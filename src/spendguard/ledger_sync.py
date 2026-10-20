@@ -15,6 +15,11 @@ import argparse
 
 from . import config
 
+RECONCILE_GAP_MONEY_PRECISION = 6
+RECONCILE_GAP_REPORT_PRECISION = 2
+RECONCILE_GAP_MIN_PROJECT_USD = 0.01
+RECONCILE_GAP_MIN_DAY_USD = 0.005
+
 
 def _warn_fetch(provider, e):
     """A swallowed provider-fetch failure reads as $0 billed — the classic silent-partial-fetch trust bug. Make
@@ -259,6 +264,8 @@ def reconcile_into_ledger(since=None):
     if not _ok:
         return dict(since=since, skipped=_why,
                     provider_total=0.0, gate_attributed=0.0, ungoverned=0.0, gap_rows=0, gap_by_project={}, errors={})
+    from .reconcile_gap_ownership import migrate_reconcile_gap_provider_ownership
+    ownership = migrate_reconcile_gap_provider_ownership(since)
     prov = {}   # (provider, day) -> $ billed (truth)
     errors = {}   # NEVER silently undercount — a failed/partial provider fetch must be visible, not hidden
     try:
@@ -266,7 +273,7 @@ def reconcile_into_ledger(since=None):
         oai, _pending = openai_by_day()                        # NB: returns (by_day, pending)
         for d, v in oai.items():
             if d >= since:
-                prov[("openai", d)] = prov.get(("openai", d), 0.0) + v
+                prov[("openai", d)] = prov.get(("openai", d), 0.0) + float(v)
     except Exception as e:
         errors["openai"] = str(e)[:140]
     try:
@@ -274,7 +281,7 @@ def reconcile_into_ledger(since=None):
         an, _ = anth.cost_by_day(since=since)
         for d, v in an.items():
             if d >= since:
-                prov[("anthropic", d)] = prov.get(("anthropic", d), 0.0) + v
+                prov[("anthropic", d)] = prov.get(("anthropic", d), 0.0) + float(v)
     except Exception as e:
         errors["anthropic"] = str(e)[:140]
     # Per-batch billed actuals, fetched ONCE and shared by the true-down and the evidence-attribution loop below.
@@ -289,15 +296,19 @@ def reconcile_into_ledger(since=None):
             _billed_rows[_prov_name] = None
             errors.setdefault(_prov_name, str(e)[:140])
     td = true_down(since=since, billed_rows=_billed_rows)       # estimates → billed actuals FIRST, so every
-    if td.get("estimate_unpriced_incomplete"):
+    if td.get("unpriced_incomplete"):
         return dict(since=since, true_down=td,
-                    errors={**errors, "unpriced_estimates": td["estimate_unpriced_incomplete"]},
+                    errors={**errors, "unpriced_estimates": td["unpriced_incomplete"]},
                     complete=False, gap_rebuild_refused="unpriced estimate rows; existing gap rows preserved")
-    if td.get("read_gaps"):
-        # Gap records combine providers. Their settled values cannot safely be rebuilt
-        # from partial truth, even though readable providers' corrections completed.
+    partial_provider_truth = bool(td.get("read_gaps")) or any(rows is None for rows in _billed_rows.values())
+    if partial_provider_truth and ownership["unowned"]:
         return dict(since=since, true_down=td, errors={**errors, "ledger_read": td["read_gaps"]},
-                    complete=False, gap_rebuild_refused="unreadable provider estimate rows; existing gap rows preserved")
+                    ownership_migration=ownership, complete=False,
+                    gap_rebuild_refused="unowned reconciliation gap rows; existing gap rows preserved")
+    readable_providers = tuple(provider for provider, rows in _billed_rows.items()
+                               if rows is not None and provider not in td.get("read_gaps", {}))
+    if td.get("read_gaps"):
+        errors["ledger_read"] = td["read_gaps"]
     # Fallback project for batches with NO conversation evidence: a single-project repo's LLM provider account is
     # entirely THAT project (e.g. Acme's OpenAI/Anthropic spend is all 'nlp-pipeline'), so a no-evidence batch is the
     # repo's project, not truly 'unattributed' — that bucket is for genuinely MULTI-project repos only. This is the
@@ -315,26 +326,33 @@ def reconcile_into_ledger(since=None):
     # An evidenced batch (we know which repo ran it) always gets a real project; only a batch with NO conversation
     # at all falls to `fallback`. Populate the agentic cache with `spendguard accounting --run` (estimate-first).
     bmap = conv.batch_project_map()
-    prov_by_proj = {}   # (project, day) -> provider $ (evidence-attributed)
-    for _pn, _model, cost, _it, _ot, day, bid in ((_billed_rows.get("openai") or []) + (_billed_rows.get("anthropic") or [])):
-        if (day or "") < since:
-            continue
-        proj = (bmap.get(bid, {}).get("project") or "").lower()   # agentic per-subconversation attribution
-        prov_by_proj[(proj or fallback, day)] = prov_by_proj.get((proj or fallback, day), 0.0) + cost
+    prov_by_proj = {}   # (provider, project, day) -> provider $ (evidence-attributed)
+    excluded_billed_rows = {"out_of_window": 0}
+    for provider in readable_providers:
+        for _pn, _model, cost, _it, _ot, day, bid in _billed_rows[provider]:
+            if (day or "") < since:
+                excluded_billed_rows["out_of_window"] += 1
+                continue
+            proj = (bmap.get(bid, {}).get("project") or "").lower()
+            key = (provider, proj or fallback, day)
+            prov_by_proj[key] = prov_by_proj.get(key, 0.0) + cost
     # match by PROJECT TOTAL, not (project, day): provider-billing day ≠ gate-record day, so a per-day match would
     # fail to subtract the gate-attributed spend and double-count it. But the gap must be DATED correctly (else
     # day/week/month/quarter periods are wrong) → SPREAD each project's NET gap across its actual provider-usage
     # days, proportional to provider $/day. Spreading the NET (not re-matching) avoids the per-day double-count.
     prov_proj_total, prov_proj_days = {}, {}
-    for (proj, day), pv in prov_by_proj.items():
-        prov_proj_total[proj] = prov_proj_total.get(proj, 0.0) + pv
-        prov_proj_days.setdefault(proj, {})
-        prov_proj_days[proj][day] = prov_proj_days[proj].get(day, 0.0) + pv
+    for (provider, proj, day), pv in prov_by_proj.items():
+        key = (provider, proj)
+        prov_proj_total[key] = prov_proj_total.get(key, 0.0) + pv
+        prov_proj_days.setdefault(key, {})
+        prov_proj_days[key][day] = prov_proj_days[key].get(day, 0.0) + pv
     gate_proj_total = {}
     from .reconcile_estimate_stage import iter_reconcile_gate_project_days
-    for (proj, _day), gv in iter_reconcile_gate_project_days(since):
-        gate_proj_total[proj] = gate_proj_total.get(proj, 0.0) + gv
-    budget.clear_reconciled(since)
+    for (provider, proj, _day), gv in iter_reconcile_gate_project_days(
+            since, providers=readable_providers, include_provider=True):
+        key = (provider, proj)
+        gate_proj_total[key] = gate_proj_total.get(key, 0.0) + gv
+    budget.clear_reconciled(since, providers=readable_providers if partial_provider_truth else None)
     provider_total = round(sum(prov_proj_total.values()), 2)   # evidence-based total — same source as the gaps
     local_total = round(sum(gate_proj_total.values()), 2)
     # Cap total reconciled at the ACCOUNT net gap (provider − gate). The per-project positive gaps (provider_proj −
@@ -342,34 +360,39 @@ def reconcile_into_ledger(since=None):
     # key but evidence-attributed to ANOTHER (gate_proj=0 → the full provider $ is written as a reconciled row while
     # the original gate row still stands → DOUBLE-COUNT, total > provider). Scaling the positive gaps down to the
     # account net guarantees gate + reconciled ≤ provider_total. Account-anchored magnitude, evidence-weighted split.
-    account_net = max(0.0, round(provider_total - local_total, 2))
-    pos = {proj: (pv - gate_proj_total.get(proj, 0.0)) for proj, pv in prov_proj_total.items()}
-    pos = {proj: g for proj, g in pos.items() if g > 0.01}
-    overshoot = round(sum(pos.values()), 2)
-    scale = (account_net / overshoot) if (overshoot > account_net and overshoot > 0) else 1.0
+    pos = {key: (pv - gate_proj_total.get(key, 0.0)) for key, pv in prov_proj_total.items()}
+    pos = {key: g for key, g in pos.items() if g > RECONCILE_GAP_MIN_PROJECT_USD}
+    scales = {}
+    for provider in readable_providers:
+        billed_total = sum(pv for key, pv in prov_proj_total.items() if key[0] == provider)
+        recorded_total = sum(gv for key, gv in gate_proj_total.items() if key[0] == provider)
+        account_net = max(0.0, round(billed_total - recorded_total, RECONCILE_GAP_REPORT_PRECISION))
+        overshoot = round(sum(g for key, g in pos.items() if key[0] == provider), RECONCILE_GAP_REPORT_PRECISION)
+        scales[provider] = (account_net / overshoot) if (overshoot > account_net and overshoot > 0) else 1.0
     gap_usd = 0.0
     gap_rows = 0
     by_project = {}
-    for proj, gap in pos.items():
-        gap = round(gap * scale, 6)
-        if gap <= 0.01:
+    for (provider, proj), gap in pos.items():
+        gap = round(gap * scales[provider], RECONCILE_GAP_MONEY_PRECISION)
+        if gap <= RECONCILE_GAP_MIN_PROJECT_USD:
             continue
-        days = prov_proj_days.get(proj, {})
+        days = prov_proj_days.get((provider, proj), {})
         tot = sum(days.values()) or 1.0
         for day, v in sorted(days.items()):                  # spread the (capped) gap across actual usage days
             share = gap * (v / tot)
-            if share > 0.005:
-                budget.record_reconciled(day, "(reconciled)", round(share, 6), project=proj)
+            if share > RECONCILE_GAP_MIN_DAY_USD:
+                budget.record_reconciled(day, provider, round(share, RECONCILE_GAP_MONEY_PRECISION), project=proj)
         gap_usd += gap
-        gap_rows += 1
-        by_project[proj] = round(gap, 2)
+        by_project[proj] = round(by_project.get(proj, 0.0) + gap, RECONCILE_GAP_REPORT_PRECISION)
+    gap_rows = len(by_project)  # Historical summary counts projects, not physical provider/day rows.
     audit = audit_completeness()                  # triple-check: every batch accounted, nothing silently dropped
     return dict(since=since, provider_total=provider_total, gate_attributed=local_total,
-                true_down=td,
+                true_down=td, ownership_migration=ownership, excluded_billed_rows=excluded_billed_rows,
                 ungoverned=round(gap_usd, 2), gap_rows=gap_rows, gap_by_project=by_project,
                 coverage=round(local_total / provider_total * 100, 1) if provider_total else 100.0,
                 errors=errors, providers_ok=[p for p in ("openai", "anthropic") if p not in errors],
-                complete=audit.get("complete", False), unaccounted=audit.get("openai", {}).get("unaccounted", []),
+                complete=audit.get("complete", False) and not errors,
+                unaccounted=audit.get("openai", {}).get("unaccounted", []),
                 audit=audit)
 
 
@@ -505,6 +528,7 @@ def reconcile_realtime(since=None):
     except OSError:
         return dict(since=since, imported=0.0, rows=0)
     skipped = 0
+    excluded_log_rows = {"out_of_window": 0, "missing_day": 0}
     with _fh:                                                    # `with` → the handle is closed deterministically (was leaked)
         for ln in _fh:
             # ONE bad line must SKIP, never abort. The outer try/except used to wrap the WHOLE loop, so a single
@@ -514,6 +538,7 @@ def reconcile_realtime(since=None):
                 r = json.loads(ln)
                 d = r.get("day", "")
                 if not d or d < since:
+                    excluded_log_rows["missing_day" if not d else "out_of_window"] += 1
                     continue
                 k = (r.get("provider") or "?", d)
                 log_pd[k] = log_pd.get(k, 0.0) + float(r.get("cost") or 0)
@@ -542,7 +567,7 @@ def reconcile_realtime(since=None):
             budget.record_reconciled(day, prov, gap, project=fallback, kind="realtime", model=_RT_MARKER)
             imported += gap
             rows += 1
-    return dict(since=since, imported=round(imported, 4), rows=rows)
+    return dict(since=since, imported=round(imported, 4), rows=rows, excluded_log_rows=excluded_log_rows)
 
 
 def _leak_cache_path():
@@ -583,6 +608,7 @@ def realtime_check(recorded, since=None):
     log_total = 0.0
     seen = False
     skipped = 0
+    excluded_log_rows = {"out_of_window": 0, "missing_day": 0}
     try:
         if os.path.exists(RT_LOG):
             seen = True
@@ -591,6 +617,7 @@ def realtime_check(recorded, since=None):
                     try:
                         r = json.loads(ln)
                         if since and (r.get("day") or "") < since:     # same window as `recorded`, or it lies
+                            excluded_log_rows["missing_day" if not r.get("day") else "out_of_window"] += 1
                             continue
                         log_total += float(r.get("cost") or 0)
                     except Exception:
@@ -605,8 +632,9 @@ def realtime_check(recorded, since=None):
         warn_once(f"[ledger_sync] {skipped} unparseable RT_LOG line(s) SKIPPED in realtime_check — log_total is a "
                   f"lower bound; the recorded-vs-log comparison may under-read the gap.")
     if not seen:
-        return {"recorded": recorded, "log": None, "over": 0.0, "under": 0.0}
-    return {"recorded": recorded, "log": log_total,
+        return {"recorded": recorded, "log": None, "over": 0.0, "under": 0.0,
+                "excluded_log_rows": excluded_log_rows}
+    return {"recorded": recorded, "log": log_total, "excluded_log_rows": excluded_log_rows,
             "over": max(0.0, round(recorded - log_total, 2)),      # ledger claims MORE than the gate ever saw
             "under": max(0.0, round(log_total - recorded, 2))}     # the gate saw calls the ledger never got
 

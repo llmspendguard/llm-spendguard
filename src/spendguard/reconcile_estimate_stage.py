@@ -72,7 +72,7 @@ def stage_reconcile_estimate_cells(since, correction_marker, normalize_model, pa
             yield staged, gaps
 
 
-def iter_reconcile_gate_project_days(since, path=None):
+def iter_reconcile_gate_project_days(since, path=None, providers=None, include_provider=False):
     """Stream the exact countable project/day batch projection for gap arithmetic."""
     ledger_path = Path(path if path is not None else config.db_path()).expanduser().resolve()
     source = None
@@ -80,13 +80,23 @@ def iter_reconcile_gate_project_days(since, path=None):
         source = config.open_ledger_connection(ledger_path.as_uri() + "?mode=ro", uri=True,
             timeout=config.LEDGER_CONNECT_TIMEOUT_S, tune=False)
         source.create_aggregate("dec_sum", LEDGER_READ_DECIMAL_ARITY, _DecSum)
-        for project, day, amount in source.execute(
-                "SELECT project_primary,day,dec_sum(batch_usd) FROM spend_events WHERE day>=? AND "
-                + SpendLedger._NOT_VOID + " AND " + SpendLedger._COUNTABLE + " GROUP BY project_primary,day",
-                (since,)):
+        provider_scope = tuple(providers) if providers is not None else None
+        if provider_scope == ():
+            return
+        scope_sql = ""
+        parameters = [since]
+        if provider_scope is not None:
+            scope_sql = " AND provider IN (" + ",".join("?" for _ in provider_scope) + ")"
+            parameters.extend(provider_scope)
+        grouping = "provider,project_primary,day" if include_provider else "project_primary,day"
+        for provider, project, day, amount in source.execute(
+                "SELECT provider,project_primary,day,dec_sum(batch_usd) FROM spend_events WHERE day>=? AND "
+                + SpendLedger._NOT_VOID + " AND " + SpendLedger._COUNTABLE + scope_sql
+                + " GROUP BY " + grouping, parameters):
             value = float(amount)
             if value:
-                yield (project or "unattributed", day), value
+                key = (provider, project or "unattributed", day) if include_provider else (project or "unattributed", day)
+                yield key, value
     except Exception as exc:
         RECONCILE_STAGE_LOGGER.exception("Reconcile project/day gap read refused")
         raise LedgerReadError(f"reconcile-project-day-stream: {exc!r}\n{traceback.format_exc()}") from exc

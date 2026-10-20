@@ -175,6 +175,10 @@ class LedgerReadTimeout(LedgerReadError):
         super().__init__(f"Ledger read exceeded wall-clock budget {budget} seconds")
 
 
+class LedgerQueryDeadline(LedgerReadTimeout):
+    """A request-path spend aggregate could not finish within its caller deadline."""
+
+
 class LedgerReadSchemaError(LedgerReadError):
     """An existing ledger lacks the requested schema; reads never migrate it."""
 
