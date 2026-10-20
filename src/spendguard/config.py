@@ -14,7 +14,8 @@ import sqlite3
 import gc
 from pathlib import Path
 
-HOME = Path(os.getenv("SPENDGUARD_HOME") or (Path.home() / ".spendguard"))
+DEFAULT_SPENDGUARD_HOME = Path.home() / ".spendguard"
+HOME = Path(os.getenv("SPENDGUARD_HOME") or DEFAULT_SPENDGUARD_HOME)
 try:
     HOME.mkdir(parents=True, exist_ok=True)
 except Exception:
@@ -980,6 +981,7 @@ def budget_backend():
 
 
 def db_path():
+    require_ledger_home_alignment(HOME)
     p = _cfg_get("budget", "db_path", None)
     return p if p else str(HOME / "spend.db")
 
@@ -1045,6 +1047,38 @@ LEDGER_CONNECT_TIMEOUT_S = 5
 LEDGER_WRITE_TIMEOUT_S = 10
 LEDGER_BUSY_TIMEOUT_MS = 5000
 LEDGER_JOURNAL_LIMIT_BYTES = 64 * 1024 * 1024
+LEDGER_HOME_ENVIRONMENT_KEY = "SPENDGUARD_HOME"
+
+
+class LedgerHomeIsolationError(BaseException):
+    """A late home redirect cannot authorize writes to a stale real-home target.
+
+    Deliberately escapes telemetry's best-effort Exception catches, including
+    the dead-letter fallback which itself uses the import-time home.
+    """
+
+
+def require_ledger_home_alignment(path):
+    """Refuse cached real-home files after an explicit environment redirect.
+
+    Python startup hooks may import config before a test assigns its temporary
+    home. Deliberate isolated-to-isolated redirects and unrelated explicitly
+    selected databases remain usable; retaining the real home's target does not.
+    """
+    requested_home = os.environ.get(LEDGER_HOME_ENVIRONMENT_KEY)
+    if not requested_home:
+        return
+    cached_home = HOME.expanduser().resolve()
+    if cached_home != DEFAULT_SPENDGUARD_HOME.expanduser().resolve():
+        return
+    if Path(requested_home).expanduser().resolve() == cached_home:
+        return
+    ledger_path = Path(path).expanduser().resolve()
+    if ledger_path == cached_home or cached_home in ledger_path.parents:
+        raise LedgerHomeIsolationError(
+            f"Ledger home changed after config import: {cached_home} -> {requested_home}; "
+            f"refusing stale ledger {ledger_path}. Set {LEDGER_HOME_ENVIRONMENT_KEY} "
+            "before interpreter startup or restart the interpreter.")
 
 
 class _LedgerAdmissionGeneration:
@@ -1124,6 +1158,8 @@ class _CountedLedgerConnection(sqlite3.Connection):
 
 def open_ledger_connection(path=None, timeout=LEDGER_CONNECT_TIMEOUT_S, *, tune=True, **options):
     """Atomically admit, open and tune a connection; callers own its close."""
+    path = path or db_path()
+    require_ledger_home_alignment(path)
     with _LEDGER_ADMISSION.lock:
         ceiling = ledger_connection_limit()
         current = ledger_connection_count()
@@ -1140,7 +1176,7 @@ def open_ledger_connection(path=None, timeout=LEDGER_CONNECT_TIMEOUT_S, *, tune=
             raise LedgerConnectionLimitError(
                 f"Ledger connection ceiling {ceiling} reached: current live count {current}")
         options.setdefault("check_same_thread", False)
-        c = sqlite3.connect(path or db_path(), timeout=timeout,
+        c = sqlite3.connect(path, timeout=timeout,
                             factory=_CountedLedgerConnection, **options)
         c._ledger_generation = _LEDGER_ADMISSION
         c._ledger_released = False
@@ -1232,6 +1268,7 @@ def pooled_ledger_conn(key, ensure_schema, path=None):
     if conns is None:
         conns = _LEDGER_POOL.conns = {}
     path = path or db_path()
+    require_ledger_home_alignment(path)
     got = conns.get(key)
     if got is not None and got[1] == path:
         return got[0]
