@@ -6,6 +6,7 @@ not be read (key/network)" even though spendguard's whole realtime premise is re
 surface: a reconstruction cache → reconcile reads ESTIMATED (reconstructed); a STALE cache says so accurately; a CORRUPT
 cache is a FAILURE (never masked as absence); and a completeness verdict with an estimated realtime source is NOT
 'INCOMPLETE — UNKNOWN'. Offline + hermetic: writes a fake reconstruction cache under SPENDGUARD_HOME, no network."""
+import importlib.util
 import json
 import os
 import sys
@@ -28,6 +29,18 @@ def ck(name, cond):
 
 
 _CACHE = str(config.HOME / "realtime_reconstruction.json")
+RT_SURFACE_PROJECT_ALPHA = "fixture-project-alpha"
+RT_SURFACE_PROJECT_BETA = "fixture-project-beta"
+RT_SURFACE_ORG = "fixture-shared-org"
+RT_SURFACE_PROVIDER = "openai"
+RT_SURFACE_DAY = "2026-09-05"
+RT_SURFACE_TRUTH_USD = 31.0
+RT_SURFACE_UNATTRIBUTED_USD = 3.0
+RT_SURFACE_SCRIPT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                                 "scripts", "reconstruct", "realtime_find_batch.py")
+rt_surface_spec = importlib.util.spec_from_file_location("realtime_surface_producer_fixture", RT_SURFACE_SCRIPT)
+rt_surface_producer = importlib.util.module_from_spec(rt_surface_spec)
+rt_surface_spec.loader.exec_module(rt_surface_producer)
 
 
 def _write_cache(rows, since="2026-06-01"):
@@ -50,8 +63,8 @@ _bad = ledger_sync.realtime_reconstruction_estimate("2026-09-01")
 ck("corrupt cache -> {'error': …} (a dependency FAILURE, never masked as absence)",
    isinstance(_bad, dict) and bool(_bad.get("error")))
 
-_write_cache([{"day": "2026-09-05", "usd": 12.0, "org": "ensight"},
-              {"day": "2026-09-06", "usd": 8.0, "org": "healiom"},
+_write_cache([{"day": "2026-09-05", "usd": 12.0, "org": RT_SURFACE_ORG, "project": RT_SURFACE_PROJECT_ALPHA},
+              {"day": "2026-09-06", "usd": 8.0, "org": RT_SURFACE_ORG, "project": RT_SURFACE_PROJECT_BETA},
               {"day": "2026-08-20", "usd": 99.0, "org": "ensight"},   # out of window
               {"day": "2026-09-07", "usd": 0.0, "org": "ensight"}])   # nonpositive
 _fresh = ledger_sync.realtime_reconstruction_estimate("2026-09-01")
@@ -59,8 +72,33 @@ ck("fresh cache covers the window", _fresh["covers_window"] is True)
 ck("window total sums only in-window POSITIVE rows (12+8=20)", _fresh["total"] == 20.0)
 ck("out-of-window + nonpositive rows are COUNTED, never dropped silently",
    _fresh["dropped"]["out_of_window"] == 1 and _fresh["dropped"]["nonpositive"] == 1)
-ck("by_project maps org->project (ensight->llm-spendguard, healiom->lmm)",
-   {d["project"] for d in _fresh["by_project"]} == {"llm-spendguard", "lmm"})
+ck("by_project preserves distinct evidence projects sharing one org, including their costs",
+   _fresh["by_project"] == [{"project": RT_SURFACE_PROJECT_ALPHA, "cost": 12.0},
+                            {"project": RT_SURFACE_PROJECT_BETA, "cost": 8.0}])
+
+rt_surface_runs = [dict(day=RT_SURFACE_DAY, usd=row["cost"], project=row["project"],
+                        org=RT_SURFACE_ORG, provider=RT_SURFACE_PROVIDER, basis="printed")
+                   for row in _fresh["by_project"]]
+rt_surface_runs.append(dict(day=RT_SURFACE_DAY, usd=RT_SURFACE_UNATTRIBUTED_USD,
+                            org=RT_SURFACE_ORG, provider=RT_SURFACE_PROVIDER, basis="printed"))
+rt_surface_truth = [dict(day=RT_SURFACE_DAY, provider=RT_SURFACE_PROVIDER, usd=RT_SURFACE_TRUTH_USD)]
+rt_surface_payload = rt_surface_producer._reconstruction_cache_payload(
+    rt_surface_runs, rt_surface_truth, RT_SURFACE_DAY)
+ck("producer retains canonical provider truth on its independent axis", rt_surface_payload["truth"] == rt_surface_truth)
+ck("provider-month compares account truth against all reconstructed rows with signed residual",
+   rt_surface_payload["provider_months"] == [dict(provider=RT_SURFACE_PROVIDER, month=RT_SURFACE_DAY.rsplit("-", 1)[0],
+                                                truth_total=RT_SURFACE_TRUTH_USD,
+                                                reconstructed=_fresh["total"] + RT_SURFACE_UNATTRIBUTED_USD,
+                                                residual=RT_SURFACE_TRUTH_USD - _fresh["total"] - RT_SURFACE_UNATTRIBUTED_USD)])
+ck("missing project has a named unattributed gap instead of inheriting org identity",
+   rt_surface_payload["gaps"] == [dict(kind="unattributed", row=len(rt_surface_runs) - 1, sessions=None)])
+with open(_CACHE, "w") as rt_surface_stream:
+    json.dump(rt_surface_payload, rt_surface_stream)
+rt_surface_estimate = ledger_sync.realtime_reconstruction_estimate(RT_SURFACE_DAY)
+ck("consumer preserves producer projects and explicitly unattributed money without adding account truth",
+   rt_surface_estimate["by_project"] == _fresh["by_project"] + [dict(project="unattributed", cost=RT_SURFACE_UNATTRIBUTED_USD)]
+   and rt_surface_estimate["total"] == rt_surface_payload["total"]
+   and rt_surface_payload["rows"][-1]["project"] == "unattributed")
 
 _write_cache([{"day": "2026-07-15", "usd": 50.0, "org": "ensight"}])
 _stale = ledger_sync.realtime_reconstruction_estimate("2026-09-01")
