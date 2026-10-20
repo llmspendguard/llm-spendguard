@@ -81,3 +81,16 @@ provider-side scoping — an OpenAI **project key** and an Anthropic **workspace
 provider's own billing then splits per repo, so reconcile cross-checks each repo against its own
 workspace truth instead of the shared account total. Every charge is stamped with the serving key's
 fingerprint (`sha256[:8]:last4`, local-only, never pushed); `spendguard keys` shows $ per key.
+
+### Disk-space reserve
+
+`config.disk_guard_floor_bytes()` reads `disk_guard.floor_bytes` in
+`$SPENDGUARD_HOME/config.json`, overridden by `SPENDGUARD_DISK_GUARD_FLOOR_BYTES`.
+The default reserve is 5 GiB (5368709120 bytes). Values must be positive integer
+bytes; invalid values refuse the write. `spendguard.disk_guard.require_disk_space(target)`
+checks the destination filesystem (nearest existing ancestor for a new path) and
+raises `SpendGateRefused` with the path, free bytes, floor and shortfall when unsafe.
+Probe failures also refuse. Ledger snapshots (including compaction) and reprice
+backups use it before creating their database copy. It is a reusable admission
+check, not a disk reservation or a prediction of the eventual output size; callers
+must check before each large write, and concurrent writers can consume space later.

@@ -13,6 +13,8 @@ otherwise, and the quality JUDGE is an LLM (never a keyword rule) — the same j
   bakeoff('code-review', candidates=['openai:gpt-5.5','deepseek:deepseek-v4-flash'], sample_n=5)  # estimate
   bakeoff('code-review', candidates=[...], sample_n=5, run=True, budget_usd=0.50)                 # measure
 """
+import json
+
 from . import calls, config, pricing, callio
 from .submit import _count_tokens
 
@@ -45,12 +47,14 @@ def _task_sample_key(task):
     """The stable content KEY hashed into measurement.item_id — incorporates the image reference(s) so two captions
     of DIFFERENT images are distinct samples (a text-only task keys exactly as before: the bare prompt string)."""
     txt, imgs = _task_parts(task)
+    if isinstance(task, dict) and any(task.get(k) for k in ("system", "schema", "max_tokens")):
+        return json.dumps(task, sort_keys=True, ensure_ascii=False)
     if not imgs:
         return txt
     return txt + "\n\x00images\x00\n" + "\n".join(str(i) for i in imgs)
 
 
-def _sample_prompts(intent, n):
+def _sample_prompts(intent, n, include_shape=False):
     """Up to `n` DISTINCT real prompts recorded for this intent (the tasks to replay on the candidates). Returns
     [] ONLY when the intent genuinely has no recorded prompts — the caller must then pass prompts explicitly (a
     bakeoff cannot invent representative work). Reads callio's OWN connection: the call_io table lives in
@@ -58,14 +62,33 @@ def _sample_prompts(intent, n):
     WRONG file, so auto-sample silently returned nothing and every bakeoff demanded explicit prompts. A real DB
     failure PROPAGATES (it is not masked as 'no prompts' — that fail-open hid the wrong-path bug for exactly this
     reason); the table is auto-created, so an empty corpus is a clean [] while a broken db surfaces."""
+    # include_shape keeps system/schema/ceiling/effort together for replay consumers.
+    # The default text view remains compatible with display and prompt-only callers.
     con = callio._callio_db()
     # EXCLUDE truncated rows: a prompt CUT at the capture cap is a different task, so replaying it measures
     # something other than the work it claims to (the 800-char silent-truncation failure). Only full-fidelity
     # bodies feed a bakeoff/titration; an intent whose corpus is entirely truncated returns [] → the caller
     # refuses cleanly ("no sample tasks — re-fetch with a higher callio.snip_chars"), never a partial replay.
-    rows = con.execute("SELECT DISTINCT prompt FROM call_io WHERE intent IS ? AND prompt IS NOT NULL "
-                       "AND length(prompt) > 0 AND COALESCE(truncated,0) = 0 LIMIT ?", (intent, int(n))).fetchall()
-    return [r[0] for r in rows]
+    replay_columns = "prompt, system, req_schema, req_max_tokens, effort" if include_shape else "prompt"
+    rows = con.execute("SELECT DISTINCT " + replay_columns + " FROM call_io "
+                       "WHERE intent IS ? AND prompt IS NOT NULL AND length(prompt) > 0 "
+                       "AND COALESCE(truncated,0) = 0 AND shape_complete = 1 LIMIT ?", (intent, int(n))).fetchall()
+    if not include_shape:
+        return [r[0] for r in rows]
+    # Decode the entire stored contract. Invalid schema data refuses sampling via JSONDecodeError;
+    # it must never silently turn a strict-output task into an unconstrained prompt.
+    replay_tasks = []
+    for prompt, system, schema, max_tokens, effort in rows:
+        decoded_schema = json.loads(schema) if schema else None
+        # Batch recovery stores OpenAI's response_format envelope; live capture stores the
+        # JSON Schema itself. Parse the envelope rather than treating it as the schema.
+        if isinstance(decoded_schema, dict) and decoded_schema.get("type") == "json_schema":
+            decoded_schema = decoded_schema["json_schema"]["schema"]
+        elif isinstance(decoded_schema, dict) and decoded_schema.get("type") == "json_object":
+            decoded_schema = {"type": "object"}
+        replay_tasks.append(dict(prompt=prompt, system=system or None, schema=decoded_schema,
+                                 max_tokens=max_tokens or None, effort=effort))
+    return replay_tasks
 
 
 def _judge_one(prompt, output, judge_model, images=None):
@@ -114,7 +137,12 @@ def _plan(intent, candidates, prompts, judge_model, efforts, requirement_aware=F
     n_eff = max(1, len(efforts))                        # swallowed into a false-low estimate by the broad guards below
     tasks = [_task_parts(p) for p in prompts]           # (prompt_text, images_or_None) — a string yields (string, None)
     loaded = [([adapters._load_image(i) for i in imgs] if imgs else None) for _txt, imgs in tasks]  # dims for the token est ($0 read)
-    in_text = [_count_tokens(txt, candidates[0] if candidates else "gpt-5.5") for txt, _im in tasks]  # text tokens (unchanged)
+    contract_inputs = []
+    for task, (txt, _im) in zip(prompts, tasks):
+        contract = ({k: task[k] for k in ("system", "schema", "max_tokens") if task.get(k) is not None}
+                    if isinstance(task, dict) else {})
+        contract_inputs.append(json.dumps({"prompt": txt, **contract}, ensure_ascii=False) if contract else txt)
+    in_text = [_count_tokens(txt, candidates[0] if candidates else "gpt-5.5") for txt in contract_inputs]
 
     def _img_tok(model, i):                             # provider-aware IMAGE input tokens for task i on `model` (0 = text task)
         return (adapters._image_input_tokens(loaded[i], adapters.provider_for(model), model.split(":", 1)[-1])
@@ -135,7 +163,7 @@ def _plan(intent, candidates, prompts, judge_model, efforts, requirement_aware=F
         total += (detail[c] or 0.0)
     n_judge = len(candidates) * len(prompts) * n_eff                    # one small judge call per (candidate, prompt, effort)
     try:                                                               # the generic/screen judge SEES the image on a vision task
-        judge_in = sum(_count_tokens(txt, judge_model) + _img_tok(judge_model, i)
+        judge_in = sum(_count_tokens(contract_inputs[i], judge_model) + _img_tok(judge_model, i)
                        for i, (txt, _im) in enumerate(tasks)) * len(candidates) * n_eff
         total += pricing.realtime_cost(judge_model, judge_in, _JUDGE_OUT * n_judge)
     except _stop:
@@ -146,9 +174,9 @@ def _plan(intent, candidates, prompts, judge_model, efforts, requirement_aware=F
         from . import requirement_judge
         ex, adj = config.advisor_model(), (adjudicator_model or config.advisor_adjudicator_model())
         try:
-            total += pricing.realtime_cost(ex, sum(_count_tokens(txt, ex) for txt, _im in tasks),
+            total += pricing.realtime_cost(ex, sum(_count_tokens(txt, ex) for txt in contract_inputs),
                                            requirement_judge._EXTRACT_OUT * len(prompts))
-            adj_in = sum(_count_tokens(txt, adj) + _img_tok(adj, i)     # the adjudicator SEES the image too
+            adj_in = sum(_count_tokens(contract_inputs[i], adj) + _img_tok(adj, i)     # the adjudicator SEES the image too
                          for i, (txt, _im) in enumerate(tasks)) * len(candidates) * n_eff
             total += pricing.realtime_cost(adj, adj_in, requirement_judge._JUDGE_OUT * n_judge)
         except _stop:
@@ -187,7 +215,7 @@ def bakeoff(intent, candidates=None, prompts=None, sample_n=5, run=False, budget
     if not candidates:
         return dict(intent=intent, error="no candidates — pass candidates=['vendor:model', …] (the slate to test). "
                     "spendguard_recommend suggests a slate from your priced catalogue.")
-    prompts = list(prompts) if prompts else _sample_prompts(intent, sample_n)
+    prompts = list(prompts) if prompts else _sample_prompts(intent, sample_n, include_shape=True)
     if not prompts:
         return dict(intent=intent, candidates=candidates, error="no sample tasks — this intent has no recorded "
                     "prompts to replay. Pass prompts=[…] with a few representative tasks.")
@@ -218,7 +246,11 @@ def bakeoff(intent, candidates=None, prompts=None, sample_n=5, run=False, budget
                 n_good = n_lab = n_run = n_err = 0
                 spent, last_error = 0.0, None
                 for p in prompts:
-                    txt, imgs = _task_parts(p)              # (prompt_text, images_or_None) — a vision task sends images= through
+                    txt, imgs = _task_parts(p)
+                    replay_contract = ({k: p[k] for k in ("system", "schema", "max_tokens")
+                                        if p.get(k) is not None} if isinstance(p, dict) else {})
+                    replay_effort = eff if eff is not None else (p.get("effort") if isinstance(p, dict) else None)
+                    judge_task = json.dumps({"prompt": txt, **replay_contract}, ensure_ascii=False) if replay_contract else txt
                     # no_substitution PINS the candidate: a bakeoff MEASURES this exact model, so the lane/bandit must
                     # never swap it — else the arm records ANOTHER model's cost×quality under c's name (the corruption
                     # that feeds advise/recommend). Still $0 on c's OWN lane where available (pinning suppresses
@@ -235,7 +267,8 @@ def bakeoff(intent, candidates=None, prompts=None, sample_n=5, run=False, budget
                     calls.set_context(intent=intent, who="bakeoff", root_call=_measurement_call_id, attempt=1,
                                       requested_model=c, measurement=True)
                     try:
-                        r = adapters.call(c, txt, sig=intent, timeout_s=120, reasoning=eff, no_substitution=True,
+                        r = adapters.call(c, txt, sig=intent, timeout_s=120, reasoning=replay_effort, no_substitution=True,
+                                          **replay_contract,
                                           **({"measurement": True} if _det else {}), **_det,
                                           **({"images": imgs} if imgs else {}))
                     finally:
@@ -258,7 +291,7 @@ def bakeoff(intent, candidates=None, prompts=None, sample_n=5, run=False, budget
                     try:
                         if requirement_aware:                           # judge by the PROMPT'S OWN requirements, two-tier (screen→opus)
                             from . import requirement_judge
-                            _v = requirement_judge.judge_requirements(txt, r.get("text"), screen_model=judge_model,
+                            _v = requirement_judge.judge_requirements(judge_task, r.get("text"), screen_model=judge_model,
                                                                       adjudicator_model=adjudicator_model,
                                                                       **({"images": imgs} if imgs else {}))
                             verdict = _v.get("good")                    # same True/False/None contract as _judge_one
@@ -267,7 +300,7 @@ def bakeoff(intent, candidates=None, prompts=None, sample_n=5, run=False, budget
                                 if _rq not in req_seen:
                                     req_seen.append(_rq)
                         else:
-                            verdict = _judge_one(txt, r.get("text"), judge_model,
+                            verdict = _judge_one(judge_task, r.get("text"), judge_model,
                                                  **({"images": imgs} if imgs else {}))  # generic LLM judge — the quality signal
                     except Exception as _je:
                         from . import gate
@@ -284,7 +317,7 @@ def bakeoff(intent, candidates=None, prompts=None, sample_n=5, run=False, budget
                     calls.finalize_bakeoff_measurement(
                         _measurement_call_id, r.get("provider") or adapters.provider_for(_served_model),
                         c, _served_model, cost, int(r.get("in_tok") or 0), int(r.get("out_tok") or 0),
-                        intent, q, eff, r.get("executor") or "api")
+                        intent, q, r.get("chosen_effort", replay_effort), r.get("executor") or "api")
                 results[arm] = dict(model=c, effort=eff, runs=n_run, failed=n_err, last_error=last_error,
                                     labeled=n_lab, good=n_good, good_rate=(n_good / n_lab if n_lab else None),
                                     spent=round(spent, 6), per_good=(spent / n_good if n_good else None))

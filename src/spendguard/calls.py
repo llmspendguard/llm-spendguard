@@ -4,7 +4,7 @@ OFF by default (it can store prompts/outputs — privacy). Enable with config ca
 (or SPENDGUARD_CALLS=1). Per call it records: chain, intent, caller, model, cost, tokens, latency,
 prompt hash (+ optional snippet), output snippet, finish reason, and a DEFERRED quality label:
   - feedback(call_id, ok)        -> explicit / judge verdict (authoritative)
-  - implicit 'used'              -> a later call in the same chain reused this output
+  - reuse alone                 -> unjudged (NULL); only feedback or a judge can assess quality
 That powers cost-per-GOOD-result per intent (`spendguard calls`) and, later, an `optimize` loop.
 
 Shares the SQLite db with budget (config.db_path()), table `calls`. RLock — reentrant (record/query
@@ -323,7 +323,8 @@ def _ensure_call_observation_schema(c):
         quality TEXT, quality_src TEXT, quality_conf REAL,
         executor TEXT, project TEXT, effort TEXT, suspect TEXT,
         call_class TEXT, origin_session TEXT,
-        requested_model TEXT, served_model TEXT, resolved_lane TEXT, redirect_reason TEXT)""")
+        requested_model TEXT, served_model TEXT, resolved_lane TEXT, redirect_reason TEXT,
+        cache_read_tok INTEGER, cache_write_tok INTEGER)""")
     c.execute("CREATE INDEX IF NOT EXISTS idx_calls_chain ON calls(chain)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_calls_intent ON calls(intent)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_calls_ts ON calls(ts)")  # as_of/since range reads (calibrate, advise)
@@ -374,7 +375,8 @@ def _ensure_call_observation_schema(c):
                         ("retry_of", "TEXT"), ("fell_from", "TEXT"), ("fell_reason", "TEXT"),
                         ("call_class", "TEXT"), ("origin_session", "TEXT"),
                         ("requested_model", "TEXT"), ("served_model", "TEXT"),
-                        ("resolved_lane", "TEXT"), ("redirect_reason", "TEXT")):
+                        ("resolved_lane", "TEXT"), ("redirect_reason", "TEXT"),
+                        ("cache_read_tok", "INTEGER"), ("cache_write_tok", "INTEGER")):
         if _col not in _have:
             c.execute(f"ALTER TABLE calls ADD COLUMN {_col} {_decl}")
     c.execute("CREATE INDEX IF NOT EXISTS idx_calls_executor ON calls(executor)")  # per-lane rollups
@@ -469,8 +471,12 @@ def record_call(provider, model, kind, cost, in_tok=0, out_tok=0, latency=None,
            executor=None, project=None, effort=None, *, outcome=None, http_status=None,
            provider_error=None, retry_after=None, attempts=None, disposition=None, disposition_reason=None, retry_of=None,
            fell_from=None, fell_reason=None, call_id=None, call_class=None, origin_session=None,
-           requested_model=None, served_model=None, resolved_lane=None, redirect_reason=None):
+           requested_model=None, served_model=None, resolved_lane=None, redirect_reason=None,
+           cache_read_tok=None, cache_write_tok=None):
     """Record one call — its full OUTCOME, success OR failure. Returns call_id. Never raises.
+
+    Cache observations remain NULL when unmeasured or when a write tier is unknown.
+    Complete split observations use input inclusive of reads, excluding writes; writes identify the five-minute tier.
 
     FORENSIC MANDATE (the reason this tool exists): EVERY call is on the ledger, whatever its fate — a metered success,
     a $0 lane hit, a 429 overload, a transport drop, a schema miss, an exhausted-after-N-retries failure. So the OUTCOME
@@ -562,8 +568,8 @@ def record_call(provider, model, kind, cost, in_tok=0, out_tok=0, latency=None,
                 "INSERT INTO calls (id,ts,chain,intent,caller,provider,model,kind,in_tok,out_tok,"
                 "cost,latency,prompt_hash,prompt_snip,output_snip,finish,executor,project,effort,suspect,"
                 "quality,quality_src,quality_conf,outcome,http_status,provider_error,retry_after,attempts,disposition,disposition_reason,retry_of,fell_from,fell_reason,"
-                "call_class,origin_session,requested_model,served_model,resolved_lane,redirect_reason) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "call_class,origin_session,requested_model,served_model,resolved_lane,redirect_reason,cache_read_tok,cache_write_tok) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (cid, ts, chain, intent, who or ctx.get("who") or caller(), provider, model, kind,
                  int(in_tok or 0), int(out_tok or 0), float(cost or 0), latency, ph, psnip, osnip, finish,
                  executor, proj, (effort or None), suspect,
@@ -577,9 +583,11 @@ def record_call(provider, model, kind, cost, in_tok=0, out_tok=0, latency=None,
                  (disposition or None), (disposition_reason or None), (retry_of or None), (fell_from or None),
                  (fell_reason or None), call_class, origin_session,
                  (requested_model or None), (served_model or None), (resolved_lane or None),
-                 (redirect_reason or None)))
+                 (redirect_reason or None),
+                 (int(cache_read_tok) if cache_read_tok is not None else None),
+                 (int(cache_write_tok) if cache_write_tok is not None else None)))
             _calls_db().commit()
-        # deferred implicit feedback: did THIS call reuse an earlier output in the same chain?
+        # Reuse alone must leave quality unjudged; the compatibility entrypoint never infers a verdict.
         if chain and prompt:
             _link_used(chain, prompt)
         return cid
@@ -664,26 +672,14 @@ def reconcile_calls_batch_estimate(provider, model, intent, in_tok, out_tok, cos
 
 
 def _link_used(chain, current_prompt):
-    """Mark prior unlabeled calls in this chain 'used' if their output appears in this prompt."""
-    if not _store_prompts():
-        return
-    try:
-        with _lock:
-            rows = _calls_db().execute(
-                "SELECT id, output_snip FROM calls WHERE chain=? AND quality IS NULL "
-                "AND output_snip IS NOT NULL ORDER BY ts DESC LIMIT 10", (chain,)).fetchall()
-            for cid, out in rows:
-                # Match the FULL stored snippet (not just an 80-char prefix) and require it to be substantive (>= 40
-                # chars): an 80-char PREFIX match fired on any two calls that shared a boilerplate/system preamble,
-                # mislabelling unrelated outputs 'used'. Requiring the whole snippet to reappear, and skipping short
-                # boilerplate, keeps the signal specific. (Still a low-confidence 0.6 'used' label, never authoritative.)
-                if out and len(out) >= 40 and out in current_prompt:
-                    # NB: single string literal (not concatenated) so the static SQL index audit can see the
-                    # WHERE id=? and read it as the PK seek it is, not a full-table scan (tests/test_sql_index_audit).
-                    _calls_db().execute("UPDATE calls SET quality='good', quality_src='used', quality_conf=0.6 WHERE id=? AND COALESCE(quality_src,'') != 'truncation'", (cid,))
-            _calls_db().commit()
-    except Exception:
-        config.rollback_ledger_conn("calls")   # clear a dangling txn from the failed write on the reused pooled conn
+    """Leave reuse unjudged (quality=NULL) until explicit feedback or an agentic judge labels it.
+
+    Kept as the implicit-reuse entrypoint for compatibility. Output appearing in a later prompt is not evidence
+    that it was correct or usable: it may have been quoted for correction. Do not infer reuse or quality from
+    stored snippets, and never replace an existing measured verdict. NULL is the corpus's unjudged marker;
+    cost_summary and advise.evidence exclude it from their good/bad and confidence-weighted label counts.
+    """
+    return None
 
 
 def intent_spend(intent, window_s=86400):
@@ -836,6 +832,6 @@ def cmd_summary(argv=None):
         goodpct = f"{100*good/labeled:.0f}%" if labeled else "—"
         per = f"${cost/good:.4f}" if good else "—"
         print(f"{intent[:19]:<20}{model[:21]:<22}{n:>7}{('$%.4f' % cost):>11}{goodpct:>7}{per:>10}")
-    print("\ngood% = share of LABELED calls (feedback / judge / implicit 'used').  $/good = cost-per-good-result.")
-    print("Label calls with spendguard.feedback(call_id, ok=...) or let chains infer 'used'.")
+    print("\ngood% = share of LABELED calls (feedback / judge).  $/good = cost-per-good-result.")
+    print("Label calls with spendguard.feedback(call_id, ok=...) or an agentic judge; reuse stays unjudged.")
     return 0

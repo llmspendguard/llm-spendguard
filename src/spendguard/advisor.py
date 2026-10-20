@@ -261,7 +261,7 @@ def optimize(intent=None, plan=None, run=False):
     if not table:
         print("  → no evidence yet. Run `spendguard backfill` / record calls first. 0 spend.")
         return dict(requests=0, cost=0.0, model=model)
-    ins_txt = "\n".join(f"- ({c:.2f}) {lesson}" for _i, lesson, _s, c, _e in ins[:12]) or "(none yet — run `spendguard mine`)"
+    ins_txt = "\n".join(f"- ({c:.2f}) {lesson}" for _i, lesson, _s, c, _e in ins) or "(none yet — run `spendguard mine`)"
     prompt = (f"Intent: {intent or 'all'}\nPlanned model: {plan or 'unspecified'}\n\n"
               f"Evidence:\n{table}\n\nMined insights:\n{ins_txt}\n\n"
               f"Recommend how to run the next job most cheaply without losing quality.")

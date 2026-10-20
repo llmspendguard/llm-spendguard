@@ -110,6 +110,22 @@ ALLOWED_SCAN_SNIPPETS = (
     "FROM semcache",             # cache stats
     "FROM graph_edges GROUP BY rel",
 )
+# This migration inspects every legacy request shape once, only when its eligibility column
+# is added. Register the complete statement: a future hot-path variation must still fail.
+ALLOWED_EXACT_SCAN_QUERIES = {
+    "UPDATE call_io SET shape_complete=1 WHERE COALESCE(system,'')='' AND COALESCE(req_schema,'')=''",
+}
+
+
+def sql_index_scan_is_registered(query):
+    return query in ALLOWED_EXACT_SCAN_QUERIES or any(snippet in query for snippet in ALLOWED_SCAN_SNIPPETS)
+
+
+for migration_query in ALLOWED_EXACT_SCAN_QUERIES:
+    ck("legacy shape migration scan has an exact exemption", sql_index_scan_is_registered(migration_query))
+    ck("shape migration exemption does not cover a hot-path variation",
+       not sql_index_scan_is_registered(migration_query + " AND intent=1"))
+
 queries = set()
 for path in glob.glob(os.path.join(os.path.dirname(calls.__file__), "*.py")):
     tree = ast.parse(open(path).read(), filename=path)
@@ -134,7 +150,7 @@ for q in sorted(queries):
         skipped += 1                                            # composed/multi-line SQL — not extractable
         continue
     for t in WATCHLIST:
-        if re.search(rf"SCAN {t}\b", plan) and not any(s in q for s in ALLOWED_SCAN_SNIPPETS):
+        if re.search(rf"SCAN {t}\b", plan) and not sql_index_scan_is_registered(q):
             offenders.append((t, q[:100], plan[:80]))
 print(f"  audited {planned} extractable queries ({skipped} skipped as non-literal SQL)")
 for t, q, p in offenders:

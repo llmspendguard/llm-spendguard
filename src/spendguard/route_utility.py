@@ -11,9 +11,10 @@ is "use it or lose it" (the urgency multiplier). Among metered: cheaper-per-toke
 available prepay can't cover the estimated call is UNAVAILABLE — except an on_demand/payg account, which reloads and
 is never gated on balance. A can't-check balance ('unknown') does NOT block (a gap is not an exhaustion).
 
-Operator policy (chosen): NO hard headroom floor — a low-headroom lane simply sorts low; the reactive cooldown
-(resource_state.cooling) stays the only HARD cutoff, at 0%/error. This module SCORES and RANKS; wiring the ranking
-into dispatch is route_decision/idle_lanes (the next stage). All tunables are config (advisor.*), never magic here.
+Operator policy: the configured window reserve is a HARD cutoff, alongside reactive cooldown
+(resource_state.cooling). Proactive shedding is a soft preference applied only within those constraints. This module
+SCORES and RANKS; wiring the ranking into dispatch is route_decision/idle_lanes (the next stage). All tunables are
+config (advisor.*), never magic here.
 """
 import time
 
@@ -132,7 +133,7 @@ def rank_lanes(rows, cooling=None, now=None, pace_by=None, protect=None, auth_ov
     # comparable to remaining_pct. None when no lane has a measured cap yet → every lane falls back to its own %.
     abs_norm = max((float(r["remaining_abs"]) for r in rows if r.get("remaining_abs") is not None), default=None)
     out = []
-    shed_held = []   # refs to entries held ONLY by the proactive shed — re-admittable below (never leaks into the return)
+    shed_held = []   # Only cap-eligible entries held by soft preference may be re-admitted below.
     for r in rows:
         pc = (pace_by or {}).get(r["lane"])
         base = {"lane": r["lane"], "provider": r.get("provider"), "remaining_pct": r.get("remaining_pct"),
@@ -143,21 +144,6 @@ def rank_lanes(rows, cooling=None, now=None, pace_by=None, protect=None, auth_ov
         if pc is not None and pc < 0 and protect(r["lane"]):
             out.append({**base, "available": False, "score": None,
                         "why": f"protected + ahead of pace ({pc:+.2f}) — held for its own window"})
-            continue
-        # PROACTIVE SHED — the operator marked this lane in advisor.shed_lanes: hold it out of discretionary routing
-        # REGARDLESS of pace, so substitutable work goes to the OTHER free lanes (shed semantics differ from pace-
-        # protect, which only holds a lane that is AHEAD of pace — a behind-pace shed lane was still ranked #1, which
-        # DEFEATED the shed for every fungible/bandit call; this is that fix). It is a PREFERENCE, not a hard cap: the
-        # lane keeps its real score and is re-admitted below iff NO other lane can serve (never force fungible work to
-        # paid metered when a free — if shed — lane could serve). A shed lane that is ALSO cooling/window-capped stays
-        # held by those rules above (it genuinely cannot serve). Window-cap (truly exhausted) still takes precedence.
-        if r["lane"] in shed:
-            entry = {**base, "available": False,
-                     "score": lane_score(r, now, abs_norm=abs_norm, pace=pc,
-                                         quota_cost=quota_costs.get(r["lane"], {}), quota_cost_floor=quota_cost_floor),
-                     "why": "shed (advisor.shed_lanes) — discretionary work routed to other free lanes"}
-            out.append(entry)
-            shed_held.append(entry)   # tracked locally so the re-admit never needs a key on the returned dict
             continue
         # HARD CAP at the window boundary — the enforcement the pace NUDGE lacks. A lane at/below its reserve of
         # remaining capacity is SHED, so 'use each plan to ~100%, never over' is real: without this an exhausted lane
@@ -174,6 +160,21 @@ def rank_lanes(rows, cooling=None, now=None, pace_by=None, protect=None, auth_ov
                             "why": f"at window cap ({int(_rp)}% left ≤ reserve {_reserve*100:.0f}%) — held so the "
                                    f"plan is not pushed past 100% of its window"})
                 continue
+        # PROACTIVE SHED — the operator marked this lane in advisor.shed_lanes: hold it out of discretionary routing
+        # REGARDLESS of pace, so substitutable work goes to the OTHER free lanes (shed semantics differ from pace-
+        # protect, which only holds a lane that is AHEAD of pace — a behind-pace shed lane was still ranked #1, which
+        # DEFEATED the shed for every fungible/bandit call; this is that fix). It is a PREFERENCE, not a hard cap: the
+        # lane keeps its real score and is re-admitted below iff NO other lane can serve (never force fungible work to
+        # paid metered when a free — if shed — lane could serve). A shed lane that is ALSO cooling/window-capped stays
+        # held by those rules above (it genuinely cannot serve). Window-cap (truly exhausted) still takes precedence.
+        if r["lane"] in shed:
+            entry = {**base, "available": False,
+                     "score": lane_score(r, now, abs_norm=abs_norm, pace=pc,
+                                         quota_cost=quota_costs.get(r["lane"], {}), quota_cost_floor=quota_cost_floor),
+                     "why": "shed (advisor.shed_lanes) — discretionary work routed to other free lanes"}
+            out.append(entry)
+            shed_held.append(entry)   # tracked locally so the re-admit never needs a key on the returned dict
+            continue
         s = lane_score(r, now, abs_norm=abs_norm, pace=pc, quota_cost=quota_costs.get(r["lane"], {}),
                        quota_cost_floor=quota_cost_floor)
         if s is None:

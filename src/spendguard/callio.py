@@ -13,9 +13,12 @@ confidence interval, not every request. Shares the spendguard db. Quality is wri
 judge (advisor.reconstruct). RLock — reentrant.
 """
 import json, threading, datetime
+import logging
+import traceback
 from . import config
 
 _lock = threading.RLock()
+_callio_logger = logging.getLogger(__name__)
 # Chars kept per prompt / per output. 800 is enough for the caged JUDGE to rate an answer, and that is what
 # this cap was sized for. It is NOT enough to REPLAY a call: a prompt cut at 800 chars is a different task, so
 # a replay built on truncated rows measures something other than the work it claims to. Callers that need
@@ -102,6 +105,13 @@ def _ensure_callio_schema(c):
         # conservatively excluded from replay (safe), never silently replayed as a partial task.
         c.execute("UPDATE call_io SET truncated=1 WHERE length(prompt)=? OR length(output)=?",
                   (_IO_SNIP_DEFAULT, _IO_SNIP_DEFAULT))
+    if "effort" not in cols:
+        c.execute("ALTER TABLE call_io ADD COLUMN effort TEXT")
+    if "shape_complete" not in cols:
+        c.execute("ALTER TABLE call_io ADD COLUMN shape_complete INTEGER DEFAULT 0")
+        # Legacy shape fields were silently capped. Preserve them, but name their uncertain fidelity
+        # with a separate eligibility flag until a complete source capture repairs them.
+        c.execute("UPDATE call_io SET shape_complete=1 WHERE COALESCE(system,'')='' AND COALESCE(req_schema,'')=''")
     c.execute("CREATE INDEX IF NOT EXISTS idx_io_im ON call_io(intent, model)")
     c.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_io_key ON call_io(batch, custom_id)")
     c.commit()
@@ -131,7 +141,7 @@ def counts():
 
 
 def record_io_sample(intent, provider, model, batch, custom_id, prompt, output, in_tok=0, out_tok=0, source="batch_io",
-           system=None, req_schema=None, req_max_tokens=0, cap_chars=None, finish_reason=None):
+           system=None, req_schema=None, req_max_tokens=0, cap_chars=None, finish_reason=None, effort=None):
     """Insert one sample (idempotent on batch+custom_id). Returns id or None if duplicate.
 
     `cap_chars` overrides the per-body character cap for THIS write (default: snip_chars(), the judge-sized 800). The
@@ -154,16 +164,16 @@ def record_io_sample(intent, provider, model, batch, custom_id, prompt, output, 
         with _lock:
             cur = _callio_db().execute(
                 "INSERT OR IGNORE INTO call_io (id,ts,intent,provider,model,batch,custom_id,prompt,output,"
-                "in_tok,out_tok,source,system,req_schema,req_max_tokens,truncated,quality,quality_src,quality_conf) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "in_tok,out_tok,source,system,req_schema,req_max_tokens,truncated,quality,quality_src,quality_conf,effort,shape_complete) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (cid, ts, intent, provider, model, batch, str(custom_id),
                  (prompt or "")[:cap], (output or "")[:cap],
                  int(in_tok or 0), int(out_tok or 0), source,
-                 (system or "")[:cap],
-                 (req_schema if isinstance(req_schema, str) else json.dumps(req_schema or ""))[:cap],
+                 system or "",
+                 req_schema if isinstance(req_schema, str) else json.dumps(req_schema) if req_schema else "",
                  int(req_max_tokens or 0), _trunc,
                  ("bad" if _reply_truncated else None), ("truncation" if _reply_truncated else None),
-                 (1.0 if _reply_truncated else None)))
+                 (1.0 if _reply_truncated else None), effort, 1))
             inserted = cur.rowcount == 1        # 0 → the (batch, custom_id) row already existed (IGNORE) = DUPLICATE
             # INSERT OR IGNORE alone makes a refill a NO-OP: a row captured under a smaller snip cap keeps its
             # truncated prompt forever, and `added: 0` reads as "nothing new to get" rather than "the fidelity
@@ -184,29 +194,30 @@ def record_io_sample(intent, provider, model, batch, custom_id, prompt, output, 
                 "truncated = CASE WHEN LENGTH(?) > LENGTH(COALESCE(prompt,'')) THEN ? ELSE truncated END "
                 "WHERE batch=? AND custom_id=?",
                 (_p, _p, _o, _o, _p, _trunc, batch, str(custom_id)))
-            # The request shape backfills onto rows captured before it was stored — it is strictly new
-            # information, so fill only where we currently hold nothing.
-            if system or req_schema or req_max_tokens:
-                _callio_db().execute(
-                    "UPDATE call_io SET system=COALESCE(NULLIF(system,''),?), "
-                    "req_schema=COALESCE(NULLIF(req_schema,''),?), "
-                    "req_max_tokens=CASE WHEN COALESCE(req_max_tokens,0)=0 THEN ? ELSE req_max_tokens END "
-                    "WHERE batch=? AND custom_id=?",
-                    ((system or "")[:snip_chars()],
-                     (req_schema if isinstance(req_schema, str) else json.dumps(req_schema or ""))[:snip_chars()],
-                     int(req_max_tokens or 0), batch, str(custom_id)))
+            # Shape is executable replay evidence, never display text: keep it WHOLE, independent
+            # of the prompt/output storage cap. A source refill repairs legacy incomplete shape.
+            _callio_db().execute(
+                "UPDATE call_io SET system=COALESCE(NULLIF(system,''),?), "
+                "req_schema=COALESCE(NULLIF(req_schema,''),?), "
+                "req_max_tokens=CASE WHEN COALESCE(req_max_tokens,0)=0 THEN ? ELSE req_max_tokens END, "
+                "effort=COALESCE(effort,?) WHERE batch=? AND custom_id=?",
+                (system or "",
+                 req_schema if isinstance(req_schema, str) else json.dumps(req_schema) if req_schema else "",
+                 int(req_max_tokens or 0), effort, batch, str(custom_id)))
             _callio_db().commit()
         # Honor the docstring ('Returns id or None if duplicate'): a duplicate still GROWS the row above (a
         # refill's fidelity is kept), but returning the fresh cid made callers count it as a NEW sample and
         # inflate `added` / mis-trigger the added>=sample_n early stop. Return None when nothing was inserted.
         return cid if inserted else None
-    except Exception:
-        config.rollback_ledger_conn("callio")   # clear a dangling txn from the failed write on the reused pooled conn
-        return None
+    except Exception as exc:
+        _callio_logger.exception("call_io sample persistence failed for batch=%r custom_id=%r", batch, custom_id)
+        config.rollback_ledger_conn("callio")
+        raise RuntimeError("call_io sample persistence gap for batch=%r custom_id=%r: %r\n%s" %
+                           (batch, custom_id, exc, traceback.format_exc())) from exc
 
 
 def capture_live(intent, provider, model, prompt, output, in_tok=0, out_tok=0,
-                 system=None, req_schema=None, req_max_tokens=0, finish_reason=None):
+                 system=None, req_schema=None, req_max_tokens=0, finish_reason=None, effort=None):
     """Capture ONE realtime/lane WORKLOAD call into the call_io replay corpus so bakeoff / effort-titrate / advise
     good% have REAL tasks to sample WITHOUT a batch to fetch. THIS is the path that unblocks measuring realtime/lane-
     only intents: an estate whose work never became an OpenAI/Anthropic batch leaves no provider file for fetch-io to
@@ -238,12 +249,14 @@ def capture_live(intent, provider, model, prompt, output, in_tok=0, out_tok=0,
                              "for it; that intent now has enough to bakeoff/effort-titrate." % (intent, model, DEFAULT_CAP))
             return None
         import hashlib
-        cid = hashlib.sha256(prompt.encode("utf-8", "ignore")).hexdigest()[:16]
+        identity = json.dumps({"prompt": prompt, "system": system, "schema": req_schema,
+                               "max_tokens": req_max_tokens, "effort": effort}, sort_keys=True)
+        cid = hashlib.sha256(identity.encode("utf-8")).hexdigest()
         # prompt is <= _max (checked above), so it is stored WHOLE — cap_chars is a ceiling that never cuts it here.
         return record_io_sample(intent, provider, model, "live", cid, prompt, output,
                                 in_tok=in_tok, out_tok=out_tok, source="live_io",
                                 system=system, req_schema=req_schema, req_max_tokens=req_max_tokens, cap_chars=_max,
-                                finish_reason=finish_reason)
+                                finish_reason=finish_reason, effort=effort)
     except Exception as e:
         config.warn_once("[spendguard] call_io live-capture FAILED for intent %r (%s) — sample not recorded; capture "
                          "is best-effort and never blocks the call." % (intent, type(e).__name__))
@@ -413,6 +426,7 @@ def fetch_openai(client, batch_id, intent, model, cap, sample_n):
                     want[cid]["req_schema"] = json.dumps(rf) if rf else ""
                     want[cid]["req_max_tokens"] = int(body_in.get("max_tokens")
                                                       or body_in.get("max_completion_tokens") or 0)
+                    want[cid]["effort"] = body_in.get("reasoning_effort") or (body_in.get("reasoning") or {}).get("effort")
                     need.discard(cid)
     added = 0
     for cid, d in want.items():
@@ -421,7 +435,7 @@ def fetch_openai(client, batch_id, intent, model, cap, sample_n):
         if record_io_sample(intent, "openai", model, batch_id, cid, d.get("prompt", ""), d["output"],
                   out_tok=d.get("out_tok", 0), system=d.get("system"),
                   req_schema=d.get("req_schema"), req_max_tokens=d.get("req_max_tokens", 0),
-                  finish_reason=d.get("finish_reason")):
+                  finish_reason=d.get("finish_reason"), effort=d.get("effort")):
             added += 1
     return added, None
 
@@ -793,7 +807,7 @@ def status_rows(intents=None):
     with _lock:
         rows = _callio_db().execute(
             "SELECT COALESCE(intent,'(none)'), model, COUNT(*), "
-            "SUM(CASE WHEN COALESCE(truncated,0)=0 THEN 1 ELSE 0 END), "
+            "SUM(CASE WHEN COALESCE(truncated,0)=0 AND shape_complete=1 THEN 1 ELSE 0 END), "
             "SUM(CASE WHEN source='live_io' THEN 1 ELSE 0 END), "
             "SUM(quality IS NOT NULL) "
             "FROM call_io GROUP BY COALESCE(intent,'(none)'), model ORDER BY COUNT(*) DESC").fetchall()

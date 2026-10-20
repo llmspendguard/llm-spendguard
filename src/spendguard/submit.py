@@ -17,6 +17,10 @@ CLI (estimate only, never submits):
     python scripts/submit_gate.py --jsonl requests.jsonl --model gpt-5.5 --cap 50
 """
 import os, sys, json, argparse
+import logging
+import math
+import time
+import traceback
 
 from .pricing import batch_cost, realtime_cost, normalize
 from . import bulk_resilience
@@ -256,7 +260,29 @@ def build_chat_batch_jsonl(tasks_path, model, system=None, max_out=None, reasoni
     return out_path, n
 
 
-def _preflight_first_request(provider, first_request, endpoint):
+class BatchAdmissionDeadlineRefused(RuntimeError):
+    """A declared native-batch admission deadline is invalid or exhausted."""
+
+
+_BATCH_ADMISSION_RETRIES = 0
+_batch_admission_logger = logging.getLogger(__name__)
+
+
+def _batch_admission_options(deadline_at, stage):
+    """Recompute control-plane timeout from the SAME absolute monotonic deadline."""
+    if deadline_at is None:
+        return {}
+    if isinstance(deadline_at, bool) or not isinstance(deadline_at, (int, float)) or not math.isfinite(deadline_at):
+        raise BatchAdmissionDeadlineRefused(
+            f"REFUSED: {stage}: deadline_at must be a finite monotonic timestamp; got {deadline_at!r}")
+    remaining = deadline_at - time.monotonic()
+    if remaining <= 0:
+        raise BatchAdmissionDeadlineRefused(
+            f"REFUSED: {stage}: batch admission deadline {deadline_at!r} exhausted (remaining={remaining!r})")
+    return {"timeout": remaining}
+
+
+def _preflight_first_request(provider, first_request, endpoint, *, deadline_at=None):
     """MANDATORY pre-flight for a batch door: send the FIRST built request LIVE to the provider, synchronously, and
     require a 2xx BEFORE the batch of N is committed and BEFORE any estimate is booked. One request costs fractions of
     a cent; it catches the whole class an estimate cannot see — a model-wrong parameter (max_tokens vs
@@ -265,7 +291,8 @@ def _preflight_first_request(provider, first_request, endpoint):
     across (and so a 'completed' batch with 0 successes can never settle as phantom spend). The probe rides the gated
     SDK (recorded), output capped tiny (it is a liveness check, not the real generation). Returns {"ok": True} or
     {"ok": False, "error": <verbatim provider error>, "hint": <agentic 'did you mean' for a stale id>}. NEVER raises —
-    a probe that itself errors returns ok:False, so the caller REFUSES rather than guessing (fail-closed)."""
+    a probe that itself errors returns ok:False, so the caller REFUSES rather than guessing (fail-closed).
+    Deadline-bearing probes instead raise BatchAdmissionDeadlineRefused with full failure evidence."""
     try:
         req = first_request or {}
         body = dict(req.get("body") or req.get("params") or {})   # OpenAI jsonl line = 'body'; Anthropic request = 'params'
@@ -275,14 +302,16 @@ def _preflight_first_request(provider, first_request, endpoint):
         if provider == "openai":
             from openai import OpenAI
             client = OpenAI(api_key=_api_key("OPENAI_API_KEY"))
+            if deadline_at is not None:
+                client = client.with_options(max_retries=_BATCH_ADMISSION_RETRIES)
             if endpoint == "/v1/embeddings":
-                client.embeddings.create(**body)             # one input → cheap; exercises model id / auth / dimensions
+                client.embeddings.create(**body, **_batch_admission_options(deadline_at, "preflight"))             # one input → cheap; exercises model id / auth / dimensions
             else:
                 probe = dict(body)                           # cap output tiny: shape acceptance (param/schema/effort), not output
                 for _k in ("max_completion_tokens", "max_tokens"):
                     if _k in probe:
                         probe[_k] = min(int(probe[_k] or 16), 16)
-                client.chat.completions.create(**probe)      # tests the EXACT param name + response_format + reasoning_effort
+                client.chat.completions.create(**probe, **_batch_admission_options(deadline_at, "preflight"))      # tests the EXACT param name + response_format + reasoning_effort
         elif provider == "anthropic":
             import anthropic
             client = anthropic.Anthropic(api_key=_api_key("ANTHROPIC_API_KEY"))
@@ -292,7 +321,13 @@ def _preflight_first_request(provider, first_request, endpoint):
         else:
             return {"ok": True}                              # unknown door — do not block (never reached for the two doors)
         return {"ok": True}
+    except BatchAdmissionDeadlineRefused:
+        raise
     except Exception as e:
+        if deadline_at is not None:
+            _batch_admission_logger.exception("Batch admission preflight failed")
+            raise BatchAdmissionDeadlineRefused(
+                f"REFUSED: batch admission preflight failed: {e!r}\n{traceback.format_exc()}") from e
         hint = ""
         try:                                                 # agentic 'did you mean' for a stale/unknown id — the SAME
             from . import vendor_call as _vc                 # resolver the realtime dispatch pre-flight uses (closest_served)
@@ -307,7 +342,7 @@ def _preflight_first_request(provider, first_request, endpoint):
 def guarded_submit(jsonl_path, model, cap_dollars, batch=True, avg_out_tokens=None,
                    expected_cost=None, submit=True, request_cap=25000,
                    overrun_tolerance=DEFAULT_OVERRUN_TOLERANCE, endpoint="/v1/chat/completions", intent=None,
-                   metadata=None, preflight=True, force=False):
+                   metadata=None, preflight=True, force=False, *, deadline_at: float | None = None):
     """Estimate -> enforce cap -> PRE-FLIGHT one live request -> log -> submit. Raises RuntimeError if it won't pass. `endpoint` is the Batch API
     target the .jsonl lines address ('/v1/chat/completions' by default, '/v1/embeddings' for an embeddings batch) —
     it must match the lines' `url`, so it is a parameter, not a hardcoded literal at the batches.create call.
@@ -319,7 +354,18 @@ def guarded_submit(jsonl_path, model, cap_dollars, batch=True, avg_out_tokens=No
 
     `metadata` (an OpenAI batch metadata dict, keys/values ≤64/512 chars, ≤16 pairs) is attached to the created batch.
     batch_tracker.submit_offload uses it to stamp a DETERMINISTIC offload key on the batch so a crashed-then-retried
-    offload is de-duplicated against the provider's own batch list (exactly-once) instead of double-submitting."""
+    offload is de-duplicated against the provider's own batch list (exactly-once) instead of double-submitting.
+
+    `deadline_at` is an optional finite absolute time.monotonic() timestamp for ADMISSION:
+    preflight, upload and create each receive the remaining control-plane timeout with SDK retries
+    disabled. None preserves existing behavior. It does not bound server-side batch completion
+    (the provider completion_window does); execution deadlines require governed realtime."""
+    # Native Batch returns an asynchronous ID: completion_window="24h" governs server execution.
+    # deadline_at is ADMISSION ONLY (absolute time.monotonic coordinates, like StormRequestContract).
+    # None preserves the existing unbounded admission behavior. SDK timeouts bound control-plane
+    # requests only, never server-side completion. Work requiring an execution deadline must use
+    # storm_submit's governed realtime path; native Batch has no execution-deadline channel.
+    _batch_admission_options(deadline_at, "admission")
     est = estimate_submission_jsonl_cost(jsonl_path, model, batch=batch, avg_out_tokens=avg_out_tokens, intent=intent)
     if submit:
         bulk_resilience.require_resilient(est["requests"], chunked=False, checkpointed=False,
@@ -376,10 +422,16 @@ def guarded_submit(jsonl_path, model, cap_dollars, batch=True, avg_out_tokens=No
                     if _ln.strip():
                         _first = _jpf.loads(_ln)
                         break
-        except Exception:
+        except Exception as exc:
+            if deadline_at is not None:
+                _batch_admission_logger.exception("Batch admission preflight input failed")
+                raise BatchAdmissionDeadlineRefused(
+                    f"REFUSED: preflight input failed: {exc!r}\n{traceback.format_exc()}") from exc
             _first = None
         if _first is not None:
-            _pf = _preflight_first_request("openai", _first, endpoint)
+            _batch_admission_options(deadline_at, "preflight")
+            _pf = _preflight_first_request("openai", _first, endpoint, **(
+                {"deadline_at": deadline_at} if deadline_at is not None else {}))
             if not _pf["ok"]:
                 raise RuntimeError(
                     f"PRE-FLIGHT FAILED — NOT submitting {est['requests']:,} requests and NOT booking the estimate. "
@@ -395,14 +447,26 @@ def guarded_submit(jsonl_path, model, cap_dollars, batch=True, avg_out_tokens=No
     try:
         from openai import OpenAI
         client = OpenAI(api_key=_api_key("OPENAI_API_KEY"))
+        if deadline_at is not None:
+            client = client.with_options(max_retries=_BATCH_ADMISSION_RETRIES)
         with open(jsonl_path, "rb") as fh:        # the upload handle was never closed
-            f = client.files.create(file=fh, purpose="batch")
+            f = client.files.create(file=fh, purpose="batch",
+                                    **_batch_admission_options(deadline_at, "upload"))
         # metadata carries batch_tracker's deterministic offload key so a crash-retried offload adopts THIS batch
         # (found by that key in the provider's batch list) instead of creating a duplicate — the exactly-once tag.
         _extra = {"metadata": metadata} if metadata else {}
-        b = client.batches.create(input_file_id=f.id, endpoint=endpoint, completion_window="24h", **_extra)
+        b = client.batches.create(input_file_id=f.id, endpoint=endpoint, completion_window="24h", **_extra,
+                                  **_batch_admission_options(deadline_at, "create"))
         from . import gate as _gate
         _gate.record_accepted_batch_estimate({**est, "provider": "openai", "model": est["model"]})
+    except BatchAdmissionDeadlineRefused:
+        raise
+    except Exception as exc:
+        if deadline_at is not None:
+            _batch_admission_logger.exception("Batch admission dispatch failed")
+            raise BatchAdmissionDeadlineRefused(
+                f"REFUSED: batch admission dispatch failed: {exc!r}\n{traceback.format_exc()}") from exc
+        raise
     finally:
         _calls._local.ctx = _prev_ctx             # restore the caller's exact context (never leak the submit intent)
     print(f"[submit_gate] SUBMITTED batch {b.id} (projected ${est['cost']:,.2f}). "

@@ -313,11 +313,15 @@ def snapshot(reason="", keep=None, force=False, *, compact_source=None, compact_
     ~650MB ledger = 12GB of full-db copies in ~/.spendguard/snapshots. Local only needs the window since the last
     daily B2 push, so the default is small and configurable (safety.snapshot_keep, default 2 ≈ a day or two of
     recovery points). None → read that config; an explicit keep still wins."""
+    from .disk_guard import require_disk_space
+    from .gate import SpendGateRefused
+
     # Offline reclaim extends this copy boundary, but MUST NOT reuse/prune a
     # snapshot or swallow an error. The caller owns locking and verification.
     if compact_source is not None or compact_target is not None:
         if compact_source is None or compact_target is None:
             raise ValueError("compact snapshot requires both source handle and target")
+        require_disk_space(compact_target)
         compact_source.execute("VACUUM INTO ?", (str(compact_target),))
         return str(compact_target)
     import datetime as _dt
@@ -351,6 +355,7 @@ def snapshot(reason="", keep=None, force=False, *, compact_source=None, compact_
         stamp = _dt.datetime.now(_dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         tag = "".join(ch if ch.isalnum() or ch in "-_" else "-" for ch in (reason or "pre-mutation"))[:40]
         dst = d / f"spend-{stamp}-{tag}.db"
+        require_disk_space(dst)
         with _sq.connect(src) as _s, _sq.connect(str(dst)) as _t:
             _s.backup(_t)                        # consistent even under a concurrent writer
         # Keep the most recent `keep`; a snapshot directory that grows without bound gets deleted by hand
@@ -364,6 +369,8 @@ def snapshot(reason="", keep=None, force=False, *, compact_source=None, compact_
                 except OSError:
                     pass
         return str(dst)
+    except SpendGateRefused:
+        raise
     except Exception as e:
         import sys as _sys
         _sys.stderr.write(f"[budget] WARN could not snapshot the ledger before mutating it "
