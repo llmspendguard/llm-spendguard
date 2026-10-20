@@ -6,6 +6,7 @@ real-time cap only (this module is then never touched). Per-call SQLite I/O is f
 real-time volume; very high-volume loops should stay on the in-process cap.
 """
 import contextlib, datetime, threading
+import time
 from . import config
 
 _conn = None
@@ -54,6 +55,12 @@ def _ledger():
     if led is None:
         from .ledger import SpendLedger
         led = _LEDGER_TL.led = SpendLedger()
+    if led._conn is None:
+        from .ledger_read import LedgerQueryDeadline
+        try:
+            led._restore_spend_aggregate_connection()
+        except Exception as recovery_error:
+            raise LedgerQueryDeadline(config.LEDGER_QUERY_DEADLINE_S) from recovery_error
     return led
 
 
@@ -653,9 +660,11 @@ def charge_to_event(provider, model, kind, cost, conv_id="", basis="", intent=""
     return ev
 
 
-def spent_since(day, project=None, conv=None):
+def spent_since(day, project=None, conv=None, *, deadline_s=config.LEDGER_QUERY_DEADLINE_S):
     """Gate-recorded workload $ since `day` — the LLM cap's number, now read from spend_events via the single
     `_COUNTABLE` filter (batch+realtime, excluding meta / reconciliation / voided-impossible / reconstructed).
+    `deadline_s` optionally bounds this aggregate by a relative wall-clock duration; expiry raises
+    LedgerQueryDeadline rather than returning an incomplete spend value.
     Optionally SCOPE to a `project` (repo) and/or `conv` (conversation) — the receipt uses this to show what is
     relevant to the current repo/conversation, not a global sum.
 
@@ -667,7 +676,7 @@ def spent_since(day, project=None, conv=None):
         where["project_primary"] = str(project).strip().lower()
     if conv is not None:
         where["conv_id"] = str(conv)
-    return float(_ledger().spent_dec(since=day, where=where or None))
+    return float(_ledger().spent_dec(since=day, where=where or None, deadline_s=deadline_s))
 
 
 def input_cache_split(since=None, project=None, conv=None):
@@ -694,7 +703,7 @@ def input_cache_split(since=None, project=None, conv=None):
             "cache_write_share": (write / total if total else 0.0)}
 
 
-def spent_by_job(job, since=None):
+def spent_by_job(job, since=None, *, deadline_s=config.LEDGER_QUERY_DEADLINE_S):
     """Gate-recorded billed LLM $ for ONE job/run tag — the rows whose `chain` == `spendguard.context(chain=<job>)`.
     This is the concurrency-SAFE "my spend": the chain is per-run, so a job's total never sweeps in a CONCURRENT run
     that happens to share the intent (the collision that made `spent_since` filtered by intent over-count). Read from
@@ -702,15 +711,17 @@ def spent_by_job(job, since=None):
     voided / reconstructed). $0, read-only; 0.0 for an empty job. `since` optionally bounds it to an accounting day on."""
     if not job:
         return 0.0
-    return float(_ledger().spent_dec(since=since, where={"chain": str(job)}))
+    return float(_ledger().spent_dec(since=since, where={"chain": str(job)}, deadline_s=deadline_s))
 
 
-def spent_all_time():
+def spent_all_time(*, deadline_s=config.LEDGER_QUERY_DEADLINE_S):
     """Running total of ALL gate-recorded countable LLM billed-$ to date — the flow-receipt BASELINE, read at a
     flow's enter and its exit so the DELTA is what that flow spent (calls.context / receipt.emit_flow). Memoized
     on a ledger-freshness token (SpendLedger.running_llm_total_dec), so opening many flow contexts no longer
     re-sums the whole 356k-row ledger each time. Same number as the old spent_since('1970-01-01') idiom — which
     forced a full SCAN of spend_events on every context enter — without the scan."""
+    if deadline_s is not None:
+        return float(_ledger().spent_dec(deadline_s=deadline_s))
     return float(_ledger().running_llm_total_dec())
 
 
@@ -1191,14 +1202,23 @@ def spent_today():  return spent_since(_utc().strftime("%Y-%m-%d"))
 def spent_month():  return spent_since(_utc().strftime("%Y-%m-01"))
 
 
-def exceeded(pending=0.0, kind="llm"):
+def exceeded(pending=0.0, kind="llm", *, deadline_s=config.LEDGER_QUERY_DEADLINE_S):
     """(scope, cap, projected) if a cap would be exceeded by `pending` more $ on a call of resource class
     `kind` (llm|compute), else None. Checks the class SUB-CAP then the TOTAL ceiling, daily then monthly.
     The gate governs LLM calls, so it passes kind='llm'; remote-compute caps are checked in resources.py
     (vast.ai launches don't hit the gate). meta is separate (meta_exceeded). NOTE: this local ledger holds LLM
     spend, so the total ceiling here is evaluated against LLM spend — the true LLM+compute total is composed on
     the dashboard/report; the compute portion is enforced/alerted via resources.compute_exceeded()."""
-    sd, sm = spent_today(), spent_month()
+    from .ledger_read import LedgerQueryDeadline
+    try:
+        if deadline_s is None:
+            sd, sm = spent_today(), spent_month()
+        else:
+            expires = time.monotonic() + deadline_s
+            sd = spent_since(_utc().strftime("%Y-%m-%d"), deadline_s=expires - time.monotonic())
+            sm = spent_since(_utc().strftime("%Y-%m-01"), deadline_s=expires - time.monotonic())
+    except LedgerQueryDeadline:
+        return ("ledger-query-deadline", float("inf"), float("inf"))
     checks = []
     if kind in ("llm", "compute"):
         checks.append((f"{kind}-daily", config.class_cap(kind, "daily"), sd))
