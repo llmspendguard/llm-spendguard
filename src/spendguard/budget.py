@@ -978,7 +978,7 @@ def record_true_down(day, provider, model, delta, project):
                         invoice_id="%s:%s" % (provider, (day or "")[:7]))   # reconciled to this provider-period invoice
 
 
-def clear_true_down(since=None):
+def clear_true_down(since=None, providers=None):
     """Remove prior true-down rows in the window so the correction is rebuilt idempotently each reconcile
     (billed actuals only grow as in-flight batches land, so each rebuild converges on the final billed $).
 
@@ -989,13 +989,57 @@ def clear_true_down(since=None):
     Keeping the previous correction would leave a figure LABELLED as billed truth while being derived from
     billed data this run could not confirm — a stale number wearing a stronger label. The estimate is the
     more honest of the two, so the clear stays unconditional and ledger_sync warns about the gap instead.
-    Second finding today that both validators confirmed and the code was right about."""
+    Second finding today that both validators confirmed and the code was right about.
+
+    An explicit providers collection scopes the rebuild to readable provider units; None preserves the
+    unconditional default above. An empty collection changes nothing, including taking no snapshot."""
+    true_down_provider_scope = None if providers is None else tuple(dict.fromkeys(providers))
+    if true_down_provider_scope == ():
+        return
     snapshot_once("clear-true-down")    # DELETEs money rows — never without a recovery path
     # Delete the true-down correction rows from spend_events (the money-of-record). NOT charges: the ONLY writer
     # of true-down rows, record_true_down, now writes only spend_events (its INSERT INTO charges was removed
     # above); and the only consumers of these rows — gate_batch_cells (the estimate base) and by_dims (the SaaS
     # push) — read spend_events (repointed 5b). So charges holds no true-down rows for this to leave stale.
-    _ledger().delete(where={"conv_id": _TRUE_DOWN_CONV}, since=since, actor="clear_true_down", reason="rebuild")
+    from .ledger import LockedError
+    from .ledger_read import DEFAULT_LEDGER_READ_ROW_CAP
+    import logging as true_down_logging
+    import traceback as true_down_traceback
+    true_down_ledger = _ledger()
+    true_down_scopes = ([{"conv_id": _TRUE_DOWN_CONV}] if true_down_provider_scope is None else
+                        [{"conv_id": _TRUE_DOWN_CONV, "provider": true_down_provider}
+                         for true_down_provider in true_down_provider_scope])
+    try:
+        # Preserve delete's full lock preflight before the first destructive batch, without retaining all matches.
+        for true_down_scope in true_down_scopes:
+            true_down_filter, true_down_args = true_down_ledger._where(since, None, true_down_scope)
+            true_down_cursor = true_down_ledger._conn.execute(
+                f"SELECT id, period, locked FROM spend_events WHERE 1=1{true_down_filter}", true_down_args)
+            while true_down_lock_batch := true_down_cursor.fetchmany(DEFAULT_LEDGER_READ_ROW_CAP):
+                for true_down_id, true_down_period, true_down_locked in true_down_lock_batch:
+                    if true_down_locked or true_down_ledger._is_period_locked(true_down_period):
+                        raise LockedError(f"refusing to delete locked event {true_down_id} "
+                                          f"(period {true_down_period}) — use reverse/adjust")
+        for true_down_scope in true_down_scopes:
+            true_down_filter, true_down_args = true_down_ledger._where(since, None, true_down_scope)
+            while True:
+                true_down_rowids = true_down_ledger._conn.execute(
+                    f"SELECT rowid FROM spend_events WHERE 1=1{true_down_filter} LIMIT ?",
+                    (*true_down_args, DEFAULT_LEDGER_READ_ROW_CAP)).fetchall()
+                if not true_down_rowids:
+                    break
+                # rowid is a SQLite integer, not source content; parse before forming the internal SQL predicate.
+                true_down_rowid_sql = ",".join(str(int(true_down_rowid[0])) for true_down_rowid in true_down_rowids)
+                del true_down_rowids  # release this batch before delete() allocates its bounded audit batch.
+                true_down_ledger.delete(where=true_down_scope, filt=f"rowid IN ({true_down_rowid_sql})", since=since,
+                                        actor="clear_true_down", reason="rebuild")
+    except Exception as true_down_clear_error:
+        true_down_logging.getLogger(__name__).exception("refusing clear_true_down after ledger clear failure")
+        if isinstance(true_down_clear_error, LockedError):
+            raise
+        raise RuntimeError(
+            f"refusing clear_true_down after ledger clear failure: {true_down_clear_error!r}\n"
+            f"{true_down_traceback.format_exc()}") from true_down_clear_error
 
 
 # ── spendguard's own advisor LLM use (segregated: own cap, own line, excluded from workload) ──
