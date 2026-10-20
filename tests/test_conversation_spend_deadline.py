@@ -18,6 +18,8 @@ CONVERSATION_FAULT_DEADLINE_S = 0.02
 CONVERSATION_FAULT_BOUND_S = 1.0
 CONVERSATION_FAULT_STEP_S = 0.001
 CONVERSATION_FAULT_FAST_S = 5.0
+CONVERSATION_LOCK_EARLY_BUSY_TIMEOUT_S = 0.0
+CONVERSATION_NON_BUSY_OPEN_CODES = (sqlite3.SQLITE_LOCKED, sqlite3.SQLITE_CANTOPEN)
 CONVERSATION_FAULT_INVALID_DEADLINES = (float("nan"), float("inf"), 0.0, -1.0)
 CONVERSATION_FAULT_ID = "consumer-deadline-conversation"
 CONVERSATION_FAULT_DAY = budget._utc().strftime("%Y-%m-%d")
@@ -77,8 +79,18 @@ def test_conversation_spend_deadline_cold_read_never_initializes_writer():
                                   deadline_s=CONVERSATION_FAULT_FAST_S) == CONVERSATION_FAULT_ROWS
 
 
-def test_conversation_spend_deadline_exclusive_lock():
+def exercise_conversation_exclusive_lock_refusal(*, early_busy, deadline_s):
     seed_conversation_consumer_fault_rows()
+    baseline = config.ledger_connection_count()
+    original_open = config.open_ledger_connection
+
+    def open_conversation_lock_early_busy(*args, **kwargs):
+        # SQLite's millisecond busy timeout may finish before the caller's
+        # monotonic deadline. Force that ordering while retaining a real lock.
+        if early_busy:
+            kwargs["timeout"] = CONVERSATION_LOCK_EARLY_BUSY_TIMEOUT_S
+        return original_open(*args, **kwargs)
+
     lock_connection = sqlite3.connect(config.db_path())
     try:
         lock_connection.execute("PRAGMA journal_mode=DELETE")
@@ -86,16 +98,46 @@ def test_conversation_spend_deadline_exclusive_lock():
         lock_connection.execute("BEGIN EXCLUSIVE")
         started = time.monotonic()
         try:
-            budget.spent_since(CONVERSATION_FAULT_DAY, conv=CONVERSATION_FAULT_ID,
-                               deadline_s=CONVERSATION_FAULT_DEADLINE_S)
+            with patch.object(config, "open_ledger_connection", open_conversation_lock_early_busy):
+                budget.spent_since(CONVERSATION_FAULT_DAY, conv=CONVERSATION_FAULT_ID,
+                                   deadline_s=deadline_s)
         except ledger_read.LedgerQueryDeadline:
             pass
         else:
             raise AssertionError("locked conversation read must refuse explicitly")
         assert time.monotonic() - started < CONVERSATION_FAULT_BOUND_S
+        assert lock_connection.in_transaction
+        assert config.ledger_connection_count() == baseline
     finally:
         lock_connection.rollback()
         lock_connection.close()
+    assert budget.spent_since(CONVERSATION_FAULT_DAY, conv=CONVERSATION_FAULT_ID,
+                              deadline_s=CONVERSATION_FAULT_FAST_S) == CONVERSATION_FAULT_ROWS
+
+
+def test_conversation_spend_deadline_exclusive_lock():
+    exercise_conversation_exclusive_lock_refusal(
+        early_busy=False, deadline_s=CONVERSATION_FAULT_DEADLINE_S)
+
+
+def test_conversation_spend_deadline_exclusive_lock_early_busy():
+    exercise_conversation_exclusive_lock_refusal(
+        early_busy=True, deadline_s=CONVERSATION_FAULT_FAST_S)
+
+
+def test_conversation_spend_deadline_non_busy_open_errors():
+    for error_code in CONVERSATION_NON_BUSY_OPEN_CODES:
+        open_error = sqlite3.OperationalError()
+        open_error.sqlite_errorcode = error_code
+        with patch.object(config, "open_ledger_connection", side_effect=open_error):
+            try:
+                budget.spent_since(CONVERSATION_FAULT_DAY, conv=CONVERSATION_FAULT_ID,
+                                   deadline_s=CONVERSATION_FAULT_FAST_S)
+            except ledger_read.LedgerReadOpenError as refusal:
+                assert type(refusal) is ledger_read.LedgerReadOpenError
+                assert refusal.__cause__ is open_error
+            else:
+                raise AssertionError("non-busy open failure must preserve its typed refusal")
 
 
 def test_conversation_spend_deadline_invalid_durations_refuse():

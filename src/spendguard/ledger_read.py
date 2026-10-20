@@ -33,6 +33,8 @@ DEFAULT_LEDGER_READ_TIME_BUDGET_S = config.LEDGER_READ_TIME_BUDGET_S
 # polling granularity. Smaller = more frequent timeout checks at a small per-instruction cost.
 DEFAULT_LEDGER_READ_PROGRESS_VM_INSTRUCTIONS = config.LEDGER_READ_PROGRESS_VM_INSTRUCTIONS
 LEDGER_READ_DECIMAL_ARITY = 1
+# SQLite extended result codes retain their primary result in the low byte.
+LEDGER_READ_SQLITE_PRIMARY_CODE_MASK = 0xFF
 LEDGER_READ_COUNT_EXPRESSION = "COUNT(*)"
 SPEND_EVENT_READ_COLUMNS = tuple("""id dedup_key source content_hash schema_version ts_utc occurred_at recorded_at tz local_datetime day period eligibility_window window_start window_end currency batch_usd realtime_usd est_chat_usd remote_compute_usd subscription_usd external_usd cost_type billed is_meta cost_basis amount_confidence rate_in rate_out fx_rate base_usd provider model model_kind finish in_tok out_tok cache_read_tok cache_write_tok reasoning_tok num_calls num_items latency org team projects project_primary member_ref key_fp account_id customer_id cost_center engagement billable invoice_id conv_id seg_id call_id cwd batch_id from_message_ids prior_message_ids post_message_ids script repo host prompt_hash prompt_snip output_snip evidence_uri intent actor chain attr_what attr_why attr_how attr_reason attr_confidence attr_source attr_model attr_ts attr_version recorded_by ingest_version status revision locked locked_at lock_reason reverses_id adjusts_id superseded_by reconciled reconciled_vs reconciled_at reconciliation_id gap_flag period_closed recon_marker quality quality_src quality_conf cache_hit savings_cv tags""".split())
 RECENT_CALL_READ_COLUMNS = tuple("id ts chain intent caller provider model kind in_tok out_tok cost latency finish quality executor project effort outcome disposition".split())
@@ -299,7 +301,12 @@ def _ledger_bounded_read_handle(path, time_budget):
     except TimeoutError as exc:
         raise LedgerReadTimeout(time_budget) from exc
     except (sqlite3.Error, OSError) as exc:
-        if time.monotonic() - started >= time_budget:
+        # SQLite's busy timeout uses integer milliseconds and can exhaust just
+        # before the monotonic deadline. Its BUSY result is already a bounded
+        # lock-wait refusal; a second clock sample must not change its type.
+        # SQLITE_LOCKED is a different condition and keeps the ordinary error.
+        if (getattr(exc, "sqlite_errorcode", 0) & LEDGER_READ_SQLITE_PRIMARY_CODE_MASK == sqlite3.SQLITE_BUSY
+                or time.monotonic() - started >= time_budget):
             raise LedgerReadTimeout(time_budget) from exc
         raise LedgerReadOpenError(f"Ledger read cannot open existing database: {exc}") from exc
     expired = False
@@ -319,7 +326,8 @@ def _ledger_bounded_read_handle(path, time_budget):
         if time.monotonic() - started >= time_budget:
             raise LedgerReadTimeout(time_budget)
     except sqlite3.Error as exc:
-        if expired or time.monotonic() - started >= time_budget:
+        if (getattr(exc, "sqlite_errorcode", 0) & LEDGER_READ_SQLITE_PRIMARY_CODE_MASK == sqlite3.SQLITE_BUSY
+                or expired or time.monotonic() - started >= time_budget):
             raise LedgerReadTimeout(time_budget) from exc
         if getattr(exc, "sqlite_errorcode", None) == sqlite3.SQLITE_ERROR:
             raise LedgerReadSchemaError(f"Ledger read schema unavailable: {exc}") from exc
