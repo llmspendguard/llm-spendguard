@@ -6,7 +6,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import config
+from spendguard import config
 
 _WAL_MAINTENANCE_LOG = logging.getLogger(__name__)
 WAL_CHECKPOINT_SUCCESS = "complete"

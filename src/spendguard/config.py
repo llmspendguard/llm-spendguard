@@ -1086,7 +1086,13 @@ def _resolved_ledger_home_redirect(home, protected_default, requested_home, expa
     return cached_home, Path(requested_home).expanduser().resolve() != cached_home
 
 
-def require_ledger_home_alignment(path):
+@lru_cache(maxsize=LEDGER_HOME_IDENTITY_CACHE_SIZE)
+def _ledger_home_spellings_are_absolute(home, protected_default, requested_home):
+    """Cache only spelling facts; relative identities still depend on live cwd."""
+    return os.path.isabs(home) and os.path.isabs(protected_default) and os.path.isabs(requested_home)
+
+
+def require_ledger_home_alignment(path, *, opened_path_identity=None):
     """Refuse cached real-home files after an explicit environment redirect.
 
     Python startup hooks may import config before a test assigns its temporary
@@ -1096,12 +1102,25 @@ def require_ledger_home_alignment(path):
     requested_home = os.environ.get(LEDGER_HOME_ENVIRONMENT_KEY)
     if not requested_home:
         return
+    # Absolute spellings are independent of cwd. Avoid its filesystem syscall on
+    # every managed cursor step, while relative/tilde spellings retain cwd in the
+    # identity cache key so a chdir can never reuse stale authorization facts.
+    absolute_spellings = _ledger_home_spellings_are_absolute(
+        HOME, DEFAULT_SPENDGUARD_HOME, requested_home)
+    working_directory = None if absolute_spellings else os.getcwd()
+    expansion_home = (None if absolute_spellings
+                      else os.environ.get(LEDGER_HOME_EXPANSION_ENVIRONMENT_KEY))
     cached_home, redirected = _resolved_ledger_home_redirect(
         HOME, DEFAULT_SPENDGUARD_HOME, requested_home,
-        os.environ.get(LEDGER_HOME_EXPANSION_ENVIRONMENT_KEY), os.getcwd())
+        expansion_home, working_directory)
     if not redirected:
         return
-    ledger_path = Path(path).expanduser().resolve()
+    # Managed handles retain the physical target selected at admission. Resolving
+    # its spelling again on every fetch both traverses the filesystem and could
+    # identify a different file after cwd/symlink changes, although SQLite still
+    # holds the originally opened target. Direct callers resolve their live path.
+    ledger_path = (opened_path_identity if opened_path_identity is not None
+                   else Path(path).expanduser().resolve())
     if ledger_path == cached_home or cached_home in ledger_path.parents:
         raise LedgerHomeIsolationError(
             f"Ledger home changed after config import: {cached_home} -> {requested_home}; "
@@ -1172,8 +1191,9 @@ class _HomeAlignedLedgerCursor(sqlite3.Cursor):
     """Retained cursors enforce the same live home boundary as admission."""
 
     def _dispatch_home_aligned_cursor_operation(self, operation, *args, **kwargs):
-        require_ledger_home_alignment(self.connection._ledger_home_path)
-        from .ledger_request_cursor import ManagedRequestCursorState
+        require_ledger_home_alignment(self.connection._ledger_home_path,
+                                     opened_path_identity=self.connection._ledger_opened_path_identity)
+        from spendguard.ledger_request_cursor import ManagedRequestCursorState
         state = getattr(self, "_ledger_request_cursor_state", None)
         if state is None:
             state = self._ledger_request_cursor_state = ManagedRequestCursorState(self)
@@ -1195,11 +1215,13 @@ class _HomeAlignedLedgerCursor(sqlite3.Cursor):
 
 class _CountedLedgerConnection(sqlite3.Connection):
     def _dispatch_home_aligned_connection_operation(self, operation, *args, **kwargs):
-        require_ledger_home_alignment(self._ledger_home_path)
+        require_ledger_home_alignment(self._ledger_home_path,
+                                     opened_path_identity=self._ledger_opened_path_identity)
         return operation(self, *args, **kwargs)
 
     def _create_home_aligned_ledger_cursor(self, factory=_HomeAlignedLedgerCursor):
-        require_ledger_home_alignment(self._ledger_home_path)
+        require_ledger_home_alignment(self._ledger_home_path,
+                                     opened_path_identity=self._ledger_opened_path_identity)
         if not issubclass(factory, _HomeAlignedLedgerCursor):
             raise LedgerHomeIsolationError("Ledger cursor factory must preserve the live home isolation guard")
         return sqlite3.Connection.cursor(self, factory)
@@ -1207,7 +1229,8 @@ class _CountedLedgerConnection(sqlite3.Connection):
     def _dispatch_home_aligned_cursor_shortcut(self, operation, *args, **kwargs):
         # SQLite's native connection shortcuts return an unguarded base Cursor.
         # Create our cursor explicitly so a caller retaining that result stays guarded.
-        return self.cursor()._dispatch_home_aligned_cursor_operation(operation, *args, **kwargs)
+        shortcut_cursor = sqlite3.Connection.cursor(self, _HomeAlignedLedgerCursor)
+        return shortcut_cursor._dispatch_home_aligned_cursor_operation(operation, *args, **kwargs)
 
     def set_progress_handler(self, progress_handler, n):
         self._ledger_progress = (progress_handler, n)
@@ -1215,6 +1238,10 @@ class _CountedLedgerConnection(sqlite3.Connection):
 
     def set_authorizer(self, authorizer_callback):
         self._ledger_authorizer = authorizer_callback
+        parser_facts = getattr(self, "_ledger_statement_parser_facts", None)
+        if parser_facts is not None:
+            with self._ledger_request_step_lock:
+                return parser_facts.replace_managed_user_authorizer(authorizer_callback)
         return sqlite3.Connection.set_authorizer(self, authorizer_callback)
 
     cursor = partialmethod(_create_home_aligned_ledger_cursor)
@@ -1253,6 +1280,7 @@ def open_ledger_connection(path=None, timeout=LEDGER_CONNECT_TIMEOUT_S, *, tune=
     """Atomically admit, open and tune a connection; callers own its close."""
     path = path or db_path()
     require_ledger_home_alignment(path)
+    opened_path_identity = Path(path).expanduser().resolve()
     generation = _LEDGER_ADMISSION
     ceiling = ledger_connection_limit()
     if deadline_at is None:
@@ -1293,6 +1321,8 @@ def open_ledger_connection(path=None, timeout=LEDGER_CONNECT_TIMEOUT_S, *, tune=
         c = sqlite3.connect(path, timeout=timeout,
                             factory=_CountedLedgerConnection, **options)
         c._ledger_home_path = path
+        c._ledger_opened_path_identity = opened_path_identity
+        c._ledger_request_step_lock = threading.RLock()
         c._ledger_generation = generation
         c._ledger_released = False
         with generation.lock:
@@ -1403,7 +1433,7 @@ def pooled_ledger_conn(key, ensure_schema, path=None):
             pass
     c = fresh_ledger_conn(ensure_schema, path)
     conns[key] = (c, path)
-    from .ledger_wal_maintenance import maintain_ledger_wal_if_due
+    from spendguard.ledger_wal_maintenance import maintain_ledger_wal_if_due
     maintain_ledger_wal_if_due(path)
     return c
 
@@ -1449,7 +1479,7 @@ def ledger_op(key, ensure_schema, path=None):
     try:
         yield c
         c.commit()
-        from .ledger_wal_maintenance import maintain_ledger_wal_if_due
+        from spendguard.ledger_wal_maintenance import maintain_ledger_wal_if_due
         maintain_ledger_wal_if_due(path or db_path())
     except Exception:
         try:

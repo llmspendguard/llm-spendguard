@@ -170,6 +170,11 @@ def _receipt_est_records():
         records = json.loads(_receipt_aggregate_cache_path().read_text()).get("est_value_by_source") or {}
     except (OSError, ValueError):
         pass
+    # A cache-only installation has no ledger yet. Preserve its source records
+    # (including attribution and as-of dates) without creating a database merely
+    # to display a receipt. Existing ledgers still use the bounded reader below.
+    if not pathlib.Path(config.db_path()).exists():
+        return records
     ledger_records = {}
     today, week, month = _windows()
     try:
@@ -177,7 +182,7 @@ def _receipt_est_records():
             rows = conn.execute(
                 "SELECT source, day, org, team, project_primary, "
                 "SUM(COALESCE(CAST(est_chat_usd AS REAL), 0)) FROM spend_events "
-                "WHERE day >= ? AND est_chat_usd IS NOT NULL "
+                "WHERE day >= ? AND est_chat_usd IS NOT NULL AND billed = 0 "
                 f"AND {SpendLedger._LIVE_FILTER} "
                 "GROUP BY source, day, org, team, project_primary", (min(week, month),)).fetchall()
         for source, day, org, team, project, usd in rows:

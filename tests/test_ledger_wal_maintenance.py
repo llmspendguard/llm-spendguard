@@ -20,6 +20,7 @@ WAL_GUARD_INTERVAL_S = 1.0
 WAL_GUARD_CLOCK_START_S = 100.0
 WAL_GUARD_REQUEST_DEADLINE_S = 0.02
 WAL_GUARD_EXPIRY_WAIT_S = 2.0
+WAL_GUARD_CURSOR_REFERENCES_PER_STEP = 1
 WAL_GUARD_SLOW_SQL = """WITH RECURSIVE counter(n) AS
 (VALUES(0) UNION ALL SELECT n+1 FROM counter) SELECT SUM(n) FROM counter"""
 
@@ -308,6 +309,64 @@ def test_wal_idle_expiry_lost_retry_mutation_is_detected(tmp_path, monkeypatch):
                         lose_wal_expiry_deferred_registration)
     with pytest.raises(AssertionError):
         test_wal_idle_expiry_retries_busy_connection_owner(tmp_path, monkeypatch)
+
+
+def test_wal_cursor_fetches_retain_one_expiry_registration(tmp_path, monkeypatch):
+    """A whole scan must not wake the expiry worker separately for every row."""
+    from spendguard import ledger_request_cursor as cursor_module
+
+    ledger_path = tmp_path / pathlib.Path(__file__).stem
+    writer = _seed_wal_maintenance_fixture(ledger_path)
+    reader = config.open_ledger_connection(ledger_path)
+    registrations = []
+    original_registration = cursor_module._register_managed_read_expiry
+
+    def count_wal_scan_expiry_registrations(state, coordinator):
+        registrations.append(state)
+        return original_registration(state, coordinator)
+
+    monkeypatch.setattr(cursor_module, "_register_managed_read_expiry", count_wal_scan_expiry_registrations)
+    try:
+        cursor = reader.execute(WAL_GUARD_SQL_READ)
+        prepared_registrations = tuple(registrations)
+        assert prepared_registrations
+        original_deadline = cursor._ledger_request_cursor_state.operation_deadline_at
+        assert sum(1 for _ in cursor) == WAL_GUARD_ROWS
+        assert tuple(registrations) == prepared_registrations
+        assert cursor._ledger_request_cursor_state.operation_deadline_at == original_deadline
+    finally:
+        reader.close()
+        writer.close()
+
+
+def test_wal_native_step_retains_one_cursor_referent(tmp_path, monkeypatch):
+    """The native step owns one strong cursor reference throughout callbacks."""
+    from spendguard import ledger_request_cursor as cursor_module
+
+    ledger_path = tmp_path / pathlib.Path(__file__).stem
+    writer = _seed_wal_maintenance_fixture(ledger_path)
+    reader = config.open_ledger_connection(ledger_path)
+    try:
+        cursor = reader.execute(WAL_GUARD_SQL_READ)
+        observed_state = cursor._ledger_request_cursor_state
+        original_referent = cursor_module.ManagedRequestCursorState._request_cursor_referent.fget
+        references = []
+
+        def count_wal_native_step_cursor_references(state):
+            if state is observed_state:
+                references.append(state)
+            return original_referent(state)
+
+        monkeypatch.setattr(cursor_module.ManagedRequestCursorState, "_request_cursor_referent",
+                            property(count_wal_native_step_cursor_references))
+        cursor.fetchone()
+        assert len(references) == WAL_GUARD_CURSOR_REFERENCES_PER_STEP
+        references.clear()
+        cursor.execute(WAL_GUARD_SQL_READ)
+        assert len(references) == WAL_GUARD_CURSOR_REFERENCES_PER_STEP
+    finally:
+        reader.close()
+        writer.close()
 
 
 if __name__ == "__main__":

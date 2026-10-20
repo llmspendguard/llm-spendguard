@@ -1,5 +1,6 @@
 """Structural guard for the enumerated served ledger connection and scope graph."""
 import ast
+import copy
 import pathlib
 import unittest
 
@@ -19,12 +20,17 @@ REQUEST_LEDGER_REQUIRED_EDGES = {
         "open_ledger_connection": ("connect",),
         "_dispatch_home_aligned_cursor_operation": ("dispatch_managed_request_cursor_step",),
         "_dispatch_home_aligned_cursor_shortcut": ("_dispatch_home_aligned_cursor_operation",),
+        "set_authorizer": ("replace_managed_user_authorizer",),
     },
     "ledger_request_cursor": {
         "dispatch_managed_request_cursor_step": (
-            "current_ledger_request_scope", "set_authorizer", "set_progress_handler",
+            "current_ledger_request_scope", "prepare_managed_statement_facts",
+            "finish_managed_statement_facts", "set_progress_handler",
             "register_request_read_connection", "register_request_read_cursor",
             "dispose_managed_request_cursor"),
+        "prepare_managed_statement_facts": ("set_authorizer",),
+        "replace_managed_user_authorizer": ("set_authorizer", "clear"),
+        "authorize_managed_statement_facts": ("user_authorizer",),
     },
     "mcp_server": {
         "handle": ("ledger_request_scope",),
@@ -87,6 +93,23 @@ class RequestLedgerReadBoundsGraphGuards(unittest.TestCase):
         trees = {module: ast.parse((REQUEST_LEDGER_SOURCE_ROOT / (module + ".py")).read_text())
                  for module in modules}
         _assert_request_ledger_connection_graph(trees)
+        # A missing coordinator or native reset must be rejected even when the
+        # remaining managed-reader graph is unchanged.
+        parser_edges = (
+            ("ledger_request_cursor", "dispatch_managed_request_cursor_step", "prepare_managed_statement_facts"),
+            ("ledger_request_cursor", "prepare_managed_statement_facts", "set_authorizer"),
+            ("config", "set_authorizer", "replace_managed_user_authorizer"),
+        )
+        for module, function, callee in parser_edges:
+            altered_trees = copy.deepcopy(trees)
+            definition = next(node for node in ast.walk(altered_trees[module])
+                              if isinstance(node, ast.FunctionDef) and node.name == function)
+            for node in ast.walk(definition):
+                if isinstance(node, ast.Call) and _request_ledger_ast_callee(node.func) == callee:
+                    node.func = ast.Name(id="missing_managed_parser_edge", ctx=ast.Load())
+            with self.subTest(module=module, function=function, callee=callee):
+                with self.assertRaises(AssertionError):
+                    _assert_request_ledger_connection_graph(altered_trees)
         # Reintroduce the exact historical bypass as an AST mutation in a served
         # reader; the same production-graph assertion must reject it.
         mutation = ast.parse("sqlite3.connect(ledger_path)").body[0]

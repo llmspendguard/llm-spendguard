@@ -745,9 +745,7 @@ def spent_all_time(*, deadline_s=config.LEDGER_QUERY_DEADLINE_S):
     on a ledger-freshness token (SpendLedger.running_llm_total_dec), so opening many flow contexts no longer
     re-sums the whole 356k-row ledger each time. Same number as the old spent_since('1970-01-01') idiom — which
     forced a full SCAN of spend_events on every context enter — without the scan."""
-    if deadline_s is not None:
-        return float(_ledger().spent_dec(deadline_s=deadline_s))
-    return float(_ledger().running_llm_total_dec())
+    return float(_ledger().running_llm_total_dec(deadline_s=deadline_s))
 
 
 def suspect_batches(since):
@@ -1071,12 +1069,18 @@ def clear_readable_true_down(since=None, providers=None):
         for true_down_scope in true_down_scopes:
             true_down_filter, true_down_args = true_down_ledger._where(since, None, true_down_scope)
             true_down_cursor = true_down_ledger._conn.execute(
-                f"SELECT id, period, locked FROM spend_events WHERE 1=1{true_down_filter}", true_down_args)
-            while true_down_lock_batch := true_down_cursor.fetchmany(DEFAULT_LEDGER_READ_ROW_CAP):
-                for true_down_id, true_down_period, true_down_locked in true_down_lock_batch:
-                    if true_down_locked or true_down_ledger._is_period_locked(true_down_period):
-                        raise LockedError(f"refusing to delete locked event {true_down_id} "
-                                          f"(period {true_down_period}) — use reverse/adjust")
+                f"SELECT id, period FROM spend_events WHERE 1=1{true_down_filter} "
+                "AND (COALESCE(locked,0) != 0 OR "
+                "(COALESCE(period,'') != '' AND period <= (SELECT MAX(period) FROM ledger_locks)))",
+                true_down_args)
+            try:
+                true_down_locked_row = true_down_cursor.fetchone()
+                if true_down_locked_row:
+                    true_down_id, true_down_period = true_down_locked_row
+                    raise LockedError(f"refusing to delete locked event {true_down_id} "
+                                      f"(period {true_down_period}) — use reverse/adjust")
+            finally:
+                true_down_cursor.close()
         for true_down_scope in true_down_scopes:
             true_down_filter, true_down_args = true_down_ledger._where(since, None, true_down_scope)
             while True:

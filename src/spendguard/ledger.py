@@ -448,7 +448,7 @@ class SpendLedger:
         ev.setdefault("ts_utc", now)
         ev.setdefault("recorded_at", now)
         ev.setdefault("occurred_at", ev["ts_utc"])
-        loc = datetime.datetime.now().astimezone()
+        loc = datetime.datetime.now(datetime.timezone.utc).astimezone()
         ev.setdefault("tz", getattr(loc.tzinfo, "key", None) or loc.tzname() or "")
         ev.setdefault("local_datetime", loc.isoformat(timespec="seconds"))
         d, p = _day_period(ev["occurred_at"], _reporting_tz())
@@ -833,7 +833,7 @@ class SpendLedger:
         dv = self._conn.execute("PRAGMA data_version").fetchone()[0]
         return (self._conn.total_changes, dv)
 
-    def running_llm_total_dec(self):
+    def running_llm_total_dec(self, *, deadline_s=config.LEDGER_QUERY_DEADLINE_S):
         """The whole-ledger countable LLM total (identical to spent_dec() with no window), MEMOIZED on
         _freshness_token so a REPEAT read is O(1) instead of re-summing the table. This is the flow-receipt
         baseline (calls.context enter + receipt.emit_flow exit): a chat loop opens hundreds of flow contexts and
@@ -841,11 +841,20 @@ class SpendLedger:
         each, far worse walking the WAL under a concurrent writer (one honestreview run paid ~734 such scans).
         The NUMBER is byte-identical to spent_dec(); only the re-summation is removed. Caps/reports keep their own
         live (un-memoized) spent_dec path — this accessor is a display baseline, never a spend gate."""
+        from .ledger_read import LedgerQueryDeadline
+        expires = None
+        if deadline_s is not None:
+            if not math.isfinite(deadline_s) or deadline_s <= 0 or self._conn.in_transaction:
+                raise LedgerQueryDeadline(deadline_s)
+            expires = time.monotonic() + deadline_s
         tok = self._freshness_token()
+        remaining = None if expires is None else expires - time.monotonic()
+        if remaining is not None and remaining <= 0:
+            raise LedgerQueryDeadline(deadline_s)
         memo = self._total_memo
         if memo is not None and memo[0] == tok:
             return memo[1]
-        val = self.spent_dec()                           # exact whole-ledger countable LLM Σ (batch + realtime)
+        val = self.spent_dec(deadline_s=remaining)       # only recompute on mutation; the read remains bounded
         self._total_memo = (tok, val)
         return val
 
