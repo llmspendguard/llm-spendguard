@@ -12,6 +12,7 @@ import os
 import threading
 import sqlite3
 import gc
+import time
 from functools import lru_cache, partialmethod
 from pathlib import Path
 
@@ -1048,6 +1049,9 @@ LEDGER_CONNECT_TIMEOUT_S = 5
 LEDGER_WRITE_TIMEOUT_S = 10
 LEDGER_QUERY_DEADLINE_S = None  # Optional caller wall-clock duration; None preserves unbounded legacy reads.
 LEDGER_QUERY_PROGRESS_VM_INSTRUCTIONS = 100
+LEDGER_READ_TIME_BUDGET_S = float(os.getenv("SPENDGUARD_LEDGER_READ_TIME_BUDGET_S", "5.0"))
+LEDGER_READ_ROW_CAP = int(os.getenv("SPENDGUARD_LEDGER_READ_ROW_CAP", "10000"))
+LEDGER_READ_PROGRESS_VM_INSTRUCTIONS = int(os.getenv("SPENDGUARD_LEDGER_READ_PROGRESS_VM_INSTRUCTIONS", "100"))
 LEDGER_BUSY_TIMEOUT_MS = 5000
 LEDGER_JOURNAL_LIMIT_BYTES = 64 * 1024 * 1024
 LEDGER_HOME_ENVIRONMENT_KEY = "SPENDGUARD_HOME"
@@ -1110,6 +1114,7 @@ class _LedgerAdmissionGeneration:
         self.owner_pid = os.getpid()
         self.abandoned_inherited_count = 0
         self.live_count = 0
+        self.pending_count = 0
         self.active_ceiling = None
 
 
@@ -1190,8 +1195,8 @@ class _CountedLedgerConnection(sqlite3.Connection):
         generation = getattr(self, "_ledger_generation", None)
         if generation is not _LEDGER_ADMISSION:
             return  # inherited handles never acquire an inherited lock
+        super().close()
         with generation.lock:
-            super().close()
             if not self._ledger_released:
                 self._ledger_released = True
                 generation.live_count -= 1
@@ -1200,29 +1205,39 @@ class _CountedLedgerConnection(sqlite3.Connection):
         generation = getattr(self, "_ledger_generation", None)
         if generation is None or generation is not _LEDGER_ADMISSION:
             return
-        with generation.lock:
-            try:
-                _close(self)
-            except _error:
-                pass
-            finally:
+        try:
+            _close(self)
+        except _error:
+            pass
+        finally:
+            with generation.lock:
                 if not self._ledger_released:
                     self._ledger_released = True
                     generation.live_count -= 1
 
 
-def open_ledger_connection(path=None, timeout=LEDGER_CONNECT_TIMEOUT_S, *, tune=True, **options):
+def open_ledger_connection(path=None, timeout=LEDGER_CONNECT_TIMEOUT_S, *, tune=True, deadline_at=None, **options):
     """Atomically admit, open and tune a connection; callers own its close."""
     path = path or db_path()
     require_ledger_home_alignment(path)
-    with _LEDGER_ADMISSION.lock:
-        ceiling = ledger_connection_limit()
-        current = ledger_connection_count()
+    generation = _LEDGER_ADMISSION
+    ceiling = ledger_connection_limit()
+    if deadline_at is None:
+        generation.lock.acquire()
+    elif not generation.lock.acquire(timeout=max(0.0, deadline_at - time.monotonic())):
+        raise TimeoutError("Ledger connection admission deadline exceeded")
+    try:
+        current = generation.live_count + generation.pending_count
         if current >= ceiling or (current and ceiling != _LEDGER_ADMISSION.active_ceiling):
             # sqlite statements can form cycles. Reclaim unreachable connections
             # from expired workers before refusing; never evict a live reference.
-            gc.collect()
-            current = ledger_connection_count()
+            if deadline_at is None:
+                generation.lock.release()
+                try:
+                    gc.collect()
+                finally:
+                    generation.lock.acquire()
+            current = generation.live_count + generation.pending_count
         if current and ceiling != _LEDGER_ADMISSION.active_ceiling:
             raise LedgerConnectionLimitError(
                 f"Ledger connection ceiling cannot change from {_LEDGER_ADMISSION.active_ceiling} "
@@ -1230,14 +1245,27 @@ def open_ledger_connection(path=None, timeout=LEDGER_CONNECT_TIMEOUT_S, *, tune=
         if current >= ceiling:
             raise LedgerConnectionLimitError(
                 f"Ledger connection ceiling {ceiling} reached: current live count {current}")
+        generation.pending_count += 1
+        generation.active_ceiling = ceiling
+    finally:
+        generation.lock.release()
+    reservation_pending = True
+    try:
+        if deadline_at is not None:
+            remaining = deadline_at - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError("Ledger connection setup deadline exceeded")
+            timeout = min(timeout, remaining)
         options.setdefault("check_same_thread", False)
         c = sqlite3.connect(path, timeout=timeout,
                             factory=_CountedLedgerConnection, **options)
         c._ledger_home_path = path
-        c._ledger_generation = _LEDGER_ADMISSION
+        c._ledger_generation = generation
         c._ledger_released = False
-        _LEDGER_ADMISSION.live_count += 1
-        _LEDGER_ADMISSION.active_ceiling = ceiling
+        with generation.lock:
+            generation.pending_count -= 1
+            reservation_pending = False
+            generation.live_count += 1
         try:
             if tune:
                 tune_ledger_connection(c, ceiling=ceiling)
@@ -1247,6 +1275,13 @@ def open_ledger_connection(path=None, timeout=LEDGER_CONNECT_TIMEOUT_S, *, tune=
             c.close()
             raise
         return c
+    finally:
+        if reservation_pending:
+            with generation.lock:
+                generation.pending_count -= 1
+
+
+_LEDGER_SCHEMA_LOCK = threading.RLock()
 
 
 def ensure_ledger_schema(c, schema):
@@ -1255,7 +1290,7 @@ def ensure_ledger_schema(c, schema):
     File identity cannot prove tables, additive columns or indexes still exist.
     Serialize local migrations; callbacks retain their cross-process race safety.
     """
-    with _LEDGER_ADMISSION.lock:
+    with _LEDGER_SCHEMA_LOCK:
         result = schema(c)
         c.commit()
         return result
@@ -1409,7 +1444,7 @@ def _abandon_inherited_ledger_generation_in_fork_child():
     the child reopens fresh on next use. This register_at_fork(after_in_child) callback
     only transitions a NEW child: owner-PID equality makes same-process calls no-ops.
     The new generation exposes abandoned_inherited_count without taking the inherited lock."""
-    global _LEDGER_ADMISSION
+    global _LEDGER_ADMISSION, _LEDGER_SCHEMA_LOCK
     if _LEDGER_ADMISSION.owner_pid == os.getpid():
         return  # Same-process calls cannot reset live admission slots.
     # POSIX after_in_child is single-threaded; no parent execution context survives.
@@ -1417,6 +1452,7 @@ def _abandon_inherited_ledger_generation_in_fork_child():
     # Old connections retain their generation and cannot release child slots.
     inherited_generation = _LEDGER_ADMISSION
     _LEDGER_ADMISSION = _LedgerAdmissionGeneration()
+    _LEDGER_SCHEMA_LOCK = threading.RLock()
     _LEDGER_ADMISSION.abandoned_inherited_count = inherited_generation.live_count
     try:
         _LEDGER_POOL.conns = {}

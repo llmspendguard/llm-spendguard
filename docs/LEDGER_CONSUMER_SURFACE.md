@@ -127,30 +127,64 @@ Requirements:
 
 ---
 
-## Part C — the consumer query surface
+## Part C: sanctioned ledger consumer surface
 
-The structural problem: **a consumer has nowhere to ask spendguard a question, so it ends up with the
-ledger open in-process.** `config.db_path()` is one file opened by ~8 subsystems, and any process importing
-the gate inherits that posture. honestreview is simply the first consumer big enough to make it visible.
+This surface lets ledger consumers use spendguard's read contracts without resolving database locations or opening SQLite themselves. Part B concerns connection and warmup cost and is outside this document's scope.
 
-Ground first: `receipt.py` and `report.py` exist, as do the `spendguard_*` MCP tools. **Find what already
-answers these questions and extend it. Prove a capability is missing before building it.**
+All operations are read-only and make no model calls. CLI output is JSON by default; `--json` is accepted explicitly. MCP uses the existing `spendguard_ledger_read` tool with an `operation` argument. The CLI and MCP share one handler, which delegates to the library without rounding money.
 
-Design a read surface a consumer can use **without opening the database**, exposed as
-**library · CLI · MCP** — one implementation, three thin skins, not three implementations.
+| Need | Library (`spendguard.ledger_read`) | CLI (`spendguard ledger-read`) | MCP operation | Success |
+| --- | --- | --- | --- | --- |
+| N1 raw recorded call costs | `read_recorded_call_total(path=None, *, time_budget=DEFAULT_LEDGER_READ_TIME_BUDGET_S)` | `recorded-call-total [--path PATH] --json` | `recorded-call-total` (`path` optional) | Library `float`; transport `{"recorded_call_total": value}` |
+| N2 conversation spend since | `read_conversation_spend_since(since, conv, *, deadline_s=config.LEDGER_QUERY_DEADLINE_S)` | `conversation-spend-since --since DATE --conv SESSION [--deadline-s SECONDS] --json` | `conversation-spend-since` (`since`, `conv`, optional `deadline_s`) | Library `float`; transport `{"conversation_spend_since": value}` |
+| N3 read observability | `ledger_read_metrics()` | `metrics --json` | `metrics` | Same metrics object |
 
-- **The consumer never opens `spend.db` or `lane_queue.db`.** That is the point.
-- **One owner of the connection and the pragma posture.** Consumers cannot inherit or override it.
-- **Bounded by construction** — every query carries a row cap and a time budget. A query that would exceed
-  its budget fails loud and says so. No caller can request an unbounded cursor walk.
-- **Never `SELECT *` on `calls` / `spend_events`** — named columns only, so no caller accidentally pulls
-  ~6 KB/row of payload.
-- **Typed answers, not rows** — "what did intent X cost today", "is the plan on overage", "what did this
-  conversation cost", "recent calls for repo R" — so callers don't re-implement aggregation.
-- Honour the house cost-display rule: real-$ split into API / Subscription / Remote, est-value as a separate
-  axis after `::`, **never summed**.
+## N1: raw corpus total, explicit unknown
 
-Then migrate spendguard's own in-repo direct openers to the surface, leaving the raw path to internals only.
+N1 computes the complete `SUM(calls.cost)` (zero for a successfully read empty table). This is the **raw recorded-call corpus total**, not countable billed dollars. It can include subscription-covered estimated value and other observations; it is not the billed accounting total from `receipt --by-intent` and must never be presented as money out the door.
+
+The bounded read-only reader raises a `LedgerReadError` subclass when it cannot measure: missing or unreadable database, lock contention, corruption, missing `calls` schema, or timeout. Unknown is never silently converted to zero.
+
+The two honestreview consumer policies can therefore share one library call:
+
+```python
+from spendguard.ledger_read import LedgerReadError, read_recorded_call_total
+
+try:
+    recorded_total = read_recorded_call_total()
+except LedgerReadError:
+    recorded_total = 0.0  # Only a caller explicitly tolerating unknown as zero.
+```
+
+A fail-closed consumer instead lets the typed error propagate, or catches `LedgerReadError` and assigns `None`. It must refuse a budget decision when measurement is unknown.
+
+## N2: existing accounting, one caller deadline
+
+The alias calls the existing public entrypoint:
+
+```python
+budget.spent_since(day, project=None, conv=None, *, deadline_s=config.LEDGER_QUERY_DEADLINE_S)
+```
+
+Thus honestreview's `budget.spent_since(today, conv=session, deadline_s=seconds)` is supported directly. The alias forwards `since` as `day`, the conversation, and an explicit deadline. Omission uses `config.LEDGER_QUERY_DEADLINE_S`; no transport invents another default.
+
+`config.LEDGER_QUERY_DEADLINE_S` defaults to `None`. For conversation reads, `None` selects the bounded reader's `config.LEDGER_READ_TIME_BUDGET_S` fallback (currently five seconds), rather than disabling the deadline. `SPENDGUARD_LEDGER_READ_TIME_BUDGET_S` configures that fallback; an explicit caller deadline takes precedence.
+
+The conversation path uses the bounded read-only connection and existing aggregate SQL. Its deadline includes connection setup, lock waiting, and aggregate execution. Expiry raises `LedgerQueryDeadline`, a `LedgerReadError` subclass; there is no partial aggregate. Interrupted read handles are closed; subsequent queries open fresh read handles. Reads do not interrupt or change the forensic writer connection or its pending writes. CLI and MCP forward `deadline_s` unchanged. This operation uses the configured ledger (`SPENDGUARD_HOME`), and rejects `path` rather than silently ignoring it.
+
+## Failure contract across transports
+
+Library calls preserve typed exceptions. CLI failures exit nonzero and return `{"error": "ExceptionClass: message", "error_type": "ExceptionClass"}` without a success value. MCP direct handlers preserve exceptions; the MCP protocol reports the same object with `isError: true`, including `LedgerQueryDeadline`. Consumers must check the exit status or MCP `isError` before using a value. A timeout or unreadable ledger must resolve to refusal/over-budget, never permission to spend.
+
+## N3: process-local metrics
+
+`ledger_read_metrics()` returns `open_connections`, `read_calls_issued`, and `cumulative_read_seconds`. The first composes `config.ledger_connection_count()` rather than counting descriptors. The issued counter and cumulative monotonic elapsed seconds instrument bounded read attempts, including failed attempts; updates are thread-safe. Metrics reads do not themselves issue a ledger read.
+
+Counters belong to the serving process. A warm MCP daemon accumulates its own activity; a separate CLI invocation reports that CLI process's activity. Shapes and semantics match, while independent process histories naturally produce different numbers. Within one process, CLI/MCP/library snapshots agree when no intervening read occurs.
+
+## Consumer goal state
+
+After adoption, honestreview can delete every `sqlite3.connect` against a spendguard database and every `db_path()`/`lane_queue_db_path()` resolution. Honestreview should add a guard that fails if any file directly opens a `~/.spendguard` path. That migration and its consumer guard are outside this spendguard-only change; this document does not claim they have happened.
 
 ---
 

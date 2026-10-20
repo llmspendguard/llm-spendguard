@@ -35,7 +35,8 @@ import sys
 import traceback
 
 PROTOCOL_VERSION = "2024-11-05"     # echoed back to the client if it names one; this is the safe default
-LEDGER_READ_OPERATIONS = ("events", "event", "calls", "count", "aggregate")
+LEDGER_READ_OPERATIONS = ("events", "event", "calls", "count", "aggregate",
+                          "recorded-call-total", "conversation-spend-since", "metrics")
 
 
 def _tool_ledger_read(args):
@@ -46,6 +47,18 @@ def _tool_ledger_read(args):
     path = args.get("path")
     if operation not in LEDGER_READ_OPERATIONS:
         raise ValueError(f"expected operation in {LEDGER_READ_OPERATIONS}")
+    if operation == "recorded-call-total":
+        return {"recorded_call_total": ledger_read.read_recorded_call_total(path=path)}
+    if operation == "conversation-spend-since":
+        if path is not None:
+            raise ValueError("conversation-spend-since uses configured ledger; set SPENDGUARD_HOME instead of path")
+        if not args.get("conv") or not args.get("since"):
+            raise ValueError("conversation-spend-since requires conv and since")
+        deadline_arguments = {} if args.get("deadline_s") is None else {"deadline_s": args["deadline_s"]}
+        return {"conversation_spend_since": ledger_read.read_conversation_spend_since(
+            args["since"], conv=args["conv"], **deadline_arguments)}
+    if operation == "metrics":
+        return ledger_read.ledger_read_metrics()
     if operation == "count":
         return {"count": ledger_read.read_filtered_ledger_count(
             table=args.get("table", ledger_read.LEDGER_EVENTS_TABLE),
@@ -613,6 +626,7 @@ _TOOLS = {
             "table": {"type": "string", "enum": ["calls", "spend_events"]},
             "group_by": {"type": "array", "items": {"type": "string"}},
             "event_id": {"type": "string"}, "since": {"type": "string"},
+            "conv": {"type": "string"}, "deadline_s": {"type": "number"},
             "until": {"type": "string"}, "path": {"type": "string"}},
          "additionalProperties": False},
         _tool_ledger_read),
@@ -974,7 +988,8 @@ def handle(req):
             return _ok(rid, _tool_result(payload))
         except Exception as e:
             # a TOOL failure is reported as an isError result (the model can read it), not a transport error
-            return _ok(rid, _tool_result({"error": f"{type(e).__name__}: {e}"}, is_error=True))
+            return _ok(rid, _tool_result({"error": f"{type(e).__name__}: {e}",
+                                          "error_type": type(e).__name__}, is_error=True))
     if is_notification:
         return None                                    # unknown notification → ignore, never reply
     return _err(rid, -32601, f"method not found: {method}")

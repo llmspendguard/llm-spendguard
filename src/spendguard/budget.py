@@ -676,6 +676,31 @@ def spent_since(day, project=None, conv=None, *, deadline_s=config.LEDGER_QUERY_
         where["project_primary"] = str(project).strip().lower()
     if conv is not None:
         where["conv_id"] = str(conv)
+        # Conversation consumers must never initialize/migrate the write ledger.
+        # The bounded reader owns setup, lock waiting, stepping and disposal;
+        # spent_dec remains the single definition of the countable aggregate.
+        from .ledger import SpendLedger
+        from .ledger_read import (_ledger_read_connection, LedgerReadTimeout,
+                                  LedgerQueryDeadline, DEFAULT_LEDGER_READ_TIME_BUDGET_S,
+                                  SPEND_EVENT_READ_COLUMNS)
+        conversation_budget = (deadline_s if deadline_s is not None
+                               else DEFAULT_LEDGER_READ_TIME_BUDGET_S)
+        import math
+        if not math.isfinite(conversation_budget) or conversation_budget <= 0:
+            raise LedgerQueryDeadline(conversation_budget)
+        conversation_ledger = getattr(_LEDGER_TL, "led", None)
+        if (conversation_ledger is not None and conversation_ledger._conn is not None
+                and conversation_ledger._conn.in_transaction):
+            raise LedgerQueryDeadline(conversation_budget)
+        try:
+            with _ledger_read_connection(time_budget=conversation_budget) as conversation_connection:
+                conversation_reader = object.__new__(SpendLedger)
+                conversation_reader._conn = conversation_connection
+                conversation_reader._cols = set(SPEND_EVENT_READ_COLUMNS)
+                return float(conversation_reader.spent_dec(
+                    since=day, where=where, deadline_s=None))
+        except LedgerReadTimeout as conversation_timeout:
+            raise LedgerQueryDeadline(conversation_budget) from conversation_timeout
     return float(_ledger().spent_dec(since=day, where=where or None, deadline_s=deadline_s))
 
 

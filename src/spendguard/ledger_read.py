@@ -1,12 +1,14 @@
 """Bounded, admission-counted, read-only ledger requests shared by every skin."""
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 import sqlite3
 import time
 import logging
 import traceback
+import threading
+import math
 
 from . import config
 
@@ -24,12 +26,12 @@ _cc_residency_logger = logging.getLogger(__name__)
 LEDGER_EVENTS_TABLE = "spend_events"
 LEDGER_CALLS_TABLE = "calls"
 LEDGER_INSIGHTS_TABLE = "insights"
-DEFAULT_LEDGER_READ_ROW_CAP = 10000
-DEFAULT_LEDGER_READ_TIME_BUDGET_S = 5.0
+DEFAULT_LEDGER_READ_ROW_CAP = config.LEDGER_READ_ROW_CAP
+DEFAULT_LEDGER_READ_TIME_BUDGET_S = config.LEDGER_READ_TIME_BUDGET_S
 # sqlite3.set_progress_handler fires the callback every N SQLite virtual-machine instructions
 # (opcodes), NOT N "progress steps" — this is that instruction interval, the wall-clock budget's
 # polling granularity. Smaller = more frequent timeout checks at a small per-instruction cost.
-DEFAULT_LEDGER_READ_PROGRESS_VM_INSTRUCTIONS = 100
+DEFAULT_LEDGER_READ_PROGRESS_VM_INSTRUCTIONS = config.LEDGER_READ_PROGRESS_VM_INSTRUCTIONS
 LEDGER_READ_DECIMAL_ARITY = 1
 LEDGER_READ_COUNT_EXPRESSION = "COUNT(*)"
 SPEND_EVENT_READ_COLUMNS = tuple("""id dedup_key source content_hash schema_version ts_utc occurred_at recorded_at tz local_datetime day period eligibility_window window_start window_end currency batch_usd realtime_usd est_chat_usd remote_compute_usd subscription_usd external_usd cost_type billed is_meta cost_basis amount_confidence rate_in rate_out fx_rate base_usd provider model model_kind finish in_tok out_tok cache_read_tok cache_write_tok reasoning_tok num_calls num_items latency org team projects project_primary member_ref key_fp account_id customer_id cost_center engagement billable invoice_id conv_id seg_id call_id cwd batch_id from_message_ids prior_message_ids post_message_ids script repo host prompt_hash prompt_snip output_snip evidence_uri intent actor chain attr_what attr_why attr_how attr_reason attr_confidence attr_source attr_model attr_ts attr_version recorded_by ingest_version status revision locked locked_at lock_reason reverses_id adjusts_id superseded_by reconciled reconciled_vs reconciled_at reconciliation_id gap_flag period_closed recon_marker quality quality_src quality_conf cache_hit savings_cv tags""".split())
@@ -114,6 +116,48 @@ READ_REALIZED_CALL_RATES_COLUMNS = ("AVG(CASE WHEN ts < ? THEN cost END) AS befo
          "AVG(CASE WHEN ts >= ? THEN cost END) AS after_rate", "SUM(ts >= ?) AS after_n")
 READ_RECORDING_GAP_CELLS_COLUMNS = ("intent", "provider", "model", "date(ts) AS day", "SUM(cost) AS calls_billed")
 READ_CALIBRATION_SUMMARY_COLUMNS = ("intent", "model", "kind", "COUNT(*) AS n", "SUM(cost) AS cost")
+RECORDED_CALL_TOTAL_SQL = "SELECT COALESCE(SUM(cost),0) AS recorded_call_total FROM calls"
+
+
+@dataclass
+class _LedgerReadProcessMetrics:
+    """Own the synchronized, process-local ledger reader accounting state."""
+
+    _read_attempt_lock: object = field(default_factory=threading.Lock)
+    _read_attempt_count: int = 0
+    _read_elapsed_seconds: float = 0.0
+
+    @contextmanager
+    def observe_ledger_read_attempt(self):
+        observation_started = time.monotonic()
+        with self._read_attempt_lock:
+            self._read_attempt_count += 1
+        try:
+            yield
+        finally:
+            with self._read_attempt_lock:
+                self._read_elapsed_seconds += time.monotonic() - observation_started
+
+    def snapshot_ledger_read_process_metrics(self):
+        with self._read_attempt_lock:
+            return {"open_connections": config.ledger_connection_count(),
+                    "read_calls_issued": self._read_attempt_count,
+                    "cumulative_read_seconds": self._read_elapsed_seconds}
+
+
+_LEDGER_READ_PROCESS_METRICS = _LedgerReadProcessMetrics()
+
+
+@contextmanager
+def _ledger_read_observation():
+    """Account for one issued read, including setup, failure and cleanup time."""
+    with _LEDGER_READ_PROCESS_METRICS.observe_ledger_read_attempt():
+        yield
+
+
+def ledger_read_metrics():
+    """Return process-local read attempts, elapsed seconds and managed connections."""
+    return _LEDGER_READ_PROCESS_METRICS.snapshot_ledger_read_process_metrics()
 
 
 def read_cc_residency_totals(conv_id=None, path=None):
@@ -231,14 +275,30 @@ class LedgerSQLReadRequest:
 
 @contextmanager
 def _ledger_read_connection(path=None, time_budget=DEFAULT_LEDGER_READ_TIME_BUDGET_S):
-    if time_budget <= 0:
-        raise ValueError("Ledger read time budget must be positive")
-    ledger_path = Path(path if path is not None else config.db_path()).expanduser().resolve()
+    with _ledger_read_observation():
+        with _ledger_bounded_read_handle(path, time_budget) as connection:
+            yield connection
+
+
+@contextmanager
+def _ledger_bounded_read_handle(path, time_budget):
+    if not math.isfinite(time_budget) or time_budget <= 0:
+        raise ValueError("Ledger read time budget must be finite and positive")
+    if DEFAULT_LEDGER_READ_PROGRESS_VM_INSTRUCTIONS <= 0:
+        raise LedgerReadError("Ledger read progress instruction interval must be positive")
     started = time.monotonic()
+    deadline_at = started + time_budget
     try:
+        ledger_path = Path(path if path is not None else config.db_path()).expanduser().resolve()
+        remaining = deadline_at - time.monotonic()
+        if remaining <= 0:
+            raise LedgerReadTimeout(time_budget)
         connection = config.open_ledger_connection(ledger_path.as_uri() + "?mode=ro", uri=True,
-            timeout=min(config.LEDGER_CONNECT_TIMEOUT_S, time_budget), tune=False)
-    except sqlite3.OperationalError as exc:
+            timeout=min(config.LEDGER_CONNECT_TIMEOUT_S, remaining), tune=False,
+            deadline_at=deadline_at)
+    except TimeoutError as exc:
+        raise LedgerReadTimeout(time_budget) from exc
+    except (sqlite3.Error, OSError) as exc:
         if time.monotonic() - started >= time_budget:
             raise LedgerReadTimeout(time_budget) from exc
         raise LedgerReadOpenError(f"Ledger read cannot open existing database: {exc}") from exc
@@ -253,15 +313,17 @@ def _ledger_read_connection(path=None, time_budget=DEFAULT_LEDGER_READ_TIME_BUDG
         from .ledger import _DecSum
         connection.create_aggregate("dec_sum", LEDGER_READ_DECIMAL_ARITY, _DecSum)
         connection.set_progress_handler(ledger_read_progress, DEFAULT_LEDGER_READ_PROGRESS_VM_INSTRUCTIONS)
+        if time.monotonic() - started >= time_budget:
+            raise LedgerReadTimeout(time_budget)
         yield connection
         if time.monotonic() - started >= time_budget:
             raise LedgerReadTimeout(time_budget)
-    except sqlite3.OperationalError as exc:
+    except sqlite3.Error as exc:
         if expired or time.monotonic() - started >= time_budget:
             raise LedgerReadTimeout(time_budget) from exc
-        if exc.sqlite_errorcode == sqlite3.SQLITE_ERROR:
+        if getattr(exc, "sqlite_errorcode", None) == sqlite3.SQLITE_ERROR:
             raise LedgerReadSchemaError(f"Ledger read schema unavailable: {exc}") from exc
-        raise
+        raise LedgerReadError(f"Ledger read could not obtain a complete answer: {exc}") from exc
     finally:
         connection.close()
 
@@ -283,6 +345,29 @@ def read_ledger_sql(request: LedgerSQLReadRequest, path=None) -> tuple[LedgerRea
         if len(rows) > request.row_cap:
             raise LedgerReadTooLarge(request.row_cap, len(rows))
         return tuple(LedgerReadRow(columns, tuple(row)) for row in rows)
+
+
+def read_recorded_call_total(path=None, *, time_budget=DEFAULT_LEDGER_READ_TIME_BUDGET_S):
+    """Return raw SUM(calls.cost), never countable billed spend or an unknown zero.
+
+    Missing/unreadable/locked/corrupt ledgers and missing schema raise
+    LedgerReadError. Consumers may explicitly catch that and choose zero or None.
+    """
+    try:
+        recorded_rows = read_ledger_sql(
+            LedgerSQLReadRequest(RECORDED_CALL_TOTAL_SQL, time_budget=time_budget), path)
+    except config.LedgerConnectionLimitError as exc:
+        raise LedgerReadOpenError(f"Recorded-call total connection admission refused: {exc}") from exc
+    return float(recorded_rows[0]["recorded_call_total"])
+
+
+def read_conversation_spend_since(since, conv, *, deadline_s=config.LEDGER_QUERY_DEADLINE_S):
+    """Thin in-process name for the existing countable conversation aggregate."""
+    from . import budget
+    try:
+        return budget.spent_since(since, conv=conv, deadline_s=deadline_s)
+    except config.LedgerConnectionLimitError as exc:
+        raise LedgerReadOpenError(f"Conversation spend connection admission refused: {exc}") from exc
 
 
 def read_filtered_ledger_count(table=LEDGER_EVENTS_TABLE, since=None, until=None, where=None, path=None):
