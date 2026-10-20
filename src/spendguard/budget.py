@@ -952,7 +952,7 @@ def record_reconciled(day, provider, cost, project="unattributed", kind="batch",
                         invoice_id="%s:%s" % (provider, (day or "")[:7]))
 
 
-def clear_reconciled(since=None, model=None):
+def clear_reconciled(since=None, model=None, providers=None):
     """Remove prior reconciliation rows so reconcile is idempotent (rebuilds them). Keyed by the marker model
     (default the batch marker; the realtime backfill passes its own)."""
     snapshot_once("clear-reconciled")           # DELETEs money rows — never without a recovery path
@@ -961,7 +961,12 @@ def clear_reconciled(since=None, model=None):
     # record_reconciled writes only spend_events (the INSERT INTO charges was removed 6 lines above in this
     # same change), reconciled_by_project reads spend_events (repointed 5b, commit 6969746), and `grep
     # 'FROM charges'` across src is EMPTY. So charges holds no reconciliation rows to leave stale.
-    _ledger().delete(where={"recon_marker": marker}, since=since, actor="clear_reconciled", reason="rebuild")
+    if providers is None:
+        _ledger().delete(where={"recon_marker": marker}, since=since, actor="clear_reconciled", reason="rebuild")
+    else:
+        for provider in providers:
+            _ledger().delete(where={"recon_marker": marker, "provider": provider}, since=since,
+                             actor="clear_reconciled", reason="rebuild")
 
 
 # ── estimate→actual true-down (ledger_sync.true_down writes these; the gate's batch rows are PRE-SUBMIT

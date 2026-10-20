@@ -31,6 +31,7 @@ def check(label, cond):
 
 # ── seed local gate-recorded batch spend over three days; provider stub will bill MORE on one day ──
 DAYS = ["2026-06-01", "2026-06-02", "2026-06-03"]
+EXPECTED_OWNED_RECONCILIATION_ROWS = 2
 # gate saw $10 on d1, $20 on d2, $0 on d3 (the leak day)
 def _seed(day, provider, model, kind, cost, project):
     """Seed the money-of-record (spend_events) on a chosen DAY through the production charge→event mapping, so
@@ -220,10 +221,10 @@ check("both providers ok", set(summ["providers_ok"]) == {"openai", "anthropic"})
 
 # idempotent: a reconciled row was written to spend_events, and re-running rebuilds (not double-counts)
 recon_rows = budget._ledger().count_events(where={"recon_marker": "(provider-batch)"})
-check("one reconciled row written", recon_rows == 1)
+check("separate provider-owned reconciled rows written", recon_rows == EXPECTED_OWNED_RECONCILIATION_ROWS)
 summ2 = LS.reconcile_into_ledger(since=SINCE)
 recon_rows2 = budget._ledger().count_events(where={"recon_marker": "(provider-batch)"})
-check("still one reconciled row after re-run (idempotent)", recon_rows2 == 1)
+check("same provider-owned rows after re-run (idempotent)", recon_rows2 == EXPECTED_OWNED_RECONCILIATION_ROWS)
 check("same gap on re-run", abs(summ2["ungoverned"] - 15.0) < 1e-9)
 
 print("-- reconcile_into_ledger: provider fetch errors are surfaced, not hidden --")
