@@ -525,6 +525,21 @@ def _codex_error_status(err_text):
     return int(m.group(1)) if m else None
 
 
+def _codex_structured_http_status(payload):
+    """Read the provider's protocol status fields without interpreting error prose."""
+    if not isinstance(payload, dict):
+        return None
+    for field in ("httpStatusCode", "status"):
+        value = payload.get(field)
+        if isinstance(value, int) and not isinstance(value, bool):
+            return value
+    for value in payload.values():
+        status = _codex_structured_http_status(value)
+        if status is not None:
+            return status
+    return None
+
+
 def run_prompt(prompt, system=None, model=None, timeout=TIMEOUT_S, reasoning=None, max_tokens=None,
                sandbox="read-only", cwd=None, recycle_on_timeout=None):   # max_tokens: protocol-uniform; codex exec has no one-shot output-cap flag
     """→ {text, in_tok, out_tok, latency, error} from one headless plan-billed Codex run. `system` is
@@ -571,11 +586,18 @@ def _run_prompt_in_cwd(prompt, system=None, model=None, timeout=TIMEOUT_S, reaso
             _r = codex_daemon.run_warm(_full, model=model, reasoning=reasoning, sandbox=sandbox, cwd=cwd,
                                        timeout=timeout, recycle_on_timeout=recycle_on_timeout)
         except Exception as _e:
-            _r = {"error": f"codex daemon raised: {str(_e)[:150]}"}
+            _r = {"error": f"codex daemon raised: {_e}"}
         if _r.get("text") and not _r.get("error"):
+            if sandbox == "workspace-write" and not (
+                    _r.get("thread") and _r.get("turn") and _r.get("process_pid")):
+                return {"error": "codex execution start unconfirmed: broker supplied no thread/turn/process evidence"}
             _txt = _r["text"]
             return {"text": _txt, "in_tok": len(_full) // 4, "out_tok": len(_txt) // 4,   # est: the tool returns no usage
+                    "execution_started": bool(_r.get("thread") and _r.get("turn") and _r.get("process_pid")),
+                    "thread": _r.get("thread"), "turn": _r.get("turn"), "process_pid": _r.get("process_pid"),
                     "latency": round(time.time() - _t0, 2), "effort": _eff, "error": None}
         _derr = _r.get("error") or "codex warm admission returned no final message"
-        return {"error": _derr, "status_code": _codex_error_status(_derr)}
+        structured_status = _codex_structured_http_status(_r.get("provider_error"))
+        return {"error": _derr, "status_code": structured_status if structured_status is not None
+                else _codex_error_status(_derr)}
     return {"error": "codex broker admission disabled; uncounted cold execution refused"}
