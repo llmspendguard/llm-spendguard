@@ -17,10 +17,18 @@ import pytest
 
 # Hard per-file wall budget. Calibration: slowest legit file ≈ 18s bare, but CI runs with COVERAGE
 # tracing (~10× CPU on the heaviest modules) + `-n auto` contention on 2-vCPU runners — observed 48s
-# for a file that takes 1.6s locally. 120s holds everywhere while still catching the incident-#25
+# for a file that takes 1.6s locally. The 120s default catches the incident-#25
 # class (a 213s live-billing pull); accidental NETWORK is caught in milliseconds by the dead proxy
 # below regardless — this budget is the backstop for sleeps and runaway loops.
 FILE_BUDGET_S = 120
+# Hosted 3.11 measured this heavy containment proof at 247s before chunked
+# reads removed per-op callback overhead. 360s covers that observation plus
+# 3.12/runner variance with headroom, below the 600s subprocess timeout.
+# Every other file retains the incident-#25 hog detector's 120s global budget.
+RECONCILE_CONTAINMENT_FILE_BUDGET_S = 360
+REVIEWED_FILE_BUDGET_OVERRIDES_S = {
+    "test_reconcile_read_containment.py": RECONCILE_CONTAINMENT_FILE_BUDGET_S,
+}
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(HERE)
@@ -92,6 +100,7 @@ def test_script(script):
     # provider billing for weeks because slow ≠ red. Every run measures every file as a byproduct (no
     # separate profiler to remember to run); a hog now FAILS the suite the day it appears. Genuinely
     # heavy files raise the budget here, on purpose, in review — never by drifting.
-    assert took <= FILE_BUDGET_S, (
-        f"{os.path.basename(script)} took {took:.1f}s (> {FILE_BUDGET_S}s budget) — a sleep, live network "
+    file_budget_s = REVIEWED_FILE_BUDGET_OVERRIDES_S.get(os.path.basename(script), FILE_BUDGET_S)
+    assert took <= file_budget_s, (
+        f"{os.path.basename(script)} took {took:.1f}s (> {file_budget_s}s budget) — a sleep, live network "
         f"call, or runaway loop is hiding in an 'offline' test. Profile it: time python {script}")

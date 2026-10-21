@@ -33,10 +33,48 @@ import json
 import logging
 import sys
 import traceback
+from contextlib import contextmanager
 
 PROTOCOL_VERSION = "2024-11-05"     # echoed back to the client if it names one; this is the safe default
 LEDGER_READ_OPERATIONS = ("events", "event", "calls", "count", "aggregate",
                           "recorded-call-total", "conversation-spend-since", "metrics")
+MCP_PEER_DISCONNECT_PEEK_BYTES = 1
+MCP_PEER_OBSERVER_THREAD_NAME = "spendguard-mcp-ledger-abandonment"
+
+
+@contextmanager
+def _mcp_http_request_ledger_lifetime(connection):
+    """Interrupt request-owned ledger reads when the HTTP caller disconnects."""
+    import select
+    import socket
+    import threading
+    from . import config
+    from .ledger_read import ledger_request_scope
+
+    observer_stopped = threading.Event()
+    with ledger_request_scope() as request_reads:
+        def observe_mcp_peer_abandonment():
+            while not observer_stopped.is_set():
+                try:
+                    readable, _, _ = select.select(
+                        [connection], [], [], config.LEDGER_REQUEST_DISCONNECT_POLL_S)
+                    if readable:
+                        if not connection.recv(MCP_PEER_DISCONNECT_PEEK_BYTES, socket.MSG_PEEK):
+                            request_reads.cancel_ledger_request()
+                            return
+                        observer_stopped.wait(config.LEDGER_REQUEST_DISCONNECT_POLL_S)
+                except (OSError, ValueError, TypeError):
+                    request_reads.cancel_ledger_request()
+                    return
+
+        observer = threading.Thread(target=observe_mcp_peer_abandonment,
+                                    name=MCP_PEER_OBSERVER_THREAD_NAME, daemon=True)
+        observer.start()
+        try:
+            yield
+        finally:
+            observer_stopped.set()
+            observer.join()
 
 
 def _tool_ledger_read(args):
@@ -950,7 +988,9 @@ def handle(req):
             return _err(rid, -32602, f"unknown tool {name!r} — have: {', '.join(_TOOLS)}")
         _d, _s, fn = entry
         try:
-            payload = fn(params.get("arguments") or {})
+            from .ledger_read import ledger_request_scope
+            with ledger_request_scope():
+                payload = fn(params.get("arguments") or {})
             return _ok(rid, _tool_result(payload))
         except Exception as e:
             # a TOOL failure is reported as an isError result (the model can read it), not a transport error
@@ -1120,7 +1160,8 @@ def serve_http(host="127.0.0.1", port=4913):
             except Exception as e:
                 self._send(json.dumps(_err(None, -32700, f"parse error: {e}")))
                 return
-            resp = handle(req)                 # the ONE shared dispatch (stdio + http in lockstep)
+            with _mcp_http_request_ledger_lifetime(self.connection):
+                resp = handle(req)             # the ONE shared dispatch (stdio + http in lockstep)
             self._send(json.dumps(resp, default=str) if resp is not None else "")
             try:                               # deploy self-heal — exit BETWEEN requests so the supervisor respawns
                 if _auto_respawn_enabled() and release.should_respawn():

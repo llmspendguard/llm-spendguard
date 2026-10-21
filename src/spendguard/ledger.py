@@ -24,6 +24,7 @@ import contextlib
 import itertools
 import math
 import time
+import logging
 from types import MappingProxyType
 from decimal import Decimal, InvalidOperation, getcontext
 from . import config
@@ -31,6 +32,7 @@ from . import config
 getcontext().prec = 34   # ample for exact money arithmetic (28 is the default; money never needs more than this)
 
 SCHEMA_VERSION = 6
+LEDGER_RATE_PROVENANCE_GAP = "ledger_rate_provenance_gap"
 
 
 def ledger_posting_metadata():
@@ -324,9 +326,10 @@ def live_dedup_key(ts_iso):
 class SpendLedger:
     """The one door to spend_events: SCRUD + queries + lifecycle/audit. Mutable until locked; integrity in spend_audit."""
 
-    def __init__(self, db_path=None):
+    def __init__(self, db_path=None, *, owned_connection=None):
         self.db_path = db_path or config.db_path()
-        self._conn = config.open_ledger_connection(self.db_path, timeout=config.LEDGER_WRITE_TIMEOUT_S)
+        self._conn = (owned_connection if owned_connection is not None else
+                      config.open_ledger_connection(self.db_path, timeout=config.LEDGER_WRITE_TIMEOUT_S))
         self._conn.row_factory = sqlite3.Row
         self._conn.create_aggregate("dec_sum", 1, _DecSum)   # exact decimal SUM for the TEXT money columns
         self._defer = False                              # bulk(): defer per-row commits (still audits every row)
@@ -338,14 +341,15 @@ class SpendLedger:
             raise
 
     @contextlib.contextmanager
-    def bulk(self):
+    def bulk(self, *, commit_callback=None):
         """Defer per-row commits for a bulk load (e.g. a one-time migration), committing once on exit — every row is
-        still inserted + audited, only the fsync is batched. Use ONLY for trusted bulk ingest, not concurrent writers."""
+        still inserted + audited, only the fsync is batched. Use ONLY for trusted bulk ingest, not concurrent writers.
+        An explicitly owned maintenance handle can supply its final commit boundary as commit_callback."""
         self._defer = True
         try:
             yield self
-            self._conn.commit()
-        except Exception:
+            (commit_callback or self._conn.commit)()
+        except BaseException:
             # ROLL BACK WHAT THE FAILED LOAD WROTE. Per-row commits are deferred here, so an exception left
             # the partial rows sitting in an OPEN transaction — uncommitted, but flushed by the next commit
             # from anywhere in the process. A bulk load that raised half way through therefore landed
@@ -466,21 +470,25 @@ class SpendLedger:
             ev.setdefault("recorded_at", now)
         ev.setdefault("occurred_at", ev["ts_utc"])
         if "tz" not in ev or "local_datetime" not in ev:
-            loc = datetime.datetime.now().astimezone()
+            loc = datetime.datetime.now(datetime.timezone.utc).astimezone()
             ev.setdefault("tz", getattr(loc.tzinfo, "key", None) or loc.tzname() or "")
             ev.setdefault("local_datetime", loc.isoformat(timespec="seconds"))
         d, p = _day_period(ev["occurred_at"], _reporting_tz())
         ev.setdefault("day", d)
         ev.setdefault("period", p)
         if ev.get("model") and (ev.get("rate_in") is None or ev.get("rate_out") is None):
-            try:
-                from . import pricing
-                pr = pricing.price(ev["model"]) or {}
+            # Amounts are already supplied and validated. Optional rate
+            # provenance uses nullable catalog facts and exact table entries;
+            # it must never invoke the budget-pricing refusal API.
+            from . import pricing
+            pr = pricing._catalog_price(ev["model"]) or pricing.PRICING.get(ev["model"])
+            if pr is None:
+                logging.getLogger(__name__).warning("%s model=%s",
+                    LEDGER_RATE_PROVENANCE_GAP, ev["model"])
+            else:
                 bt = ev.get("cost_type") == "batch"
                 ev.setdefault("rate_in", pr.get("batch_in" if bt else "in_"))
                 ev.setdefault("rate_out", pr.get("batch_out" if bt else "out"))
-            except Exception:
-                pass
         ev.setdefault("schema_version", SCHEMA_VERSION)
         ev.setdefault("status", "draft")
         ev.setdefault("revision", 1)
@@ -851,7 +859,7 @@ class SpendLedger:
         dv = self._conn.execute("PRAGMA data_version").fetchone()[0]
         return (self._conn.total_changes, dv)
 
-    def running_llm_total_dec(self):
+    def running_llm_total_dec(self, *, deadline_s=config.LEDGER_QUERY_DEADLINE_S):
         """The whole-ledger countable LLM total (identical to spent_dec() with no window), MEMOIZED on
         _freshness_token so a REPEAT read is O(1) instead of re-summing the table. This is the flow-receipt
         baseline (calls.context enter + receipt.emit_flow exit): a chat loop opens hundreds of flow contexts and
@@ -859,29 +867,52 @@ class SpendLedger:
         each, far worse walking the WAL under a concurrent writer (one honestreview run paid ~734 such scans).
         The NUMBER is byte-identical to spent_dec(); only the re-summation is removed. Caps/reports keep their own
         live (un-memoized) spent_dec path — this accessor is a display baseline, never a spend gate."""
+        from .ledger_read import LedgerQueryDeadline
+        expires = None
+        if deadline_s is not None:
+            if not math.isfinite(deadline_s) or deadline_s <= 0 or self._conn.in_transaction:
+                raise LedgerQueryDeadline(deadline_s)
+            expires = time.monotonic() + deadline_s
         tok = self._freshness_token()
+        remaining = None if expires is None else expires - time.monotonic()
+        if remaining is not None and remaining <= 0:
+            raise LedgerQueryDeadline(deadline_s)
         memo = self._total_memo
         if memo is not None and memo[0] == tok:
             return memo[1]
-        val = self.spent_dec()                           # exact whole-ledger countable LLM Σ (batch + realtime)
+        val = self.spent_dec(deadline_s=remaining)       # only recompute on mutation; the read remains bounded
         self._total_memo = (tok, val)
         return val
 
     def remote_dec(self, since=None, until=None, where=None, **filters):
         """EXACT Decimal total of real GPU/remote-compute spend — the number the COMPUTE cap governs, kept
         apart from the LLM cap on purpose (a box download can burn GPU-$ without any LLM call)."""
-        return self._cat_dec(("remote_compute_usd",), self._COUNTABLE, since=since, until=until, where=where, **filters)
+        return self._bounded_category_total(("remote_compute_usd",), self._COUNTABLE,
+                                            since=since, until=until, where=where, **filters)
 
     def est_value_dec(self, since=None, until=None, where=None, **filters):
         """EXACT Decimal total of est-VALUE (est_chat_usd) — what subscription-covered usage WOULD have cost at
         API rates. Real money did NOT change hands for this, so it is reported on its own axis and is NEVER
         added into a real $ total or a cap."""
-        return self._cat_dec(("est_chat_usd",), self._LIVE_FILTER, since=since, until=until, where=where, **filters)
+        return self._bounded_category_total(("est_chat_usd",), self._LIVE_FILTER,
+                                            since=since, until=until, where=where, **filters)
 
     def subscription_dec(self, since=None, until=None, where=None, **filters):
         """EXACT Decimal total of the subscription FLAT FEE (subscription_usd) — real money, but a plan fee, not
         per-call spend, so it is its own line and not folded into the LLM cap."""
-        return self._cat_dec(("subscription_usd",), self._LIVE_FILTER, since=since, until=until, where=where, **filters)
+        return self._bounded_category_total(("subscription_usd",), self._LIVE_FILTER,
+                                            since=since, until=until, where=where, **filters)
+
+    def _bounded_category_total(self, cols, filt, since=None, until=None, where=None, **filters):
+        """Read committed category totals through the deadline-owning, disposable reader."""
+        from .ledger_read import LedgerReadRequest, read_ledger_rows
+        w, args = self._where(since, until, {**(where or {}), **filters})
+        if filt:
+            w += " AND " + filt
+        rows = read_ledger_rows(LedgerReadRequest(
+            columns=tuple(f"dec_sum({column}) AS {column}" for column in cols),
+            where_sql="1=1" + w, parameters=tuple(args)), path=self.db_path)
+        return str(sum((to_dec(value) for value in rows[0].values), Decimal(0)))
 
     # The lifecycle-status EXCLUSION, named once (same enum the DDL defines: draft|posted|reconciled|locked|
     # reversed|void). Reused by the grouped/meta primitives so the "not a void/reversed entry" rule lives in one
@@ -979,7 +1010,7 @@ class SpendLedger:
 
     def meta_dec(self, since=None, until=None, where=None):
         """EXACT total of spendguard's OWN (meta) spend — the is_meta rows, kept on their own cap line."""
-        return self._cat_dec(LLM_USD_COLS, "COALESCE(is_meta,0)=1 AND " + self._NOT_VOID,
+        return self._bounded_category_total(LLM_USD_COLS, "COALESCE(is_meta,0)=1 AND " + self._NOT_VOID,
                              since=since, until=until, where=where)
 
     def count_events(self, where=None, filt="", since=None):
@@ -1022,7 +1053,8 @@ class SpendLedger:
         for rid, period, locked in rows:
             self._conn.execute("DELETE FROM spend_events WHERE id=?", (rid,))
             self._audit(rid, actor, "delete", "(delete)", None, None, reason)
-        self._conn.commit()
+        if not self._defer:
+            self._conn.commit()
         return len(rows)
 
     def sum_dec(self, since=None, until=None, where=None, include_meta=True, include_void=False, **filters):
@@ -1039,9 +1071,11 @@ class SpendLedger:
             w += " AND COALESCE(is_meta,0)=0"
         if not include_void:
             w += " AND COALESCE(status,'') NOT IN ('void')"
-        sums = ", ".join(f"dec_sum({c})" for c in USD_COLS)       # exact per-column decimal sums
-        r = self._conn.execute(f"SELECT {sums} FROM spend_events WHERE 1=1" + w, args).fetchone()
-        return str(sum((to_dec(x) for x in r), Decimal(0)))       # add the category totals exactly
+        from .ledger_read import LedgerReadRequest, read_ledger_rows
+        r = read_ledger_rows(LedgerReadRequest(
+            columns=tuple(f"dec_sum({column}) AS {column}" for column in USD_COLS),
+            where_sql="1=1" + w, parameters=tuple(args)), path=self.db_path)[0]
+        return str(sum((to_dec(x) for x in r.values), Decimal(0)))       # add the category totals exactly
 
     def sum_usd(self, since=None, until=None, where=None, include_meta=True, include_void=False, **filters):
         """Total USD for the filter, as a FLOAT — the display convenience. Exactness lives in `sum_dec`;

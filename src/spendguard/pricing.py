@@ -606,23 +606,23 @@ def _catalog_price(model: str) -> Optional[dict]:
 
     candidate = model
     while True:
-        row = _norm_price_row(model_catalog.model_price(candidate),
-                              (model_catalog.model_record(candidate) or {}).get("provider"))
+        record = model_catalog.model_record(candidate) or {}
+        row = _norm_price_row(record.get("price"), record.get("provider"))
         if row:
             return row
         base = re.sub(r"-(?:\d{4}-\d{2}-\d{2}|\d{8}|preview|latest|v\d+)$", "", candidate)
         if base == candidate:
             break
         candidate = base
-    for mid, rec in model_catalog.all_records().items():
+    for rec in model_catalog.all_records().values():
         if model in (rec.get("aliases") or []):
-            row = _norm_price_row(model_catalog.model_price(mid), rec["provider"])
+            row = _norm_price_row(rec.get("price"), rec["provider"])
             if row:
                 return row
     mapped = _semantic_catalog_map(model)
     if mapped:
-        row = _norm_price_row(model_catalog.model_price(mapped),
-                              (model_catalog.model_record(mapped) or {}).get("provider"))
+        record = model_catalog.model_record(mapped) or {}
+        row = _norm_price_row(record.get("price"), record.get("provider"))
         if row:
             return row
     return None

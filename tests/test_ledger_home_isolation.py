@@ -18,6 +18,7 @@ align_test_startup_home(prefix=__name__)
 
 LEDGER_ISOLATION_CHILD_TIMEOUT_S = 60
 LEDGER_ALIGNMENT_OPERATION_REPETITIONS = 32
+LEDGER_SHORTCUT_NATIVE_STEP_ALIGNMENT_CHECKS = 1
 LEDGER_ALIGNMENT_PROBE_SCHEMA = "CREATE TABLE alignment_probe (value)"
 LEDGER_ALIGNMENT_PROBE_INSERT = "INSERT INTO alignment_probe VALUES (?)"
 LEDGER_ALIGNMENT_PROBE_READ = "SELECT * FROM alignment_probe"
@@ -158,6 +159,84 @@ def test_stable_home_operations_do_not_resolve_paths(tmp_path, monkeypatch):
         monkeypatch.setenv(config.LEDGER_HOME_ENVIRONMENT_KEY, str(tmp_path.parent))
         with pytest.raises(config.LedgerHomeIsolationError):
             retained_cursor.execute(LEDGER_ALIGNMENT_PROBE_READ)
+    finally:
+        connection.close()
+
+
+def test_redirected_home_cursor_uses_bound_open_identity(tmp_path, monkeypatch):
+    """Fault: resolution fails after an unrelated target opens during a redirect."""
+    from spendguard import config
+
+    protected_home = tmp_path / test_redirected_home_cursor_uses_bound_open_identity.__name__
+    monkeypatch.setattr(config, "HOME", protected_home)
+    monkeypatch.setattr(config, "DEFAULT_SPENDGUARD_HOME", protected_home)
+    monkeypatch.setenv(config.LEDGER_HOME_ENVIRONMENT_KEY, str(tmp_path))
+    connection = config.open_ledger_connection(tmp_path / pathlib.Path(__file__).stem)
+    try:
+        connection.execute(LEDGER_ALIGNMENT_PROBE_SCHEMA)
+        retained_cursor = connection.cursor()
+
+        def reject_redirected_cursor_reresolution(*args, **kwargs):
+            raise AssertionError("opened ledger identity must not be resolved again")
+
+        original_environment_get = os.environ.get
+
+        def reject_absolute_cursor_expansion_dependency(key, *args):
+            if key == config.LEDGER_HOME_EXPANSION_ENVIRONMENT_KEY:
+                raise AssertionError("absolute ledger identity must not depend on tilde expansion")
+            return original_environment_get(key, *args)
+
+        with monkeypatch.context() as resolution_fault:
+            resolution_fault.setattr(pathlib.Path, "resolve", reject_redirected_cursor_reresolution)
+            resolution_fault.setattr(os, "getcwd", reject_redirected_cursor_reresolution)
+            resolution_fault.setattr(os.path, "isabs", reject_redirected_cursor_reresolution)
+            resolution_fault.setattr(os.environ, "get", reject_absolute_cursor_expansion_dependency)
+            for _ in range(LEDGER_ALIGNMENT_OPERATION_REPETITIONS):
+                retained_cursor.executemany(LEDGER_ALIGNMENT_PROBE_INSERT, ((__name__,),))
+                connection.execute(LEDGER_ALIGNMENT_PROBE_READ).fetchall()
+                connection.commit()
+    finally:
+        connection.close()
+
+
+def test_relative_home_chdir_rechecks_retained_cursor(tmp_path, monkeypatch):
+    """Fault: a relative redirect changes identity while the cursor remains live."""
+    from spendguard import config
+
+    protected_home = tmp_path / test_relative_home_chdir_rechecks_retained_cursor.__name__
+    protected_home.mkdir()
+    monkeypatch.setattr(config, "HOME", protected_home)
+    monkeypatch.setattr(config, "DEFAULT_SPENDGUARD_HOME", protected_home)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv(config.LEDGER_HOME_ENVIRONMENT_KEY, protected_home.name)
+    connection = config.open_ledger_connection(protected_home / pathlib.Path(__file__).stem)
+    try:
+        connection.execute(LEDGER_ALIGNMENT_PROBE_SCHEMA)
+        retained_cursor = connection.cursor()
+        retained_cursor.execute(LEDGER_ALIGNMENT_PROBE_READ).fetchone()
+        monkeypatch.chdir(tmp_path.parent)
+        with pytest.raises(config.LedgerHomeIsolationError):
+            retained_cursor.execute(LEDGER_ALIGNMENT_PROBE_READ)
+    finally:
+        connection.close()
+
+
+def test_connection_shortcut_checks_alignment_once_before_native_step(tmp_path, monkeypatch):
+    """Count the mandatory guard while stale-home refusal remains fault tested."""
+    from spendguard import config
+
+    connection = config.open_ledger_connection(tmp_path / pathlib.Path(__file__).stem)
+    alignment_checks = []
+    original_alignment_guard = config.require_ledger_home_alignment
+
+    def observe_shortcut_native_alignment_check(*args, **kwargs):
+        alignment_checks.append(args)
+        return original_alignment_guard(*args, **kwargs)
+
+    try:
+        monkeypatch.setattr(config, "require_ledger_home_alignment", observe_shortcut_native_alignment_check)
+        connection.execute(LEDGER_ALIGNMENT_PROBE_SCHEMA)
+        assert len(alignment_checks) == LEDGER_SHORTCUT_NATIVE_STEP_ALIGNMENT_CHECKS
     finally:
         connection.close()
 

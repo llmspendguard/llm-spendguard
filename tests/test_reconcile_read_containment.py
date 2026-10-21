@@ -3,6 +3,7 @@ import os
 import sys
 import tempfile
 from decimal import Decimal
+from unittest.mock import patch
 
 if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
     os.environ["SPENDGUARD_TEST_ISOLATED"] = "1"
@@ -11,6 +12,7 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
 
 from spendguard import budget, ledger_sync
 from spendguard.ledger_read import DEFAULT_LEDGER_READ_ROW_CAP
+from spendguard.ledger import LockedError
 from _script_checks import seed_test_spend_event
 
 RECONCILE_GUARD_EXTRA_ROWS = 7
@@ -26,6 +28,8 @@ RECONCILE_GUARD_GAP = Decimal("10")
 RECONCILE_GUARD_GAP_MODEL = "gpt-5.5-mini"
 RECONCILE_GUARD_UNPRICED_BASIS = "unpriced"
 RECONCILE_GUARD_ZERO_PLACEHOLDER = "0"
+RECONCILE_GUARD_LOCKED_FLAG = 1
+RECONCILE_GUARD_UNLOCKED_FLAG = 0
 
 seed_test_spend_event(RECONCILE_GUARD_DAY, RECONCILE_GUARD_PROVIDERS[0], RECONCILE_GUARD_MODEL,
                       "batch", RECONCILE_GUARD_AMOUNT, "seed-project", timestamp_suffix="T00:00:00+00:00",
@@ -86,6 +90,31 @@ reconcile_guard_actual = {(r["project_primary"], r["provider"], r["model"], r["d
     for r in reconcile_guard_connection.execute("SELECT * FROM spend_events WHERE conv_id=?", (budget._TRUE_DOWN_CONV,))}
 assert reconcile_guard_actual == reconcile_guard_reference
 assert not reconcile_guard_summary["read_gaps"]
+
+# A locked correction beyond the admission batch must refuse the entire clear
+# before deleting anything. A per-row lock lookup is itself a fault: it holds
+# the outer cursor idle while nested queries consume its bounded lifetime.
+reconcile_guard_locked_id = reconcile_guard_connection.execute(
+    "SELECT id FROM spend_events WHERE conv_id=? ORDER BY rowid DESC",
+    (budget._TRUE_DOWN_CONV,)).fetchone()[0]
+reconcile_guard_connection.execute("UPDATE spend_events SET locked=? WHERE id=?",
+    (RECONCILE_GUARD_LOCKED_FLAG, reconcile_guard_locked_id))
+reconcile_guard_connection.commit()
+reconcile_guard_locked_snapshot = {r["id"]: tuple(r) for r in reconcile_guard_connection.execute(
+    "SELECT * FROM spend_events")}
+with patch.object(type(budget._ledger()), "_is_period_locked",
+                  side_effect=AssertionError("clear preflight performed a nested row lock lookup")):
+    try:
+        budget.clear_readable_true_down(RECONCILE_GUARD_SINCE)
+    except LockedError:
+        pass
+    else:
+        raise AssertionError("late locked correction did not refuse the whole clear")
+assert reconcile_guard_locked_snapshot == {r["id"]: tuple(r) for r in reconcile_guard_connection.execute(
+    "SELECT * FROM spend_events")}
+reconcile_guard_connection.execute("UPDATE spend_events SET locked=? WHERE id=?",
+    (RECONCILE_GUARD_UNLOCKED_FLAG, reconcile_guard_locked_id))
+reconcile_guard_connection.commit()
 
 # Exercise the actual gap rebuild too: provider truth exceeds every readable
 # gate cell by one known billed batch, with all billed usage on the same day.
