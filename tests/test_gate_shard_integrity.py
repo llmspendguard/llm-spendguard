@@ -92,6 +92,14 @@ SHARD_GUARD_BRANCH_ARCS = {(SHARD_GUARD_ONE, SHARD_GUARD_ONE + SHARD_GUARD_ONE)}
 SHARD_GUARD_PRODUCTION_RETURN = "    return partitions\n"
 SHARD_GUARD_DROPPED_RETURN = "    partitions[GATE_SHARD_FIRST_INDEX].pop()\n    return partitions\n"
 SHARD_GUARD_OVERSIZED_INTEGER = 1 << 4096
+SHARD_GUARD_EMPTY_PARTIAL = ".coverage.nonmeasuring"
+SHARD_GUARD_BRANCH_CONDITION = '''            if data.measured_files():
+                if not data.has_arcs():
+                    raise GateShardEvidenceError(f"non-empty coverage partial lacks branch arcs: {path}")
+                shard_has_measured_branches = True'''
+SHARD_GUARD_OLD_BRANCH_CONDITION = '''            if not data.has_arcs() or not data.measured_files():
+                raise GateShardEvidenceError(f"missing branch coverage evidence: {path}")
+            shard_has_measured_branches = True'''
 
 
 def assert_gate_shard_evidence_refused(operation, error_type=shard_plan.GateShardEvidenceError):
@@ -286,6 +294,43 @@ shard_plan.verify_gate_shard_partition(shard_guard_nodeids, shard_guard_partitio
 # Execute the whole actual production module with one deliberate defect in memory.
 # Broken source is never installed in the worktree or used by the real suite.
 shard_guard_production_source = Path(shard_plan.__file__).read_text()
+with tempfile.TemporaryDirectory() as shard_guard_union_temporary:
+    shard_guard_union_root = Path(shard_guard_union_temporary)
+    shard_guard_empty_data = CoverageData(basename=str(shard_guard_union_root / SHARD_GUARD_EMPTY_PARTIAL))
+    shard_guard_empty_data.add_arcs({})
+    shard_guard_empty_data.write()
+    with pytest.raises(shard_plan.GateShardEvidenceError, match="empty branch coverage union"):
+        shard_plan.snapshot_gate_shard_coverage(shard_guard_union_root)
+    # Inject a non-measuring process alongside real branch evidence.
+    emit_gate_shard_guard_coverage(shard_guard_union_root)
+    shard_guard_union_inventory = shard_plan.read_gate_shard_coverage_inventory(shard_guard_union_root)
+    assert set(shard_guard_union_inventory) == {SHARD_GUARD_EMPTY_PARTIAL, SHARD_GUARD_COVERAGE_FILENAME}
+    assert shard_guard_production_source.count(SHARD_GUARD_BRANCH_CONDITION) == SHARD_GUARD_ONE
+    shard_guard_coverage_mutant = {"__name__": SHARD_GUARD_CONFTEST_MODULE}
+    exec(compile(shard_guard_production_source.replace(
+        SHARD_GUARD_BRANCH_CONDITION, SHARD_GUARD_OLD_BRANCH_CONDITION),
+        shard_plan.__file__, "exec"), shard_guard_coverage_mutant)
+    # The old per-partial predicate must reject the exact evidence accepted above.
+    with pytest.raises(shard_guard_coverage_mutant["GateShardEvidenceError"]):
+        shard_guard_coverage_mutant["snapshot_gate_shard_coverage"](shard_guard_union_root)
+    shard_plan.snapshot_gate_shard_coverage(shard_guard_union_root)
+    # A line-only partial fails even when valid branch evidence is also present.
+    shard_guard_empty_data.erase()
+    shard_guard_empty_data = CoverageData(basename=str(shard_guard_union_root / SHARD_GUARD_EMPTY_PARTIAL))
+    shard_guard_empty_data.add_lines({str(Path(__file__).resolve()): {SHARD_GUARD_ONE}})
+    shard_guard_empty_data.write()
+    with pytest.raises(shard_plan.GateShardEvidenceError, match="non-empty coverage partial lacks branch arcs"):
+        shard_plan.snapshot_gate_shard_coverage(shard_guard_union_root)
+    (shard_guard_union_root / SHARD_GUARD_COVERAGE_FILENAME).unlink()
+    with pytest.raises(shard_plan.GateShardEvidenceError, match="non-empty coverage partial lacks branch arcs"):
+        shard_plan.snapshot_gate_shard_coverage(shard_guard_union_root)
+    shard_guard_empty_data.erase()
+    shard_guard_empty_data = CoverageData(basename=str(shard_guard_union_root / SHARD_GUARD_EMPTY_PARTIAL))
+    shard_guard_empty_data.add_lines({})
+    shard_guard_empty_data.write()
+    with pytest.raises(shard_plan.GateShardEvidenceError, match="empty branch coverage union"):
+        shard_plan.snapshot_gate_shard_coverage(shard_guard_union_root)
+print("Coverage union faults refused; empty partial accepted; old predicate mutation rejected; restored PASS")
 assert shard_guard_production_source.count(SHARD_GUARD_PRODUCTION_RETURN) == SHARD_GUARD_ONE
 shard_guard_mutated_namespace = {"__name__": SHARD_GUARD_CONFTEST_MODULE}
 exec(compile(shard_guard_production_source.replace(SHARD_GUARD_PRODUCTION_RETURN,

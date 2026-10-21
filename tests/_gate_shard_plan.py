@@ -119,16 +119,21 @@ def verify_gate_shard_coverage_inputs(directory, inventory):
     files = list(directory.glob(GATE_SHARD_COVERAGE_PATTERN))
     if not files or {path.name for path in files} != set(inventory):
         raise GateShardEvidenceError(f"incomplete coverage file inventory: {directory}")
+    shard_has_measured_branches = False
     for path in files:
         try:
             if not path.is_file() or hashlib.sha256(path.read_bytes()).hexdigest() != inventory[path.name]:
                 raise GateShardEvidenceError(f"coverage file digest differs: {path}")
             data = CoverageData(basename=str(path))
             data.read()
-            if not data.has_arcs() or not data.measured_files():
-                raise GateShardEvidenceError(f"missing branch coverage evidence: {path}")
+            if data.measured_files():
+                if not data.has_arcs():
+                    raise GateShardEvidenceError(f"non-empty coverage partial lacks branch arcs: {path}")
+                shard_has_measured_branches = True
         except (OSError, CoverageException) as error:
             raise GateShardEvidenceError(f"invalid coverage evidence: {path}: {error}") from error
+    if not shard_has_measured_branches:
+        raise GateShardEvidenceError(f"empty branch coverage union for shard: {directory}")
 
 
 def snapshot_gate_shard_coverage(directory, inventory_name=GATE_SHARD_COVERAGE_INVENTORY):
