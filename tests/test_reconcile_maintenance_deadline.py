@@ -24,6 +24,9 @@ MAINTENANCE_GUARD_LARGE_STEPS = 100000000
 MAINTENANCE_GUARD_PROFILE_EVENT = "call"
 MAINTENANCE_GUARD_PARSER_CALLBACK = "authorize_managed_statement_facts"
 MAINTENANCE_GUARD_LIVE_CALLBACK = "require_reconcile_maintenance_live"
+MAINTENANCE_GUARD_BOUNDARY_STEPS = 10000
+# One execute and one fetch each validate ownership before and after SQLite.
+MAINTENANCE_GUARD_EXPECTED_LIVE_BOUNDARIES = 4
 MAINTENANCE_GUARD_LARGE_SQL = """WITH RECURSIVE counter(value) AS
     (SELECT 1 UNION ALL SELECT value + 1 FROM counter WHERE value < ?)
     SELECT SUM(value) FROM counter"""
@@ -55,6 +58,12 @@ def run_reconcile_maintenance_deadline_guards():
                 assert not live_callbacks, live_callbacks
                 cursor.execute(MAINTENANCE_GUARD_SQL)
                 assert live_callbacks, "SQL execution must enforce the owner lifetime"
+                live_callbacks.clear()
+                aggregate_cursor = owner.execute(
+                    MAINTENANCE_GUARD_LARGE_SQL, (MAINTENANCE_GUARD_BOUNDARY_STEPS,))
+                assert aggregate_cursor.fetchone()[0] == (
+                    MAINTENANCE_GUARD_BOUNDARY_STEPS * (MAINTENANCE_GUARD_BOUNDARY_STEPS + 1) // 2)
+                assert len(live_callbacks) == MAINTENANCE_GUARD_EXPECTED_LIVE_BOUNDARIES, live_callbacks
             finally:
                 sys.setprofile(previous_profiler)
             assert not parser_callbacks, parser_callbacks

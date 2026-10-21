@@ -1271,6 +1271,11 @@ class _CountedLedgerConnection(sqlite3.Connection):
         generation = getattr(self, "_ledger_generation", None)
         if generation is None or generation is not _LEDGER_ADMISSION:
             return
+        # Explicit close permanently releases this slot. Cyclic GC may finalize
+        # the closed handle inside a deadline-bound reader while another thread
+        # holds admission; there is no accounting left to synchronize here.
+        if self._ledger_released:
+            return
         try:
             _close(self)
         except _error:

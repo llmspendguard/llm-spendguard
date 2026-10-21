@@ -365,14 +365,14 @@ class LedgerSQLReadRequest:
 
 
 @contextmanager
-def _ledger_read_connection(path=None, time_budget=DEFAULT_LEDGER_READ_TIME_BUDGET_S):
+def _ledger_read_connection(path=None, time_budget=DEFAULT_LEDGER_READ_TIME_BUDGET_S, *, bulk_chunked=False):
     with _ledger_read_observation():
-        with _ledger_bounded_read_handle(path, time_budget) as connection:
+        with _ledger_bounded_read_handle(path, time_budget, bulk_chunked=bulk_chunked) as connection:
             yield connection
 
 
 @contextmanager
-def _ledger_bounded_read_handle(path, time_budget):
+def _ledger_bounded_read_handle(path, time_budget, *, bulk_chunked=False):
     if not math.isfinite(time_budget) or time_budget <= 0:
         raise ValueError("Ledger read time budget must be finite and positive")
     if DEFAULT_LEDGER_READ_PROGRESS_VM_INSTRUCTIONS <= 0:
@@ -380,6 +380,8 @@ def _ledger_bounded_read_handle(path, time_budget):
     started = time.monotonic()
     deadline_at = started + time_budget
     request_scope = _LEDGER_ACTIVE_REQUEST_SCOPE.get()
+    if bulk_chunked and request_scope is not None:
+        raise LedgerReadError("Offline chunked reads cannot borrow a request scope")
     if request_scope is not None:
         request_scope.require_ledger_request_live()
     try:
@@ -402,6 +404,11 @@ def _ledger_bounded_read_handle(path, time_budget):
             raise LedgerReadTimeout(time_budget) from exc
         raise LedgerReadOpenError(f"Ledger read cannot open existing database: {exc}") from exc
     expired = False
+
+    def require_ledger_bulk_chunk_live():
+        """Refuse expired offline chunks before any fetched rows are consumed."""
+        if time.monotonic() >= deadline_at:
+            raise LedgerReadTimeout(time_budget)
 
     def ledger_read_progress():
         nonlocal expired
@@ -430,8 +437,13 @@ def _ledger_bounded_read_handle(path, time_budget):
         polling_started = time.monotonic()
         if polling_started >= deadline_at:
             raise LedgerReadTimeout(time_budget)
-        read_deadline_polling = LedgerDeadlinePolling(deadline_at, polling_started)
-        connection.set_progress_handler(ledger_read_progress, read_deadline_polling.interval)
+        if bulk_chunked:
+            # Offline reconciliation checks natural fetch boundaries. Request
+            # owners retain fine VM polling for latency and abandonment safety.
+            connection._ledger_bulk_chunk_live = require_ledger_bulk_chunk_live
+        else:
+            read_deadline_polling = LedgerDeadlinePolling(deadline_at, polling_started)
+            connection.set_progress_handler(ledger_read_progress, read_deadline_polling.interval)
         yield connection
         if request_scope is not None:
             request_scope.require_ledger_request_live()

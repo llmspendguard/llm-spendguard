@@ -91,8 +91,17 @@ class ReconcileMaintenanceConnection:
             raise ReconcileMaintenanceDeadline(self._reconcile_budget)
 
     def poll_reconcile_maintenance_deadline(self):
+        # SQLite invokes this inside one native step. Filesystem identity is
+        # validated before and after that step, including commit admission;
+        # repeating stat/path work at every VM poll makes offline scans costly
+        # under coverage. Keep cancellation and deadline interruption fine here.
         try:
-            self.require_reconcile_maintenance_live()
+            if self._reconcile_progress_failure is not None:
+                raise self._reconcile_progress_failure
+            if ledger_read.current_ledger_request_scope() is not None:
+                raise ReconcileMaintenanceRequestRefusal("Offline reconciliation cannot run inside a request scope")
+            if time.monotonic() >= self._reconcile_deadline:
+                raise ReconcileMaintenanceDeadline(self._reconcile_budget)
         except BaseException as failure:
             self._reconcile_progress_failure = failure
             return True

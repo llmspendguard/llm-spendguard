@@ -20,6 +20,8 @@ FROM spend_events WHERE day>=? AND reconciled=0
 AND COALESCE(status,'') NOT IN ('void','reversed') AND COALESCE(conv_id,'')!=?
 AND (batch_usd IS NOT NULL OR cost_type IS NULL OR cost_type=?)"""
 RECONCILE_STAGE_LOGGER = logging.getLogger(__name__)
+# Bound materialized rows and deadline-check cadence, never the complete scan.
+RECONCILE_BULK_FETCH_CHUNK_ROWS = 1024
 # Offline scans own their complete lifetime. Large ledgers can configure the
 # whole-scan budget; expiration refuses the complete result before correction.
 RECONCILE_BULK_READ_TIME_BUDGET_S = float(os.getenv(
@@ -39,7 +41,7 @@ def stage_reconcile_estimate_cells(since, correction_marker, normalize_model, pa
             staged.execute("CREATE TABLE corrections(project,provider,model,day,amount)")
             gaps = {}
             try:
-                with _ledger_read_connection(ledger_path, time_budget) as source:
+                with _ledger_read_connection(ledger_path, time_budget, bulk_chunked=True) as source:
                     with closing(sqlite3.Connection.cursor(source, sqlite3.Cursor)) as source_cursor:
                         _populate_reconcile_estimate_stage(source_cursor, staged, gaps, since,
                                                            correction_marker, normalize_model)
@@ -60,7 +62,7 @@ def _populate_reconcile_estimate_stage(source_cursor, staged, gaps, since, corre
     # even when their price is NULL; those remain incomplete evidence.
     cursor = source_cursor.execute(RECONCILE_ESTIMATE_STREAM_SQL,
         (since, correction_marker, RECONCILE_ESTIMATE_BATCH_KIND))
-    for row_id, project, provider, model, day, amount, basis in cursor:
+    for row_id, project, provider, model, day, amount, basis in _iter_reconcile_bulk_chunk_rows(cursor):
         # Keep unknown prices as NULL, including writer zero placeholders.
         if amount is None or basis == "unpriced":
             staged.execute("INSERT INTO cells VALUES(?,?,?,?,?,?)",
@@ -82,12 +84,24 @@ def _populate_reconcile_estimate_stage(source_cursor, staged, gaps, since, corre
     staged.commit()
 
 
+def _iter_reconcile_bulk_chunk_rows(cursor):
+    """Consume every native row, checking deadline before and after each chunk."""
+    require_live = cursor.connection._ledger_bulk_chunk_live
+    while True:
+        require_live()
+        rows = cursor.fetchmany(RECONCILE_BULK_FETCH_CHUNK_ROWS)
+        require_live()
+        if not rows:
+            return
+        yield from rows
+
+
 def iter_reconcile_gate_project_days(since, path=None, providers=None, include_provider=False,
                                      time_budget=RECONCILE_BULK_READ_TIME_BUDGET_S):
     """Stream the exact countable project/day batch projection for gap arithmetic."""
     ledger_path = Path(path if path is not None else config.db_path()).expanduser().resolve()
     try:
-        with _ledger_read_connection(ledger_path, time_budget) as source:
+        with _ledger_read_connection(ledger_path, time_budget, bulk_chunked=True) as source:
             with closing(sqlite3.Connection.cursor(source, sqlite3.Cursor)) as source_cursor:
                 provider_scope = tuple(providers) if providers is not None else None
                 if provider_scope == ():
@@ -98,10 +112,11 @@ def iter_reconcile_gate_project_days(since, path=None, providers=None, include_p
                     scope_sql = " AND provider IN (" + ",".join("?" for _ in provider_scope) + ")"
                     parameters.extend(provider_scope)
                 grouping = "provider,project_primary,day" if include_provider else "project_primary,day"
-                for provider, project, day, amount in source_cursor.execute(
+                source_cursor.execute(
                         "SELECT provider,project_primary,day,dec_sum(batch_usd) FROM spend_events WHERE day>=? AND "
                         + SpendLedger._NOT_VOID + " AND " + SpendLedger._COUNTABLE + scope_sql
-                        + " GROUP BY " + grouping, parameters):
+                        + " GROUP BY " + grouping, parameters)
+                for provider, project, day, amount in _iter_reconcile_bulk_chunk_rows(source_cursor):
                     value = float(amount)
                     if value:
                         key = (provider, project or "unattributed", day) if include_provider else (project or "unattributed", day)

@@ -1,6 +1,7 @@
 """Offline reconcile streams retain whole-read deadlines without request dispatch."""
 from contextlib import closing, contextmanager
 import time
+import sys
 import unittest
 from unittest.mock import patch
 
@@ -18,6 +19,8 @@ RECONCILE_OWNED_GUARD_AMOUNT = 2
 RECONCILE_OWNED_GUARD_DEADLINE_S = 0.02
 RECONCILE_OWNED_GUARD_DELAY_MULTIPLIER = 2
 RECONCILE_OWNED_GUARD_SOURCE_SCANS = 2
+RECONCILE_OWNED_GUARD_PROFILE_EVENT = "call"
+RECONCILE_OWNED_GUARD_CALLBACK_NAME = "ledger_read_progress"
 
 
 class ReconcileOwnedBulkReadGuards(unittest.TestCase):
@@ -28,13 +31,26 @@ class ReconcileOwnedBulkReadGuards(unittest.TestCase):
         original_owner = ledger_read._ledger_read_connection
         original_dispatch = ledger_request_cursor.ManagedRequestCursorState.dispatch_managed_request_cursor_step
         observed_owners = []
+        callback_count = 0
+
+        def count_reconcile_owned_source_callbacks(frame, event, argument):
+            nonlocal callback_count
+            if (event == RECONCILE_OWNED_GUARD_PROFILE_EVENT
+                    and frame.f_code.co_name == RECONCILE_OWNED_GUARD_CALLBACK_NAME):
+                callback_count += 1
 
         @contextmanager
         def observe_reconcile_owned_bulk_handle(*args, **kwargs):
+            assert kwargs.get("bulk_chunked") is True, "offline source must poll at chunk boundaries"
             with original_owner(*args, **kwargs) as source:
                 observed_owners.append(source)
                 assert source._ledger_owned_read_deadline
-                yield source
+                previous_profiler = sys.getprofile()
+                sys.setprofile(count_reconcile_owned_source_callbacks)
+                try:
+                    yield source
+                finally:
+                    sys.setprofile(previous_profiler)
 
         def refuse_reconcile_owned_cursor_dispatch(state, operation, *args, **kwargs):
             connection = state._request_cursor_referent.connection
@@ -53,11 +69,14 @@ class ReconcileOwnedBulkReadGuards(unittest.TestCase):
             self.assertEqual(dict(reconcile_estimate_stage.iter_reconcile_gate_project_days(
                 RECONCILE_OWNED_GUARD_DAY)), {(__name__, RECONCILE_OWNED_GUARD_DAY): RECONCILE_OWNED_GUARD_AMOUNT})
         self.assertEqual(len(observed_owners), RECONCILE_OWNED_GUARD_SOURCE_SCANS)
+        self.assertEqual(callback_count, 0)
+        print(f"actual reconcile staging and gap scan VM callbacks: {callback_count}")
 
         @contextmanager
-        def legacy_reconcile_unbounded_owner_mutation(path, time_budget):
+        def legacy_reconcile_unbounded_owner_mutation(path, time_budget, *, bulk_chunked=False):
             # Reintroduce the old managed connection without an owned deadline.
             with closing(config.open_ledger_connection(path)) as source:
+                source._ledger_bulk_chunk_live = lambda: None
                 yield source
 
         def expire_reconcile_staging_work(model):

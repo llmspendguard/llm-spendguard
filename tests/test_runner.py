@@ -21,11 +21,11 @@ import pytest
 # class (a 213s live-billing pull); accidental NETWORK is caught in milliseconds by the dead proxy
 # below regardless — this budget is the backstop for sleeps and runaway loops.
 FILE_BUDGET_S = 120
-# Hosted CI measured 125.6s for this deliberately heavy full-ledger containment
-# proof. WAL-pin prevention adds per-read deadlines, parser facts and idle expiry
-# ownership; retain those guards and allow ~19% headroom over that observation.
-# Every other file retains the incident-#25 hog detector's tight global budget.
-RECONCILE_CONTAINMENT_FILE_BUDGET_S = 150
+# Hosted 3.11 measured this heavy containment proof at 247s before chunked
+# reads removed per-op callback overhead. 360s covers that observation plus
+# 3.12/runner variance with headroom, below the 600s subprocess timeout.
+# Every other file retains the incident-#25 hog detector's 120s global budget.
+RECONCILE_CONTAINMENT_FILE_BUDGET_S = 360
 REVIEWED_FILE_BUDGET_OVERRIDES_S = {
     "test_reconcile_read_containment.py": RECONCILE_CONTAINMENT_FILE_BUDGET_S,
 }
