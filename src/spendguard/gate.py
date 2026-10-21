@@ -2478,13 +2478,119 @@ def _apply_rt(module_path, class_name, method, est_fn, act_fn, is_async):
     _patch_method(module_path, class_name, method, lambda cur: _wrap_rt(cur, est_fn, act_fn, is_async))
 
 
-def install(cap: "float | None" = None) -> None:
-    """Idempotently patch every registered SDK surface. Fail-open per entry (a missing
-    SDK or changed internal just logs a warning; other surfaces still install).
-    Optional cap=<dollars> sets GATE_CAP for this process."""
-    if cap is not None:
-        os.environ["GATE_CAP"] = str(cap)
+class _GatePackagePostImportLoader:
+    """Run callbacks inside the package import lock, before import can return a usable SDK."""
+
+    def __init__(self, loader, finder, package):
+        self.loader, self.finder, self.package = loader, finder, package
+
+    def create_module(self, spec):
+        create = getattr(self.loader, "create_module", None)
+        return create(spec) if create is not None else None
+
+    def exec_module(self, module):
+        if self.loader is not None:
+            execute = getattr(self.loader, "exec_module", None)
+            if execute is not None:
+                execute(module)
+            else:
+                module = self.loader.load_module(module.__name__)
+        # A failed/interrupted callback aborts import and stays registered for a retry.
+        self.finder.finish_package_import(module)
+
+    def __getattr__(self, name):
+        return getattr(self.loader, name)
+
+
+class _GatePackagePostImportFinder:
+    """One-shot top-package callbacks; delegation preserves other importers' precedence."""
+
+    def __init__(self):
+        self.callbacks = {}
+        self.package_locks = {}
+        self.active_packages = set()
+        self.lock = _threading.RLock()
+
+    def find_spec(self, fullname, path=None, target=None):
+        with self.lock:
+            if fullname not in self.callbacks:
+                return None
+        for finder in tuple(sys.meta_path):
+            if finder is self:
+                continue
+            find_spec = getattr(finder, "find_spec", None)
+            if find_spec is not None:
+                spec = find_spec(fullname, path, target)
+            else:
+                import importlib.util
+                loader = finder.find_module(fullname, path)
+                spec = importlib.util.spec_from_loader(fullname, loader) if loader is not None else None
+            if spec is not None:
+                spec.loader = _GatePackagePostImportLoader(spec.loader, self, fullname)
+                return spec
+        return None
+
+    def register_package_callback(self, package, callback):
+        """Own registry mutation explicitly; callbacks survive failed imports until successful completion."""
+        import importlib
+        with self.lock:
+            callbacks = self.callbacks.setdefault(package, [])
+            if callback not in callbacks:
+                callbacks.append(callback)
+            if self not in sys.meta_path:
+                sys.meta_path.insert(0, self)
+        module = sys.modules.get(package)
+        if module is None:
+            return
+        spec = getattr(module, "__spec__", None)
+        if getattr(spec, "_initializing", False) and isinstance(spec.loader, _GatePackagePostImportLoader):
+            return  # The importing thread owns completion; never wait while its caller may own a release event.
+        module = importlib.import_module(package)
+        if getattr(getattr(module, "__spec__", None), "_initializing", False):
+            raise SpendGateRefused("Cannot arm an SDK whose unwrapped import is executing in this thread")
+        self.finish_package_import(module)
+
+    def finish_package_import(self, module):
+        package = module.__name__
+        with self.lock:
+            package_lock = self.package_locks.setdefault(package, _threading.RLock())
+        with package_lock:
+            if package in self.active_packages:
+                return
+            self.active_packages.add(package)
+            try:
+                with self.lock:
+                    callbacks = tuple(self.callbacks.get(package, ()))
+                for callback in callbacks:
+                    callback(module)
+                    with self.lock:
+                        self.callbacks[package].remove(callback)
+                with self.lock:
+                    if not self.callbacks.get(package):
+                        self.callbacks.pop(package, None)
+                    if not self.callbacks and self in sys.meta_path:
+                        sys.meta_path.remove(self)
+            finally:
+                self.active_packages.remove(package)
+
+
+_gate_package_import_finder = _GatePackagePostImportFinder()
+
+
+def _register_gate_package_postimport(package, callback):
+    """Patch an existing package now, or its first successful import before it becomes reachable.
+
+    Never hold the registry lock while importing: another thread can own the package import lock.
+    import_module also waits for an already-running package import to finish before applying callbacks.
+    """
+    _gate_package_import_finder.register_package_callback(package, callback)
+
+
+def _patch_sdk_package_surfaces(package):
+    """Apply the historical per-entry policy, scoped to the package whose import just finished."""
     for spec in INTERCEPTORS + _EXTRA:
+        if spec[0].partition(".")[0] != package:
+            continue
         try:
             _apply(*spec)
         except ModuleNotFoundError:
@@ -2492,6 +2598,8 @@ def install(cap: "float | None" = None) -> None:
         except Exception as e:
             print(f"[spend_gate] WARN patch {spec[0]}.{spec[1]}.{spec[2]} skipped: {e}", file=sys.stderr)
     for spec in RT_INTERCEPTORS:               # real-time accounting + cumulative budget
+        if spec[0].partition(".")[0] != package:
+            continue
         try:
             _apply_rt(*spec)
         except ModuleNotFoundError:
@@ -2499,6 +2607,8 @@ def install(cap: "float | None" = None) -> None:
         except Exception as e:
             print(f"[spend_gate] WARN rt-patch {spec[0]}.{spec[1]}.{spec[2]} skipped: {e}", file=sys.stderr)
     for spec in STREAM_INTERCEPTORS:           # SDK streaming HELPERS (a different method from `create`)
+        if spec[0].partition(".")[0] != package:
+            continue
         try:
             _apply_stream(*spec)
         except ModuleNotFoundError:
@@ -2507,12 +2617,28 @@ def install(cap: "float | None" = None) -> None:
             print(f"[spend_gate] WARN stream patch {spec[0]}.{spec[1]}.{spec[2]} skipped: {e} — STREAMED "
                   f"CALLS ON THAT SURFACE WILL NOT BE RECORDED.", file=sys.stderr)
     for spec in UNIT_INTERCEPTORS:             # non-token billing (images / transcription / TTS / ft jobs)
+        if spec[0].partition(".")[0] != package:
+            continue
         try:
             _apply_units(*spec)
         except ModuleNotFoundError:
             pass
         except Exception as e:
             print(f"[spend_gate] WARN unit-patch {spec[0]}.{spec[1]}.{spec[2]} skipped: {e}", file=sys.stderr)
+
+
+def _patch_imported_sdk_package(module):
+    _patch_sdk_package_surfaces(module.__name__)
+
+
+def install(cap: "float | None" = None) -> None:
+    """Arm absent SDKs and idempotently patch imported ones; preserve fail-open per-entry warnings."""
+    if cap is not None:
+        os.environ["GATE_CAP"] = str(cap)
+    packages = {spec[0].partition(".")[0] for spec in
+                INTERCEPTORS + _EXTRA + RT_INTERCEPTORS + STREAM_INTERCEPTORS + UNIT_INTERCEPTORS}
+    for package in sorted(packages):
+        _register_gate_package_postimport(package, _patch_imported_sdk_package)
     import importlib
     for _mod in ("litellm_adapter", "bedrock_adapter", "vertex_adapter"):
         try:                                    # provider breadth (LiteLLM / direct Bedrock / direct Vertex) — wire
@@ -2533,11 +2659,10 @@ def install(cap: "float | None" = None) -> None:
 
 def _any_patched():
     """True iff at least one SDK surface is actually gated in THIS interpreter (enforcement is live here)."""
-    import importlib
     for spec in INTERCEPTORS + _EXTRA + RT_INTERCEPTORS + UNIT_INTERCEPTORS:
         module_path, class_name, method = spec[0], spec[1], spec[2]
         try:
-            cls = getattr(importlib.import_module(module_path), class_name)
+            cls = getattr(sys.modules.get(module_path), class_name)
             if getattr(getattr(cls, method, None), "_spend_gated", False):
                 return True
         except Exception:
@@ -2558,6 +2683,56 @@ def gated_sdk_modules():
     return sorted(mods)
 
 
+def _enforcement_armed():
+    """Each installed core SDK must be fully patched or covered by a live import-completion hook.
+
+    Optional adapters retain their historical any-surface probe. Importability failures are indeterminate,
+    never evidence that a provider is absent. No package is imported by the core SDK probe.
+    """
+    import importlib.util
+    specs = INTERCEPTORS + _EXTRA + RT_INTERCEPTORS + STREAM_INTERCEPTORS + UNIT_INTERCEPTORS
+    packages = {spec[0].partition(".")[0] for spec in specs}
+    finder = _gate_package_import_finder
+    for module_name in gated_sdk_modules():
+        package = module_name.partition(".")[0]
+        try:
+            if package not in sys.modules and importlib.util.find_spec(package) is None:
+                continue
+            if module_name not in sys.modules and importlib.util.find_spec(module_name) is None:
+                continue
+        except Exception:
+            return False
+        if package not in packages:
+            if not _any_patched():
+                return False
+            continue
+        with finder.lock:
+            armed = finder in sys.meta_path and _patch_imported_sdk_package in finder.callbacks.get(package, ())
+        module = sys.modules.get(package)
+        if module is None:
+            if not armed:
+                return False
+            continue
+        module_spec = getattr(module, "__spec__", None)
+        if getattr(module_spec, "_initializing", False):
+            if not armed or not isinstance(module_spec.loader, _GatePackagePostImportLoader):
+                return False
+            continue
+        found_surface = False
+        for spec in specs:
+            if spec[0].partition(".")[0] != package:
+                continue
+            cls = getattr(sys.modules.get(spec[0]), spec[1], None)
+            method = getattr(cls, spec[2], None)
+            if method is not None:
+                found_surface = True
+                if not getattr(method, "_spend_gated", False):
+                    return False
+        if not found_surface:
+            return False
+    return True
+
+
 def require(cap: "float | None" = None) -> None:
     """FAIL-CLOSED guard — ensure the gate is actually ENFORCING in this interpreter, else raise. Put at the
     top of any script that must not spend ungated; it refuses to run if spendguard was bypassed or disabled:
@@ -2569,32 +2744,11 @@ def require(cap: "float | None" = None) -> None:
         raise SpendGateRefused("spendguard is DISABLED (GATE_DISABLE / `spendguard off`) but this script "
                                "called require() — refusing to spend ungated. `spendguard on` to re-enable.")
     install(cap=cap)
-    if not _any_patched():
-        # Nothing is patched — but that has TWO meanings, and only one is a bypass. Mirror the SAME probe
-        # __init__._auto_install's strict path already uses, so the two fail-closed checkers can't disagree:
-        #   • a gated SDK is IMPORTABLE here but was not patched → a real bypass (wrong python/venv): REFUSE.
-        #   • NO gated SDK is importable → no provider can be called from this interpreter, so there is nothing
-        #     to patch and nothing that can spend ungated → enforcement is vacuously satisfied: PASS. This is the
-        #     correct state for a no-provider box (CI runners, offline suites) whose only tie to spendguard is a
-        #     module doing `import spendguard; spendguard.require()` at import. It is a point-in-time check, like
-        #     the rest of require(): if a provider SDK is later installed into this interpreter, call require()
-        #     again after importing it. Refusing here was a false negative that forced callers to install SDKs
-        #     they never use or to weaken the gate — both worse than this exact distinction.
-        import importlib.util
-
-        def _installed(m):
-            try:
-                return importlib.util.find_spec(m) is not None
-            except Exception:                       # a broken parent/namespace edge → treat as "not present"
-                return False
-
-        present = [m for m in gated_sdk_modules() if _installed(m)]
-        if present:
-            raise SpendGateRefused(
-                "spendguard is NOT enforcing in this interpreter — an LLM SDK (" + ", ".join(present) + ") is "
-                "installed yet wasn't patched (wrong python/venv?). require() refuses to spend ungated. Fix: run "
-                "under a gated venv, or `import spendguard` before the SDK is imported/used.")
-        # else: no gated provider SDK importable here — nothing to gate, nothing can spend. Enforcement holds.
+    if not _enforcement_armed():
+        raise SpendGateRefused(
+            "spendguard is NOT enforcing in this interpreter — an installed LLM SDK is neither fully patched "
+            "nor covered by a live import hook. require() refuses to spend ungated. Fix: run under a gated "
+            "venv, or import spendguard before the SDK is imported/used.")
 
 
 def _render_key_status_lines(statuses, down):
@@ -2685,7 +2839,7 @@ def _cli(cmd="status", live=False):
         elif _code_v:
             print(f"  version   : 🟢 {_code_v}")
         install()
-        enforcing = _any_patched()
+        enforcing = _enforcement_armed()
         print(f"  {ENFORCING_MARKER}: "
               f"{'🟢 ' + ENFORCING_YES + ' — calls from this interpreter are gated' if enforcing else '🔴 ' + ENFORCING_NO + ' — calls from THIS interpreter are NOT gated (bypass!)'}")
         if not enforcing:
