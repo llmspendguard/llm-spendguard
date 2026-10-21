@@ -29,10 +29,17 @@ _usage_cache = {"at": 0.0, "val": None}
 
 
 def usage():
-    """Kimi Code exposes no plan-quota/status surface. Cache the honest unknown so repeated cross-lane refreshes do
-    no work and, critically, never manufacture headroom from token estimates or call counts."""
-    from . import lane_quota
-    return lane_quota.cached_usage(_usage_cache, _USAGE_TTL_S, lambda: None)
+    """Provider quota buckets from the configured Kimi CLI server, or unknown."""
+    return usage_report()["buckets"]
+
+
+def usage_report():
+    """Documented CLI-server quota; missing local server configuration is a named gap."""
+    from . import config, subscription_headroom_surfaces as surfaces
+    settings = surfaces.subscription_surface_settings("kimi_code", "SPENDGUARD_KIMI_USAGE_URL")
+    return surfaces.cached_subscription_surface_report(_usage_cache, _USAGE_TTL_S, lambda:
+        surfaces.read_subscription_surface_report(settings, config.api_key("SPENDGUARD_KIMI_USAGE_TOKEN"),
+                                                  TIMEOUT_S, surfaces.parse_kimi_subscription_surface))
 
 
 def _bin():

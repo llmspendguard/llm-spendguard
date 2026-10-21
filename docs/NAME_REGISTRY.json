@@ -589,10 +589,15 @@
       "verdict": "PROTOCOL",
       "why": "chat/claudecode/codex.update all share a duck-typed contract: each is an incremental 'read new data since watermark, digest into local state' operation for a different provider (Claude web, Claude Cod PR0 adjudication covers only the following exact dispatched-contract pairs, including recorded shortened identities; it does not permit unrelated members sharing the bare name. n retains the planned source-definition baseline (or the planned repository count when no source definition exists); test/script pairs do not expand source coverage. [Verdict 154: src/spendguard/claudecode.py:update <-> src/spendguard/codex.py:update] Keep the Source adapter update contract The bodies maintain different provider-specific state: Claude Code accumulates a deduplicated usage ledger while Codex refreshes and prunes digest caches. sources._LedgerSource.read dynamically dispatches _mod.update() to refresh the selected backend, so the common method name is intentional. Evidence: src/spendguard/sources.py:107; src/spendguard/claudecode.py:78; src/spendguard/codex.py:127."
     },
+    "usage_report": {
+      "n": 2,
+      "verdict": "PROTOCOL",
+      "why": "Kimi and Z.ai executor usage_report() implementations expose the same zero-argument optional lane-headroom report contract: buckets, source, reason, n, window and uncertainty. Both delegate to subscription_headroom_surfaces.read_subscription_headroom_report with their lane identity. lanes.lane_headroom dispatches this member by name before the legacy usage() fallback. Provider-specific configured surfaces differ, but the dispatched signature and report semantics are uniform. This verdict covers only src/spendguard/kimi_exec.py:usage_report and src/spendguard/zai_exec.py:usage_report."
+    },
     "usage": {
       "n": 5,
       "verdict": "PROTOCOL",
-      "why": "Each usage() is a per-lane implementation of the same lane-quota contract (return buckets [{bucket, remaining_pct, reset_ts}] or None), delegating to shared lane_quota.cached_usage. Antigravity/codex/subscription parse provider surfaces; Kimi/Z.ai explicitly return cached None because those providers expose no quota surface. Intentional polymorphism consumed uniformly by lanes.lane_headroom() iterating mod.usage(). [Original protocol adjudicated by honestreview name --run, 2026-08-27; Kimi/Z.ai protocol implementations reviewed 2026-10-05.]"
+      "why": "Each usage() is a per-lane implementation of the same lane-quota contract (return buckets [{bucket, remaining_pct, reset_ts}] or None). Antigravity/codex/subscription parse provider surfaces through lane_quota.cached_usage; Kimi/Z.ai delegate to their uniform usage_report() readers and return its buckets. Intentional polymorphism consumed by lanes.lane_headroom() as the fallback when usage_report is absent. None establishes only that this read supplied no data, not that the provider has no quota surface. [Original protocol adjudicated by honestreview name --run, 2026-08-27; Kimi/Z.ai protocol implementations reviewed 2026-10-05; report-backed delegation updated in the lane-headroom fix.]"
     },
     "w": {
       "n": 12,
