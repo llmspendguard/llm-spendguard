@@ -6,6 +6,7 @@ with register_provider(...). Calls go through the openai/anthropic SDKs, so the 
 already meters + budgets them.
 """
 import time
+import os
 import json
 import threading
 import functools
@@ -1686,6 +1687,20 @@ def _embed_default_model():
         return _DEFAULT_EMBED_MODEL
 
 
+def _sdk_client_max_retries(timeout_s):
+    # TEST/OPS knob makes offline tests fail-fast against the dead proxy; unset = production identical.
+    retry_override = os.getenv("SPENDGUARD_SDK_MAX_RETRIES")
+    if retry_override is not None:
+        try:
+            retry_count = int(retry_override)
+        except ValueError:
+            raise ValueError("SPENDGUARD_SDK_MAX_RETRIES must be a non-negative integer") from None
+        if retry_count < 0:
+            raise ValueError("SPENDGUARD_SDK_MAX_RETRIES must be a non-negative integer")
+        return retry_count
+    return 0 if timeout_s else None
+
+
 def _oai_compat_client(provider, timeout_s=None):
     """The OpenAI-SDK client for an OpenAI-COMPATIBLE provider — the ONE place the per-provider base_url + key +
     fast-connect discipline is assembled, so completions AND embeddings build the client identically (no drift).
@@ -1699,8 +1714,11 @@ def _oai_compat_client(provider, timeout_s=None):
     if not key:
         raise ValueError(f"no key ({spec['key_env']}) for {provider}")
     from openai import OpenAI
-    return (OpenAI(api_key=key, base_url=spec["base_url"], timeout=_http_timeout(timeout_s), max_retries=0)
-            if timeout_s else OpenAI(api_key=key, base_url=spec["base_url"]))
+    compat_retry_count = _sdk_client_max_retries(timeout_s)
+    compat_client_options = {} if compat_retry_count is None else {"max_retries": compat_retry_count}
+    if timeout_s:
+        compat_client_options["timeout"] = _http_timeout(timeout_s)
+    return OpenAI(api_key=key, base_url=spec["base_url"], **compat_client_options)
 
 
 def embed(texts, model=None, *, dimensions=None, max_batch=None, timeout_s=None, checkpoint=None):
@@ -2871,11 +2889,11 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
             # below is the REAL wall-clock cancel and works for vision too, so for an images= call we keep the
             # deadline via that path and OMIT the httpx client timeout that breaks vision. max_retries=0 whenever
             # timeout_s (vendor_call owns the retry loop; the SDK default of 2 would triple a down vendor's wall time).
-            if timeout_s:
-                c = anthropic.Anthropic(api_key=key, max_retries=0,
-                                        **({"timeout": _http_timeout(timeout_s)} if not images else {}))
-            else:
-                c = anthropic.Anthropic(api_key=key)
+            anthropic_retry_count = _sdk_client_max_retries(timeout_s)
+            anthropic_client_options = {} if anthropic_retry_count is None else {"max_retries": anthropic_retry_count}
+            if timeout_s and not images:
+                anthropic_client_options["timeout"] = _http_timeout(timeout_s)
+            c = anthropic.Anthropic(api_key=key, **anthropic_client_options)
             _uc = ([{"type": "text", "text": prompt}] + _image_parts(images, "anthropic")) if images else prompt
             kw = {"model": raw, "max_tokens": max_tokens, "messages": [{"role": "user", "content": _uc}]}
             # MEASUREMENT DETERMINISM — apply the SAME provider-honored knob set the openai branch applies (decided once
@@ -2996,8 +3014,11 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
             from openai import OpenAI
             # Same fast-connect / no-SDK-retry discipline as the anthropic branch: a blackholed OpenAI-compatible
             # endpoint (z.ai, moonshot) must fail on CONNECT in ~10s, not hold the slot for the whole read budget.
-            c = (OpenAI(api_key=key, base_url=spec["base_url"], timeout=_http_timeout(timeout_s), max_retries=0)
-                 if timeout_s else OpenAI(api_key=key, base_url=spec["base_url"]))
+            openai_retry_count = _sdk_client_max_retries(timeout_s)
+            openai_client_options = {} if openai_retry_count is None else {"max_retries": openai_retry_count}
+            if timeout_s:
+                openai_client_options["timeout"] = _http_timeout(timeout_s)
+            c = OpenAI(api_key=key, base_url=spec["base_url"], **openai_client_options)
             _uc = ([{"type": "text", "text": prompt}] + _image_parts(images, "openai")) if images else prompt
             msgs = ([{"role": "system", "content": system}] if system else []) + [{"role": "user", "content": _uc}]
             okw = {"model": raw, "messages": msgs}
