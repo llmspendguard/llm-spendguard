@@ -4,28 +4,68 @@ on:
     branches: [main]
   pull_request:
 
+env:
+  CI_TEST_VENV: .venv
+  CI_TEST_CACHE_REVISION: gate-env-v1
+  CI_TEST_EXTRAS: ".[openai,anthropic,otel,chat,dev]"
+  CI_PYDANTIC_FLOOR: "pydantic>=2"
+  CI_GATE_TIMINGS: .test_durations.json
+  CI_GATE_REPORT_PREFIX: gate-report
+  CI_GATE_ARTIFACT_PREFIX: coverage
+  CI_GATE_ARTIFACT_ROOT: coverage-artifacts
+  CI_GATE_COVERAGE_INVENTORY: gate-coverage-manifest.json
+  # Warm with network before the runner's dead proxy is enabled; subprocesses inherit this cache.
+  TIKTOKEN_CACHE_DIR: ${{ github.workspace }}/.tiktoken-cache
+
 jobs:
-  test:
+  gate-plan:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python-version: ["3.11", "3.12"]
-    env:
-      # The offline suite's dead proxy blocks tiktoken from downloading its o200k vocab on first use — pin a cache
-      # dir the warm step populates (with network) and the test subprocess inherits (test_runner copies os.environ),
-      # so the real-BPE token tests run offline instead of a crude fallback (which 1-token-diverges the estimators).
-      TIKTOKEN_CACHE_DIR: ${{ github.workspace }}/.tiktoken-cache
+    outputs:
+      shards: ${{ steps.plan.outputs.shards }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with:
+          python-version: "3.11"
+      - id: plan
+        run: echo "shards=$(python tests/_gate_shard_plan.py matrix --timings "$CI_GATE_TIMINGS")" >> "$GITHUB_OUTPUT"
+  test:
+    needs: gate-plan
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+        shard-index: ${{ fromJSON(needs.gate-plan.outputs.shards) }}
+    env:
+      SPENDGUARD_GATE_SHARD_INDEX: ${{ matrix.shard-index }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        id: python
+        with:
           python-version: ${{ matrix.python-version }}
+      - uses: astral-sh/setup-uv@v10.3.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: pyproject.toml
+      - name: Cache resolved environment and tiktoken vocabulary
+        uses: actions/cache@v6
+        with:
+          path: |
+            ${{ env.CI_TEST_VENV }}
+            ${{ env.TIKTOKEN_CACHE_DIR }}
+          key: ${{ env.CI_TEST_CACHE_REVISION }}-${{ runner.os }}-${{ runner.arch }}-${{ steps.python.outputs.python-version }}-${{ hashFiles('pyproject.toml', '.github/workflows/ci.yml') }}
       - name: Install (with provider SDKs + test deps)
         run: |
-          python -m pip install --upgrade pip
+          if [ ! -x "${CI_TEST_VENV}/bin/python" ]; then
+            uv venv --python "${{ steps.python.outputs.python-path }}" "$CI_TEST_VENV"
+          fi
+          echo "${PWD}/${CI_TEST_VENV}/bin" >> "$GITHUB_PATH"
           # pydantic>=2 is declared on the SDK extras too (see pyproject); pinned here as well so CI resolution stays
           # deterministic — a backtracking resolve once pulled pydantic 1.x and broke `import anthropic` (httpx2.Timeout).
-          pip install -e ".[openai,anthropic,otel,chat,dev]" "pydantic>=2"
+          # Refresh the editable install even on a cache hit, so checkout metadata always matches the current tree.
+          uv pip install --python "${CI_TEST_VENV}/bin/python" -e "$CI_TEST_EXTRAS" "$CI_PYDANTIC_FLOOR"
       - name: Warm the tiktoken o200k cache (the offline suite can't download it)
         run: python -c "import tiktoken; tiktoken.get_encoding('o200k_base'); print('o200k cached')"
       - name: Lint (ruff — pyflakes + bugbear correctness rules)
@@ -38,13 +78,65 @@ jobs:
         run: |
           # -n auto: every test file is an isolated subprocess with its own temp home, so they are
           # embarrassingly parallel (one live-billing hog once made the serial suite read as 24 min).
-          SPENDGUARD_COVERAGE=1 pytest -n auto
-          coverage combine
+          SPENDGUARD_GATE_TIMINGS="$CI_GATE_TIMINGS" SPENDGUARD_COVERAGE=1 pytest -n auto --junitxml="${CI_GATE_REPORT_PREFIX}-${{ matrix.shard-index }}.xml"
+      - name: Snapshot every coverage input before transport
+        run: python tests/_gate_shard_plan.py snapshot-coverage --directory "$GITHUB_WORKSPACE" --inventory-name "$CI_GATE_COVERAGE_INVENTORY"
+      - name: Upload complete shard coverage and case report
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ env.CI_GATE_ARTIFACT_PREFIX }}-${{ matrix.python-version }}-${{ matrix.shard-index }}
+          include-hidden-files: true
+          if-no-files-found: error
+          path: |
+            .coverage.*
+            ${{ env.CI_GATE_COVERAGE_INVENTORY }}
+            ${{ env.CI_GATE_REPORT_PREFIX }}-${{ matrix.shard-index }}.xml
+      - name: Price-literal audit (FAILS the build on a mispriced literal)
+        run: SPENDGUARD_AUDIT_DIR=src/spendguard spendguard audit --ci
+  coverage:
+    needs: test
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        id: python
+        with:
+          python-version: ${{ matrix.python-version }}
+      - uses: astral-sh/setup-uv@v10.3.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: pyproject.toml
+      - name: Cache resolved environment and tiktoken vocabulary
+        uses: actions/cache@v6
+        with:
+          path: |
+            ${{ env.CI_TEST_VENV }}
+            ${{ env.TIKTOKEN_CACHE_DIR }}
+          key: ${{ env.CI_TEST_CACHE_REVISION }}-${{ runner.os }}-${{ runner.arch }}-${{ steps.python.outputs.python-version }}-${{ hashFiles('pyproject.toml', '.github/workflows/ci.yml') }}
+      - name: Install the same coverage environment
+        run: |
+          if [ ! -x "${CI_TEST_VENV}/bin/python" ]; then
+            uv venv --python "${{ steps.python.outputs.python-path }}" "$CI_TEST_VENV"
+          fi
+          echo "${PWD}/${CI_TEST_VENV}/bin" >> "$GITHUB_PATH"
+          uv pip install --python "${CI_TEST_VENV}/bin/python" -e "$CI_TEST_EXTRAS" "$CI_PYDANTIC_FLOOR"
+      - name: Download every shard for this Python version
+        uses: actions/download-artifact@v8
+        with:
+          pattern: ${{ env.CI_GATE_ARTIFACT_PREFIX }}-${{ matrix.python-version }}-*
+          path: ${{ env.CI_GATE_ARTIFACT_ROOT }}
+          merge-multiple: false
+      - name: Verify complete evidence, combine all shards, enforce both floors
+        run: |
+          python tests/_gate_shard_plan.py verify-reports --timings "$CI_GATE_TIMINGS" --reports "$CI_GATE_ARTIFACT_ROOT" --artifact-prefix "${CI_GATE_ARTIFACT_PREFIX}-${{ matrix.python-version }}-" --inventory-name "$CI_GATE_COVERAGE_INVENTORY"
+          coverage combine --keep "$CI_GATE_ARTIFACT_ROOT"/*
           # Two floors: a whole-package regression floor, and a HIGH bar on the money-critical core (the gate,
           # ledger, reconcile, pricing, attribution). The package number is dragged by I/O-adapter modules
           # (chat→claude.ai, saas push, transcript parsers, paid-call tools) that are integration- not unit-tested
-          # by design; the core is where correctness must be proven. Today: package ~42%, core ~81%.
+          # by design; the core is where correctness must be proven. Measured locally: package ~70%, core ~81%.
           coverage report --fail-under=40
           coverage report --fail-under=78 --include="*/gate.py,*/guard.py,*/budget.py,*/reconcile.py,*/ledger_sync.py,*/pricing.py,*/attribution.py,*/adapters.py,*/tag.py,*/backfill.py,*/deid.py,*/litellm_adapter.py,*/bedrock_adapter.py"
-      - name: Price-literal audit (FAILS the build on a mispriced literal)
-        run: SPENDGUARD_AUDIT_DIR=src/spendguard spendguard audit --ci
