@@ -39,6 +39,10 @@ def _test_files():
 def _child_env():
     env = dict(os.environ)
     env["SPENDGUARD_TEST_ISOLATED"] = "1"
+    # Mirror test_runner.py so offline runners stay in step: deterministic short recovery schedules; chaos sets its own timing explicitly.
+    env["SPENDGUARD_LANE_BACKOFF_S"] = "0"
+    env["SPENDGUARD_SDK_MAX_RETRIES"] = "0"
+    env["SPENDGUARD_LANE_QUEUE_DEADLINE_S"] = "0"
     # OFFLINE, ENFORCED — identical to test_runner.py: a dead proxy makes any external call fail in ms (loud,
     # not slow); localhost servers a test spins up itself stay reachable via no_proxy. Real keys are stripped.
     env["http_proxy"] = env["https_proxy"] = env["HTTP_PROXY"] = env["HTTPS_PROXY"] = "http://127.0.0.1:9"

@@ -571,6 +571,7 @@
     "tests/test_runner.py::test_script[test_scheduler_phase2_ceilings.py]": 8.21,
     "tests/test_runner.py::test_script[test_schema_capability_and_enforcement.py]": 8.57,
     "tests/test_runner.py::test_script[test_scoped_budget_ceiling.py]": 8.522,
+    "tests/test_runner.py::test_script[test_sdk_retry_knob.py]": 0.13,
     "tests/test_runner.py::test_script[test_segment_attribution.py]": 8.682,
     "tests/test_runner.py::test_script[test_semcache.py]": 8.557,
     "tests/test_runner.py::test_script[test_semcache_scope_is_consistent.py]": 8.586,
