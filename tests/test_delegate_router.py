@@ -70,7 +70,8 @@ def fake_lane(prompt, **kwargs):
 
 def fake_codex(prompt, **kwargs):
     codex_calls.append((prompt, kwargs))
-    return {"text": "agentic result", "in_tok": 80, "out_tok": 20, "error": None}
+    return {"text": "agentic result", "in_tok": 80, "out_tok": 20, "error": None,
+            "execution_started": True}
 
 
 try:

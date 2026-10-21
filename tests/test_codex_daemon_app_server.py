@@ -18,7 +18,8 @@ def test_agent_message():
     daemon = new_daemon()
     try:
         result = daemon.run_warm("hello", model="openai:test", reasoning="minimal")
-        assert result == {"text": "reply:hello", "thread": "thread-1", "error": None}, result
+        assert result == {"text": "reply:hello", "thread": "thread-1", "turn": "turn-1",
+                          "process_pid": daemon._proc.pid, "error": None}, result
     finally:
         daemon.shutdown()
 
@@ -44,7 +45,8 @@ def test_real_notifications_racing_before_turn_response_are_replayed():
     daemon = new_daemon()
     try:
         result = daemon.run_warm("race")
-        assert result == {"text": "reply:race", "thread": "thread-1", "error": None}, result
+        assert result == {"text": "reply:race", "thread": "thread-1", "turn": "turn-1",
+                          "process_pid": daemon._proc.pid, "error": None}, result
     finally:
         daemon.shutdown()
 

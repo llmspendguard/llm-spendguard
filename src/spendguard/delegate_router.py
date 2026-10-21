@@ -22,6 +22,10 @@ DEFAULT_DELEGATE_INTENT = "spendguard:delegate-task"
 AGENTIC_DELEGATE_TIMEOUT_S = 1800
 CODEX_AGENTIC_EVENTS_FILENAME = "codex-agentic-executions.jsonl"
 CODEX_AGENTIC_EVENTS_SCHEMA_VERSION = 1
+DELEGATE_EXECUTION_INVALID_RESULT = "delegate_execution_invalid_result"
+DELEGATE_EXECUTION_NO_RESULT = "delegate_execution_no_result"
+DELEGATE_EXECUTION_REFUSED = "delegate_execution_refused"
+DELEGATE_EXECUTION_NOT_STARTED = "delegate_execution_not_started"
 
 
 def codex_agentic_events_path():
@@ -374,8 +378,22 @@ def delegate_task(task, files=None, intent=None, provider="auto", execute=False,
         _dirty_before = _worktree_state(cwd)[1]            # pre-existing dirt, so changed_files is ONLY the agent's edits
         execution = _route_agentic(estimate["plan"], prompt, estimate["model"], timeout, cwd)
         changed_files = _worktree_changed_files(cwd, _dirty_before)   # the authed caller stages THESE → commit → push → PR
-    if execution.get("error") or not execution.get("text"):
-        return {**result, "status": "error", "execution": execution}
+    if not isinstance(execution, dict):
+        return {**result, "status": "error", "execution": execution,
+                "reason": DELEGATE_EXECUTION_INVALID_RESULT,
+                "why": "executor returned no structured execution result"}
+    execution_error = execution.get("error")
+    execution_text = execution.get("text")
+    if execution_error or not isinstance(execution_text, str) or not execution_text.strip():
+        return {**result, "status": "error", "execution": execution,
+                "reason": DELEGATE_EXECUTION_REFUSED if execution_error else DELEGATE_EXECUTION_NO_RESULT,
+                "why": str(execution_error) if execution_error else "executor produced no final result"}
+    executor_spec = lane_registry.lane_spec(estimate["plan"])
+    if (classification["kind"] == "agentic" and executor_spec["exec"] == "codex_exec"
+            and execution.get("execution_started") is not True):
+        return {**result, "status": "error", "execution": execution,
+                "reason": DELEGATE_EXECUTION_NOT_STARTED,
+                "why": "Codex executor supplied no confirmed agent process/thread/turn start"}
     actual_in = int(execution.get("in_tok") or estimate["input_tokens"])
     actual_out = int(execution.get("out_tok") or estimate["output_tokens"])
     spec = lane_registry.lane_spec(estimate["plan"])
@@ -446,5 +464,10 @@ def delegate_cli(argv=None):
         print(f"delegated to {receipt['plan']} ({receipt['model']})  ::  real API ${receipt['real_api_usd']:.4f}  ::  "
               f"est-value ${receipt['est_value_usd']:.4f} on {receipt['plan']}  ::  saved {saved} vs Claude overage")
     elif result["status"] in ("refused", "error"):
-        print(f"delegate {result['status']}: {result.get('why') or estimate.get('error') or classification.get('error')}")
+        execution = result.get("execution")
+        execution_error = execution.get("error") if isinstance(execution, dict) else None
+        reason = result.get("reason")
+        detail = (result.get("why") or execution_error or estimate.get("error") or classification.get("error")
+                  or "delegation failed without a result")
+        print(f"delegate {result['status']}: {reason + ': ' if reason else ''}{detail}")
     return 0 if result["status"] in ("estimate", "executed") else 2

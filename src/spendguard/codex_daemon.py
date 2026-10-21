@@ -45,7 +45,8 @@ def _codex_rpc_auth_failure(error):
 
 
 def _codex_pool_error_result(error, thread, **extra):
-    return {"text": None, "thread": thread, "error": str(error)[:200],
+    return {"text": None, "thread": thread, "error": str(error),
+            "provider_error": error,
             "auth_error": _codex_rpc_auth_failure(error), **extra}
 
 
@@ -278,6 +279,7 @@ class _CodexDaemon(_WarmStdioJsonRpcDaemon):
                     return _codex_pool_error_result(error, new_thread, tool_error=True)
                 text = "".join(turn_waiter["texts"]).strip()
                 return {"text": text or None, "thread": new_thread,
+                        "turn": turn_waiter.get("turn_id"), "process_pid": getattr(p, "pid", None),
                         "error": None if text else "empty codex reply"}
         finally:
             self._schedule_idle_shutdown()

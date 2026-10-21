@@ -9,6 +9,9 @@ from spendguard import codex_daemon, codex_exec, config
 CODEX_ENTRY_PROMPT = "entrypoint fixture"
 CODEX_ENTRY_SYSTEM = "system fixture"
 CODEX_ENTRY_REPLY = "broker reply"
+CODEX_ENTRY_THREAD = "fixture-thread"
+CODEX_ENTRY_TURN = "fixture-turn"
+CODEX_ENTRY_PID = os.getpid()
 CODEX_ENTRY_USAGE_INPUT = 850
 CODEX_ENTRY_USAGE_OUTPUT = 97
 CODEX_ENTRY_EXECUTABLE_MODE = 0o700
@@ -23,7 +26,9 @@ CODEX_ENTRY_FAILURES = (
 with patch.object(codex_exec.subprocess, "Popen") as spawn, \
         patch.object(codex_exec.subprocess, "run") as cold_run, \
         patch.object(codex_exec, "_daemon_enabled", return_value=True), \
-        patch.object(codex_daemon, "run_warm", return_value={"text": CODEX_ENTRY_REPLY}) as warm:
+        patch.object(codex_daemon, "run_warm", return_value={
+            "text": CODEX_ENTRY_REPLY, "thread": CODEX_ENTRY_THREAD,
+            "turn": CODEX_ENTRY_TURN, "process_pid": CODEX_ENTRY_PID}) as warm:
     result = codex_exec.run_prompt(CODEX_ENTRY_PROMPT, system=CODEX_ENTRY_SYSTEM)
     assert result["text"] == CODEX_ENTRY_REPLY and result["error"] is None
     assert warm.call_args.args == (f"{CODEX_ENTRY_SYSTEM}\n\n{CODEX_ENTRY_PROMPT}",)
@@ -33,6 +38,13 @@ with patch.object(codex_exec.subprocess, "Popen") as spawn, \
         codex_exec.run_prompt(CODEX_ENTRY_PROMPT, sandbox="workspace-write", cwd=trusted_cwd)
         assert warm.call_args.kwargs["sandbox"] == "workspace-write"
         assert warm.call_args.kwargs["cwd"] == trusted_cwd
+        for evidence_field in ("thread", "turn", "process_pid"):
+            incomplete = {"text": CODEX_ENTRY_REPLY, "thread": CODEX_ENTRY_THREAD,
+                          "turn": CODEX_ENTRY_TURN, "process_pid": CODEX_ENTRY_PID}
+            incomplete.pop(evidence_field)
+            warm.return_value = incomplete
+            rejected = codex_exec.run_prompt(CODEX_ENTRY_PROMPT, sandbox="workspace-write", cwd=trusted_cwd)
+            assert "start unconfirmed" in rejected["error"], rejected
     for failure in CODEX_ENTRY_FAILURES:
         warm.side_effect = failure if isinstance(failure, Exception) else None
         warm.return_value = failure
