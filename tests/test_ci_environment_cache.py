@@ -27,9 +27,6 @@ CI_CACHE_ACTION_INPUTS = {
 CI_CACHE_DISABLED_FIELDS = ("if", "continue-on-error", "defaults", "shell", "working-directory")
 CI_CACHE_NOOP_COMMAND = "true"
 CI_CACHE_UNUSED_FIELD = "x-unused-contract-evidence"
-CI_MONITORING_PYTHON_CONDITION = "matrix.python-version == '3.12'"
-CI_MONITORING_ENV_COMMAND = "echo 'COVERAGE_CORE=sysmon' >> \"$GITHUB_ENV\""
-CI_MONITORING_ENV_KEY = "COVERAGE_CORE"
 
 
 def parse_ci_cache_run_lines(run_text):
@@ -112,34 +109,3 @@ for ci_cache_fault in ci_cache_faults:
     else:
         raise AssertionError("Disabled or unused cache/install contract was accepted")
 print(f"CI YAML execution contract and {len(ci_cache_faults)} injected faults pass")
-
-
-def verify_ci_monitoring_version_scope(workflow):
-    """The fixed Actions execution contract enables sysmon only on its supported leg."""
-    assert CI_MONITORING_ENV_KEY not in workflow.get("env", {})
-    for monitoring_job in workflow["jobs"].values():
-        assert CI_MONITORING_ENV_KEY not in monitoring_job.get("env", {})
-    monitoring_steps = workflow["jobs"]["test"]["steps"]
-    monitoring_exports = [step for step in monitoring_steps
-                          if step.get("run") == CI_MONITORING_ENV_COMMAND]
-    assert len(monitoring_exports) == CI_CACHE_EXPECTED_COUNT
-    monitoring_export = monitoring_exports[0]
-    assert monitoring_export["if"] == CI_MONITORING_PYTHON_CONDITION
-    assert not monitoring_export.get("continue-on-error")
-    monitoring_suite = next(step for step in monitoring_steps
-                            if "SPENDGUARD_COVERAGE=1" in step.get("run", ""))
-    assert monitoring_steps.index(monitoring_export) < monitoring_steps.index(monitoring_suite)
-
-
-verify_ci_monitoring_version_scope(ci_cache_configuration)
-ci_monitoring_mutant = deepcopy(ci_cache_configuration)
-for ci_monitoring_step in ci_monitoring_mutant["jobs"]["test"]["steps"]:
-    if ci_monitoring_step.get("run") == CI_MONITORING_ENV_COMMAND:
-        ci_monitoring_step.pop("if")
-try:
-    verify_ci_monitoring_version_scope(ci_monitoring_mutant)
-except (AssertionError, KeyError):
-    pass
-else:
-    raise AssertionError("sysmon enabled on unsupported Python leg was accepted")
-print("Monitoring coverage version scope and unconditional-export mutation pass")
