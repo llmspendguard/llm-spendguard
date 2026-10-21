@@ -108,7 +108,8 @@ def _attribute(ev, project):
 
 def _record_spend_event(provider, model, kind, cost, *, conv_id="", basis="", intent="", actor="", key_fp="",
                         chain="", project="", occurred_at=None, in_tok=0, out_tok=0, cache_read_tok=0,
-                        cache_write_tok=0, reasoning_tok=0, source="gate", dedup_suffix="", invoice_id="", dedup_key=None):
+                        cache_write_tok=0, reasoning_tok=0, source="gate", dedup_suffix="", invoice_id="", dedup_key=None,
+                        maintenance_ledger=None):
     """THE write for a live charge → `spend_events`, the single money-of-record, through the ONE shared mapping
     (charge_to_event). Every budget writer records through here; there is no second ledger, and — since the
     cutover — no `charges` fallback behind it, so a dropped write is a dropped charge. The ledger connection
@@ -141,8 +142,11 @@ def _record_spend_event(provider, model, kind, cost, *, conv_id="", basis="", in
         if invoice_id:                                # FOCUS InvoiceId anchor — set only when reconciled to a bill
             ev["invoice_id"] = invoice_id
         with _lock:
-            _ledger().record_event(ev)
+            (maintenance_ledger if maintenance_ledger is not None else _ledger()).record_event(ev)
     except Exception as e:
+        if maintenance_ledger is not None:
+            # The offline owner rolls back this entire correction rebuild on every write failure.
+            raise
         # spend_events is the SOLE ledger now, so a failed write means this charge is genuinely absent — NOT
         # sitting safe in `charges` (dropped) and NOT rebuildable by `spendguard migrate` (which read charges).
         # DURABLY CAPTURE IT so the loss never depends on this stderr being seen: a headless/daemon consumer
@@ -1009,7 +1013,7 @@ def gate_batch_cells(since=None):
             for (pr, p, m, d), v in res.items() if float(v["usd"]) != 0}
 
 
-def record_true_down(day, provider, model, delta, project):
+def record_true_down(day, provider, model, delta, project, *, maintenance_ledger=None):
     """Insert ONE negative batch correction row: estimate − billed for this cell's share. Carries the REAL model
     (so by_dims nets it against the estimate rows before the SaaS push) and the true-down conv_id sentinel (so it
     is identifiable/clearable without a marker model). The original estimate rows are NEVER mutated — the ledger
@@ -1021,7 +1025,8 @@ def record_true_down(day, provider, model, delta, project):
     _record_spend_event(provider, model, "batch", -abs(float(delta)), conv_id=_TRUE_DOWN_CONV,
                         project=project or "unattributed", occurred_at=day + "T00:00:00+00:00",
                         source="true-down", dedup_suffix=":td",
-                        invoice_id="%s:%s" % (provider, (day or "")[:7]))   # reconciled to this provider-period invoice
+                        invoice_id="%s:%s" % (provider, (day or "")[:7]),
+                        maintenance_ledger=maintenance_ledger)   # reconciled to this provider-period invoice
 
 
 def clear_true_down(since=None):
@@ -1033,7 +1038,7 @@ def clear_true_down(since=None):
     return clear_readable_true_down(since)
 
 
-def clear_readable_true_down(since=None, providers=None):
+def clear_readable_true_down(since=None, providers=None, *, maintenance_ledger=None):
     """Remove prior true-down rows in the window so the correction is rebuilt idempotently each reconcile
     (billed actuals only grow as in-flight batches land, so each rebuild converges on the final billed $).
 
@@ -1060,7 +1065,7 @@ def clear_readable_true_down(since=None, providers=None):
     from .ledger_read import DEFAULT_LEDGER_READ_ROW_CAP
     import logging as true_down_logging
     import traceback as true_down_traceback
-    true_down_ledger = _ledger()
+    true_down_ledger = maintenance_ledger if maintenance_ledger is not None else _ledger()
     true_down_scopes = ([{"conv_id": _TRUE_DOWN_CONV}] if true_down_provider_scope is None else
                         [{"conv_id": _TRUE_DOWN_CONV, "provider": true_down_provider}
                          for true_down_provider in true_down_provider_scope])
@@ -1092,11 +1097,11 @@ def clear_readable_true_down(since=None, providers=None):
                 # rowid is a SQLite integer, not source content; parse before forming the internal SQL predicate.
                 true_down_rowid_sql = ",".join(str(int(true_down_rowid[0])) for true_down_rowid in true_down_rowids)
                 del true_down_rowids  # release this batch before delete() allocates its bounded audit batch.
-                _ledger().delete(where=true_down_scope, filt=f"rowid IN ({true_down_rowid_sql})", since=since,
+                true_down_ledger.delete(where=true_down_scope, filt=f"rowid IN ({true_down_rowid_sql})", since=since,
                                         actor="clear_true_down", reason="rebuild")
     except Exception as true_down_clear_error:
         true_down_logging.getLogger(__name__).exception("refusing clear_true_down after ledger clear failure")
-        if isinstance(true_down_clear_error, LockedError):
+        if maintenance_ledger is not None or isinstance(true_down_clear_error, LockedError):
             raise
         raise RuntimeError(
             f"refusing clear_true_down after ledger clear failure: {true_down_clear_error!r}\n"

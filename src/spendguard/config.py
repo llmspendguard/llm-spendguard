@@ -1047,11 +1047,16 @@ LEDGER_CACHE_BUDGET_KIB = 256 * 1024
 LEDGER_MMAP_BUDGET_BYTES = 512 * 1024 * 1024
 LEDGER_CONNECT_TIMEOUT_S = 5
 LEDGER_WRITE_TIMEOUT_S = 10
-LEDGER_QUERY_PROGRESS_VM_INSTRUCTIONS = 100
+# Poll deadlines every two thousand SQLite VM instructions, rather than every
+# hundred: Python callbacks are especially expensive under coverage tracing.
+# Wall-clock deadlines and transport interrupts remain authoritative; this is
+# only the polling granularity, with bounded deadline/cancel guards below it.
+LEDGER_QUERY_PROGRESS_VM_INSTRUCTIONS = 2000
 LEDGER_READ_TIME_BUDGET_S = float(os.getenv("SPENDGUARD_LEDGER_READ_TIME_BUDGET_S", "5.0"))
 LEDGER_QUERY_DEADLINE_S = float(os.getenv("SPENDGUARD_LEDGER_QUERY_DEADLINE_S", str(LEDGER_READ_TIME_BUDGET_S)))
 LEDGER_READ_ROW_CAP = int(os.getenv("SPENDGUARD_LEDGER_READ_ROW_CAP", "10000"))
-LEDGER_READ_PROGRESS_VM_INSTRUCTIONS = int(os.getenv("SPENDGUARD_LEDGER_READ_PROGRESS_VM_INSTRUCTIONS", "100"))
+LEDGER_READ_PROGRESS_VM_INSTRUCTIONS = int(os.getenv(
+    "SPENDGUARD_LEDGER_READ_PROGRESS_VM_INSTRUCTIONS", str(LEDGER_QUERY_PROGRESS_VM_INSTRUCTIONS)))
 LEDGER_BUSY_TIMEOUT_MS = 5000
 LEDGER_WAL_CHECKPOINT_INTERVAL_DEFAULT_S = 60.0
 LEDGER_WAL_CHECKPOINT_BUSY_TIMEOUT_MS = 0
@@ -1133,6 +1138,7 @@ class _LedgerAdmissionGeneration:
 
     def __init__(self):
         self.lock = threading.RLock()
+        self.reclamation_lock = threading.RLock()
         self.owner_pid = os.getpid()
         self.abandoned_inherited_count = 0
         self.live_count = 0
@@ -1295,7 +1301,12 @@ def open_ledger_connection(path=None, timeout=LEDGER_CONNECT_TIMEOUT_S, *, tune=
             if deadline_at is None:
                 generation.lock.release()
                 try:
-                    gc.collect()
+                    # gc.collect returns immediately if another thread is collecting.
+                    # Join reclamation before treating the live count as a refusal.
+                    # Finalizers need the admission lock; never hold it here.
+                    # RLock permits synchronous GC callbacks to reenter admission.
+                    with generation.reclamation_lock:
+                        gc.collect()
                 finally:
                     generation.lock.acquire()
             current = generation.live_count + generation.pending_count

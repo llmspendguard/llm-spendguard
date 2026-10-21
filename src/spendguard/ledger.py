@@ -24,12 +24,14 @@ import contextlib
 import itertools
 import math
 import time
+import logging
 from decimal import Decimal, InvalidOperation, getcontext
 from . import config
 
 getcontext().prec = 34   # ample for exact money arithmetic (28 is the default; money never needs more than this)
 
 SCHEMA_VERSION = 6
+LEDGER_RATE_PROVENANCE_GAP = "ledger_rate_provenance_gap"
 
 
 class LockedError(Exception):
@@ -308,9 +310,10 @@ def live_dedup_key(ts_iso):
 class SpendLedger:
     """The one door to spend_events: SCRUD + queries + lifecycle/audit. Mutable until locked; integrity in spend_audit."""
 
-    def __init__(self, db_path=None):
+    def __init__(self, db_path=None, *, owned_connection=None):
         self.db_path = db_path or config.db_path()
-        self._conn = config.open_ledger_connection(self.db_path, timeout=config.LEDGER_WRITE_TIMEOUT_S)
+        self._conn = (owned_connection if owned_connection is not None else
+                      config.open_ledger_connection(self.db_path, timeout=config.LEDGER_WRITE_TIMEOUT_S))
         self._conn.row_factory = sqlite3.Row
         self._conn.create_aggregate("dec_sum", 1, _DecSum)   # exact decimal SUM for the TEXT money columns
         self._defer = False                              # bulk(): defer per-row commits (still audits every row)
@@ -322,14 +325,15 @@ class SpendLedger:
             raise
 
     @contextlib.contextmanager
-    def bulk(self):
+    def bulk(self, *, commit_callback=None):
         """Defer per-row commits for a bulk load (e.g. a one-time migration), committing once on exit — every row is
-        still inserted + audited, only the fsync is batched. Use ONLY for trusted bulk ingest, not concurrent writers."""
+        still inserted + audited, only the fsync is batched. Use ONLY for trusted bulk ingest, not concurrent writers.
+        An explicitly owned maintenance handle can supply its final commit boundary as commit_callback."""
         self._defer = True
         try:
             yield self
-            self._conn.commit()
-        except Exception:
+            (commit_callback or self._conn.commit)()
+        except BaseException:
             # ROLL BACK WHAT THE FAILED LOAD WROTE. Per-row commits are deferred here, so an exception left
             # the partial rows sitting in an OPEN transaction — uncommitted, but flushed by the next commit
             # from anywhere in the process. A bulk load that raised half way through therefore landed
@@ -455,14 +459,18 @@ class SpendLedger:
         ev.setdefault("day", d)
         ev.setdefault("period", p)
         if ev.get("model") and (ev.get("rate_in") is None or ev.get("rate_out") is None):
-            try:
-                from . import pricing
-                pr = pricing.price(ev["model"]) or {}
+            # Amounts are already supplied and validated. Optional rate
+            # provenance uses nullable catalog facts and exact table entries;
+            # it must never invoke the budget-pricing refusal API.
+            from . import pricing
+            pr = pricing._catalog_price(ev["model"]) or pricing.PRICING.get(ev["model"])
+            if pr is None:
+                logging.getLogger(__name__).warning("%s model=%s",
+                    LEDGER_RATE_PROVENANCE_GAP, ev["model"])
+            else:
                 bt = ev.get("cost_type") == "batch"
                 ev.setdefault("rate_in", pr.get("batch_in" if bt else "in_"))
                 ev.setdefault("rate_out", pr.get("batch_out" if bt else "out"))
-            except Exception:
-                pass
         ev.setdefault("schema_version", SCHEMA_VERSION)
         ev.setdefault("status", "draft")
         ev.setdefault("revision", 1)
@@ -1027,7 +1035,8 @@ class SpendLedger:
         for rid, period, locked in rows:
             self._conn.execute("DELETE FROM spend_events WHERE id=?", (rid,))
             self._audit(rid, actor, "delete", "(delete)", None, None, reason)
-        self._conn.commit()
+        if not self._defer:
+            self._conn.commit()
         return len(rows)
 
     def sum_dec(self, since=None, until=None, where=None, include_meta=True, include_void=False, **filters):

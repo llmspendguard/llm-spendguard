@@ -39,6 +39,8 @@ def check(label, ok, extra=""):
 # same "exempt once, exempt forever" shape that let four config.json writers accumulate unnoticed.
 ALLOWED_MODULES = {"config": "defines update_json and the atomic temp-file write it is built from"}
 MARKER = "raw-write-ok:"
+BUDGET_MONEY_DELETE_OWNERS = frozenset(("ingest_remote", "clear_reconciled", "clear_readable_true_down"))
+BUDGET_SNAPSHOT_CALL_NAMES = frozenset(("snapshot_once", "snapshot"))
 
 print("-- no NEW module hand-rolls a whole-file JSON write --")
 offenders = {}
@@ -120,18 +122,25 @@ _bsrc = (SRC / "budget.py").read_text()
 _btree = ast.parse(_bsrc)
 _unsnapped, _checked = [], []
 for _fn in [n for n in ast.walk(_btree) if isinstance(n, ast.FunctionDef)]:
-    _body = ast.get_source_segment(_bsrc, _fn) or ""
-    # money rows are DELETEd via _ledger().delete() now (charges is retired); the guard is unchanged — any
-    # function that deletes them must snapshot the whole db first. (`_body.upper()` against a lowercase needle
-    # matched NOTHING once, passing while reporting on an empty set, which is why line 132 is a negative control.)
-    if "_ledger().delete(" not in _body:
+    _calls = [n for n in ast.walk(_fn) if isinstance(n, ast.Call)]
+    # Match the DELETE protocol independently of receiver spelling: maintenance
+    # owns an injected ledger, while ordinary writers call _ledger().
+    _deletes = [n for n in _calls if isinstance(n.func, ast.Attribute) and n.func.attr == "delete"]
+    if not _deletes:
         continue
     _checked.append(_fn.name)
-    if "snapshot_once(" not in _body and "snapshot(reason" not in _body:
+    _snapshots = [n for n in _calls if isinstance(n.func, ast.Name)
+                  and n.func.id in BUDGET_SNAPSHOT_CALL_NAMES]
+    if not any(n.lineno < min(call.lineno for call in _deletes) for n in _snapshots):
         _unsnapped.append(_fn.name)
 check("the check actually FOUND the deleting functions (an empty set would pass vacuously)",
-      len(_checked) >= 3, f"only found {_checked}")
+      frozenset(_checked) == BUDGET_MONEY_DELETE_OWNERS, f"found {_checked}")
 check("every ledger function that DELETEs money rows snapshots first", not _unsnapped, str(_unsnapped))
+_true_down_wrapper = next(n for n in ast.walk(_btree)
+                         if isinstance(n, ast.FunctionDef) and n.name == "clear_true_down")
+check("clear_true_down delegates to the snapshotted readable-provider deletion owner",
+      any(isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == "clear_readable_true_down"
+          for n in ast.walk(_true_down_wrapper)))
 
 from spendguard import budget                                                          # noqa: E402
 budget._SNAPPED.clear()
