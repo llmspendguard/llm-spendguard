@@ -369,5 +369,109 @@ def test_wal_native_step_retains_one_cursor_referent(tmp_path, monkeypatch):
         writer.close()
 
 
+# A virtual work clock makes callback density reproducible under coverage and
+# CPU contention, while actual SQLite executes every opcode and re-registration.
+WAL_ADAPTIVE_LONG_BUDGET_S = 2.0
+WAL_ADAPTIVE_WORK_UNITS = 10000
+WAL_ADAPTIVE_UNIT_SECONDS = WAL_GUARD_REQUEST_DEADLINE_S / WAL_ADAPTIVE_WORK_UNITS
+WAL_ADAPTIVE_FAULT_SLOWDOWN = 100
+WAL_ADAPTIVE_CALLBACK_RATIO = 2
+WAL_ADAPTIVE_FIXED_INTERVAL_MUTATIONS = (100, 2000)
+WAL_ADAPTIVE_SQL = """WITH RECURSIVE work(n) AS
+(VALUES(1) UNION ALL SELECT n+1 FROM work WHERE n<?)
+SELECT SUM(adaptive_work(n)) FROM work"""
+
+
+def _measure_wal_adaptive_callback_density(deadline_s):
+    from spendguard.ledger_deadline_polling import LedgerDeadlinePolling
+
+    work_clock = [0.0]
+    callback_count = [0]
+    polling = LedgerDeadlinePolling(deadline_s, work_clock[0])
+    connection = sqlite3.connect(":memory:")
+
+    def advance_wal_adaptive_work_clock(value):
+        work_clock[0] += WAL_ADAPTIVE_UNIT_SECONDS
+        return value
+
+    def observe_wal_adaptive_sqlite_callback():
+        callback_count[0] += 1
+        connection.set_progress_handler(observe_wal_adaptive_sqlite_callback,
+            polling.advance_ledger_deadline_poll(work_clock[0]))
+        return 0
+
+    try:
+        connection.create_function("adaptive_work", 1, advance_wal_adaptive_work_clock)
+        connection.set_progress_handler(observe_wal_adaptive_sqlite_callback, polling.interval)
+        result = connection.execute(WAL_ADAPTIVE_SQL, (WAL_ADAPTIVE_WORK_UNITS,)).fetchone()[0]
+        assert result == sum(range(1, WAL_ADAPTIVE_WORK_UNITS + 1))
+        return callback_count[0]
+    finally:
+        connection.close()
+
+
+def test_wal_adaptive_polling_measures_deadline_density():
+    tight_checks = _measure_wal_adaptive_callback_density(WAL_GUARD_REQUEST_DEADLINE_S)
+    long_checks = _measure_wal_adaptive_callback_density(WAL_ADAPTIVE_LONG_BUDGET_S)
+    assert tight_checks > long_checks * WAL_ADAPTIVE_CALLBACK_RATIO, (tight_checks, long_checks)
+    print(f"adaptive SQLite callbacks: tight={tight_checks}, long={long_checks}")
+
+
+def test_wal_adaptive_polling_fixed_interval_mutation_detected(monkeypatch):
+    import pytest
+    from spendguard import ledger_deadline_polling as polling_module
+
+    for fixed_interval in WAL_ADAPTIVE_FIXED_INTERVAL_MUTATIONS:
+        with monkeypatch.context() as fixed_patch:
+            fixed_patch.setattr(polling_module, "LEDGER_DEADLINE_INITIAL_VM_INTERVAL", fixed_interval)
+            fixed_patch.setattr(polling_module.LedgerDeadlinePolling, "advance_ledger_deadline_poll",
+                                lambda self, now: self.interval)
+            with pytest.raises(AssertionError):
+                test_wal_adaptive_polling_measures_deadline_density()
+
+
+def test_wal_adaptive_polling_shrinks_after_slow_work():
+    from spendguard.ledger_deadline_polling import LedgerDeadlinePolling
+
+    polling = LedgerDeadlinePolling(WAL_GUARD_REQUEST_DEADLINE_S, 0.0)
+    first_sample = polling.target_poll_seconds
+    prior_interval = polling.advance_ledger_deadline_poll(first_sample)
+    slower_interval = polling.advance_ledger_deadline_poll(
+        first_sample + polling.target_poll_seconds * WAL_ADAPTIVE_FAULT_SLOWDOWN)
+    assert slower_interval < prior_interval
+
+
+def test_wal_adaptive_polling_both_owners_interrupt_slow_scan(tmp_path, monkeypatch):
+    import pytest
+    from spendguard import ledger_read
+    from spendguard.ledger_deadline_polling import LedgerDeadlinePolling
+
+    ledger_path = tmp_path / pathlib.Path(__file__).stem
+    writer = _seed_wal_maintenance_fixture(ledger_path)
+    reader = config.open_ledger_connection(ledger_path)
+    observed_intervals = []
+    original_advance = LedgerDeadlinePolling.advance_ledger_deadline_poll
+
+    def record_wal_deadline_adaptation(polling, now):
+        observed_intervals.append(polling.interval)
+        return original_advance(polling, now)
+
+    monkeypatch.setattr(LedgerDeadlinePolling, "advance_ledger_deadline_poll", record_wal_deadline_adaptation)
+    try:
+        with pytest.raises(ledger_read.LedgerReadTimeout):
+            ledger_read.read_ledger_sql(ledger_read.LedgerSQLReadRequest(
+                WAL_GUARD_SLOW_SQL, time_budget=WAL_GUARD_REQUEST_DEADLINE_S), ledger_path)
+        assert observed_intervals, "owned bounded read never adapted"
+        observed_intervals.clear()
+        with ledger_read.ledger_request_scope(deadline_s=WAL_GUARD_REQUEST_DEADLINE_S):
+            with pytest.raises(ledger_read.LedgerQueryDeadline):
+                reader.execute(WAL_GUARD_SLOW_SQL).fetchone()
+        assert observed_intervals, "managed request read never adapted"
+        assert maintenance.truncate_ledger_wal_bounded(ledger_path).status == maintenance.WAL_CHECKPOINT_SUCCESS
+    finally:
+        reader.close()
+        writer.close()
+
+
 if __name__ == "__main__":
     sys.exit(run_pytest_style(globals()))

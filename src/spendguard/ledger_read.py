@@ -13,6 +13,7 @@ import threading
 import math
 
 from . import config
+from .ledger_deadline_polling import LedgerDeadlinePolling
 
 CC_RESIDENCY_SOURCE = "claude-code"
 CC_RESIDENCY_LATEST_SQL = "SELECT conv_id FROM spend_events WHERE source=? ORDER BY occurred_at DESC,conv_id DESC LIMIT 1"
@@ -404,9 +405,16 @@ def _ledger_bounded_read_handle(path, time_budget):
 
     def ledger_read_progress():
         nonlocal expired
-        expired = time.monotonic() >= deadline_at
+        progress_now = time.monotonic()
+        expired = progress_now >= deadline_at
         if request_scope is not None and request_scope._request_cancelled.is_set():
             return 1
+        if expired:
+            return int(expired)
+        previous_progress_interval = read_deadline_polling.interval
+        next_progress_interval = read_deadline_polling.advance_ledger_deadline_poll(progress_now)
+        if next_progress_interval != previous_progress_interval:
+            connection.set_progress_handler(ledger_read_progress, next_progress_interval)
         return int(expired)
 
     try:
@@ -417,15 +425,17 @@ def _ledger_bounded_read_handle(path, time_budget):
             request_scope.register_request_read_connection(connection)
         from .ledger import _DecSum
         connection.create_aggregate("dec_sum", LEDGER_READ_DECIMAL_ARITY, _DecSum)
-        connection.set_progress_handler(ledger_read_progress, DEFAULT_LEDGER_READ_PROGRESS_VM_INSTRUCTIONS)
-        if ledger_read_progress():
-            if request_scope is not None:
-                request_scope.require_ledger_request_live()
+        if request_scope is not None:
+            request_scope.require_ledger_request_live()
+        polling_started = time.monotonic()
+        if polling_started >= deadline_at:
             raise LedgerReadTimeout(time_budget)
+        read_deadline_polling = LedgerDeadlinePolling(deadline_at, polling_started)
+        connection.set_progress_handler(ledger_read_progress, read_deadline_polling.interval)
         yield connection
         if request_scope is not None:
             request_scope.require_ledger_request_live()
-        if ledger_read_progress():
+        if time.monotonic() >= deadline_at:
             raise LedgerReadTimeout(time_budget)
     except sqlite3.Error as exc:
         if request_scope is not None:

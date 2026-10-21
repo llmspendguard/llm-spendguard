@@ -13,6 +13,7 @@ import weakref
 from collections import OrderedDict
 
 from spendguard import config, ledger_read
+from spendguard.ledger_deadline_polling import LedgerDeadlinePolling
 
 _REQUEST_CURSOR_WRITE_ACTIONS = frozenset((
     sqlite3.SQLITE_INSERT, sqlite3.SQLITE_UPDATE, sqlite3.SQLITE_DELETE,
@@ -162,6 +163,7 @@ class ManagedRequestCursorState:
         self.read_deadline_expired = False
         self.deadline_duration_s = None
         self.expiry_cleanup_outcome = None
+        self.deadline_polling = None
 
     @property
     def _request_cursor_referent(self):
@@ -238,6 +240,7 @@ class ManagedRequestCursorState:
                 self.operation_deadline_at = time.monotonic() + scope_deadline_s
                 self.deadline_duration_s = scope_deadline_s
                 self.read_deadline_expired = False
+                self.deadline_polling = None
                 if self.scope is not None:
                     self.scope.release_request_read_cursor(cursor)
                     self.scope = None
@@ -251,14 +254,17 @@ class ManagedRequestCursorState:
                 raise ledger_read.LedgerQueryDeadline(self.deadline_duration_s)
             previous_progress, previous_interval = getattr(connection, "_ledger_progress", (None, 0))
             previous_managed_progress = getattr(connection, "_ledger_active_managed_progress", None)
-            interval = config.LEDGER_QUERY_PROGRESS_VM_INSTRUCTIONS
+            if self.deadline_polling is None:
+                self.deadline_polling = LedgerDeadlinePolling(
+                    self.operation_deadline_at, time.monotonic())
+            interval = self.deadline_polling.interval
             if previous_progress is not None and previous_interval > 0:
                 interval = min(interval, previous_interval)
             progress_instructions = 0
             registered = False
 
             def enforce_request_cursor_progress():
-                nonlocal registered, progress_instructions
+                nonlocal registered, progress_instructions, interval
                 if not self.writes:
                     try:
                         acquire_managed_statement_read_scope()
@@ -271,8 +277,18 @@ class ManagedRequestCursorState:
                     except ledger_read.LedgerReadError as error:
                         self.abort_error = error
                         return True
+                completed_interval = interval
+                if not self.writes:
+                    self.deadline_polling.interval = completed_interval
+                    next_interval = self.deadline_polling.advance_ledger_deadline_poll(time.monotonic())
+                    if previous_progress is not None and previous_interval > 0:
+                        next_interval = min(next_interval, previous_interval)
+                    if next_interval != interval:
+                        interval = next_interval
+                        sqlite3.Connection.set_progress_handler(connection, enforce_request_cursor_progress, interval)
+                        connection._ledger_active_managed_progress = (enforce_request_cursor_progress, interval)
                 if previous_progress is not None:
-                    progress_instructions += interval
+                    progress_instructions += completed_interval
                     if progress_instructions >= previous_interval:
                         progress_instructions = 0
                         return previous_progress()
@@ -287,6 +303,7 @@ class ManagedRequestCursorState:
             try:
                 if preparing:
                     self.statement_parser_facts.prepare_managed_statement_facts(self, statement_sql)
+                self.deadline_polling.sampled_at = time.monotonic()
                 sqlite3.Connection.set_progress_handler(connection, enforce_request_cursor_progress, interval)
                 connection._ledger_active_managed_progress = (enforce_request_cursor_progress, interval)
                 result = operation(cursor, *args, **kwargs)
