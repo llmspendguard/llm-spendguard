@@ -302,26 +302,39 @@ def _wrap_urllib_open(orig):
     return w
 
 
-def install() -> bool:
-    """Patch httpx (sync+async), requests, and stdlib urllib transports, idempotently and only if already
-    importable (urllib is stdlib, so it always wires). Returns True iff at least one client is now wrapped."""
-    wired = False
+def _install_imported_httpx_capture(httpx):
+    """Wire a completed httpx import without importing its optional CLI dependencies at startup."""
     try:
-        import httpx
         if not getattr(httpx.Client.send, "_spend_gated", False):
             httpx.Client.send = _wrap_httpx_send(httpx.Client.send, False)
         if not getattr(httpx.AsyncClient.send, "_spend_gated", False):
             httpx.AsyncClient.send = _wrap_httpx_send(httpx.AsyncClient.send, True)
-        wired = True
     except Exception:
         pass
+
+
+def _install_imported_requests_capture(requests):
+    """Wire a completed requests import without loading its HTTP/charset stack for unrelated callers."""
     try:
-        import requests
         if not getattr(requests.Session.send, "_spend_gated", False):
             requests.Session.send = _wrap_requests_send(requests.Session.send)
-        wired = True
     except Exception:
         pass
+
+
+def install() -> bool:
+    """Wire imported HTTP clients, or arm capture before their imports return; always wire stdlib urllib.
+
+    The same post-import mechanism as the SDK gate preserves capture for clients imported later, without
+    importing httpx's CLI/rendering dependencies or requests' HTTP/charset stack in every interpreter.
+    Client wrappers remain idempotent and fail-open; urllib remains eager and needs no optional dependency.
+    Returns True iff at least one client is now wrapped.
+    """
+    from .gate import _register_gate_package_postimport
+
+    _register_gate_package_postimport("httpx", _install_imported_httpx_capture)
+    _register_gate_package_postimport("requests", _install_imported_requests_capture)
+    wired = False
     try:
         import urllib.request                            # stdlib — always importable; OpenerDirector.open is the ONE
         if not getattr(urllib.request.OpenerDirector.open, "_spend_gated", False):   # chokepoint (urlopen calls it)

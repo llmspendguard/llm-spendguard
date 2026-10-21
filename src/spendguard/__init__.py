@@ -160,32 +160,14 @@ def _auto_install():
         return
     if not strict:
         return
-    from .gate import _any_patched, _disabled    # fail-closed checks (refuse loudly)
+    from .gate import _enforcement_armed, _disabled    # share require()'s fail-closed probe
     if _disabled():
         raise SpendGateRefused("SPENDGUARD_REQUIRE=1 but spendguard is DISABLED — `spendguard on` or unset "
                                "GATE_DISABLE. Refusing to import-and-spend ungated.")
-    if not _any_patched():
-        import importlib.util
-        from .gate import gated_sdk_modules
-
-        def _installed(m):
-            # find_spec can RAISE (a broken parent package, a namespace edge) — treat that as "not present"
-            # rather than let the probe itself crash the import it is guarding.
-            try:
-                return importlib.util.find_spec(m) is not None
-            except Exception:
-                return False
-
-        # Probe the SAME SDK set the gate can patch — not just openai/anthropic. A venv with ONLY litellm or the
-        # google-genai/vertex SDK installed would otherwise slip past REQUIRE ungated (find_spec found neither of
-        # the two hardcoded names), the exact silent-bypass this fail-closed check exists to stop.
-        present = [m for m in gated_sdk_modules() if _installed(m)]
-        if present:
-            raise SpendGateRefused(
-                f"SPENDGUARD_REQUIRE=1 but the gate is NOT enforcing in this interpreter — an LLM SDK "
-                f"({', '.join(present)}) is installed yet wasn't patched (wrong python/venv?). Refusing to "
-                f"import-and-spend ungated. Fix: run under a gated venv, or unset SPENDGUARD_REQUIRE for a "
-                f"no-op import here.")
+    if not _enforcement_armed():
+        raise SpendGateRefused(
+            "SPENDGUARD_REQUIRE=1 but the gate is NOT enforcing in this interpreter — an installed LLM SDK "
+            "is neither fully patched nor covered by a live import hook. Refusing to import-and-spend ungated.")
 
 
 if not _CLI_BOOTSTRAP_IS_LAZY:
