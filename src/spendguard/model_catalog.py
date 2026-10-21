@@ -39,6 +39,46 @@ _ISO_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 BILLING_EXEMPT_REASON_FIELD = "billing_exempt_reason"
 CATALOG_UNIT_PRICES_FIELD = "unit_prices"
 CATALOG_OVERLAY_FILENAME = "catalog_synced.json"
+GEMINI_FLASH_FLOATING_ALIAS = "g-flash"
+GEMINI_FLASH_CATALOG_PROVIDER = "gemini"
+GEMINI_FLASH_BASE_SHAPE = re.compile(r"gemini-(?P<version>.*)-flash")
+GEMINI_FLASH_NUMERIC_VERSION = re.compile(r"[0-9]+(?:\.[0-9]+)*")
+GEMINI_FLASH_VERSION_SEPARATOR = "."
+GEMINI_FLASH_VERSION_ZERO = 0
+
+
+class LatestGeminiFlashResolutionError(ValueError):
+    """The complete catalog cannot identify one latest Gemini Flash base."""
+
+
+def latest_gemini_flash_base_id(models):
+    """Return the numeric maximum of exact Gemini Flash base ids in a snapshot.
+
+    ``provider_base`` selects one provider fallback, rather than family membership.
+    Exact id grammar excludes lite, preview, and lane effort suffixes.
+    """
+    version_ids = {}
+    for record_id, record in models.items():
+        if record.get("provider") != GEMINI_FLASH_CATALOG_PROVIDER:
+            continue
+        family_match = GEMINI_FLASH_BASE_SHAPE.fullmatch(record_id)
+        if family_match is None:
+            continue
+        version_text = family_match.group("version")
+        if GEMINI_FLASH_NUMERIC_VERSION.fullmatch(version_text) is None:
+            raise LatestGeminiFlashResolutionError(
+                f"GAP gemini_flash_version_unparseable: {record_id!r}")
+        version_components = [int(part) for part in version_text.split(GEMINI_FLASH_VERSION_SEPARATOR)]
+        while version_components and version_components[-1] == GEMINI_FLASH_VERSION_ZERO:
+            version_components.pop()
+        version_key = tuple(version_components)
+        if version_key in version_ids:
+            raise LatestGeminiFlashResolutionError(
+                f"GAP gemini_flash_version_tie: {version_ids[version_key]!r}, {record_id!r}")
+        version_ids[version_key] = record_id
+    if not version_ids:
+        raise LatestGeminiFlashResolutionError("GAP gemini_flash_base_absent: no Gemini Flash base model")
+    return version_ids[max(version_ids)]
 
 
 def catalog_authoring_path():
@@ -96,6 +136,8 @@ def _parse_models(raw):
         return {}
     try:
         return (json.loads(raw) or {}).get("models") or {}
+    except CatalogLayerCorruptionError:
+        raise
     except Exception:
         return {}
 
@@ -137,7 +179,8 @@ def model_record(model_id):
     'provider:' prefix stripped, then each lane use-name (so 'gemini-3.8-flash-low' finds gemini-3.8-flash). Read-only.
 
     Callers that already hold a normalized base id (pricing does, before it looks up) get an exact hit; a caller
-    passing a lane/suffixed/qualified id is resolved here. Never raises."""
+    passing a lane/suffixed/qualified id is resolved here. A floating alias raises
+    LatestGeminiFlashResolutionError when its candidate set cannot resolve uniquely."""
     return catalog_record_from_snapshot(model_id, _load_records())
 
 
@@ -145,6 +188,8 @@ def catalog_record_from_snapshot(model_id, models):
     """Resolve an authored spelling against one captured catalog snapshot."""
     if not model_id:
         return None
+    if _bare(model_id) == GEMINI_FLASH_FLOATING_ALIAS:
+        return models[latest_gemini_flash_base_id(models)]
     for key in (model_id, _bare(model_id)):
         if key in models:
             return models[key]
@@ -200,6 +245,8 @@ def _parse_catalog_vendors(raw):
         return {}
     try:
         return (json.loads(raw) or {}).get("vendors") or {}
+    except CatalogLayerCorruptionError:
+        raise
     except Exception:
         return {}
 

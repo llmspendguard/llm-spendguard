@@ -9,7 +9,9 @@
     "gpt-6-sol",
     "gpt-6-luna",
     "gpt-6.1-sol-2026-09-29",
-    "gpt-6-sol-2026-09-22"
+    "gpt-6-sol-2026-09-22",
+    "g-flash",
+    "gemini:g-flash"
   ],
   "lane_models": {
     "claude-code/cheap": "claude-haiku-4-5",
@@ -20,11 +22,13 @@
     "gemini/strong": "gemini-3.8-flash-high",
     "zai-coding": "glm-5.3"
   },
-  "named_gaps": [
+  "named_gaps": [],
+  "resolved_named_gaps": [
     {
       "name": "GFLASH_PRICE_PROVENANCE",
       "models": ["g-flash", "gemini:g-flash"],
-      "evidence": "Five read-only calls rows on 2026-10-17, all llm-spendguard-lanevaluecold project: three recon-intent and two bake-intent rows. Repository history only test mock fixtures; absent from authored catalog, host-local prices, synced LiteLLM and cache backups. No recoverable published provider mapping or price; cannot guess or refetch."
+      "evidence": "Five read-only calls rows on 2026-10-17, all llm-spendguard-lanevaluecold project: three recon-intent and two bake-intent rows. Repository history only test mock fixtures; absent from authored catalog, host-local prices, synced LiteLLM and cache backups. No recoverable published provider mapping or price; cannot guess or refetch.",
+      "resolution": "The shared catalog resolver now defines both spellings as a floating alias for the latest numeric Gemini Flash base model. Both spellings are priceable observations and participate in the catalog price-removal mutation guard. Historical mapping evidence above is preserved; this current resolution does not reconstruct the historical calls' model version."
     }
   ]
 }

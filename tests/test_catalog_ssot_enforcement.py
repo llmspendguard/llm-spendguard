@@ -164,7 +164,7 @@ def test_catalog_ssot_seeded_observations_and_price_mutation(tmp_path, monkeypat
             with pytest.raises(AssertionError, match="missing catalog price"):
                 assert_catalog_observed_prices([model])
     assert_catalog_observed_prices(models)
-    assert observations["named_gaps"], "unrecoverable observations must remain explicitly accounted for"
+    assert isinstance(observations["named_gaps"], list), "unrecoverable observations need an explicit gap list"
     for gap in observations["named_gaps"]:
         assert gap["name"] and gap["evidence"]
         for model in gap["models"]:
