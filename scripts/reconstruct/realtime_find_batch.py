@@ -255,7 +255,13 @@ def _reconstruction_cache_payload(kept, truth_rows, since):
     rows, gaps, actual, reconstructed = [], [], {}, {}
     for index, run in enumerate(kept):
         project = run.get("project") or RECONSTRUCTION_UNATTRIBUTED
-        provider = run.get("provider") or pricing.price(run["model"])["provider"]
+        provider = run.get("provider")
+        if not provider:
+            try:
+                provider = pricing.price(run["model"])["provider"]
+            except pricing.PriceUnknownError as exc:
+                gaps.append({"kind": "provider_price_lookup_unavailable", "row": index,
+                             "model": run["model"], "error": repr(exc)})
         day = run.get("day")
         usd = run["usd"] if run.get("basis") == "printed" else round(
             run["usd"] * RECONSTRUCTION_ESTIMATE_WEIGHT, RECONSTRUCTION_MONEY_DIGITS)
@@ -265,7 +271,7 @@ def _reconstruction_cache_payload(kept, truth_rows, since):
             gaps.append({"kind": "unattributed", "row": index, "sessions": run.get("sessions")})
         if day is None:
             gaps.append({"kind": "missing_day", "row": index})
-        else:
+        elif provider is not None:
             month = datetime.date.fromisoformat(day).strftime("%Y-%m")
             key = (provider, month)
             reconstructed[key] = reconstructed.get(key, 0.0) + usd
@@ -276,6 +282,8 @@ def _reconstruction_cache_payload(kept, truth_rows, since):
             raise ValueError(f"unusable provider truth row: {truth_row!r}")
         key = (provider, day.strftime("%Y-%m"))
         actual[key] = actual.get(key, 0.0) + usd
+    provider_months_complete = not any(
+        gap["kind"] == "provider_price_lookup_unavailable" for gap in gaps)
     comparisons = []
     for provider, month in sorted(actual.keys() | reconstructed.keys()):
         key = (provider, month)
@@ -285,9 +293,10 @@ def _reconstruction_cache_payload(kept, truth_rows, since):
             gaps.append({"kind": "missing_provider_month_truth", "provider": provider, "month": month})
         comparisons.append({"provider": provider, "month": month, "truth_total": measured,
                             "reconstructed": estimate,
-                            "residual": None if measured is None else measured - estimate})
+                            "residual": None if measured is None or not provider_months_complete else measured - estimate})
     return {"since": since, "total": sum(row["usd"] for row in rows), "rows": rows,
             "truth": truth_rows, "provider_months": comparisons, "gaps": gaps,
+            "provider_months_complete": provider_months_complete,
             "note": "Provider truth is account-wide; reconstructed realtime is a separate estimate axis."}
 
 

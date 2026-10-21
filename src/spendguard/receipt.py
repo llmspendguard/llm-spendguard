@@ -354,20 +354,35 @@ def _unpriced_lines():
     real usage whose price is unknown. Both stay out of the total; both must be visible, because a silent $0
     is a claim that the work was free — and that is the one thing we know it wasn't."""
     try:
-        from . import budget
-        rows = budget.unpriced_since(_windows()[2])
+        from . import budget, model_catalog, pricing
+        rows = [row for row in budget.unpriced_since(_windows()[2])
+                if not model_catalog.billing_exempt(row["model"])]
     except Exception:
         return []
     if not rows:
         return []
-    n = sum(r["calls"] for r in rows)
-    out = [f"⚠ NOT IN THE TOTAL: {n} call(s) on {len(rows)} model(s) spendguard cannot price — real usage, "
-           f"unknown $ (never counted as free):"]
-    for r in rows[:3]:
+    unknown_rows, pending_rows = [], []
+    for row in rows:
+        try:
+            pricing.price(row["model"])
+        except pricing.PriceUnknownError:
+            unknown_rows.append(row)
+        else:
+            pending_rows.append(row)
+    n = sum(r["calls"] for r in unknown_rows)
+    out = ([f"⚠ NOT IN THE TOTAL: {n} call(s) on {len(unknown_rows)} model(s) spendguard cannot price — real usage, "
+            f"unknown $ (never counted as free):"] if unknown_rows else [])
+    for r in unknown_rows:
         out.append(f"    {r['model']:<28} {r['calls']:>4} calls   "
-                   f"spendguard price {r['model']} --in <$/1M> --out <$/1M> --source '<url>'")
-    if len(rows) > 3:
-        out.append(f"    … {len(rows) - 3} more — `spendguard price` each, or `spendguard sync-prices`")
+                   f"spendguard price {r['model']} --in <$/1M> --out <$/1M> "
+                   "--source '<url>' --verified <YYYY-MM-DD> (writes the model catalog SSOT)")
+    if pending_rows:
+        pending_calls = sum(row["calls"] for row in pending_rows)
+        out.append(f"⚠ pending_reprice_coverage: {pending_calls} historical call(s) now have catalog prices; "
+                   "ledger costs remain unrepaired and excluded from the total until repriced:")
+        for row in pending_rows:
+            out.append(f"    {row['model']:<28} {row['calls']:>4} calls   "
+                       f"spendguard reprice --model {row['model']}")
     return out
 
 

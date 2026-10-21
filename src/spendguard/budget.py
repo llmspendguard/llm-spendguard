@@ -109,7 +109,7 @@ def _attribute(ev, project):
 def _record_spend_event(provider, model, kind, cost, *, conv_id="", basis="", intent="", actor="", key_fp="",
                         chain="", project="", occurred_at=None, in_tok=0, out_tok=0, cache_read_tok=0,
                         cache_write_tok=0, reasoning_tok=0, source="gate", dedup_suffix="", invoice_id="", dedup_key=None,
-                        maintenance_ledger=None):
+                        maintenance_ledger=None, posting_metadata=None):
     """THE write for a live charge → `spend_events`, the single money-of-record, through the ONE shared mapping
     (charge_to_event). Every budget writer records through here; there is no second ledger, and — since the
     cutover — no `charges` fallback behind it, so a dropped write is a dropped charge. The ledger connection
@@ -125,6 +125,9 @@ def _record_spend_event(provider, model, kind, cost, *, conv_id="", basis="", in
         _attribute(ev, project)
         oa = occurred_at or datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
         ev["occurred_at"] = ev["ts_utc"] = oa
+        if posting_metadata is not None:
+            for posting_field in ("recorded_at", "tz", "local_datetime"):
+                ev[posting_field] = posting_metadata[posting_field]
         ev["in_tok"], ev["out_tok"] = int(in_tok or 0), int(out_tok or 0)
         # Cache/reasoning token axes — set ONLY when nonzero so the gate's hot path (which passes none) is byte-for-byte
         # unchanged. Claude Code re-reads the whole context every turn, so cache_read dominates; storing it per-turn as
@@ -1013,7 +1016,7 @@ def gate_batch_cells(since=None):
             for (pr, p, m, d), v in res.items() if float(v["usd"]) != 0}
 
 
-def record_true_down(day, provider, model, delta, project, *, maintenance_ledger=None):
+def record_true_down(day, provider, model, delta, project, *, maintenance_ledger=None, posting_metadata=None):
     """Insert ONE negative batch correction row: estimate − billed for this cell's share. Carries the REAL model
     (so by_dims nets it against the estimate rows before the SaaS push) and the true-down conv_id sentinel (so it
     is identifiable/clearable without a marker model). The original estimate rows are NEVER mutated — the ledger
@@ -1026,7 +1029,8 @@ def record_true_down(day, provider, model, delta, project, *, maintenance_ledger
                         project=project or "unattributed", occurred_at=day + "T00:00:00+00:00",
                         source="true-down", dedup_suffix=":td",
                         invoice_id="%s:%s" % (provider, (day or "")[:7]),
-                        maintenance_ledger=maintenance_ledger)   # reconciled to this provider-period invoice
+                        maintenance_ledger=maintenance_ledger,
+                        posting_metadata=posting_metadata)   # reconciled to this provider-period invoice
 
 
 def clear_true_down(since=None):

@@ -6,8 +6,7 @@ lane_catalog, reasoning_equivalence) + config + scattered literals, with no sing
 env had gemini/deepseek unpriced (they lived only in the synced LiteLLM cache), and a model id / price / ceiling /
 reasoning-floor could be authored in several places at once. This module is the ONE place a model fact is authored.
 
-SoT ≠ one COPY: derived copies are fine so long as they are generated + fresh + never hand-edited. prices.json is a
-GENERATED projection of this catalog (it carries a _generated marker); the synced LiteLLM cache is a BREADTH fallback
+Price tables are derived IN MEMORY from this catalog; the synced LiteLLM cache is a BREADTH fallback
 for models not in the catalog. PUBLISHED fields (price, output_ceiling) carry the PROVIDER as origin via a `source` +
 `verified` provenance; INTERNAL decisions (lane<->metered spelling, chosen reasoning floor) are authored here.
 
@@ -37,6 +36,15 @@ REASONING_STYLES = ("param", "suffix", "thinking", "none")   # enum domain for r
 _REQUIRED_TOP = ("id", "provider")                            # a record must at least identify itself + its vendor
 _TRACKED_FIELDS = ("price", "vision", "capabilities", "context_window", "output_ceiling")
 _ISO_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+BILLING_EXEMPT_REASON_FIELD = "billing_exempt_reason"
+CATALOG_UNIT_PRICES_FIELD = "unit_prices"
+CATALOG_OVERLAY_FILENAME = "catalog_synced.json"
+
+
+def catalog_authoring_path():
+    """The configurable local catalog layer; the packaged floor is read-only."""
+    from . import config
+    return os.path.join(str(config.HOME), CATALOG_OVERLAY_FILENAME)
 
 
 def tracked_catalog_payload(record):
@@ -64,13 +72,9 @@ def _overlay_path():
     """The SERVER-SYNCED / local-override curated catalog overlay — a {"models": {id: record}} file in SPENDGUARD_HOME,
     the SAME shape as the shipped floor (DATA_PATH). Written by `spendguard sync-catalog` from the server's curated
     catalog (the data-plane T2 layer); a user may also drop it by hand to OVERRIDE the shipped floor locally. Distinct
-    filename from catalog.py's live served-list cache (HOME/served_model_ids.json), a different store. None on any error
-    → floor only (config is imported lazily, as elsewhere in this leaf, to avoid a load-time cycle)."""
-    try:
-        from . import config
-        return os.path.join(str(config.HOME), "catalog_synced.json")
-    except Exception:
-        return None
+    filename from catalog.py's live served-list cache (HOME/served_model_ids.json), a different store. Configuration
+    errors propagate; config is imported lazily, as elsewhere in this leaf, to avoid a load-time cycle."""
+    return catalog_authoring_path()
 
 
 def _read_bytes(path):
@@ -134,7 +138,11 @@ def model_record(model_id):
 
     Callers that already hold a normalized base id (pricing does, before it looks up) get an exact hit; a caller
     passing a lane/suffixed/qualified id is resolved here. Never raises."""
-    models = _load_records()
+    return catalog_record_from_snapshot(model_id, _load_records())
+
+
+def catalog_record_from_snapshot(model_id, models):
+    """Resolve an authored spelling against one captured catalog snapshot."""
     if not model_id:
         return None
     for key in (model_id, _bare(model_id)):
@@ -143,10 +151,35 @@ def model_record(model_id):
     # a lane use-name (…-low/-high) → its base, via the authored lane_spellings (no blind suffix regex)
     bare = _bare(model_id)
     for rid, rec in models.items():
+        if bare in (rec.get("aliases") or []):
+            return rec
         for spellings in (rec.get("lane_spellings") or {}).values():
             if bare in spellings:
                 return rec
     return None
+
+
+def billing_exempt(model_id):
+    """Whether the catalog explicitly declares this model non-billable (never infer from its name)."""
+    return bool((model_record(model_id) or {}).get(BILLING_EXEMPT_REASON_FIELD))
+
+
+def unit_price_table():
+    """Catalog-authored non-token rates, overlaid using the same catalog layers as model records."""
+    return catalog_pricing_metadata(CATALOG_UNIT_PRICES_FIELD)
+
+
+def catalog_pricing_metadata(section):
+    """Read authored pricing metadata through the catalog's floor and overlay layers."""
+    floor = catalog_document_from_bytes(_read_bytes(DATA_PATH), DATA_PATH)
+    overlay_path = _overlay_path()
+    overlay = catalog_document_from_bytes(_read_bytes(overlay_path), overlay_path)
+    return {**floor.get(section, {}), **overlay.get(section, {})}
+
+
+def cache_modifier_table():
+    """Provider-published cache multipliers authored only in the catalog."""
+    return catalog_pricing_metadata("cache_modifiers")
 
 
 def all_records():
@@ -233,7 +266,14 @@ def model_price(model_id):
     model, or None when the model is not in the catalog or has no price (a curated model may carry price_error). This
     is the CURATED rate; pricing.py layers it above the synced breadth cache and does the cost math."""
     rec = model_record(model_id)
-    return (rec or {}).get("price") if rec else None
+    visited = set()
+    while rec and not rec.get("price") and rec.get("retired_alias_of"):
+        target = rec["retired_alias_of"]
+        if target in visited:
+            return None
+        visited.add(target)
+        rec = model_record(target)
+    return (rec or {}).get("price")
 
 
 def published_ceiling(model_id):
@@ -392,9 +432,9 @@ def model_capability(model_id, name):
 
 
 def as_price_table():
-    """The catalog projected into the prices.json shape: {provider: {model_id: {in_, out, cached_in, batch_in,
+    """The catalog projected in memory: {provider: {model_id: {in_, out, cached_in, batch_in,
     batch_out, [batch_cached_in], _source}}}. The ONE place that knows how a catalog record becomes a price row —
-    used by scripts/gen_prices_json.py to GENERATE prices.json (a derived artifact) and by pricing._load to layer the
+    used by pricing._load to layer the
     catalog's curated rates above the synced breadth. Models with no usable price (price is None or lacks in_) are
     omitted (an unpriced model is a gap, never a $0 row)."""
     out = {}
@@ -480,3 +520,18 @@ def validate_catalog(models=None, allow_legacy_missing_as_of=True):
         if len(rids) > 1:
             problems.append(f"provider {prov!r} has {len(rids)} provider_base records {rids}; expected exactly one")
     return problems
+
+
+class CatalogLayerCorruptionError(ValueError):
+    """A catalog layer cannot be trusted as complete JSON."""
+
+
+def catalog_document_from_bytes(raw, path):
+    """Parse a whole layer, naming corruption rather than hiding missing facts."""
+    try:
+        document = json.loads(raw) if raw is not None else {}
+        if not isinstance(document, dict):
+            raise ValueError("catalog document must be an object")
+        return document
+    except (ValueError, UnicodeError) as exc:
+        raise CatalogLayerCorruptionError(f"GAP catalog_layer_corrupt: {path}: {exc}") from exc

@@ -1261,7 +1261,10 @@ class _CountedLedgerConnection(sqlite3.Connection):
         generation = getattr(self, "_ledger_generation", None)
         if generation is not _LEDGER_ADMISSION:
             return  # inherited handles never acquire an inherited lock
-        super().close()
+        # Idle expiry owns this lock through rollback AND callback restoration.
+        # Closing between those steps invalidates its still-live native handle.
+        with self._ledger_request_step_lock:
+            super().close()
         with generation.lock:
             if not self._ledger_released:
                 self._ledger_released = True

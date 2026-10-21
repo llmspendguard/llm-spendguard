@@ -21,6 +21,7 @@ WAL_GUARD_CLOCK_START_S = 100.0
 WAL_GUARD_REQUEST_DEADLINE_S = 0.02
 WAL_GUARD_EXPIRY_WAIT_S = 2.0
 WAL_GUARD_CURSOR_REFERENCES_PER_STEP = 1
+WAL_GUARD_DEADLINE_RESTORATION_ERROR = "deadline fault leaked into checkpoint verification"
 WAL_GUARD_SLOW_SQL = """WITH RECURSIVE counter(n) AS
 (VALUES(0) UNION ALL SELECT n+1 FROM counter) SELECT SUM(n) FROM counter"""
 
@@ -186,14 +187,18 @@ def test_wal_managed_imported_read_has_default_deadline(tmp_path, monkeypatch):
     ledger_path = tmp_path / pathlib.Path(__file__).stem
     writer = _seed_wal_maintenance_fixture(ledger_path)
     reader = config.open_ledger_connection(ledger_path)
-    monkeypatch.setattr(config, "LEDGER_QUERY_DEADLINE_S", WAL_GUARD_REQUEST_DEADLINE_S)
+    checkpoint_query_deadline = config.LEDGER_QUERY_DEADLINE_S
     try:
-        reader.execute("BEGIN")
-        reader.execute(WAL_GUARD_SQL_READ).fetchone()
-        writer.execute(WAL_GUARD_SQL_INSERT, (bytes(WAL_GUARD_PAYLOAD_BYTES),))
-        writer.commit()
-        with pytest.raises(LedgerQueryDeadline):
-            reader.execute(WAL_GUARD_SLOW_SQL).fetchone()
+        with monkeypatch.context() as deadline_fault:
+            deadline_fault.setattr(config, "LEDGER_QUERY_DEADLINE_S", WAL_GUARD_REQUEST_DEADLINE_S)
+            reader.execute("BEGIN")
+            reader.execute(WAL_GUARD_SQL_READ).fetchone()
+            writer.execute(WAL_GUARD_SQL_INSERT, (bytes(WAL_GUARD_PAYLOAD_BYTES),))
+            writer.commit()
+            with pytest.raises(LedgerQueryDeadline):
+                reader.execute(WAL_GUARD_SLOW_SQL).fetchone()
+        assert not reader.in_transaction
+        assert config.LEDGER_QUERY_DEADLINE_S == checkpoint_query_deadline, WAL_GUARD_DEADLINE_RESTORATION_ERROR
         report = maintenance.truncate_ledger_wal_bounded(ledger_path)
         assert report.status == maintenance.WAL_CHECKPOINT_SUCCESS, report
         assert not reader.in_transaction
@@ -206,22 +211,45 @@ def test_wal_managed_idle_abandonment_releases_snapshot(tmp_path, monkeypatch):
     ledger_path = tmp_path / pathlib.Path(__file__).stem
     writer = _seed_wal_maintenance_fixture(ledger_path)
     reader = config.open_ledger_connection(ledger_path)
-    monkeypatch.setattr(config, "LEDGER_QUERY_DEADLINE_S", WAL_GUARD_REQUEST_DEADLINE_S)
+    checkpoint_query_deadline = config.LEDGER_QUERY_DEADLINE_S
     try:
-        reader.execute("BEGIN")
-        abandoned_cursor = reader.execute(WAL_GUARD_SQL_READ)
-        abandoned_cursor.fetchone()
-        writer.execute(WAL_GUARD_SQL_INSERT, (bytes(WAL_GUARD_PAYLOAD_BYTES),))
-        writer.commit()
-        expires = time.monotonic() + WAL_GUARD_EXPIRY_WAIT_S
-        while reader.in_transaction and time.monotonic() < expires:
-            time.sleep(config.LEDGER_REQUEST_DISCONNECT_POLL_S)
+        with monkeypatch.context() as deadline_fault:
+            deadline_fault.setattr(config, "LEDGER_QUERY_DEADLINE_S", WAL_GUARD_REQUEST_DEADLINE_S)
+            reader.execute("BEGIN")
+            abandoned_cursor = reader.execute(WAL_GUARD_SQL_READ)
+            abandoned_cursor.fetchone()
+            writer.execute(WAL_GUARD_SQL_INSERT, (bytes(WAL_GUARD_PAYLOAD_BYTES),))
+            writer.commit()
+            expires = time.monotonic() + WAL_GUARD_EXPIRY_WAIT_S
+            while reader.in_transaction and time.monotonic() < expires:
+                time.sleep(config.LEDGER_REQUEST_DISCONNECT_POLL_S)
+        assert not reader.in_transaction
+        assert config.LEDGER_QUERY_DEADLINE_S == checkpoint_query_deadline, WAL_GUARD_DEADLINE_RESTORATION_ERROR
         report = maintenance.truncate_ledger_wal_bounded(ledger_path)
         assert report.status == maintenance.WAL_CHECKPOINT_SUCCESS, report
         assert not reader.in_transaction
     finally:
         reader.close()
         writer.close()
+
+
+def test_wal_checkpoint_fault_deadline_leak_mutation_is_detected(tmp_path, monkeypatch):
+    """Retaining the read fault across verification must fail independently of CPU timing."""
+    from contextlib import contextmanager
+    import pytest
+
+    for deadline_guard in (test_wal_managed_imported_read_has_default_deadline,
+                           test_wal_managed_idle_abandonment_releases_snapshot):
+        guard_path = tmp_path / deadline_guard.__name__
+        guard_path.mkdir()
+        with monkeypatch.context() as deadline_leak:
+            @contextmanager
+            def retain_wal_fault_deadline_through_verification():
+                yield deadline_leak
+
+            deadline_leak.setattr(deadline_leak, "context", retain_wal_fault_deadline_through_verification)
+            with pytest.raises(AssertionError, match=WAL_GUARD_DEADLINE_RESTORATION_ERROR):
+                deadline_guard(guard_path, deadline_leak)
 
 
 def test_wal_request_lifetime_does_not_age_next_read_deadline(tmp_path):
@@ -471,6 +499,73 @@ def test_wal_adaptive_polling_both_owners_interrupt_slow_scan(tmp_path, monkeypa
     finally:
         reader.close()
         writer.close()
+
+
+def test_wal_connection_close_joins_idle_expiry_owner(tmp_path, monkeypatch):
+    """Close must join the owner even after rollback has cleared in_transaction."""
+    import threading
+    from contextlib import contextmanager
+
+    ledger_path = tmp_path / pathlib.Path(config.db_path()).name
+    writer = _seed_wal_maintenance_fixture(ledger_path)
+    reader = config.open_ledger_connection(ledger_path)
+    native_step_lock = reader._ledger_request_step_lock
+    close_attempted = threading.Event()
+    close_completed = threading.Event()
+    close_errors = []
+
+    @contextmanager
+    def observe_wal_close_step_lock_entry():
+        close_attempted.set()
+        with native_step_lock:
+            yield
+
+    def close_wal_reader_during_expiry_restoration():
+        try:
+            reader.close()
+        except BaseException as error:
+            close_errors.append(error)
+        finally:
+            close_completed.set()
+
+    closer = threading.Thread(target=close_wal_reader_during_expiry_restoration)
+    native_step_lock.acquire()
+    monkeypatch.setattr(reader, "_ledger_request_step_lock", observe_wal_close_step_lock_entry())
+    try:
+        closer.start()
+        assert close_attempted.wait(WAL_GUARD_EXPIRY_WAIT_S), "close bypassed the expiry owner lock"
+        assert not close_completed.is_set(), "close invalidated an owned connection"
+        assert not reader.in_transaction
+        sqlite3.Connection.set_progress_handler(reader, None, 0)
+    finally:
+        native_step_lock.release()
+        closer.join(WAL_GUARD_EXPIRY_WAIT_S)
+        monkeypatch.setattr(reader, "_ledger_request_step_lock", native_step_lock)
+        reader.close()
+        writer.close()
+    assert not closer.is_alive()
+    assert close_completed.is_set()
+    assert not close_errors
+
+
+def test_wal_connection_close_owner_bypass_mutation_is_detected(tmp_path, monkeypatch):
+    import pytest
+    from contextlib import nullcontext
+
+    guarded_close = config._CountedLedgerConnection.close
+
+    def bypass_wal_close_owner_synchronization(connection):
+        observed_lock = connection._ledger_request_step_lock
+        connection._ledger_request_step_lock = nullcontext()
+        try:
+            return guarded_close(connection)
+        finally:
+            connection._ledger_request_step_lock = observed_lock
+
+    with monkeypatch.context() as close_owner_mutation:
+        close_owner_mutation.setattr(config._CountedLedgerConnection, "close", bypass_wal_close_owner_synchronization)
+        with pytest.raises(AssertionError, match="close bypassed the expiry owner lock"):
+            test_wal_connection_close_joins_idle_expiry_owner(tmp_path, close_owner_mutation)
 
 
 if __name__ == "__main__":
