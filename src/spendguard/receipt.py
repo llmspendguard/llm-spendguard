@@ -160,8 +160,8 @@ def _receipt_est_records():
     Open the ledger read-only: receipt rendering must never create, migrate, or checkpoint it.
     Numeric TEXT is cast per row before aggregation, independently of every real-dollar column.
     """
-    import contextlib
     import sqlite3
+    from .ledger_read import _ledger_read_connection
     from .sources import receipt_source_family
     from .ledger import SpendLedger
 
@@ -170,15 +170,19 @@ def _receipt_est_records():
         records = json.loads(_receipt_aggregate_cache_path().read_text()).get("est_value_by_source") or {}
     except (OSError, ValueError):
         pass
+    # A cache-only installation has no ledger yet. Preserve its source records
+    # (including attribution and as-of dates) without creating a database merely
+    # to display a receipt. Existing ledgers still use the bounded reader below.
+    if not pathlib.Path(config.db_path()).exists():
+        return records
     ledger_records = {}
     today, week, month = _windows()
     try:
-        uri = pathlib.Path(config.db_path()).resolve().as_uri() + "?mode=ro"
-        with contextlib.closing(sqlite3.connect(uri, uri=True)) as conn:
+        with _ledger_read_connection() as conn:
             rows = conn.execute(
                 "SELECT source, day, org, team, project_primary, "
                 "SUM(COALESCE(CAST(est_chat_usd AS REAL), 0)) FROM spend_events "
-                "WHERE day >= ? AND est_chat_usd IS NOT NULL "
+                "WHERE day >= ? AND est_chat_usd IS NOT NULL AND billed = 0 "
                 f"AND {SpendLedger._LIVE_FILTER} "
                 "GROUP BY source, day, org, team, project_primary", (min(week, month),)).fetchall()
         for source, day, org, team, project, usd in rows:
@@ -350,20 +354,35 @@ def _unpriced_lines():
     real usage whose price is unknown. Both stay out of the total; both must be visible, because a silent $0
     is a claim that the work was free — and that is the one thing we know it wasn't."""
     try:
-        from . import budget
-        rows = budget.unpriced_since(_windows()[2])
+        from . import budget, model_catalog, pricing
+        rows = [row for row in budget.unpriced_since(_windows()[2])
+                if not model_catalog.billing_exempt(row["model"])]
     except Exception:
         return []
     if not rows:
         return []
-    n = sum(r["calls"] for r in rows)
-    out = [f"⚠ NOT IN THE TOTAL: {n} call(s) on {len(rows)} model(s) spendguard cannot price — real usage, "
-           f"unknown $ (never counted as free):"]
-    for r in rows[:3]:
+    unknown_rows, pending_rows = [], []
+    for row in rows:
+        try:
+            pricing.price(row["model"])
+        except pricing.PriceUnknownError:
+            unknown_rows.append(row)
+        else:
+            pending_rows.append(row)
+    n = sum(r["calls"] for r in unknown_rows)
+    out = ([f"⚠ NOT IN THE TOTAL: {n} call(s) on {len(unknown_rows)} model(s) spendguard cannot price — real usage, "
+            f"unknown $ (never counted as free):"] if unknown_rows else [])
+    for r in unknown_rows:
         out.append(f"    {r['model']:<28} {r['calls']:>4} calls   "
-                   f"spendguard price {r['model']} --in <$/1M> --out <$/1M> --source '<url>'")
-    if len(rows) > 3:
-        out.append(f"    … {len(rows) - 3} more — `spendguard price` each, or `spendguard sync-prices`")
+                   f"spendguard price {r['model']} --in <$/1M> --out <$/1M> "
+                   "--source '<url>' --verified <YYYY-MM-DD> (writes the model catalog SSOT)")
+    if pending_rows:
+        pending_calls = sum(row["calls"] for row in pending_rows)
+        out.append(f"⚠ pending_reprice_coverage: {pending_calls} historical call(s) now have catalog prices; "
+                   "ledger costs remain unrepaired and excluded from the total until repriced:")
+        for row in pending_rows:
+            out.append(f"    {row['model']:<28} {row['calls']:>4} calls   "
+                       f"spendguard reprice --model {row['model']}")
     return out
 
 
@@ -377,13 +396,8 @@ def _truncated_lines():
     as 'no findings' rather than 'no answer' — so it is worse than a visible failure. It was invisible here
     because it sits inside a legitimate-looking total."""
     try:
-        from . import config
-        # CLOSED ON EVERY PATH. This connection leaked on the success path AND the exception path, and the
-        # receipt runs on every turn — so a long session accumulated open handles against the ledger it is
-        # reading. contextlib.closing works on a raw connection; `with sqlite3.connect(...)` would only
-        # manage the TRANSACTION and still leave the handle open.
-        import contextlib as _cl
-        with _cl.closing(config.open_ledger_connection(config.db_path(), tune=False)) as c:
+        from .ledger_read import _ledger_read_connection
+        with _ledger_read_connection() as c:
             return _truncation_rows(c)
     except Exception:
         return []

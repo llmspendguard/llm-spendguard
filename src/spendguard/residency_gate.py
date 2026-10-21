@@ -22,6 +22,7 @@ import shutil
 import sys
 
 from . import config
+from .ledger_read import LedgerReadError
 
 _HOOK_SUFFIX = "residency-gate --posttooluse-hook"
 def _residency_configured_integer(key):
@@ -122,6 +123,8 @@ def _judge_residency_delegability(tool_name, tool_input, result_text):
                               schema={"type": "object", "additionalProperties": False, "required": ["delegable"],
                                       "properties": {"delegable": {"type": "boolean"}, "why": {"type": "string"}}})
         j = adapters.structured_reply(r)
+    except LedgerReadError:
+        raise
     except Exception:
         return None
     if not (isinstance(j, dict) and isinstance(j.get("delegable"), bool)):
@@ -181,6 +184,8 @@ def evaluate_posttooluse(payload):
                f"drops it.")
         return {"systemMessage": msg,
                 "hookSpecificOutput": {"hookEventName": "PostToolUse", "additionalContext": msg}}
+    except LedgerReadError as exc:
+        return {"systemMessage": f"spendguard residency ledger gap: {exc}"}
     except Exception:
         return silent
 

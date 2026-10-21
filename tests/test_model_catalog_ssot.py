@@ -1,14 +1,7 @@
-"""Guard — the model_catalog SSOT (concern 'model_catalog'). ONE authoring home for per-model data; prices.json is a
-GENERATED, fresh projection of it; published fields resolve from the version-controlled catalog in a FRESH env (not a
-host-local override or the synced breadth cache). This is the check that keeps model data from scattering again.
+"""Catalog data contract and isolated runtime resolution guard.
 
-Proves: (1) the catalog satisfies its DATA CONTRACT (model_catalog.validate_catalog); (2) the models we depend on are present;
-(3) prices.json carries the _generated marker AND matches the catalog projection exactly (the freshness guard — a
-catalog edit without re-running the generator FAILS here); (4) in an ISOLATED home (no synced cache, no user
-prices.json) gemini/deepseek/gpt-5.6/glm price from the catalog with the right ceilings — the durable fix for the
-scatter; (5) the retired-alias datum is present; (6) reliability's probe default is catalog-derived, not a stale
-literal. Offline: reads the shipped catalog/prices.json; no network, no model call."""
-import json
+The catalog is shipped and its price projection is derived only in memory.
+"""
 import os
 import sys
 import tempfile
@@ -52,14 +45,14 @@ for m in ["claude-opus-4-8", "gpt-5.5", "gpt-5-nano", "gpt-5.6-sol", "gpt-5.6-lu
           "kimi-k3", "glm-5.3", "deepseek-v4-flash", "gemini-3.8-flash"]:
     ck(f"catalog has a record for {m}", mc.model_record(m) is not None)
 
-# ── (3) prices.json is GENERATED and FRESH (matches the catalog projection) ──
-print("-- (3) prices.json is a generated, fresh projection --")
-shipped = json.load(open(os.path.join(_SRC, "prices.json")))
-ck("prices.json carries the _generated marker", shipped.get("_meta", {}).get("_generated") is True)
-ck("prices.json names its generator + source", bool(shipped["_meta"].get("_generator")) and "model_catalog" in shipped["_meta"].get("_source", ""))
-shipped_table = {prov: pd.get("models", {}) for prov, pd in (shipped.get("providers") or {}).items()}
-ck("prices.json EXACTLY matches the catalog projection (freshness — re-run gen_prices_json after a catalog edit)",
-   shipped_table == mc.as_price_table())
+# ── (3) no second on-disk price source ──
+print("-- (3) catalog projection exists only in memory --")
+ck("generated token price artifact is absent", not os.path.exists(os.path.join(_SRC, "prices.json")))
+ck("pricing has no authored fallback table", not hasattr(pricing, "_FALLBACK"))
+for provider, rows in mc.as_price_table().items():
+    for model, row in rows.items():
+        ck(f"catalog price resolves through runtime API: {provider}/{model}",
+           pricing.price(model, provider=provider)["in_"] == row["in_"])
 
 # ── (4) FRESH env: published fields resolve from the versioned catalog (the durable fix) ──
 print("-- (4) versioned resolution in an isolated env (no synced cache, no user override) --")

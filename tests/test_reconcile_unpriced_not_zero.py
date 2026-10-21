@@ -9,11 +9,15 @@ as REAL — corrupting two money paths:
 Offline ($0): billed_rows + the provider readers are faked. Isolation: SPENDGUARD_HOME → mkdtemp before import.
 """
 import os, sys, tempfile
+from types import MappingProxyType
+
+RECONCILE_POSTING_METADATA_FIELDS = frozenset(("recorded_at", "tz", "local_datetime"))
 
 os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="spendguard-reconcile-unpriced-")
 
 from spendguard import ledger_sync, budget, pricing   # noqa: E402
 from _script_checks import seed_test_spend_event   # noqa: E402
+from spendguard.reconcile_maintenance_owner import ReconcileMaintenanceConnection   # noqa: E402
 
 
 def main():
@@ -28,12 +32,22 @@ def main():
     # ── true_down: an unpriced batch (cost=None) is EXCLUDED from the correction, never trued down against unknown ──
     _real_record = budget.record_true_down
     recorded = []
+    maintenance_owners = []
+    reconcile_posting_snapshots = []
     # Reconciliation now streams the ledger; seed its actual input rather than
     # mocking the retired aggregate-reader seam (which created no database).
     seed_test_spend_event("2026-06-15", "openai", "gpt-5.5", "batch", 10.0, "lmm",
                           timestamp_suffix="T00:00:00+00:00", source="unpriced-billed-fixture",
                           dedup_fields=("day", "provider", "model"))
-    budget.record_true_down = lambda day, prov, model, amt, project=None: recorded.append((prov, model, amt))
+    def capture_reconcile_unpriced_owned_correction(day, prov, model, amt, project=None, *,
+                                                   maintenance_ledger, posting_metadata=None):
+        recorded.append((prov, model, amt))
+        maintenance_owners.append(maintenance_ledger._conn)
+        reconcile_posting_snapshots.append(posting_metadata)
+        return _real_record(day, prov, model, amt, project, maintenance_ledger=maintenance_ledger,
+                            posting_metadata=posting_metadata)
+
+    budget.record_true_down = capture_reconcile_unpriced_owned_correction
     try:
         # UNPRICED billed batch (cost=None): its $ is UNKNOWN, must NOT be read as $0 (which would make delta=10 → a
         # wrong $10 correction). billed_rows row shape: (provider, model, cost, in_tok, out_tok, day, batch_id).
@@ -51,7 +65,15 @@ def main():
         out2 = ledger_sync.true_down(since="2026-06-01",
                                      billed_rows={"openai": [("openai", "gpt-5.5", 8.0, 0, 0, "2026-06-15", "b2")]})
         ck("a PRICED batch still trues down the real delta (est − billed)", recorded and abs(recorded[0][2] - 2.0) < 1e-6, recorded)
+        ck("priced corrections use the explicitly owned offline maintenance connection",
+           maintenance_owners and all(isinstance(owner, ReconcileMaintenanceConnection) for owner in maintenance_owners))
         ck("its unpriced_incomplete is empty", out2.get("unpriced_incomplete") == [], out2)
+        ck("the priced correction carries complete immutable operation metadata",
+           len(reconcile_posting_snapshots) == len(recorded)
+           and all(isinstance(snapshot, MappingProxyType)
+                   and RECONCILE_POSTING_METADATA_FIELDS <= snapshot.keys()
+                   and all(snapshot[field] for field in RECONCILE_POSTING_METADATA_FIELDS)
+                   for snapshot in reconcile_posting_snapshots), reconcile_posting_snapshots)
     finally:
         budget.record_true_down = _real_record
 

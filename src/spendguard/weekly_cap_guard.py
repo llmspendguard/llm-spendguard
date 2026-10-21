@@ -8,6 +8,7 @@ import shutil
 import sys
 
 from . import config
+from .ledger_read import LedgerReadError
 
 
 WEEKLY_CAP_GUARD_ENABLED_DEFAULT = True
@@ -157,6 +158,8 @@ def weekly_cap_guard_pretooluse(payload):
                 override=WEEKLY_CAP_GUARD_OVERRIDE_ENV, disable=WEEKLY_CAP_GUARD_DISABLE_GUIDANCE)
             return _weekly_cap_guard_result("deny", message)
         return _weekly_cap_guard_result("allow", "spendguard cap-guard: weekly headroom permits this spawn")
+    except LedgerReadError as exc:
+        return _weekly_cap_guard_result("deny", f"spendguard ledger unavailable; refusing spawn: {exc}")
     except Exception as exc:
         warning = WEEKLY_CAP_GUARD_CRASH_TEMPLATE.format(error=f"{type(exc).__name__}: {str(exc)[:160]}")
         print(warning, file=sys.stderr)
@@ -170,6 +173,8 @@ def cmd(argv=None):
     try:
         payload = json.loads(sys.stdin.read() or "{}")
         result = weekly_cap_guard_pretooluse(payload)
+    except LedgerReadError as exc:
+        result = _weekly_cap_guard_result("deny", f"spendguard ledger unavailable; refusing spawn: {exc}")
     except Exception as exc:
         warning = WEEKLY_CAP_GUARD_CRASH_TEMPLATE.format(error=f"{type(exc).__name__}: {str(exc)[:160]}")
         print(warning, file=sys.stderr)

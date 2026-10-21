@@ -231,9 +231,22 @@ def true_down(since=None, billed_rows=None):
             by_model[f"{prov_name}:{jmodel}"] = round(delta, 2)
         # All reads/calculations finish before the snapshot and destructive clear.
         staged.commit()
-        budget.clear_readable_true_down(since, providers=[p for p in billed_rows if p not in read_gaps])
-        for proj, prov_name, model, day, share in staged.execute("SELECT * FROM corrections"):
-            budget.record_true_down(day, prov_name, model, share, project=proj)
+        from .ledger import SpendLedger, ledger_posting_metadata
+        from .reconcile_maintenance_owner import owned_reconcile_maintenance_connection
+        true_down_posting = ledger_posting_metadata()
+        # Snapshot before SQLite's writer transaction; backup must never wait on our own uncommitted writes.
+        budget.snapshot_once("clear-true-down")
+        with budget._lock, owned_reconcile_maintenance_connection() as correction_connection:
+            correction_ledger = SpendLedger(owned_connection=correction_connection)
+            with correction_ledger.bulk(commit_callback=correction_connection.commit_reconcile_maintenance_corrections):
+                correction_connection.execute("BEGIN IMMEDIATE")
+                budget.clear_readable_true_down(
+                    since, providers=[p for p in billed_rows if p not in read_gaps],
+                    maintenance_ledger=correction_ledger)
+                for proj, prov_name, model, day, share in staged.execute("SELECT * FROM corrections"):
+                    budget.record_true_down(day, prov_name, model, share, project=proj,
+                                            maintenance_ledger=correction_ledger,
+                                            posting_metadata=true_down_posting)
     return dict(since=since, trued_down=round(trued, 2), by_model=by_model, skipped=skipped_providers,
                 read_gaps=read_gaps,
                 estimate_unpriced_incomplete=sorted("%s:%s" % k for k in estimate_incomplete),

@@ -8,6 +8,7 @@ import shutil
 import sys
 
 from . import config, delegate_router, lane_registry, lanes, overage
+from .ledger_read import LedgerReadError
 
 _HOOK_SUFFIX = "agent-spawn-gate --pretooluse-hook"
 _OVERRIDE_FLAG = "SPENDGUARD_ALLOW_SUBAGENT"
@@ -99,6 +100,8 @@ def evaluate_pretooluse(payload):
         return _hook_result("deny", f"{_OVERRIDE_FLAG}=1 requires {_OVERRIDE_REASON} with a human-supplied reason")
     try:
         in_band = _plan_in_band()
+    except LedgerReadError as exc:
+        return _hook_result("deny", f"spendguard ledger unavailable; refusing spawn: {exc}")
     except Exception as exc:
         return _hook_result("allow", f"spendguard agent gate degraded; allowing spawn: plan state unavailable ({exc})")
     if not in_band:
@@ -113,6 +116,8 @@ def evaluate_pretooluse(payload):
     if verdict is None:
         try:
             verdict = delegate_router.classify_task(prompt, exclude_plans=[_hosting_lane()])
+        except LedgerReadError as exc:
+            return _hook_result("deny", f"spendguard ledger unavailable; refusing spawn: {exc}")
         except Exception as exc:
             return _hook_result("allow", f"spendguard agent gate degraded; allowing spawn: classifier error ({exc})")
         if verdict.get("error"):
@@ -146,6 +151,8 @@ def cmd(argv=None):
         return 0
     try:
         result = evaluate_pretooluse(payload)
+    except LedgerReadError as exc:
+        result = _hook_result("deny", f"spendguard ledger unavailable; refusing spawn: {exc}")
     except Exception as exc:                 # A gate on EVERY Agent/Task spawn must NEVER crash: a crashed PreToolUse
         # hook can fail-CLOSED and block all agent work. So any unanticipated error (beyond the per-step try/excepts
         # inside evaluate_pretooluse) degrades to ALLOW, visibly — the fail-open guarantee is the outermost invariant.

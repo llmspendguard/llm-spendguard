@@ -33,10 +33,48 @@ import json
 import logging
 import sys
 import traceback
+from contextlib import contextmanager
 
 PROTOCOL_VERSION = "2024-11-05"     # echoed back to the client if it names one; this is the safe default
 LEDGER_READ_OPERATIONS = ("events", "event", "calls", "count", "aggregate",
                           "recorded-call-total", "conversation-spend-since", "metrics")
+MCP_PEER_DISCONNECT_PEEK_BYTES = 1
+MCP_PEER_OBSERVER_THREAD_NAME = "spendguard-mcp-ledger-abandonment"
+
+
+@contextmanager
+def _mcp_http_request_ledger_lifetime(connection):
+    """Interrupt request-owned ledger reads when the HTTP caller disconnects."""
+    import select
+    import socket
+    import threading
+    from . import config
+    from .ledger_read import ledger_request_scope
+
+    observer_stopped = threading.Event()
+    with ledger_request_scope() as request_reads:
+        def observe_mcp_peer_abandonment():
+            while not observer_stopped.is_set():
+                try:
+                    readable, _, _ = select.select(
+                        [connection], [], [], config.LEDGER_REQUEST_DISCONNECT_POLL_S)
+                    if readable:
+                        if not connection.recv(MCP_PEER_DISCONNECT_PEEK_BYTES, socket.MSG_PEEK):
+                            request_reads.cancel_ledger_request()
+                            return
+                        observer_stopped.wait(config.LEDGER_REQUEST_DISCONNECT_POLL_S)
+                except (OSError, ValueError, TypeError):
+                    request_reads.cancel_ledger_request()
+                    return
+
+        observer = threading.Thread(target=observe_mcp_peer_abandonment,
+                                    name=MCP_PEER_OBSERVER_THREAD_NAME, daemon=True)
+        observer.start()
+        try:
+            yield
+        finally:
+            observer_stopped.set()
+            observer.join()
 
 
 def _tool_ledger_read(args):
@@ -109,53 +147,19 @@ def _tool_advise(args):
 
 
 def _catalogue():
-    """The ACTIONABLE model catalogue: spendguard's curated prices (_FALLBACK) + the caller's own verified prices
-    (prices.json), each with per-1M rates + provider. The full provider universe (hundreds of ids) is enumerated
-    on demand by the bakeoff, never dumped here — this is the 'known, priced options' set."""
-    import os
-    from . import pricing
-    seen, out = set(), []
-
-    def add_priced_model(model, rates, source):
-        prov = (rates or {}).get("provider") or pricing.PROVIDERS.get(model) or pricing.PROVIDERS.get(pricing.normalize(model))
-        key = f"{prov}:{model}"
-        if key in seen:
-            return
-        seen.add(key)
+    """Enumerate authored catalog models, resolving rates through the sole price API."""
+    from . import model_catalog, pricing
+    out = []
+    for model, record in model_catalog.all_records().items():
+        provider = record.get("provider")
         try:
-            p = pricing.price(model, provider=prov)   # prov (resolved above) pins a bare multi-vendor id to the right rate card
-        except Exception:
-            p = rates or {}
-        out.append(dict(id=key, model=model, provider=prov,
-                        in_usd_per_m=p.get("in_"), out_usd_per_m=p.get("out"), source=source))
-
-    for m, r in getattr(pricing, "_FALLBACK", {}).items():
-        add_priced_model(m, r, "curated")
-    # The SHIPPED curated layer (src/spendguard/prices.json). _FALLBACK is only its in-source mirror and does
-    # NOT carry the vendor-hosted / newest ids that live solely in this data file (claude-opus-5,
-    # claude-fable-5-1, glm-5.3, ...). Without reading it, those were priced by pricing.price() yet INVISIBLE
-    # here on any fresh install — the exact gap that hid claude-fable-5-1 / claude-opus-5 despite their being
-    # the majority of Sept-2026 Claude Code turns. Tagged "curated" (ships with the package); the user's own
-    # prices.json below stays "verified". seen-dedup keeps _FALLBACK's copy of a shared id.
-    try:
-        shipped = os.path.join(os.path.dirname(pricing.__file__), "prices.json")
-        if os.path.exists(shipped):
-            sd = json.loads(open(shipped).read())
-            for prov, pv in (sd.get("providers") or {}).items():
-                for m, r in (pv.get("models") or {}).items():
-                    add_priced_model(m, {**(r or {}), "provider": prov}, "curated")
-    except Exception:
-        pass
-    try:
-        path = pricing.user_prices_path()
-        if os.path.exists(path):
-            data = json.loads(open(path).read())
-            for prov, pv in (data.get("providers") or {}).items():
-                for m, r in (pv.get("models") or {}).items():
-                    add_priced_model(m, {**(r or {}), "provider": prov}, "verified")
-    except Exception:
-        pass
-    return sorted(out, key=lambda d: (d["provider"] or "~", d["model"]))
+            rates = pricing.price(model, provider=provider)
+        except pricing.PriceUnknownError:
+            pricing.note_unpriced(model)
+            continue
+        out.append(dict(id=f"{provider}:{model}", model=model, provider=provider,
+                        in_usd_per_m=rates.get("in_"), out_usd_per_m=rates.get("out"), source="curated"))
+    return sorted(out, key=lambda row: (row["provider"] or "~", row["model"]))
 
 
 def _tool_models(args):
@@ -984,7 +988,9 @@ def handle(req):
             return _err(rid, -32602, f"unknown tool {name!r} — have: {', '.join(_TOOLS)}")
         _d, _s, fn = entry
         try:
-            payload = fn(params.get("arguments") or {})
+            from .ledger_read import ledger_request_scope
+            with ledger_request_scope():
+                payload = fn(params.get("arguments") or {})
             return _ok(rid, _tool_result(payload))
         except Exception as e:
             # a TOOL failure is reported as an isError result (the model can read it), not a transport error
@@ -1154,7 +1160,8 @@ def serve_http(host="127.0.0.1", port=4913):
             except Exception as e:
                 self._send(json.dumps(_err(None, -32700, f"parse error: {e}")))
                 return
-            resp = handle(req)                 # the ONE shared dispatch (stdio + http in lockstep)
+            with _mcp_http_request_ledger_lifetime(self.connection):
+                resp = handle(req)             # the ONE shared dispatch (stdio + http in lockstep)
             self._send(json.dumps(resp, default=str) if resp is not None else "")
             try:                               # deploy self-heal — exit BETWEEN requests so the supervisor respawns
                 if _auto_respawn_enabled() and release.should_respawn():

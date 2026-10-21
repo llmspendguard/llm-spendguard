@@ -14,6 +14,7 @@ the conversation; omitting it (the default) starts a FRESH, context-isolated thr
 warm server a POOL of independent prompts rather than one growing conversation.
 """
 import atexit
+import contextvars
 import os
 import threading
 import time
@@ -480,15 +481,22 @@ class _CodexDaemonPool:
                         finally:
                             completion.set()
 
-                    threading.Thread(target=invoke_pool_lease, daemon=True).start()
-                    if not completed.wait(max(0, deadline - time.monotonic())):
-                        retire = True
-                        result = {"text": None, "thread": kwargs.get("thread"),
-                                  "error": "codex pool leased turn deadline expired", "timed_out": True}
-                    elif "exception" in outcome:
-                        raise outcome["exception"]
-                    else:
-                        result = outcome["result"]
+                    from .ledger_read import ledger_request_scope
+                    with ledger_request_scope() as lease_reads:
+                        lease_context = contextvars.copy_context()
+                        threading.Thread(target=lease_context.run, args=(invoke_pool_lease,), daemon=True).start()
+                        if not completed.wait(max(0, deadline - time.monotonic())):
+                            # The worker lifecycle keeps its existing recycling
+                            # policy; release any ledger work owned by this lease
+                            # before returning a detached invocation to recovery.
+                            lease_reads.cancel_ledger_request()
+                            retire = True
+                            result = {"text": None, "thread": kwargs.get("thread"),
+                                      "error": "codex pool leased turn deadline expired", "timed_out": True}
+                        elif "exception" in outcome:
+                            raise outcome["exception"]
+                        else:
+                            result = outcome["result"]
                 else:
                     result = worker.run_warm(**call_kwargs)
                 recycle = bool(result.get("error"))

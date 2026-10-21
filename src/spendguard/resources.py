@@ -32,6 +32,8 @@ VAST_BASE = "https://console.vast.ai/api/v0"
 # mis-attribute a stranger's instance (e.g. "embed-test" → some project that isn't theirs). Each user sets their own
 # in config `resources.vastai.label_map` ({substring: project}), e.g. {"train": "ml-pipeline", "render": "video"}.
 DEFAULT_LABEL_MAP = []
+REALTIME_FIND_PRICE_GAP_KIND = "find_price_unavailable"
+REALTIME_RUN_PRICE_GAP_KIND = "run_price_unavailable"
 
 
 def _vast_key():
@@ -706,7 +708,13 @@ def reconstruct_realtime_llm_sync(run=False, sids=None, max_sessions=None, max_c
     if max_chunks:
         chunks = chunks[:max_chunks]
     find_in = sum(max(1, len(_RT_FIND_SYS + ex) // 4) for _, ex in chunks)
-    est = pricing.realtime_cost(fm, find_in, 200 * max(1, len(chunks)))
+    try:
+        est = pricing.realtime_cost(fm, find_in, 200 * max(1, len(chunks)))
+    except pricing.PriceUnknownError as exc:
+        return {"mode": "refused", "chunks": len(chunks), "dropped_batch_context": dropped_batch,
+                "since": since, "find_model": fm, "consolidate_model": cm,
+                "find_input_tokens": find_in, "est_find_usd": None, "complete": False,
+                "gaps": [{"kind": REALTIME_FIND_PRICE_GAP_KIND, "model": fm, "error": str(exc)}]}
     if not run:
         return {"mode": "estimate", "chunks": len(chunks), "dropped_batch_context": dropped_batch, "since": since,
                 "find_model": fm, "consolidate_model": cm, "find_input_tokens": find_in, "est_find_usd": round(est, 2)}
@@ -739,6 +747,7 @@ def reconstruct_realtime_llm_sync(run=False, sids=None, max_sessions=None, max_c
     except Exception:
         runs = []
     rows = []
+    price_gaps = []
     for rn in runs:
         ms = _norm_model(rn.get("model"))
         printed = rn.get("printed_usd")
@@ -750,8 +759,10 @@ def reconstruct_realtime_llm_sync(run=False, sids=None, max_sessions=None, max_c
         else:
             try:
                 usd = round(pricing.realtime_cost(ms, int(rn.get("total_in") or 0), int(rn.get("total_out") or 0)), 2)
-            except Exception:
-                usd = 0.0
+            except pricing.PriceUnknownError as exc:
+                price_gaps.append({"kind": REALTIME_RUN_PRICE_GAP_KIND, "model": ms,
+                                   "error": str(exc), "run": dict(rn)})
+                continue
             basis = "estimated"
         if usd <= 0:
             continue
@@ -769,8 +780,10 @@ def reconstruct_realtime_llm_sync(run=False, sids=None, max_sessions=None, max_c
     for r_ in rows:
         k = r_["org"] or "(untagged)"
         by_org[k] = round(by_org.get(k, 0.0) + r_["usd"], 2)
+    known_total = round(sum(r_["usd"] for r_ in rows), 2)
     return {"mode": "run", "chunks": len(chunks), "dropped_batch_context": dropped_batch, "fragments": len(frags),
-            "runs": rows, "by_org": by_org, "total": round(sum(r_["usd"] for r_ in rows), 2)}
+            "runs": rows, "by_org": by_org, "total": None if price_gaps else known_total,
+            "known_total": known_total, "complete": not price_gaps, "gaps": price_gaps}
 
 
 def _reconcile(allrows, account_total, conn, ptmap):
