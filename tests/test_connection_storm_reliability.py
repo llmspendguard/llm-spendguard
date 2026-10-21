@@ -24,6 +24,7 @@ import threading
 import time
 import functools
 import pathlib
+import gc
 
 os.environ.setdefault("SPENDGUARD_TEST_ISOLATED", "1")
 os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="sg-connstorm-")
@@ -32,7 +33,7 @@ os.environ["SPENDGUARD_ROUTE_THROUGH_QUEUE"] = "0"
 os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "src"))
 
-from spendguard import adapters, dispatch, lane_balance   # noqa: E402
+from spendguard import adapters, config, dispatch, lane_balance   # noqa: E402
 
 print = functools.partial(print, flush=True)             # unbuffered — a long run shows progress live (the runlog lesson)
 
@@ -98,11 +99,20 @@ def _run_storm(ceiling, burst, prompt, deadline_s):
             "elapsed": time.time() - t0, "deadline": deadline_s, "err": err}
 
 
-def main():
+def _run_explicitly_collected_storm_matrix():
     fails = 0
+    gc.collect()
+    cold_start_ledger_connections = config.ledger_connection_count()
     print(f"== connection-storm reliability: {RUNS} cold-start runs (governor default vendor cap="
           f"{dispatch.DEFAULT_VENDOR_CONCURRENCY}) ==")
     for i in range(RUNS):
+        # Each cold start owns a new executor. SQLite statement cycles can keep
+        # expired workers' ledger handles alive until collection; reclaim them
+        # only BETWEEN settled storms, never while a storm is being measured.
+        # The process ledger ceiling is independent of the Codex worker pool.
+        gc.collect()
+        assert config.ledger_connection_count() == cold_start_ledger_connections, (
+            "cold-start ledger gap: expired storm workers retained managed connections")
         ceiling, burst, psize = _VARIETY[i % len(_VARIETY)]
         dispatch.reset_connection_window(VENDOR)       # each run = an INDEPENDENT cold start (public reset, no internals)
         r = _run_storm(ceiling, burst, "x " * (psize // 2), DEADLINE)
@@ -118,6 +128,20 @@ def main():
     print(f"\n{'OK' if fails == 0 else '[FAIL]'} test_connection_storm_reliability: {fails} failure(s) "
           f"(SLO = 0 client-visible failures across {RUNS} cold-start bursts)")
     return 1 if fails else 0
+
+
+def main():
+    # Fault dimension: do not let incidental automatic collection hide stale
+    # handles between cold starts. The baseline assertion catches retained
+    # handles even when cap-time collection happens to prevent exhaustion.
+    storm_gc_was_enabled = gc.isenabled()
+    gc.disable()
+    try:
+        return _run_explicitly_collected_storm_matrix()
+    finally:
+        gc.collect()
+        if storm_gc_was_enabled:
+            gc.enable()
 
 
 if __name__ == "__main__":
