@@ -11,11 +11,21 @@ code written to enforce it. That is not irony, it is the reason external review 
 author is the last person able to see it.
 """
 import contextlib
+import datetime
 import io
 import os
 import pathlib
 import sys
 import tempfile
+from unittest.mock import patch
+
+REVIEWED_CATALOG_CORRUPTION = b'{"models": {"existing-model": {"id": "existing-model"}}, BROKEN'
+REVIEWED_CATALOG_MODEL = "reviewed-catalog-write-probe"
+REVIEWED_CATALOG_PROVIDER = "reviewed-catalog-provider"
+REVIEWED_CATALOG_SOURCE = "owner-supplied reviewed-defect fixture"
+REVIEWED_CATALOG_INPUT_RATE = 2.0
+REVIEWED_CATALOG_OUTPUT_RATE = 4.0
+REVIEWED_CATALOG_VERIFIED = datetime.datetime.now(datetime.timezone.utc).date().isoformat()
 
 # ISOLATE BEFORE IMPORTING ANYTHING. This file writes through spendguard's own paths, and on 2026-08-10 a
 # check added here overwrote the user's real ~/.spendguard/config.json — 9KB of settings replaced by a
@@ -198,27 +208,29 @@ check("a repo with no spend reports 0, not the global total", _none == 0 or _non
 print("\n-- an unreadable price file is never overwritten (pricing.set_price) --")
 # `except: data = {}` + a full rewrite DESTROYED every verified price on one bad read, in the file whose
 # whole discipline is "prices enter this table only with provenance".
-import os as _os2, tempfile as _tf2                           # noqa: E402
+from spendguard import config as reviewed_catalog_config, model_catalog as reviewed_catalog_api  # noqa: E402
 from spendguard import pricing as _p2                                        # noqa: E402
-_saved = _os2.environ.get("SPENDGUARD_HOME")
-_os2.environ["SPENDGUARD_HOME"] = _tf2.mkdtemp(prefix="spendguard-prices-")
-try:
-    _path = _p2.user_prices_path()
-    _os2.makedirs(_os2.path.dirname(_path), exist_ok=True)
-    with open(_path, "w") as _fh:
-        _fh.write('{"providers": {"acme": {"m1": {"in_": 1.0}}}, BROKEN')
-    try:
-        _p2.set_price("m2", "acme", 2.0, 4.0, source="test")
-        check("an unreadable prices.json is REFUSED, not replaced", False, "it overwrote the file")
-    except ValueError:
-        check("an unreadable prices.json is REFUSED, not replaced", True)
-    with open(_path) as _fh:
-        check("...and the original content survives", "m1" in _fh.read())
-finally:
-    if _saved is None:
-        _os2.environ.pop("SPENDGUARD_HOME", None)
-    else:
-        _os2.environ["SPENDGUARD_HOME"] = _saved
+reviewed_catalog_floor = pathlib.Path(reviewed_catalog_api.DATA_PATH)
+reviewed_catalog_floor_snapshot = reviewed_catalog_floor.read_bytes()
+with tempfile.TemporaryDirectory() as reviewed_catalog_temporary_home:
+    reviewed_catalog_home = pathlib.Path(reviewed_catalog_temporary_home)
+    with patch.object(reviewed_catalog_config, "HOME", reviewed_catalog_home):
+        reviewed_catalog_target = pathlib.Path(_p2.user_prices_path())
+        # Check the sink BEFORE writing the fault: a regression must never poison the packaged floor.
+        assert reviewed_catalog_target.parent == reviewed_catalog_home, "authoring escaped isolated HOME"
+        assert reviewed_catalog_target != reviewed_catalog_floor, "authoring targeted the packaged floor"
+        reviewed_catalog_target.write_bytes(REVIEWED_CATALOG_CORRUPTION)
+        try:
+            _p2.set_price(REVIEWED_CATALOG_MODEL, REVIEWED_CATALOG_PROVIDER,
+                          REVIEWED_CATALOG_INPUT_RATE, REVIEWED_CATALOG_OUTPUT_RATE,
+                          source=REVIEWED_CATALOG_SOURCE, verified=REVIEWED_CATALOG_VERIFIED)
+            check("an unreadable catalog overlay is REFUSED, not replaced", False, "it overwrote the file")
+        except ValueError:
+            check("an unreadable catalog overlay is REFUSED, not replaced", True)
+        check("...and all original corrupt bytes survive",
+              reviewed_catalog_target.read_bytes() == REVIEWED_CATALOG_CORRUPTION)
+        check("...and the packaged catalog remains byte-identical",
+              reviewed_catalog_floor.read_bytes() == reviewed_catalog_floor_snapshot)
 
 print("\n-- a call class is the WHOLE prompt, not its first 512 chars (bulkgate.sig) --")
 # A shared preamble longer than 512 chars is the norm here — system blocks, review briefs, compacted

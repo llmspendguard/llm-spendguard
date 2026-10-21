@@ -23,7 +23,7 @@ import time
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "src"))
 import spendguard  # noqa: E402
 spendguard.require()
-from spendguard import pricing  # noqa: E402  — for the EXACT seed-fallback source constant (PRICING_SOURCE)
+from spendguard import config, pricing  # noqa: E402  — for the EXACT seed-fallback source constant (PRICING_SOURCE)
 
 DEST = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
                     "src", "spendguard", "model_catalog.json")
@@ -90,8 +90,7 @@ def main(argv=None):
     bak = f"{DEST}.{time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())}.bak"
     shutil.copy2(DEST, bak)
     print(f"backed up → {bak}", file=sys.stderr)
-    with open(DEST, "w") as f:
-        f.write(json.dumps(doc, indent=2, sort_keys=False) + "\n")
+    config.update_json(DEST, lambda current: doc, required=True)
     print(f"wrote {DEST} — {len(doc['models'])} models")
     return 0
 

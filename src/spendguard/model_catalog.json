@@ -1,6 +1,22 @@
 {
-  "_doc": "SSOT for per-model data (models) AND per-vendor metered-API data (vendors). Authored here (curated edits welcome); prices.json is GENERATED from this. See docs/CANONICAL_CONCERNS.json concern 'model_catalog'.",
+  "_doc": "SSOT for per-model data (models) AND per-vendor metered-API data (vendors). Authored here (curated edits welcome); fast price tables derive in memory through model_catalog read APIs. See docs/CANONICAL_CONCERNS.json concern 'model_catalog'.",
   "_seeded_from": "scripts/migrate/seed_model_catalog.py (current resolved values)",
+  "pricing_conversion": {
+    "batch_fraction_default": 0.5,
+    "batch_fraction_by_provider": {"moonshot": 0.6},
+    "cache_read_fraction_default": 0.1,
+    "source": "Existing sync.py documented provider conventions; Moonshot https://platform.kimi.ai/docs/pricing/batch.md",
+    "verified": "2026-08-04"
+  },
+  "cache_modifiers": {
+    "anthropic": {
+      "write_5m": 1.25,
+      "write_1h": 2.0,
+      "read": 0.1,
+      "source": "https://platform.claude.com/docs/en/about-claude/pricing",
+      "verified": "2026-08-12"
+    }
+  },
   "vendors": {
     "_doc": "Per-vendor metered-API rate limits \u2014 the SSOT the dispatch governor reads for its PROACTIVE cold-start cap (the floor applied BEFORE any response header, so a cold burst is paced from call #1 instead of storming). Response headers REFINE these upward to the account's real ceiling (dispatch.learn_rate_limit). Researched 2026-10-04 \u2014 anthropic AUTHORITATIVE (platform.claude.com/docs/en/api/rate-limits, full tier tables); openai tier caps (developers.openai.com/api/docs/guides/rate-limits), per-model rpm/tpm ride x-ratelimit headers (this account measured tpm=40000000 rpm=15000); gemini/zai/moonshot not publicly tabulated \u2192 conservative floor, refine from headers. units: rpm=requests/min, itpm=INPUT tok/min, otpm=OUTPUT tok/min, tpm=combined where one bucket. SAVED HERE so it is never re-researched.",
     "_behaviors": {
@@ -2525,7 +2541,7 @@
     "gpt-6.1-sol": {
       "id": "gpt-6.1-sol",
       "provider": "openai",
-      "aliases": [],
+      "aliases": ["gpt-6.1-sol-2026-09-29"],
       "retired_alias_of": null,
       "metered_id": "gpt-6.1-sol",
       "lane_spellings": {},
@@ -2561,7 +2577,7 @@
     "gpt-6-sol": {
       "id": "gpt-6-sol",
       "provider": "openai",
-      "aliases": [],
+      "aliases": ["gpt-6-sol-2026-09-22"],
       "retired_alias_of": null,
       "metered_id": "gpt-6-sol",
       "lane_spellings": {},
@@ -2629,6 +2645,22 @@
         "style": "param"
       },
       "as_of": "2026-10-13"
+    },
+    "stub-vlm": {
+      "id": "stub-vlm",
+      "provider": "synthetic",
+      "aliases": [],
+      "billing_exempt_reason": "synthetic",
+      "price": {
+        "in_": 0.0,
+        "out": 0.0,
+        "cached_in": 0.0,
+        "batch_in": 0.0,
+        "batch_out": 0.0,
+        "source": "Owner decision in catalog SSOT task brief: stub-vlm is a synthetic non-billable stub, excluded from cannot-price warnings",
+        "verified": "2026-10-20"
+      },
+      "as_of": "2026-10-20"
     },
     "gpt-6-astra": {
       "id": "gpt-6-astra",

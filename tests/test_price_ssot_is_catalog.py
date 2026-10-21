@@ -34,7 +34,7 @@ for mid in model_catalog.all_records():
     priced += 1
     try:
         cost = pricing.realtime_cost(mid, 1000, 1000)
-        ck(f"catalog price: {mid}", isinstance(cost, float) and cost > 0, cost)
+        ck(f"catalog price: {mid}", isinstance(cost, float) and (cost > 0 or model_catalog.billing_exempt(mid) and cost == 0), cost)
     except Exception as exc:
         ck(f"catalog price: {mid}", False, str(exc))
 ck("catalog contains priced models", priced > 0)

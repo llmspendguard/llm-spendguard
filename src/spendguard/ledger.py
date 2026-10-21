@@ -24,12 +24,28 @@ import contextlib
 import itertools
 import math
 import time
+from types import MappingProxyType
 from decimal import Decimal, InvalidOperation, getcontext
 from . import config
 
 getcontext().prec = 34   # ample for exact money arithmetic (28 is the default; money never needs more than this)
 
 SCHEMA_VERSION = 6
+
+
+def ledger_posting_metadata():
+    """Return immutable UTC/local recording metadata for one posting operation.
+
+    Occurrence dates remain event-specific and audit timestamps remain per write.
+    This snapshot is owned by its caller; concurrent operations never share state.
+    """
+    posting_instant = datetime.datetime.now(datetime.timezone.utc)
+    posting_local = posting_instant.astimezone()
+    return MappingProxyType({
+        "recorded_at": posting_instant.isoformat(timespec="seconds"),
+        "tz": getattr(posting_local.tzinfo, "key", None) or posting_local.tzname() or "",
+        "local_datetime": posting_local.isoformat(timespec="seconds"),
+    })
 
 
 class LockedError(Exception):
@@ -444,13 +460,15 @@ class SpendLedger:
             raise ValueError("spend event needs a dedup_key or a source")
         ev.setdefault("currency", "USD")
         ev.setdefault("cost_type", _USD_TO_KIND[nz[0]] if len(nz) == 1 else None)
-        now = _now_utc()
-        ev.setdefault("ts_utc", now)
-        ev.setdefault("recorded_at", now)
+        if "ts_utc" not in ev or "recorded_at" not in ev:
+            now = _now_utc()
+            ev.setdefault("ts_utc", now)
+            ev.setdefault("recorded_at", now)
         ev.setdefault("occurred_at", ev["ts_utc"])
-        loc = datetime.datetime.now().astimezone()
-        ev.setdefault("tz", getattr(loc.tzinfo, "key", None) or loc.tzname() or "")
-        ev.setdefault("local_datetime", loc.isoformat(timespec="seconds"))
+        if "tz" not in ev or "local_datetime" not in ev:
+            loc = datetime.datetime.now().astimezone()
+            ev.setdefault("tz", getattr(loc.tzinfo, "key", None) or loc.tzname() or "")
+            ev.setdefault("local_datetime", loc.isoformat(timespec="seconds"))
         d, p = _day_period(ev["occurred_at"], _reporting_tz())
         ev.setdefault("day", d)
         ev.setdefault("period", p)

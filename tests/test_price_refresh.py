@@ -112,7 +112,8 @@ os.makedirs(os.path.dirname(price_sync.CACHE), exist_ok=True)
 json.dump({"_fetched": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
            "models": models, "providers": provs, "unit_models": unit_models,
            "context": context}, open(price_sync.CACHE, "w"))
-from spendguard import pricing
+from spendguard import pricing, model_catalog
+pricing.PRICING_BREADTH_SNAPSHOT = pricing._load_pricing_breadth_snapshot()
 u = pricing._load_units()
 check("audio_second: whisper $0.0001/s from the cache", abs(u["audio_second"].get("whisper-x", 0) - 0.0001) < 1e-9)
 check("tts_char: $0.000015/char from the cache", abs(u["tts_char"].get("tts-x", 0) - 1.5e-05) < 1e-12)
@@ -128,7 +129,7 @@ print("-- _validate cross-checks the FULL curated table vs LiteLLM (not 3 hardco
 # Build a LiteLLM fetch that matches EVERY curated price except one tampered model, keyed bare as LiteLLM often
 # does. Derived from pricing._FALLBACK so this test can never drift from the curated table it guards.
 fake = {}
-for _m, _r in pricing._FALLBACK.items():
+for _m, _r in {model: row for rows in model_catalog.as_price_table().values() for model, row in rows.items()}.items():
     if _r.get("in_") is None:
         continue
     fake[_m] = {"in_": _r["in_"], "out": _r["out"], "cached_in": 0, "batch_in": 0, "batch_out": 0}

@@ -64,19 +64,13 @@ for path in sorted(SRC.rglob("*.json")):
     except (ValueError, OSError) as exc:
         ck(f"read JSON: {rel}", False, str(exc))
         continue
-    if rel == "prices.json":
-        meta = data.get("_meta", {})
-        banner = " ".join(str(v) for v in (meta.get("note", ""), meta.get("_source", ""), data.get("_source", "")))
-        derived = "GENERATED from the model catalog" in banner
-        ck("prices.json carries catalog-generated banner", derived)
-        if derived:
-            continue
+    ck(f"no legacy price file: {rel}", rel != "prices.json")
     if has_model_map(data):
         authored.append(rel)
         ck(f"authored model facts: {rel}", rel == "model_catalog.json", "competing SSOT")
 ck("exactly one authored model fact file", authored == ["model_catalog.json"], str(authored))
 
-fallback_found = False
+fallback_found = hasattr(pricing, "_FALLBACK")
 for path in sorted(SRC.rglob("*.py")):
     source = path.read_text()
     tree = ast.parse(source, filename=str(path))
@@ -90,11 +84,8 @@ for path in sorted(SRC.rglob("*.py")):
         if not isinstance(node, ast.Assign) or not isinstance(node.value, ast.Dict):
             continue
         names = [target.id for target in node.targets if isinstance(target, ast.Name)]
-        allowed = path == SRC / "pricing.py" and names == ["_FALLBACK"]
-        if allowed:
+        if path == SRC / "pricing.py" and "_FALLBACK" in names:
             fallback_found = True
-            nearby = "\n".join(source.splitlines()[max(0, node.lineno - 6):node.lineno - 1])
-            ck("pricing._FALLBACK documented as FALLBACK", "FALLBACK" in nearby)
         count = sum(
             isinstance(key, ast.Constant) and model_id_like(key.value)
             and isinstance(value, ast.Dict)
@@ -102,13 +93,13 @@ for path in sorted(SRC.rglob("*.py")):
             for key, value in zip(node.value.keys, node.value.values)
         )
         if count >= 3:
-            ck(f"rate literal: {path.relative_to(SRC)}:{node.lineno}", allowed, "competing SSOT")
-ck("sanctioned pricing._FALLBACK located", fallback_found)
+            ck(f"rate literal: {path.relative_to(SRC)}:{node.lineno}", False, "competing SSOT")
+ck("no competing pricing._FALLBACK", not fallback_found)
 
 priced = ceilings = 0
 for mid in sorted(model_catalog.all_records()):
     row = model_catalog.model_price(mid)
-    if row and priced < 8:
+    if row:
         priced += 1
         with patch.object(pricing, "_vendor_qualified", side_effect=AssertionError("breadth consulted before catalog")):
             try:
@@ -117,7 +108,7 @@ for mid in sorted(model_catalog.all_records()):
             except Exception as exc:
                 ck(f"catalog price authority: {mid}", False, str(exc))
     ceiling = model_catalog.published_ceiling(mid)
-    if ceiling and ceilings < 8:
+    if ceiling:
         ceilings += 1
         with patch.object(pricing, "CONTEXT_LIMITS", {mid: {"max_output_tokens": 7, "max_input_tokens": 11}}):
             ck(f"catalog max_output_tokens: {mid}", pricing.max_output_tokens(mid) == ceiling)
