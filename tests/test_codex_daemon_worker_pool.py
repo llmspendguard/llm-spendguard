@@ -30,6 +30,7 @@ POOL_CHAOS_WRITE_BUDGET_S = 0.1
 POOL_CHAOS_TURN_BUDGET_S = 0.8
 POOL_CHAOS_RETRY_BUDGET_S = 0.01
 POOL_CHAOS_PIPE_BLOCK = b"x" * 65536
+POOL_CHAOS_RECOVERY_PROMPT = "post-chaos"
 
 
 def _pool_guard_fake_child(turn_handler=None):
@@ -437,7 +438,16 @@ def _pool_chaos_exercise_wedge(wedge_mode):
                 "recycle_on_timeout": True})
             assert entered.wait(POOL_EVENT_TIMEOUT_S)
             # Force a failed first respawn; recovery must retry rather than silently return a dead slot.
-            children[0].ensure_running.side_effect = [None, object()]
+            original_respawn_outcomes = iter((None, object()))
+
+            def pool_chaos_respawn_original():
+                outcome = next(original_respawn_outcomes)
+                if outcome is not None:
+                    # A successful respawn restores the stdin fixture's process health, too.
+                    children[0].run_warm.side_effect = pool_chaos_healthy_turn
+                return outcome
+
+            children[0].ensure_running.side_effect = pool_chaos_respawn_original
             healthy = [executor.submit(broker._call_owner, {"prompt": POOL_TEST_PROMPT})
                        for _ in range(POOL_GUARD_SIZE - 1)]
             assert all(f.result(timeout=POOL_EVENT_TIMEOUT_S) == POOL_SUCCESS_REPLY for f in healthy)
@@ -450,7 +460,11 @@ def _pool_chaos_exercise_wedge(wedge_mode):
             assert children[0].shutdown.called
             assert all(not child.shutdown.called for child in children[1:POOL_GUARD_SIZE])
             assert broker._listener is listener and broker.broker_running()
-            assert broker._call_owner({"prompt": "post-chaos"}) == POOL_SUCCESS_REPLY
+            # Check the recovered slot explicitly: monitor ordering must not hide a sick fixture.
+            recovered_reply = pool._workers[0].run_warm(prompt=POOL_CHAOS_RECOVERY_PROMPT)
+            assert recovered_reply == POOL_SUCCESS_REPLY, (wedge_mode, recovered_reply)
+            broker_reply = broker._call_owner({"prompt": POOL_CHAOS_RECOVERY_PROMPT})
+            assert broker_reply == POOL_SUCCESS_REPLY, (wedge_mode, broker_reply)
             with pool._pool_lock:
                 assert len(pool._idle_workers) == POOL_GUARD_SIZE
             assert all(child.running() for child in pool._workers)

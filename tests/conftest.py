@@ -12,6 +12,12 @@ from pathlib import Path
 
 import pytest
 
+from _gate_shard_plan import (
+    GATE_SHARD_FIRST_INDEX, GATE_SHARD_INDEX_ENV, GATE_SHARD_MANIFEST_FILENAME,
+    GATE_SHARD_TIMINGS_ENV, GateShardEvidenceError, distribute_gate_shard_nodeids,
+    read_gate_shard_manifest, verify_gate_shard_partition,
+)
+
 RUNNER_CALIBRATION_MODULE_NAME = "spendguard_test_runner_calibration"
 RUNNER_CALIBRATION_WORKER_KEY = "spendguard_runner_budget_scale"
 RUNNER_CALIBRATION_COVERAGE_ENV = "SPENDGUARD_COVERAGE"
@@ -47,6 +53,31 @@ def pytest_configure_node(node):
 @pytest.fixture(scope="session")
 def runner_budget_scale(request):
     return request.config._spendguard_runner_budget_scale
+
+
+@pytest.hookimpl(tryfirst=True)
+def pytest_collection_modifyitems(config, items):
+    """Partition complete collection before optional -k/-m filtering; default unchanged."""
+    configured_index = os.environ.get(GATE_SHARD_INDEX_ENV)
+    if configured_index is None:
+        return
+    try:
+        index = int(configured_index)
+        manifest_path = os.environ.get(GATE_SHARD_TIMINGS_ENV,
+            str(Path(__file__).resolve().parent.parent / GATE_SHARD_MANIFEST_FILENAME))
+        manifest = read_gate_shard_manifest(manifest_path)
+        if not GATE_SHARD_FIRST_INDEX <= index < manifest["shard_count"]:
+            raise GateShardEvidenceError(f"shard index outside configured range: {configured_index}")
+        nodeids = [item.nodeid for item in items]
+        partitions = distribute_gate_shard_nodeids(nodeids, manifest)
+        # Independently check the integration seam, even if the planner regresses.
+        verify_gate_shard_partition(nodeids, partitions)
+        selected = set(partitions[index])
+        deselected = [item for item in items if item.nodeid not in selected]
+        items[:] = [item for item in items if item.nodeid in selected]
+        config.hook.pytest_deselected(items=deselected)
+    except (GateShardEvidenceError, ValueError) as error:
+        raise pytest.UsageError(f"gate shard evidence gap: {error}") from error
 
 
 def pytest_collectstart(collector):
