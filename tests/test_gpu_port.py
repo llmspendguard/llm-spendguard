@@ -24,6 +24,8 @@ from types import SimpleNamespace
 
 from spendguard import gpu_port, config
 
+GPU_PORT_TRANSCRIPT_FIXTURE_PREFIX = "sg-gpu-port-transcripts-"
+
 fails = []
 def ck(name, cond):
     print(("  [OK] " if cond else "  [FAIL] ") + name)
@@ -58,7 +60,34 @@ ck("cost_by_day: since accepts YYYY-MM-DD", gpu_port.gpu_cost_by_day(port_rows, 
 
 # EQUIVALENCE with vast.ai — the math was EXTRACTED from resources.vast_gpu_accounting_rows_by_day; identical instances must
 # land identical per-day $ through both paths (guards the refactor: vast behavior unchanged, one math for all).
-from spendguard import resources
+from spendguard import resources, conv
+
+# This equivalence proof exercises GPU cost splitting, not conversation attribution.
+# SPENDGUARD_HOME does not isolate conv's transcript directory: without this fixture
+# the real attribution reader walks the developer's entire conversation corpus.
+gpu_port_transcript_fixture = tempfile.TemporaryDirectory(prefix=GPU_PORT_TRANSCRIPT_FIXTURE_PREFIX)
+gpu_port_original_segments = conv.segments
+gpu_port_segment_scan_roots = []
+
+
+def gpu_port_fixture_segments_scope_guard(tdir=None):
+    scan_root = os.path.realpath(tdir or conv._DEFAULT_TDIR)
+    fixture_root = os.path.realpath(gpu_port_transcript_fixture.name)
+    assert scan_root == fixture_root, "gpu_port ambient transcript scan refused"
+    gpu_port_segment_scan_roots.append(scan_root)
+    return gpu_port_original_segments(tdir)
+
+
+conv.segments = gpu_port_fixture_segments_scope_guard
+conv._DEFAULT_TDIR = gpu_port_transcript_fixture.name
+try:
+    conv.segments(config.HOME)
+except AssertionError:
+    gpu_port_ambient_scan_refused = True
+else:
+    gpu_port_ambient_scan_refused = False
+ck("transcript containment: adverse out-of-fixture scan is refused before reading",
+   gpu_port_ambient_scan_refused and not gpu_port_segment_scan_roots)
 resources.instances = lambda: [
     {"id": 1, "gpu_name": "H100", "dph_total": 2.0, "start_date": now - 3 * 86400, "end_date": now - 2 * 86400, "label": "train-a"},
     {"id": 2, "gpu_name": "A100", "dph_total": 3.61, "start_date": now - 1.5 * 86400, "end_date": None, "label": "train-b"},
@@ -68,6 +97,7 @@ for r in resources.vast_gpu_accounting_rows_by_day(since_ts=now - 5 * 86400, now
     vast_by_day[r["day"]] = round(vast_by_day.get(r["day"], 0.0) + r["cost"], 6)
 ck("EQUIVALENCE: vast_gpu_accounting_rows_by_day per-day $ == shared cost_by_day on the same instances",
    set(vast_by_day) == set(cbd) and all(abs(vast_by_day[d] - cbd[d]) < 1e-6 for d in cbd))
+ck("EQUIVALENCE: attribution reader scans only the isolated transcript fixture", bool(gpu_port_segment_scan_roots))
 
 # ── honesty markers: UNKNOWN stays visible, never becomes $0 rows ────────────────────────────────────────────
 unk = [{"id": "u1", "label": "x", "gpu": "H100", "dph_usd": None, "start_ts": now - 86400, "end_ts": now, "unpriced": True},

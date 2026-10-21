@@ -9,8 +9,9 @@ record_saving() too — same pipe.
 """
 import datetime
 import math
+from pathlib import Path
 
-from . import budget
+from . import budget, config
 
 # per-source confidence → coefficient of variation (lower confidence ⇒ wider spread). certain ⟂ counterfactual.
 # best-value = the auto-selector chose a cheaper (model, effort) that held the intent's MEASURED quality bar; it is a
@@ -87,15 +88,19 @@ def _lognormal_cumulants(mu, cv):
 
 def by_dims_guarded(since=None):
     """Per (day, project, source): event count + SUMMED cumulants — the additive payload the server rolls up."""
-    db = _savings_db()
+    from .ledger_read import LedgerSQLReadRequest, ledger_read_table_exists, read_ledger_sql
+    if not Path(config.db_path()).exists() or not ledger_read_table_exists("savings"):
+        return []
     cond, args = [], []
     if since:
         cond.append("day >= ?"); args.append(since)
     where = ("WHERE " + " AND ".join(cond)) if cond else ""
-    with budget._lock:
-        rows = db.execute(f"SELECT day, COALESCE(project,''), source, amount, cv FROM savings {where}", args).fetchall()
+    rows = read_ledger_sql(LedgerSQLReadRequest(
+        sql=f"SELECT day, COALESCE(project,''), source, amount, cv FROM savings {where}",
+        parameters=tuple(args)))
     agg = {}
-    for day, proj, source, amount, cv in rows:
+    for row in rows:
+        day, proj, source, amount, cv = row.values
         k1, k2, k3, k4 = _lognormal_cumulants(float(amount), float(cv if cv is not None else 0.3))
         a = agg.setdefault((day, proj, source),
                            {"day": day, "project": proj, "source": source, "n": 0, "k1": 0.0, "k2": 0.0, "k3": 0.0, "k4": 0.0})
@@ -199,14 +204,17 @@ def record_decision(intent, requested_model, chosen_model, counterfactual_usd, a
 
 def decisions_since(since=None):
     """Per-decision rows since `since` (day, YYYY-MM-DD), newest first — the forensic detail behind the tally."""
-    db = _decisions_db()
+    from .ledger_read import LedgerSQLReadRequest, ledger_read_table_exists, read_ledger_sql
+    if not Path(config.db_path()).exists() or not ledger_read_table_exists("decisions"):
+        return []
     cond, args = [], []
     if since:
         cond.append("day >= ?"); args.append(since)
     where = ("WHERE " + " AND ".join(cond)) if cond else ""
-    with budget._lock:
-        rows = db.execute(f"SELECT {','.join(_DECISION_COLS)} FROM decisions {where} ORDER BY ts DESC", args).fetchall()
-    return [dict(zip(_DECISION_COLS, r)) for r in rows]
+    rows = read_ledger_sql(LedgerSQLReadRequest(
+        sql=f"SELECT {','.join(_DECISION_COLS)} FROM decisions {where} ORDER BY ts DESC",
+        parameters=tuple(args)))
+    return [dict(zip(_DECISION_COLS, r.values)) for r in rows]
 
 
 def decisions_summary(since=None):

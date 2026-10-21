@@ -22,7 +22,7 @@ _SRC = pathlib.Path(__file__).resolve().parent.parent / "src" / "spendguard"
 # The files whose update_json callers were fixed in cluster A. Every update_json call in these files must carry a
 # disposition. (config.py is NOT here: it DEFINES update_json and its one call-site returns the value to its caller.)
 _CLUSTER_A_FILES = [
-    "balances.py", "calibrate.py", "catalog.py", "lane_balance.py", "refresh.py", "resources.py", "review.py",
+    "balances.py", "calibrate.py", "catalog.py", "catalog_price_authoring.py", "lane_balance.py", "resources.py", "review.py",
     "saas.py", "setup.py", "submit.py", "sync.py", "sync_capabilities.py", "tier_config.py", "vendor_call.py",
 ]
 
@@ -49,6 +49,15 @@ def _has_true_kw(call, key):
 
 def main():
     fails, checked = [], 0
+    refresh_tree = ast.parse((_SRC / "refresh.py").read_text())
+    refresh_writer = next(node for node in ast.walk(refresh_tree)
+                          if isinstance(node, ast.FunctionDef) and node.name == "_write")
+    refresh_calls = [node for node in ast.walk(refresh_writer) if isinstance(node, ast.Call)]
+    if not any(isinstance(node.func, ast.Name) and node.func.id == "set_catalog_model_price"
+               for node in refresh_calls):
+        fails.append("refresh.py: verified writes must delegate to the refusal-preserving catalog author")
+    if any(isinstance(node, ast.Try) for node in ast.walk(refresh_writer)):
+        fails.append("refresh.py: catalog author refusals must propagate to the caller")
     for fname in _CLUSTER_A_FILES:
         p = _SRC / fname
         if not p.exists():

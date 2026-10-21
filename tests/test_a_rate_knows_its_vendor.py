@@ -25,36 +25,33 @@ None of these fail loudly. Every one produces a plausible number with a wrong ve
 """
 import sys
 
+from spendguard import model_catalog
 from spendguard import pricing as p
 
-failures = 0
+failures = []
 
 
-def check(label, ok, extra=""):
-    global failures
+def check(outcomes, label, ok, extra=""):
     if not ok:
-        failures += 1
+        outcomes.append(label)
     print(f"  [{'OK' if ok else 'FAIL'}] {label}" + (f"  — {extra}" if not ok and extra else ""))
 
 
-# 1. THE DATA CARRIES ITS OWN VENDOR — no entry may rely on being inferred.
-missing = [m for m, r in p._FALLBACK.items() if not r.get("provider")]
-check("every built-in rate declares its vendor", not missing, f"undeclared: {missing}")
-
-# 2. AND THE DECLARATION IS CONFIRMED BY THE AUTHORITATIVE TABLE, not by a name rule. The breadth layer
-#    keys models as `vendor/model`; ask it rather than reading the id. This is the check that would catch a
-#    mis-stamped entry — including one stamped by the very prefix rule this file exists to have removed.
-contradicted, unconfirmable = [], []
-for m, r in p._FALLBACK.items():
-    hosts = {k.split("/")[0] for k in p.PRICING if k.count("/") == 1 and k.split("/", 1)[1] == m}
-    if not hosts:
-        unconfirmable.append(m)
-    elif r["provider"] not in hosts:
-        contradicted.append((m, r["provider"], sorted(hosts)))
-check("no declared vendor is contradicted by the vendor-qualified table",
-      not contradicted, str(contradicted[:4]))
-print(f"       ({len(p._FALLBACK) - len(unconfirmable)}/{len(p._FALLBACK)} confirmed against the "
-      f"vendor-qualified table; {len(unconfirmable)} had no qualified entry to check against)")
+# Every authored record declares its vendor; every projected rate retains that exact declaration.
+catalog_records = model_catalog.all_records()
+vendor_guard_catalog_rates = model_catalog.as_price_table()
+missing = [mid for mid in catalog_records if not model_catalog.model_record(mid).get("provider")]
+check(failures, "every catalog record declares its vendor", bool(catalog_records) and not missing, str(missing))
+contradicted = []
+for provider, rates in vendor_guard_catalog_rates.items():
+    for mid, rate in rates.items():
+        record = model_catalog.model_record(mid)
+        if not record or record.get("provider") != provider:
+            contradicted.append((provider, mid, record))
+        check(failures, f"catalog vendor-qualified rate resolves: {provider}:{mid}",
+              p._rate_key(p.price(f"{provider}:{mid}")) == p._rate_key(rate))
+check(failures, "every projected rate retains its catalog vendor",
+      bool(vendor_guard_catalog_rates) and not contradicted, str(contradicted))
 
 # 3. A NAMED VENDOR IS ANSWERED BY THAT VENDOR. Built from the live table, so this keeps testing the real
 #    collision set as the price data changes rather than pinning today's example.
@@ -69,13 +66,13 @@ for k, v in p.PRICING.items():
 print(f"       ({len(disagreeing)} ids where a vendor's rate differs from the bare entry — the blast radius)")
 wrong = [(prov, m) for prov, m, v in disagreeing
          if p._rate_key(p.price(f"{prov}:{m}")) != p._rate_key(v)]
-check("`vendor:model` is priced at THAT vendor's published rate, never a bare-name entry",
+check(failures, "`vendor:model` is priced at THAT vendor's published rate, never a bare-name entry",
       not wrong, f"{len(wrong)} mispriced, e.g. {wrong[:3]}")
 
 # 4. AN AMBIGUOUS BARE ID HAS NO BARE ANSWER. Not a silently-chosen one, and not an empty result either —
 #    the ambiguity is recorded, because "no such model" and "several, name one" are different answers.
-for m in list(p.AMBIGUOUS_BARE)[:5]:
-    check(f"ambiguous id {m!r} has no bare entry to pick from", m not in p.PRICING)
+for m in p.AMBIGUOUS_BARE:
+    check(failures, f"ambiguous id {m!r} has no bare entry to pick from", m not in p.PRICING)
 if not p.AMBIGUOUS_BARE:
     print("       (no bare id is currently ambiguous in the loaded table — nothing to assert)")
 
@@ -90,15 +87,15 @@ try:
     # text would just pin today's English. Silently picking one of two vendors' rates is the bug.
     try:
         got = p.price(probe_id)
-        check("two vendors disagreeing on a bare id RAISES rather than picking one", False,
+        check(failures, "two vendors disagreeing on a bare id RAISES rather than picking one", False,
               f"picked in_=${got.get('in_')} from one of the two without saying which")
     except KeyError:
-        check("two vendors disagreeing on a bare id RAISES rather than picking one", True)
-    check("...and naming the vendor still resolves cleanly",
+        check(failures, "two vendors disagreeing on a bare id RAISES rather than picking one", True)
+    check(failures, "...and naming the vendor still resolves cleanly",
           p.price(f"vendor-b:{probe_id}")["in_"] == 9.0)
 finally:
     p.PRICING.clear()
     p.PRICING.update(saved)
 
-print(f"\n{'[FAIL]' if failures else 'OK'} test_a_rate_knows_its_vendor: {failures} failure(s)")
+print(f"\n{'[FAIL]' if failures else 'OK'} test_a_rate_knows_its_vendor: {len(failures)} failure(s)")
 sys.exit(1 if failures else 0)

@@ -1,0 +1,30 @@
+{
+  "observed_at": "2026-10-20",
+  "provenance": {
+    "priceable_models": "Read-only ~/.spendguard/spend.db calls DISTINCT model contains gpt-6.1-sol, gpt-6-sol, gpt-6-luna; dated snapshots recovered from ~/.spendguard/litellm_prices.json models.azure/gpt-6.1-sol-2026-09-29 and models.azure/gpt-6-sol-2026-09-22 (_fetched 2026-10-20T00:38:20+00:00)",
+    "lane_models": "Read-only ~/.spendguard/config.json advisor.lane_models; cheap and strong entries flattened without dropping any spelling"
+  },
+  "priceable_models": [
+    "gpt-6.1-sol",
+    "gpt-6-sol",
+    "gpt-6-luna",
+    "gpt-6.1-sol-2026-09-29",
+    "gpt-6-sol-2026-09-22"
+  ],
+  "lane_models": {
+    "claude-code/cheap": "claude-haiku-4-5",
+    "claude-code/strong": "claude-opus-4-8",
+    "codex/cheap": "gpt-5.6-luna",
+    "codex/strong": "gpt-5.6-sol",
+    "gemini/cheap": "gemini-3.8-flash-low",
+    "gemini/strong": "gemini-3.8-flash-high",
+    "zai-coding": "glm-5.3"
+  },
+  "named_gaps": [
+    {
+      "name": "GFLASH_PRICE_PROVENANCE",
+      "models": ["g-flash", "gemini:g-flash"],
+      "evidence": "Five read-only calls rows on 2026-10-17, all llm-spendguard-lanevaluecold project: three recon-intent and two bake-intent rows. Repository history only test mock fixtures; absent from authored catalog, host-local prices, synced LiteLLM and cache backups. No recoverable published provider mapping or price; cannot guess or refetch."
+    }
+  ]
+}

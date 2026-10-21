@@ -40,7 +40,8 @@ def main():
     ck("the package dir actually has data files to ship (sanity)", bool(on_disk), on_disk)
     ck("model_catalog.json is declared in package-data (the 0.11.3 gap — clamp was inert on pip without it)",
        "model_catalog.json" in shipped, sorted(shipped))
-    ck("prices.json is declared in package-data", "prices.json" in shipped, sorted(shipped))
+    ck("derived token-price artifact is absent from package and disk",
+       "prices.json" not in shipped and "prices.json" not in on_disk)
     for f in on_disk:
         ck(f"every runtime data file ships: {f}", f in shipped, f"package-data={sorted(shipped)}")
 

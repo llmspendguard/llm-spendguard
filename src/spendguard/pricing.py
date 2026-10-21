@@ -21,62 +21,16 @@ USAGE
 
 Run `python scripts/pricing.py` to print the table and self-check.
 """
-import re, os, json, datetime
+import re, json
 from typing import Optional
 
-# per 1M tokens: realtime in/out, cached input, batch in/out  (batch == 50% of realtime).
-# This dict is the FALLBACK / source-of-record for the shipped prices.json. At runtime
-# prices load from config (prices.json + optional user override); if that fails, this is used.
-_FALLBACK = {
-    # ---- current flagship (on the live pricing page, verified 2026-06-13) ----
-    "gpt-5.5":      dict(provider="openai", in_=5.00,  out=30.00,  cached_in=0.50,  batch_in=2.50,  batch_out=15.00),
-    "gpt-5.5-pro":  dict(provider="openai", in_=30.00, out=180.00, cached_in=3.00,  batch_in=15.00, batch_out=90.00),
-    "gpt-5.4":      dict(provider="openai", in_=2.50,  out=15.00,  cached_in=0.25,  batch_in=1.25,  batch_out=7.50),
-    "gpt-5.4-mini": dict(provider="openai", in_=0.75,  out=4.50,   cached_in=0.075, batch_in=0.375, batch_out=2.25),
-    "gpt-5.4-nano": dict(provider="openai", in_=0.20,  out=1.25,   cached_in=0.02,  batch_in=0.10,  batch_out=0.625),
-    # ---- legacy (not on current page; stable historical rates) ----
-    "gpt-5":        dict(provider="openai", in_=1.25,  out=10.00,  cached_in=0.125, batch_in=0.625, batch_out=5.00),
-    "gpt-5-mini":   dict(provider="openai", in_=0.25,  out=2.00,   cached_in=0.025, batch_in=0.125, batch_out=1.00),
-    "gpt-5-nano":   dict(provider="openai", in_=0.05,  out=0.40,   cached_in=0.005, batch_in=0.025, batch_out=0.20),
-    "gpt-4o":       dict(provider="openai", in_=2.50,  out=10.00,  cached_in=1.25,  batch_in=1.25,  batch_out=5.00),
-    "gpt-4o-mini":  dict(provider="openai", in_=0.15,  out=0.60,   cached_in=0.075, batch_in=0.075, batch_out=0.30),
-    "gpt-4.1-mini": dict(provider="openai", in_=0.40,  out=1.60,   cached_in=0.10,  batch_in=0.20,  batch_out=0.80),
-    "text-embedding-3-large": dict(provider="openai", in_=0.13, out=0.0, cached_in=0.0, batch_in=0.065, batch_out=0.0),
-    "text-embedding-3-small": dict(provider="openai", in_=0.02, out=0.0, cached_in=0.0, batch_in=0.010, batch_out=0.0),
-    # ---- Anthropic Claude (verified via claude-api skill, 2026-06-13). batch = 50% off;
-    #      cached_in = cache-READ (~0.1x in). Cache WRITE is ~1.25x in @5min / 2x @1h (not stored here).
-    #
-    #      batch_cached_in = cached_in x 0.5. Read from platform.claude.com/docs/en/about-claude/pricing on
-    #      2026-08-12, which states the cache multipliers "stack with other pricing modifiers, including the
-    #      Batch API discount" and answers it again under How do discounts stack: "Batch API and prompt
-    #      caching discounts can be combined." So a batch cache-read is 0.1x base x 50%.
-    #
-    #      This field exists ONLY where a provider documents the stacking. OpenAI publishes no batch
-    #      cache-read rate that I could verify, so its rows deliberately omit it and estimate.project()
-    #      falls back to the full batch input rate and SAYS SO in `cache_basis`. An absent field is a
-    #      conservative projection with a stated reason; a guessed one is a wrong number that looks right.
-    #      NOTE: claude-opus-4-8 is $5/$25 — NOT the old $15/$75 (that was Opus 3/4/4.1). Opus 4.8 < gpt-5.5 on output.
-    "claude-opus-4-8":   dict(provider="anthropic", in_=5.00, out=25.00, cached_in=0.50, batch_cached_in=0.25, batch_in=2.50, batch_out=12.50),
-    "claude-sonnet-4-6": dict(provider="anthropic", in_=3.00, out=15.00, cached_in=0.30, batch_cached_in=0.15, batch_in=1.50, batch_out=7.50),
-    "claude-haiku-4-5":  dict(provider="anthropic", in_=1.00, out=5.00,  cached_in=0.10, batch_cached_in=0.05, batch_in=0.50, batch_out=2.50),
-    # legacy Claude (stable historical rates) — for reconciling older batches
-    "claude-opus-4-7":   dict(provider="anthropic", in_=5.00,  out=25.00, cached_in=0.50, batch_cached_in=0.25, batch_in=2.50,  batch_out=12.50),
-    "claude-opus-4-6":   dict(provider="anthropic", in_=5.00,  out=25.00, cached_in=0.50, batch_cached_in=0.25, batch_in=2.50,  batch_out=12.50),
-    "claude-opus-4-5":   dict(provider="anthropic", in_=5.00,  out=25.00, cached_in=0.50, batch_cached_in=0.25, batch_in=2.50,  batch_out=12.50),
-    "claude-opus-4-1":   dict(provider="anthropic", in_=15.00, out=75.00, cached_in=1.50, batch_cached_in=0.75, batch_in=7.50,  batch_out=37.50),
-    "claude-opus-4-0":   dict(provider="anthropic", in_=15.00, out=75.00, cached_in=1.50, batch_cached_in=0.75, batch_in=7.50,  batch_out=37.50),
-    "claude-sonnet-4-5": dict(provider="anthropic", in_=3.00,  out=15.00, cached_in=0.30, batch_cached_in=0.15, batch_in=1.50,  batch_out=7.50),
-    "claude-sonnet-4-0": dict(provider="anthropic", in_=3.00,  out=15.00, cached_in=0.30, batch_cached_in=0.15, batch_in=1.50,  batch_out=7.50),
-}
+# Authored multipliers and provenance live with all other price data in the catalog.
+from . import model_catalog as _price_catalog
 
-# Prompt-cache WRITE multipliers, relative to base input. Published by Anthropic at
-# platform.claude.com/docs/en/about-claude/pricing (read 2026-08-12): "5-minute cache write 1.25x base
-# input price", "1-hour cache write 2x base input price", "Cache read (hit) 0.1x base input price".
-# Named here rather than inline at each use — reconcile_anthropic had the 1.25 as a bare literal beside the
-# money it multiplied, which is how a published rate becomes a magic number nobody can check.
-CACHE_WRITE_5M_MULTIPLIER = 1.25
-CACHE_WRITE_1H_MULTIPLIER = 2.0
-CACHE_READ_MULTIPLIER = 0.1
+_ANTHROPIC_CACHE_MODIFIERS = _price_catalog.cache_modifier_table()["anthropic"]
+CACHE_WRITE_5M_MULTIPLIER = _ANTHROPIC_CACHE_MODIFIERS["write_5m"]
+CACHE_WRITE_1H_MULTIPLIER = _ANTHROPIC_CACHE_MODIFIERS["write_1h"]
+CACHE_READ_MULTIPLIER = _ANTHROPIC_CACHE_MODIFIERS["read"]
 
 ONE_MILLION = 1_000_000          # rates are quoted per this many tokens; a UNIT, never a workload
 PRICING_SOURCE = "https://developers.openai.com/api/docs/pricing"
@@ -110,175 +64,70 @@ def _rate_key(rates):
 
 
 def user_prices_path():
-    """Where a user's OWN verified prices live (highest precedence after $SPENDGUARD_PRICES)."""
-    home = os.environ.get("SPENDGUARD_HOME") or os.path.expanduser("~/.spendguard")
-    return os.path.join(home, "prices.json")
+    """Compatibility accessor for the catalog authoring path."""
+    from . import model_catalog
+    return str(model_catalog.catalog_authoring_path())
 
 
-def set_price(model, provider, in_usd, out_usd, source, batch_in=None, batch_out=None, cached_in=None):
-    """Record a VERIFIED price for a model spendguard cannot price. Rates are $ per 1M tokens.
+def set_price(model, provider, in_usd, out_usd, source, batch_in=None, batch_out=None, cached_in=None,
+              verified=None):
+    """Author a catalog price with mandatory source and verification provenance."""
+    from .catalog_price_authoring import set_catalog_model_price
+    return set_catalog_model_price(model, input=in_usd, output=out_usd, cached=cached_in,
+                                   batch_input=batch_in, batch_output=batch_out, provider=provider,
+                                   source=source, verified=verified)
 
-    `source` is REQUIRED and stored with the entry. That is the whole discipline: spendguard never invents a
-    price (a fabricated glm-5.2 stub once under-priced a model ~40%), so the only way one enters the table is a
-    human writing down where the number came from. Non-positive rates are refused — a $0 price is what makes
-    real spend record as free, silently."""
-    if not model or not provider:
-        raise ValueError("model and provider are both required")
-    if not source or not str(source).strip():
-        raise ValueError("a --source is required: prices enter this table only with provenance, never invented")
-    try:
-        in_usd, out_usd = float(in_usd), float(out_usd)
-    except (TypeError, ValueError):
-        raise ValueError("--in and --out must be numbers ($ per 1M tokens)")
-    if in_usd <= 0 or out_usd <= 0:
-        raise ValueError("rates must be positive — a $0 rate records real spend as free (see sync's zero-rate skip)")
-    path = user_prices_path()
-    # AN UNREADABLE FILE IS NOT AN EMPTY ONE. `except: data = {}` followed by a full rewrite meant a single
-    # partial write, permission blip or stray character DESTROYED every verified price the user had
-    # recorded — in the file whose entire discipline is "prices enter this table only with provenance,
-    # never invented". Losing them is worse than refusing to add one, and the refusal is recoverable.
-    data = {}
-    if os.path.exists(path):
-        try:
-            with open(path) as _fh:
-                data = json.load(_fh)
-        except Exception as e:
-            raise ValueError(
-                f"{path} exists but could not be read ({type(e).__name__}: {str(e)[:80]}). REFUSING to "
-                f"write, because doing so would replace every price recorded in it with just this one. "
-                f"Fix or move that file, then re-run.")
-        if not isinstance(data, dict):
-            raise ValueError(f"{path} does not contain a JSON object — refusing to overwrite it.")
-    provs = data.setdefault("providers", {}).setdefault(str(provider).strip().lower(), {})
-    entry = {"in_": in_usd, "out": out_usd,
-             "cached_in": float(cached_in) if cached_in is not None else round(in_usd * 0.1, 6),
-             "batch_in": float(batch_in) if batch_in is not None else round(in_usd * 0.5, 6),
-             "batch_out": float(batch_out) if batch_out is not None else round(out_usd * 0.5, 6),
-             "_source": str(source).strip(),
-             "_added": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")}
-    provs.setdefault("models", {})[str(model).strip()] = entry
+
+LITELLM_BREADTH_FILENAME = "litellm_prices.json"
+
+
+def _load_pricing_breadth_snapshot():
+    """Read optional synced breadth only in the designated price loader."""
     from . import config
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    config.update_json(path, lambda _d: data)      # atomic + `~` backup: this file IS the $/token truth
-    return path, entry
+    path = config.HOME / LITELLM_BREADTH_FILENAME
+    if not path.exists():
+        return {}
+    try:
+        with path.open() as handle:
+            return json.load(handle)
+    except (OSError, ValueError) as error:
+        import sys
+        sys.stderr.write(f"[pricing] GAP unreadable breadth cache {path}: {error}\n")
+        return {}
 
 
-def _candidate_files():
-    """Config files, lowest→highest precedence. Later overrides earlier (user can override one model)."""
-    here = os.path.dirname(os.path.abspath(__file__))
-    paths = [os.path.join(here, "prices.json")]                         # shipped default
-    home = os.environ.get("SPENDGUARD_HOME") or os.path.expanduser("~/.spendguard")
-    paths += [os.path.join(home, "prices.json"), os.path.join(home, "prices.yaml")]  # user override
-    if os.environ.get("SPENDGUARD_PRICES"):
-        paths.append(os.environ["SPENDGUARD_PRICES"])                   # explicit override
-    return [p for p in paths if os.path.exists(p)]
+PRICING_BREADTH_SNAPSHOT = _load_pricing_breadth_snapshot()
 
 
-def _read(path):
-    txt = open(path).read()
-    if path.endswith((".yaml", ".yml")):
-        import yaml  # optional; only needed if a YAML config is used
-        return yaml.safe_load(txt)
-    return json.loads(txt)
+def _derive_catalog_pricing_state(snapshot=None):
+    """Derive rate, provider and ambiguity maps in memory; catalog overrides breadth for its vendor."""
+    from . import model_catalog
+    snapshot = PRICING_BREADTH_SNAPSHOT if snapshot is None else snapshot
+    providers = dict(snapshot.get("providers") or {})
+    prices = {model: dict(row) for model, row in (snapshot.get("models") or {}).items()}
+    ambiguous = set()
+    for provider, rows in model_catalog.as_price_table().items():
+        for model, row in rows.items():
+            qualified = f"{provider}/{model}"
+            rates = {**prices.get(qualified, {}), **row, "provider": provider}
+            prices[qualified] = rates
+            previous = prices.get(model)
+            if previous is not None and providers.get(model) != provider and _rate_key(previous) != _rate_key(rates):
+                prices.pop(model, None)
+                ambiguous.add(model)
+                providers.pop(model, None)
+            elif model not in ambiguous:
+                prices[model] = rates
+                providers[model] = provider
+    return prices, providers, ambiguous
 
 
 def _load():
-    """Build PRICING (model->rates) + PROVIDERS (model->provider) by layering, lowest→highest precedence:
-       built-in _FALLBACK  →  LiteLLM cache (breadth, from `spendguard sync-prices`)  →
-       curated prices.json (our verified models win)  →  user override. No network here (cache only)."""
-    global PRICING_SOURCE, PRICING_VERIFIED, STALE_AFTER_DAYS, PROVIDERS
-    prices = dict(_FALLBACK)
-    # THE DATA CARRIES ITS OWN PROVIDER. This line used to read
-    #     {m: ("anthropic" if m.startswith("claude") else "openai") for m in _FALLBACK}
-    # which was correct for all 23 entries and a trap for the 24th: the first Moonshot or z.ai fallback
-    # added would have been attributed to OpenAI — silently, in the table the entire ledger prices from,
-    # with an `else` branch that can only ever name one vendor. An inference that happens to be right is
-    # still an inference. Refuse a rate with no vendor rather than invent one; the same discipline
-    # set_price() already applies to `source`.
-    PROVIDERS = {}
-    for _m, _rates in _FALLBACK.items():
-        _prov = _rates.get("provider")
-        if not _prov:
-            raise ValueError(f"_FALLBACK[{_m!r}] has no provider — a rate that cannot be attributed to a "
-                             "vendor cannot be billed to one either")
-        PROVIDERS[_m] = _prov
-    # LiteLLM breadth (2700+ models) — cached locally; absent until `spendguard sync-prices` runs.
-    home = os.environ.get("SPENDGUARD_HOME") or os.path.expanduser("~/.spendguard")
-    litellm = os.path.join(home, "litellm_prices.json")
-    if os.path.exists(litellm):
-        try:
-            d = json.load(open(litellm))
-            # MERGE PER FIELD, not per entry. `prices.update(...)` REPLACED a model's whole rate dict, so
-            # every field the built-in fallback carried and the incoming layer did not was silently dropped
-            # for that model. Adding `batch_cached_in` to the Anthropic fallback rows is how this surfaced:
-            # the field was present in the source and gone at runtime, because a broader layer that knows
-            # nothing about it overwrote the entry wholesale. Any field added here in future would have
-            # vanished the same way, for exactly the models a curated layer covers — the popular ones.
-            for _m, _r in (d.get("models", {}) or {}).items():
-                prices[_m] = {**prices.get(_m, {}), **(_r or {})}
-            PROVIDERS.update(d.get("providers", {}))
-        except Exception as e:
-            import sys
-            sys.stderr.write(f"[pricing] WARN could not load LiteLLM cache ({e})\n")
-    # THE MODEL CATALOG — the curated SSOT (provider-doc-sourced, version-controlled), layered ABOVE the synced
-    # LiteLLM breadth cache so gemini/deepseek/gpt-5.6/glm etc. are priced from it in a FRESH env (no sync needed).
-    # Reads the catalog's rates (model_catalog owns them); this is pricing's LAYERING job, not authoring. Per-field
-    # merge + provider-qualified + bare, with the SAME ambiguity discipline as the curated files below.
-    try:
-        from . import model_catalog as _mc
-        for _prov, _rows in (_mc.as_price_table() or {}).items():
-            for _mid, _row in _rows.items():
-                _rates = {**prices.get(_mid, {}), **{k: v for k, v in _row.items() if not str(k).startswith("_")}}
-                prices[f"{_prov}/{_mid}"] = _rates
-                _prior = prices.get(_mid)
-                if _prior is not None and _rate_key(_prior) != _rate_key(_rates):
-                    prices.pop(_mid, None)
-                    AMBIGUOUS_BARE.add(_mid)
-                    PROVIDERS.pop(_mid, None)
-                elif _mid not in AMBIGUOUS_BARE:
-                    prices[_mid] = _rates
-                    PROVIDERS[_mid] = _prov
-    except Exception as e:
-        import sys
-        sys.stderr.write(f"[pricing] WARN could not load model_catalog ({e})\n")
-    for path in _candidate_files():
-        try:
-            cfg = _read(path)
-            meta = cfg.get("_meta", {})
-            PRICING_SOURCE = meta.get("source", PRICING_SOURCE)
-            PRICING_VERIFIED = meta.get("verified", PRICING_VERIFIED)
-            STALE_AFTER_DAYS = meta.get("stale_after_days", STALE_AFTER_DAYS)
-            for prov, pd in (cfg.get("providers") or {}).items():
-                for model, rates in (pd.get("models") or {}).items():
-                    # KEEP THE PROVIDER. The config knows exactly which vendor publishes this rate, and
-                    # flattening to a bare key threw that away: two vendors hosting the same model id meant
-                    # the LAST one loaded silently overwrote both the rate and the attribution of the first.
-                    # Dict iteration order decided which vendor's money was used.
-                    #
-                    # _vendor_qualified() below already resolves `vendor/model` and already RAISES when two
-                    # vendors publish DIFFERENT rates for one bare id rather than picking. That guard could
-                    # never fire, because the collision was resolved here — before anything could see it.
-                    # Per-field merge, same reason as the litellm layer above: a curated entry
-                    # states the rates it verified and must not erase fields it never mentions.
-                    rates = {**prices.get(model, {}), **(rates or {})}
-                    prices[f"{prov}/{model}"] = rates
-                    prior = prices.get(model)
-                    if prior is not None and _rate_key(prior) != _rate_key(rates):
-                        # Same id, two vendors, DIFFERENT money. Leave NO bare entry: a caller who did not
-                        # name a provider must reach the ambiguity error, not one of the two answers.
-                        prices.pop(model, None)
-                        AMBIGUOUS_BARE.add(model)
-                        PROVIDERS.pop(model, None)
-                    elif model not in AMBIGUOUS_BARE:
-                        prices[model] = rates
-                        PROVIDERS[model] = prov
-        except Exception as e:
-            import sys
-            sys.stderr.write(f"[pricing] WARN could not load {path} ({e}); using built-in fallback\n")
-    return prices
+    """Compatibility loader returning the derived price table."""
+    return _derive_catalog_pricing_state(_load_pricing_breadth_snapshot())[0]
 
 
-PRICING = _load()
+PRICING, PROVIDERS, AMBIGUOUS_BARE = _derive_catalog_pricing_state()
 
 
 # ── MAXIMUM OUTPUT TOKENS, per model ──────────────────────────────────────────────────────────────────
@@ -315,41 +164,22 @@ def _load_units():
     variant 'WxH:quality'), `audio_second` (transcription $/second), `tts_char` ($/character),
     `training_token` (fine-tune training $/token). Layered like PRICING, lowest→highest:
     LiteLLM cache per-unit fields (input_cost_per_second / *_per_character / *_per_image — provenance:
-    the synced upstream table)  →  curated prices.json `unit_prices`. NOTHING is guessed: an absent
+    the synced upstream table)  →  catalog `unit_prices`. NOTHING is guessed: an absent
     unit price surfaces as a loud unpriced-call WARN at the gate, never a made-up number."""
     units = {"image": {}, "audio_second": {}, "tts_char": {}, "training_token": {}, "web_search_call": {}}
-    home = os.environ.get("SPENDGUARD_HOME") or os.path.expanduser("~/.spendguard")
-    lit = os.path.join(home, "litellm_prices.json")
-    if os.path.exists(lit):
-        try:
-            for model, r in (json.load(open(lit)).get("unit_models") or {}).items():
-                if r.get("input_cost_per_second"):
-                    units["audio_second"][model] = float(r["input_cost_per_second"])
-                per_char = r.get("input_cost_per_character") or r.get("output_cost_per_character")
-                if per_char:
-                    units["tts_char"][model] = float(per_char)
-                per_img = r.get("output_cost_per_image") or r.get("input_cost_per_image")
-                if per_img:
-                    units["image"][model] = float(per_img)
-        except Exception as e:
-            import sys
-            sys.stderr.write(f"[pricing] WARN could not load LiteLLM unit prices ({e})\n")
-    for path in _candidate_files():
-        try:
-            for kind, entries in (_read(path).get("unit_prices") or {}).items():
-                if kind in units:
-                    units[kind].update({k: float(v) for k, v in entries.items()})
-        except Exception as e:
-            # THE CURATED FILE IS THE AUTHORITATIVE ONE. Swallowing here meant a malformed or unreadable
-            # prices.json left the built-in defaults in place and returned them as if they were the curated
-            # values — so a per-unit price the user had deliberately corrected silently reverted, and every
-            # figure computed from it looked exactly as trustworthy as before. The defaults are still used
-            # (refusing to price anything at all would be worse), but nobody is told they are looking at a
-            # number the override was supposed to have replaced unless it is said out loud.
-            import sys as _sys
-            _sys.stderr.write(f"[spendguard] unit prices in {path} could NOT be applied "
-                              f"({type(e).__name__}: {str(e)[:60]}) — falling back to built-in defaults, "
-                              f"which may not match what you curated. Fix the file, then re-check.\n")
+    for model, row in (PRICING_BREADTH_SNAPSHOT.get("unit_models") or {}).items():
+        if row.get("input_cost_per_second"):
+            units["audio_second"][model] = float(row["input_cost_per_second"])
+        per_char = row.get("input_cost_per_character") or row.get("output_cost_per_character")
+        if per_char:
+            units["tts_char"][model] = float(per_char)
+        per_image = row.get("output_cost_per_image") or row.get("input_cost_per_image")
+        if per_image:
+            units["image"][model] = float(per_image)
+    from . import model_catalog
+    for kind, entries in model_catalog.unit_price_table().items():
+        if kind in units:
+            units[kind].update({key: float(value) for key, value in entries.items()})
     return units
 
 
@@ -360,11 +190,7 @@ def _load_context():
     """{model: {max_input_tokens, max_output_tokens}} from the synced LiteLLM cache. These are LIMITS, not
     prices — the upstream table is `model_prices_and_context_window.json` and carries both. Absent → {}, and
     every caller must treat "unknown" as "no opinion" rather than inventing a bound."""
-    home = os.environ.get("SPENDGUARD_HOME") or os.path.expanduser("~/.spendguard")
-    try:
-        return json.load(open(os.path.join(home, "litellm_prices.json"))).get("context") or {}
-    except Exception:
-        return {}
+    return dict(_load_pricing_breadth_snapshot().get("context") or {})
 
 
 CONTEXT_LIMITS = _load_context()
@@ -471,7 +297,7 @@ def unit_price(kind: str, model: str, variant: str = None) -> float:
     raise KeyError(
         f"No {kind} unit price for {model!r}"
         + (f" (variant {variant!r})" if variant else "")
-        + " — add it to prices.json `unit_prices` with a source or run `spendguard sync-prices`."
+        + " — add it to model_catalog.json `unit_prices` with a source or run `spendguard sync-prices`."
     )
 
 
@@ -602,7 +428,8 @@ def cross_check_openrouter(run=False, scope=None):
         except Exception:
             pass
     exact = {m: m for m in PRICING if m in ormap}     # identical ids: provable, free, across the whole table
-    ours = list(scope) if scope is not None else list(_FALLBACK)
+    from . import model_catalog
+    ours = list(scope) if scope is not None else list(model_catalog.all_records())
     todo = [m for m in ours if m not in exact]
     resolved, id_stats = _same_model_as_ours(todo, ormap.keys(), run=run)
     pairs = {**exact, **resolved}
@@ -779,23 +606,23 @@ def _catalog_price(model: str) -> Optional[dict]:
 
     candidate = model
     while True:
-        row = _norm_price_row(model_catalog.model_price(candidate),
-                              (model_catalog.model_record(candidate) or {}).get("provider"))
+        record = model_catalog.model_record(candidate) or {}
+        row = _norm_price_row(record.get("price"), record.get("provider"))
         if row:
             return row
         base = re.sub(r"-(?:\d{4}-\d{2}-\d{2}|\d{8}|preview|latest|v\d+)$", "", candidate)
         if base == candidate:
             break
         candidate = base
-    for mid, rec in model_catalog.all_records().items():
+    for rec in model_catalog.all_records().values():
         if model in (rec.get("aliases") or []):
-            row = _norm_price_row(model_catalog.model_price(mid), rec["provider"])
+            row = _norm_price_row(rec.get("price"), rec["provider"])
             if row:
                 return row
     mapped = _semantic_catalog_map(model)
     if mapped:
-        row = _norm_price_row(model_catalog.model_price(mapped),
-                              (model_catalog.model_record(mapped) or {}).get("provider"))
+        record = model_catalog.model_record(mapped) or {}
+        row = _norm_price_row(record.get("price"), record.get("provider"))
         if row:
             return row
     return None

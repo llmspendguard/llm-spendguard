@@ -58,6 +58,9 @@ DAY = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d")
 # an aggregator counted. True-down is negative because that is what a correction row really is.
 AMOUNTS = {"plain": 1.0, "quarantined": 2.0, "reconciled": 4.0, "true_down": -8.0, "meta": 16.0}
 UNPRICED_MODEL = "kimi-k3-unpriceable"     # a real call whose $ is unknown — recorded at 0, NEVER as "free"
+UNKNOWN_BASIS_MODEL = "matrix-unknown-basis"
+UNKNOWN_BASIS_VALUE = "wishful"
+UNKNOWN_BASIS_COST = 0.5
 
 
 def seed():
@@ -151,7 +154,8 @@ KWARGS = {"by_provider_day": {"kind": "batch"}, "gate_by_project_day": {"kind": 
 
 # A SpendLedger method that returns a DOLLAR sum. budget is a facade over these now, so a $-aggregator is a
 # budget function that CALLS one of them (detected structurally from the AST, not a substring scan).
-_DOLLAR_PRIMITIVES = {"sum_by", "spent_dec", "meta_dec", "remote_dec", "est_value_dec", "subscription_dec"}
+_DOLLAR_PRIMITIVES = {"sum_by", "spent_dec", "meta_dec", "remote_dec", "est_value_dec", "subscription_dec",
+                      "running_llm_total_dec"}
 # sum_by also backs COUNT-only readers that total tokens/counts, not dollars, so the DOLLAR decomposition below
 # does not apply to them: unpriced_since reads its 'n' (the dollars are precisely what is unknown there);
 # input_cache_split totals the input-token cache axes (read/write shares) via sum_by's int_cols, reading no 'usd'.
@@ -221,7 +225,7 @@ up = budget.unpriced_since("2000-01-01")
 check("the unpriced call is recorded, with its model", any(r["model"] == UNPRICED_MODEL for r in up))
 check("it is NOT in the spend total (a $0 there would read as free)",
       decompose(_total(budget.spent_since("2000-01-01"))) == {"plain", "true_down"})
-check("nor in the SaaS push payload", "unpriced" not in str(budget.by_dims()).lower() or True)
+check("nor in the SaaS push payload", all(row["model"] != UNPRICED_MODEL for row in budget.by_dims()))
 from spendguard import receipt as _r0
 _ul = "\n".join(_r0._unpriced_lines())
 check("the receipt names it and says it is NOT in the total", UNPRICED_MODEL in _ul and "NOT IN THE TOTAL" in _ul)
@@ -252,9 +256,15 @@ check("provider-reported usage is labelled billed", abs(bb.get("billed", {}).get
 # the assertion is about the bucket EXISTING, not about its sign.
 check("rows written before basis existed read as UNLABELLED, not folded into billed",
       "" in bb and abs(bb.get("billed", {}).get("cost", 0) - 64.0) < 1e-6, str(sorted(bb)))
-check("an unknown basis string is refused rather than stored", (
-    budget.record_charge("anthropic", "test-model", "batch", 0.5, project="p1", basis="wishful") or True)
-    and budget.by_basis("2000-01-01").get("wishful") is None)
+# An unsupported basis does not discard real spend: charge_to_event preserves the charge as unlabelled.
+budget.record_charge("anthropic", UNKNOWN_BASIS_MODEL, "batch", UNKNOWN_BASIS_COST,
+                     project="p1", basis=UNKNOWN_BASIS_VALUE)
+unknown_basis_rows = [row for row in budget._ledger().query() if row["model"] == UNKNOWN_BASIS_MODEL]
+check("an unknown basis preserves its charge as unlabelled",
+      len(unknown_basis_rows) == 1 and unknown_basis_rows[0]["cost_basis"] == ""
+      and _total(budget.by_basis("2000-01-01").get(UNKNOWN_BASIS_VALUE, {})) == 0
+      and any(L.to_dec(unknown_basis_rows[0].get(column)) == L.to_dec(UNKNOWN_BASIS_COST)
+              for column in L.USD_COLS))
 check("quarantined rows never appear under any basis",
       not any(abs(v["cost"] - AMOUNTS["quarantined"]) < 1e-6 for v in bb.values()))
 from spendguard import receipt as _rcpt

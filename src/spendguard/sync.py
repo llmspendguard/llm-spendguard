@@ -1,13 +1,13 @@
 """Sync prices from LiteLLM's community-maintained dataset (breadth + freshness, ~zero maintenance).
 
 LiteLLM's `model_prices_and_context_window.json` (CI-updated, ~2700 models, all providers) becomes the
-breadth layer; spendguard's curated prices.json overrides verified models; the user can override on top.
+breadth layer; the authored model catalog overrides verified models.
 
 `spendguard sync-prices` fetches → validates → caches to ~/.spendguard/litellm_prices.json. pricing.py
 reads that cache (no network at import). A validation gate prevents caching a bad/empty fetch.
 """
 import json, os, urllib.request, datetime
-from . import config
+from . import config, model_catalog
 
 LITELLM_URL = "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json"
 CACHE = str(config.HOME / "litellm_prices.json")
@@ -21,8 +21,10 @@ CACHE = str(config.HOME / "litellm_prices.json")
 # (https://platform.kimi.ai/docs/pricing/batch.md, fetched 2026-08-04), so the generic fallback UNDER-priced
 # every Moonshot batch by 17% — and under-pricing is the dangerous direction for a spend gate. Only providers
 # with a PUBLISHED multiplier belong here: an invented one is worse than the default because it looks precise.
-BATCH_FRACTION_DEFAULT = 0.5
-BATCH_FRACTION_BY_PROVIDER = {"moonshot": 0.6}
+PRICING_CONVERSION = model_catalog.catalog_pricing_metadata("pricing_conversion")
+BATCH_FRACTION_DEFAULT = PRICING_CONVERSION["batch_fraction_default"]
+BATCH_FRACTION_BY_PROVIDER = PRICING_CONVERSION["batch_fraction_by_provider"]
+CACHE_READ_FRACTION_DEFAULT = PRICING_CONVERSION["cache_read_fraction_default"]
 
 # Physical limits, not prices — used by the estimate plausibility rail.
 _CONTEXT_FIELDS = ("max_input_tokens", "max_output_tokens")
@@ -120,7 +122,7 @@ def _convert(raw):
                                              BATCH_FRACTION_DEFAULT)
         rate = {
             "in_": ic * 1e6, "out": oc * 1e6,
-            "cached_in": _rate_or(cc, ic * 1e6 * 0.1),
+            "cached_in": _rate_or(cc, ic * 1e6 * CACHE_READ_FRACTION_DEFAULT),
             "batch_in": _rate_or(bi, ic * 1e6 * bf),      # published rate wins; a malformed one falls back, never aborts
             "batch_out": _rate_or(bo, oc * 1e6 * bf),
         }
@@ -140,7 +142,7 @@ def _convert(raw):
 def _validate(models):
     """Sanity gate + a FULL curated cross-check before trusting a fetch. (ok, [messages]).
 
-    Cross-checks EVERY curated price (pricing._FALLBACK, the source of record) against this LiteLLM fetch — not a
+    Cross-checks EVERY curated price (model_catalog, the source of record) against this LiteLLM fetch — not a
     hand-copied handful. The old {model: (in, out)} anchor list here DUPLICATED three curated prices as inline
     literals and could drift from the table it was meant to guard (a hardcoded price is exactly what this module
     exists to avoid). A per-token disagreement is surfaced as a DIFF and a re-verify signal — curated wins, it never
@@ -148,9 +150,9 @@ def _validate(models):
     provider.model, so all three are tried before concluding a curated model is absent."""
     if len(models) < 1000:
         return False, [f"only {len(models)} models parsed — suspicious; not caching"]
-    from . import pricing
     diffs, checked, agreed, missing = [], 0, 0, 0
-    for m, r in pricing._FALLBACK.items():
+    for m, record in model_catalog.all_records().items():
+        r = {**(record.get("price") or {}), "provider": record.get("provider")}
         ein, eout, prov = r.get("in_"), r.get("out"), r.get("provider")
         if ein is None:
             continue
@@ -207,7 +209,7 @@ def refresh_if_stale():
     """Keep the price table fresh WITHOUT a dedicated scheduler: called at the top of every `saas sync` (which the
     installed `spendguard schedule` agent already runs on a cadence), it re-fetches only when the cache is older
     than `pricing.refresh_days` (default 1; 0 disables) — so an hourly scheduler still refreshes at most once a
-    day. Strictly fail-open: a failed fetch leaves the existing cache + curated prices.json in effect and reports
+    day. Strictly fail-open: a failed fetch leaves the existing cache + curated model catalog in effect and reports
     the error instead of raising. On success the in-process pricing table is reloaded so THIS run (reconcile's
     batch pricing, unit/ft: lookups) already uses the fresh rates."""
     from . import config
@@ -236,7 +238,7 @@ def refresh_if_stale():
         from . import gate as _g
         if _g.is_deliberate_stop(e):
             raise                                       # a deliberate stop (refusal/deadline) is never downgraded to a fallback
-        return {"error": str(e)[:120], "note": "existing cache + curated prices.json still in effect"}
+        return {"error": str(e)[:120], "note": "existing cache + curated model catalog still in effect"}
 
 
 def main(argv=None):

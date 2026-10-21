@@ -11,6 +11,7 @@ Invariants:
   • the memoized baseline stays CORRECT: it reflects a new charge exactly and equals the live un-memoized sum.
 """
 import os, sys, tempfile
+from unittest.mock import patch
 
 os.environ["SPENDGUARD_RECEIPTS"] = "off"   # isolate the flow-ENTER baseline (at 'off', emit_flow returns before the exit read)
 
@@ -22,6 +23,11 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
 import spendguard
 from spendguard import budget
 from spendguard.ledger import SpendLedger
+from spendguard.ledger_read import LedgerQueryDeadline
+
+_FLOW_DEADLINE_REDUCTION_FACTOR = 2
+_FLOW_EXPLICIT_READ_DEADLINE_S = budget.config.LEDGER_QUERY_DEADLINE_S / _FLOW_DEADLINE_REDUCTION_FACTOR
+_FLOW_INVALID_READ_DEADLINE_S = float("nan")
 
 fails = []
 def ck(name, cond):
@@ -75,6 +81,29 @@ live = float(budget._ledger().spent_dec())         # the un-memoized whole-ledge
 ck("memoized baseline == live un-memoized whole-ledger sum", round(b1 - live, 9) == 0.0)
 
 SpendLedger.spent_dec = _orig_spent_dec
+
+# D) a cold memo's adverse read must fail visibly, never cache a partial value.
+budget._ledger()._total_memo = None
+with patch.object(SpendLedger, "spent_dec", side_effect=LedgerQueryDeadline(_FLOW_EXPLICIT_READ_DEADLINE_S)):
+    try:
+        budget.spent_all_time(deadline_s=_FLOW_EXPLICIT_READ_DEADLINE_S)
+    except LedgerQueryDeadline:
+        ck("a failed cold baseline read propagates its typed deadline", True)
+    else:
+        ck("a failed cold baseline read propagates its typed deadline", False)
+ck("a failed baseline read never fills the memo", budget._ledger()._total_memo is None)
+with patch.object(SpendLedger, "spent_dec", autospec=True, side_effect=_orig_spent_dec) as bounded_retry:
+    recovered = budget.spent_all_time(deadline_s=_FLOW_EXPLICIT_READ_DEADLINE_S)
+    remaining_budget = bounded_retry.call_args.kwargs["deadline_s"]
+    ck("a retry retains the explicit bounded-read deadline",
+       remaining_budget is not None and 0 < remaining_budget <= _FLOW_EXPLICIT_READ_DEADLINE_S)
+    ck("the recovered baseline is complete", recovered == live)
+try:
+    budget.spent_all_time(deadline_s=_FLOW_INVALID_READ_DEADLINE_S)
+except LedgerQueryDeadline:
+    ck("an invalid deadline is refused even with a warm memo", True)
+else:
+    ck("an invalid deadline is refused even with a warm memo", False)
 
 print(("FAIL: " + ", ".join(fails)) if fails else "all flow-start no-rescan checks passed")
 sys.exit(1 if fails else 0)

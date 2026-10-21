@@ -8,6 +8,7 @@ socket reclamation.
 import contextlib
 import json
 import os
+import select
 import socket
 import struct
 import threading
@@ -23,6 +24,44 @@ _MAX_FRAME_BYTES = int(config._cfg_get("advisor", "codex_daemon_broker_max_frame
 _CONNECT_TIMEOUT_S = float(config._cfg_get("advisor", "codex_daemon_broker_connect_timeout_s", 2.0))
 _RESPONSE_GRACE_S = float(config._cfg_get("advisor", "codex_daemon_broker_response_grace_s", 5.0))
 _LOCK_NAME = "codex-daemon"
+_BROKER_PEER_PEEK_BYTES = 1
+
+
+@contextlib.contextmanager
+def _broker_request_ledger_lifetime(connection):
+    """Interrupt this request's ledger reads when its peer abandons the socket.
+
+    Only the serving thread consumes the framed protocol. The observer peeks at
+    EOF and never changes socket timeouts or worker recycling policy.
+    """
+    from .ledger_read import ledger_request_scope
+
+    observer_stopped = threading.Event()
+    with ledger_request_scope() as request_reads:
+        def observe_broker_peer_abandonment():
+            while not observer_stopped.is_set():
+                try:
+                    readable, _, _ = select.select(
+                        [connection], [], [], config.LEDGER_REQUEST_DISCONNECT_POLL_S)
+                    if readable:
+                        if not connection.recv(_BROKER_PEER_PEEK_BYTES, socket.MSG_PEEK):
+                            request_reads.cancel_ledger_request()
+                            return
+                        # No second frame is expected. Avoid spinning if a peer
+                        # pipelined data; the ledger deadline remains in force.
+                        observer_stopped.wait(config.LEDGER_REQUEST_DISCONNECT_POLL_S)
+                except (OSError, ValueError, TypeError):
+                    request_reads.cancel_ledger_request()
+                    return
+
+        observer = threading.Thread(target=observe_broker_peer_abandonment,
+                                    name="codex-broker-ledger-abandonment", daemon=True)
+        observer.start()
+        try:
+            yield
+        finally:
+            observer_stopped.set()
+            observer.join()
 
 
 def _socket_path():
@@ -171,7 +210,8 @@ class _CodexDaemonBroker:
                 if not isinstance(kwargs, dict):
                     raise ValueError("run_warm kwargs are not an object")
                 connection.settimeout(None)
-                result = self._local.run_warm(**kwargs)
+                with _broker_request_ledger_lifetime(connection):
+                    result = self._local.run_warm(**kwargs)
                 connection.settimeout(read_timeout)
                 _send_frame(connection, {"version": _PROTOCOL_VERSION, "result": result})
             except ValueError as exc:

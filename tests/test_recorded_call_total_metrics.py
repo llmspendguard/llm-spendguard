@@ -119,6 +119,25 @@ def run_recorded_total_metrics_guards():
         finally:
             writer.close()
         assert_recorded_admission_deadline(database)
+        # Reproduce cyclic-GC finalization inside a bounded open while another
+        # caller owns admission. An explicitly closed slot must never wait again.
+        original_recorded_guard_open = config.open_ledger_connection
+
+        def finalize_closed_recorded_handle_before_admission(*args, **kwargs):
+            writer.__del__()
+            return original_recorded_guard_open(*args, **kwargs)
+
+        before_finalizer_count = config.ledger_connection_count()
+        with patch.object(config, "open_ledger_connection",
+                          side_effect=finalize_closed_recorded_handle_before_admission):
+            assert_recorded_admission_deadline(database)
+        assert config.ledger_connection_count() == before_finalizer_count
+        unclosed_recorded_guard = config.open_ledger_connection(database, tune=False)
+        assert config.ledger_connection_count() == before_finalizer_count + RECORDED_GUARD_READ_INCREMENT
+        unclosed_recorded_guard.__del__()
+        assert config.ledger_connection_count() == before_finalizer_count
+        unclosed_recorded_guard.__del__()
+        assert config.ledger_connection_count() == before_finalizer_count
         missing = home / RECORDED_GUARD_ABSENT
         assert_recorded_unknown(missing)
         assert not missing.exists()

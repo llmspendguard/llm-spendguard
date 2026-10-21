@@ -14,7 +14,7 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
 
 import types
 from spendguard import gate as spend_gate
-from spendguard import pricing
+from spendguard import model_catalog, pricing
 
 fails = []
 
@@ -105,10 +105,9 @@ ck("over the realtime budget, an IMAGE call is REFUSED like any token call", ref
 os.environ["GATE_RT_BUDGET"] = "1000"
 
 # ── rails: the shipped unit table carries no invented numbers ──
-import json
-shipped = json.load(open(os.path.join(os.path.dirname(spend_gate.__file__), "prices.json")))
-ck("shipped prices.json has no unsourced unit_prices (empty or absent until verified entries land)",
-   not shipped.get("unit_prices"))
+shipped_units = model_catalog.unit_price_table()
+ck("catalog has no unsourced unit_prices (empty or absent until verified entries land)",
+   not shipped_units)
 
 print(("[OK]" if not fails else "[FAIL]") + " gate units: %d failure(s)" % len(fails))
 sys.exit(1 if fails else 0)

@@ -1,16 +1,19 @@
 """Bounded, admission-counted, read-only ledger requests shared by every skin."""
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from pathlib import Path
 import sqlite3
 import time
+import weakref
 import logging
 import traceback
 import threading
 import math
 
 from . import config
+from .ledger_deadline_polling import LedgerDeadlinePolling
 
 CC_RESIDENCY_SOURCE = "claude-code"
 CC_RESIDENCY_LATEST_SQL = "SELECT conv_id FROM spend_events WHERE source=? ORDER BY occurred_at DESC,conv_id DESC LIMIT 1"
@@ -33,6 +36,7 @@ DEFAULT_LEDGER_READ_TIME_BUDGET_S = config.LEDGER_READ_TIME_BUDGET_S
 # polling granularity. Smaller = more frequent timeout checks at a small per-instruction cost.
 DEFAULT_LEDGER_READ_PROGRESS_VM_INSTRUCTIONS = config.LEDGER_READ_PROGRESS_VM_INSTRUCTIONS
 LEDGER_READ_DECIMAL_ARITY = 1
+LEDGER_READ_DISABLE_PROGRESS_VM_INSTRUCTIONS = 0
 # SQLite extended result codes retain their primary result in the low byte.
 LEDGER_READ_SQLITE_PRIMARY_CODE_MASK = 0xFF
 LEDGER_READ_COUNT_EXPRESSION = "COUNT(*)"
@@ -228,6 +232,91 @@ class LedgerQueryDeadline(LedgerReadTimeout):
     """A request-path spend aggregate could not finish within its caller deadline."""
 
 
+class LedgerRequestAbandoned(LedgerReadError):
+    """The serving transport abandoned its request; no complete answer exists."""
+
+
+class LedgerRequestReadScope:
+    """Share only interrupt handles with the transport, never SQLite ownership.
+
+    SQLite interrupt is safe from a watcher thread. The query-owning thread
+    always disposes its connection in the bounded reader's finally block.
+    """
+
+    def __init__(self, deadline_s):
+        if not math.isfinite(deadline_s) or deadline_s <= 0:
+            raise LedgerQueryDeadline(deadline_s)
+        self.deadline_at = time.monotonic() + deadline_s
+        self.deadline_s = deadline_s
+        self._request_cancelled = threading.Event()
+        self._request_connection_lock = threading.Lock()
+        self._request_connections = set()
+        self._request_cursors = weakref.WeakSet()
+
+    def cancel_ledger_request(self):
+        self._request_cancelled.set()
+        with self._request_connection_lock:
+            for request_connection in self._request_connections:
+                request_connection.interrupt()
+            pending_cursors = tuple(self._request_cursors)
+        for pending_cursor in pending_cursors:
+            pending_cursor._release_request_cursor_if_idle()
+
+    def register_request_read_cursor(self, cursor):
+        with self._request_connection_lock:
+            self.require_ledger_request_live()
+            self._request_cursors.add(cursor)
+
+    def release_request_read_cursor(self, cursor):
+        with self._request_connection_lock:
+            self._request_cursors.discard(cursor)
+
+    def require_ledger_request_live(self):
+        if self._request_cancelled.is_set():
+            raise LedgerRequestAbandoned("Ledger request transport abandoned the read")
+
+    def register_request_read_connection(self, connection):
+        with self._request_connection_lock:
+            self.require_ledger_request_live()
+            self._request_connections.add(connection)
+
+    def release_request_read_connection(self, connection):
+        with self._request_connection_lock:
+            self._request_connections.discard(connection)
+
+
+_LEDGER_ACTIVE_REQUEST_SCOPE = ContextVar("spendguard_ledger_request_scope", default=None)
+
+
+def current_ledger_request_scope():
+    """Return the serving request's cancellation owner for managed SQL reads."""
+    return _LEDGER_ACTIVE_REQUEST_SCOPE.get()
+
+
+@contextmanager
+def ledger_request_scope(*, deadline_s=None):
+    """Bind request reads to one absolute deadline and cancellation owner.
+
+    Nested dispatch retains its caller's scope; worker dispatch must propagate
+    contextvars.copy_context() so cancellation crosses thread boundaries.
+    """
+    existing_scope = _LEDGER_ACTIVE_REQUEST_SCOPE.get()
+    if existing_scope is not None:
+        existing_scope.require_ledger_request_live()
+        yield existing_scope
+        return
+    scope_budget = config.LEDGER_QUERY_DEADLINE_S if deadline_s is None else deadline_s
+    if scope_budget is None:
+        scope_budget = config.LEDGER_READ_TIME_BUDGET_S
+    request_scope = LedgerRequestReadScope(scope_budget)
+    request_token = _LEDGER_ACTIVE_REQUEST_SCOPE.set(request_scope)
+    try:
+        yield request_scope
+    finally:
+        request_scope.cancel_ledger_request()
+        _LEDGER_ACTIVE_REQUEST_SCOPE.reset(request_token)
+
+
 class LedgerReadSchemaError(LedgerReadError):
     """An existing ledger lacks the requested schema; reads never migrate it."""
 
@@ -276,20 +365,25 @@ class LedgerSQLReadRequest:
 
 
 @contextmanager
-def _ledger_read_connection(path=None, time_budget=DEFAULT_LEDGER_READ_TIME_BUDGET_S):
+def _ledger_read_connection(path=None, time_budget=DEFAULT_LEDGER_READ_TIME_BUDGET_S, *, bulk_chunked=False):
     with _ledger_read_observation():
-        with _ledger_bounded_read_handle(path, time_budget) as connection:
+        with _ledger_bounded_read_handle(path, time_budget, bulk_chunked=bulk_chunked) as connection:
             yield connection
 
 
 @contextmanager
-def _ledger_bounded_read_handle(path, time_budget):
+def _ledger_bounded_read_handle(path, time_budget, *, bulk_chunked=False):
     if not math.isfinite(time_budget) or time_budget <= 0:
         raise ValueError("Ledger read time budget must be finite and positive")
     if DEFAULT_LEDGER_READ_PROGRESS_VM_INSTRUCTIONS <= 0:
         raise LedgerReadError("Ledger read progress instruction interval must be positive")
     started = time.monotonic()
     deadline_at = started + time_budget
+    request_scope = _LEDGER_ACTIVE_REQUEST_SCOPE.get()
+    if bulk_chunked and request_scope is not None:
+        raise LedgerReadError("Offline chunked reads cannot borrow a request scope")
+    if request_scope is not None:
+        request_scope.require_ledger_request_live()
     try:
         ledger_path = Path(path if path is not None else config.db_path()).expanduser().resolve()
         remaining = deadline_at - time.monotonic()
@@ -311,21 +405,53 @@ def _ledger_bounded_read_handle(path, time_budget):
         raise LedgerReadOpenError(f"Ledger read cannot open existing database: {exc}") from exc
     expired = False
 
+    def require_ledger_bulk_chunk_live():
+        """Refuse expired offline chunks before any fetched rows are consumed."""
+        if time.monotonic() >= deadline_at:
+            raise LedgerReadTimeout(time_budget)
+
     def ledger_read_progress():
         nonlocal expired
-        expired = time.monotonic() - started >= time_budget
+        progress_now = time.monotonic()
+        expired = progress_now >= deadline_at
+        if request_scope is not None and request_scope._request_cancelled.is_set():
+            return 1
+        if expired:
+            return int(expired)
+        previous_progress_interval = read_deadline_polling.interval
+        next_progress_interval = read_deadline_polling.advance_ledger_deadline_poll(progress_now)
+        if next_progress_interval != previous_progress_interval:
+            connection.set_progress_handler(ledger_read_progress, next_progress_interval)
         return int(expired)
 
     try:
+        # This disposable read-only owner already supplies a whole-read deadline
+        # and teardown. Shared pooled-cursor cleanup must not race its owner.
+        connection._ledger_owned_read_deadline = True
+        if request_scope is not None:
+            request_scope.register_request_read_connection(connection)
         from .ledger import _DecSum
         connection.create_aggregate("dec_sum", LEDGER_READ_DECIMAL_ARITY, _DecSum)
-        connection.set_progress_handler(ledger_read_progress, DEFAULT_LEDGER_READ_PROGRESS_VM_INSTRUCTIONS)
-        if time.monotonic() - started >= time_budget:
+        if request_scope is not None:
+            request_scope.require_ledger_request_live()
+        polling_started = time.monotonic()
+        if polling_started >= deadline_at:
             raise LedgerReadTimeout(time_budget)
+        if bulk_chunked:
+            # Offline reconciliation checks natural fetch boundaries. Request
+            # owners retain fine VM polling for latency and abandonment safety.
+            connection._ledger_bulk_chunk_live = require_ledger_bulk_chunk_live
+        else:
+            read_deadline_polling = LedgerDeadlinePolling(deadline_at, polling_started)
+            connection.set_progress_handler(ledger_read_progress, read_deadline_polling.interval)
         yield connection
-        if time.monotonic() - started >= time_budget:
+        if request_scope is not None:
+            request_scope.require_ledger_request_live()
+        if time.monotonic() >= deadline_at:
             raise LedgerReadTimeout(time_budget)
     except sqlite3.Error as exc:
+        if request_scope is not None:
+            request_scope.require_ledger_request_live()
         if (getattr(exc, "sqlite_errorcode", 0) & LEDGER_READ_SQLITE_PRIMARY_CODE_MASK == sqlite3.SQLITE_BUSY
                 or expired or time.monotonic() - started >= time_budget):
             raise LedgerReadTimeout(time_budget) from exc
@@ -333,7 +459,16 @@ def _ledger_bounded_read_handle(path, time_budget):
             raise LedgerReadSchemaError(f"Ledger read schema unavailable: {exc}") from exc
         raise LedgerReadError(f"Ledger read could not obtain a complete answer: {exc}") from exc
     finally:
-        connection.close()
+        if request_scope is not None:
+            request_scope.release_request_read_connection(connection)
+        try:
+            # SQLite close can defer native disposal while a failed statement's
+            # cursor survives in an exception traceback. Explicitly end this
+            # exclusively read-only owner's transaction before deferred close.
+            connection.set_progress_handler(None, LEDGER_READ_DISABLE_PROGRESS_VM_INSTRUCTIONS)
+            connection.rollback()
+        finally:
+            connection.close()
 
 
 def read_ledger_sql(request: LedgerSQLReadRequest, path=None) -> tuple[LedgerReadRow, ...]:
