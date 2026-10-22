@@ -4,6 +4,43 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 
 ## [Unreleased]
 
+## [0.15.0] — 2026-10-22
+
+### Added
+- **Dedicated launchd-supervised Codex broker owner.** spendguard is now the sole owner of the host-wide Codex
+  broker socket/pool via a `com.spendguard.codex-broker-owner` launchd job (RunAtLoad + KeepAlive). Consumers are
+  structurally barred from owning: `_become_owner_if_available()` grants ownership only on an exact
+  PID+create_time marker match, so a consumer facade attaches (or requests the owner's startup) and never builds an
+  incidental pool that is later orphaned — the dominant cause of the intermittent "codex broker unavailable" wedge.
+  On a non-launchd platform the prior shared in-process single-owner model is preserved (a host may build/share the
+  one local warm daemon under the role lock). No ungoverned fallback: an unreachable owner returns a refusal, never
+  a silent uncounted local pool. `fleet.restart_stale(apply=True)` installs + kickstarts the owner, so
+  `spendguard deploy` brings it up. (#172)
+- **Protected-lane leak tripwire** — the hourly leak-detection script that was referenced but never existed; its
+  exit codes now distinguish a real leak from inconclusive, closing a silently-unmonitored lane. (#170)
+
+### Changed
+- **`spendguard deploy` is now bulletproof.** Self-heals editable-install drift before gating
+  (`pip install -e . --no-cache-dir`, fails closed if drift remains); `--no-cache-dir` on every deploy-time
+  editable reinstall; a hermetic gate with a child-only tmp `SPENDGUARD_HOME` so ambient local state (a live
+  `~/.spendguard`, running daemons, a busy WAL) cannot cause a false gate failure; and a loud terminal verdict on
+  every exit path (🟢 DEPLOY SUCCEEDED — promoted &lt;sha&gt; / 🔴 DEPLOY FAILED — &lt;reason&gt; (pointer NOT
+  advanced)). (#171)
+
+### Fixed
+- **Authoritative Codex-logout banner.** Lane auth is read fresh (uncached, `ttl=0`) and a logout is surfaced only
+  on the checker's exact `authed is False`; a stale cached verdict can no longer cry "codex lane LOGGED OUT" while
+  Codex is logged in. `lanes.lane_auth_status` gains a `use_cache` parameter. (#171)
+- **`no_metered_fallback` honored on the strict-schema→enforce reroute** — a strict-schema call that pins a lane and
+  forbids metered fallback is no longer silently rerouted to a metered path. (#168)
+- **Recycle-proof fleet identity.** Stale-daemon detection keys on (pid, create_time), so a recycled pid is never
+  mistaken for a live daemon (no false STALE) and a recycled pid is never kickstarted. (#169)
+
+### Tests / Reliability
+- Proof that an abandoned request-path ledger scan cannot starve the next pool lease or ledger read; per-platform
+  broker-owner invariants (macOS dedicated-owner attach-only vs non-launchd shared-owner fallback) are both
+  asserted offline. (#172)
+
 ## [0.14.0] — 2026-10-22
 
 ### Added
