@@ -417,6 +417,26 @@ with tempfile.TemporaryDirectory() as shard_guard_temporary:
     emit_gate_shard_guard_junit(shard_guard_report, shard_guard_partitions[SHARD_GUARD_ZERO])
     shard_plan.verify_gate_shard_artifacts(shard_guard_manifest, shard_guard_root, SHARD_GUARD_ARTIFACT_PREFIX)
 
+    # Tolerance guard (coverage-combine half of new-test tolerance): a test ADDED since the timing manifest
+    # was recorded appears in the shards' report UNION but not in the manifest. The verifier must derive the
+    # complete collection from that union — median-weighting the untimed case exactly as the runtime sharder
+    # does — and PASS, not refuse an otherwise-green suite. Before this, verify_gate_shard_artifacts built the
+    # expected partition from the manifest alone, so a shard that legitimately ran a new test was reported as
+    # "differs from its complete assigned partition" and blocked the gate.
+    shard_guard_untimed = SHARD_GUARD_FIXTURE_NODEID.format(index=SHARD_GUARD_CASE_COUNT)
+    assert shard_guard_untimed not in shard_guard_manifest["durations"]
+    shard_guard_union_nodeids = shard_guard_nodeids + [shard_guard_untimed]
+    shard_guard_union_partitions = shard_plan.distribute_gate_shard_nodeids(
+        shard_guard_union_nodeids, shard_guard_manifest)
+    for shard_guard_index, shard_guard_members in enumerate(shard_guard_union_partitions):
+        shard_guard_directory = shard_guard_root / (SHARD_GUARD_ARTIFACT_PREFIX + str(shard_guard_index))
+        emit_gate_shard_guard_junit(shard_guard_directory / shard_plan.GATE_SHARD_REPORT_PATTERN.format(
+            index=shard_guard_index), shard_guard_members)
+        emit_gate_shard_guard_coverage(shard_guard_directory)
+    shard_plan.verify_gate_shard_artifacts(shard_guard_manifest, shard_guard_root, SHARD_GUARD_ARTIFACT_PREFIX)
+    assert shard_guard_untimed in {nodeid for members in shard_guard_union_partitions for nodeid in members}
+    print("Untimed-in-report-union PASS: coverage verifier tolerates a test absent from the timing manifest")
+
     shard_guard_spec = importlib.util.spec_from_file_location(SHARD_GUARD_CONFTEST_MODULE,
         Path(__file__).with_name("conftest.py"))
     shard_guard_conftest = importlib.util.module_from_spec(shard_guard_spec)
