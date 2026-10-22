@@ -11,6 +11,65 @@
 """
 import sys
 
+_DEPLOY_HOME_ENVIRONMENT_KEY = "SPENDGUARD_HOME"
+_DEPLOY_EDITABLE_INSTALL_ARGUMENTS = ("-m", "pip", "install", "-e", ".", "--no-cache-dir")
+_DEPLOY_GATE_PATH_PARTS = ("scripts", "test", "chunked_suite.py")
+
+
+def _deploy_execute_subprocess(command, **kwargs):
+    """Single subprocess seam for deploy's installer and gate; tests replace it, never the real host tools."""
+    import subprocess
+    return subprocess.run(command, **kwargs)
+
+
+def _deploy_align_active_editable_install(repo_root):
+    """Self-heal this interpreter's editable metadata before gating; fail closed unless alignment is restored."""
+    from . import gate
+    stale, code_version, metadata_version = gate._stale_editable_install()
+    if not stale:
+        return True, ""
+    command = [sys.executable, *_DEPLOY_EDITABLE_INSTALL_ARGUMENTS]
+    remediation = f"`{sys.executable} -m pip install -e . --no-cache-dir`"
+    print("deploy: editable-install drift detected "
+          f"(running code {code_version} != metadata {metadata_version}); self-healing with {remediation}…")
+    try:
+        completed = _deploy_execute_subprocess(command, cwd=str(repo_root), capture_output=True, text=True)
+    except Exception as exc:
+        return False, f"editable-install self-heal could not run; run {remediation}: {exc}"
+    if completed.returncode:
+        detail = (completed.stderr or completed.stdout or "pip install failed").strip().replace("\n", " ")
+        return False, f"editable-install self-heal failed; run {remediation}: {detail}"
+    still_stale, repaired_code_version, repaired_metadata_version = gate._stale_editable_install()
+    if still_stale:
+        return False, ("editable-install version drift remains after self-heal "
+                       f"(running code {repaired_code_version} != metadata {repaired_metadata_version}); "
+                       f"run {remediation}")
+    print(f"deploy: editable-install metadata repaired ({repaired_code_version}).")
+    return True, ""
+
+
+def _deploy_run_hermetic_gate(suite_path):
+    """Run the gate with an isolated child-only home; the parent retains its real promotion home."""
+    import os
+    import tempfile
+    with tempfile.TemporaryDirectory(prefix="spendguard-deploy-gate-") as isolated_home:
+        gate_environment = os.environ.copy()
+        gate_environment[_DEPLOY_HOME_ENVIRONMENT_KEY] = isolated_home
+        return _deploy_execute_subprocess(
+            [sys.executable, str(suite_path)], env=gate_environment).returncode
+
+
+def _deploy_failed_verdict(reason, exit_code=1):
+    """Render deploy's terminal fail-closed verdict."""
+    print(f"🔴 DEPLOY FAILED — {reason} (pointer NOT advanced)", file=sys.stderr)
+    return exit_code
+
+
+def _deploy_succeeded_verdict(release_record):
+    """Render deploy's terminal success verdict after propagation work completes."""
+    print(f"🟢 DEPLOY SUCCEEDED — promoted {release_record['short']} ({release_record['describe']})")
+    return 0
+
 # The command surface, grouped the way you'd actually use it. The module docstring used to be the entire help —
 # 10 of 60+ commands — printed for `--help`, `help`, `--version` AND every typo, always exiting 1.
 # `_all_commands()` cross-checks this table against the real dispatch, so help can't silently drift from code.
@@ -318,7 +377,6 @@ def _dispatch(argv=None):
         # gate; --allow-dirty promotes an uncommitted tree deliberately (discouraged — the pointer then names code
         # no commit captures). This is the write path; `spendguard release` is the read-only status.
         import pathlib as _pl
-        import subprocess as _sp
         from . import config as _config
         from . import release as _rel
         r = list(rest)
@@ -338,7 +396,7 @@ def _dispatch(argv=None):
         if _rel._tracked_dirty() and not _allow_dirty:
             print("deploy: the working tree has uncommitted changes to tracked files — commit first (the green "
                   "pointer must name committed code), or pass --allow-dirty deliberately.", file=sys.stderr)
-            return 2
+            return _deploy_failed_verdict("working tree has uncommitted tracked changes", exit_code=2)
         # SINGLE-INSTANCE: only ONE deploy gate may run on this machine at a time. Two concurrent gates each spawn a
         # full test suite; they starve each other's CPU and the receipt/timeout-sensitive tests flake (measured
         # 2026-10-09 — two accidental `deploy` runs raced and both would have flaked). A count-1 semaphore (flock) held
@@ -348,17 +406,24 @@ def _dispatch(argv=None):
                 print("deploy: another `spendguard deploy` is already running on this machine — only one gate may run "
                       "at a time (concurrent suites starve each other's CPU and flake). Wait for it to finish, then "
                       "re-run `spendguard deploy`.", file=sys.stderr)
-                return 2
+                return _deploy_failed_verdict("another deploy already holds the deploy lock", exit_code=2)
+            repo_root = _pl.Path(__file__).resolve().parents[2]
+            install_aligned, install_failure = _deploy_align_active_editable_install(repo_root)
+            if not install_aligned:
+                return _deploy_failed_verdict(install_failure)
             gate_desc = "skipped (--no-gate)"
             if not _no_gate:
-                suite = _pl.Path(__file__).resolve().parents[2] / "scripts" / "test" / "chunked_suite.py"
+                suite = repo_root.joinpath(*_DEPLOY_GATE_PATH_PARTS)
                 print(f"deploy: running the full gate ({suite.name}) — a few minutes; the pointer only advances if it passes…")
-                if _sp.run([sys.executable, str(suite)]).returncode != 0:
+                if _deploy_run_hermetic_gate(suite) != 0:
                     print("deploy: 🔴 the gate FAILED — NOT promoting. Fix the suite, then re-run `spendguard deploy`.",
                           file=sys.stderr)
-                    return 1
+                    return _deploy_failed_verdict("chunked_suite gate failed")
                 gate_desc = "chunked_suite green"
-            rec = _rel.promote_release(gate=gate_desc, allow_dirty=_allow_dirty)
+            try:
+                rec = _rel.promote_release(gate=gate_desc, allow_dirty=_allow_dirty)
+            except Exception as exc:
+                return _deploy_failed_verdict(f"green-pointer promotion failed: {exc}")
         print(f"deploy: 🟢 promoted {rec['short']} ({rec['describe']}) → green pointer  [{rec['gate']}]")
         print("        already-running MCP servers serve it on their next request (they hand off between requests).")
         # UPDATE PROPAGATION: the MCP fleet self-respawns onto the green commit, but OTHER long-lived consumers
@@ -389,7 +454,7 @@ def _dispatch(argv=None):
                     print("deploy: install — no registered consumer venvs to refresh.")
                 else:
                     print("deploy: install — all registered consumer venvs already have current dependency metadata.")
-        return 0
+        return _deploy_succeeded_verdict(rec)
     if cmd == "fleet":                                # the running spendguard consumers + which are STALE vs green
         import json as _json
         from . import fleet as _fleet

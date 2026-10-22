@@ -97,7 +97,7 @@ _AUTH_STATUS_TTL_S = 60.0
 _auth_status_cache = {}   # {lane: (monotonic_ts, {"authed": bool|None, "cmd": str})}
 
 
-def lane_auth_status(lane, ttl=_AUTH_STATUS_TTL_S):
+def lane_auth_status(lane, ttl=_AUTH_STATUS_TTL_S, use_cache=True):
     """POSITIVE login state for a lane → {"authed": True|False|None, "cmd": <relogin_cmd>}. Asks the lane's exec its
     OWN auth_status() — claude/codex read a STRUCTURAL loggedIn bool / exit code, never error prose. A lane WITHOUT a
     cheap status command (gemini/zai/kimi have none) returns None (inconclusive), so this NEVER falsely claims a
@@ -109,7 +109,7 @@ def lane_auth_status(lane, ttl=_AUTH_STATUS_TTL_S):
             return {"authed": None, "cmd": ""}            # unknown lane: never cached, so the cache stays registry-bounded
         now = time.monotonic()
         hit = _auth_status_cache.get(lane)
-        if hit and (now - hit[0]) < ttl:
+        if use_cache and hit and (now - hit[0]) < ttl:
             return hit[1]
         authed = None
         try:
