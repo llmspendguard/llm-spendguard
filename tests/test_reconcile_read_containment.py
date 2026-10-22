@@ -8,18 +8,28 @@ from unittest.mock import patch
 # The containment behaviour under test — bounding every read/clear at the row cap and refusing a correction
 # that crosses it — is scale-INVARIANT: crossing the boundary at a small cap proves exactly what crossing it at
 # the 10,000-row production default proves, while seeding (cap+7)*2 rows and running ~7 full reconcile scans over
-# them costs ~1s at a small cap versus ~5m at the production cap. setdefault keeps an explicit outer override
-# (e.g. a deliberate production-scale run) winning. Must be set before spendguard.config is imported below.
+# them costs ~0.3s at a small cap versus ~130s at the production cap.
 RECONCILE_GUARD_ROW_CAP = "50"
-os.environ.setdefault("SPENDGUARD_LEDGER_READ_ROW_CAP", RECONCILE_GUARD_ROW_CAP)
+# Set the env BEFORE spendguard.config is first imported so a fresh (re-exec'd) interpreter reads the small cap
+# straight from config. Force, not setdefault: a stale value an outer harness pre-set must not win.
+os.environ["SPENDGUARD_LEDGER_READ_ROW_CAP"] = RECONCILE_GUARD_ROW_CAP
 
 if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
     os.environ["SPENDGUARD_TEST_ISOLATED"] = "1"
     os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="spendguard-test-")
     os.execv(sys.executable, [sys.executable] + sys.argv)
 
+import spendguard.ledger_read as _ledger_read
+# The deploy gate's chunked_suite pre-sets SPENDGUARD_TEST_ISOLATED, so the re-exec above is SKIPPED and this
+# module may import into a worker where spendguard.config was already cached at the 10,000-row production
+# default before the env var above was set — leaving DEFAULT_LEDGER_READ_ROW_CAP frozen at 10,000 and the seed
+# below scanning ~20,000 rows (~130s) instead of ~114 (~0.3s). Overriding the ONE live lever is honoured
+# regardless of import order: ledger_read now reads this global at request-build time
+# (_default_ledger_read_row_cap), so the code under test and this test's own seed sizing share it. (A re-exec'd
+# fresh process already has 50 here; the assignment is then a no-op.)
+_ledger_read.DEFAULT_LEDGER_READ_ROW_CAP = int(RECONCILE_GUARD_ROW_CAP)
+DEFAULT_LEDGER_READ_ROW_CAP = _ledger_read.DEFAULT_LEDGER_READ_ROW_CAP
 from spendguard import budget, ledger_sync
-from spendguard.ledger_read import DEFAULT_LEDGER_READ_ROW_CAP
 from spendguard.ledger import LockedError
 from _script_checks import seed_test_spend_event
 

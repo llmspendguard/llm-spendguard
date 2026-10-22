@@ -32,7 +32,10 @@ RT_LOG = HOME / "realtime_log.jsonl"          # real-time spend log (per-day-per
 CONFIG_JSON = HOME / "config.json"             # operational (non-secret) config: caps, budget, emit
 KEYS_ENV = HOME / "keys.env"                    # SECRETS: LLM/compute/org keys (KEY=value lines), loaded at import
 
-CODEX_POOL_SIZE_DEFAULT = 12
+CODEX_POOL_SIZE_DEFAULT = 20   # warm codex app-servers kept ready per host, fleet-wide default (was 12). The
+#   warm lane is the fast path (~5s warm vs >75s cold); a larger floor absorbs concurrent delegate/review fan-out
+#   without cold-start churn. An explicit advisor.codex_daemon_pool_size / SPENDGUARD_CODEX_DAEMON_POOL_SIZE still
+#   wins per host. Orphaned app-servers from dead hosts are reclaimed by the warm-server reaper, not left to leak.
 CODEX_DAEMON_MAX_WAITERS_DEFAULT = 32
 CODEX_DAEMON_REQUEST_READ_TIMEOUT_DEFAULT_S = 5.0
 CODEX_DAEMON_RECYCLE_ON_TIMEOUT_DEFAULT = True

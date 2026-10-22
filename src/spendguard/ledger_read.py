@@ -30,6 +30,20 @@ LEDGER_EVENTS_TABLE = "spend_events"
 LEDGER_CALLS_TABLE = "calls"
 LEDGER_INSIGHTS_TABLE = "insights"
 DEFAULT_LEDGER_READ_ROW_CAP = config.LEDGER_READ_ROW_CAP
+
+
+def _default_ledger_read_row_cap():
+    """Resolve the read row cap at REQUEST-BUILD time by reading the module global LIVE, instead of freezing it
+    into a dataclass field default or a function arg default at class/def-definition time. The two are identical
+    in production — DEFAULT_LEDGER_READ_ROW_CAP is set once from config and never rebound — but a frozen default
+    captures whatever config happened to resolve at the instant this module was first imported, which makes a
+    test that lowers the cap AFTER import (to exercise the scale-invariant containment boundary at ~50 rows
+    rather than scanning the 10,000-row production default) silently ineffective when an outer harness imported
+    config first. Late-binding here makes DEFAULT_LEDGER_READ_ROW_CAP the single live lever, independent of
+    import order."""
+    return DEFAULT_LEDGER_READ_ROW_CAP
+
+
 DEFAULT_LEDGER_READ_TIME_BUDGET_S = config.LEDGER_READ_TIME_BUDGET_S
 # sqlite3.set_progress_handler fires the callback every N SQLite virtual-machine instructions
 # (opcodes), NOT N "progress steps" — this is that instruction interval, the wall-clock budget's
@@ -350,7 +364,7 @@ class LedgerReadRequest:
     parameters: tuple = ()
     order_by: tuple[str, ...] = ()
     group_by: tuple[str, ...] = ()
-    row_cap: int = DEFAULT_LEDGER_READ_ROW_CAP
+    row_cap: int = field(default_factory=_default_ledger_read_row_cap)
     time_budget: float = DEFAULT_LEDGER_READ_TIME_BUDGET_S
 
 
@@ -360,7 +374,7 @@ class LedgerSQLReadRequest:
 
     sql: str
     parameters: tuple = ()
-    row_cap: int = DEFAULT_LEDGER_READ_ROW_CAP
+    row_cap: int = field(default_factory=_default_ledger_read_row_cap)
     time_budget: float = DEFAULT_LEDGER_READ_TIME_BUDGET_S
 
 
@@ -577,7 +591,7 @@ def read_spend_events(since=None, until=None, where=None, category_column=None, 
         predicates.append(f"{category_column} IS NOT NULL")
     request = LedgerReadRequest(where_sql=" AND ".join(predicates), parameters=tuple(parameters),
                                 order_by=("day", "id"),
-                                row_cap=limit if limit is not None else DEFAULT_LEDGER_READ_ROW_CAP)
+                                row_cap=limit if limit is not None else _default_ledger_read_row_cap())
     return read_ledger_rows(request, path)
 
 
@@ -599,7 +613,7 @@ def read_recent_calls(since=None, until=None, where=None, limit=None, path=None)
         parameters.append(value)
     return read_ledger_rows(LedgerReadRequest(LEDGER_CALLS_TABLE, RECENT_CALL_READ_COLUMNS,
         " AND ".join(predicates), tuple(parameters), ("ts DESC", "id"),
-        row_cap=limit if limit is not None else DEFAULT_LEDGER_READ_ROW_CAP), path)
+        row_cap=limit if limit is not None else _default_ledger_read_row_cap()), path)
 
 
 def read_spend_aggregates(group_by=("provider", "day"), since=None, until=None, path=None):
@@ -672,8 +686,9 @@ def read_cc_spend_overview(path=None):
     return read_ledger_sql(LedgerSQLReadRequest(CC_SPEND_OVERVIEW_SQL), path)[0]
 
 
-def read_cc_top_conversations(limit=DEFAULT_LEDGER_READ_ROW_CAP, path=None):
-    return read_ledger_sql(LedgerSQLReadRequest(CC_TOP_CONVERSATIONS_SQL, row_cap=limit), path)
+def read_cc_top_conversations(limit=None, path=None):
+    row_cap = limit if limit is not None else _default_ledger_read_row_cap()
+    return read_ledger_sql(LedgerSQLReadRequest(CC_TOP_CONVERSATIONS_SQL, row_cap=row_cap), path)
 
 
 def read_cc_conversation_cost(conv, path=None):
