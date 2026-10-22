@@ -16,12 +16,14 @@ CALIBRATION_GUARD_FIXED_COMPARE = "took <= FILE_BUDGET_S"
 CALIBRATION_GUARD_COMPARE_NAME = "file_budget_s"
 CALIBRATION_GUARD_CONFTEST_MODULE_NAME = "runner_calibration_conftest_probe"
 CALIBRATION_GUARD_INVALID_MEASUREMENTS = (0.0, -1.0, float("nan"), float("inf"))
+CALIBRATION_GUARD_YARDSTICK_ITERATIONS = 10_000
 
 calibration_guard_path = Path(__file__).with_name("test_runner.py")
 calibration_guard_spec = importlib.util.spec_from_file_location(CALIBRATION_GUARD_MODULE_NAME, calibration_guard_path)
 calibration_guard_runner = importlib.util.module_from_spec(calibration_guard_spec)
 with patch.dict(os.environ, {"SPENDGUARD_COVERAGE": CALIBRATION_GUARD_COVERAGE_OFF}):
     calibration_guard_spec.loader.exec_module(calibration_guard_runner)
+calibration_guard_runner.RUNNER_YARDSTICK_ITERATIONS = CALIBRATION_GUARD_YARDSTICK_ITERATIONS
 
 # The whole kernel is deterministic, not just its timed wrapper.
 assert calibration_guard_runner.runner_budget_cpu_yardstick() == calibration_guard_runner.runner_budget_cpu_yardstick()

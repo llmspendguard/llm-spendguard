@@ -20,6 +20,15 @@ import sys
 from spendguard.source_compact import compact
 
 REPO = pathlib.Path(__file__).resolve().parents[1] / "src" / "spendguard"
+
+# The whole package is the corpus — every shipped module, with NO slice. Capping this at the first N modules
+# would silently exempt module N+1: a compaction defect there would never be seen and the test would still pass.
+# compact() is the one expensive step, so it runs ONCE per module here and all four properties read the result.
+SOURCE_COMPACT_RESULTS_BY_PATH = {
+    source_compact_path: (source_compact_source, *compact(source_compact_source))
+    for source_compact_path in sorted(REPO.glob("*.py"))
+    for source_compact_source in (source_compact_path.read_text(),)
+}
 failures = 0
 
 
@@ -33,9 +42,7 @@ def check(label, ok, extra=""):
 def test_every_shipped_module_survives():
     """The whole package is the corpus. A compressor tested on toy input is tested on nothing."""
     bad, shrank = [], []
-    for f in sorted(REPO.glob("*.py")):
-        src = f.read_text()
-        out, st = compact(src)
+    for f, (src, out, st) in SOURCE_COMPACT_RESULTS_BY_PATH.items():
         if not st["ok"] and len(src) > 200:
             bad.append(f.name)
             continue
@@ -73,9 +80,7 @@ def test_code_statements_are_preserved_exactly():
         return ast.dump(ast.parse(ast.unparse(tree)))
 
     mismatched = []
-    for f in sorted(REPO.glob("*.py"))[:25]:
-        src = f.read_text()
-        out, st = compact(src)
+    for f, (src, out, st) in SOURCE_COMPACT_RESULTS_BY_PATH.items():
         if not st["ok"]:
             continue
         if skeleton(src) != skeleton(out):
@@ -89,9 +94,7 @@ def test_line_numbers_are_preserved_exactly():
     findings at the wrong place. The findings were correct; nobody could act on them. A blank line costs one
     byte. Assert the property, not the intention."""
     off = []
-    for f in sorted(REPO.glob("*.py")):
-        src = f.read_text()
-        out, st = compact(src)
+    for f, (src, out, st) in SOURCE_COMPACT_RESULTS_BY_PATH.items():
         if not st["ok"]:
             continue
         if len(out.splitlines()) != len(src.splitlines()):
@@ -105,9 +108,7 @@ def test_every_kept_line_is_byte_identical_at_the_same_index():
     was moved, reordered, or rewritten. Asserting byte-equality instead would fail on every `code  # note`
     line and prove only that the assertion was wrong."""
     bad = []
-    for f in sorted(REPO.glob("*.py"))[:30]:
-        src = f.read_text()
-        out, st = compact(src)
+    for f, (src, out, st) in SOURCE_COMPACT_RESULTS_BY_PATH.items():
         if not st["ok"]:
             continue
         for i, (o, c) in enumerate(zip(src.splitlines(), out.splitlines()), 1):
