@@ -2491,7 +2491,8 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
     if _lane and (_lane_too_big(_lane[0], prompt) or _lane_model_cooling(_lane[0], raw)):
         _lane = None                                 # prompt too big for this lane, OR this MODEL was rejected here
         #                                              recently (the API served it) → straight to API, don't re-intercept
-    # Only a strict-capable meter improves enforcement; compat vendors retain their free lane.
+    # Only a strict-capable meter improves enforcement; compat vendors retain their free lane. An explicit
+    # no-metered-fallback guarantee retains the free lane too, where prompt-shaping + local validation enforce it.
     if _lane and schema is not None and schema_capability(prov) == SCHEMA_STRICT:
         from . import output_contract as _oc_cap
         if _oc_cap.needs_enforcement(schema):
@@ -2499,8 +2500,11 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
             guard.record_decision(intent=(_schema_calls.current() or {}).get("intent"),
                                   requested_model=model, chosen_model=model,
                                   counterfactual_usd=None, actual_usd=None, saved_usd=0,
-                                  basis="capability", why="strict-schema→enforce")
-            _lane = None
+                                  basis="capability",
+                                  why=("strict-schema→enforce-suppressed:no_metered_fallback"
+                                       if no_metered_fallback else "strict-schema→enforce"))
+            if not no_metered_fallback:
+                _lane = None
     if _lane is None and prov == "gemini":           # METERED namespace: effort is a PARAMETER, not an id suffix.
         _bare, _tier = metered_fallback_id(prov, raw)  # an agy id (…-medium) 404s on the metered API — the ONE
         if _tier:                                    # equivalence fn splits it so the bare id rides the request and
