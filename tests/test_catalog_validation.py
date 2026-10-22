@@ -20,6 +20,7 @@ import os
 import sys
 import types
 import tempfile
+from unittest.mock import patch
 
 os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="sg-served-")
 os.environ.setdefault("SPENDGUARD_TEST_ISOLATED", "1")
@@ -27,7 +28,7 @@ os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
 os.environ["GEMINI_API_KEY"] = "test-key-not-real"        # only gemini is keyed → only gemini gets cataloged
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
-from spendguard import vendor_call, catalog, adapters, pricing                         # noqa: E402
+from spendguard import vendor_call, catalog, adapters, pricing, config                         # noqa: E402
 
 fails = []
 
@@ -55,7 +56,9 @@ def _stub_list_models(vendor, timeout_s=20):
 
 
 vendor_call.list_models = _stub_list_models
-catalog.pull_live_catalog()                               # seed the cache from the (stubbed) live list
+with patch.dict(os.environ):
+    os.environ.pop(config.CLI_TEST_OFFLINE_ENVIRONMENT_KEY, None)
+    catalog.pull_live_catalog()                               # seed the cache from the (stubbed) live list
 
 print("\n-- (b) served_check is cache-first, and a cache MISS is confirmed live before 'stale' --")
 ck("a served id resolves from cache ($0 fast path) → 'served'", vendor_call.served_check("gemini", "gemini-3.7-flash") == "served")

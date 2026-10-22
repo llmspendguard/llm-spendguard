@@ -6,13 +6,14 @@ Offline: a fake lane whose reply we control + a stubbed API failover; no real su
 import os
 import sys
 import tempfile
+from unittest.mock import patch
 
 os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="sg-lanefb-")
 os.environ.setdefault("SPENDGUARD_TEST_ISOLATED", "1")
 os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
-from spendguard import adapters, lane_balance, calls, output_contract, plan_admission   # noqa: E402
+from spendguard import adapters, lane_balance, calls, output_contract, plan_admission, config   # noqa: E402
 
 
 def ck(name, cond):
@@ -36,7 +37,9 @@ class _FakeLane:
 def _run(text, schema=None):
     _X["text"] = text
     with calls.context(intent="chunk-extract"):
-        return adapters._call_once("openai:gpt-5-mini", "hi", max_tokens=100, schema=schema)
+        with patch.dict(os.environ):
+            os.environ.pop(config.CLI_TEST_OFFLINE_ENVIRONMENT_KEY, None)
+            return adapters._call_once("openai:gpt-5-mini", "hi", max_tokens=100, schema=schema)
 
 
 _orig = (adapters._lane_for, adapters.call, lane_balance.quality_equivalent_free_substitutes,

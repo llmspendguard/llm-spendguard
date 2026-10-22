@@ -19,7 +19,7 @@ os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
 os.environ["SPENDGUARD_AVOID_CLAUDE_LANE"] = "off"
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
-from spendguard import lane_balance, adapters, calls, plan_admission                   # noqa: E402
+from spendguard import lane_balance, adapters, calls, plan_admission, config                   # noqa: E402
 
 
 def ck(name, cond):
@@ -144,7 +144,9 @@ try:
     lane_balance.quality_equivalent_free_substitutes = lambda intent, model, excluded=None: (
         ["openai:gpt-5.5"] if model == "anthropic:claude-x" else [])
     with patch.object(plan_admission, "_ready", return_value=True), calls.context(intent=INTENT):
-        rr = adapters._call_once("anthropic:claude-x", "hi", max_tokens=100, system="SYS")
+        with patch.dict(os.environ):
+            os.environ.pop(config.CLI_TEST_OFFLINE_ENVIRONMENT_KEY, None)
+            rr = adapters._call_once("anthropic:claude-x", "hi", max_tokens=100, system="SYS")
     fails += ck("a FAILED lane routes to the substitute PLAN (before the API)", seen_r.get("model") == "openai:gpt-5.5")
     fails += ck("...records substituted_from = the primary", rr.get("substituted_from") == "anthropic:claude-x")
     fails += ck("...and returns the substitute's answer", rr.get("text") == "ok-sub")
