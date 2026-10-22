@@ -4,6 +4,40 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 
 ## [Unreleased]
 
+## [0.14.0] — 2026-10-22
+
+### Added
+- **Cross-session orphan reaper for leaked Codex warm app-servers.** When a pool's host process dies by
+  SIGKILL/crash (bypassing `atexit`), the app-servers it spawned are orphaned and nothing reclaimed them. The warm
+  daemon now stamps an owner marker (pid + process `create_time` + lane) on each server's env at spawn, and
+  `reap_orphaned_warm_servers()` reaps ONLY marker-carrying servers whose owner is provably dead (a gone pid, or a
+  recycled pid whose `create_time` no longer matches). Selection is structural — never a command-line guess — so a
+  live pool's servers and the user's own codex/kimi processes are never touched; unknown/unreadable identity is
+  never conflated with dead (can only under-reap). The Codex pool runs it at startup and on every health tick. (#166)
+- Capacity-derived hooks admission ceiling, replacing the previously frozen limit. (#164)
+- Floating `g-flash` alias that tracks the latest Gemini Flash base model. (#153)
+
+### Changed
+- **Codex warm-daemon pool default raised to 20**, fleet-wide via `config.CODEX_POOL_SIZE_DEFAULT`; an explicit
+  `advisor.codex_daemon_pool_size` / `SPENDGUARD_CODEX_DAEMON_POOL_SIZE` still wins per host. (#166, building on #150)
+- **Ledger read row-cap now resolves at request-build time** from one live global instead of freezing into
+  dataclass/arg defaults at import, so the reconcile-containment gate test is fast regardless of import order;
+  production behavior is unchanged (the cap is never rebound at runtime). (#166)
+- Price catalog collapsed to a single in-memory-derived SSOT with an enforcement guard. (#149)
+
+### Fixed
+- Honest 3-state lane headroom with Kimi/Zai readers — no false "no quota API". (#156)
+- Require execution evidence before a Codex delegation is counted successful. (#152)
+- Request-path ledger reads self-bound and release their transaction, ending a WAL-pin choke. (#151)
+
+### Performance / CI
+- Deploy gate parallelized and timing-sharded (≈398s → ≈101s; CI ≈6m → ≈2.5m), with per-file durations self-recorded
+  and calibrated to measured runner compute; untimed tests weighted at the median without crashing sharding. (#154,
+  #155, #160, #162, #165)
+- `import spendguard` reduced from ≈3.2s to ≈2ms via lazy SDK patching; offline tests fail fast (no SDK retry backoff
+  or lane-recovery sleeps); gate test-isolation made hermetic by construction; accidental real I/O removed from gate
+  tests. (#157, #158, #161, #163)
+
 ## [0.13.0] — 2026-10-20
 
 ### Added
