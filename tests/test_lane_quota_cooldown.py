@@ -11,6 +11,8 @@ Offline: the lane executor is stubbed; no network, no subprocess.
 import os
 import sys
 import tempfile
+from types import SimpleNamespace
+from unittest.mock import patch
 
 os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="sg-quota-")
 os.environ.setdefault("SPENDGUARD_TEST_ISOLATED", "1")
@@ -41,8 +43,14 @@ fails += ck("an ordinary error has NO window (None → treated as a normal miss,
             antigravity_exec._reset_window_s("lane down: connection reset") is None)
 er = antigravity_exec._error_result("quota exhausted. Resets in 5h")
 fails += ck("_error_result attaches retry_after_s when a window is present", er.get("retry_after_s") == 5 * 3600 and er.get("error"))
-fails += ck("_error_result with no window is a plain error (no retry_after_s key)",
-            "retry_after_s" not in antigravity_exec._error_result("boom"))
+# Supply the account-status INPUT: a real `agy /usage` can wait its full timeout
+# and makes this offline proof depend on the user's installed CLI and account.
+with patch.object(antigravity_exec, "_fetch_usage", return_value=None) as quota_usage_fetch:
+    antigravity_exec._usage_cache.clear()
+    fails += ck("_error_result with no window is a plain error (no retry_after_s key)",
+                "retry_after_s" not in antigravity_exec._error_result("boom"))
+    fails += ck("no-window error consulted the supplied unavailable-quota input",
+                quota_usage_fetch.call_count == 1)
 
 print("\n-- _lane_cool honors an explicit duration and PERSISTS across processes (unified resource_state store) --")
 resource_state._reset()
@@ -86,6 +94,21 @@ lane_bandit.arm_stats = lambda intent: {}                    # cold intent → e
 arms = lane_balance._bulk_arms("anyintent")                 # uses the REAL _arm_cooling → reads adapters._lane_cooling
 fails += ck("(C) the cooling gemini lane is dropped from bulk arms (only codex remains)",
             {a[0] for a in arms} == {"codex"})
+
+# Drive real comparisons and persisted pruning across the exact deadline,
+# without sleeping or changing production cooldown durations.
+quota_cool_until = resource_state.cool_until(resource_state.lane_key("gemini"))
+QUOTA_CLOCK_BEFORE_DEADLINE_S = 1.0
+with patch.object(resource_state, "time", SimpleNamespace(time=lambda: quota_cool_until - QUOTA_CLOCK_BEFORE_DEADLINE_S)):
+    fails += ck("quota lane remains excluded before its cooldown deadline",
+                adapters._lane_cooling("gemini") and {a[0] for a in lane_balance._bulk_arms("anyintent")} == {"codex"})
+with patch.object(resource_state, "time", SimpleNamespace(time=lambda: quota_cool_until)):
+    resource_state._reset()
+    resource_state._load_state()
+    fails += ck("expired persisted cooldown releases the lane at its exact deadline",
+                not adapters._lane_cooling("gemini"))
+    fails += ck("released quota lane is eligible for bulk again",
+                {a[0] for a in lane_balance._bulk_arms("anyintent")} == {"gemini", "codex"})
 
 print(f"\n{'[FAIL]' if fails else 'OK'} test_lane_quota_cooldown: {len(fails)} failure(s)")
 sys.exit(1 if fails else 0)

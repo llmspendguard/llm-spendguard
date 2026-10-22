@@ -8,7 +8,8 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
     os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="spendguard-wsum-")
     os.execv(sys.executable, [sys.executable] + sys.argv)
 
-from spendguard import workdone
+from spendguard import conv, workdone
+from unittest.mock import patch
 
 fails = []
 def ck(name, cond):
@@ -35,7 +36,11 @@ json.dump({"lmm": "Shipped the resolver."}, open(workdone._summaries_path(), "w"
 ck("load_summaries reads the cached digest", workdone.load_summaries().get("lmm") == "Shipped the resolver.")
 
 # ── summarize(run=False): ESTIMATE-ONLY — zero spend, no network, returns {projects, est_usd, model} ──
-est = workdone.summarize(run=False)
+# SPENDGUARD_HOME isolates the ledger, but conv's transcript input is separately
+# rooted in the user's home. Keep REAL aggregation over an empty corpus fixture.
+with tempfile.TemporaryDirectory(prefix="sg-summary-corpus-") as summary_corpus:
+    with patch.object(conv, "_DEFAULT_TDIR", summary_corpus):
+        est = workdone.summarize(run=False)
 ck("estimate path returns projects + est_usd + model (no spend)",
    "projects" in est and "est_usd" in est and "model" in est and "summarized" not in est)
 ck("empty isolated home → 0 projects, $0 estimate (no git/corpus, no network)",
