@@ -15,6 +15,11 @@ CODEX_BROKER_OWNER_LAUNCHD_DIRECTORY_PARTS = ("Library", "LaunchAgents")
 CODEX_BROKER_OWNER_KICKSTART_TIMEOUT_S = 15
 
 
+def launchd_codex_broker_owner_supported():
+    """Return whether this platform can supervise the dedicated broker owner."""
+    return sys.platform == "darwin"
+
+
 def codex_broker_owner_plist_path():
     return pathlib.Path.home().joinpath(*CODEX_BROKER_OWNER_LAUNCHD_DIRECTORY_PARTS) / (
         CODEX_BROKER_OWNER_LAUNCHD_LABEL + CODEX_BROKER_OWNER_PLIST_SUFFIX)
@@ -46,7 +51,7 @@ def install_codex_broker_owner_launchd():
 
 def ensure_codex_broker_owner_running():
     """Install and kickstart the one launchd owner; launchd keeps a healthy existing owner unchanged."""
-    if sys.platform != "darwin":
+    if not launchd_codex_broker_owner_supported():
         config.warn_once("[spendguard] dedicated codex broker owner requires launchd on this platform")
         return False
     try:

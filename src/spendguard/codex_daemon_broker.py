@@ -138,9 +138,15 @@ class _CodexDaemonBroker:
 
     def _become_owner_if_available(self):
         current_marker = _warm_owner_marker_env(CODEX_BROKER_OWNER_LANE)
+        from .codex_broker_owner import launchd_codex_broker_owner_supported
         from .warm_stdio_daemon import WARM_OWNER_BOOT_ENV, WARM_OWNER_PID_ENV
-        if (WARM_OWNER_BOOT_ENV not in self._owner_marker or WARM_OWNER_PID_ENV not in self._owner_marker
-                or self._owner_marker != current_marker):
+        dedicated_owner_required = launchd_codex_broker_owner_supported()
+        marker_matches_process = (
+            WARM_OWNER_BOOT_ENV in self._owner_marker
+            and WARM_OWNER_PID_ENV in self._owner_marker
+            and self._owner_marker == current_marker
+        )
+        if dedicated_owner_required and not marker_matches_process:
             return False
         pid = os.getpid()
         with self._role_lock:
