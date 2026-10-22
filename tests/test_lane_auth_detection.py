@@ -5,6 +5,7 @@ loggedIn bool / process exit code, never a regex on error prose); a CONFIRMED lo
 unhedged actionable line is printed with the exact re-login command, and a PERSISTENT alert rides every receipt's
 banner until the lane's next successful call clears it. Offline (stubbed subprocess), zero spend."""
 import os
+from unittest.mock import patch
 import sys
 import tempfile
 
@@ -15,6 +16,7 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
 
 import json
 import types
+from spendguard import config  # noqa: E402
 from spendguard import subscription_exec as se
 from spendguard import codex_exec as cx
 from spendguard import lanes, reliability
@@ -41,32 +43,35 @@ def _fake_run_exit(returncode, out="", err=""):
 
 
 # ── 1. subscription_exec.auth_status: reads the STRUCTURAL `loggedIn` bool from `claude auth status` JSON ──
-se._bin = lambda: "/usr/local/bin/claude"
-se.subprocess.run = _fake_run_json({"loggedIn": False, "authMethod": "claude.ai"})
-ck("claude logged OUT → authed False (positive detection, not a guess)", se.auth_status().get("authed") is False)
-se.subprocess.run = _fake_run_json({"loggedIn": True, "subscriptionType": "max"})
-ck("claude logged in → authed True", se.auth_status().get("authed") is True)
-se.subprocess.run = _fake_run_exit(0, out="not json")
-ck("unparseable status → authed None (can't-check is NEVER a false logout)", se.auth_status().get("authed") is None)
-def _boom(*a, **k):
-    raise RuntimeError("cli crashed")
-se.subprocess.run = _boom
-ck("status command crash → authed None, never raises", se.auth_status().get("authed") is None)
-se._bin = lambda: None
-ck("claude CLI absent → authed None", se.auth_status().get("authed") is None)
+with patch.dict(os.environ):
+    os.environ.pop(config.CLI_TEST_OFFLINE_ENVIRONMENT_KEY, None)
+    se._bin = lambda: "/usr/local/bin/claude"
+    se.subprocess.run = _fake_run_json({"loggedIn": False, "authMethod": "claude.ai"})
+    ck("claude logged OUT → authed False (positive detection, not a guess)", se.auth_status().get("authed") is False)
+    se.subprocess.run = _fake_run_json({"loggedIn": True, "subscriptionType": "max"})
+    ck("claude logged in → authed True", se.auth_status().get("authed") is True)
+    se.subprocess.run = _fake_run_exit(0, out="not json")
+    ck("unparseable status → authed None (can't-check is NEVER a false logout)", se.auth_status().get("authed") is None)
+    def _boom(*a, **k):
+        raise RuntimeError("cli crashed")
+    se.subprocess.run = _boom
+    ck("status command crash → authed None, never raises", se.auth_status().get("authed") is None)
+    se._bin = lambda: None
+    ck("claude CLI absent → authed None", se.auth_status().get("authed") is None)
 
-# ── 2. codex_exec.auth_status: the process EXIT CODE is the signal (0 = signed in), never the printed prose ──
-cx._bin = lambda: "/usr/local/bin/codex"
-cx.subprocess.run = _fake_run_exit(0, out="Logged in using ChatGPT")
-ck("codex exit 0 → authed True", cx.auth_status().get("authed") is True)
-cx.subprocess.run = _fake_run_exit(1, err="Not logged in")
-_orig_tok = cx._token_unexpired                   # under a non-zero status, the on-disk token's exp is AUTHORITATIVE
-cx._token_unexpired = lambda *a, **k: False        # non-zero AND no valid token on disk → a genuine logout
-ck("codex exit non-zero + no valid token → authed False (logged out)", cx.auth_status().get("authed") is False)
-cx._token_unexpired = lambda *a, **k: True         # non-zero BUT the token is unexpired → a status/refresh race, NOT a logout
-ck("codex exit non-zero + VALID token → authed True (token exp authoritative; a status race is never a false logout)",
-   cx.auth_status().get("authed") is True)
-cx._token_unexpired = _orig_tok
+    # ── 2. codex_exec.auth_status: the process EXIT CODE is the signal (0 = signed in), never the printed prose ──
+    cx._bin = lambda: "/usr/local/bin/codex"
+    cx.subprocess.run = _fake_run_exit(0, out="Logged in using ChatGPT")
+    ck("codex exit 0 → authed True", cx.auth_status().get("authed") is True)
+    cx.subprocess.run = _fake_run_exit(1, err="Not logged in")
+    _orig_tok = cx._token_unexpired                   # under a non-zero status, the on-disk token's exp is AUTHORITATIVE
+    cx._token_unexpired = lambda *a, **k: False        # non-zero AND no valid token on disk → a genuine logout
+    ck("codex exit non-zero + no valid token → authed False (logged out)", cx.auth_status().get("authed") is False)
+    cx._token_unexpired = lambda *a, **k: True         # non-zero BUT the token is unexpired → a status/refresh race, NOT a logout
+    ck("codex exit non-zero + VALID token → authed True (token exp authoritative; a status race is never a false logout)",
+       cx.auth_status().get("authed") is True)
+    cx._token_unexpired = _orig_tok
+
 
 # ── 3. lanes.lane_auth_status: dispatch to the exec + attach the registry's authored relogin_cmd ──
 lanes._auth_status_cache.clear()

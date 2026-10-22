@@ -11,6 +11,7 @@
 Offline, isolated home.
 """
 import os
+from unittest.mock import patch
 import sys
 import tempfile
 import types
@@ -71,7 +72,9 @@ cap = {}
 se._bin = lambda: "claude"
 se.subprocess.run = lambda cmd, **kw: (cap.__setitem__("env", kw.get("env", {})),
                                        types.SimpleNamespace(returncode=0, stdout="{}", stderr=""))[1]
-se.run_prompt("hello")
+with patch.dict(os.environ):
+    os.environ.pop(config.CLI_TEST_OFFLINE_ENVIRONMENT_KEY, None)
+    se.run_prompt("hello")
 ck("subscription lane strips API_KEY + AUTH_TOKEN + BASE_URL from the child env",
    all(k not in cap.get("env", {}) for k in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL")),
    str([k for k in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL") if k in cap.get("env", {})]))

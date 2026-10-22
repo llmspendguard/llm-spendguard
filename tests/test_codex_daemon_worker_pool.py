@@ -195,6 +195,7 @@ def test_pool_shared_and_isolated_homes_preserve_environment_and_private_copies(
                             launcher = str(pathlib.Path(sys.executable).resolve())
                             environment_without_codex_home = dict(os.environ)
                             environment_without_codex_home.pop("CODEX_HOME", None)
+                            environment_without_codex_home.pop(config.CLI_TEST_OFFLINE_ENVIRONMENT_KEY, None)
                             with patch.dict(os.environ, environment_without_codex_home, clear=True), patch.object(
                                     worker, "_spawn_cmd", return_value=[launcher]), patch(
                                     "spendguard.warm_stdio_daemon.subprocess.Popen", side_effect=OSError

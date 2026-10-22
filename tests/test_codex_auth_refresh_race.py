@@ -5,6 +5,7 @@ was valid. Fix: the TOKEN on disk is authoritative; an UNREADABLE (mid-refresh) 
 confirmed logout. authed is False ONLY for a present-and-expired token or a genuinely ABSENT auth file. Offline — the
 token state, the status subprocess, and auth.json presence are all controlled; zero spend."""
 import os
+from unittest.mock import patch
 import sys
 import tempfile
 
@@ -13,6 +14,7 @@ os.environ["SPENDGUARD_NO_AUTOINSTALL"] = "1"
 os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="sg-codexauth-")
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
+from spendguard import config  # noqa: E402
 from spendguard import codex_exec  # noqa: E402
 
 fails = []
@@ -40,7 +42,9 @@ def _run(token, rc=1, auth_present=True):
     os.environ["CODEX_HOME"] = home
     if auth_present:
         open(os.path.join(home, "auth.json"), "w").write("{}")   # file EXISTS (content irrelevant; token stubbed)
-    return codex_exec.auth_status(timeout=5).get("authed")
+    with patch.dict(os.environ):
+        os.environ.pop(config.CLI_TEST_OFFLINE_ENVIRONMENT_KEY, None)
+        return codex_exec.auth_status(timeout=5).get("authed")
 
 # ── THE false-toast case: flaky non-zero status but a VALID token → authed True, NOT False (no banner) ──
 ck("valid token + flaky non-zero `login status` → authed True (the false-logout case is gone)", _run(True, rc=1) is True)

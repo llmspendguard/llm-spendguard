@@ -13,6 +13,7 @@ import tempfile
 import sysconfig
 import subprocess
 import math
+import shutil
 
 import pytest
 
@@ -67,6 +68,10 @@ def measure_runner_budget_scale():
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(HERE)
+sys.path.insert(0, REPO)
+from scripts.test.chunked_suite import _child_env  # noqa: E402
+
+RUNNER_SCRATCH_HOME_PREFIX = "sg-pytest-"
 SCRIPTS = sorted(
     f for f in glob.glob(os.path.join(HERE, "test_*.py"))
     if os.path.basename(f) != "test_runner.py"
@@ -103,23 +108,8 @@ _COV_PTH = _enable_startup_coverage() if COVERAGE else None
 def test_script(script, runner_budget_scale):
     if not math.isfinite(runner_budget_scale) or not MIN_RUNNER_SCALE <= runner_budget_scale <= MAX_RUNNER_SCALE:
         raise RunnerBudgetCalibrationError(f"invalid runner scale: {runner_budget_scale!r}")
-    env = dict(os.environ)
-    env["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="sg-pytest-")
-    env["SPENDGUARD_TEST_ISOLATED"] = "1"            # tests skip their own re-exec; use this isolated home
-    # Deterministic short recovery schedules in the offline tier; chaos sets its own timing explicitly.
-    env["SPENDGUARD_LANE_BACKOFF_S"] = "0"
-    env["SPENDGUARD_SDK_MAX_RETRIES"] = "0"
-    env["SPENDGUARD_LANE_QUEUE_DEADLINE_S"] = "0"
-    # OFFLINE, ENFORCED: the suite once inherited real provider keys and `doctor`'s leak check silently
-    # pulled 30 days of LIVE provider billing inside a "offline" test — 213s of network in one file.
-    # A dead proxy makes any accidental external call fail in milliseconds (loud, not slow); localhost
-    # servers tests spin up themselves stay reachable via no_proxy. Real keys are stripped — a test that
-    # needs a key sets its own fake one.
-    env["http_proxy"] = env["https_proxy"] = env["HTTP_PROXY"] = env["HTTPS_PROXY"] = "http://127.0.0.1:9"
-    env["no_proxy"] = env["NO_PROXY"] = "localhost,127.0.0.1"
-    for k in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "VAST_API_KEY", "GEMINI_API_KEY",
-              "RUNPOD_API_KEY", "MODAL_TOKEN_ID", "MODAL_TOKEN_SECRET", "LAMBDA_API_KEY"):
-        env.pop(k, None)
+    scratch_home = tempfile.mkdtemp(prefix=RUNNER_SCRATCH_HOME_PREFIX)
+    env = _child_env(scratch_home)
     if COVERAGE:
         env["COVERAGE_PROCESS_START"] = RCFILE
         # with the .pth hook → plain python (coverage starts at startup, traces sitecustomize imports);
@@ -129,8 +119,11 @@ def test_script(script, runner_budget_scale):
     else:
         cmd = [sys.executable, script]
     t0 = time.monotonic()
-    r = subprocess.run(cmd, capture_output=True, text=True, env=env,
-                       timeout=RUNNER_SUBPROCESS_TIMEOUT_S * runner_budget_scale, cwd=REPO)
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, env=env,
+                           timeout=RUNNER_SUBPROCESS_TIMEOUT_S * runner_budget_scale, cwd=REPO)
+    finally:
+        shutil.rmtree(scratch_home, ignore_errors=True)
     took = time.monotonic() - t0
     out = r.stdout + r.stderr
     assert r.returncode == 0, f"{os.path.basename(script)} exited {r.returncode}\n{out}"

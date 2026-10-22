@@ -1,6 +1,7 @@
 """Resolved lane CLIs expose co-located runtimes, and newer successful probes heal stale sweep reds. Offline/$0."""
 import datetime
 import os
+from unittest.mock import patch
 import sys
 import tempfile
 
@@ -27,7 +28,9 @@ try:
     os.environ["PATH"] = os.pathsep.join(("/daemon/bin", "/usr/bin"))
     os.environ["OPENAI_API_KEY"] = "must-not-reach-plan-child"
     resolved = os.path.join(tempfile.gettempdir(), "node-v-test", "bin", "codex")
-    child = config.lane_exec_env(resolved)
+    with patch.dict(os.environ):
+        os.environ.pop(config.CLI_TEST_OFFLINE_ENVIRONMENT_KEY, None)
+        child = config.lane_exec_env(resolved)
     ck("resolved CLI directory is prepended to PATH", child["PATH"].split(os.pathsep)[0] == os.path.dirname(resolved))
     ck("ambient PATH follows the co-located runtime directory", child["PATH"].split(os.pathsep)[1:] == ["/daemon/bin", "/usr/bin"])
     ck("lane credential scrubbing is preserved", "OPENAI_API_KEY" not in child)

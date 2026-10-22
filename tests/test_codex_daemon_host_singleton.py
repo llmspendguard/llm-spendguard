@@ -1,6 +1,8 @@
 """F3 guard: two processes share one warm app-server through the host broker, without signalling its live pid."""
 import multiprocessing
 import os
+from unittest.mock import patch
+from spendguard import config
 import pathlib
 import socket
 import sys
@@ -139,7 +141,9 @@ def _client(ready, reports, use_socketpair):
     reports.put(("attach_attempts", attempts))
 
 
+@patch.dict(os.environ)
 def test_two_host_attempts_share_one_warm_daemon_without_signals():
+    os.environ.pop(config.CLI_TEST_OFFLINE_ENVIRONMENT_KEY, None)
     global _SOCKETPAIR_OWNER, _SOCKETPAIR_CLIENT
     probe_path = os.path.join(os.environ["SPENDGUARD_HOME"], "codex-daemon-probe.sock")
     probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)

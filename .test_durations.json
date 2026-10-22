@@ -266,6 +266,7 @@
     "tests/test_runner.py::test_script[test_gate_consolidation.py]": 0.229,
     "tests/test_runner.py::test_script[test_gate_embeddings.py]": 1.476,
     "tests/test_runner.py::test_script[test_gate_failclosed.py]": 1.506,
+    "tests/test_runner.py::test_script[test_gate_hermeticity_isolation.py]": 0.112,
     "tests/test_runner.py::test_script[test_gate_properties.py]": 2.068,
     "tests/test_runner.py::test_script[test_gate_refusal_not_retryable.py]": 0.216,
     "tests/test_runner.py::test_script[test_gate_shard_integrity.py]": 3.71,

@@ -10,6 +10,7 @@ an all-zero usage block (measured: it sometimes does), marking the row tok_estim
 Nothing spends: the claude binary is stubbed and subprocess.run is monkeypatched to return a crafted CLI JSON."""
 import json
 import os
+from unittest.mock import patch
 import sys
 import tempfile
 
@@ -20,6 +21,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(
 
 import spendguard  # noqa: E402
 spendguard.require = lambda: None                      # bypass the fail-closed gate FOR THIS OFFLINE TEST only
+from spendguard import config  # noqa: E402
 from spendguard import subscription_exec as se         # noqa: E402
 
 fails = []
@@ -40,7 +42,9 @@ def _run_with_cli_json(payload, prompt="classify this", system=None):
     """Drive run_prompt with the claude binary stubbed and subprocess.run returning one crafted CLI JSON line."""
     se._bin = lambda: "/fake/claude"                   # pretend the CLI is installed
     se.subprocess.run = lambda *a, **k: _R(json.dumps(payload))
-    return se.run_prompt(prompt, system=system, model="claude-haiku-4-5")
+    with patch.dict(os.environ):
+        os.environ.pop(config.CLI_TEST_OFFLINE_ENVIRONMENT_KEY, None)
+        return se.run_prompt(prompt, system=system, model="claude-haiku-4-5")
 
 
 print("-- SUM of the three input fields (fresh + cache_creation + cache_read) is the real read-side input --")

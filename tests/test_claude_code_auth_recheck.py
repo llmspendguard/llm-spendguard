@@ -5,6 +5,7 @@ false on the re-check; True is authoritative on the first read; an unreadable lo
 false logout. Offline: the `claude auth status` subprocess is scripted; no CLI, no spend."""
 import json
 import os
+from unittest.mock import patch
 import sys
 import tempfile
 from _script_checks import scripted_process_results
@@ -14,6 +15,7 @@ os.environ["SPENDGUARD_NO_AUTOINSTALL"] = "1"
 os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="sg-cc-auth-")
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
+from spendguard import config  # noqa: E402
 from spendguard import subscription_exec as se  # noqa: E402
 
 fails = []
@@ -33,26 +35,29 @@ _F = json.dumps({"loggedIn": False})
 _BAD = "not json at all"
 _MISSING = json.dumps({"other": 1})
 
-se.subprocess.run, c1 = scripted_process_results([_P(_T)])
-ck("loggedIn true → authed True (authoritative on the first read, no re-check)", se.auth_status() == {"authed": True})
-ck("...with exactly one status call", c1["n"] == 1)
+with patch.dict(os.environ):
+    os.environ.pop(config.CLI_TEST_OFFLINE_ENVIRONMENT_KEY, None)
+    se.subprocess.run, c1 = scripted_process_results([_P(_T)])
+    ck("loggedIn true → authed True (authoritative on the first read, no re-check)", se.auth_status() == {"authed": True})
+    ck("...with exactly one status call", c1["n"] == 1)
 
-se.subprocess.run, c2 = scripted_process_results([_P(_F), _P(_T)])
-ck("loggedIn false then true → authed True (transient flap recovered via the re-check)", se.auth_status() == {"authed": True})
-ck("...using one confirming re-check (two status calls)", c2["n"] == 2)
+    se.subprocess.run, c2 = scripted_process_results([_P(_F), _P(_T)])
+    ck("loggedIn false then true → authed True (transient flap recovered via the re-check)", se.auth_status() == {"authed": True})
+    ck("...using one confirming re-check (two status calls)", c2["n"] == 2)
 
-se.subprocess.run, _ = scripted_process_results([_P(_F), _P(_F)])
-ck("loggedIn false on BOTH → authed False (a real logout still reports)", se.auth_status() == {"authed": False})
+    se.subprocess.run, _ = scripted_process_results([_P(_F), _P(_F)])
+    ck("loggedIn false on BOTH → authed False (a real logout still reports)", se.auth_status() == {"authed": False})
 
-se.subprocess.run, _ = scripted_process_results([_P(_F), _P(_BAD)])
-ck("loggedIn false then unreadable re-check → authed None (inconclusive, never the banner)", se.auth_status() == {"authed": None})
+    se.subprocess.run, _ = scripted_process_results([_P(_F), _P(_BAD)])
+    ck("loggedIn false then unreadable re-check → authed None (inconclusive, never the banner)", se.auth_status() == {"authed": None})
 
-se.subprocess.run, c5 = scripted_process_results([_P(_BAD)])
-ck("unparseable first read → authed None (no re-check, no false logout)", se.auth_status() == {"authed": None})
-ck("...one status call only", c5["n"] == 1)
+    se.subprocess.run, c5 = scripted_process_results([_P(_BAD)])
+    ck("unparseable first read → authed None (no re-check, no false logout)", se.auth_status() == {"authed": None})
+    ck("...one status call only", c5["n"] == 1)
 
-se.subprocess.run, _ = scripted_process_results([_P(_MISSING)])
-ck("missing loggedIn field → authed None (inconclusive)", se.auth_status() == {"authed": None})
+    se.subprocess.run, _ = scripted_process_results([_P(_MISSING)])
+    ck("missing loggedIn field → authed None (inconclusive)", se.auth_status() == {"authed": None})
+
 
 print(f"\n{'[FAIL]' if fails else 'OK'} test_claude_code_auth_recheck: {len(fails)} failure(s)")
 sys.exit(1 if fails else 0)
