@@ -1,13 +1,19 @@
-"""Complete timing evidence and deterministic partitions for the isolated merge gate.
+"""Deterministic shard partitions for the isolated merge gate, resilient to an evolving test set.
 
-Timing zero is a legitimate rounded measurement. Missing evidence is an error,
-never an invented duration. The default unsharded runner does not read this file.
+Timing zero is a legitimate rounded measurement. A test the manifest has NOT yet timed (a newly added
+one) is weighted at the median of the known durations and flagged loudly — it degrades shard BALANCE,
+it never blocks the gate. Forgetting to record a new test's duration used to raise mid-collection and,
+under `pytest -n auto`, surface as an opaque xdist worker INTERNALERROR; balance is not correctness, and
+coverage completeness is enforced by the coverage gate, so an untimed test must never crash sharding.
+The default unsharded runner does not read this file.
 """
 import argparse
 from collections import Counter
 import hashlib
 import json
 import math
+import statistics
+import sys
 from pathlib import Path
 import xml.etree.ElementTree as ET
 
@@ -76,19 +82,40 @@ def verify_gate_shard_partition(nodeids, partitions):
         raise GateShardEvidenceError("shard partition must contain every collected nodeid exactly once")
 
 
+GATE_SHARD_UNTIMED_FALLBACK_SECONDS = 0.2  # weight for a collected test the manifest has not yet timed
+
+
+def gate_shard_fallback_duration(durations):
+    """The weight for an untimed test: the median of known durations, or a small floor if none are known.
+    A median (not a mean) keeps one slow outlier from inflating every new test's assumed cost."""
+    known = [value for value in durations.values() if math.isfinite(value)]
+    if not known:
+        return GATE_SHARD_UNTIMED_FALLBACK_SECONDS
+    return float(statistics.median(known))
+
+
 def distribute_gate_shard_nodeids(nodeids, manifest):
     validate_gate_shard_manifest(manifest)
     durations = manifest["durations"]
-    if len(nodeids) != len(set(nodeids)) or set(nodeids) != set(durations):
-        missing = sorted(set(nodeids) - set(durations))
-        stale = sorted(set(durations) - set(nodeids))
-        raise GateShardEvidenceError(f"timing inventory differs from complete collection; missing={missing}; stale={stale}")
+    if len(nodeids) != len(set(nodeids)):
+        duplicates = sorted(name for name, count in Counter(nodeids).items() if count != GATE_SHARD_MINIMUM_COUNT)
+        raise GateShardEvidenceError(f"collection contains duplicate nodeids: {duplicates}")
+    # An untimed test (added since the manifest was recorded) is weighted at the median and flagged; a stale
+    # manifest entry (a removed test) is simply not partitioned. Neither blocks the gate — see module docstring.
+    fallback = gate_shard_fallback_duration(durations)
+    untimed = sorted(set(nodeids) - set(durations))
+    if untimed:
+        sys.stderr.write(
+            f"[gate-shard] {len(untimed)} collected test(s) absent from {GATE_SHARD_MANIFEST_FILENAME}; "
+            f"weighting each at the median {fallback:.3f}s for balance. Record real timings with "
+            f"`python tests/_gate_shard_plan.py refresh` so shards stay balanced: {untimed}\n")
+    weight = lambda item: durations.get(item, fallback)  # noqa: E731 - local balance weight, not a decision
     partitions = [[] for _ in range(manifest["shard_count"])]
     totals = [float(GATE_SHARD_FIRST_INDEX) for _ in partitions]
-    for nodeid in sorted(nodeids, key=lambda item: (-durations[item], item)):
+    for nodeid in sorted(nodeids, key=lambda item: (-weight(item), item)):
         index = min(range(len(partitions)), key=lambda item: (totals[item], len(partitions[item]), item))
         partitions[index].append(nodeid)
-        totals[index] += durations[nodeid]
+        totals[index] += weight(nodeid)
         if not math.isfinite(totals[index]):
             raise GateShardEvidenceError("aggregate shard duration overflow")
     verify_gate_shard_partition(nodeids, partitions)
