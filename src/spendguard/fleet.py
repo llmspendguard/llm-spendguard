@@ -24,9 +24,15 @@ import sqlite3
 import sys
 from contextlib import closing
 
+import psutil
+
 from . import config
+from .warm_stdio_daemon import WARM_OWNER_BOOT_EPSILON_S
 
 _registered = False                                  # once-per-process guard for register() (cheap hot-path no-op after)
+_FLEET_PID_GONE = "gone"
+_FLEET_PID_VERIFIED_LIVE = "verified_live"
+_FLEET_PID_UNVERIFIABLE = "unverifiable"
 
 
 def _fleet_db():
@@ -39,11 +45,12 @@ def _fleet_db():
     c.execute("PRAGMA busy_timeout=5000")
     c.execute("""CREATE TABLE IF NOT EXISTS consumers(
         pid INTEGER PRIMARY KEY, version TEXT, served_sha TEXT, served_short TEXT, dirty INTEGER,
-        cmdline TEXT, launchd_label TEXT, registered_ts TEXT, venv_root TEXT, python_executable TEXT)""")
+        cmdline TEXT, launchd_label TEXT, registered_ts TEXT, venv_root TEXT, python_executable TEXT,
+        pid_create_time TEXT)""")
     # Existing registries predate install-refresh metadata. Keep migration additive so every consumer can continue
     # registering while a newer spendguard gradually rolls through the fleet.
     columns = {row[1] for row in c.execute("PRAGMA table_info(consumers)").fetchall()}
-    for name in ("venv_root", "python_executable"):
+    for name in ("venv_root", "python_executable", "pid_create_time"):
         if name not in columns:
             c.execute("ALTER TABLE consumers ADD COLUMN %s TEXT" % name)
     c.commit()
@@ -66,17 +73,26 @@ def _cmdline(pid=None):
         return ""
 
 
-def _alive(pid):
-    """Is pid a live process? os.kill(pid, 0) — no signal sent, just an existence+permission probe."""
+def _classify_fleet_pid_identity(pid, recorded_create_time):
+    """Classify a registered (pid, create_time) without ever treating uncertainty as death."""
     try:
-        os.kill(int(pid), 0)
-        return True
-    except (ProcessLookupError, ValueError):
-        return False
-    except PermissionError:
-        return True                                  # exists but owned by another user — alive
+        process = psutil.Process(pid)
+    except psutil.NoSuchProcess:
+        return _FLEET_PID_GONE
     except Exception:
-        return False
+        return _FLEET_PID_UNVERIFIABLE
+    if recorded_create_time is None:
+        return _FLEET_PID_UNVERIFIABLE
+    try:
+        recorded = float(recorded_create_time)
+    except (TypeError, ValueError):
+        return _FLEET_PID_UNVERIFIABLE
+    try:
+        if abs(process.create_time() - recorded) >= WARM_OWNER_BOOT_EPSILON_S:
+            return _FLEET_PID_GONE
+    except Exception:
+        return _FLEET_PID_UNVERIFIABLE
+    return _FLEET_PID_VERIFIED_LIVE
 
 
 def register_consumer(label=None):
@@ -93,13 +109,18 @@ def register_consumer(label=None):
         from . import release, _version
         s = release.served_sha() or {}
         now = _fleet_iso()
+        try:
+            pid_create_time = repr(psutil.Process(os.getpid()).create_time())
+        except Exception:
+            pid_create_time = None
         with closing(_fleet_db()) as c:
             with c:
                 c.execute("INSERT OR REPLACE INTO consumers "
                           "(pid,version,served_sha,served_short,dirty,cmdline,launchd_label,registered_ts,"
-                          "venv_root,python_executable) VALUES(?,?,?,?,?,?,?,?,?,?)",
+                          "venv_root,python_executable,pid_create_time) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
                           (os.getpid(), getattr(_version, "__version__", None), s.get("sha"), s.get("short"),
-                           1 if s.get("dirty") else 0, _cmdline(), label, now, sys.prefix, sys.executable))
+                           1 if s.get("dirty") else 0, _cmdline(), label, now, sys.prefix, sys.executable,
+                           pid_create_time))
     except Exception:
         pass
 
@@ -132,24 +153,28 @@ def running_consumers(prune=True):
     from . import release
     g = release.green_pointer() or {}
     green_sha = g.get("sha")
-    out, dead = [], []
+    out, gone = [], []
     try:
         with closing(_fleet_db()) as c:
-            rows = c.execute("SELECT pid,version,served_sha,served_short,dirty,cmdline,launchd_label,registered_ts "
+            rows = c.execute("SELECT pid,version,served_sha,served_short,dirty,cmdline,launchd_label,registered_ts,"
+                             "pid_create_time "
                              "FROM consumers").fetchall()
-            for (pid, ver, sha, short, dirty, cmd, label, reg) in rows:
-                if not _alive(pid):
-                    dead.append(pid)
+            for (pid, ver, sha, short, dirty, cmd, label, reg, recorded_create_time) in rows:
+                identity_state = _classify_fleet_pid_identity(pid, recorded_create_time)
+                if identity_state == _FLEET_PID_GONE:
+                    gone.append((pid, recorded_create_time))
                     continue
-                if not green_sha or not sha:
+                identity_verified = identity_state == _FLEET_PID_VERIFIED_LIVE
+                if not identity_verified or not green_sha or not sha:
                     stale = None                      # cannot establish from a sha compare (no pointer / pinned install)
                 else:
                     stale = (sha != green_sha)
                 out.append({"pid": pid, "version": ver, "served_sha": sha, "served_short": short,
                             "dirty": bool(dirty), "cmdline": cmd, "launchd_label": label, "registered_ts": reg,
+                            "pid_create_time": recorded_create_time, "identity_verified": identity_verified,
                             "stale": stale})
-            if prune and dead:
-                c.executemany("DELETE FROM consumers WHERE pid=?", [(p,) for p in dead])
+            if prune and gone:
+                c.executemany("DELETE FROM consumers WHERE pid=? AND pid_create_time IS ?", gone)
                 c.commit()
     except Exception:
         pass
@@ -165,6 +190,10 @@ def restart_stale(apply=False):
     import subprocess
     restarted, warn = [], []
     for c in running_consumers():
+        if not c.get("identity_verified"):
+            warn.append({"pid": c["pid"], "cmdline": c["cmdline"],
+                         "why": "stale but pid identity could not be verified — not kickstarting"})
+            continue
         if not c.get("stale"):                        # only stale ones (None = can't tell → leave it, report in warn)
             if c.get("stale") is None:
                 warn.append({"pid": c["pid"], "cmdline": c["cmdline"], "why": "version unknown vs green (pinned install?)"})
@@ -267,9 +296,10 @@ def refresh_stale_installs(apply=False):
 
 
 def fleet_summary():
-    """One dict for `spendguard fleet` / doctor: the green pointer, the live consumers, and the stale count. $0."""
+    """One dict for `spendguard fleet` / doctor, including any identity-verification gap. $0."""
     from . import release
     procs = running_consumers()
     g = release.green_pointer() or {}
     return {"green": g.get("short") or g.get("sha"), "n": len(procs),
-            "stale": sum(1 for p in procs if p.get("stale")), "consumers": procs}
+            "stale": sum(1 for p in procs if p.get("stale")),
+            "unverifiable": sum(1 for p in procs if not p.get("identity_verified")), "consumers": procs}
