@@ -9,6 +9,7 @@ Auth detection is artifact-based and HONEST about its limits (learned live 2026-
 item can belong to the DESKTOP app while the CLI is logged out, so keychain-only reads as 'unknown', never
 'ok' — only each CLI's own credentials file (or a live probe) proves the lane.
 """
+import math
 import os
 import subprocess
 import sys
@@ -209,6 +210,12 @@ def probe(timeout_s=None):
 
 
 _HEADROOM_SNAPSHOT = "lane_headroom"      # persisted cross-process so the routing hot path reads it without a CLI call
+_HEADROOM_NO_READER = "no_reader"
+_HEADROOM_NO_DATA = "reader_no_data"
+_HEADROOM_KNOWN = "known"
+_HEADROOM_PERCENT_MINIMUM = 0
+_HEADROOM_PERCENT_MAXIMUM = 100
+_HEADROOM_METADATA_UNKNOWN = "unknown"
 _HEADROOM_REFRESH_HOURS_DEFAULT = 0.5     # headroom moves with usage → refresh more often than the 6h balances cache
 
 
@@ -236,15 +243,12 @@ def refresh_headroom_if_stale():
 
 
 def lane_headroom(do_fetch=True):
-    """Per-lane subscription QUOTA headroom, from each executor's usage() — provider TRUTH where the plan exposes it
-    (gemini/claude-code status commands; codex/zai captured from real calls), None where it does not. One dict per
-    ENABLED lane: {lane, provider, remaining_pct, reset_ts, buckets, known}. known=False ⇒ the provider exposes no
-    quota surface — 'UNKNOWN', which callers must treat as DISTINCT from 0% remaining (never as exhausted).
+    """Read structural reader/data state per enabled lane and persist the routing snapshot.
 
-    do_fetch=True (default, the interactive/refresh path): read each lane's usage() — one cached $0 status call for
-    gemini/claude-code, captured metadata for codex/zai — and PERSIST the snapshot so a later routing process reads
-    it free. do_fetch=False (the routing HOT path): return ONLY the persisted snapshot (never a CLI call); [] when no
-    snapshot exists yet, so routing safely falls back to its call-volume proxy rather than paying a fetch per decision."""
+    An absent reader and a reader returning no usable data are distinct unknown states;
+    neither establishes availability or a provider capability verdict. The hot path reads
+    only the persisted snapshot and never launches a probe.
+    """
     from . import lane_quota
     if not do_fetch:
         snap = config.load_state(_HEADROOM_SNAPSHOT, {}) or {}
@@ -255,15 +259,44 @@ def lane_headroom(do_fetch=True):
         if not ln["enabled"]:
             continue
         mod = mods.get(ln["lane"])
-        buckets = None
-        if mod is not None and hasattr(mod, "usage"):
+        report_reader = getattr(mod, "usage_report", None)
+        reader = report_reader if callable(report_reader) else getattr(mod, "usage", None)
+        reader_present = callable(reader)
+        buckets, hr, gap, evidence = None, {}, None, None
+        metadata = {}
+        if reader_present:
             try:
-                buckets = mod.usage()
-            except Exception:
-                buckets = None                              # a lane's quota read must never break the cross-lane view
-        hr = lane_quota.bucket_headroom(buckets) or {}
+                reported = reader()
+                if callable(report_reader):
+                    buckets = reported.get("buckets")
+                    gap = reported.get("reason")
+                    evidence = reported.get("source")
+                    metadata = {key: reported.get(key) for key in ("n", "window", "uncertainty")}
+                else:
+                    buckets = reported
+                # Shape validation is parsing: incomplete/non-finite buckets never become
+                # a fabricated full gauge via bucket_headroom's legacy default.
+                if buckets and all(isinstance(bucket, dict)
+                                   and isinstance(bucket.get("remaining_pct"), (int, float))
+                                   and not isinstance(bucket.get("remaining_pct"), bool)
+                                   and math.isfinite(bucket["remaining_pct"])
+                                   and _HEADROOM_PERCENT_MINIMUM <= bucket["remaining_pct"] <= _HEADROOM_PERCENT_MAXIMUM
+                                   for bucket in buckets):
+                    hr = lane_quota.bucket_headroom(buckets) or {}
+                else:
+                    gap = gap or "reader_returned_no_usable_buckets"
+                    buckets = None
+            except Exception as error:
+                gap = f"headroom_reader_error:{type(error).__name__}"
+                buckets = None
+        state = (_HEADROOM_KNOWN if hr else
+                 _HEADROOM_NO_DATA if reader_present else _HEADROOM_NO_READER)
         out.append({"lane": ln["lane"], "provider": ln["provider"], "remaining_pct": hr.get("remaining_pct"),
-                    "reset_ts": hr.get("reset_ts"), "buckets": buckets, "known": buckets is not None})
+                    "reset_ts": hr.get("reset_ts"), "buckets": buckets, "known": state == _HEADROOM_KNOWN,
+                    "reader_present": reader_present, "headroom_state": state,
+                    "headroom_gap": gap, "headroom_source": evidence,
+                    "headroom_n": metadata.get("n"), "headroom_window": metadata.get("window"),
+                    "headroom_uncertainty": metadata.get("uncertainty")})
     try:
         from . import lane_economics
         lane_economics.record_samples(out)                  # append a (pct, tokens) sample so caps self-measure over time
@@ -427,7 +460,7 @@ def main(argv=None):
         import datetime
         from . import lane_quota_cost
         token_costs = lane_quota_cost.measured_lane_token_cost()
-        print("\nplan quota headroom (provider truth where the plan exposes it; 'unknown' = no quota surface yet):")
+        print("\nplan quota headroom (provider truth where read; unknown does not establish availability):")
         for h in lane_headroom():
             token_cost = token_costs.get(h["lane"], {"tokens_per_call": None, "samples": 0,
                                                      "basis": "unmeasured"})
@@ -435,10 +468,17 @@ def main(argv=None):
                          f"({token_cost['basis']}, n={token_cost['samples']})"
                          if token_cost["tokens_per_call"] is not None else
                          f" · quota cost {token_cost['basis']} (n={token_cost['samples']})")
+            metadata_text = (f" · headroom n={h.get('headroom_n') if h.get('headroom_n') is not None else _HEADROOM_METADATA_UNKNOWN}"
+                             f" window={h.get('headroom_window') if h.get('headroom_window') is not None else _HEADROOM_METADATA_UNKNOWN}"
+                             f" uncertainty={h.get('headroom_uncertainty') or _HEADROOM_METADATA_UNKNOWN}")
+            source_text = f" · source {h['headroom_source']}" if h.get("headroom_source") else ""
+            cost_text = source_text + metadata_text + cost_text
             if not h["known"]:
-                print(f"  {h['lane']:<12} ({h['provider']} plan): quota not exposed by this plan (no quota API) — "
-                      f"usage is recorded in the ledger (`spendguard receipt`), not as a plan-side headroom %"
-                      f"{cost_text}")
+                explanation = ("no reader wired (executor exposes no callable usage/headroom reader)"
+                               if h.get("headroom_state") == _HEADROOM_NO_READER else
+                               "reader wired but no data this run (unknown/stale)")
+                gap = f" · gap {h['headroom_gap']}" if h.get("headroom_gap") else ""
+                print(f"  {h['lane']:<12} ({h['provider']} plan): UNKNOWN — {explanation}{gap}{cost_text}")
                 continue
             rem = int(h["remaining_pct"])
             bar = "█" * (rem // 10) + "░" * (10 - rem // 10)

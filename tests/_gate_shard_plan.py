@@ -209,8 +209,14 @@ def read_gate_shard_junit(path):
 
 
 def verify_gate_shard_artifacts(manifest, reports, artifact_prefix, inventory_name=GATE_SHARD_COVERAGE_INVENTORY):
-    """Prove every shard passed and supplied coverage before coverage combine."""
-    partitions = distribute_gate_shard_nodeids(list(manifest["durations"]), manifest)
+    """Prove every shard passed and supplied coverage before coverage combine.
+
+    The complete collection is the UNION of the shards' own reports — the ground truth of what actually
+    ran — not the committed timing manifest. A test added since the manifest was last recorded is weighted
+    at the median by distribute_gate_shard_nodeids (see its docstring), so recomputing the partition from
+    the same live collection the shards used keeps this verifier consistent with runtime sharding, instead
+    of refusing an otherwise-green suite because the timing manifest trails the test set.
+    """
     reports = Path(reports)
     expected_names = {artifact_prefix + str(index) for index in gate_shard_workflow_matrix(manifest)}
     try:
@@ -219,16 +225,24 @@ def verify_gate_shard_artifacts(manifest, reports, artifact_prefix, inventory_na
         raise GateShardEvidenceError(f"missing shard artifact directory: {reports}") from error
     if actual_names != expected_names:
         raise GateShardEvidenceError(f"incomplete shard artifacts; expected={sorted(expected_names)} actual={sorted(actual_names)}")
+    # First pass: read every shard's report. Their union is the collection that actually ran — the set
+    # the runtime sharder (conftest) partitioned — which is what the expected partition must be built from.
+    shard_reports = {}
+    for index in gate_shard_workflow_matrix(manifest):
+        directory = reports / (artifact_prefix + str(index))
+        report = directory / GATE_SHARD_REPORT_PATTERN.format(index=index)
+        shard_reports[index] = read_gate_shard_junit(report)
+    collected = sorted({nodeid for report in shard_reports.values() for nodeid in report})
+    partitions = distribute_gate_shard_nodeids(collected, manifest)
     observed = []
     for index, expected in enumerate(partitions):
         directory = reports / (artifact_prefix + str(index))
-        report = directory / GATE_SHARD_REPORT_PATTERN.format(index=index)
-        actual = read_gate_shard_junit(report)
+        actual = shard_reports[index]
         if set(actual) != set(expected):
             raise GateShardEvidenceError(f"shard {index} report differs from its complete assigned partition")
         verify_gate_shard_coverage_inputs(directory, read_gate_shard_coverage_inventory(directory, inventory_name))
         observed.append(list(actual))
-    verify_gate_shard_partition(list(manifest["durations"]), observed)
+    verify_gate_shard_partition(collected, observed)
 
 
 def gate_shard_cli_main(argv=None):

@@ -1,0 +1,13 @@
+{
+  "zai_coding": {
+    "auth_prefix": "",
+    "url": "https://api.z.ai/api/monitor/usage/quota/limit",
+    "source": "https://github.com/zai-org/zai-coding-plugins/blob/main/plugins/glm-plan-usage/skills/usage-query-skill/scripts/query-usage.mjs",
+    "quota_types": ["TOKENS_LIMIT", "CREDIT_LIMIT"]
+  },
+  "kimi_code": {
+    "auth_prefix": "Bearer ",
+    "url": null,
+    "source": "https://www.kimi.com/code/docs/en/kimi-code-cli/reference/server-api.html#get-api-v1-oauth-usage"
+  }
+}
