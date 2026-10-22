@@ -3,6 +3,7 @@ flat-fee plan: one-shot headless `claude -p` (no agent loop), the provider key e
 the child (a plan call can never silently become metered API), $0 recorded on the billed axis, and any
 failure FALLS BACK to the caged API path. Offline (stubbed subprocess + which), zero spend."""
 import os
+from unittest.mock import patch
 import sys
 import tempfile
 
@@ -19,6 +20,7 @@ import json
 import shutil     # patch shutil.which directly — the shared config.resolve_cli() uses it (subscription_exec no
 #                  longer imports shutil; it delegates the PATH lookup to config.resolve_cli, like codex/antigravity)
 import types
+from spendguard import config  # noqa: E402
 from spendguard import subscription_exec as se
 from spendguard import adapters, calls
 
@@ -42,78 +44,81 @@ def subscription_invocation_result(cmd, capture_output=None, text=None, timeout=
     return types.SimpleNamespace(returncode=0, stdout=out, stderr="")
 
 
-shutil.which = lambda name: "/usr/local/bin/claude"
-se.subprocess.run = subscription_invocation_result
-os.environ[KEY_ENV] = "sk-test-not-real"
+with patch.dict(os.environ):
+    os.environ.pop(config.CLI_TEST_OFFLINE_ENVIRONMENT_KEY, None)
+    shutil.which = lambda name: "/usr/local/bin/claude"
+    se.subprocess.run = subscription_invocation_result
+    os.environ[KEY_ENV] = "sk-test-not-real"
 
-r = se.run_prompt("evidence table…", system="You are the advisor.")
-ck("headless one-shot: -p + json output + --max-turns 1 (no agent loop)",
-   seen["cmd"][0].endswith("claude") and seen["cmd"][1] == "-p"
-   and "--max-turns" in seen["cmd"] and "json" in seen["cmd"])
-ck("no model requested → no --model flag (CLI default)", "--model" not in seen["cmd"])
-ck("system prompt rides --append-system-prompt", "--append-system-prompt" in seen["cmd"])
-ck("the provider key env var is STRIPPED from the child (plan login only, never metered)",
-   KEY_ENV not in seen["env"] and "PATH" in seen["env"])
-ck("result + usage parsed", r["text"] == "SYNTHESIZED INSIGHT" and r["in_tok"] == 900 and r["out_tok"] == 120
-   and r["error"] is None)
+    r = se.run_prompt("evidence table…", system="You are the advisor.")
+    ck("headless one-shot: -p + json output + --max-turns 1 (no agent loop)",
+       seen["cmd"][0].endswith("claude") and seen["cmd"][1] == "-p"
+       and "--max-turns" in seen["cmd"] and "json" in seen["cmd"])
+    ck("no model requested → no --model flag (CLI default)", "--model" not in seen["cmd"])
+    ck("system prompt rides --append-system-prompt", "--append-system-prompt" in seen["cmd"])
+    ck("the provider key env var is STRIPPED from the child (plan login only, never metered)",
+       KEY_ENV not in seen["env"] and "PATH" in seen["env"])
+    ck("result + usage parsed", r["text"] == "SYNTHESIZED INSIGHT" and r["in_tok"] == 900 and r["out_tok"] == 120
+       and r["error"] is None)
 
-print("-- plan-window smartness: the requested tier is honored, never upgraded to the default model --")
-se.run_prompt("cheap classify…", model="claude-haiku-4-5-20251001")
-ck("haiku-class request → --model haiku",
-   "--model" in seen["cmd"] and seen["cmd"][seen["cmd"].index("--model") + 1] == "haiku")
-se.run_prompt("judge…", model="claude-opus-4-8")
-ck("opus-class request → --model opus", seen["cmd"][seen["cmd"].index("--model") + 1] == "opus")
-se.run_prompt("mystery…", model="some-future-model-9")
-ck("unknown family → no --model (degrade to CLI default, never error)", "--model" not in seen["cmd"])
+    print("-- plan-window smartness: the requested tier is honored, never upgraded to the default model --")
+    se.run_prompt("cheap classify…", model="claude-haiku-4-5-20251001")
+    ck("haiku-class request → --model haiku",
+       "--model" in seen["cmd"] and seen["cmd"][seen["cmd"].index("--model") + 1] == "haiku")
+    se.run_prompt("judge…", model="claude-opus-4-8")
+    ck("opus-class request → --model opus", seen["cmd"][seen["cmd"].index("--model") + 1] == "opus")
+    se.run_prompt("mystery…", model="some-future-model-9")
+    ck("unknown family → no --model (degrade to CLI default, never error)", "--model" not in seen["cmd"])
 
-# failure shapes → {error}, never raises
-se.subprocess.run = lambda *a, **k: types.SimpleNamespace(returncode=1, stdout="", stderr="rate limited by plan")
-ck("non-zero exit → error (caller falls back)", "rate limited" in se.run_prompt("x")["error"])
-se.subprocess.run = lambda *a, **k: types.SimpleNamespace(returncode=0, stdout="not json", stderr="")
-ck("unparseable output → error", se.run_prompt("x")["error"] is not None)
-shutil.which = lambda name: None
-os.environ["SPENDGUARD_CLAUDE_BIN"] = "/nonexistent/claude"   # explicit pin that's missing = fail LOUD, no
-ck("CLI absent → error", "not found" in se.run_prompt("x")["error"])  # well-known-dir substitution (dev machines
-del os.environ["SPENDGUARD_CLAUDE_BIN"]                        # have a real claude the resolver would find)
-shutil.which = lambda name: "/usr/local/bin/claude"
+    # failure shapes → {error}, never raises
+    se.subprocess.run = lambda *a, **k: types.SimpleNamespace(returncode=1, stdout="", stderr="rate limited by plan")
+    ck("non-zero exit → error (caller falls back)", "rate limited" in se.run_prompt("x")["error"])
+    se.subprocess.run = lambda *a, **k: types.SimpleNamespace(returncode=0, stdout="not json", stderr="")
+    ck("unparseable output → error", se.run_prompt("x")["error"] is not None)
+    shutil.which = lambda name: None
+    os.environ["SPENDGUARD_CLAUDE_BIN"] = "/nonexistent/claude"   # explicit pin that's missing = fail LOUD, no
+    ck("CLI absent → error", "not found" in se.run_prompt("x")["error"])  # well-known-dir substitution (dev machines
+    del os.environ["SPENDGUARD_CLAUDE_BIN"]                        # have a real claude the resolver would find)
+    shutil.which = lambda name: "/usr/local/bin/claude"
 
-print("-- resolver: an explicit env pin WINS over PATH (the resolve-cli-binary DRIFT fix — no shutil.which fast-path) --")
-_pin = os.path.join(tempfile.mkdtemp(prefix="sg-claudepin-"), "claude")
-open(_pin, "w").write("#!/bin/sh\n")
-os.chmod(_pin, 0o755)
-os.environ["SPENDGUARD_CLAUDE_BIN"] = _pin                     # a real pinned binary, while PATH also has a 'claude'
-ck("subscription_exec._bin honors the pin over PATH (never silently overridden by a stray claude on PATH)",
-   se._bin() == _pin)
-del os.environ["SPENDGUARD_CLAUDE_BIN"]
+    print("-- resolver: an explicit env pin WINS over PATH (the resolve-cli-binary DRIFT fix — no shutil.which fast-path) --")
+    _pin = os.path.join(tempfile.mkdtemp(prefix="sg-claudepin-"), "claude")
+    open(_pin, "w").write("#!/bin/sh\n")
+    os.chmod(_pin, 0o755)
+    os.environ["SPENDGUARD_CLAUDE_BIN"] = _pin                     # a real pinned binary, while PATH also has a 'claude'
+    ck("subscription_exec._bin honors the pin over PATH (never silently overridden by a stray claude on PATH)",
+       se._bin() == _pin)
+    del os.environ["SPENDGUARD_CLAUDE_BIN"]
 
-# ── adapters.call routing: plan first, corpus row at $0 billed, API fallback on error ──
-os.environ["SPENDGUARD_ADVISOR_EXECUTOR"] = "claude-code"
-se.subprocess.run = subscription_invocation_result
-recorded = []
-calls.record_call = lambda provider, model, kind, cost, **k: recorded.append((provider, model, kind, cost))
-out = adapters.call("claude-opus-4-8", "prompt", max_tokens=400, system="sys")
-ck("adapters.call routes to the plan: $0 billed + executor tagged",
-   out["cost"] == 0.0 and out["executor"] == "claude-code" and out["text"] == "SYNTHESIZED INSIGHT")
-ck("corpus row recorded as kind='subscription' at $0 (billed axis honest)",
-   recorded and recorded[-1] == ("anthropic", "claude-opus-4-8", "subscription", 0.0))
+    # ── adapters.call routing: plan first, corpus row at $0 billed, API fallback on error ──
+    os.environ["SPENDGUARD_ADVISOR_EXECUTOR"] = "claude-code"
+    se.subprocess.run = subscription_invocation_result
+    recorded = []
+    calls.record_call = lambda provider, model, kind, cost, **k: recorded.append((provider, model, kind, cost))
+    out = adapters.call("claude-opus-4-8", "prompt", max_tokens=400, system="sys")
+    ck("adapters.call routes to the plan: $0 billed + executor tagged",
+       out["cost"] == 0.0 and out["executor"] == "claude-code" and out["text"] == "SYNTHESIZED INSIGHT")
+    ck("corpus row recorded as kind='subscription' at $0 (billed axis honest)",
+       recorded and recorded[-1] == ("anthropic", "claude-opus-4-8", "subscription", 0.0))
 
-# executor fails ("plan window exhausted") → the call must FALL THROUGH to the API path. Under the
-# suite's dead proxy the API attempt dies with ITS OWN error (connection/no-key) — either proves the
-# fall-through happened: the executor's error is never what the caller sees.
-se.subprocess.run = lambda *a, **k: types.SimpleNamespace(returncode=1, stdout="", stderr="plan window exhausted")
-out2 = adapters.call("claude-opus-4-8", "prompt", sig="test:subscription-exec")
-ck("executor failure FALLS BACK to the API path (the API path's own error surfaces, tagged executor='api')",
-   out2.get("error") and "plan window" not in out2["error"] and out2.get("executor") == "api")
+    # executor fails ("plan window exhausted") → the call must FALL THROUGH to the API path. Under the
+    # suite's dead proxy the API attempt dies with ITS OWN error (connection/no-key) — either proves the
+    # fall-through happened: the executor's error is never what the caller sees.
+    se.subprocess.run = lambda *a, **k: types.SimpleNamespace(returncode=1, stdout="", stderr="plan window exhausted")
+    out2 = adapters.call("claude-opus-4-8", "prompt", sig="test:subscription-exec")
+    ck("executor failure FALLS BACK to the API path (the API path's own error surfaces, tagged executor='api')",
+       out2.get("error") and "plan window" not in out2["error"] and out2.get("executor") == "api")
 
-os.environ["SPENDGUARD_ADVISOR_EXECUTOR"] = "api"
-# The api path now RECORDS its outcome — the forensic mandate: EVERY call, success or FAILURE, lands on the ledger
-# (a failed api attempt legitimately writes a kind='realtime' failure row via adapters.call's chokepoint). So the
-# check is no longer "no row at all"; it is that the PLAN path was not touched — NO new subscription-kind row.
-subs0 = sum(1 for r in recorded if r[2] == "subscription")
-out3 = adapters.call("claude-opus-4-8", "prompt", sig="test:subscription-exec")
-subs1 = sum(1 for r in recorded if r[2] == "subscription")
-ck("executor=api never touches the PLAN path (no new subscription row; the API path is tagged executor='api')",
-   out3.get("executor") == "api" and subs1 == subs0)
+
+    os.environ["SPENDGUARD_ADVISOR_EXECUTOR"] = "api"
+    # The api path now RECORDS its outcome — the forensic mandate: EVERY call, success or FAILURE, lands on the ledger
+    # (a failed api attempt legitimately writes a kind='realtime' failure row via adapters.call's chokepoint). So the
+    # check is no longer "no row at all"; it is that the PLAN path was not touched — NO new subscription-kind row.
+    subs0 = sum(1 for r in recorded if r[2] == "subscription")
+    out3 = adapters.call("claude-opus-4-8", "prompt", sig="test:subscription-exec")
+    subs1 = sum(1 for r in recorded if r[2] == "subscription")
+    ck("executor=api never touches the PLAN path (no new subscription row; the API path is tagged executor='api')",
+       out3.get("executor") == "api" and subs1 == subs0)
 
 print(("[OK]" if not fails else "[FAIL]") + " subscription executor: %d failure(s)" % len(fails))
 sys.exit(1 if fails else 0)

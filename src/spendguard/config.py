@@ -1731,6 +1731,20 @@ def lane_plan_env(keep=()):
     return {k: v for k, v in os.environ.items() if k not in metered}
 
 
+CLI_TEST_OFFLINE_ENVIRONMENT_KEY = "SPENDGUARD_TEST_CLI_OFFLINE"
+CLI_TEST_OFFLINE_ENABLED_VALUE = "1"
+
+
+class IsolatedCliLaunchError(BaseException):
+    """Escape fail-soft lane handlers when a test attempts a real CLI launch."""
+
+
+def refuse_isolated_cli_launch():
+    if os.environ.get(CLI_TEST_OFFLINE_ENVIRONMENT_KEY) == CLI_TEST_OFFLINE_ENABLED_VALUE:
+        raise IsolatedCliLaunchError(
+            f"{CLI_TEST_OFFLINE_ENVIRONMENT_KEY} forbids a real subscription CLI launch; supply a lane/usage fixture")
+
+
 def lane_exec_env(cli_path, keep=()):
     """Plan-safe child env for a resolved subscription CLI, with its sibling runtime directory first on PATH.
 
@@ -1739,6 +1753,7 @@ def lane_exec_env(cli_path, keep=()):
     and real calls runnable without encoding any version-manager layout. ``lane_plan_env`` remains the credential
     boundary; this helper changes only PATH and never makes a missing CLI look present.
     """
+    refuse_isolated_cli_launch()
     env = lane_plan_env(keep=keep)
     if cli_path:
         cli_dir = os.path.dirname(os.path.abspath(cli_path))

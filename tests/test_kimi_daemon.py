@@ -8,6 +8,7 @@ kimi_exec.run_prompt falls back to a cold `kimi -p` when the warm daemon path FA
 LATENCY, never AVAILABILITY.
 """
 import os
+from unittest.mock import patch
 import sys
 import tempfile
 from functools import partial
@@ -18,6 +19,7 @@ os.environ.setdefault("SPENDGUARD_TEST_ISOLATED", "1")
 os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
+from spendguard import config  # noqa: E402
 from spendguard import kimi_daemon as kd        # noqa: E402
 from spendguard import kimi_exec as _kx          # noqa: E402
 
@@ -57,7 +59,9 @@ try:
         return type("ColdResult", (), {
             "returncode": 0, "stdout": '{"role":"assistant","content":"cold answer"}\n', "stderr": ""})()
     _kx.subprocess.run = _cold_ok
-    _out = _kx.run_prompt("hi", model=None)
+    with patch.dict(os.environ):
+        os.environ.pop(config.CLI_TEST_OFFLINE_ENVIRONMENT_KEY, None)
+        _out = _kx.run_prompt("hi", model=None)
     fails += ck("warm daemon exception degrades cleanly to cold `kimi -p`",
                 _out.get("text") == "cold answer" and not _out.get("error"))
 finally:

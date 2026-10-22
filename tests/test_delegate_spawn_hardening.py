@@ -1,6 +1,7 @@
 """Offline guards for delegated provider stdin and working-directory containment."""
 import json
 import os
+from unittest.mock import patch
 import pathlib
 import subprocess
 import sys
@@ -13,6 +14,7 @@ os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
 os.environ.setdefault("OPENAI_API_KEY", "sk-test-delegate-spawn-never-used")
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "src"))
 
+from spendguard import config  # noqa: E402
 from spendguard import antigravity_exec, codex_daemon, codex_exec, delegate_router, kimi_exec, subscription_exec  # noqa: E402
 
 failed = []
@@ -41,7 +43,9 @@ def exercise_cold(module, stdout, poison_cwd, output_file=False):
             return types.SimpleNamespace(returncode=0, stdout=stdout, stderr="")
 
         module.subprocess.run = fake_run
-        result = module.run_prompt("offline prompt")
+        with patch.dict(os.environ):
+            os.environ.pop(config.CLI_TEST_OFFLINE_ENVIRONMENT_KEY, None)
+            result = module.run_prompt("offline prompt")
     finally:
         os.getcwd = original_getcwd
         module._bin, module.subprocess.run = original_bin, original_run

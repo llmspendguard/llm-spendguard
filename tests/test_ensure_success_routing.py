@@ -9,6 +9,7 @@ import os
 import sqlite3
 import sys
 import tempfile
+from unittest.mock import patch
 
 os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="sg-ensure-success-")
 os.environ["SPENDGUARD_TEST_ISOLATED"] = "1"
@@ -84,7 +85,9 @@ def main():
                     "provider": "gemini", "model": "gem-x"}
 
         adapters.call = free_success
-        row = original_once("anthropic:claude-opus-4-8", "task", max_tokens=100)
+        with patch.dict(os.environ):
+            os.environ.pop(config.CLI_TEST_OFFLINE_ENVIRONMENT_KEY, None)
+            row = original_once("anthropic:claude-opus-4-8", "task", max_tokens=100)
         check(results, "task succeeds on the second $0 lane", row.get("text") == "free answer")
         check(results, "substitute attempt is explicitly free-only", seen == [("gemini:gem-x", True)])
 
@@ -105,7 +108,9 @@ def main():
         adapters._call_once = intercepted_once
         stderr = io.StringIO()
         with calls.context(intent="ensure-success"), contextlib.redirect_stderr(stderr):
-            row2 = intercepted_once("anthropic:claude-opus-4-8", "task", max_tokens=100)
+            with patch.dict(os.environ):
+                os.environ.pop(config.CLI_TEST_OFFLINE_ENVIRONMENT_KEY, None)
+                row2 = intercepted_once("anthropic:claude-opus-4-8", "task", max_tokens=100)
         check(results, "metered last resort succeeds", row2.get("text") == "metered answer")
         check(results, "fallback stayed on the original model's metered twin",
               metered_models == ["anthropic:claude-opus-4-8"])
@@ -124,13 +129,17 @@ def main():
         lane_balance.quality_equivalent_free_substitutes = lambda *args, **kwargs: substitute_queries.append(args) or ["gemini:gem-x"]
         metered_models.clear()
         with contextlib.redirect_stderr(io.StringIO()):
-            pinned = intercepted_once("anthropic:claude-opus-4-8", "task", max_tokens=100, _no_sub=True)
+            with patch.dict(os.environ):
+                os.environ.pop(config.CLI_TEST_OFFLINE_ENVIRONMENT_KEY, None)
+                pinned = intercepted_once("anthropic:claude-opus-4-8", "task", max_tokens=100, _no_sub=True)
         check(results, "pinned call never asks for a substitute", not substitute_queries)
         check(results, "pinned call meters the same model", pinned.get("text") == "metered answer"
               and metered_models == ["anthropic:claude-opus-4-8"])
         metered_models.clear()
-        refused = intercepted_once("anthropic:claude-opus-4-8", "task", max_tokens=100,
-                                   no_metered_fallback=True)
+        with patch.dict(os.environ):
+            os.environ.pop(config.CLI_TEST_OFFLINE_ENVIRONMENT_KEY, None)
+            refused = intercepted_once("anthropic:claude-opus-4-8", "task", max_tokens=100,
+                                       no_metered_fallback=True)
         check(results, "refuse-billed returns a free error row", refused.get("text") is None
               and refused.get("cost") is None and str(refused.get("error") or "").startswith("refused"))
         check(results, "refuse-billed made zero metered attempts", metered_models == [])

@@ -12,6 +12,7 @@ Pins (offline; agy binary + subprocess stubbed, no CLI, no network):
   (d) _error_result attaches retry_after_s from /usage on a window-less error, and an INLINE window still wins.
 """
 import os
+from unittest.mock import patch
 import sys
 import time
 import tempfile
@@ -22,6 +23,7 @@ os.environ.setdefault("SPENDGUARD_TEST_ISOLATED", "1")
 os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
+from spendguard import config  # noqa: E402
 from spendguard import antigravity_exec as agy                                          # noqa: E402
 
 fails = []
@@ -90,39 +92,42 @@ class _CP:
     stdout = _SAMPLE
 
 
-_o_bin, _o_run = agy._bin, agy.subprocess.run
-try:
-    agy._bin = lambda: "/fake/agy"
-    def _fake_run(*a, **k):
-        calls["n"] += 1
-        return _CP()
-    agy.subprocess.run = _fake_run
-    _reset_cache()
-    u1 = agy.usage()
-    u2 = agy.usage()
-    check("two usage() calls within the TTL invoked the CLI ONCE (cached)", calls["n"] == 1)
-    check("...and both returned the parsed rows", u1 is not None and u1 == u2 and len(u1) == 2)
-finally:
-    agy._bin, agy.subprocess.run = _o_bin, _o_run
-    _reset_cache()
+with patch.dict(os.environ):
+    os.environ.pop(config.CLI_TEST_OFFLINE_ENVIRONMENT_KEY, None)
+    _o_bin, _o_run = agy._bin, agy.subprocess.run
+    try:
+        agy._bin = lambda: "/fake/agy"
+        def _fake_run(*a, **k):
+            calls["n"] += 1
+            return _CP()
+        agy.subprocess.run = _fake_run
+        _reset_cache()
+        u1 = agy.usage()
+        u2 = agy.usage()
+        check("two usage() calls within the TTL invoked the CLI ONCE (cached)", calls["n"] == 1)
+        check("...and both returned the parsed rows", u1 is not None and u1 == u2 and len(u1) == 2)
+    finally:
+        agy._bin, agy.subprocess.run = _o_bin, _o_run
+        _reset_cache()
 
-print("\n-- (c2) a cached snapshot PAST its reported reset is REFETCHED (a refilled quota is never masked) --")
-calls["n"] = 0
-_o_bin2, _o_run2 = agy._bin, agy.subprocess.run
-try:
-    agy._bin = lambda: "/fake/agy"
-    agy.subprocess.run = _fake_run
-    now = time.time()
-    # fresh by TTL, but its soonest reset already elapsed → the quota has refilled, so the cache must invalidate
-    agy._usage_cache["at"] = now
-    agy._usage_cache["val"] = [{"bucket": "Gemini Models", "remaining_pct": 0, "reset_ts": now - 10}]
-    u = agy.usage()
-    check("past-reset cache → refetched despite the TTL (CLI invoked once)", calls["n"] == 1)
-    check("...and returns the FRESH rows, not the stale exhausted snapshot",
-          u is not None and len(u) == 2 and any("gemini" in r["bucket"].lower() for r in u))
-finally:
-    agy._bin, agy.subprocess.run = _o_bin2, _o_run2
-    _reset_cache()
+    print("\n-- (c2) a cached snapshot PAST its reported reset is REFETCHED (a refilled quota is never masked) --")
+    calls["n"] = 0
+    _o_bin2, _o_run2 = agy._bin, agy.subprocess.run
+    try:
+        agy._bin = lambda: "/fake/agy"
+        agy.subprocess.run = _fake_run
+        now = time.time()
+        # fresh by TTL, but its soonest reset already elapsed → the quota has refilled, so the cache must invalidate
+        agy._usage_cache["at"] = now
+        agy._usage_cache["val"] = [{"bucket": "Gemini Models", "remaining_pct": 0, "reset_ts": now - 10}]
+        u = agy.usage()
+        check("past-reset cache → refetched despite the TTL (CLI invoked once)", calls["n"] == 1)
+        check("...and returns the FRESH rows, not the stale exhausted snapshot",
+              u is not None and len(u) == 2 and any("gemini" in r["bucket"].lower() for r in u))
+    finally:
+        agy._bin, agy.subprocess.run = _o_bin2, _o_run2
+        _reset_cache()
+
 
 print("\n-- (d) _error_result: window-less quota error → retry_after_s from /usage; an INLINE window still wins --")
 _o_usage2 = agy.usage

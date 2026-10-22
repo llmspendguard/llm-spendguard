@@ -8,6 +8,7 @@ import os
 import subprocess
 import sys
 import tempfile
+from unittest.mock import patch
 
 os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="sg-lanenv-")
 os.environ.setdefault("SPENDGUARD_TEST_ISOLATED", "1")
@@ -58,7 +59,9 @@ try:
         captured.update(kw)
         raise OSError()  # stop before protocol startup; no live process is created
     warm_stdio_daemon.subprocess.Popen = _cap_run
-    worker._spawn()
+    with patch.dict(os.environ):
+        os.environ.pop(config.CLI_TEST_OFFLINE_ENVIRONMENT_KEY, None)
+        worker._spawn()
     cenv = captured.get("env", {})
     fails += ck("warm subprocess boundary was reached", bool(cenv))
     fails += ck("the env actually passed to the codex subprocess has NO ANTHROPIC_API_KEY", "ANTHROPIC_API_KEY" not in cenv)

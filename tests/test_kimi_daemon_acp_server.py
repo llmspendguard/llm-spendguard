@@ -5,6 +5,7 @@ property (N prompts, ONE cold-start), a wedged turn that fails only itself, a ha
 server-initiated request, and dead-pipe wakeups. Offline, no real kimi, no model spend.
 """
 import os
+from unittest.mock import patch
 import sys
 import tempfile
 import pathlib
@@ -16,6 +17,7 @@ os.environ.setdefault("SPENDGUARD_TEST_ISOLATED", "1")
 os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
+from spendguard import config  # noqa: E402
 from spendguard import kimi_daemon        # noqa: E402
 
 FAKE = pathlib.Path(__file__).with_name("fake_kimi_acp_server.py").resolve()
@@ -39,7 +41,9 @@ def ck(name, cond):
         fails.append(name)
 
 
+@patch.dict(os.environ)
 def test_agent_message():
+    os.environ.pop(config.CLI_TEST_OFFLINE_ENVIRONMENT_KEY, None)
     daemon = new_daemon()
     try:
         r = daemon.run_warm("hello")
@@ -48,14 +52,18 @@ def test_agent_message():
         daemon.shutdown()
 
 
+@patch.dict(os.environ)
 def test_concurrent_turns_are_demultiplexed():
+    os.environ.pop(config.CLI_TEST_OFFLINE_ENVIRONMENT_KEY, None)
     results = collect_daemon_concurrent_turns(new_daemon, ("first", "second"), timeout=10)
     ck("concurrent turns demuxed to their own text",
        sorted(x["text"] for x in results) == ["reply:first", "reply:second"])
 
 
+@patch.dict(os.environ)
 def test_n_prompts_one_cold_start():
     """The warm-POOL guarantee: N independent prompts are served by ONE server boot, not N cold starts."""
+    os.environ.pop(config.CLI_TEST_OFFLINE_ENVIRONMENT_KEY, None)
     boot_log = pathlib.Path(tempfile.mkdtemp(prefix="sg-kboot-")) / "boots.txt"
     daemon = new_daemon(boot_log=boot_log)
     try:
@@ -67,8 +75,10 @@ def test_n_prompts_one_cold_start():
         daemon.shutdown()
 
 
+@patch.dict(os.environ)
 def test_wedged_turn_fails_only_itself_others_survive():
     """A single wedged turn times out to its OWN error; concurrent healthy turns still complete and the server lives."""
+    os.environ.pop(config.CLI_TEST_OFFLINE_ENVIRONMENT_KEY, None)
     daemon = new_daemon()
     try:
         with ThreadPoolExecutor(max_workers=3) as pool:
@@ -83,7 +93,9 @@ def test_wedged_turn_fails_only_itself_others_survive():
         daemon.shutdown()
 
 
+@patch.dict(os.environ)
 def test_kimi_refusal_is_tool_error():
+    os.environ.pop(config.CLI_TEST_OFFLINE_ENVIRONMENT_KEY, None)
     daemon = new_daemon()
     try:
         r = daemon.run_warm("refuse")
@@ -93,7 +105,9 @@ def test_kimi_refusal_is_tool_error():
         daemon.shutdown()
 
 
+@patch.dict(os.environ)
 def test_server_initiated_request_is_declined_not_hung():
+    os.environ.pop(config.CLI_TEST_OFFLINE_ENVIRONMENT_KEY, None)
     daemon = new_daemon()
     try:
         r = daemon.run_warm("permreq", timeout=6)
@@ -102,7 +116,9 @@ def test_server_initiated_request_is_declined_not_hung():
         daemon.shutdown()
 
 
+@patch.dict(os.environ)
 def test_dead_pipe_wakes_every_waiter():
+    os.environ.pop(config.CLI_TEST_OFFLINE_ENVIRONMENT_KEY, None)
     awakened, dead = collect_daemon_dead_pipe_waiters(
         new_daemon, range(10_000, 10_002), process_timeout=5, event_timeout=3)
     ck("every pending waiter is woken on a dead pipe", awakened and dead)

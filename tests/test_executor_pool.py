@@ -5,6 +5,7 @@ that lane (advisor.pool_cooldown_s) so bursts go straight to the API; single-lan
 touch their own provider. Offline: both lane modules stubbed, no CLI, no network.
 """
 import os, sys, tempfile
+from unittest.mock import patch
 os.environ.setdefault("OPENAI_API_KEY", "sk-test-offline")          # offline: key RESOLUTION must succeed (lanes + the
 os.environ.setdefault("ANTHROPIC_API_KEY", "sk-ant-test-offline")   #   metered fallback are stubbed; test_runner's dead
 #   proxy fails any real call in ms) — a fake key never bills (its "a test that needs a key sets its own fake one" rule)
@@ -17,7 +18,7 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
 # covers the default-on Anthropic avoidance policy and its authorization behavior.
 os.environ["SPENDGUARD_AVOID_CLAUDE_LANE"] = "off"
 
-from spendguard import adapters, subscription_exec, codex_exec, resource_state
+from spendguard import adapters, subscription_exec, codex_exec, resource_state, config
 
 fails = []
 def ck(name, cond):
@@ -58,11 +59,15 @@ def codex_down(prompt, system=None, model=None, timeout=None, **_kw):
     calls_made["codex"] += 1
     return {"error": "plan window exhausted"}
 codex_exec.run_prompt = codex_down
-r = adapters.call("openai:gpt-5.5", "classify…", sig="test:executor-pool")
+with patch.dict(os.environ):
+    os.environ.pop(config.CLI_TEST_OFFLINE_ENVIRONMENT_KEY, None)
+    r = adapters.call("openai:gpt-5.5", "classify…", sig="test:executor-pool")
 ck("failed lane falls back to the API path (its error, not the lane's; tagged executor='api')",
    r.get("executor") == "api" and r.get("error") and "plan window" not in (r.get("error") or ""))
 n = calls_made["codex"]
-r2 = adapters.call("openai:gpt-5.5", "classify…", sig="test:executor-pool")
+with patch.dict(os.environ):
+    os.environ.pop(config.CLI_TEST_OFFLINE_ENVIRONMENT_KEY, None)
+    r2 = adapters.call("openai:gpt-5.5", "classify…", sig="test:executor-pool")
 ck("cooling lane still confirms recovery before a paid fallback",
    calls_made["codex"] > n and r2.get("executor") == "api"
    and any(e["rung"] == "metered_authorized" for e in r2.get("lane_recovery", [])))
