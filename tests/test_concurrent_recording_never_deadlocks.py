@@ -13,7 +13,9 @@ watchdog so a regression ABORTS with every thread's stack, never hangs silently.
 still exact under contention and the hash-chained audit log survives concurrent writers.
 """
 import os, sys, tempfile, threading, faulthandler, time, datetime
+import importlib.util
 from decimal import Decimal
+from pathlib import Path
 
 if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
     os.environ["SPENDGUARD_TEST_ISOLATED"] = "1"
@@ -24,11 +26,32 @@ from spendguard import config as _cfg
 _cfg.budget_backend = lambda: "sqlite"        # the cross-thread ledger path only exists on the sqlite backend
 from spendguard import budget
 
+CONCURRENCY_CALIBRATION_MODULE_NAME = "spendguard_concurrency_runner_calibration"
+CONCURRENCY_CALIBRATION_FILENAME = "test_runner.py"
+CONCURRENCY_CALIBRATION_COVERAGE_ENV = "SPENDGUARD_COVERAGE"
+CONCURRENCY_CALIBRATION_COVERAGE_DISABLED = "0"
+
+concurrency_calibration_spec = importlib.util.spec_from_file_location(
+    CONCURRENCY_CALIBRATION_MODULE_NAME, Path(__file__).with_name(CONCURRENCY_CALIBRATION_FILENAME))
+concurrency_calibration_module = importlib.util.module_from_spec(concurrency_calibration_spec)
+concurrency_prior_coverage = os.environ.get(CONCURRENCY_CALIBRATION_COVERAGE_ENV)
+try:
+    os.environ[CONCURRENCY_CALIBRATION_COVERAGE_ENV] = CONCURRENCY_CALIBRATION_COVERAGE_DISABLED
+    concurrency_calibration_spec.loader.exec_module(concurrency_calibration_module)
+finally:
+    if concurrency_prior_coverage is None:
+        os.environ.pop(CONCURRENCY_CALIBRATION_COVERAGE_ENV, None)
+    else:
+        os.environ[CONCURRENCY_CALIBRATION_COVERAGE_ENV] = concurrency_prior_coverage
+_runner_budget_scale = concurrency_calibration_module.measure_runner_budget_scale()
+
 N_THREADS = 8
 PER_THREAD = 120
 COST = 0.01
 DAY = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-01")
-WATCHDOG_S = 60                               # a healthy run finishes in a few seconds; a deadlock hangs forever
+WATCHDOG_BASE_S = 60                          # reference-machine deadlock timeout; healthy runs take seconds
+WATCHDOG_S = WATCHDOG_BASE_S * _runner_budget_scale
+# Measured compute gives slow runners proportional headroom, below the outer runner scaled kill timeout.
 
 fails = 0
 def ck(label, cond, extra=""):
@@ -49,7 +72,8 @@ def worker(tid):
     except Exception as e:                     # a thread that raised must not vanish — surface it
         errors.append(f"thread {tid}: {type(e).__name__}: {e}")
 
-print(f"-- {N_THREADS} threads x {PER_THREAD} (record + 2 dec_sum reads) ops, watchdog {WATCHDOG_S}s --")
+print(f"-- {N_THREADS} threads x {PER_THREAD} (record + 2 dec_sum reads) ops, "
+      f"watchdog {WATCHDOG_S:.0f}s (scale {_runner_budget_scale:.2f}) --")
 faulthandler.dump_traceback_later(WATCHDOG_S, exit=True)     # deadlock -> full stack dump + abort(1), not a hang
 t0 = time.time()
 threads = [threading.Thread(target=worker, args=(i,)) for i in range(N_THREADS)]
