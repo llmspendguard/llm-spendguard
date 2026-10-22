@@ -39,10 +39,11 @@ print = functools.partial(print, flush=True)             # unbuffered — a long
 
 MODEL = "claude-haiku-4-5"
 VENDOR = "anthropic"
-RUNS = int(os.environ.get("STORM_RUNS", "8"))
-DEADLINE = float(os.environ.get("STORM_DEADLINE", "15"))   # generous vs the ~1s real convergence → no CI-jitter flakes
 # varied: ceiling BELOW the governor's default vendor cap (8) so the window must LEARN+ratchet; varied burst + prompt size
 _VARIETY = [(4, 40, 2000), (3, 60, 8000), (5, 50, 40000), (4, 80, 2000), (2, 30, 60000), (6, 100, 4000)]
+STORM_VARIETY_RUN_COUNT = len(_VARIETY)
+RUNS = int(os.environ.get("STORM_RUNS", str(STORM_VARIETY_RUN_COUNT)))
+DEADLINE = float(os.environ.get("STORM_DEADLINE", "15"))   # generous vs the ~1s real convergence → no CI-jitter flakes
 
 
 class _ConnLimitedProvider:

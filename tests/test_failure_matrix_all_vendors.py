@@ -11,6 +11,9 @@ so "it works on vendor X" can never again quietly mean "we only tried the happy 
 """
 import os, sys, tempfile
 
+FAILURE_MATRIX_XP_RATE_OFF = "1"
+os.environ.setdefault("SPENDGUARD_DISPATCH_XP_RATE_OFF", FAILURE_MATRIX_XP_RATE_OFF)
+
 if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
     os.environ["SPENDGUARD_TEST_ISOLATED"] = "1"
     os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="spendguard-matrix-")

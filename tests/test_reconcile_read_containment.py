@@ -5,6 +5,14 @@ import tempfile
 from decimal import Decimal
 from unittest.mock import patch
 
+# The containment behaviour under test — bounding every read/clear at the row cap and refusing a correction
+# that crosses it — is scale-INVARIANT: crossing the boundary at a small cap proves exactly what crossing it at
+# the 10,000-row production default proves, while seeding (cap+7)*2 rows and running ~7 full reconcile scans over
+# them costs ~1s at a small cap versus ~5m at the production cap. setdefault keeps an explicit outer override
+# (e.g. a deliberate production-scale run) winning. Must be set before spendguard.config is imported below.
+RECONCILE_GUARD_ROW_CAP = "50"
+os.environ.setdefault("SPENDGUARD_LEDGER_READ_ROW_CAP", RECONCILE_GUARD_ROW_CAP)
+
 if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
     os.environ["SPENDGUARD_TEST_ISOLATED"] = "1"
     os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="spendguard-test-")
