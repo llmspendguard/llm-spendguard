@@ -2,6 +2,7 @@
 import os
 import sys
 import tempfile
+from unittest.mock import patch
 
 
 if os.environ.get("SPENDGUARD_TEST_ISOLATED") != "1":
@@ -39,7 +40,48 @@ class OfflinePool:
         return None
 
 
+def _simulate_dedicated_owner_test_platform(launchd_owner_supported):
+    codex_broker_owner.launchd_codex_broker_owner_supported = lambda: launchd_owner_supported
+
+
+class OfflineDedicatedOwnerListener:
+    def bind(self, _path):
+        return None
+
+    def listen(self):
+        return None
+
+    def settimeout(self, _timeout):
+        return None
+
+    def close(self):
+        return None
+
+
+class OfflineDedicatedOwnerServerThread:
+    def __init__(self, **_kwargs):
+        pass
+
+    def start(self):
+        return None
+
+
+class OfflineDedicatedOwnerRoleLock:
+    def __init__(self, ownership_state):
+        self._ownership_state = ownership_state
+
+    def __enter__(self):
+        if self._ownership_state["acquired"]:
+            return False
+        self._ownership_state["acquired"] = True
+        return True
+
+    def __exit__(self, _exc_type, _exc_value, _traceback):
+        return None
+
+
 # A consumer with no owner must request launchd ownership and must never build its local pool.
+_simulate_dedicated_owner_test_platform(launchd_owner_supported=True)
 consumer_pool = OfflinePool()
 consumer = codex_daemon_broker._CodexDaemonBroker(consumer_pool)
 owner_requests = []
@@ -60,6 +102,32 @@ wrong_marker = dict(owner_marker)
 wrong_marker[warm_stdio_daemon.WARM_OWNER_BOOT_ENV] = "0"
 wrong_owner = codex_daemon_broker._CodexDaemonBroker(OfflinePool(), owner_marker=wrong_marker)
 record_script_check(failures, "mismatched marker cannot own", wrong_owner._become_owner_if_available() is False)
+
+# Without a dedicated launchd owner, one markerless facade may build and a second shares that owner.
+_simulate_dedicated_owner_test_platform(launchd_owner_supported=False)
+fallback_owner_pool = OfflinePool()
+fallback_consumer_pool = OfflinePool()
+fallback_owner = codex_daemon_broker._CodexDaemonBroker(fallback_owner_pool)
+fallback_consumer = codex_daemon_broker._CodexDaemonBroker(fallback_consumer_pool)
+fallback_ownership_state = {"acquired": False}
+
+
+def offline_dedicated_owner_role_lock(_lock_name):
+    return OfflineDedicatedOwnerRoleLock(fallback_ownership_state)
+
+
+with (patch.object(codex_daemon_broker.config, "single_instance_lock", offline_dedicated_owner_role_lock),
+      patch.object(codex_daemon_broker.socket, "socket", return_value=OfflineDedicatedOwnerListener()),
+      patch.object(codex_daemon_broker.threading, "Thread", OfflineDedicatedOwnerServerThread)):
+    fallback_owner_acquired = fallback_owner._become_owner_if_available()
+    fallback_consumer.broker_running = lambda: fallback_owner_acquired
+    fallback_consumer_attached = fallback_consumer.broker_ensure_running()
+
+record_script_check(failures, "markerless non-launchd consumer can own", fallback_owner_acquired is True)
+record_script_check(failures, "non-launchd consumers share one local pool",
+                    fallback_consumer_attached is True
+                    and fallback_owner_pool.starts == 1
+                    and fallback_consumer_pool.starts == 0)
 
 # Unknown owner identity is never proof of death; only a missing PID or recycled identity can be reaped.
 original_process = warm_stdio_daemon.psutil.Process
