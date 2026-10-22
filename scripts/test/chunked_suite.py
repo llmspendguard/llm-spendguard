@@ -1,18 +1,15 @@
 #!/usr/bin/env python3
-"""Run the offline test suite in CHUNKS, reporting each chunk's pass/fail as it finishes — never one buffered
-all-or-nothing run whose exit code can be masked (and once was, pushing a red state).
+"""Run isolated offline files in a bounded pool, streaming completed verdicts.
 
-Each test_*.py self-isolates (execv into a fresh SPENDGUARD_HOME); this replicates test_runner.py's environment
-exactly — isolated home per file, a DEAD proxy so any accidental network fails in ms, real provider keys
-stripped — then runs the files in N chunks. A chunk prints PASS/FAIL the moment it completes, so progress is
-visible; the process exits non-zero if ANY file failed. Grouping is by sorted filename so chunks are stable.
-
-    python scripts/test/chunked_suite.py            # 6 chunks (default)
-    python scripts/test/chunked_suite.py --chunks 4
-    python scripts/test/chunked_suite.py --chunk 2/6 # run only the 2nd of 6 chunks (for parallel shells)
+Use --sequential for the original chunk loop, --chunk i/N for a single CI subset,
+or --write-manifest --shard-count N to promote complete local timing evidence.
+Full runs atomically record durations without modifying the committed manifest.
 """
 import argparse
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime, timezone
 import glob
+import json
 import os
 import shutil
 import subprocess
@@ -23,6 +20,54 @@ import time
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(os.path.dirname(HERE))
 TESTS = os.path.join(REPO, "tests")
+sys.path.insert(0, TESTS)
+from _gate_shard_plan import (  # noqa: E402
+    GATE_SHARD_MANIFEST_FILENAME, GATE_SHARD_MINIMUM_COUNT,
+    GATE_SHARD_SCHEMA_VERSION, GateShardEvidenceError, validate_gate_shard_manifest,
+)
+
+DEFAULT_MAX_PARALLEL = max(1, (os.cpu_count() or 2) - 2)
+LOCAL_DURATION_CACHE = os.path.join(REPO, ".test_durations.local.json")
+DEFAULT_CHUNK_COUNT = 6
+SLOWEST_FILE_COUNT = 10
+CHUNKED_NODEID_TEMPLATE = "tests/test_runner.py::test_script[{}]"
+
+
+def _chunked_manifest_payload(durations, shard_count):
+    return validate_gate_shard_manifest({"schema_version": GATE_SHARD_SCHEMA_VERSION,
+                                         "shard_count": shard_count, "durations": durations})
+
+
+def _chunked_atomic_json(path, payload):
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(mode="w", dir=os.path.dirname(path), delete=False) as stream:
+            temporary = stream.name
+            json.dump(payload, stream, indent=2, sort_keys=True)
+            stream.write("\n")
+        os.replace(temporary, path)
+    finally:
+        if temporary and os.path.exists(temporary):
+            os.unlink(temporary)
+
+
+def _chunked_promote_cache(files, shard_count):
+    with open(LOCAL_DURATION_CACHE) as stream:
+        cache = json.load(stream)
+    if type(cache.get("coverage")) is not bool or cache["coverage"] != (os.environ.get("SPENDGUARD_COVERAGE") == "1"):
+        raise GateShardEvidenceError("cache coverage regime differs from requested regime")
+    if cache.get("schema_version") != GATE_SHARD_SCHEMA_VERSION:
+        raise GateShardEvidenceError("unsupported cache schema")
+    manifest = _chunked_manifest_payload(cache.get("durations"), shard_count)
+    if set(manifest["durations"]) != {CHUNKED_NODEID_TEMPLATE.format(os.path.basename(path)) for path in files}:
+        raise GateShardEvidenceError("cache inventory differs from complete suite")
+    _chunked_atomic_json(os.path.join(REPO, GATE_SHARD_MANIFEST_FILENAME), manifest)
+
+
+def _chunked_timed_file(path):
+    started = time.perf_counter()
+    result = _run_one(path)
+    return result, time.perf_counter() - started
 FILE_BUDGET_S = 600                      # per-file timeout — MIRROR tests/test_runner.py's `timeout=600` (they must stay
 #                                          in step). 120 here silently diverged and false-failed `spendguard deploy` when a
 #                                          slow-but-correct test (e.g. test_resources_gpu) ran on a loaded machine; 600
@@ -79,14 +124,29 @@ def _run_one(path):
 
 def main(argv=None):
     ap = argparse.ArgumentParser()
-    ap.add_argument("--chunks", type=int, default=6, help="how many chunks to split the suite into")
+    ap.add_argument("--chunks", type=int, default=DEFAULT_CHUNK_COUNT, help="how many chunks to split the suite into")
     ap.add_argument("--chunk", default=None, help="run ONLY chunk i/N (e.g. 2/6), for parallel shells")
+    ap.add_argument("--max-parallel", type=int, default=DEFAULT_MAX_PARALLEL)
+    ap.add_argument("--sequential", action="store_true", help="use the sequential chunk loop")
+    ap.add_argument("--write-manifest", action="store_true", help="promote the complete local cache without running tests")
+    ap.add_argument("--shard-count", type=int)
     a = ap.parse_args(argv)
+    if a.max_parallel < GATE_SHARD_MINIMUM_COUNT:
+        ap.error("--max-parallel must be positive")
+    if a.write_manifest and (a.chunk or a.shard_count is None):
+        ap.error("--write-manifest requires --shard-count and cannot use --chunk")
 
     files = _test_files()
     if not files:
         print("no test files found", file=sys.stderr)
         return 2
+    if a.write_manifest:
+        try:
+            _chunked_promote_cache(files, a.shard_count)
+        except (OSError, ValueError, GateShardEvidenceError) as error:
+            print(f"manifest refused: {error}", file=sys.stderr)
+            return 1
+        return 0
 
     # LINT GATE FIRST — mirror CI (`ruff check src tests`), so "green locally" means "green in the release build".
     # A suite that passes but fails lint still fails the release; this catches it in seconds instead of at the tag.
@@ -108,17 +168,35 @@ def main(argv=None):
     if a.chunk:
         i, _, tot = a.chunk.partition("/")
         only, n2 = int(i), int(tot or n)
+        if n2 < GATE_SHARD_MINIMUM_COUNT or not GATE_SHARD_MINIMUM_COUNT <= only <= n2:
+            ap.error("--chunk must select a valid i/N")
         if n2 != n:
             chunks = [files[j::n2] for j in range(n2)]
 
     total_fail, total_run = [], 0
-    for idx, chunk in enumerate(chunks, 1):
+    durations = {}
+    suite_started = time.perf_counter()
+    if not a.sequential and only is None:
+        with ThreadPoolExecutor(max_workers=a.max_parallel) as pool:
+            pending = {pool.submit(_chunked_timed_file, path): path for path in files}
+            for future in as_completed(pending):
+                path = pending[future]
+                (rc, out, err), elapsed = future.result()
+                name = os.path.basename(path)
+                durations[CHUNKED_NODEID_TEMPLATE.format(name)] = elapsed
+                total_run += 1
+                print(f"[file] {'FAIL' if rc else 'PASS'}: {name} ({elapsed:.2f}s)", flush=True)
+                if rc:
+                    total_fail.append((name, rc, out, err))
+                    print(f"    exit {rc}\n{out}\n    stderr: {err}", flush=True)
+    for idx, chunk in enumerate(chunks if a.sequential or only is not None else [], 1):
         if only is not None and idx != only:
             continue
         t0 = time.time()
         fails = []
         for path in chunk:
-            rc, out, err = _run_one(path)
+            (rc, out, err), elapsed = _chunked_timed_file(path)
+            durations[CHUNKED_NODEID_TEMPLATE.format(os.path.basename(path))] = elapsed
             total_run += 1
             if rc != 0:
                 fails.append((os.path.basename(path), rc, out, err))
@@ -129,6 +207,24 @@ def main(argv=None):
             tail = "\n".join((out or "").splitlines()[-6:])
             print(f"    ✗ {name} (exit {rc})\n{tail}\n    stderr: {(err or '').strip()[:200]}", flush=True)
         total_fail += fails
+
+    wall_s = time.perf_counter() - suite_started
+    if only is None:
+        expected = {CHUNKED_NODEID_TEMPLATE.format(os.path.basename(path)) for path in _test_files()}
+        if total_run != len(files) or set(durations) != expected:
+            raise GateShardEvidenceError("full suite timing inventory is incomplete")
+        _chunked_manifest_payload(durations, GATE_SHARD_MINIMUM_COUNT)
+        _chunked_atomic_json(LOCAL_DURATION_CACHE, {
+            "schema_version": GATE_SHARD_SCHEMA_VERSION,
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "coverage": os.environ.get("SPENDGUARD_COVERAGE") == "1",
+            "wall_s": wall_s, "max_parallel": GATE_SHARD_MINIMUM_COUNT if a.sequential else a.max_parallel,
+            "durations": durations,
+        })
+        print(f"[timing] total wall {wall_s:.2f}s; CPU sum (file wall-times) {sum(durations.values()):.2f}s", flush=True)
+        print(f"[timing] TOP {SLOWEST_FILE_COUNT} slowest files:", flush=True)
+        for nodeid, elapsed in sorted(durations.items(), key=lambda item: (-item[1], item[0]))[:SLOWEST_FILE_COUNT]:
+            print(f"    {nodeid}: {elapsed:.2f}s", flush=True)
 
     print(f"\n{'FAIL' if total_fail else 'OK'}: {total_run - len(total_fail)}/{total_run} files passed"
           f"{' — ' + ', '.join(f[0] for f in total_fail) if total_fail else ''}")
