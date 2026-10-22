@@ -39,6 +39,7 @@
     "tests/test_runner.py::test_script[test_audit_deep_evidence_whole.py]": 0.596,
     "tests/test_runner.py::test_script[test_auto_fresh.py]": 0.209,
     "tests/test_runner.py::test_script[test_autotune_raises_on_truncation.py]": 0.388,
+    "tests/test_runner.py::test_script[test_available_capacity.py]": 0.09,
     "tests/test_runner.py::test_script[test_backfill.py]": 0.253,
     "tests/test_runner.py::test_script[test_bakeoff_arm_resilience.py]": 0.572,
     "tests/test_runner.py::test_script[test_bakeoff_effort_sweep.py]": 0.689,
