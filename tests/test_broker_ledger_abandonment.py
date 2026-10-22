@@ -73,8 +73,15 @@ class BrokerLedgerAbandonmentGuards(unittest.TestCase):
         released = threading.Event()
         failures = []
         results = []
+        invocation_count = 0
 
         def invoke_pool_snapshot_fixture(**kwargs):
+            nonlocal invocation_count
+            invocation_count += 1
+            if invocation_count > 1:
+                with ledger_read._ledger_read_connection(
+                        ledger_path, BROKER_WAL_READ_DEADLINE_S) as next_reader:
+                    return {"text": next_reader.execute(BROKER_WAL_SELECT).fetchone()[0]}
             try:
                 with ledger_read._ledger_read_connection(
                         ledger_path, BROKER_WAL_READ_DEADLINE_S) as reader:
@@ -113,6 +120,9 @@ class BrokerLedgerAbandonmentGuards(unittest.TestCase):
                                 "watchdog recycled the worker but detached its ledger read")
                 self.assertTrue(failures, "watchdog must surface typed read abandonment")
                 self.assertEqual(writer.execute(BROKER_WAL_CHECKPOINT_SQL).fetchone(), (0, 0, 0))
+                next_result = pool.run_warm(__name__, timeout=POOL_WAL_WATCHDOG_S)
+                self.assertEqual(next_result, {"text": __name__},
+                                 "abandoned scan starved the next pool lease or ledger read")
         finally:
             caller.join(BROKER_WAL_READ_DEADLINE_S)
             pool.shutdown()
