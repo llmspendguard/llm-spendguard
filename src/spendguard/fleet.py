@@ -188,6 +188,9 @@ def restart_stale(apply=False):
     `apply=False` (default) is a DRY RUN: it reports what it WOULD do without touching anything. Returns
     {restarted:[...], warn:[...], dry_run:bool}. $0, never raises — a restart hiccup is reported, not thrown."""
     import subprocess
+    if apply:
+        from .codex_broker_owner import ensure_codex_broker_owner_running
+        ensure_codex_broker_owner_running()
     restarted, warn = [], []
     for c in running_consumers():
         if not c.get("identity_verified"):

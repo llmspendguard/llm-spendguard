@@ -16,6 +16,7 @@ import time
 from pathlib import Path
 
 from . import config
+from .warm_stdio_daemon import _warm_owner_marker_env
 
 
 _PROTOCOL_VERSION = 1
@@ -25,6 +26,7 @@ _CONNECT_TIMEOUT_S = float(config._cfg_get("advisor", "codex_daemon_broker_conne
 _RESPONSE_GRACE_S = float(config._cfg_get("advisor", "codex_daemon_broker_response_grace_s", 5.0))
 _LOCK_NAME = "codex-daemon"
 _BROKER_PEER_PEEK_BYTES = 1
+CODEX_BROKER_OWNER_LANE = "codex"
 
 
 @contextlib.contextmanager
@@ -107,8 +109,9 @@ def _send_frame(connection, value):
 class _CodexDaemonBroker:
     """Bound-method facade preserving the codex_daemon module API while sharing one host owner."""
 
-    def __init__(self, local_daemon):
+    def __init__(self, local_daemon, owner_marker=None):
         self._local = local_daemon
+        self._owner_marker = dict(owner_marker or {})
         self._role_lock = threading.Lock()
         self._owner_pid = None
         self._lock_context = None
@@ -134,6 +137,11 @@ class _CodexDaemonBroker:
             config.codex_daemon_pool_settings()["size"] + config.codex_daemon_admission_settings()["max_waiters"])
 
     def _become_owner_if_available(self):
+        current_marker = _warm_owner_marker_env(CODEX_BROKER_OWNER_LANE)
+        from .warm_stdio_daemon import WARM_OWNER_BOOT_ENV, WARM_OWNER_PID_ENV
+        if (WARM_OWNER_BOOT_ENV not in self._owner_marker or WARM_OWNER_PID_ENV not in self._owner_marker
+                or self._owner_marker != current_marker):
+            return False
         pid = os.getpid()
         with self._role_lock:
             if self._owner_pid == pid and self._listener is not None:
@@ -268,6 +276,10 @@ class _CodexDaemonBroker:
         if self._become_owner_if_available():
             return self._local.run_warm(**kwargs)
         result = self._call_owner(kwargs)
+        if result is None:
+            from .codex_broker_owner import ensure_codex_broker_owner_running
+            ensure_codex_broker_owner_running()
+            result = self._call_owner(kwargs)
         return result if result is not None else {"error": "codex broker unavailable; uncounted local fallback refused"}
 
     def broker_ensure_running(self):
@@ -275,8 +287,20 @@ class _CodexDaemonBroker:
             return self._local.ensure_running()
         if self.broker_running():
             return True
+        from .codex_broker_owner import ensure_codex_broker_owner_running
+        ensure_codex_broker_owner_running()
+        if self.broker_running():
+            return True
         config.warn_once("[spendguard] codex broker unavailable; uncounted local startup refused")
         return False
+
+    def broker_owner_serve_forever(self):
+        """Build and serve only when this facade carries this process's exact owner identity."""
+        if not self._become_owner_if_available():
+            return False
+        while not self._stopping.wait(config.codex_daemon_pool_settings()["health_interval_s"]):
+            pass
+        return True
 
     def broker_running(self):
         if self._owner_pid == os.getpid():
