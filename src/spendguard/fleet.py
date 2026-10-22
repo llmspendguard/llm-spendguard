@@ -238,7 +238,7 @@ def _dependency_fingerprint(pyproject_path=None):
 def _refresh_editable_install(python_executable, repo_root, timeout=180):
     """The pip boundary, kept small so offline tests can replace it without ever invoking a real installer."""
     import subprocess
-    result = subprocess.run([str(python_executable), "-m", "pip", "install", "-e", str(repo_root)],
+    result = subprocess.run([str(python_executable), "-m", "pip", "install", "-e", str(repo_root), "--no-cache-dir"],
                             capture_output=True, text=True, timeout=timeout)
     if result.returncode:
         raise RuntimeError((result.stderr or result.stdout or "pip install failed").strip()[:500])

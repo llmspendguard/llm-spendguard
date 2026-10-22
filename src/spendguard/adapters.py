@@ -291,6 +291,29 @@ def _surface_lane_auth(lane, cmd):
         pass
 
 
+def _authoritative_lane_auth_status(lane):
+    """Read current lane auth without the routing cache; logout alerts must never consume stale state."""
+    try:
+        from . import lanes
+        return lanes.lane_auth_status(lane, ttl=0)
+    except Exception:
+        return None
+
+
+def _surface_confirmed_lane_logout(lane, auth_status):
+    """Emit and persist logout only for the authoritative checker's exact False verdict."""
+    if not isinstance(auth_status, dict) or auth_status.get("authed") is not False:
+        return False
+    relogin_command = auth_status.get("cmd") or ""
+    _surface_lane_auth(lane, relogin_command)
+    try:
+        from . import reliability
+        reliability.note_lane_auth_down(lane, relogin_command)
+    except Exception:
+        pass
+    return True
+
+
 def _lane_model_cooling(lane, model):
     return resource_state.cooling(resource_state.lane_model_key(lane, model))
 
@@ -2648,21 +2671,11 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
         # DOWN lane is not a task the caller opted out of). A lane with no cheap status command answers None → behavior
         # unchanged. Skipped for a quota miss (a known transient, not a logout). Cached, $0 for a lane already checked.
         if _lane_reason != "quota":
-            try:
-                from . import lanes as _lanes_auth
-                _astat = _lanes_auth.lane_auth_status(lane_name)
-            except Exception:
-                _astat = None
-            if isinstance(_astat, dict) and _astat.get("authed") is False:
+            _astat = _authoritative_lane_auth_status(lane_name)
+            if _surface_confirmed_lane_logout(lane_name, _astat):
                 _lane_reason = "auth"
                 _recovery.classification = "permanent"
                 _recovery.recovery_event("classified", classification="permanent", evidence=_astat)
-                _surface_lane_auth(lane_name, _astat.get("cmd") or "")
-                try:
-                    from . import reliability as _rel_auth
-                    _rel_auth.note_lane_auth_down(lane_name, _astat.get("cmd") or "")
-                except Exception:
-                    pass
         if no_metered_fallback and getattr(_sub_guard, "on", False):
             # EXPLICIT $0-ONLY caller (--refuse-billed): EVERY lane miss stays a free error, including an executor/auth
             # outage. This is deliberately the rare exception to ensure-success; without this opt-in, the ladder below
