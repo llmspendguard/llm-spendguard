@@ -6,8 +6,12 @@ from unittest.mock import patch
 
 from spendguard import codex_daemon, config, config_schema, dispatch
 
-SCHEDULER_EXPECTED_WARM_DEFAULT = 12
-SCHEDULER_OVERRIDE_WARM_SIZE = 13
+# Track the one SSOT (config.CODEX_POOL_SIZE_DEFAULT), not a frozen literal: this guard checks that the
+# resolution path returns the DECLARED default when nothing overrides — it does not re-pin the number, so an
+# intentional default change (e.g. 12→20) never forces a hand-edit here while the override cases below still prove
+# env/cfg win over whatever the default is.
+SCHEDULER_EXPECTED_WARM_DEFAULT = config.CODEX_POOL_SIZE_DEFAULT
+SCHEDULER_OVERRIDE_WARM_SIZE = config.CODEX_POOL_SIZE_DEFAULT - 1
 SCHEDULER_CEILING_CONFIGURATIONS = ((2, 11, 12), (11, 3, 12), (11, 12, 4))
 SCHEDULER_CODEX_VENDOR = "openai"
 SCHEDULER_CODEX_LANE = "codex"
