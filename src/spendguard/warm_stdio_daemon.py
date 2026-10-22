@@ -40,6 +40,8 @@ import tempfile
 import threading
 import time
 
+import psutil
+
 from . import config
 
 # A FIXED, non-external bootstrap directory for the server process. Each call carries its own explicit task cwd where
@@ -49,6 +51,142 @@ _WARM_REAP_TIMEOUT_S = 5
 _WARM_GROUP_POLL_INTERVAL_S = 0.05
 _WARM_GROUP_PROBE_SIGNAL = 0
 _WARM_FORCE_KILL_SIGNAL = getattr(signal, "SIGKILL", None)
+
+# ── warm-server OWNER MARKER + cross-session ORPHAN REAPER ────────────────────────────────────────────────────────
+# A warm server is a child of whatever process built the pool (an mcp daemon, a `delegate`, a hook). If that owner
+# dies by SIGKILL/crash — bypassing its atexit teardown — the server is ORPHANED: its stdio pipes to the dead owner
+# are broken so it can serve no one, yet it keeps its RAM. Reaping is otherwise owned by the (now-dead) worker, so
+# these leak across sessions and accumulate. The reaper closes that gap. It identifies spendguard's own servers
+# STRUCTURALLY — by a marker spendguard stamps on the child's environment at spawn — NEVER by guessing from a
+# command line (which would be a meaning-decision AND would risk killing the user's own codex/kimi processes). The
+# owner is recorded as (pid, create_time): a recycle-proof identity, so a reused pid belonging to a NEW process is
+# not mistaken for the dead owner still being alive.
+WARM_OWNER_PID_ENV = "SPENDGUARD_WARM_OWNER_PID"
+WARM_OWNER_BOOT_ENV = "SPENDGUARD_WARM_OWNER_BOOT"       # owner psutil create_time(), repr() of a float
+WARM_OWNER_LANE_ENV = "SPENDGUARD_WARM_LANE"             # the lane label of the server (codex / kimi / …)
+WARM_OWNER_BOOT_EPSILON_S = 0.05                         # create_time() float-formatting tolerance
+
+
+def _warm_owner_marker_env(lane):
+    """The owner-identity env stamped onto every warm server spendguard spawns, so the reaper can later decide —
+    structurally, from a fact spendguard itself wrote — whether this process is one of ours and whether its owner is
+    still alive. Stamps (pid, create_time); if create_time is unreadable the reaper treats the owner as unknown and
+    NEVER reaps, so a missing identity can only under-reap, never over-reap."""
+    marker = {WARM_OWNER_LANE_ENV: str(lane), WARM_OWNER_PID_ENV: str(os.getpid())}
+    try:
+        marker[WARM_OWNER_BOOT_ENV] = repr(psutil.Process(os.getpid()).create_time())
+    except Exception:
+        pass
+    return marker
+
+
+def _warm_owner_provably_dead(owner_pid, owner_boot_repr):
+    """True ONLY when the recorded owner (pid, create_time) can be PROVEN gone — a vanished pid, or a pid that now
+    belongs to a different process (its create_time no longer matches, i.e. the pid was recycled). Everything else
+    returns False: owner alive with a matching identity; a pid whose identity cannot be confirmed (missing or
+    malformed create_time); or any psutil failure. The name states exactly this one-directional claim — unknown is
+    deliberately NOT conflated with dead — so uncertainty can only under-reap, never cause a wrongful kill."""
+    try:
+        owner = psutil.Process(owner_pid)
+    except psutil.NoSuchProcess:
+        return True                                     # the owner pid is gone → provably dead
+    except Exception:
+        return False                                    # cannot query the pid → not provable → never reap
+    if owner_boot_repr is None:
+        return False                                    # pid exists, no recorded identity to confirm recycling
+    try:
+        recorded_boot = float(owner_boot_repr)
+    except (TypeError, ValueError):
+        return False                                    # malformed identity → cannot prove recycling → never reap
+    try:
+        return abs(owner.create_time() - recorded_boot) >= WARM_OWNER_BOOT_EPSILON_S
+    except Exception:
+        return False
+
+
+def _warm_reap_process_group(pid):
+    """Signal a warm server's whole process GROUP (it is a session leader — start_new_session at spawn — so its pgid
+    is its pid), SIGTERM then SIGKILL after a short grace. Returns True once no group member remains."""
+    if not (hasattr(os, "killpg") and hasattr(os, "getpgid")):
+        try:
+            os.kill(pid, _WARM_FORCE_KILL_SIGNAL or signal.SIGTERM)
+        except ProcessLookupError:
+            return True
+        except Exception:
+            return False
+        return True
+    deadline = time.monotonic() + _WARM_REAP_TIMEOUT_S
+    for sig in (signal.SIGTERM, _WARM_FORCE_KILL_SIGNAL or signal.SIGTERM):
+        try:
+            os.killpg(pid, sig)
+        except ProcessLookupError:
+            return True
+        except Exception:
+            return False
+        while time.monotonic() < deadline:
+            try:
+                os.killpg(pid, _WARM_GROUP_PROBE_SIGNAL)     # signal 0 = liveness probe, kills nothing
+            except ProcessLookupError:
+                return True
+            except Exception:
+                break
+            time.sleep(_WARM_GROUP_POLL_INTERVAL_S)
+    try:
+        os.killpg(pid, _WARM_GROUP_PROBE_SIGNAL)
+        return False
+    except ProcessLookupError:
+        return True
+    except Exception:
+        return False
+
+
+def reap_orphaned_warm_servers(lane=None, execute=True):
+    """Reclaim warm-lane servers spendguard spawned whose spawning OWNER is no longer alive (the cross-session leak).
+
+    Selection is STRUCTURAL: a candidate is only a process carrying spendguard's own owner-marker env (stamped at
+    spawn), and it is reaped ONLY when its recorded owner (pid, create_time) is not a currently-living process with
+    that identity. A live pool's servers (owner alive) and the user's own codex/kimi processes (no marker) are never
+    touched. Each orphan is a session leader, so its whole process group is signalled.
+
+    lane: restrict to one lane label (e.g. "codex"); None reaps every warm lane.
+    execute: False ⇒ dry run — return the orphans that WOULD be reaped without signalling any.
+    Returns {"scanned", "orphans", "reaped", "unreadable", "errors"}. `unreadable` names every process whose
+    environment could not be read — a VISIBLE gap (a possible orphan we could not classify), never silently dropped:
+    "cannot tell" is not "clean".
+    """
+    report = {"scanned": 0, "orphans": [], "reaped": [], "unreadable": [], "errors": []}
+    for proc in psutil.process_iter(["pid"]):
+        try:
+            environ = proc.environ()
+        except (psutil.NoSuchProcess, psutil.ZombieProcess):
+            continue                                     # the process is genuinely gone — nothing to reap or report
+        except Exception as exc:
+            # Could not read this process's environment, so we cannot tell whether it is one of our orphaned servers.
+            # Record it as an EXPLICIT gap rather than dropping it. (Our servers are same-uid and readable; an
+            # AccessDenied here is another user's process, which is never ours — but the trace must still exist.)
+            report["unreadable"].append(f"{getattr(proc, 'pid', '?')}: {type(exc).__name__}")
+            continue
+        owner_pid_raw = environ.get(WARM_OWNER_PID_ENV)
+        if owner_pid_raw is None:
+            continue                                     # not a spendguard-spawned warm server
+        if lane is not None and environ.get(WARM_OWNER_LANE_ENV) != lane:
+            continue
+        report["scanned"] += 1
+        try:
+            owner_pid = int(owner_pid_raw)
+        except (TypeError, ValueError):
+            report["unreadable"].append(f"{proc.pid}: unparseable owner pid {owner_pid_raw!r}")
+            continue                                     # owner id corrupt → owner unknown → never reap
+        if not _warm_owner_provably_dead(owner_pid, environ.get(WARM_OWNER_BOOT_ENV)):
+            continue                                     # owner alive or unverifiable → server may be in use; never reap
+        report["orphans"].append(proc.pid)
+        if not execute:
+            continue
+        if _warm_reap_process_group(proc.pid):
+            report["reaped"].append(proc.pid)
+        else:
+            report["errors"].append(f"reap({proc.pid}): group still alive after SIGKILL grace")
+    return report
 
 
 class _WarmStdioJsonRpcDaemon:
@@ -340,7 +478,8 @@ class _WarmStdioJsonRpcDaemon:
             p = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                                  bufsize=0, cwd=_SAFE_CWD,
                                  start_new_session=hasattr(os, "killpg") and hasattr(os, "getpgid"),
-                                 env={**config.lane_exec_env(launcher), **self._environment_overrides})
+                                 env={**config.lane_exec_env(launcher), **self._environment_overrides,
+                                      **_warm_owner_marker_env(self._LANE_LABEL)})   # owner identity last: authoritative
         except Exception:
             return None
         if hasattr(os, "killpg") and hasattr(os, "getpgid"):

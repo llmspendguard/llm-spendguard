@@ -51,6 +51,24 @@ def _codex_pool_error_result(error, thread, **extra):
             "auth_error": _codex_rpc_auth_failure(error), **extra}
 
 
+def _reap_codex_orphans():
+    """Reclaim codex app-servers orphaned by a dead host (the cross-session leak the user hit as warm-daemon
+    saturation / thrashing). Structural + safe-by-construction: reaps ONLY servers carrying spendguard's own
+    owner-marker whose recorded owner is dead — never a live pool's servers, never the user's own codex. Called at
+    pool startup and on every health tick so it runs continuously, not just once. Best-effort: a reap failure must
+    never break warming or the advisor."""
+    try:
+        from .warm_stdio_daemon import reap_orphaned_warm_servers
+        report = reap_orphaned_warm_servers(lane=_CodexDaemon._LANE_LABEL)
+        if report.get("reaped"):
+            config.warn_once(f"[spendguard] reaped {len(report['reaped'])} orphaned codex app-server(s): "
+                             f"{report['reaped']}")
+        return report
+    except Exception as exc:
+        config.warn_once(f"[spendguard] codex orphan reap failed: {exc}")
+        return None
+
+
 def _mcp_disable_flags():
     """Disable MCP orchestration for this headless app-server process — the ONE definition lives in codex_exec (so the
     cold read-only `codex exec` path and this warm daemon share the setting to avoid orphaned MCP servers).
@@ -322,6 +340,9 @@ class _CodexDaemonPool:
         self._pool_degraded = {}
 
     def pool_ensure_running(self):
+        # Before warming a fresh pool, reclaim any codex app-servers orphaned by a previously-dead host, so a new
+        # pool never starts on top of a pile of leaked servers from earlier sessions.
+        _reap_codex_orphans()
         # Warm concurrently; the inherited per-instance spawn lock also makes concurrent callers safe.
         results = [None] * self._size
 
@@ -347,6 +368,9 @@ class _CodexDaemonPool:
     def _pool_maintain_warmth(self):
         interval = config.codex_daemon_pool_settings()["health_interval_s"]
         while not self._pool_stopping.wait(interval):
+            # Continuously reclaim orphaned codex app-servers (a host that died WHILE this pool runs leaks its
+            # servers too), so the leak can never accumulate between restarts — the active reaper the user asked for.
+            _reap_codex_orphans()
             # Idle health work leases through the same bucket. Agentic leases have an independent
             # deadline in pool_run_warm, so even an invocation that never returns is reclaimed.
             from .dispatch import DispatchTimeout
