@@ -56,16 +56,16 @@ DISPATCH_POSITIVE_CONCURRENCY_MIN = 1
 _ENV_PREFIX = "SPENDGUARD_DISPATCH_"
 
 
-def effective_codex_concurrency(pool_size=None):
+def effective_codex_concurrency(pool_size=None, *, strict=False):
     """Resolve Codex execution capacity without raising any configured safety bound."""
     from . import config
     if pool_size is None:
         pool_size = config.codex_daemon_pool_settings()["size"]
     # Unify warm-worker N, aggregate dispatch semaphore, and Codex lane admission conservatively.
     return min(int(pool_size),
-               max(DISPATCH_POSITIVE_CONCURRENCY_MIN, _limit("global_concurrency", DEFAULT_GLOBAL_CONCURRENCY)),
+               max(DISPATCH_POSITIVE_CONCURRENCY_MIN, _limit("global_concurrency", DEFAULT_GLOBAL_CONCURRENCY, strict=strict)),
                max(DISPATCH_POSITIVE_CONCURRENCY_MIN, _limit(
-                   "lane_concurrency_codex", _limit("lane_concurrency", DEFAULT_LANE_CONCURRENCY))))
+                   "lane_concurrency_codex", _limit("lane_concurrency", DEFAULT_LANE_CONCURRENCY, strict=strict), strict=strict)))
 
 
 def _off():
@@ -74,10 +74,16 @@ def _off():
     return os.environ.get(_ENV_PREFIX + "OFF") == "1"
 
 
-def _limit(key, default):
+def _dispatch_limit_env_key(key):
+    """Environment spelling shared by limit reads and presence checks."""
+    return _ENV_PREFIX + key.upper()
+
+
+def _limit(key, default, *, strict=False):
     """A dispatch limit: env `SPENDGUARD_DISPATCH_<KEY>` wins, then config `dispatch.<key>`, then the default.
-    Parsed as int; a malformed value falls back to the default rather than raising into a hot path."""
-    env = os.environ.get(_ENV_PREFIX + key.upper())
+    Parsed as int; malformed config falls back to the default unless strict=True.
+    Strict capacity reads propagate config failures so the whole ceiling can use its floor."""
+    env = os.environ.get(_dispatch_limit_env_key(key))
     if env is not None:
         try:
             return int(env)
@@ -88,6 +94,8 @@ def _limit(key, default):
         v = config._cfg_get("dispatch", key, default)
         return int(v)
     except Exception:
+        if strict:
+            raise
         return int(default)
 
 
@@ -1159,6 +1167,14 @@ def _managed_all_on():
         return True
 
 
+def _configured_lane_capacity(lane, *, strict=False):
+    """Configured execution capacity shared by free-slot and ceiling reads."""
+    if lane == "codex":
+        return effective_codex_concurrency(strict=strict)
+    return _limit(f"lane_concurrency_{lane}", _limit(
+        "lane_concurrency", DEFAULT_LANE_CONCURRENCY, strict=strict), strict=strict)
+
+
 def lane_free(lane):
     """Free concurrency slots on a subscription LANE right now = limit − in_flight − waiting. The signal a fan uses
     for LEAST-LOADED dispatch: pick the arm with the MOST free slots so no lane idles while a slow one bottlenecks,
@@ -1166,9 +1182,7 @@ def lane_free(lane):
     lane with no bucket yet is FULLY free (its whole cap), so the first tasks fill every empty lane first, which is
     exactly what seeds the cross-vendor SPREAD before the fast lanes start pulling the overflow."""
     key = f"lane:{lane}"
-    limit = _limit(f"lane_concurrency_{lane}", _limit("lane_concurrency", DEFAULT_LANE_CONCURRENCY))
-    if lane == "codex":
-        limit = effective_codex_concurrency()
+    limit = _configured_lane_capacity(lane)
     with _GOV._lock:
         b = _GOV._buckets.get(key)
         if b is None:
@@ -1181,7 +1195,7 @@ def lane_free(lane):
 # processes each holding RAM while queued. try_admit() is the missing primitive: a caller checks for a slot and, if
 # none is free, SHEDS immediately (never spawns / never waits). Machine-wide (flock), so one shared ceiling bounds
 # the whole hook fleet (honestreview / ccwatch / 7thsense) across every process, not per-system.
-DEFAULT_ADMIT = 6              # concurrent heavy hook-ops machine-wide; override via SPENDGUARD_DISPATCH_ADMIT_<POOL> / config
+DEFAULT_ADMIT = 6              # capacity-derived admission floor; explicit operator caps still win
 
 
 class _NoopAdmit:
@@ -1196,10 +1210,53 @@ class _NoopAdmit:
 _NOOP_ADMIT = _NoopAdmit()
 
 
+def _admit_pool_config_key(pool):
+    """The single spelling of a pool admission config key."""
+    return f"admit_{pool}"
+
+
 def _admit_limit(pool):
     """Machine-wide ceiling for a named admission POOL — env SPENDGUARD_DISPATCH_ADMIT_<POOL> wins, then config
     dispatch.admit_<pool>, else DEFAULT_ADMIT. One number the whole fleet shares."""
-    return _limit(f"admit_{pool}", DEFAULT_ADMIT)
+    return _limit(_admit_pool_config_key(pool), DEFAULT_ADMIT)
+
+
+def available_capacity(pool="hooks"):
+    """Sum full configured capacity of ready lanes, floored at DEFAULT_ADMIT.
+
+    Capacity is currently pool-independent; pool provides signature symmetry.
+    Read cached readiness only, counting unknown lanes as ready. Any read failure
+    returns the floor; no probe is spawned or refreshed on this hot path.
+    """
+    try:
+        from . import lane_catalog, lanes
+        capacity = 0
+        for lane in lane_catalog.lanes():
+            readiness = lanes._last_probe_ok(lane)
+            # The cache API returns (ok, timestamp); no timestamp means unknown.
+            if isinstance(readiness, tuple):
+                probe_ok, probe_timestamp = readiness
+                readiness = probe_ok if probe_timestamp else None
+            if readiness is not False:
+                capacity += _configured_lane_capacity(lane, strict=True)
+        return max(DEFAULT_ADMIT, capacity)
+    except Exception:
+        return DEFAULT_ADMIT
+
+
+def _resolve_admit_ceiling(pool):
+    """An explicit operator cap wins absolutely over derived capacity."""
+    key = _admit_pool_config_key(pool)
+    if _dispatch_limit_env_key(key) in os.environ:
+        return _admit_limit(pool)
+    try:
+        from . import config
+        absent = object()
+        if config._cfg_get("dispatch", key, absent) is not absent:
+            return _admit_limit(pool)
+        return max(DEFAULT_ADMIT, available_capacity(pool))
+    except Exception:
+        return DEFAULT_ADMIT
 
 
 def try_admit(pool="hooks", limit=None):
@@ -1209,7 +1266,7 @@ def try_admit(pool="hooks", limit=None):
     `h = dispatch.try_admit('hooks')` and skip-with-a-note when `h is None`, so a busy machine never accumulates
     hundreds of waiting review processes — a refused caller never starts. Slots are flock-based, so a crashed
     holder's slot frees automatically (no stale reap). Gating-off / no fcntl → a no-op handle that always admits."""
-    lim = int(limit) if limit is not None else _admit_limit(pool)
+    lim = int(limit) if limit is not None else _resolve_admit_ceiling(pool)
     if _off() or _xp_off():
         return _NOOP_ADMIT
     try:
