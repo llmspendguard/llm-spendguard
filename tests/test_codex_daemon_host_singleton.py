@@ -2,7 +2,6 @@
 import multiprocessing
 import os
 from unittest.mock import patch
-from spendguard import config
 import pathlib
 import socket
 import sys
@@ -10,9 +9,20 @@ import tempfile
 import threading
 import time
 
-os.environ.setdefault("SPENDGUARD_HOME", tempfile.mkdtemp(prefix="sg-codex-host-singleton-", dir="/tmp"))
-os.environ.setdefault("SPENDGUARD_TEST_ISOLATED", "1")
-os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
+TEST_ISOLATION_ENVIRONMENT_KEY = "SPENDGUARD_TEST_ISOLATED"
+SPENDGUARD_HOME_ENVIRONMENT_KEY = "SPENDGUARD_HOME"
+NO_AUTOINSTALL_ENVIRONMENT_KEY = "SPENDGUARD_NO_AUTOINSTALL"
+TEST_HOME_PREFIX = "sg-"
+
+if os.environ.get(TEST_ISOLATION_ENVIRONMENT_KEY) != "1":
+    isolated_environment = dict(os.environ)
+    isolated_environment[TEST_ISOLATION_ENVIRONMENT_KEY] = "1"
+    isolated_environment[SPENDGUARD_HOME_ENVIRONMENT_KEY] = tempfile.mkdtemp(prefix=TEST_HOME_PREFIX)
+    isolated_environment[NO_AUTOINSTALL_ENVIRONMENT_KEY] = "1"
+    os.execve(sys.executable, [sys.executable, __file__], isolated_environment)
+
+from spendguard import config  # noqa: E402
+
 os.environ["SPENDGUARD_CODEX_DAEMON_POOL_SIZE"] = "1"
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
@@ -21,6 +31,11 @@ os.environ["SPENDGUARD_CODEX_BIN"] = str(FAKE_CODEX)
 
 _SOCKETPAIR_OWNER = None
 _SOCKETPAIR_CLIENT = None
+
+
+def _simulate_platform_without_launchd_owner():
+    from spendguard import codex_broker_owner
+    codex_broker_owner.launchd_codex_broker_owner_supported = lambda: False
 
 
 class _SocketPairConnection:
@@ -33,8 +48,11 @@ class _SocketPairConnection:
     def connect(self, path):
         return None
 
-    def recv(self, size):
-        return self._endpoint.recv(size)
+    def fileno(self):
+        return self._endpoint.fileno()
+
+    def recv(self, size, flags=0):
+        return self._endpoint.recv(size, flags)
 
     def sendall(self, payload):
         self._endpoint.sendall(payload)
@@ -87,6 +105,7 @@ def _install_socketpair_transport(owner):
 
 
 def _owner(ready, stop, reports, use_socketpair):
+    _simulate_platform_without_launchd_owner()
     from spendguard import codex_daemon
     from spendguard import warm_stdio_daemon
     if use_socketpair:
@@ -108,6 +127,7 @@ def _owner(ready, stop, reports, use_socketpair):
 
 def _client(ready, reports, use_socketpair):
     ready.wait(10)
+    _simulate_platform_without_launchd_owner()
     from spendguard import codex_daemon
     from spendguard import warm_stdio_daemon
     if use_socketpair:
@@ -145,19 +165,7 @@ def _client(ready, reports, use_socketpair):
 def test_two_host_attempts_share_one_warm_daemon_without_signals():
     os.environ.pop(config.CLI_TEST_OFFLINE_ENVIRONMENT_KEY, None)
     global _SOCKETPAIR_OWNER, _SOCKETPAIR_CLIENT
-    probe_path = os.path.join(os.environ["SPENDGUARD_HOME"], "codex-daemon-probe.sock")
-    probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    try:
-        probe.bind(probe_path)
-        use_socketpair = False
-    except PermissionError:
-        use_socketpair = True
-    finally:
-        probe.close()
-        try:
-            os.unlink(probe_path)
-        except FileNotFoundError:
-            pass
+    use_socketpair = True
     context = multiprocessing.get_context("fork" if use_socketpair else "spawn")
     if use_socketpair:
         _SOCKETPAIR_OWNER, _SOCKETPAIR_CLIENT = socket.socketpair()

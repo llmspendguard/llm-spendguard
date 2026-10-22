@@ -569,4 +569,11 @@ ensure_running = _DAEMON.broker_ensure_running
 running = _DAEMON.broker_running
 shutdown = _DAEMON.broker_shutdown
 
+
+def run_dedicated_codex_broker_owner():
+    """Run the sole pool-building facade with this process's exact PID/create-time marker."""
+    from .warm_stdio_daemon import _warm_owner_marker_env
+    owner = _CodexDaemonBroker(_LOCAL_DAEMON, owner_marker=_warm_owner_marker_env(_CodexDaemon._LANE_LABEL))
+    return owner.broker_owner_serve_forever()
+
 atexit.register(shutdown)

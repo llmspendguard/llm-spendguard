@@ -428,7 +428,9 @@ def _pool_chaos_exercise_wedge(wedge_mode):
             config, "codex_daemon_pool_settings", return_value=settings), patch(
             "spendguard.codex_daemon_broker._socket_path", return_value=pathlib.Path(temporary) / "broker.sock"):
         pool = codex_daemon._CodexDaemonPool(pool_chaos_child_factory, size=POOL_GUARD_SIZE)
-        broker = _CodexDaemonBroker(pool)
+        from spendguard.warm_stdio_daemon import _warm_owner_marker_env
+        from spendguard.codex_daemon_broker import CODEX_BROKER_OWNER_LANE
+        broker = _CodexDaemonBroker(pool, owner_marker=_warm_owner_marker_env(CODEX_BROKER_OWNER_LANE))
         executor = concurrent.futures.ThreadPoolExecutor(max_workers=POOL_GUARD_SIZE + 1)
         try:
             assert broker._become_owner_if_available()
