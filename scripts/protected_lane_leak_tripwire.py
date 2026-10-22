@@ -52,7 +52,7 @@ def validated_protected_lane_arguments(argv: list[str] | None) -> argparse.Names
 
 def protected_billing_groups(rows, protected_executor: str, protected_provider: str):
     metered_rows, plan_rows = [], []
-    other_call_count = 0
+    other_lane_markers = []
     for row in rows:
         executor = row["executor"]
         if executor == protected_executor:
@@ -60,8 +60,8 @@ def protected_billing_groups(rows, protected_executor: str, protected_provider: 
         elif row["provider"] == protected_provider and executor in API_EXECUTORS:
             metered_rows.append(row)
         else:
-            other_call_count += 1
-    return metered_rows, plan_rows, other_call_count
+            other_lane_markers.append(True)
+    return metered_rows, plan_rows, len(other_lane_markers)
 
 
 def summarized_protected_rows(rows):
