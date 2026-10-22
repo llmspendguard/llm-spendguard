@@ -4,6 +4,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import statistics
 import tempfile
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -350,14 +351,28 @@ for shard_guard_bad_duration in (-SHARD_GUARD_ONE, float("inf"), float("nan"), T
     shard_guard_invalid["durations"][shard_guard_nodeids[SHARD_GUARD_ZERO]] = shard_guard_bad_duration
     assert_gate_shard_evidence_refused(lambda shard_guard_invalid=shard_guard_invalid: shard_plan.distribute_gate_shard_nodeids(
         shard_guard_nodeids, shard_guard_invalid))
-shard_guard_missing = copy.deepcopy(shard_guard_manifest)
-shard_guard_missing["durations"].pop(shard_guard_nodeids[SHARD_GUARD_ZERO])
-assert_gate_shard_evidence_refused(lambda: shard_plan.distribute_gate_shard_nodeids(
-    shard_guard_nodeids, shard_guard_missing))
+# REGRESSION GUARD (the failure class that cost 5 rounds): a collected test the manifest has NOT timed
+# (a newly added one) must NEVER crash sharding. It is weighted at the median of known durations and the
+# partition still covers the COLLECTED set exactly once. This used to raise mid-collection and, under
+# `pytest -n auto`, surface as an opaque xdist worker INTERNALERROR blaming an unrelated test.
+shard_guard_untimed_manifest = copy.deepcopy(shard_guard_manifest)
+shard_guard_untimed_manifest["durations"].pop(shard_guard_nodeids[SHARD_GUARD_ZERO])
+shard_guard_expected_fallback = shard_plan.gate_shard_fallback_duration(shard_guard_untimed_manifest["durations"])
+assert shard_guard_expected_fallback == statistics.median(shard_guard_untimed_manifest["durations"].values())
+shard_guard_untimed_partitions = shard_plan.distribute_gate_shard_nodeids(
+    shard_guard_nodeids, shard_guard_untimed_manifest)
+shard_plan.verify_gate_shard_partition(shard_guard_nodeids, shard_guard_untimed_partitions)
+# A stale manifest entry (a removed test still listed) is simply not partitioned; the rest shards cleanly.
 shard_guard_incomplete_collection = list(shard_guard_nodeids)
-shard_guard_incomplete_collection.pop()
+shard_guard_dropped_nodeid = shard_guard_incomplete_collection.pop()
+shard_guard_stale_partitions = shard_plan.distribute_gate_shard_nodeids(
+    shard_guard_incomplete_collection, shard_guard_manifest)
+shard_plan.verify_gate_shard_partition(shard_guard_incomplete_collection, shard_guard_stale_partitions)
+assert shard_guard_dropped_nodeid not in {
+    nodeid for partition in shard_guard_stale_partitions for nodeid in partition}
+# A duplicate in the collection is still a genuine evidence error.
 assert_gate_shard_evidence_refused(lambda: shard_plan.distribute_gate_shard_nodeids(
-    shard_guard_incomplete_collection, shard_guard_manifest))
+    shard_guard_nodeids + [shard_guard_nodeids[SHARD_GUARD_ZERO]], shard_guard_manifest))
 shard_guard_zero_manifest = copy.deepcopy(shard_guard_manifest)
 shard_guard_zero_manifest["durations"] = dict.fromkeys(shard_guard_nodeids, SHARD_GUARD_ZERO)
 assert all(shard_plan.distribute_gate_shard_nodeids(shard_guard_nodeids, shard_guard_zero_manifest))
