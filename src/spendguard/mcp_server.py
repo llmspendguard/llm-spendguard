@@ -448,8 +448,10 @@ def _tool_compaction_candidates(args):
             "note": "for a tailored, conversation-specific decision run `spendguard claude-code compact --tailor` (gated)"}
 
 
-def _tool_dispatch_state(_args):
-    from . import dispatch
+def _tool_dispatch_state(args):
+    from . import dispatch, lane_queue
+    if args.get("id") is not None:
+        return lane_queue.queue_row_status(args["id"])
     st = dispatch.admission_state()
     return {"note": ("live ADMISSION + QUEUE + reasoning-cut state (the SAME dispatch.admission_state() the CLI "
                      "`spendguard dispatch` renders — api/MCP/cli parity): the governor's per-key concurrency/rpm/tpm, "
@@ -881,7 +883,9 @@ _TOOLS = {
         "waiting, the SELF-CALIBRATED per-vendor limits (learned from provider 429 + success headers), the durable "
         "queue depth incl. PARKED (capacity backpressure), and the deadline-cancel counts (billed by the provider, "
         "invisible to the local ledger). The same data the CLI `spendguard dispatch` prints (api/MCP/cli parity). $0.",
-        {"type": "object", "properties": {}, "additionalProperties": False},
+        {"type": "object", "properties": {
+            "id": {"type": "integer", "description": "optional async queue row handle to query"}},
+         "additionalProperties": False},
         _tool_dispatch_state),
     "spendguard_config": (
         "Every spendguard CONFIG knob (from config_schema — the single source that also drives the CLI `config` "

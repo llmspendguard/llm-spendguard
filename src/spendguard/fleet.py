@@ -118,12 +118,21 @@ def install_periodic_launchd_fleet_jobs():
             current = None
         if current != encoded:
             path.write_bytes(encoded)
+        clean_report = None
+        if document["Label"] == QUEUE_MANAGE_LAUNCHD_LABEL and current is None:
+            from .lane_queue import manage_queue_tick
+            clean_report = manage_queue_tick(execute=True, process=False)
+            if clean_report.get("error"):
+                installed.append({"label": document["Label"], "path": str(path),
+                                  "clean_only": clean_report, "install_skipped": True})
+                continue
         bootstrap = subprocess.run(["launchctl", "bootstrap", domain, str(path)], capture_output=True, text=True,
                                    timeout=FLEET_LAUNCHD_OPERATION_TIMEOUT_S)
         kickstart = subprocess.run(["launchctl", "kickstart", "%s/%s" % (domain, document["Label"])],
                                    capture_output=True, text=True, timeout=FLEET_LAUNCHD_OPERATION_TIMEOUT_S)
         installed.append({"label": document["Label"], "path": str(path),
-                          "bootstrap_rc": bootstrap.returncode, "kickstart_rc": kickstart.returncode})
+                          "bootstrap_rc": bootstrap.returncode, "kickstart_rc": kickstart.returncode,
+                          "clean_only": clean_report})
     return installed
 
 
