@@ -29,6 +29,19 @@ _BROKER_PEER_PEEK_BYTES = 1
 CODEX_BROKER_OWNER_LANE = "codex"
 
 
+class _BrokerAttachImportFailure:
+    def __init__(self, error):
+        self.error = error
+
+
+def _stale_consumer_attach_error(error):
+    from . import __version__
+    install_root = Path(__file__).resolve().parents[2]
+    return {"error": (f"spendguard install in this venv is stale/broken (running {__version__}; "
+                      f"attach-client import failed: {error}) — run `pip install -e {install_root}`; "
+                      "uncounted local fallback refused")}
+
+
 @contextlib.contextmanager
 def _broker_request_ledger_lifetime(connection):
     """Interrupt this request's ledger reads when its peer abandons the socket.
@@ -258,14 +271,24 @@ class _CodexDaemonBroker:
                 with contextlib.closing(connection):
                     _send_frame(connection, {"version": _PROTOCOL_VERSION, "method": "run_warm", "kwargs": kwargs})
                     response = _receive_frame(connection)
-                if response.get("version") != _PROTOCOL_VERSION or "result" not in response:
+                if response.get("version") != _PROTOCOL_VERSION:
+                    return _BrokerAttachImportFailure(
+                        ImportError(f"broker protocol {response.get('version')} is incompatible with client "
+                                    f"protocol {_PROTOCOL_VERSION}"))
+                if "result" not in response:
                     return None
                 result = response["result"]
                 return result if isinstance(result, dict) else None
             except ValueError as exc:
                 connection.close()
                 return {"error": f"codex broker invalid response refused: {exc}"}
-            except Exception:
+            except ImportError as exc:
+                try:
+                    connection.close()
+                except Exception:
+                    pass
+                return _BrokerAttachImportFailure(exc)
+            except (OSError, TimeoutError):
                 try:
                     connection.close()
                 except Exception:
@@ -273,6 +296,12 @@ class _CodexDaemonBroker:
                 if time.monotonic() >= deadline:
                     return None
                 time.sleep(min(0.02, max(0.0, deadline - time.monotonic())))
+            except Exception:
+                try:
+                    connection.close()
+                except Exception:
+                    pass
+                return None
 
     def broker_run_warm(self, prompt, model=None, thread=None, reasoning=None, sandbox="read-only", cwd=None,
                         timeout=None, recycle_on_timeout=None):
@@ -282,11 +311,15 @@ class _CodexDaemonBroker:
         if self._become_owner_if_available():
             return self._local.run_warm(**kwargs)
         result = self._call_owner(kwargs)
+        if isinstance(result, _BrokerAttachImportFailure):
+            return _stale_consumer_attach_error(result.error)
         if result is None:
             from .codex_broker_owner import ensure_codex_broker_owner_running
             ensure_codex_broker_owner_running()
             result = self._call_owner(kwargs)
-        return result if result is not None else {"error": "codex broker unavailable; uncounted local fallback refused"}
+        if isinstance(result, _BrokerAttachImportFailure):
+            return _stale_consumer_attach_error(result.error)
+        return result if result is not None else {"error": "codex broker unreachable; uncounted local fallback refused"}
 
     def broker_ensure_running(self):
         if self._become_owner_if_available():

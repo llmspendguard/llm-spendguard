@@ -1,8 +1,10 @@
 """Offline guard for fleet editable-install metadata refreshes: no network, real pip, git, or LLM."""
 import os
+import json
 import pathlib
 import sqlite3
 import tempfile
+from types import SimpleNamespace
 
 os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="sg-fleet-refresh-")
 os.environ.setdefault("SPENDGUARD_TEST_ISOLATED", "1")
@@ -11,6 +13,7 @@ os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
 from spendguard import config, fleet  # noqa: E402
 
 fails = []
+PINNED_CONSUMER_VERSION = "0.14.0"
 
 
 def ck(label, condition):
@@ -35,7 +38,11 @@ def consumer(home, name, pid):
 
 
 original_install = fleet._refresh_editable_install
+original_install_state = fleet._consumer_install_state
 try:
+    fleet._consumer_install_state = lambda python, root, version, timeout=fleet._CONSUMER_INSTALL_PROBE_TIMEOUT_S: {
+        "state": "editable_current", "code_version": version, "metadata_version": version,
+        "module_path": str(root / "src" / "spendguard" / "__init__.py"), "editable": True}
     print("-- absent marker refreshes and records the current dependency fingerprint --")
     home = isolated_home()
     venv = consumer(home, "consumer", 1001)
@@ -56,6 +63,28 @@ try:
     result = fleet.refresh_stale_installs(apply=True)
     ck("current venv is skipped", result["skipped_current"] == [str(current)])
     ck("current venv never invokes pip", calls == [] and result["refreshed"] == [])
+
+    print("\n-- pinned non-editable install cannot hide behind a current dependency marker --")
+    home = isolated_home()
+    pinned = consumer(home, "pinned", 1006)
+    (pinned / fleet._INSTALL_FINGERPRINT_MARKER).write_text(fleet._dependency_fingerprint() + "\n")
+    fleet._consumer_install_state = original_install_state
+    original_subprocess_run = fleet.subprocess.run
+    fleet.subprocess.run = lambda *args, **kwargs: SimpleNamespace(
+        returncode=0, stderr="", stdout=json.dumps({
+            "code_version": PINNED_CONSUMER_VERSION, "metadata_version": PINNED_CONSUMER_VERSION,
+            "module_path": str(pinned / "site-packages" / "spendguard" / "__init__.py"), "editable": False}))
+    calls = []
+    fleet._refresh_editable_install = lambda python, root, timeout=180: calls.append((python, root))
+    try:
+        result = fleet.refresh_stale_installs(apply=True)
+    finally:
+        fleet.subprocess.run = original_subprocess_run
+    ck("pinned consumer is detected and refreshed despite matching marker",
+       result["refreshed"] == [str(pinned)] and len(calls) == 1 and result["skipped_current"] == [])
+    fleet._consumer_install_state = lambda python, root, version, timeout=fleet._CONSUMER_INSTALL_PROBE_TIMEOUT_S: {
+        "state": "editable_current", "code_version": version, "metadata_version": version,
+        "module_path": str(root / "src" / "spendguard" / "__init__.py"), "editable": True}
 
     print("\n-- a per-venv failure does not block another refresh --")
     home = isolated_home()
@@ -106,6 +135,7 @@ try:
     ck("migration adds venv columns", {"venv_root", "python_executable"} <= columns)
 finally:
     fleet._refresh_editable_install = original_install
+    fleet._consumer_install_state = original_install_state
 
 print(f"\n{'[FAIL]' if fails else 'OK'} test_fleet_refresh_stale_installs: {len(fails)} failure(s)")
 raise SystemExit(1 if fails else 0)

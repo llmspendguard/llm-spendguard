@@ -19,6 +19,7 @@ never a start-time guess):
 `release.exit_if_stale()` lets any daemon self-exit→respawn. $0, no LLM. Nothing here ever raises onto a call path."""
 import os
 import hashlib
+import json
 import pathlib
 import plistlib
 import sqlite3
@@ -321,6 +322,16 @@ def restart_stale(apply=False):
 
 
 _INSTALL_FINGERPRINT_MARKER = ".spendguard_dep_fingerprint"
+_CONSUMER_INSTALL_PROBE_TIMEOUT_S = 15
+_CONSUMER_EDITABLE_REFRESH_TIMEOUT_S = 180
+_CONSUMER_INSTALL_PROBE = (
+    "import importlib.metadata as m,json,pathlib,spendguard;"
+    "d=m.distribution('llm-spendguard');"
+    "u=d.read_text('direct_url.json');"
+    "print(json.dumps({'code_version':spendguard.__version__,'metadata_version':d.version,"
+    "'module_path':str(pathlib.Path(spendguard.__file__).resolve()),"
+    "'editable':bool(u and json.loads(u).get('dir_info',{}).get('editable'))}))"
+)
 
 
 def _dependency_fingerprint(pyproject_path=None):
@@ -339,13 +350,53 @@ def _dependency_fingerprint(pyproject_path=None):
     return hashlib.sha256("\n".join(sorted(normalized)).encode("utf-8")).hexdigest()
 
 
-def _refresh_editable_install(python_executable, repo_root, timeout=180):
-    """The pip boundary, kept small so offline tests can replace it without ever invoking a real installer."""
-    import subprocess
-    result = subprocess.run([str(python_executable), "-m", "pip", "install", "-e", str(repo_root), "--no-cache-dir"],
+def _refresh_editable_install(python_executable, repo_root, timeout=_CONSUMER_EDITABLE_REFRESH_TIMEOUT_S):
+    """Compatibility boundary for tests; installation behavior lives in setup.install-hook machinery."""
+    from .setup import refresh_consumer_editable_package
+    refresh_consumer_editable_package(python_executable, repo_root, timeout)
+
+
+def _consumer_install_state(python_executable, repo_root, source_version,
+                            timeout=_CONSUMER_INSTALL_PROBE_TIMEOUT_S):
+    """Resolve one interpreter's package provenance without importing it into this process."""
+    result = subprocess.run([str(python_executable), "-c", _CONSUMER_INSTALL_PROBE],
                             capture_output=True, text=True, timeout=timeout)
     if result.returncode:
-        raise RuntimeError((result.stderr or result.stdout or "pip install failed").strip()[:500])
+        raise RuntimeError((result.stderr or result.stdout or "install probe failed").strip())
+    details = json.loads(result.stdout)
+    module_path = pathlib.Path(details["module_path"])
+    source_root = repo_root / "src"
+    details["state"] = (
+        "editable_current" if details["editable"] and module_path.is_relative_to(source_root)
+        and details["code_version"] == source_version and details["metadata_version"] == source_version
+        else "editable_stale" if details["editable"] else "noneditable_pinned"
+    )
+    return details
+
+
+def consumer_install_drift():
+    """Return actionable install skew for registered consumer venvs; read-only and idempotent."""
+    from . import __version__
+    repo_root = pathlib.Path(__file__).resolve().parents[2]
+    drift = []
+    try:
+        with closing(_fleet_db()) as connection:
+            consumers = connection.execute(
+                "SELECT DISTINCT venv_root,python_executable FROM consumers WHERE venv_root IS NOT NULL "
+                "AND venv_root != '' ORDER BY venv_root").fetchall()
+    except Exception:
+        return []
+    for venv, registered_python in consumers:
+        python_executable = pathlib.Path(registered_python) if registered_python else pathlib.Path(venv) / "bin" / "python"
+        try:
+            details = _consumer_install_state(python_executable, repo_root, __version__)
+            if details["state"] != "editable_current":
+                drift.append({"venv": venv, **details,
+                              "remediation": f"{python_executable} -m pip install -e {repo_root}"})
+        except Exception as exc:
+            drift.append({"venv": venv, "error": str(exc),
+                          "remediation": f"{python_executable} -m pip install -e {repo_root}"})
+    return drift
 
 
 def refresh_stale_installs(apply=False):
@@ -369,6 +420,7 @@ def refresh_stale_installs(apply=False):
     if not distinct:
         return {"refreshed": [], "skipped_current": [], "failed": [], "no_consumers": True}
 
+    from . import __version__
     repo_root = pathlib.Path(__file__).resolve().parents[2]
     try:
         current = _dependency_fingerprint(repo_root / "pyproject.toml")
@@ -379,17 +431,19 @@ def refresh_stale_installs(apply=False):
 
     for venv, registered_python in distinct.items():
         marker = pathlib.Path(venv) / _INSTALL_FINGERPRINT_MARKER
+        python_executable = pathlib.Path(registered_python) if registered_python else pathlib.Path(venv) / "bin" / "python"
         try:
-            if marker.read_text().strip() == current:
+            install_state = _consumer_install_state(python_executable, repo_root, __version__)
+            marker_current = marker.read_text().strip() == current
+            if install_state["state"] == "editable_current" and marker_current:
                 skipped_current.append(venv)
                 continue
-        except (OSError, UnicodeError):
+        except (OSError, UnicodeError, RuntimeError, ValueError, KeyError, json.JSONDecodeError):
             pass
         if not apply:
             refreshed.append(venv)                    # would refresh; result shape stays identical for dry-run
             continue
         try:
-            python_executable = pathlib.Path(registered_python) if registered_python else pathlib.Path(venv) / "bin" / "python"
             _refresh_editable_install(python_executable, repo_root)
             marker.write_text(current + "\n")
             refreshed.append(venv)
