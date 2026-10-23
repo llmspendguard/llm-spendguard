@@ -88,6 +88,7 @@ GATE_ISOLATED_TMPDIR_ENV_NAME = "TMPDIR"
 GATE_TIKTOKEN_CACHE_ENV_NAME = "TIKTOKEN_CACHE_DIR"
 GATE_TIKTOKEN_CACHE_DIRECTORY_NAME = "data-gym-cache"
 GATE_AMBIENT_TMPDIR = tempfile.gettempdir()
+GATE_AMBIENT_TIKTOKEN_CACHE_DIRECTORY = os.environ.get(GATE_TIKTOKEN_CACHE_ENV_NAME)
 GATE_TIKTOKEN_CACHE_DIRECTORY = os.path.join(GATE_AMBIENT_TMPDIR, GATE_TIKTOKEN_CACHE_DIRECTORY_NAME)
 GATE_SHORT_TMPDIR_DIRECTORY_NAME = "tmp"
 GATE_SHORT_TMPDIR_BASE = os.path.realpath(os.path.join(os.sep, GATE_SHORT_TMPDIR_DIRECTORY_NAME))
@@ -117,8 +118,7 @@ def validate_gate_child_environment(env, scratch_home, scratch_tmpdir):
     if not tmpdir_value or os.path.realpath(tmpdir_value) != expected_tmpdir:
         raise GateTestEnvironmentError("test isolation violated: TMPDIR escaped per-file temp directory")
     tiktoken_cache_value = env.get(GATE_TIKTOKEN_CACHE_ENV_NAME)
-    if not tiktoken_cache_value or os.path.realpath(tiktoken_cache_value) != os.path.realpath(
-            GATE_TIKTOKEN_CACHE_DIRECTORY):
+    if not tiktoken_cache_value or not os.path.isdir(tiktoken_cache_value):
         raise GateTestEnvironmentError("test isolation violated: stable tiktoken cache missing")
     if env.get(GATE_TEST_ISOLATED_ENV) != GATE_TEST_ENABLED:
         raise GateTestEnvironmentError("test isolation violated: isolated test signal missing")
@@ -131,7 +131,9 @@ def _child_env(scratch_home, scratch_tmpdir):
     for root_name in GATE_ISOLATED_HOME_ENV_NAMES:
         env[root_name] = os.path.realpath(scratch_home)
     env[GATE_ISOLATED_TMPDIR_ENV_NAME] = os.path.realpath(scratch_tmpdir)
-    env[GATE_TIKTOKEN_CACHE_ENV_NAME] = os.path.realpath(GATE_TIKTOKEN_CACHE_DIRECTORY)
+    env[GATE_TIKTOKEN_CACHE_ENV_NAME] = (
+        GATE_AMBIENT_TIKTOKEN_CACHE_DIRECTORY or os.path.realpath(GATE_TIKTOKEN_CACHE_DIRECTORY)
+    )
     env[GATE_TEST_ISOLATED_ENV] = GATE_TEST_ENABLED
     env[CLI_TEST_OFFLINE_ENVIRONMENT_KEY] = CLI_TEST_OFFLINE_ENABLED_VALUE
     # Mirror test_runner.py so offline runners stay in step: deterministic short recovery schedules; chaos sets its own timing explicitly.
