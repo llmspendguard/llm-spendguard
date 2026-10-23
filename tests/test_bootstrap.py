@@ -100,18 +100,30 @@ check("returns 0 with default repo", rc3 == 0)
 check("reconstruct_intents got a repo path (cwd default)",
       bool(calls_log.get("reconstruct_intents", {}).get("args")))
 
-print("-- bootstrap(run=True): success-print branch (reasoners stubbed → still zero spend in test) --")
-# all four reasoners are stubbed no-ops, so run=True cannot actually spend here; this only exercises
-# the run=True print path + confirms run=True is forwarded to every reasoner.
-review.review = _spy("review", ret={"insights": 1, "cost": 0.0})
+print("-- bootstrap(run=True): spend-sensitive negative control proves the dry-run oracle is non-vacuous --")
+# Negative control: the same paid-step double records a charge only when run=True. This proves the
+# conservation assertion above is sensitive to spend instead of passing vacuously against inert stubs.
+negative_control_meta_cost = 0.01
+
+
+def _ledger_sensitive_review(*a, **k):
+    calls_log["review"] = dict(args=a, kwargs=k)
+    if k.get("run") is True:
+        budget.record_meta(__name__, _ledger_sensitive_review.__name__, negative_control_meta_cost)
+    return {"insights": 1, "cost": negative_control_meta_cost if k.get("run") is True else 0.0}
+
+
+review.review = _ledger_sensitive_review
 advisor.mine = _spy("mine", ret={"insights": 1, "cost": 0.0})
 conv.synth = _spy("synth", ret={"insights": 1, "cost": 0.0})
 advisor.reconstruct = _spy("reconstruct", ret={"judged": 0, "cost": 0.0})
+negative_control_meta_before = budget.meta_spent_today()
 rc_run = bootstrap.bootstrap(repo=repo, transcripts=tdir, run=True)
 check("run=True returns 0", rc_run == 0)
 check("run=True forwarded to review", calls_log["review"]["kwargs"].get("run") is True)
 check("run=True forwarded to reconstruct", calls_log["reconstruct"]["kwargs"].get("run") is True)
-check("run=True (stubbed) still zero spend in test", budget.spent_today() == 0.0)
+check("negative control records meta spend when run=True",
+      budget.meta_spent_today() > negative_control_meta_before)
 # restore dry-run no-ops for the CLI test below
 review.review = _spy("review", ret={"requests": 1, "cost": 0.0})
 advisor.mine = _spy("mine", ret={"requests": 1, "cost": 0.0})

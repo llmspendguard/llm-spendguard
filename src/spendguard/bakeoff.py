@@ -317,7 +317,9 @@ def bakeoff(intent, candidates=None, prompts=None, sample_n=5, run=False, budget
                     calls.finalize_bakeoff_measurement(
                         _measurement_call_id, r.get("provider") or adapters.provider_for(_served_model),
                         c, _served_model, cost, int(r.get("in_tok") or 0), int(r.get("out_tok") or 0),
-                        intent, q, r.get("chosen_effort", replay_effort), r.get("executor") or "api")
+                        intent, q, r.get("chosen_effort", replay_effort),
+                        r.get("resolved_lane") or r.get("executor") or "api",
+                        r.get("resolution") or r.get("substitution"))
                 results[arm] = dict(model=c, effort=eff, runs=n_run, failed=n_err, last_error=last_error,
                                     labeled=n_lab, good=n_good, good_rate=(n_good / n_lab if n_lab else None),
                                     spent=round(spent, 6), per_good=(spent / n_good if n_good else None))
