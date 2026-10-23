@@ -16,6 +16,7 @@ Offline + hermetic: adapters.call is stubbed (no real model call, no network, no
 run proceeds without the pricing/tokenizer path.
 """
 import os
+import sqlite3
 import sys
 import tempfile
 
@@ -24,7 +25,7 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
     os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="spendguard-measure-")
     os.execv(sys.executable, [sys.executable] + sys.argv)
 
-from spendguard import adapters, bakeoff   # noqa: E402
+from spendguard import adapters, bakeoff, calls, config   # noqa: E402
 
 fails = []
 
@@ -49,13 +50,21 @@ ck("ONCE per pair: the same swap does not re-announce", adapters._warn_once_if_s
 
 print("-- bakeoff PINS the candidate AND the judge (no_substitution=True) so it measures the model it names --")
 seen = []
+actual_substitution_lane = "catalog-resolution-lane"
+actual_substitution_reason = "requested catalog alias resolved to served model"
 
 
 def _stub_call(model, prompt, **kw):
     seen.append({"model": model, "prompt": prompt, "kw": kw})
     if kw.get("schema") is not None:                     # the judge call (structured verdict)
         return {"text": '{"good": true}', "json": {"good": True}, "model": model, "cost": 0.0}
-    return {"text": "candidate output", "model": model, "cost": 0.0}   # the candidate generation
+    served_model = swap["model"]
+    measurement_call_id = calls.current().get("root_call")
+    calls.record_call(served_model.split(":", 1)[0], served_model, "realtime", 0.0,
+                      call_id=measurement_call_id)
+    return {"text": "candidate output", "model": served_model, "cost": 0.0,
+            "resolved_from": model, "resolution": actual_substitution_reason,
+            "resolved_lane": actual_substitution_lane}
 
 
 adapters.call = _stub_call
@@ -69,6 +78,12 @@ ck("every candidate call is PINNED (no_substitution=True) — the named model is
    bool(cand_calls) and all(c["kw"].get("no_substitution") is True for c in cand_calls))
 ck("the judge call is PINNED too — one ruler across candidates",
    bool(judge_calls) and all(c["kw"].get("no_substitution") is True for c in judge_calls))
+provenance_row = sqlite3.connect(config.db_path()).execute(
+    "SELECT requested_model,served_model,resolved_lane,redirect_reason FROM calls WHERE caller='bakeoff'"
+).fetchone()
+ck("the durable bakeoff row records the actual substitution provenance",
+   provenance_row == ("openai:gpt-5-nano", swap["model"],
+                      actual_substitution_lane, actual_substitution_reason))
 
 print("-- fix 4: the judge scores the candidate's WHOLE output, not a [:4000] head --")
 captured = {}
