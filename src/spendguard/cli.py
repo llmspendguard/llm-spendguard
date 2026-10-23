@@ -86,6 +86,7 @@ _GROUPS = [
         ("serve", "the ask surface over localhost HTTP — POST /ask from any tool/language"),
         ("mcp", "spendguard's tools over MCP (stdio): model-advisor + spend/compaction queries"),
         ("install-mcp", "register `spendguard mcp` in Claude Code (~/.claude.json); --remove to undo"),
+        ("reap-orphans", "inspect or reap warm-lane servers whose marked owner is provably dead"),
     ]),
     ("see the money", [
         ("ledger-read", "bounded read-only events, calls and exact counts; oversized reads fail loud"),
@@ -200,6 +201,79 @@ def ledger_read_cli(argv):
     return 0
 
 
+REAP_UNREADABLE_SAMPLE_MAX = 20
+
+
+def reap_orphaned_warm_servers_cli(argv):
+    """Operator surface for the structural warm-server reaper; dry-run unless ``--execute`` is explicit.
+
+    Exit contract: 0 means the scan completed cleanly (including dry runs that find orphans, or executes that reap
+    every orphan); 1 means at least one process group remained alive after the reaper's SIGKILL grace. Unreadable
+    processes are an explicit, visible classification gap but are not a failure: same-uid warm servers are readable,
+    while other users' or root-owned processes may not be.
+    """
+    import argparse
+    import json
+    from .warm_stdio_daemon import reap_orphaned_warm_servers
+
+    parser = argparse.ArgumentParser(prog="spendguard reap-orphans")
+    parser.add_argument("--execute", action="store_true", help="reap provably-dead marked servers (default: dry-run)")
+    parser.add_argument("--lane", metavar="LABEL", help="restrict the scan to one warm-lane label")
+    parser.add_argument("--json", action="store_true", help="emit one machine-readable JSON object")
+    parser.add_argument("--bounded-log", metavar="PATH", help=argparse.SUPPRESS)
+    args = parser.parse_args(argv)
+    report = reap_orphaned_warm_servers(lane=args.lane, execute=args.execute)
+    marked = report.get("marked", [])
+    lanes = {}
+    for server in marked:
+        lane_label = server.get("lane") or "(unlabelled)"
+        lane_report = lanes.setdefault(lane_label, {"marked_servers": 0, "orphan_servers": 0, "owners": {}})
+        lane_report["marked_servers"] += 1
+        if server.get("orphan"):
+            lane_report["orphan_servers"] += 1
+        owner_key = str(server.get("owner_pid"))
+        owner = lane_report["owners"].setdefault(
+            owner_key, {"owner_pid": server.get("owner_pid"), "state": server.get("owner_state"), "servers": 0})
+        owner["servers"] += 1
+    for lane_report in lanes.values():
+        lane_report["owners"] = list(lane_report["owners"].values())
+    unreadable_count = len(report["unreadable"])
+    unreadable_sample = report["unreadable"][:REAP_UNREADABLE_SAMPLE_MAX]
+    payload = {"mode": "execute" if args.execute else "dry-run", "lane_filter": args.lane,
+               "lanes": lanes, **{key: report[key] for key in
+                                  ("scanned", "orphans", "reaped", "cross_uid_skipped", "errors")},
+               "unreadable": unreadable_sample, "unreadable_count": unreadable_count,
+               "unreadable_truncated": unreadable_count > len(unreadable_sample)}
+    if args.json or args.bounded_log:
+        rendered = json.dumps(payload, sort_keys=True)
+        if args.bounded_log:
+            from .fleet import append_bounded_fleet_log_record
+            append_bounded_fleet_log_record(args.bounded_log, rendered)
+        else:
+            print(rendered)
+    else:
+        scope = args.lane or "all warm lanes"
+        print(f"warm-server orphan sweep ({payload['mode']}; {scope})")
+        if not lanes:
+            print("  marked servers: 0")
+        for lane_label, lane_report in sorted(lanes.items()):
+            print(f"  {lane_label}: {lane_report['marked_servers']} marked server(s), "
+                  f"{lane_report['orphan_servers']} provably-dead orphan(s)")
+            for owner in lane_report["owners"]:
+                print(f"    owner {owner['owner_pid']}: {owner['state']}; {owner['servers']} server(s)")
+        action_label = "reaped" if args.execute else "would reap"
+        print(f"  {action_label}: {len(report['reaped'] if args.execute else report['orphans'])}; "
+              f"errors: {len(report['errors'])}; unreadable: {unreadable_count}")
+        print(f"  {report['cross_uid_skipped']} cross-uid processes skipped (not spendguard-owned)")
+        for gap in unreadable_sample:
+            print(f"    unreadable: {gap}")
+        if payload["unreadable_truncated"]:
+            print(f"    unreadable: (+{unreadable_count - len(unreadable_sample)} more)")
+        for error in report["errors"]:
+            print(f"    error: {error}")
+    return 1 if report["errors"] else 0
+
+
 def main(argv=None):
     """CLI entry. Wraps the dispatch so a MISSING PREREQUISITE (no provider key, no config) exits with one clean
     line instead of a raw traceback: `spendguard report` on a fresh install used to dump 14 lines ending in
@@ -253,6 +327,8 @@ def _dispatch(argv=None):
     if cmd == "delegate":
         from . import delegate_router
         return delegate_router.delegate_cli(rest)
+    if cmd == "reap-orphans":
+        return reap_orphaned_warm_servers_cli(rest)
     if cmd == "ledger-read":
         return ledger_read_cli(rest)
     if cmd == "agent-spawn-gate":
@@ -426,13 +502,19 @@ def _dispatch(argv=None):
                 return _deploy_failed_verdict(f"green-pointer promotion failed: {exc}")
         print(f"deploy: 🟢 promoted {rec['short']} ({rec['describe']}) → green pointer  [{rec['gate']}]")
         print("        already-running MCP servers serve it on their next request (they hand off between requests).")
+        from . import fleet as _fleet
+        try:
+            for _job in _fleet.install_periodic_launchd_fleet_jobs():
+                _state = "installed" if _job["kickstart_rc"] == 0 else "install/kickstart warning"
+                print(f"deploy: fleet job — {_state} {_job['label']} ({_job['path']})")
+        except Exception as _job_error:
+            print(f"deploy: ⚠ periodic fleet-job install failed: {_job_error}", file=sys.stderr)
         # UPDATE PROPAGATION: the MCP fleet self-respawns onto the green commit, but OTHER long-lived consumers
         # (7thsense/honestreview daemons, the drain) load spendguard ONCE at startup and would keep running stale code
         # (measured 2026-10-10: pre-fix daemons false-fired the codex toast for days). Restart the launchd-MANAGED
         # stale consumers now (they respawn onto latest); WARN loudly about any that are NOT supervised (never kill a
         # process we cannot bring back). `--no-restart` skips this.
         if "--no-restart" not in r:
-            from . import fleet as _fleet
             _fr = _fleet.restart_stale(apply=True)
             for _x in _fr.get("restarted", []):
                 print(f"deploy: fleet — {_x.get('action')} {_x.get('launchd_label')} (pid {_x.get('pid')})")
@@ -442,7 +524,6 @@ def _dispatch(argv=None):
             if not _fr.get("restarted") and not _fr.get("warn"):
                 print("deploy: fleet — all tracked consumers already on the green commit.")
         if "--no-refresh" not in r:
-            from . import fleet as _fleet
             _ir = _fleet.refresh_stale_installs(apply=True)
             for _venv in _ir.get("refreshed", []):
                 print(f"deploy: install — refreshed editable metadata in {_venv}")

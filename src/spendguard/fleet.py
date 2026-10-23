@@ -20,7 +20,9 @@ never a start-time guess):
 import os
 import hashlib
 import pathlib
+import plistlib
 import sqlite3
+import subprocess
 import sys
 from contextlib import closing
 
@@ -33,6 +35,85 @@ _registered = False                                  # once-per-process guard fo
 _FLEET_PID_GONE = "gone"
 _FLEET_PID_VERIFIED_LIVE = "verified_live"
 _FLEET_PID_UNVERIFIABLE = "unverifiable"
+ORPHAN_REAP_LAUNCHD_LABEL = "com.spendguard.codex-orphan-reap"
+ORPHAN_REAP_LAUNCHD_INTERVAL_S = 900
+ORPHAN_REAP_LOG_BASENAME = "codex-orphan-reap.log"
+ORPHAN_REAP_BOUNDED_LOG_FLAG = "--bounded-log"
+FLEET_LOG_MAX_BYTES = 5 * 1024 * 1024
+FLEET_LOG_KEEP = 1
+FLEET_LOG_TRUNCATION_MARKER = "\n[record truncated to fleet log byte cap]\n"
+FLEET_LAUNCHD_DIRECTORY_PARTS = ("Library", "LaunchAgents")
+FLEET_LAUNCHD_PLIST_SUFFIX = ".plist"
+FLEET_LAUNCHD_COMMAND_ARGUMENTS = ("reap-orphans", "--execute", "--json")
+FLEET_LAUNCHD_OPERATION_TIMEOUT_S = 15
+FLEET_TEST_ISOLATION_ENV = "SPENDGUARD_TEST_ISOLATED"
+
+
+def periodic_launchd_job_registry():
+    """Package-owned periodic jobs installed by deploy; paths derive from this interpreter and configured home.
+
+    The reaper writes through ``append_bounded_fleet_log_record``; launchd output goes to the null device so its
+    append semantics cannot create a second unbounded log.
+    """
+    spendguard_binary = pathlib.Path(sys.executable).with_name("spendguard")
+    log_path = config.HOME / ORPHAN_REAP_LOG_BASENAME
+    return ({"Label": ORPHAN_REAP_LAUNCHD_LABEL,
+             "ProgramArguments": [str(spendguard_binary), *FLEET_LAUNCHD_COMMAND_ARGUMENTS,
+                                  ORPHAN_REAP_BOUNDED_LOG_FLAG, str(log_path)],
+             "RunAtLoad": True, "StartInterval": ORPHAN_REAP_LAUNCHD_INTERVAL_S,
+             "StandardErrorPath": os.devnull, "StandardOutPath": os.devnull},)
+
+
+def append_bounded_fleet_log_record(log_path, record, max_bytes=FLEET_LOG_MAX_BYTES, keep=FLEET_LOG_KEEP):
+    """Append one record while bounding the live log and retaining at most ``keep`` rotated generations."""
+    path = pathlib.Path(log_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    encoded = (record.rstrip("\n") + "\n").encode()
+    if len(encoded) > max_bytes:
+        marker = FLEET_LOG_TRUNCATION_MARKER.encode()
+        encoded = encoded[:max(0, max_bytes - len(marker))] + marker[:max_bytes]
+    try:
+        current_size = path.stat().st_size
+    except FileNotFoundError:
+        current_size = 0
+    if current_size + len(encoded) > max_bytes:
+        for generation in range(keep, 0, -1):
+            destination = path.with_name(f"{path.name}.{generation}")
+            source = path if generation == 1 else path.with_name(f"{path.name}.{generation - 1}")
+            if not source.exists():
+                continue
+            if destination.exists():
+                destination.unlink()
+            source.replace(destination)
+    with path.open("ab") as stream:
+        stream.write(encoded)
+
+
+def install_periodic_launchd_fleet_jobs():
+    """Idempotently install and kickstart every registered periodic fleet job on macOS."""
+    if sys.platform != "darwin" or os.environ.get(FLEET_TEST_ISOLATION_ENV):
+        return []
+    launchd_directory = pathlib.Path.home().joinpath(*FLEET_LAUNCHD_DIRECTORY_PARTS)
+    launchd_directory.mkdir(parents=True, exist_ok=True)
+    config.HOME.mkdir(parents=True, exist_ok=True)
+    domain = "gui/%d" % os.getuid()
+    installed = []
+    for document in periodic_launchd_job_registry():
+        path = launchd_directory / (document["Label"] + FLEET_LAUNCHD_PLIST_SUFFIX)
+        encoded = plistlib.dumps(document)
+        try:
+            current = path.read_bytes()
+        except FileNotFoundError:
+            current = None
+        if current != encoded:
+            path.write_bytes(encoded)
+        bootstrap = subprocess.run(["launchctl", "bootstrap", domain, str(path)], capture_output=True, text=True,
+                                   timeout=FLEET_LAUNCHD_OPERATION_TIMEOUT_S)
+        kickstart = subprocess.run(["launchctl", "kickstart", "%s/%s" % (domain, document["Label"])],
+                                   capture_output=True, text=True, timeout=FLEET_LAUNCHD_OPERATION_TIMEOUT_S)
+        installed.append({"label": document["Label"], "path": str(path),
+                          "bootstrap_rc": bootstrap.returncode, "kickstart_rc": kickstart.returncode})
+    return installed
 
 
 def _fleet_db():

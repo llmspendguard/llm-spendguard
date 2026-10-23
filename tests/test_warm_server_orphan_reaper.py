@@ -33,6 +33,10 @@ class _FakeZombieProcess(Exception):
     pass
 
 
+class _FakeEnvironmentReadFailure(Exception):
+    pass
+
+
 class _FakeProc:
     def __init__(self, pid, environ=None, environ_exc=None):
         self.pid = pid
@@ -64,7 +68,7 @@ def _marker(lane, owner_pid, boot):
 LIVE_OWNER_PID, LIVE_OWNER_BOOT = 8002, 1000.5
 RECYCLED_PID, OLD_BOOT, NEW_BOOT = 8003, 1000.5, 9999.9   # pid still exists but is now a DIFFERENT process
 ORPHAN_CODEX, LIVE_CODEX, RECYCLED_CODEX = 7001, 7002, 7003
-UNMARKED, UNREADABLE, ORPHAN_KIMI = 7004, 7005, 7006
+UNMARKED, CROSS_UID, ORPHAN_KIMI, UNREADABLE = 7004, 7005, 7006, 7007
 
 
 def _scenario():
@@ -74,8 +78,9 @@ def _scenario():
         _FakeProc(LIVE_CODEX, _marker("codex", LIVE_OWNER_PID, LIVE_OWNER_BOOT)),  # owner alive, boot matches → keep
         _FakeProc(RECYCLED_CODEX, _marker("codex", RECYCLED_PID, OLD_BOOT)),       # pid reused, boot differs → reap
         _FakeProc(UNMARKED, {"PATH": "/usr/bin", "FOO": "bar"}),      # the user's own codex: no marker → untouched
-        _FakeProc(UNREADABLE, environ_exc=_FakeAccessDenied()),       # cannot classify → visible gap, not reaped
+        _FakeProc(CROSS_UID, environ_exc=_FakeAccessDenied()),        # other uid → counted, never a candidate
         _FakeProc(ORPHAN_KIMI, _marker("kimi", 8009, 500.0)),         # a DIFFERENT lane's orphan
+        _FakeProc(UNREADABLE, environ_exc=_FakeEnvironmentReadFailure()),  # same-uid gap → visible, never reaped
     ]
     living_owners = {LIVE_OWNER_PID: _FakeOwner(LIVE_OWNER_BOOT), RECYCLED_PID: _FakeOwner(NEW_BOOT)}
     return procs, living_owners
@@ -132,8 +137,10 @@ def test_reaps_exactly_the_marked_orphans_of_the_named_lane():
         assert UNMARKED not in reaped and UNMARKED not in report["orphans"], "an UNMARKED user process was reaped"
         assert ORPHAN_KIMI not in reaped and ORPHAN_KIMI not in report["orphans"], "a different lane's orphan was reaped"
         assert {pid for pid, _ in killed} == {ORPHAN_CODEX, RECYCLED_CODEX}, killed
+        assert report["cross_uid_skipped"] == 1
+        assert not any(str(CROSS_UID) in entry for entry in report["unreadable"]), report["unreadable"]
         assert any(str(UNREADABLE) in entry for entry in report["unreadable"]), report["unreadable"]
-        assert UNREADABLE not in reaped
+        assert CROSS_UID not in reaped and UNREADABLE not in reaped
     finally:
         restore()
 

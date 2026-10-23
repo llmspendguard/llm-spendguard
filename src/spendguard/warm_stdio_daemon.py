@@ -28,6 +28,7 @@ any caller's prompt content, and a lane subprocess can never silently become a m
 Names are unique+semantic (NAME_REGISTRY): `run_warm` across daemons is the adjudicated PROTOCOL entrypoint — one
 uniform warm-lane contract, each daemon its own body — not a collision.
 """
+import errno
 import fcntl
 import itertools
 import json
@@ -65,6 +66,9 @@ WARM_OWNER_PID_ENV = "SPENDGUARD_WARM_OWNER_PID"
 WARM_OWNER_BOOT_ENV = "SPENDGUARD_WARM_OWNER_BOOT"       # owner psutil create_time(), repr() of a float
 WARM_OWNER_LANE_ENV = "SPENDGUARD_WARM_LANE"             # the lane label of the server (codex / kimi / …)
 WARM_OWNER_BOOT_EPSILON_S = 0.05                         # create_time() float-formatting tolerance
+WARM_OWNER_IDENTITY_ALIVE = "alive"
+WARM_OWNER_IDENTITY_DEAD = "dead"
+WARM_OWNER_IDENTITY_UNKNOWN = "unknown"
 
 
 def _warm_owner_marker_env(lane):
@@ -80,28 +84,30 @@ def _warm_owner_marker_env(lane):
     return marker
 
 
-def _warm_owner_provably_dead(owner_pid, owner_boot_repr):
-    """True ONLY when the recorded owner (pid, create_time) can be PROVEN gone — a vanished pid, or a pid that now
-    belongs to a different process (its create_time no longer matches, i.e. the pid was recycled). Everything else
-    returns False: owner alive with a matching identity; a pid whose identity cannot be confirmed (missing or
-    malformed create_time); or any psutil failure. The name states exactly this one-directional claim — unknown is
-    deliberately NOT conflated with dead — so uncertainty can only under-reap, never cause a wrongful kill."""
+def _warm_owner_identity_state(owner_pid, owner_boot_repr):
+    """Classify a recorded owner identity without ever conflating an unverifiable owner with a dead one."""
     try:
         owner = psutil.Process(owner_pid)
     except psutil.NoSuchProcess:
-        return True                                     # the owner pid is gone → provably dead
+        return WARM_OWNER_IDENTITY_DEAD                 # the owner pid is gone → provably dead
     except Exception:
-        return False                                    # cannot query the pid → not provable → never reap
+        return WARM_OWNER_IDENTITY_UNKNOWN              # cannot query the pid → never reap
     if owner_boot_repr is None:
-        return False                                    # pid exists, no recorded identity to confirm recycling
+        return WARM_OWNER_IDENTITY_UNKNOWN              # pid exists, no identity to confirm recycling
     try:
         recorded_boot = float(owner_boot_repr)
     except (TypeError, ValueError):
-        return False                                    # malformed identity → cannot prove recycling → never reap
+        return WARM_OWNER_IDENTITY_UNKNOWN              # malformed identity → never reap
     try:
-        return abs(owner.create_time() - recorded_boot) >= WARM_OWNER_BOOT_EPSILON_S
+        recycled = abs(owner.create_time() - recorded_boot) >= WARM_OWNER_BOOT_EPSILON_S
+        return WARM_OWNER_IDENTITY_DEAD if recycled else WARM_OWNER_IDENTITY_ALIVE
     except Exception:
-        return False
+        return WARM_OWNER_IDENTITY_UNKNOWN
+
+
+def _warm_owner_provably_dead(owner_pid, owner_boot_repr):
+    """True ONLY when the recorded recycle-proof owner identity is proven gone; unknown is never dead."""
+    return _warm_owner_identity_state(owner_pid, owner_boot_repr) == WARM_OWNER_IDENTITY_DEAD
 
 
 def _warm_reap_process_group(pid):
@@ -150,20 +156,27 @@ def reap_orphaned_warm_servers(lane=None, execute=True):
 
     lane: restrict to one lane label (e.g. "codex"); None reaps every warm lane.
     execute: False ⇒ dry run — return the orphans that WOULD be reaped without signalling any.
-    Returns {"scanned", "orphans", "reaped", "unreadable", "errors"}. `unreadable` names every process whose
-    environment could not be read — a VISIBLE gap (a possible orphan we could not classify), never silently dropped:
-    "cannot tell" is not "clean".
+    Returns {"scanned", "orphans", "reaped", "cross_uid_skipped", "unreadable", "errors", "marked"}. ``marked``
+    exposes the lane and
+    owner identity facts from THIS SAME authoritative scan for operator reporting; it does not add another selector.
+    `cross_uid_skipped` counts permission-denied environments, which belong to another uid and therefore cannot be
+    spendguard warm servers. `unreadable` names every OTHER environment read failure — a VISIBLE same-uid gap (a
+    possible orphan we could not classify), never silently dropped: "cannot tell" is not "clean".
     """
-    report = {"scanned": 0, "orphans": [], "reaped": [], "unreadable": [], "errors": []}
+    report = {"scanned": 0, "orphans": [], "reaped": [], "cross_uid_skipped": 0, "unreadable": [],
+              "errors": [], "marked": []}
     for proc in psutil.process_iter(["pid"]):
         try:
             environ = proc.environ()
         except (psutil.NoSuchProcess, psutil.ZombieProcess):
             continue                                     # the process is genuinely gone — nothing to reap or report
         except Exception as exc:
-            # Could not read this process's environment, so we cannot tell whether it is one of our orphaned servers.
-            # Record it as an EXPLICIT gap rather than dropping it. (Our servers are same-uid and readable; an
-            # AccessDenied here is another user's process, which is never ours — but the trace must still exist.)
+            # Permission denial proves this is another uid's process: spendguard's children share this uid and are
+            # readable. Count that non-candidate compactly; preserve every other read failure as a genuine gap.
+            if isinstance(exc, psutil.AccessDenied) or (
+                    isinstance(exc, OSError) and exc.errno in (errno.EACCES, errno.EPERM)):
+                report["cross_uid_skipped"] += 1
+                continue
             report["unreadable"].append(f"{getattr(proc, 'pid', '?')}: {type(exc).__name__}")
             continue
         owner_pid_raw = environ.get(WARM_OWNER_PID_ENV)
@@ -177,7 +190,11 @@ def reap_orphaned_warm_servers(lane=None, execute=True):
         except (TypeError, ValueError):
             report["unreadable"].append(f"{proc.pid}: unparseable owner pid {owner_pid_raw!r}")
             continue                                     # owner id corrupt → owner unknown → never reap
-        if not _warm_owner_provably_dead(owner_pid, environ.get(WARM_OWNER_BOOT_ENV)):
+        owner_state = _warm_owner_identity_state(owner_pid, environ.get(WARM_OWNER_BOOT_ENV))
+        marked_server = {"pid": proc.pid, "lane": environ.get(WARM_OWNER_LANE_ENV), "owner_pid": owner_pid,
+                         "owner_state": owner_state, "orphan": owner_state == WARM_OWNER_IDENTITY_DEAD}
+        report["marked"].append(marked_server)
+        if owner_state != WARM_OWNER_IDENTITY_DEAD:
             continue                                     # owner alive or unverifiable → server may be in use; never reap
         report["orphans"].append(proc.pid)
         if not execute:

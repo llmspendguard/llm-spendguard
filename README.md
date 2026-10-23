@@ -144,6 +144,7 @@ it reconstructs *what* you should do cheaper, and won't let "cheaper" cost you q
   served substitute within anchor rate ×1.25. Shed results distinguish avoided-overage $ from quota-preserved value.
 - **warm shared MCP + fleet** — one long-lived daemon per tool is shared by sessions; `spendguard fleet` reports the
   deployed green version and stale consumers instead of leaving long-running processes silently behind.
+- **periodic warm-lane cleanup** — deploy installs a dead-owner-only sweep; `spendguard reap-orphans` previews it safely.
 - **cost levers** — prompt-caching audit/test, semantic cache + batch dedup, cost-aware cascade routing.
 - **observability** — emits OpenTelemetry GenAI-convention metrics+spans → Langfuse / Helicone / Phoenix / any OTLP backend.
 
