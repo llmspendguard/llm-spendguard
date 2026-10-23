@@ -38,7 +38,7 @@ def _load_runner():
 
 
 def _scratch_dirs(prefix):
-    return set(glob.glob(os.path.join(tempfile.gettempdir(), prefix + "*")))
+    return set(glob.glob(os.path.join(runner.GATE_SHORT_TMPDIR_BASE, prefix + "*")))
 
 
 runner = _load_runner()
@@ -47,8 +47,9 @@ runner = _load_runner()
 # both import — at a private root, so `_run_one`'s scratch mkdtemp AND our before/after glob live ONLY here. A
 # concurrent process's sg-chunk-* in the real $TMPDIR can no longer be counted as this test's leak. `_iso` itself
 # is created in the real $TMPDIR first (its own distinct prefix), then becomes the base for everything after.
-_iso = tempfile.mkdtemp(prefix="sg-cleanup-iso-")
+_iso = tempfile.mkdtemp(prefix="sg-cleanup-iso-", dir=runner.GATE_SHORT_TMPDIR_BASE)
 tempfile.tempdir = _iso
+runner.GATE_SHORT_TMPDIR_BASE = _iso
 
 print("-- chunked_suite._run_one removes its scratch SPENDGUARD_HOME (clean run) --")
 before = _scratch_dirs(runner.SCRATCH_HOME_PREFIX)
