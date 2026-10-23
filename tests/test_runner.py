@@ -69,7 +69,11 @@ def measure_runner_budget_scale():
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(HERE)
 sys.path.insert(0, REPO)
-from scripts.test.chunked_suite import _child_env  # noqa: E402
+from scripts.test.chunked_suite import (  # noqa: E402
+    GATE_SHORT_TMPDIR_BASE,
+    _child_env,
+    validate_gate_broker_socket_path_capacity,
+)
 
 RUNNER_SCRATCH_HOME_PREFIX = "sg-pytest-"
 RUNNER_SCRATCH_TMPDIR_PREFIX = "sg-pytest-tmp-"
@@ -109,10 +113,11 @@ _COV_PTH = _enable_startup_coverage() if COVERAGE else None
 def test_script(script, runner_budget_scale):
     if not math.isfinite(runner_budget_scale) or not MIN_RUNNER_SCALE <= runner_budget_scale <= MAX_RUNNER_SCALE:
         raise RunnerBudgetCalibrationError(f"invalid runner scale: {runner_budget_scale!r}")
-    scratch_home = tempfile.mkdtemp(prefix=RUNNER_SCRATCH_HOME_PREFIX)
+    scratch_home = tempfile.mkdtemp(prefix=RUNNER_SCRATCH_HOME_PREFIX, dir=GATE_SHORT_TMPDIR_BASE)
     scratch_tmpdir = None
     try:
-        scratch_tmpdir = tempfile.mkdtemp(prefix=RUNNER_SCRATCH_TMPDIR_PREFIX)
+        scratch_tmpdir = tempfile.mkdtemp(prefix=RUNNER_SCRATCH_TMPDIR_PREFIX, dir=GATE_SHORT_TMPDIR_BASE)
+        validate_gate_broker_socket_path_capacity(scratch_home, scratch_tmpdir)
         env = _child_env(scratch_home, scratch_tmpdir)
         if COVERAGE:
             env["COVERAGE_PROCESS_START"] = RCFILE

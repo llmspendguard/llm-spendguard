@@ -12,6 +12,7 @@ import glob
 import json
 import os
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
@@ -84,6 +85,18 @@ def _test_files():
 
 GATE_ISOLATED_HOME_ENV_NAMES = ("HOME", "SPENDGUARD_HOME")
 GATE_ISOLATED_TMPDIR_ENV_NAME = "TMPDIR"
+GATE_TIKTOKEN_CACHE_ENV_NAME = "TIKTOKEN_CACHE_DIR"
+GATE_TIKTOKEN_CACHE_DIRECTORY_NAME = "data-gym-cache"
+GATE_AMBIENT_TMPDIR = tempfile.gettempdir()
+GATE_TIKTOKEN_CACHE_DIRECTORY = os.path.join(GATE_AMBIENT_TMPDIR, GATE_TIKTOKEN_CACHE_DIRECTORY_NAME)
+GATE_SHORT_TMPDIR_DIRECTORY_NAME = "tmp"
+GATE_SHORT_TMPDIR_BASE = os.path.realpath(os.path.join(os.sep, GATE_SHORT_TMPDIR_DIRECTORY_NAME))
+DARWIN_AF_UNIX_SUN_PATH_CAPACITY_BYTES = 104
+AF_UNIX_PATH_TERMINATOR_BYTES = 1
+GATE_BROKER_NESTED_TMPDIR_PREFIX = "sg-chaos-"
+GATE_BROKER_NESTED_TMPDIR_RANDOM_SUFFIX = "XXXXXXXX"
+GATE_BROKER_TEST_SOCKET_FILENAME = "broker.sock"
+GATE_BROKER_DEFAULT_SOCKET_FILENAME = "codex-daemon.sock"
 GATE_TEST_ISOLATED_ENV = "SPENDGUARD_TEST_ISOLATED"
 GATE_TEST_ENABLED = "1"
 
@@ -103,6 +116,10 @@ def validate_gate_child_environment(env, scratch_home, scratch_tmpdir):
     tmpdir_value = env.get(GATE_ISOLATED_TMPDIR_ENV_NAME)
     if not tmpdir_value or os.path.realpath(tmpdir_value) != expected_tmpdir:
         raise GateTestEnvironmentError("test isolation violated: TMPDIR escaped per-file temp directory")
+    tiktoken_cache_value = env.get(GATE_TIKTOKEN_CACHE_ENV_NAME)
+    if not tiktoken_cache_value or os.path.realpath(tiktoken_cache_value) != os.path.realpath(
+            GATE_TIKTOKEN_CACHE_DIRECTORY):
+        raise GateTestEnvironmentError("test isolation violated: stable tiktoken cache missing")
     if env.get(GATE_TEST_ISOLATED_ENV) != GATE_TEST_ENABLED:
         raise GateTestEnvironmentError("test isolation violated: isolated test signal missing")
     if env.get(CLI_TEST_OFFLINE_ENVIRONMENT_KEY) != CLI_TEST_OFFLINE_ENABLED_VALUE:
@@ -114,6 +131,7 @@ def _child_env(scratch_home, scratch_tmpdir):
     for root_name in GATE_ISOLATED_HOME_ENV_NAMES:
         env[root_name] = os.path.realpath(scratch_home)
     env[GATE_ISOLATED_TMPDIR_ENV_NAME] = os.path.realpath(scratch_tmpdir)
+    env[GATE_TIKTOKEN_CACHE_ENV_NAME] = os.path.realpath(GATE_TIKTOKEN_CACHE_DIRECTORY)
     env[GATE_TEST_ISOLATED_ENV] = GATE_TEST_ENABLED
     env[CLI_TEST_OFFLINE_ENVIRONMENT_KEY] = CLI_TEST_OFFLINE_ENABLED_VALUE
     # Mirror test_runner.py so offline runners stay in step: deterministic short recovery schedules; chaos sets its own timing explicitly.
@@ -134,16 +152,36 @@ SCRATCH_HOME_PREFIX = "sg-chunk-"           # per-file SPENDGUARD_HOME in $TMPDI
 GATE_SCRATCH_TMPDIR_PREFIX = "sg-chunk-tmp-"
 
 
+def validate_gate_broker_socket_path_capacity(scratch_home, scratch_tmpdir):
+    """Keep every broker socket exercised by the gate within Darwin's sockaddr_un.sun_path."""
+    if not hasattr(socket, "AF_UNIX") or sys.platform != "darwin":
+        return
+    nested_test_socket = os.path.join(
+        scratch_tmpdir,
+        GATE_BROKER_NESTED_TMPDIR_PREFIX + GATE_BROKER_NESTED_TMPDIR_RANDOM_SUFFIX,
+        GATE_BROKER_TEST_SOCKET_FILENAME,
+    )
+    default_broker_socket = os.path.join(scratch_home, GATE_BROKER_DEFAULT_SOCKET_FILENAME)
+    longest_socket_path = max((nested_test_socket, default_broker_socket), key=lambda path: len(os.fsencode(path)))
+    required_bytes = len(os.fsencode(longest_socket_path)) + AF_UNIX_PATH_TERMINATOR_BYTES
+    if required_bytes > DARWIN_AF_UNIX_SUN_PATH_CAPACITY_BYTES:
+        raise GateTestEnvironmentError(
+            f"test isolation violated: broker socket needs {required_bytes} bytes, "
+            f"Darwin sun_path holds {DARWIN_AF_UNIX_SUN_PATH_CAPACITY_BYTES}"
+        )
+
+
 def _run_one(path):
     # Only files under tests/ are ever spawned (symlink-resolved), so a stray path can never escape the repo.
     real = os.path.realpath(path)
     tests_root = os.path.realpath(TESTS) + os.sep
     if not real.startswith(tests_root):
         return 2, "", f"refused: {path} is not under {TESTS}"
-    scratch_home = tempfile.mkdtemp(prefix=SCRATCH_HOME_PREFIX)
+    scratch_home = tempfile.mkdtemp(prefix=SCRATCH_HOME_PREFIX, dir=GATE_SHORT_TMPDIR_BASE)
     scratch_tmpdir = None
     try:
-        scratch_tmpdir = tempfile.mkdtemp(prefix=GATE_SCRATCH_TMPDIR_PREFIX)
+        scratch_tmpdir = tempfile.mkdtemp(prefix=GATE_SCRATCH_TMPDIR_PREFIX, dir=GATE_SHORT_TMPDIR_BASE)
+        validate_gate_broker_socket_path_capacity(scratch_home, scratch_tmpdir)
         env = _child_env(scratch_home, scratch_tmpdir)
         p = subprocess.run([sys.executable, real], env=env, timeout=FILE_BUDGET_S,
                            capture_output=True, text=True)
