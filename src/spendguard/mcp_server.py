@@ -1126,15 +1126,12 @@ def _prewarm_codex_daemon():
               file=sys.stderr, flush=True)
 
 
-def serve_http(host="127.0.0.1", port=4913):
-    """MCP over HTTP (stdlib, stateless POST /mcp → the SAME handle() the stdio transport uses) — one WARM daemon every
-    session CONNECTS to via urllib instead of spawning a `spendguard mcp` stdio copy per session (the per-session
-    spawn that accumulates). Dependency-free (http.server), matching spendguard's portable surfaces and ccwatch's
-    in-board /mcp. Threaded so concurrent clients are independent; each request is self-contained (no session state).
-    Carries the SAME deploy self-heal as serve_stdio: after a response is flushed (between requests, nothing in
-    flight), if a newer green commit was deployed the process exits so the supervisor respawns it on the latest code."""
+def build_mcp_http_handler():
+    """The `POST /mcp` request handler for the warm HTTP daemon, as a module-level factory so the exact
+    over-the-wire response SHAPE is testable without binding the real :4913 daemon or pre-warming codex. Routes
+    every POST through the SAME handle() as the stdio transport (stdio + http stay in lockstep)."""
     import os as _os
-    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    from http.server import BaseHTTPRequestHandler
     from . import release
 
     class _Handler(BaseHTTPRequestHandler):
@@ -1150,6 +1147,19 @@ def serve_http(host="127.0.0.1", port=4913):
             if data:
                 self.wfile.write(data)
 
+        def _send_accepted(self):
+            # A JSON-RPC NOTIFICATION (e.g. notifications/initialized) carries NOTHING to return. Per the MCP
+            # Streamable HTTP transport, a POST that contains only notifications/responses MUST be answered with
+            # `202 Accepted` and NO body — and crucially NOT a `200` with an empty `application/json` body. A
+            # strict client (codex's app-server rmcp `StreamableHttpClientWorker`) that sees
+            # `200 + Content-Type: application/json` will try to serde_json-parse the body; zero bytes then raise
+            # "Deserialize error: EOF while parsing a value at line 1 column 0, when send initialized notification",
+            # the rmcp transport worker quits fatally ("Transport channel closed"), and the app-server reconnects
+            # in a loop (the warm-daemon churn). A bare 202 tells the client there is nothing to read.
+            self.send_response(202)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+
         def do_POST(self):
             if self.path.rstrip("/") != "/mcp":
                 self._send(json.dumps(_err(None, -32601, "not found: POST /mcp")), 404)
@@ -1162,7 +1172,10 @@ def serve_http(host="127.0.0.1", port=4913):
                 return
             with _mcp_http_request_ledger_lifetime(self.connection):
                 resp = handle(req)             # the ONE shared dispatch (stdio + http in lockstep)
-            self._send(json.dumps(resp, default=str) if resp is not None else "")
+            if resp is None:                   # a NOTIFICATION (handle() returns None only for these) → 202, no body
+                self._send_accepted()          # NEVER a 200 with an empty application/json body (kills strict rmcp)
+            else:
+                self._send(json.dumps(resp, default=str))
             try:                               # deploy self-heal — exit BETWEEN requests so the supervisor respawns
                 if _auto_respawn_enabled() and release.should_respawn():
                     self.wfile.flush()
@@ -1170,8 +1183,19 @@ def serve_http(host="127.0.0.1", port=4913):
             except Exception:
                 pass
 
+    return _Handler
+
+
+def serve_http(host="127.0.0.1", port=4913):
+    """MCP over HTTP (stdlib, stateless POST /mcp → the SAME handle() the stdio transport uses) — one WARM daemon every
+    session CONNECTS to via urllib instead of spawning a `spendguard mcp` stdio copy per session (the per-session
+    spawn that accumulates). Dependency-free (http.server), matching spendguard's portable surfaces and ccwatch's
+    in-board /mcp. Threaded so concurrent clients are independent; each request is self-contained (no session state).
+    Carries the SAME deploy self-heal as serve_stdio: after a response is flushed (between requests, nothing in
+    flight), if a newer green commit was deployed the process exits so the supervisor respawns it on the latest code."""
+    from http.server import ThreadingHTTPServer
     _prewarm_codex_daemon()
-    ThreadingHTTPServer((host, port), _Handler).serve_forever()
+    ThreadingHTTPServer((host, port), build_mcp_http_handler()).serve_forever()
 
 
 def cmd(argv=None):
