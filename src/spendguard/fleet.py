@@ -39,12 +39,17 @@ ORPHAN_REAP_LAUNCHD_LABEL = "com.spendguard.codex-orphan-reap"
 ORPHAN_REAP_LAUNCHD_INTERVAL_S = 900
 ORPHAN_REAP_LOG_BASENAME = "codex-orphan-reap.log"
 ORPHAN_REAP_BOUNDED_LOG_FLAG = "--bounded-log"
+QUEUE_MANAGE_LAUNCHD_LABEL = "com.spendguard.queue-manage"
+QUEUE_MANAGE_LAUNCHD_INTERVAL_S = 300
+QUEUE_MANAGE_LOG_BASENAME = "queue-manage.log"
+QUEUE_MANAGE_BOUNDED_LOG_FLAG = "--bounded-log"
 FLEET_LOG_MAX_BYTES = 5 * 1024 * 1024
 FLEET_LOG_KEEP = 1
 FLEET_LOG_TRUNCATION_MARKER = "\n[record truncated to fleet log byte cap]\n"
 FLEET_LAUNCHD_DIRECTORY_PARTS = ("Library", "LaunchAgents")
 FLEET_LAUNCHD_PLIST_SUFFIX = ".plist"
-FLEET_LAUNCHD_COMMAND_ARGUMENTS = ("reap-orphans", "--execute", "--json")
+ORPHAN_REAP_LAUNCHD_COMMAND_ARGUMENTS = ("reap-orphans", "--execute", "--json")
+QUEUE_MANAGE_LAUNCHD_COMMAND_ARGUMENTS = ("queue-manage", "--execute", "--json")
 FLEET_LAUNCHD_OPERATION_TIMEOUT_S = 15
 FLEET_TEST_ISOLATION_ENV = "SPENDGUARD_TEST_ISOLATED"
 
@@ -56,12 +61,18 @@ def periodic_launchd_job_registry():
     append semantics cannot create a second unbounded log.
     """
     spendguard_binary = pathlib.Path(sys.executable).with_name("spendguard")
-    log_path = config.HOME / ORPHAN_REAP_LOG_BASENAME
+    orphan_log_path = config.HOME / ORPHAN_REAP_LOG_BASENAME
+    queue_log_path = config.HOME / QUEUE_MANAGE_LOG_BASENAME
     return ({"Label": ORPHAN_REAP_LAUNCHD_LABEL,
-             "ProgramArguments": [str(spendguard_binary), *FLEET_LAUNCHD_COMMAND_ARGUMENTS,
-                                  ORPHAN_REAP_BOUNDED_LOG_FLAG, str(log_path)],
+             "ProgramArguments": [str(spendguard_binary), *ORPHAN_REAP_LAUNCHD_COMMAND_ARGUMENTS,
+                                  ORPHAN_REAP_BOUNDED_LOG_FLAG, str(orphan_log_path)],
              "RunAtLoad": True, "StartInterval": ORPHAN_REAP_LAUNCHD_INTERVAL_S,
-             "StandardErrorPath": os.devnull, "StandardOutPath": os.devnull},)
+             "StandardErrorPath": os.devnull, "StandardOutPath": os.devnull},
+            {"Label": QUEUE_MANAGE_LAUNCHD_LABEL,
+             "ProgramArguments": [str(spendguard_binary), *QUEUE_MANAGE_LAUNCHD_COMMAND_ARGUMENTS,
+                                  QUEUE_MANAGE_BOUNDED_LOG_FLAG, str(queue_log_path)],
+             "RunAtLoad": True, "StartInterval": QUEUE_MANAGE_LAUNCHD_INTERVAL_S,
+             "StandardErrorPath": os.devnull, "StandardOutPath": os.devnull})
 
 
 def append_bounded_fleet_log_record(log_path, record, max_bytes=FLEET_LOG_MAX_BYTES, keep=FLEET_LOG_KEEP):

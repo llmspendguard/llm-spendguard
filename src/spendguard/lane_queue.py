@@ -30,6 +30,7 @@ import datetime
 import json
 import logging
 import os
+import pathlib
 import sqlite3
 import time
 
@@ -65,6 +66,9 @@ QUEUE_MIGRATION_TIMEOUT_S = 30
 _RESULT_CAP = 4000            # bytes of result JSON retained per row (audit/debug, not the whole payload)
 QUEUE_PURGE_STAMP_KEY = "last_purge_ts"
 _QUEUE_RESULT_GAP = "lane_queue_result_invalid_json"
+QUEUE_STALE_DAYS_DEFAULT = 1.0  # hook classifications describe the triggering edit; after a day they are obsolete
+QUEUE_MANAGER_IDLE_ROUNDS_DEFAULT = 1
+QUEUE_MANAGER_MAX_ITERS_DEFAULT = 100
 
 # Priority convention (higher drains first): a delegated task someone is WAITING on jumps ahead of a big backfill,
 # so a 6k-item bulk enqueue never starves interactive work sharing the same queue.
@@ -245,6 +249,12 @@ def _queue_db():
     return config.fresh_ledger_conn(_ensure_queue_schema, path=config.lane_queue_db_path())
 
 
+def _queue_readonly_preview_connection():
+    """Fresh read-only connection for dry-run/operator previews; never tunes or ensures schema."""
+    queue_uri = pathlib.Path(config.lane_queue_db_path()).expanduser().resolve().as_uri() + "?mode=ro"
+    return sqlite3.connect(queue_uri, uri=True)
+
+
 def migrate_from_ledger():
     """ONE-TIME move of the queue out of the spend.db money ledger into its own lane_queue.db (see
     config.lane_queue_db_path). Copies the NON-TERMINAL rows (pending/leased — the live work) and DROPs the old
@@ -411,6 +421,40 @@ def dedup_pending_against_done(chunk=5000):
     return {"fingerprinted": fingerprinted, "settled": settled}
 
 
+def reclaim_expired_leases(connection=None, now=None):
+    """Reclaim every expired lease using the queue's single retry-budget rule.
+
+    When ``connection`` is supplied, its caller already owns the write transaction (the claim path uses this form),
+    so reclaim and claim remain atomic.  Otherwise this function takes the same queue write lock itself.  Returns
+    counts by outcome; failures are named rather than raised into a queue caller.
+    """
+    now = now or _iso(_utcnow())
+
+    def _reclaim_locked(active_connection):
+        failed = active_connection.execute(
+            "UPDATE lane_queue SET state='failed', updated_ts=? "
+            "WHERE state='leased' AND lease_until<? AND attempts>=max_attempts", (now, now)).rowcount
+        pending = active_connection.execute(
+            "UPDATE lane_queue SET state='pending', worker=NULL, updated_ts=? "
+            "WHERE state='leased' AND lease_until<? AND attempts<max_attempts", (now, now)).rowcount
+        return {"reclaimed_to_pending": pending, "failed_exhausted": failed}
+
+    if connection is not None:
+        return _reclaim_locked(connection)
+    try:
+        with _queue_op() as queue_connection:
+            queue_connection.execute("BEGIN IMMEDIATE")
+            try:
+                result = _reclaim_locked(queue_connection)
+                queue_connection.execute("COMMIT")
+                return result
+            except Exception:
+                queue_connection.execute("ROLLBACK")
+                raise
+    except Exception as error:
+        return {"reclaimed_to_pending": 0, "failed_exhausted": 0, "error": str(error)[:120]}
+
+
 def lease(n, worker=None, lease_s=None):
     """Atomically claim up to `n` pending tasks of the MOST URGENT pending intent — SLA/priority order: highest
     priority, then REALTIME before batch, then the tightest SLA deadline (deadline_ts asc, nulls last), then oldest —
@@ -438,10 +482,7 @@ def lease(n, worker=None, lease_s=None):
                           (deadline_audit, deadline_payload, now, now))
                 # reclaim expired leases: exhausted → failed, else → pending (retryable). attempts was already
                 # incremented at lease time, so `attempts>=max_attempts` here means every allowed try is spent.
-                c.execute("UPDATE lane_queue SET state='failed', updated_ts=? "
-                          "WHERE state='leased' AND lease_until<? AND attempts>=max_attempts", (now, now))
-                c.execute("UPDATE lane_queue SET state='pending', worker=NULL, updated_ts=? "
-                          "WHERE state='leased' AND lease_until<? AND attempts<max_attempts", (now, now))
+                reclaim_expired_leases(connection=c, now=now)
                 # SLA/PRIORITY SCHEDULER (2b): pick the MOST URGENT pending intent — highest priority, then REALTIME
                 # before batch, then the TIGHTEST deadline (deadline_ts ASC, nulls last), then oldest. So a realtime
                 # item with a near SLA deadline preempts a batch backfill within the same capacity — 'what is needed
@@ -1106,11 +1147,44 @@ def purge_due(min_interval_s=None):
         return True
 
 
-def purge(retain_days=None, archive_path=None, chunk=None):
-    """Bound the queue so it never accumulates forever: TERMINAL rows (done/failed) older than `retain_days` are
-    APPENDED to an archive jsonl (a reviewable log) and then DELETED from the live table, in BOUNDED CHUNKS. Recent
-    terminal rows stay in the queue for `--queue` review; pending/leased rows are NEVER touched. Returns {archived,
-    deleted, archive} (or {error}). Never raises.
+def _archive_then_delete_queue_pass(where_sql, where_parameters, archive_path, chunk):
+    """Run one fixed structural retirement pass in bounded archive-before-delete transactions."""
+    cols = ("id", "intent", "task", "system", "reasoning", "priority", "state", "lease_until", "attempts",
+            "max_attempts", "worker", "result", "lane", "billed", "sla_class", "deadline_ts", "defer_until",
+            "parks", "fingerprint", "batch_handle", "batch_model", "result_payload", "result_gap",
+            "result_migrated", "created_ts", "updated_ts")
+    archived = deleted = 0
+    while True:
+        with _queue_op() as queue_connection:
+            queue_connection.execute("BEGIN IMMEDIATE")
+            try:
+                rows = queue_connection.execute(
+                    f"SELECT {','.join(cols)} FROM lane_queue WHERE {where_sql} ORDER BY updated_ts LIMIT ?",
+                    (*where_parameters, chunk)).fetchall()
+                if not rows:
+                    queue_connection.execute("COMMIT")
+                    break
+                _append_durable_queue_archive(archive_path, [dict(zip(cols, row)) for row in rows])
+                queue_connection.executemany("DELETE FROM lane_queue WHERE id=?", [(row[0],) for row in rows])
+                queue_connection.execute("COMMIT")
+            except Exception:
+                queue_connection.execute("ROLLBACK")
+                raise
+        archived += len(rows)
+        deleted += len(rows)
+        _bound_archive(archive_path)
+        if len(rows) < chunk:
+            break
+    return {"archived": archived, "deleted": deleted}
+
+
+def purge(retain_days=None, archive_path=None, chunk=None, stale_days=None):
+    """Archive then delete two distinct structural classes: stale live work, then retained terminal history.
+
+    Stale work is pending, or leased only when its lease is expired, and is retired when its declared deadline has
+    passed or its creation age exceeds ``stale_days``.  Terminal rows retain the established ``retain_days`` policy.
+    Both passes use separate bounded ``BEGIN IMMEDIATE`` chunks and the same durable archive. Returns per-class and
+    aggregate counts (or a named error); never raises.
 
     Each chunk is a SHORT `BEGIN IMMEDIATE` txn (archive-before-delete preserved per chunk) that releases the write
     lock between chunks, so purging a large backlog never holds the ledger-grade lock for minutes nor fetches the
@@ -1119,40 +1193,105 @@ def purge(retain_days=None, archive_path=None, chunk=None):
     an append-only audit); it can never DELETE before its archive copy is fsynced and verified."""
     import time as _t
     retain_days = float(retain_days if retain_days is not None else _qcfg("queue_retain_days", RETAIN_DAYS_DEFAULT))
-    cutoff = _iso(_utcnow() - datetime.timedelta(days=retain_days))
+    stale_days = float(stale_days if stale_days is not None else _qcfg("queue_stale_days", QUEUE_STALE_DAYS_DEFAULT))
+    now = _iso(_utcnow())
+    terminal_cutoff = _iso(_utcnow() - datetime.timedelta(days=retain_days))
+    stale_cutoff = _iso(_utcnow() - datetime.timedelta(days=stale_days))
     archive_path = archive_path or str(config.HOME / "lane_queue_archive.jsonl")
     chunk = max(1, int(chunk if chunk is not None else _qcfg("queue_purge_chunk", PURGE_CHUNK_DEFAULT)))
-    cols = ("id", "intent", "task", "state", "attempts", "lane", "billed", "result",
-            "result_payload", "batch_handle", "batch_model", "result_gap", "result_migrated",
-            "created_ts", "updated_ts")
-    archived = deleted = 0
+    stale_result = {"archived": 0, "deleted": 0}
+    terminal_result = {"archived": 0, "deleted": 0}
     try:
-        while True:
-            with _queue_op() as c:
-                c.execute("BEGIN IMMEDIATE")                   # lock before select→delete so a concurrent drainer can't race
-                try:
-                    rows = c.execute(f"SELECT {','.join(cols)} FROM lane_queue "
-                                     "WHERE state IN ('done','failed') AND updated_ts < ? "
-                                     "ORDER BY updated_ts LIMIT ?", (cutoff, chunk)).fetchall()
-                    if not rows:
-                        c.execute("COMMIT")
-                        break
-                    _append_durable_queue_archive(archive_path, [dict(zip(cols, r)) for r in rows])
-                    c.executemany("DELETE FROM lane_queue WHERE id=?", [(r[0],) for r in rows])
-                    c.execute("COMMIT")
-                except Exception:
-                    c.execute("ROLLBACK")
-                    raise
-            archived += len(rows)
-            deleted += len(rows)
-            _bound_archive(archive_path)                       # keep the audit log bounded as we append
-            if len(rows) < chunk:
-                break                                          # last partial chunk → the backlog is cleared
+        stale_result = _archive_then_delete_queue_pass(
+            "state IN ('pending','leased') AND (state='pending' OR lease_until<?) "
+            "AND ((deadline_ts IS NOT NULL AND deadline_ts<?) OR created_ts<?)",
+            (now, now, stale_cutoff), archive_path, chunk)
+        terminal_result = _archive_then_delete_queue_pass(
+            "state IN ('done','failed') AND updated_ts<?", (terminal_cutoff,), archive_path, chunk)
         if not _queue_meta_set(QUEUE_PURGE_STAMP_KEY, _t.time()):
-            return {"archived": archived, "deleted": deleted, "error": "purge throttle stamp could not be persisted"}
-        return {"archived": archived, "deleted": deleted, "archive": archive_path}
+            return {"stale": stale_result, "terminal": terminal_result,
+                    "archived": stale_result["archived"] + terminal_result["archived"],
+                    "deleted": stale_result["deleted"] + terminal_result["deleted"],
+                    "error": "purge throttle stamp could not be persisted"}
+        return {"stale": stale_result, "terminal": terminal_result,
+                "archived": stale_result["archived"] + terminal_result["archived"],
+                "deleted": stale_result["deleted"] + terminal_result["deleted"], "archive": archive_path}
     except Exception as e:
-        return {"archived": archived, "deleted": deleted, "error": str(e)[:120]}
+        return {"stale": stale_result, "terminal": terminal_result,
+                "archived": stale_result["archived"] + terminal_result["archived"],
+                "deleted": stale_result["deleted"] + terminal_result["deleted"], "error": str(e)[:120]}
+
+
+def queue_management_plan(stale_days=None, retain_days=None):
+    """Read-only, grouped preview for one manager tick; rows are summarized, never dumped."""
+    stale_days = float(stale_days if stale_days is not None else _qcfg("queue_stale_days", QUEUE_STALE_DAYS_DEFAULT))
+    retain_days = float(retain_days if retain_days is not None else _qcfg("queue_retain_days", RETAIN_DAYS_DEFAULT))
+    now_dt = _utcnow()
+    now = _iso(now_dt)
+    stale_cutoff = _iso(now_dt - datetime.timedelta(days=stale_days))
+    terminal_cutoff = _iso(now_dt - datetime.timedelta(days=retain_days))
+    try:
+        import contextlib
+        with contextlib.closing(_queue_readonly_preview_connection()) as queue_connection:
+            expired = queue_connection.execute(
+                "SELECT state,intent,COUNT(*),MIN(created_ts),MAX(created_ts) FROM lane_queue "
+                "WHERE state='leased' AND lease_until<? GROUP BY state,intent ORDER BY state,intent", (now,)).fetchall()
+            stale = queue_connection.execute(
+                "SELECT state,intent,COUNT(*),MIN(created_ts),MAX(created_ts) FROM lane_queue "
+                "WHERE state IN ('pending','leased') AND (state='pending' OR lease_until<?) "
+                "AND ((deadline_ts IS NOT NULL AND deadline_ts<?) OR created_ts<?) "
+                "GROUP BY state,intent ORDER BY state,intent", (now, now, stale_cutoff)).fetchall()
+            terminal = queue_connection.execute(
+                "SELECT state,intent,COUNT(*),MIN(updated_ts),MAX(updated_ts) FROM lane_queue "
+                "WHERE state IN ('done','failed') AND updated_ts<? GROUP BY state,intent ORDER BY state,intent",
+                (terminal_cutoff,)).fetchall()
+            ready = queue_connection.execute(
+                "SELECT COUNT(*) FROM lane_queue WHERE state='pending' "
+                "AND (defer_until IS NULL OR defer_until<=?)", (now,)).fetchone()[0]
+        grouped = lambda rows: [{"state": row[0], "intent": row[1], "count": row[2],
+                                 "oldest_ts": row[3], "newest_ts": row[4]} for row in rows]
+        return {"expired_leases": grouped(expired), "stale_live": grouped(stale),
+                "terminal_retention": grouped(terminal), "ready_pending": int(ready),
+                "stale_days": stale_days, "retain_days": retain_days}
+    except Exception as error:
+        return {"error": str(error)[:120], "stale_days": stale_days, "retain_days": retain_days}
+
+
+def manage_queue_tick(execute=False, process=True, stale_days=None):
+    """Clean every tick, then conditionally run one bounded, load-gated foreground drain."""
+    plan = queue_management_plan(stale_days=stale_days)
+    report = {"mode": "execute" if execute else "dry-run", "plan": plan, "reclaim": None, "purge": None,
+              "process": {"requested": bool(process), "invoked": False}}
+    if plan.get("error"):
+        report["error"] = plan["error"]
+        return report
+    ceiling = float(_qcfg("queue_load_ceiling", 0.0))
+    report["process"]["overloaded"] = _overloaded(ceiling)
+    if not execute:
+        report["process"]["would_invoke"] = bool(process and plan["ready_pending"] > 0
+                                                    and not report["process"]["overloaded"])
+        return report
+    report["reclaim"] = reclaim_expired_leases()
+    if report["reclaim"].get("error"):
+        report["error"] = report["reclaim"]["error"]
+        return report
+    report["purge"] = purge(stale_days=stale_days)
+    if report["purge"].get("error"):
+        report["error"] = report["purge"]["error"]
+        return report
+    depth_after_cleanup = queue_depth()
+    ready_after_cleanup = max(0, int(depth_after_cleanup.get("pending", 0))
+                              - int(depth_after_cleanup.get("parked", 0)))
+    report["process"]["ready_pending_after_cleanup"] = ready_after_cleanup
+    report["process"]["overloaded"] = _overloaded(ceiling)
+    if process and ready_after_cleanup > 0 and not report["process"]["overloaded"]:
+        report["process"]["invoked"] = True
+        report["process"]["drain"] = drain(
+            forever=False,
+            idle_rounds=int(_qcfg("queue_manager_idle_rounds", QUEUE_MANAGER_IDLE_ROUNDS_DEFAULT)),
+            load_ceiling=ceiling,
+            max_iters=int(_qcfg("queue_manager_max_iters", QUEUE_MANAGER_MAX_ITERS_DEFAULT)))
+    return report
 
 
 def _overloaded(ceiling):
