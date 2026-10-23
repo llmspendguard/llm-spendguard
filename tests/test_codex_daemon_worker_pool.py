@@ -31,6 +31,8 @@ POOL_CHAOS_TURN_BUDGET_S = 0.8
 POOL_CHAOS_RETRY_BUDGET_S = 0.01
 POOL_CHAOS_PIPE_BLOCK = b"x" * 65536
 POOL_CHAOS_RECOVERY_PROMPT = "post-chaos"
+POOL_CHAOS_TEMP_PREFIX = "sgc-"
+POOL_CHAOS_SOCKET_FILENAME = "gate.sock"
 
 
 def _pool_guard_fake_child(turn_handler=None):
@@ -423,10 +425,11 @@ def _pool_chaos_exercise_wedge(wedge_mode):
                      ("advisor", "codex_daemon_pool_health_interval_s"): POOL_CHAOS_RETRY_BUDGET_S}
         return overrides.get((section, key), original_get(section, key, default))
 
-    with tempfile.TemporaryDirectory(prefix="sg-chaos-", dir=tempfile.gettempdir()) as temporary, patch.object(
+    with tempfile.TemporaryDirectory(prefix=POOL_CHAOS_TEMP_PREFIX, dir=tempfile.gettempdir()) as temporary, patch.object(
             config, "_cfg_get", side_effect=pool_chaos_config), patch.object(
             config, "codex_daemon_pool_settings", return_value=settings), patch(
-            "spendguard.codex_daemon_broker._socket_path", return_value=pathlib.Path(temporary) / "broker.sock"):
+            "spendguard.codex_daemon_broker._socket_path",
+            return_value=pathlib.Path(temporary) / POOL_CHAOS_SOCKET_FILENAME):
         pool = codex_daemon._CodexDaemonPool(pool_chaos_child_factory, size=POOL_GUARD_SIZE)
         from spendguard.warm_stdio_daemon import _warm_owner_marker_env
         from spendguard.codex_daemon_broker import CODEX_BROKER_OWNER_LANE
