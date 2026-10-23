@@ -87,6 +87,7 @@ _GROUPS = [
         ("mcp", "spendguard's tools over MCP (stdio): model-advisor + spend/compaction queries"),
         ("install-mcp", "register `spendguard mcp` in Claude Code (~/.claude.json); --remove to undo"),
         ("reap-orphans", "inspect or reap warm-lane servers whose marked owner is provably dead"),
+        ("queue-manage", "reclaim, retire, purge, and conditionally drain the durable lane queue"),
     ]),
     ("see the money", [
         ("ledger-read", "bounded read-only events, calls and exact counts; oversized reads fail loud"),
@@ -274,6 +275,49 @@ def reap_orphaned_warm_servers_cli(argv):
     return 1 if report["errors"] else 0
 
 
+def manage_lane_queue_cli(argv):
+    """Operator queue manager; exit 0 on a completed dry-run/execute and 1 only on a real manager failure."""
+    import argparse
+    import json
+    from .lane_queue import manage_queue_tick
+
+    parser = argparse.ArgumentParser(prog="spendguard queue-manage")
+    parser.add_argument("--execute", action="store_true", help="apply cleanup and bounded processing (default: dry-run)")
+    parser.add_argument("--json", action="store_true", help="emit one machine-readable JSON object")
+    parser.add_argument("--no-process", action="store_true", help="clean only; never start the bounded drain")
+    parser.add_argument("--stale-days", type=float, metavar="DAYS", help="override advisor.queue_stale_days")
+    parser.add_argument("--bounded-log", metavar="PATH", help=argparse.SUPPRESS)
+    args = parser.parse_args(argv)
+    report = manage_queue_tick(execute=args.execute, process=not args.no_process, stale_days=args.stale_days)
+    rendered = json.dumps(report, sort_keys=True)
+    if args.bounded_log:
+        from .fleet import append_bounded_fleet_log_record
+        append_bounded_fleet_log_record(args.bounded_log, rendered)
+    elif args.json:
+        print(rendered)
+    else:
+        plan = report.get("plan", {})
+        def _sum_queue_manager_groups(groups):
+            return sum(group.get("count", 0) for group in groups or [])
+
+        print(f"lane queue manager ({report['mode']})")
+        print(f"  expired leases: {_sum_queue_manager_groups(plan.get('expired_leases'))}; "
+              f"stale pending/expired-leased: {_sum_queue_manager_groups(plan.get('stale_live'))}; "
+              f"terminal retention: {_sum_queue_manager_groups(plan.get('terminal_retention'))}")
+        for group in plan.get("stale_live", []):
+            print(f"    {group['state']} {group['intent']}: {group['count']} "
+                  f"({group['oldest_ts']} .. {group['newest_ts']})")
+        process_report = report.get("process", {})
+        action = "invoked" if process_report.get("invoked") else "not invoked"
+        if report["mode"] == "dry-run":
+            action = "would invoke" if process_report.get("would_invoke") else "would not invoke"
+        print(f"  bounded drain: {action}; ready pending: {plan.get('ready_pending', 0)}; "
+              f"overloaded: {process_report.get('overloaded', False)}")
+        if report.get("error"):
+            print(f"  error: {report['error']}")
+    return 1 if report.get("error") else 0
+
+
 def main(argv=None):
     """CLI entry. Wraps the dispatch so a MISSING PREREQUISITE (no provider key, no config) exits with one clean
     line instead of a raw traceback: `spendguard report` on a fresh install used to dump 14 lines ending in
@@ -329,6 +373,8 @@ def _dispatch(argv=None):
         return delegate_router.delegate_cli(rest)
     if cmd == "reap-orphans":
         return reap_orphaned_warm_servers_cli(rest)
+    if cmd == "queue-manage":
+        return manage_lane_queue_cli(rest)
     if cmd == "ledger-read":
         return ledger_read_cli(rest)
     if cmd == "agent-spawn-gate":

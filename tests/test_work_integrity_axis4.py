@@ -43,7 +43,8 @@ STATE_WRITES_REVIEWED = {
     ("src/spendguard/batch_tracker.py", "_set_status"): 1,
     ("src/spendguard/lane_queue.py", "dedup_pending_against_done"): 1,
     ("src/spendguard/lane_queue.py", "settle"): 2,
-    ("src/spendguard/lane_queue.py", "lease"): 4,
+    ("src/spendguard/lane_queue.py", "lease"): 2,
+    ("src/spendguard/lane_queue.py", "_reclaim_locked"): 2,
     ("src/spendguard/lane_queue.py", "mark_batched"): 1,
     ("src/spendguard/lane_queue.py", "requeue_from_batch"): 1,
 }

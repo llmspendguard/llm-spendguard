@@ -104,8 +104,8 @@ def test_periodic_fleet_registry_contains_orphan_reaper_job():
     assert len(matches) == 1
     job = matches[0]
     assert job["StartInterval"] == fleet.ORPHAN_REAP_LAUNCHD_INTERVAL_S
-    assert job["ProgramArguments"][1:1 + len(fleet.FLEET_LAUNCHD_COMMAND_ARGUMENTS)] == list(
-        fleet.FLEET_LAUNCHD_COMMAND_ARGUMENTS)
+    assert job["ProgramArguments"][1:1 + len(fleet.ORPHAN_REAP_LAUNCHD_COMMAND_ARGUMENTS)] == list(
+        fleet.ORPHAN_REAP_LAUNCHD_COMMAND_ARGUMENTS)
     assert fleet.ORPHAN_REAP_BOUNDED_LOG_FLAG in job["ProgramArguments"]
     assert str(fleet.config.HOME / fleet.ORPHAN_REAP_LOG_BASENAME) in job["ProgramArguments"]
     assert job["StandardOutPath"] == job["StandardErrorPath"]
