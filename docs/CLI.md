@@ -30,6 +30,10 @@ spendguard delegate "<self-contained task>" [--files a,b] [--provider auto|PLAN]
 #   agentically classify then offload workspace work to a configured provider plan; dry-run unless --yes
 spendguard deploy [--no-gate] [--allow-dirty] [--no-restart]
 #   run the full gate, promote committed HEAD to the green pointer, then restart launchd-managed stale consumers
+spendguard reap-orphans [--execute] [--lane LABEL] [--json]
+#   inspect marked warm-lane servers whose recorded owner is provably dead; dry-run by default
+#   --execute reaps them; exit 0 = clean scan/all reaped, exit 1 = a reap failed after SIGKILL grace
+#   cross-uid permission denials are counted, not listed; other unreadables are nonfatal and sampled at 20 entries
 
 # teams / orgs (client seam → future server repo, llmspendguard.com)
 spendguard saas [status|ping|link|push|pull|sync|reconcile|audit|crosscheck|commands]

@@ -33,3 +33,19 @@ After promotion, deploy calls `restart_stale(apply=True)` by default. It prints 
 5. Let supervised consumers using `exit_if_stale()` hand off at their next safe point.
 
 Promotion alone completes only step 1. A deployment is not fully propagated until stale long-lived consumers have restarted or safely self-exited.
+
+## Periodic orphan sweep
+
+Deploy also installs and kickstarts the registered `com.spendguard.codex-orphan-reap` LaunchAgent. Every 15 minutes
+it runs `spendguard reap-orphans --execute --json`, logging to `codex-orphan-reap.log` under the configured spendguard
+home. The CLI rotates the log before an append would exceed `FLEET_LOG_MAX_BYTES` (5 MiB) and retains the single
+`FLEET_LOG_KEEP` generation; launchd stdout/stderr go to the null device, so its append handling cannot bypass that
+bound. This closes the interval when no warm pool is running, and therefore no pool health tick exists to notice
+app-servers left behind by a crashed owner.
+
+The job delegates selection and signalling to `warm_stdio_daemon.reap_orphaned_warm_servers`: only a process carrying
+spendguard's owner marker whose recorded `(pid, create_time)` is provably dead can be reaped. A live pool's workers and
+the user's unmarked codex/kimi processes are never candidates. Exit 0 means the scan ran cleanly (including finding no
+orphans, a dry run that finds orphans, or an execute that reaps all of them); exit 1 means a process group remained
+alive after the SIGKILL grace. Cross-uid permission denials are counted as proven non-candidates; other unreadable
+environments remain visible in a bounded JSON sample with an exact total and are nonfatal.

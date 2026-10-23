@@ -28,6 +28,19 @@ starts N fresh server processes, and when the session (or the codex app-server d
 
 All three share **one root cause: the unit of an MCP server is the *session*, not the *tool*.**
 
+### Warm-lane app-server orphan sweep
+
+Warm codex/kimi workers carry a structural owner marker: lane plus the spawning owner's PID and process create time.
+`spendguard reap-orphans` reports that marker population and distinct owners; `--execute` reaps only servers whose
+recorded owner identity is provably dead. It is a dry run by default, accepts `--lane LABEL` and `--json`, and counts
+cross-uid permission denials as proven non-candidates. Other unreadable processes remain explicit classification gaps;
+their exact count and a bounded sample are reported. Unreadable is nonfatal; a failed reap exits 1, while every clean
+scan or fully successful reap exits 0.
+
+The periodic fleet job runs the executing JSON form even when no pool exists to run a health tick. Count workers from
+the owner-marker population reported here, never from `ps | grep codex`: each codex worker is a two-process tree (the
+Node `codex.js app-server` parent and native child), so command-line counting doubles the true worker population.
+
 ## 2. What already exists (extend, don't rebuild)
 
 | piece | where | what it gives |
