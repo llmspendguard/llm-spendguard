@@ -64,7 +64,7 @@ ck("VAST_API_KEY is in the schema", any(s["key"] == "VAST_API_KEY" for s in conf
 #    SYNCED breadth layer (absent in this isolated home on purpose), never from a hand-typed stub: the old
 #    assertion here demanded a "(stub) price" for glm-5.2, which is exactly how a fabricated 0.6/2.2 rate
 #    survived while under-pricing the real z.ai 5-series by ~40%. Unpriced MUST be loud, not invented.
-from spendguard import adapters, pricing
+from spendguard import adapters, models, pricing
 ck("ZAI_API_KEY is in the schema", any(s["key"] == "ZAI_API_KEY" for s in config_schema.SETTINGS))
 ck("MOONSHOT_API_KEY is in the schema", any(s["key"] == "MOONSHOT_API_KEY" for s in config_schema.SETTINGS))
 ck("adapters routes a glm- model to the zai provider", adapters.provider_for("glm-5.2") == "zai")
@@ -81,6 +81,11 @@ except KeyError:
     ck("an id with NO published rate fails loud (never a fabricated stub)", True)
 _p = pricing.price("glm-5.2")
 ck("glm-5.2 is priced from a CITED source, not a guess", "http" in (_p.get("_source") or ""))
+PRICED_PROFILE_MODEL = "gpt-6-luna"
+with contextlib.redirect_stdout(_priced_profile_output := io.StringIO()):
+    models.cmd(["show", PRICED_PROFILE_MODEL])
+ck("models CLI profile carries the catalog rate", "rate" in _priced_profile_output.getvalue()
+   and "input=$" in _priced_profile_output.getvalue() and "output=$" in _priced_profile_output.getvalue())
 
 config.CONFIG_JSON.write_text('{"gate": {"enforce": "block"}}')
 config._cfg._cache = None

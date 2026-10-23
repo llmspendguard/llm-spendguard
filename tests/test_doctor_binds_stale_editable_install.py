@@ -62,10 +62,13 @@ finally:
 from spendguard import metadata_audit as _ma  # noqa: E402
 _o_sei, _o_install, _o_bh = gate._stale_editable_install, gate.install, _ma.backbone_health
 _o_consumer_drift = fleet.consumer_install_drift
+_o_registration_status = fleet.enforcing_interpreter_registration_status
 try:
     _ma.backbone_health = lambda: {"cache": {"present": True, "models": 1, "age_days": 0}, "ok": True, "drift": []}
     gate.install = lambda *a, **k: None                    # don't patch the real SDKs in the test process
     fleet.consumer_install_drift = lambda: []
+    fleet.enforcing_interpreter_registration_status = lambda: {
+        "registered": True, "error": None, "python_executable": sys.executable}
     gate._stale_editable_install = lambda: (True, "9.9.9", "0.0.1")   # simulate a stale editable install
 
     _buf = io.StringIO()
@@ -83,9 +86,10 @@ try:
        extra=f"rc_status={rc_status}")
 
     gate._stale_editable_install = lambda: (False, "9.9.9", "9.9.9")   # a FRESH install (code == metadata)
-    with contextlib.redirect_stdout(io.StringIO()):
+    with contextlib.redirect_stdout(_fresh_doctor_output := io.StringIO()):
         rc_fresh = gate._cli("doctor")
-    ck("doctor on a FRESH install exits 0", rc_fresh == 0, extra=f"rc_fresh={rc_fresh}")
+    ck("doctor on a FRESH install exits 0", rc_fresh == 0,
+       extra=f"rc_fresh={rc_fresh}; output={_fresh_doctor_output.getvalue()}")
 
     fleet.consumer_install_drift = lambda: [{
         "venv": PINNED_CONSUMER_VENV, "metadata_version": PINNED_CONSUMER_VERSION,
@@ -101,6 +105,7 @@ try:
 finally:
     gate._stale_editable_install, gate.install, _ma.backbone_health = _o_sei, _o_install, _o_bh
     fleet.consumer_install_drift = _o_consumer_drift
+    fleet.enforcing_interpreter_registration_status = _o_registration_status
 
 print(f"\n{'OK' if not fails else 'FAIL'} test_doctor_binds_stale_editable_install: {len(fails)} failure(s)")
 sys.exit(1 if fails else 0)

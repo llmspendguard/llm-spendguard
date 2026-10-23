@@ -125,6 +125,7 @@ _GROUPS = [
     ("setup & plumbing", [
         ("config", "`config` show all · `config set <section.key> <value>`"),
         ("install-hook", "gate EVERY process in a venv (opt-in; --uninstall removes)"),
+        ("gate-host", "offer/apply import-time gating to every discovered unregistered interpreter"),
         ("install-agent-gate", "hard-route reroutable Agent/Task spawns off a near-cap hosting plan"),
         ("install-capguard", "guard Claude subagent and raw codex-exec spawns at low weekly headroom"),
         ("install-rule", "teach Claude/Cursor to route generated code through the gate"),
@@ -569,18 +570,15 @@ def _dispatch(argv=None):
                       file=sys.stderr)
             if not _fr.get("restarted") and not _fr.get("warn"):
                 print("deploy: fleet — all tracked consumers already on the green commit.")
-        if "--no-refresh" not in r:
-            _ir = _fleet.refresh_stale_installs(apply=True)
-            for _venv in _ir.get("refreshed", []):
-                print(f"deploy: install — refreshed editable metadata in {_venv}")
-            for _failure in _ir.get("failed", []):
-                print(f"deploy: ⚠ install refresh failed for {_failure.get('venv')}: {_failure.get('error')}",
-                      file=sys.stderr)
-            if not _ir.get("refreshed") and not _ir.get("failed"):
-                if _ir.get("no_consumers"):
-                    print("deploy: install — no registered consumer venvs to refresh.")
-                else:
-                    print("deploy: install — all registered consumer venvs already have current dependency metadata.")
+        _deployment_verdict = _fleet.verify_and_refresh_registered_interpreters(apply="--no-refresh" not in r)
+        print("deploy: completeness — "
+              f"N_total={_deployment_verdict['N_total']} N_updated={_deployment_verdict['N_updated']} "
+              f"N_verified_fresh={_deployment_verdict['N_verified_fresh']}")
+        for _failure in _deployment_verdict["failed"]:
+            print(f"deploy: 🔴 registered deployment FAILED {_failure.get('python_executable')}: "
+                  f"{_failure.get('error') or _failure.get('state')}", file=sys.stderr)
+        if not _deployment_verdict["complete"]:
+            return _deploy_failed_verdict("one or more registered deployments remain stale or unreachable")
         return _deploy_succeeded_verdict(rec)
     if cmd == "fleet":                                # the running spendguard consumers + which are STALE vs green
         import json as _json
@@ -814,6 +812,9 @@ def _dispatch(argv=None):
     if cmd in ("install-hook", "gate-venv"):          # gate every process in another venv (other repos)
         from . import setup
         return setup.cmd_install_hook(rest)
+    if cmd == "gate-host":
+        from . import setup
+        return setup.cmd_gate_discovered_host(rest)
     if cmd == "install-agent-gate":
         from . import agent_spawn_gate
         return agent_spawn_gate.install_agent_gate_cli(rest)

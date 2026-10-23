@@ -508,10 +508,18 @@ def cmd(argv=None):
     if argv and argv[0] == "show":
         model = argv[1] if len(argv) > 1 else ""
         p = profile(model)
+        from . import pricing
+        try:
+            rate = pricing.price(model)
+            rate_summary = ("input=$%s/M output=$%s/M cached_input=$%s/M"
+                            % (rate["in_"], rate["out"], rate.get("cached_in", "unpublished")))
+        except pricing.PriceUnknownError as exc:
+            rate_summary = "UNPRICED — %s" % exc
         print(f"model profile — {model}")
         for k in ("provider", "reasoning", "tokens_param", "cache", "cache_min"):
             print(f"  {k:<14} {p.get(k)}")
         print(f"  note           {p.get('note')}")
+        print(f"  rate           {rate_summary}")
         if p.get("_facts"):
             print("  stored learnings:")
             for k, (v, c, src, ver) in p["_facts"].items():

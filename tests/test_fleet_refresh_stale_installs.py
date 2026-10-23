@@ -3,6 +3,7 @@ import os
 import json
 import pathlib
 import sqlite3
+import sys
 import tempfile
 from types import SimpleNamespace
 
@@ -10,7 +11,7 @@ os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="sg-fleet-refresh-")
 os.environ.setdefault("SPENDGUARD_TEST_ISOLATED", "1")
 os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
 
-from spendguard import config, fleet  # noqa: E402
+from spendguard import config, fleet, setup  # noqa: E402
 
 fails = []
 PINNED_CONSUMER_VERSION = "0.14.0"
@@ -39,6 +40,7 @@ def consumer(home, name, pid):
 
 original_install = fleet._refresh_editable_install
 original_install_state = fleet._consumer_install_state
+original_registered_interpreters = fleet.registered_interpreters
 try:
     fleet._consumer_install_state = lambda python, root, version, timeout=fleet._CONSUMER_INSTALL_PROBE_TIMEOUT_S: {
         "state": "editable_current", "code_version": version, "metadata_version": version,
@@ -82,6 +84,35 @@ try:
         fleet.subprocess.run = original_subprocess_run
     ck("pinned consumer is detected and refreshed despite matching marker",
        result["refreshed"] == [str(pinned)] and len(calls) == 1 and result["skipped_current"] == [])
+
+    print("\n-- stale egg-info shadow is distinct from a genuinely pinned install --")
+    fleet.subprocess.run = lambda *args, **kwargs: SimpleNamespace(
+        returncode=0, stderr="", stdout=json.dumps({
+            "code_version": fleet.__version__ if hasattr(fleet, "__version__") else PINNED_CONSUMER_VERSION,
+            "metadata_version": PINNED_CONSUMER_VERSION,
+            "module_path": str(pathlib.Path(fleet.__file__).resolve()), "editable": False,
+            "selected_metadata_path": str(pathlib.Path(fleet.__file__).resolve().parents[1] / "stale.egg-info"),
+            "editable_metadata_paths": [str(pinned / "site-packages" / "current.dist-info")],
+            "catalog_verified": None}))
+    shadow_state = fleet._consumer_install_state(pathlib.Path(sys.executable),
+                                                  pathlib.Path(fleet.__file__).resolve().parents[2],
+                                                  PINNED_CONSUMER_VERSION)
+    fleet.subprocess.run = original_subprocess_run
+    ck("egg-info shadow has its own state instead of noneditable_pinned",
+       shadow_state["state"] == "editable_shadowed_by_egg_info")
+
+    refresh_repo = pathlib.Path(tempfile.mkdtemp(prefix="sg-egg-shadow-"))
+    shadow = refresh_repo / "src" / "llm_spendguard.egg-info"
+    shadow.mkdir(parents=True)
+    (shadow / "PKG-INFO").write_text("stale")
+    original_setup_run = __import__("subprocess").run
+    setup.subprocess = __import__("subprocess")
+    setup.subprocess.run = lambda *args, **kwargs: SimpleNamespace(returncode=0, stderr="", stdout="1\n")
+    try:
+        setup.refresh_consumer_editable_package(sys.executable, refresh_repo, 10)
+    finally:
+        setup.subprocess.run = original_setup_run
+    ck("successful refresh purges only the in-tree egg-info shadow", not shadow.exists())
     fleet._consumer_install_state = lambda python, root, version, timeout=fleet._CONSUMER_INSTALL_PROBE_TIMEOUT_S: {
         "state": "editable_current", "code_version": version, "metadata_version": version,
         "module_path": str(root / "src" / "spendguard" / "__init__.py"), "editable": True}
@@ -133,9 +164,55 @@ try:
     with fleet._fleet_db() as connection:
         columns = {row[1] for row in connection.execute("PRAGMA table_info(consumers)")}
     ck("migration adds venv columns", {"venv_root", "python_executable"} <= columns)
+
+    print("\n-- deployment completeness touches and verifies every persistent registration --")
+    repo_root = pathlib.Path(fleet.__file__).resolve().parents[2]
+    registered = [{"python_executable": str(home / name / "bin" / "python"), "venv_root": str(home / name)}
+                  for name in ("consumer-a", "consumer-b", "consumer-c")]
+    fleet.registered_interpreters = lambda: registered
+    probed = []
+    from spendguard import pricing
+
+    def all_fresh_probe(python_executable, root, version, timeout=fleet._CONSUMER_INSTALL_PROBE_TIMEOUT_S):
+        probed.append(str(python_executable))
+        return {"state": "editable_current", "code_version": version, "metadata_version": version,
+                "module_path": str(repo_root / "src" / "spendguard" / "__init__.py"), "editable": True,
+                "catalog_verified": pricing.PRICING_VERIFIED}
+
+    fleet._consumer_install_state = all_fresh_probe
+    fresh_verdict = fleet.verify_and_refresh_registered_interpreters(apply=True)
+    ck("all K registered deployments are touched and completeness is proven",
+       len(set(probed)) == len(registered) and fresh_verdict["N_total"] == len(registered)
+       and fresh_verdict["N_verified_fresh"] == len(registered) and fresh_verdict["complete"])
+
+    stale_python = registered[1]["python_executable"]
+    probed = []
+    refreshed = []
+
+    def one_stale_probe(python_executable, root, version, timeout=fleet._CONSUMER_INSTALL_PROBE_TIMEOUT_S):
+        probed.append(str(python_executable))
+        stale = str(python_executable) == stale_python
+        return {"state": "editable_stale" if stale else "editable_current", "code_version": version,
+                "metadata_version": PINNED_CONSUMER_VERSION if stale else version,
+                "module_path": str(repo_root / "src" / "spendguard" / "__init__.py"), "editable": True,
+                "catalog_verified": pricing.PRICING_VERIFIED}
+
+    fleet._consumer_install_state = one_stale_probe
+    fleet._refresh_editable_install = lambda python, root, timeout=180: refreshed.append(str(python))
+    failed_verdict = fleet.verify_and_refresh_registered_interpreters(apply=True)
+    ck("one forced-stale deployment prevents the green completeness verdict",
+       len(set(probed)) == len(registered) and refreshed == [stale_python]
+       and not failed_verdict["complete"] and failed_verdict["failed"]
+       and failed_verdict["N_verified_fresh"] == len(registered) - 1)
+    fleet.registered_interpreters = lambda: (_ for _ in ()).throw(PermissionError("registry unreadable"))
+    unreadable_verdict = fleet.verify_and_refresh_registered_interpreters(apply=True)
+    ck("an unreadable authoritative registry fails deployment completeness loudly",
+       not unreadable_verdict["complete"] and unreadable_verdict["failed"]
+       and "authoritative registry" in unreadable_verdict["failed"][0]["error"])
 finally:
     fleet._refresh_editable_install = original_install
     fleet._consumer_install_state = original_install_state
+    fleet.registered_interpreters = original_registered_interpreters
 
 print(f"\n{'[FAIL]' if fails else 'OK'} test_fleet_refresh_stale_installs: {len(fails)} failure(s)")
 raise SystemExit(1 if fails else 0)
