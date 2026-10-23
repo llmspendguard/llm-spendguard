@@ -410,17 +410,20 @@ _CONSUMER_INSTALL_PROBE_TIMEOUT_S = 15
 _CONSUMER_EDITABLE_REFRESH_TIMEOUT_S = 180
 _CONSUMER_INSTALL_PROBE = (
     "import importlib.metadata as m,json,pathlib,spendguard;from spendguard import pricing;"
-    "d=m.distribution('llm-spendguard');"
-    "u=d.read_text('direct_url.json');"
+    "d=None;"
+    "exec(\"try:\\n d=m.distribution('llm-spendguard')\\n"
+    "except (m.PackageNotFoundError,StopIteration):\\n pass\");"
+    "u=d.read_text('direct_url.json') if d else None;"
     "a=[];"
-    "exec(\"for x in m.distributions():\\n n=(x.metadata.get('Name') or '').lower().replace('_','-')\\n"
-    " if n=='llm-spendguard':\\n  q=x.read_text('direct_url.json')\\n"
-    "  if q and json.loads(q).get('dir_info',{}).get('editable'): a.append(str(x._path))\");"
-    "print(json.dumps({'code_version':spendguard.__version__,'metadata_version':d.version,"
+    "exec(\"if d:\\n for x in m.distributions():\\n  n=(x.metadata.get('Name') or '').lower().replace('_','-')\\n"
+    "  if n=='llm-spendguard':\\n   q=x.read_text('direct_url.json')\\n"
+    "   if q and json.loads(q).get('dir_info',{}).get('editable'): a.append(str(x._path))\");"
+    "print(json.dumps({'code_version':spendguard.__version__,'metadata_version':d.version if d else None,"
     "'module_path':str(pathlib.Path(spendguard.__file__).resolve()),"
-    "'selected_metadata_path':str(d._path),'editable_metadata_paths':a,"
+    "'selected_metadata_path':str(d._path) if d else None,'editable_metadata_paths':a,"
     "'catalog_verified':pricing.PRICING_VERIFIED,"
-    "'editable':bool(u and json.loads(u).get('dir_info',{}).get('editable'))}))"
+    "'editable':bool(u and json.loads(u).get('dir_info',{}).get('editable')),"
+    "'distribution_present':d is not None}))"
 )
 
 
@@ -456,6 +459,12 @@ def _consumer_install_state(python_executable, repo_root, source_version,
     details = json.loads(result.stdout)
     module_path = pathlib.Path(details["module_path"])
     source_root = repo_root / "src"
+    if not details.get("distribution_present", True):
+        details["state"] = (
+            "pathinjected_managed" if module_path.is_relative_to(source_root)
+            else "pathinjected_foreign"
+        )
+        return details
     shadowed_editable = (not details["editable"] and module_path.is_relative_to(source_root)
                          and bool(details.get("editable_metadata_paths")))
     details["state"] = (
@@ -469,6 +478,11 @@ def _consumer_install_state(python_executable, repo_root, source_version,
 
 def _consumer_install_is_verified_fresh(install_state, source_version, catalog_version):
     """Freshness is package identity, except that known editable-shadowing is always an invalid deployment."""
+    if install_state.get("state") == "pathinjected_managed":
+        return (
+            install_state.get("code_version") == source_version
+            and install_state.get("catalog_verified") == catalog_version
+        )
     return (
         install_state.get("state") != "editable_shadowed_by_egg_info"
         and install_state.get("code_version") == source_version
@@ -634,7 +648,7 @@ def verify_and_refresh_registered_interpreters(apply=False):
             before = _consumer_install_state(executable, repo_root, __version__)
             fresh_before = _consumer_install_is_verified_fresh(
                 before, __version__, pricing.PRICING_VERIFIED)
-            if apply and not fresh_before:
+            if apply and not fresh_before and before.get("state") != "pathinjected_managed":
                 _refresh_editable_install(executable, repo_root)
                 updated.append(str(executable))
             after = _consumer_install_state(executable, repo_root, __version__)

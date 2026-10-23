@@ -1,4 +1,6 @@
 """Offline guard for fleet editable-install metadata refreshes: no network, real pip, git, or LLM."""
+import contextlib
+import io
 import os
 import json
 import pathlib
@@ -11,7 +13,7 @@ os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="sg-fleet-refresh-")
 os.environ.setdefault("SPENDGUARD_TEST_ISOLATED", "1")
 os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
 
-from spendguard import config, fleet, setup  # noqa: E402
+from spendguard import __version__ as CURRENT_SOURCE_VERSION, config, fleet, setup  # noqa: E402
 
 fails = []
 PINNED_CONSUMER_VERSION = "0.14.0"
@@ -101,6 +103,39 @@ try:
     ck("egg-info shadow has its own state instead of noneditable_pinned",
        shadow_state["state"] == "editable_shadowed_by_egg_info")
 
+    print("\n-- an absent distribution remains probe-able and identifies managed source injection --")
+    import importlib.metadata as probe_metadata
+    original_probe_distribution = probe_metadata.distribution
+    probe_metadata.distribution = lambda distribution_name: (_ for _ in ()).throw(
+        probe_metadata.PackageNotFoundError(distribution_name))
+    absent_distribution_output = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(absent_distribution_output):
+            exec(fleet._CONSUMER_INSTALL_PROBE, {})
+    finally:
+        probe_metadata.distribution = original_probe_distribution
+    absent_distribution_details = json.loads(absent_distribution_output.getvalue())
+    ck("probe reports an absent distribution without losing imported module identity",
+       absent_distribution_details["distribution_present"] is False
+       and absent_distribution_details["metadata_version"] is None
+       and absent_distribution_details["selected_metadata_path"] is None
+       and absent_distribution_details["editable_metadata_paths"] == []
+       and absent_distribution_details["editable"] is False
+       and absent_distribution_details["code_version"]
+       and absent_distribution_details["module_path"]
+       and absent_distribution_details["catalog_verified"])
+
+    fleet.subprocess.run = lambda *args, **kwargs: SimpleNamespace(
+        returncode=0, stderr="", stdout=json.dumps({
+            **absent_distribution_details,
+            "module_path": str(pathlib.Path(fleet.__file__).resolve())}))
+    managed_pathinjected_state = fleet._consumer_install_state(
+        pathlib.Path(sys.executable), pathlib.Path(fleet.__file__).resolve().parents[2],
+        absent_distribution_details["code_version"])
+    fleet.subprocess.run = original_subprocess_run
+    ck("an absent distribution imported from the managed source has its own state",
+       managed_pathinjected_state["state"] == "pathinjected_managed")
+
     refresh_repo = pathlib.Path(tempfile.mkdtemp(prefix="sg-egg-shadow-"))
     shadow = refresh_repo / "src" / "llm_spendguard.egg-info"
     shadow.mkdir(parents=True)
@@ -173,6 +208,37 @@ try:
     probed = []
     from spendguard import pricing
 
+    print("\n-- path-injected freshness requires managed source identity at HEAD --")
+    managed_pathinjected_identity = {
+        "state": "pathinjected_managed", "code_version": CURRENT_SOURCE_VERSION,
+        "metadata_version": None, "catalog_verified": pricing.PRICING_VERIFIED}
+    ck("managed path injection at current code and catalog is verified fresh",
+       fleet._consumer_install_is_verified_fresh(
+           managed_pathinjected_identity, CURRENT_SOURCE_VERSION, pricing.PRICING_VERIFIED))
+    stale_pathinjected_code = {**managed_pathinjected_identity, "code_version": PINNED_CONSUMER_VERSION}
+    stale_pathinjected_catalog = {**managed_pathinjected_identity, "catalog_verified": None}
+    foreign_pathinjected_identity = {**managed_pathinjected_identity, "state": "pathinjected_foreign"}
+    ck("managed path injection with stale code is not fresh",
+       not fleet._consumer_install_is_verified_fresh(
+           stale_pathinjected_code, CURRENT_SOURCE_VERSION, pricing.PRICING_VERIFIED))
+    ck("managed path injection with stale catalog is not fresh",
+       not fleet._consumer_install_is_verified_fresh(
+           stale_pathinjected_catalog, CURRENT_SOURCE_VERSION, pricing.PRICING_VERIFIED))
+    ck("foreign path injection is not fresh even with current identities",
+       not fleet._consumer_install_is_verified_fresh(
+           foreign_pathinjected_identity, CURRENT_SOURCE_VERSION, pricing.PRICING_VERIFIED))
+    installed_missing_metadata_identity = {**managed_pathinjected_identity, "state": "editable_current"}
+    installed_stale_metadata_identity = {
+        **installed_missing_metadata_identity, "metadata_version": PINNED_CONSUMER_VERSION}
+    ck("installed states still reject absent metadata identity",
+       not fleet._consumer_install_is_verified_fresh(
+           installed_missing_metadata_identity,
+           CURRENT_SOURCE_VERSION, pricing.PRICING_VERIFIED))
+    ck("installed states still reject mismatched metadata identity",
+       not fleet._consumer_install_is_verified_fresh(
+           installed_stale_metadata_identity,
+           CURRENT_SOURCE_VERSION, pricing.PRICING_VERIFIED))
+
     def all_fresh_probe(python_executable, root, version, timeout=fleet._CONSUMER_INSTALL_PROBE_TIMEOUT_S):
         probed.append(str(python_executable))
         return {"state": "editable_current", "code_version": version, "metadata_version": version,
@@ -184,6 +250,21 @@ try:
     ck("all K registered deployments are touched and completeness is proven",
        len(set(probed)) == len(registered) and fresh_verdict["N_total"] == len(registered)
        and fresh_verdict["N_verified_fresh"] == len(registered) and fresh_verdict["complete"])
+
+    def managed_pathinjected_probe(python_executable, root, version,
+                                   timeout=fleet._CONSUMER_INSTALL_PROBE_TIMEOUT_S):
+        return {"state": "pathinjected_managed", "code_version": version, "metadata_version": None,
+                "module_path": str(repo_root / "src" / "spendguard" / "__init__.py"), "editable": False,
+                "catalog_verified": pricing.PRICING_VERIFIED, "distribution_present": False}
+
+    fleet._consumer_install_state = managed_pathinjected_probe
+    fleet._refresh_editable_install = lambda *args, **kwargs: (_ for _ in ()).throw(
+        AssertionError("managed path injection must not invoke pip refresh"))
+    pathinjected_verdict = fleet.verify_and_refresh_registered_interpreters(apply=True)
+    ck("managed path-injected deployments verify fresh without invoking pip",
+       pathinjected_verdict["complete"]
+       and pathinjected_verdict["N_verified_fresh"] == len(registered)
+       and pathinjected_verdict["N_updated"] == 0)
 
     refreshed = []
 
