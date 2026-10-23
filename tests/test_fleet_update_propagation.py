@@ -8,22 +8,114 @@ spendguard once at startup and runs that code until it restarts; a later pip/dep
     can't bring back);
   • release.exit_if_stale() self-exits when a respawn would land on green.
 Offline, isolated HOME, no network, no LLM."""
+import contextlib
 import os
 import sqlite3
 import sys
 import tempfile
+import pathlib
 
 os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="sg-fleet-")
 os.environ.setdefault("SPENDGUARD_TEST_ISOLATED", "1")
 os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
-from spendguard import fleet, release, config  # noqa: E402
+from spendguard import fleet, gate, release, config, setup  # noqa: E402
+
+config.HOME = pathlib.Path(os.environ["SPENDGUARD_HOME"])
 
 fails = []
 from functools import partial
 from _script_checks import record_script_check
 ck = partial(record_script_check, fails)
+
+# ── 0. enforcing-interpreter registration is persistent, idempotent, and fail-observable ──
+original_fleet_iso = fleet._fleet_iso
+registration_clock = {"calls": 0}
+
+
+def registration_test_timestamp():
+    registration_clock["calls"] += 1
+    return "first" if registration_clock["calls"] <= 2 else "last"
+
+
+fleet._fleet_iso = registration_test_timestamp
+fleet.register_enforcing_interpreter()
+fleet.register_enforcing_interpreter()
+with fleet._fleet_db() as registration_connection:
+    registration_rows = registration_connection.execute(
+        "SELECT first_seen,last_seen FROM registered_interpreters WHERE python_executable=?",
+        (str(pathlib.Path(sys.executable).resolve()),)).fetchall()
+ck("enforcing interpreter has exactly one persistent registration", registration_rows == [("first", "last")])
+fleet._fleet_iso = original_fleet_iso
+
+original_fleet_db = fleet._fleet_db
+fleet._fleet_db = lambda: (_ for _ in ()).throw(PermissionError("read-only fleet registry"))
+ck("read-only registry never crashes enforcement", fleet.register_enforcing_interpreter() is False)
+registration_status = fleet.enforcing_interpreter_registration_status()
+ck("read-only registry is loudly tracked as enforcing-but-unregistered",
+   registration_status["registered"] is False and "read-only" in registration_status["error"])
+fleet._fleet_db = original_fleet_db
+fleet.register_enforcing_interpreter()
+
+original_register_enforcing_interpreter = fleet.register_enforcing_interpreter
+
+
+def emit_and_fail_install_registration():
+    print("registration dependency warning", file=sys.stderr)
+    raise RuntimeError("registration persistence failed")
+
+
+fleet.register_enforcing_interpreter = emit_and_fail_install_registration
+install_registration_stderr = tempfile.TemporaryFile(mode="w+")
+try:
+    with contextlib.redirect_stderr(install_registration_stderr):
+        gate._register_installing_enforcing_interpreter()
+    install_registration_stderr.seek(0)
+    escaped_install_registration_stderr = install_registration_stderr.read()
+finally:
+    install_registration_stderr.close()
+    fleet.register_enforcing_interpreter = original_register_enforcing_interpreter
+registration_status = fleet.enforcing_interpreter_registration_status()
+ck("failed install registration adds no stderr noise",
+   escaped_install_registration_stderr == "")
+ck("failed install registration routes stderr and exception detail to doctor",
+   registration_status["registered"] is False
+   and "registration dependency warning" in registration_status["error"]
+   and "registration persistence failed" in registration_status["error"])
+fleet.register_enforcing_interpreter()
+
+# ── 0b. host discovery reconciles CLI shebang identity against the persistent registry ──
+fake_cli_root = pathlib.Path(tempfile.mkdtemp(prefix="sg-discovery-"))
+fake_python = fake_cli_root / "python"
+fake_cli = fake_cli_root / "spendguard"
+fake_python.write_text("")
+fake_cli.write_text(f"#!{fake_python}\n")
+discovered = fleet.discover_host_spendguard_installations(cli_paths=[fake_cli], pipx_document={})
+escape_audit = fleet.reconcile_registered_host_installations(discovered)
+ck("discovered unregistered CLI interpreter is a registration escape with remediation",
+   not escape_audit["complete"] and escape_audit["escapes"]
+   and "install-hook --user --python" in escape_audit["escapes"][0]["remediation"])
+with fleet._fleet_db() as registration_connection:
+    registration_connection.execute(
+        "INSERT INTO registered_interpreters"
+        "(python_executable,venv_root,first_seen,last_seen) VALUES(?,?,?,?)",
+        (str(fake_python.resolve()), str(fake_cli_root), "first", "last"))
+registered_audit = fleet.reconcile_registered_host_installations(discovered)
+ck("fully registered discovered host reports complete", registered_audit["complete"] is True)
+
+original_reconcile = fleet.reconcile_registered_host_installations
+original_install_hook = setup.install_hook
+fleet.reconcile_registered_host_installations = lambda: escape_audit
+applied_interpreters = []
+setup.install_hook = lambda **kwargs: applied_interpreters.append(kwargs["python"])
+try:
+    gate_host_rc = setup.cmd_gate_discovered_host(["--apply"])
+finally:
+    fleet.reconcile_registered_host_installations = original_reconcile
+    setup.install_hook = original_install_hook
+ck("gate-host apply consumes every discovered registration escape",
+   gate_host_rc == 0 and applied_interpreters == [str(fake_python.resolve())])
 
 # control the served commit of THIS process + the green pointer
 release.served_sha = lambda: {"sha": "AAAAAAA", "short": "AAAAAAA", "dirty": False, "describe": "AAAAAAA"}

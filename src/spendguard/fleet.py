@@ -53,6 +53,8 @@ ORPHAN_REAP_LAUNCHD_COMMAND_ARGUMENTS = ("reap-orphans", "--execute", "--json")
 QUEUE_MANAGE_LAUNCHD_COMMAND_ARGUMENTS = ("queue-manage", "--execute", "--json")
 FLEET_LAUNCHD_OPERATION_TIMEOUT_S = 15
 FLEET_TEST_ISOLATION_ENV = "SPENDGUARD_TEST_ISOLATED"
+_INTERPRETER_REGISTRATION_TABLE = "registered_interpreters"
+_registration_failure = None
 
 
 def periodic_launchd_job_registry():
@@ -149,14 +151,83 @@ def _fleet_db():
         pid INTEGER PRIMARY KEY, version TEXT, served_sha TEXT, served_short TEXT, dirty INTEGER,
         cmdline TEXT, launchd_label TEXT, registered_ts TEXT, venv_root TEXT, python_executable TEXT,
         pid_create_time TEXT)""")
+    c.execute(f"""CREATE TABLE IF NOT EXISTS {_INTERPRETER_REGISTRATION_TABLE}(
+        python_executable TEXT PRIMARY KEY, venv_root TEXT NOT NULL, code_version TEXT,
+        metadata_version TEXT, catalog_verified TEXT, first_seen TEXT NOT NULL, last_seen TEXT NOT NULL)""")
     # Existing registries predate install-refresh metadata. Keep migration additive so every consumer can continue
     # registering while a newer spendguard gradually rolls through the fleet.
     columns = {row[1] for row in c.execute("PRAGMA table_info(consumers)").fetchall()}
-    for name in ("venv_root", "python_executable", "pid_create_time"):
+    for name in ("venv_root", "python_executable", "pid_create_time", "registered_ts"):
         if name not in columns:
             c.execute("ALTER TABLE consumers ADD COLUMN %s TEXT" % name)
+    migration_time = _fleet_iso()
+    c.execute(
+        f"INSERT OR IGNORE INTO {_INTERPRETER_REGISTRATION_TABLE}"
+        "(python_executable,venv_root,code_version,metadata_version,catalog_verified,first_seen,last_seen) "
+        "SELECT python_executable,venv_root,version,version,NULL,COALESCE(registered_ts,?),COALESCE(registered_ts,?) "
+        "FROM consumers WHERE python_executable IS NOT NULL AND python_executable != ''",
+        (migration_time, migration_time))
     c.commit()
     return c
+
+
+def register_enforcing_interpreter():
+    """Persist THIS enforcing interpreter as a managed deployment; cheap, network-free, and fail-observable."""
+    global _registration_failure
+    try:
+        import importlib.metadata
+        from . import _version, pricing
+        python_executable = str(pathlib.Path(sys.executable).resolve())
+        now = _fleet_iso()
+        try:
+            metadata_version = importlib.metadata.version("llm-spendguard")
+        except importlib.metadata.PackageNotFoundError:
+            metadata_version = None
+        with closing(_fleet_db()) as connection:
+            with connection:
+                connection.execute(
+                    f"INSERT INTO {_INTERPRETER_REGISTRATION_TABLE}"
+                    "(python_executable,venv_root,code_version,metadata_version,catalog_verified,first_seen,last_seen) "
+                    "VALUES(?,?,?,?,?,?,?) ON CONFLICT(python_executable) DO UPDATE SET "
+                    "venv_root=excluded.venv_root,code_version=excluded.code_version,"
+                    "metadata_version=excluded.metadata_version,catalog_verified=excluded.catalog_verified,"
+                    "last_seen=excluded.last_seen",
+                    (python_executable, str(pathlib.Path(sys.prefix).resolve()), _version.__version__,
+                     metadata_version, pricing.PRICING_VERIFIED, now, now))
+        _registration_failure = None
+        return True
+    except Exception as exc:
+        _registration_failure = "%s: %s" % (type(exc).__name__, str(exc))
+        return False
+
+
+def record_enforcing_interpreter_registration_failure(exception=None, captured_stderr=""):
+    """Preserve an install-time registration failure for doctor without writing to the install path."""
+    global _registration_failure
+    failure_details = []
+    if exception is not None:
+        failure_details.append("%s: %s" % (type(exception).__name__, str(exception)))
+    normalized_stderr = captured_stderr.strip()
+    if normalized_stderr:
+        failure_details.append("captured stderr: %s" % normalized_stderr)
+    _registration_failure = "; ".join(failure_details) or "registration failed without diagnostic detail"
+
+
+def enforcing_interpreter_registration_status():
+    """Doctor-facing invariant status; a failed mandatory registration is never silently forgotten."""
+    return {"registered": _registration_failure is None, "error": _registration_failure,
+            "python_executable": str(pathlib.Path(sys.executable).resolve())}
+
+
+def registered_interpreters():
+    """The persistent authoritative deployment inventory, independent of live process lifetime."""
+    with closing(_fleet_db()) as connection:
+        rows = connection.execute(
+            f"SELECT python_executable,venv_root,code_version,metadata_version,catalog_verified,first_seen,last_seen "
+            f"FROM {_INTERPRETER_REGISTRATION_TABLE} ORDER BY python_executable").fetchall()
+    keys = ("python_executable", "venv_root", "code_version", "metadata_version", "catalog_verified",
+            "first_seen", "last_seen")
+    return [dict(zip(keys, row)) for row in rows]
 
 
 def _cmdline(pid=None):
@@ -325,11 +396,17 @@ _INSTALL_FINGERPRINT_MARKER = ".spendguard_dep_fingerprint"
 _CONSUMER_INSTALL_PROBE_TIMEOUT_S = 15
 _CONSUMER_EDITABLE_REFRESH_TIMEOUT_S = 180
 _CONSUMER_INSTALL_PROBE = (
-    "import importlib.metadata as m,json,pathlib,spendguard;"
+    "import importlib.metadata as m,json,pathlib,spendguard;from spendguard import pricing;"
     "d=m.distribution('llm-spendguard');"
     "u=d.read_text('direct_url.json');"
+    "a=[];"
+    "exec(\"for x in m.distributions():\\n n=(x.metadata.get('Name') or '').lower().replace('_','-')\\n"
+    " if n=='llm-spendguard':\\n  q=x.read_text('direct_url.json')\\n"
+    "  if q and json.loads(q).get('dir_info',{}).get('editable'): a.append(str(x._path))\");"
     "print(json.dumps({'code_version':spendguard.__version__,'metadata_version':d.version,"
     "'module_path':str(pathlib.Path(spendguard.__file__).resolve()),"
+    "'selected_metadata_path':str(d._path),'editable_metadata_paths':a,"
+    "'catalog_verified':pricing.PRICING_VERIFIED,"
     "'editable':bool(u and json.loads(u).get('dir_info',{}).get('editable'))}))"
 )
 
@@ -366,9 +443,12 @@ def _consumer_install_state(python_executable, repo_root, source_version,
     details = json.loads(result.stdout)
     module_path = pathlib.Path(details["module_path"])
     source_root = repo_root / "src"
+    shadowed_editable = (not details["editable"] and module_path.is_relative_to(source_root)
+                         and bool(details.get("editable_metadata_paths")))
     details["state"] = (
         "editable_current" if details["editable"] and module_path.is_relative_to(source_root)
         and details["code_version"] == source_version and details["metadata_version"] == source_version
+        else "editable_shadowed_by_egg_info" if shadowed_editable
         else "editable_stale" if details["editable"] else "noneditable_pinned"
     )
     return details
@@ -391,8 +471,12 @@ def consumer_install_drift():
         try:
             details = _consumer_install_state(python_executable, repo_root, __version__)
             if details["state"] != "editable_current":
+                if details["state"] == "editable_shadowed_by_egg_info":
+                    remediation = "remove stale in-tree metadata: %s" % details.get("selected_metadata_path")
+                else:
+                    remediation = f"{python_executable} -m pip install -e {repo_root}"
                 drift.append({"venv": venv, **details,
-                              "remediation": f"{python_executable} -m pip install -e {repo_root}"})
+                              "remediation": remediation})
         except Exception as exc:
             drift.append({"venv": venv, "error": str(exc),
                           "remediation": f"{python_executable} -m pip install -e {repo_root}"})
@@ -451,6 +535,97 @@ def refresh_stale_installs(apply=False):
             failed.append({"venv": venv, "error": str(exc)[:500]})
     return {"refreshed": refreshed, "skipped_current": skipped_current,
             "failed": failed, "no_consumers": False}
+
+
+def reconcile_registered_host_installations(discovered=None):
+    """Reconcile mechanically discovered spendguard installations against the authoritative registry."""
+    installations = discover_host_spendguard_installations() if discovered is None else discovered
+    registered = {str(pathlib.Path(row["python_executable"]).resolve()) for row in registered_interpreters()}
+    escapes = []
+    for installation in installations:
+        executable = str(pathlib.Path(installation["python_executable"]).resolve())
+        if executable in registered:
+            continue
+        escapes.append({**installation, "python_executable": executable,
+                        "remediation": f"spendguard install-hook --user --python {executable}"})
+    return {"complete": not escapes, "discovered": installations, "escapes": escapes}
+
+
+def discover_host_spendguard_installations(cli_paths=None, pipx_document=None):
+    """Discover PATH and pipx installations without guessing logical identity; resolved interpreter path is identity."""
+    isolated_test = bool(os.environ.get(FLEET_TEST_ISOLATION_ENV))
+    if cli_paths is None:
+        if isolated_test:
+            cli_paths = []
+        else:
+            result = subprocess.run(["which", "-a", "spendguard"], capture_output=True, text=True, check=False)
+            cli_paths = [line for line in result.stdout.splitlines() if line]
+    if pipx_document is None:
+        if isolated_test:
+            pipx_document = {}
+        else:
+            try:
+                result = subprocess.run(["pipx", "list", "--json"], capture_output=True, text=True, check=False)
+                pipx_document = json.loads(result.stdout) if result.returncode == 0 else {}
+            except (OSError, ValueError, json.JSONDecodeError):
+                pipx_document = {}
+    candidates = []
+    for cli_path in cli_paths:
+        try:
+            first_line = pathlib.Path(cli_path).read_text().splitlines()[0]
+        except (OSError, UnicodeError, IndexError):
+            continue
+        if first_line.startswith("#!"):
+            candidates.append({"source": str(pathlib.Path(cli_path).resolve()),
+                               "python_executable": first_line[2:].strip().split()[0]})
+    for package in (pipx_document.get("venvs") or {}).values():
+        metadata = package.get("metadata") or {}
+        main_package = metadata.get("main_package") or {}
+        if main_package.get("package") != "llm-spendguard":
+            continue
+        venv_dir = main_package.get("package_or_url") or package.get("venv_dir")
+        if venv_dir:
+            candidates.append({"source": "pipx", "python_executable": str(pathlib.Path(venv_dir) / "bin" / "python")})
+    unique = {}
+    for candidate in candidates:
+        executable = str(pathlib.Path(candidate["python_executable"]).resolve())
+        unique.setdefault(executable, {**candidate, "python_executable": executable})
+    return list(unique.values())
+
+
+def verify_and_refresh_registered_interpreters(apply=False):
+    """Touch every registered deployment and prove version + catalog freshness after isolated refresh attempts."""
+    from . import __version__, pricing
+    repo_root = pathlib.Path(__file__).resolve().parents[2]
+    try:
+        rows = registered_interpreters()
+    except Exception as exc:
+        registry_failure = {"python_executable": None,
+                            "error": "could not read authoritative registry: %s" % str(exc)[:500]}
+        return {"N_total": 0, "N_updated": 0, "N_verified_fresh": 0, "updated": [],
+                "verified_fresh": [], "failed": [registry_failure], "complete": False}
+    updated, verified_fresh, failed = [], [], []
+    for row in rows:
+        executable = pathlib.Path(row["python_executable"])
+        try:
+            before = _consumer_install_state(executable, repo_root, __version__)
+            fresh_before = (before["state"] == "editable_current"
+                            and before.get("catalog_verified") == pricing.PRICING_VERIFIED)
+            if apply and not fresh_before:
+                _refresh_editable_install(executable, repo_root)
+                updated.append(str(executable))
+            after = _consumer_install_state(executable, repo_root, __version__)
+            if (after["state"] == "editable_current"
+                    and after.get("catalog_verified") == pricing.PRICING_VERIFIED):
+                verified_fresh.append(str(executable))
+            else:
+                failed.append({"python_executable": str(executable), "state": after.get("state"),
+                               "catalog_verified": after.get("catalog_verified")})
+        except Exception as exc:
+            failed.append({"python_executable": str(executable), "error": str(exc)[:500]})
+    return {"N_total": len(rows), "N_updated": len(updated), "N_verified_fresh": len(verified_fresh),
+            "updated": updated, "verified_fresh": verified_fresh, "failed": failed,
+            "complete": len(verified_fresh) == len(rows) and not failed}
 
 
 def fleet_summary():

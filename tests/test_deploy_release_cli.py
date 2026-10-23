@@ -9,6 +9,7 @@ suite never runs; stdout/stderr captured. No network, no ledger, no git writes."
 import contextlib
 import io
 import os
+import pathlib
 import sys
 import tempfile
 
@@ -17,7 +18,11 @@ os.environ.setdefault("SPENDGUARD_TEST_ISOLATED", "1")
 os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
-from spendguard import cli, release   # noqa: E402
+from spendguard import cli, release, config, fleet   # noqa: E402
+
+config.HOME = pathlib.Path(os.environ["SPENDGUARD_HOME"])
+fleet.verify_and_refresh_registered_interpreters = lambda apply=True: {
+    "N_total": 0, "N_updated": 0, "N_verified_fresh": 0, "failed": [], "complete": True}
 
 fails = []
 

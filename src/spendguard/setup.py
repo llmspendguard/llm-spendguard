@@ -14,6 +14,25 @@ from . import config, config_schema
 _SENTINEL = "spendguard-gate-hook/v1"
 _PTH_NAME = "spendguard_gate_hook.pth"
 _GATED_SDKS = ("openai", "anthropic", "httpx")
+_EDITABLE_METADATA_PROBE = (
+    "import importlib.metadata as m,json;"
+    "print(int(any((d.metadata.get('Name') or '').lower().replace('_','-')=='llm-spendguard' "
+    "and (lambda u: bool(u and json.loads(u).get('dir_info',{}).get('editable')))"
+    "(d.read_text('direct_url.json')) for d in m.distributions())))")
+
+
+def purge_shadowing_in_tree_egg_info(repo_root):
+    """Remove only stale package metadata contained by this checkout's source root."""
+    import shutil
+    source_root = (repo_root / "src").resolve()
+    removed = []
+    for candidate in source_root.glob("*.egg-info"):
+        resolved = candidate.resolve()
+        if not resolved.is_relative_to(source_root):
+            continue
+        shutil.rmtree(resolved)
+        removed.append(str(resolved))
+    return removed
 
 
 def refresh_consumer_editable_package(python_executable, repo_root, timeout):
@@ -24,6 +43,10 @@ def refresh_consumer_editable_package(python_executable, repo_root, timeout):
         capture_output=True, text=True, timeout=timeout)
     if result.returncode:
         raise RuntimeError((result.stderr or result.stdout or "pip install failed").strip())
+    metadata_probe = subprocess.run([str(python_executable), "-c", _EDITABLE_METADATA_PROBE],
+                                    capture_output=True, text=True, timeout=timeout)
+    if metadata_probe.returncode == 0 and metadata_probe.stdout.strip() == "1":
+        purge_shadowing_in_tree_egg_info(repo_root)
 
 _HOOK = '''# Auto-installs the spendguard cost gate for every process in this venv (the `spendguard` package).
 # spendguard-gate-hook/v1 — this marker is how `install-hook --uninstall` knows the file is ours.
@@ -284,6 +307,28 @@ def coverage(extra=None):
 
 def cmd_coverage(argv=None):
     return coverage(list(argv or []))
+
+
+def cmd_gate_discovered_host(argv=None):
+    """Offer or apply user-site gating for every discovered installation missing from the fleet registry."""
+    from . import fleet
+    apply = "--apply" in (argv or [])
+    audit = fleet.reconcile_registered_host_installations()
+    failures = []
+    for escape in audit["escapes"]:
+        interpreter = escape["python_executable"]
+        if not apply:
+            print(f"registration escape: {interpreter}; fix: {escape['remediation']}")
+            continue
+        try:
+            install_hook(user=True, python=interpreter)
+        except Exception as exc:
+            failures.append({"python_executable": interpreter, "error": str(exc)})
+    if failures:
+        for failure in failures:
+            print(f"gate-host failed {failure['python_executable']}: {failure['error']}")
+        return 1
+    return 0 if apply or audit["complete"] else 2
 
 
 def _interpreter_purelib(target, timeout=10):

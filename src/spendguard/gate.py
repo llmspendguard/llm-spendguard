@@ -18,6 +18,8 @@ Design for safety on a live submit path:
 
 Audit trail: data/spend_audit/gate_log.jsonl (one line per submission, with decision).
 """
+import contextlib
+import io
 import os, sys, json, functools, datetime, time
 
 from . import pricing
@@ -2631,6 +2633,26 @@ def _patch_imported_sdk_package(module):
     _patch_sdk_package_surfaces(module.__name__)
 
 
+def _register_installing_enforcing_interpreter() -> None:
+    """Register this interpreter silently, routing every diagnostic to fleet status for doctor."""
+    registration_stderr = io.StringIO()
+    enforcing_fleet = None
+    registration_exception = None
+    with contextlib.redirect_stderr(registration_stderr):
+        try:
+            from . import fleet as enforcing_fleet
+            enforcing_fleet.register_enforcing_interpreter()
+        except Exception as exc:
+            registration_exception = exc
+        captured_stderr = registration_stderr.getvalue()
+        if enforcing_fleet is not None and (registration_exception is not None or captured_stderr.strip()):
+            try:
+                enforcing_fleet.record_enforcing_interpreter_registration_failure(
+                    exception=registration_exception, captured_stderr=captured_stderr)
+            except Exception:
+                pass
+
+
 def install(cap: "float | None" = None) -> None:
     """Arm absent SDKs and idempotently patch imported ones; preserve fail-open per-entry warnings."""
     if cap is not None:
@@ -2655,6 +2677,7 @@ def install(cap: "float | None" = None) -> None:
         http_capture.install()
     except Exception as e:
         print(f"[spend_gate] WARN raw-HTTP capture skipped: {e}", file=sys.stderr)
+    _register_installing_enforcing_interpreter()
 
 
 def _any_patched():
@@ -2849,6 +2872,14 @@ def _cli(cmd="status", live=False):
                              if _drift.get("metadata_version") else _drift.get("error", "install state unknown"))
                     print(f"  consumer  : 🔴 {_drift.get('venv')} — {_skew}; "
                           f"fix: `{_drift.get('remediation')}`")
+                _registry_audit = _fleet.reconcile_registered_host_installations()
+                for _escape in _registry_audit["escapes"]:
+                    _consumer_install_drift_found = True
+                    print(f"  registry  : 🔴 REGISTRATION ESCAPE {_escape.get('python_executable')} "
+                          f"(discovered via {_escape.get('source')}); fix: `{_escape.get('remediation')}`")
+                if _registry_audit["complete"]:
+                    print(f"  registry  : 🟢 complete across {len(_registry_audit['discovered'])} "
+                          "discovered host installation(s)")
             except Exception as _consumer_audit_error:
                 print(f"  consumer  : ? install audit failed: {_consumer_audit_error}")
         install()
@@ -2858,6 +2889,19 @@ def _cli(cmd="status", live=False):
         if not enforcing:
             print("    fix: run under a gated venv, `spendguard install-hook --venv <v>` / `--user`, "
                   "or `import spendguard; spendguard.require()` at the top of the script.")
+        try:
+            from . import fleet as _registration_fleet
+            _registration_status = _registration_fleet.enforcing_interpreter_registration_status()
+            if _registration_status["registered"]:
+                print("  registry  : 🟢 enforcing interpreter registered for fleet management")
+            else:
+                print(f"  registry  : 🔴 enforcing-but-UNREGISTERED — {_registration_status['error']}; "
+                      "fix fleet DB permissions/lock, then rerun `spendguard doctor`")
+                _consumer_install_drift_found = True
+        except Exception as _registration_status_error:
+            print(f"  registry  : 🔴 enforcing-but-UNREGISTERED — status unavailable: "
+                  f"{_registration_status_error}")
+            _consumer_install_drift_found = True
         try:
             from . import bulkgate
             _bm = bulkgate.mode()
