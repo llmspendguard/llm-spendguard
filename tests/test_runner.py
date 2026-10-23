@@ -72,6 +72,7 @@ sys.path.insert(0, REPO)
 from scripts.test.chunked_suite import _child_env  # noqa: E402
 
 RUNNER_SCRATCH_HOME_PREFIX = "sg-pytest-"
+RUNNER_SCRATCH_TMPDIR_PREFIX = "sg-pytest-tmp-"
 SCRIPTS = sorted(
     f for f in glob.glob(os.path.join(HERE, "test_*.py"))
     if os.path.basename(f) != "test_runner.py"
@@ -109,21 +110,25 @@ def test_script(script, runner_budget_scale):
     if not math.isfinite(runner_budget_scale) or not MIN_RUNNER_SCALE <= runner_budget_scale <= MAX_RUNNER_SCALE:
         raise RunnerBudgetCalibrationError(f"invalid runner scale: {runner_budget_scale!r}")
     scratch_home = tempfile.mkdtemp(prefix=RUNNER_SCRATCH_HOME_PREFIX)
-    env = _child_env(scratch_home)
-    if COVERAGE:
-        env["COVERAGE_PROCESS_START"] = RCFILE
-        # with the .pth hook → plain python (coverage starts at startup, traces sitecustomize imports);
-        # without it → `coverage run` (attaches after startup, misses those import-time lines).
-        cmd = ([sys.executable, script] if _COV_PTH
-               else [sys.executable, "-m", "coverage", "run", "-p", "--rcfile", RCFILE, script])
-    else:
-        cmd = [sys.executable, script]
-    t0 = time.monotonic()
+    scratch_tmpdir = None
     try:
+        scratch_tmpdir = tempfile.mkdtemp(prefix=RUNNER_SCRATCH_TMPDIR_PREFIX)
+        env = _child_env(scratch_home, scratch_tmpdir)
+        if COVERAGE:
+            env["COVERAGE_PROCESS_START"] = RCFILE
+            # with the .pth hook → plain python (coverage starts at startup, traces sitecustomize imports);
+            # without it → `coverage run` (attaches after startup, misses those import-time lines).
+            cmd = ([sys.executable, script] if _COV_PTH
+                   else [sys.executable, "-m", "coverage", "run", "-p", "--rcfile", RCFILE, script])
+        else:
+            cmd = [sys.executable, script]
+        t0 = time.monotonic()
         r = subprocess.run(cmd, capture_output=True, text=True, env=env,
                            timeout=RUNNER_SUBPROCESS_TIMEOUT_S * runner_budget_scale, cwd=REPO)
     finally:
         shutil.rmtree(scratch_home, ignore_errors=True)
+        if scratch_tmpdir is not None:
+            shutil.rmtree(scratch_tmpdir, ignore_errors=True)
     took = time.monotonic() - t0
     out = r.stdout + r.stderr
     assert r.returncode == 0, f"{os.path.basename(script)} exited {r.returncode}\n{out}"

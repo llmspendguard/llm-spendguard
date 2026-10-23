@@ -20,16 +20,19 @@ import test_runner as hermeticity_pytest_runner  # noqa: E402
 
 
 def verify_gate_hermeticity_isolation_contract():
-    with tempfile.TemporaryDirectory() as scratch:
-        expected_home = str(Path(scratch).resolve())
-        environment = chunked_suite._child_env(scratch)
+    with tempfile.TemporaryDirectory() as scratch_home, tempfile.TemporaryDirectory() as scratch_tmpdir:
+        expected_home = str(Path(scratch_home).resolve())
+        expected_tmpdir = str(Path(scratch_tmpdir).resolve())
+        environment = chunked_suite._child_env(scratch_home, scratch_tmpdir)
         assert hermeticity_pytest_runner._child_env is chunked_suite._child_env
-        assert hermeticity_pytest_runner._child_env(scratch) == environment
+        assert hermeticity_pytest_runner._child_env(scratch_home, scratch_tmpdir) == environment
         for home_key in chunked_suite.GATE_ISOLATED_HOME_ENV_NAMES:
             assert environment[home_key] == expected_home
+        assert environment[chunked_suite.GATE_ISOLATED_TMPDIR_ENV_NAME] == expected_tmpdir
         assert environment[chunked_suite.GATE_TEST_ISOLATED_ENV] == chunked_suite.GATE_TEST_ENABLED
         assert environment[config.CLI_TEST_OFFLINE_ENVIRONMENT_KEY] == config.CLI_TEST_OFFLINE_ENABLED_VALUE
-        with patch.object(hermeticity_pytest_runner.tempfile, "mkdtemp", return_value=scratch), \
+        with patch.object(hermeticity_pytest_runner.tempfile, "mkdtemp",
+                          side_effect=[scratch_home, scratch_tmpdir]), \
                 patch.object(hermeticity_pytest_runner.time, "monotonic", return_value=HERMETICITY_CLOCK_ORIGIN), \
                 patch.object(hermeticity_pytest_runner.subprocess, "run", return_value=SimpleNamespace(
                     returncode=HERMETICITY_SUCCESS_RETURN_CODE, stdout="", stderr="")) as runner_child:
@@ -37,19 +40,20 @@ def verify_gate_hermeticity_isolation_contract():
         # Coverage may add its startup key; every shared isolation key must survive unchanged.
         assert environment.items() <= runner_child.call_args.kwargs["env"].items()
         for broken_key in (*chunked_suite.GATE_ISOLATED_HOME_ENV_NAMES,
+                           chunked_suite.GATE_ISOLATED_TMPDIR_ENV_NAME,
                            chunked_suite.GATE_TEST_ISOLATED_ENV, config.CLI_TEST_OFFLINE_ENVIRONMENT_KEY):
             broken_environment = dict(environment)
             broken_environment.pop(broken_key)
             try:
-                chunked_suite.validate_gate_child_environment(broken_environment, scratch)
+                chunked_suite.validate_gate_child_environment(broken_environment, scratch_home, scratch_tmpdir)
             except chunked_suite.GateTestEnvironmentError:
                 pass
             else:
                 raise AssertionError(f"missing {broken_key} accepted")
         escaped_environment = dict(environment)
-        escaped_environment["HOME"] = str(Path(scratch).parent)
+        escaped_environment["HOME"] = str(Path(scratch_home).parent)
         try:
-            chunked_suite.validate_gate_child_environment(escaped_environment, scratch)
+            chunked_suite.validate_gate_child_environment(escaped_environment, scratch_home, scratch_tmpdir)
         except chunked_suite.GateTestEnvironmentError:
             pass
         else:
