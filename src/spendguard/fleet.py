@@ -230,6 +230,19 @@ def registered_interpreters():
     return [dict(zip(keys, row)) for row in rows]
 
 
+def deregister_interpreter(python_executable):
+    """Forget one explicitly retired deployment without changing that interpreter's gate installation."""
+    resolved_executable = str(pathlib.Path(python_executable).resolve())
+    with closing(_fleet_db()) as connection:
+        with connection:
+            cursor = connection.execute(
+                f"DELETE FROM {_INTERPRETER_REGISTRATION_TABLE} WHERE python_executable=?",
+                (resolved_executable,))
+            remaining = connection.execute(
+                f"SELECT COUNT(*) FROM {_INTERPRETER_REGISTRATION_TABLE}").fetchone()[0]
+    return {"removed": cursor.rowcount > 0, "python_executable": resolved_executable, "remaining": remaining}
+
+
 def _cmdline(pid=None):
     """This (or another) process's command, best-effort via ps — for identifying a consumer in the fleet view. For
     SELF, sys.argv is the cheap source; ps is the cross-process fallback. Never raises."""
@@ -454,6 +467,16 @@ def _consumer_install_state(python_executable, repo_root, source_version,
     return details
 
 
+def _consumer_install_is_verified_fresh(install_state, source_version, catalog_version):
+    """Freshness is package identity, except that known editable-shadowing is always an invalid deployment."""
+    return (
+        install_state.get("state") != "editable_shadowed_by_egg_info"
+        and install_state.get("code_version") == source_version
+        and install_state.get("metadata_version") == source_version
+        and install_state.get("catalog_verified") == catalog_version
+    )
+
+
 def consumer_install_drift():
     """Return actionable install skew for registered consumer venvs; read-only and idempotent."""
     from . import __version__
@@ -609,14 +632,13 @@ def verify_and_refresh_registered_interpreters(apply=False):
         executable = pathlib.Path(row["python_executable"])
         try:
             before = _consumer_install_state(executable, repo_root, __version__)
-            fresh_before = (before["state"] == "editable_current"
-                            and before.get("catalog_verified") == pricing.PRICING_VERIFIED)
+            fresh_before = _consumer_install_is_verified_fresh(
+                before, __version__, pricing.PRICING_VERIFIED)
             if apply and not fresh_before:
                 _refresh_editable_install(executable, repo_root)
                 updated.append(str(executable))
             after = _consumer_install_state(executable, repo_root, __version__)
-            if (after["state"] == "editable_current"
-                    and after.get("catalog_verified") == pricing.PRICING_VERIFIED):
+            if _consumer_install_is_verified_fresh(after, __version__, pricing.PRICING_VERIFIED):
                 verified_fresh.append(str(executable))
             else:
                 failed.append({"python_executable": str(executable), "state": after.get("state"),

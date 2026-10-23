@@ -104,6 +104,28 @@ with fleet._fleet_db() as registration_connection:
 registered_audit = fleet.reconcile_registered_host_installations(discovered)
 ck("fully registered discovered host reports complete", registered_audit["complete"] is True)
 
+other_python = fake_cli_root / "other-python"
+with fleet._fleet_db() as registration_connection:
+    registration_connection.execute(
+        "INSERT INTO registered_interpreters"
+        "(python_executable,venv_root,first_seen,last_seen) VALUES(?,?,?,?)",
+        (str(other_python.resolve()), str(fake_cli_root), "first", "last"))
+deregistered = fleet.deregister_interpreter(fake_python)
+remaining_executables = {row["python_executable"] for row in fleet.registered_interpreters()}
+ck("deregister removes exactly the resolved interpreter and preserves every other registration",
+   deregistered == {"removed": True, "python_executable": str(fake_python.resolve()),
+                    "remaining": len(remaining_executables)}
+   and str(fake_python.resolve()) not in remaining_executables
+   and str(other_python.resolve()) in remaining_executables)
+second_deregistration = fleet.deregister_interpreter(fake_python)
+ck("deregister is an idempotent no-op for an absent interpreter",
+   second_deregistration["removed"] is False
+   and second_deregistration["remaining"] == len(remaining_executables))
+escaped_after_deregistration = fleet.reconcile_registered_host_installations(discovered)
+ck("a still-discoverable gated interpreter reappears as an escape after explicit deregistration",
+   not escaped_after_deregistration["complete"]
+   and escaped_after_deregistration["escapes"][0]["python_executable"] == str(fake_python.resolve()))
+
 original_reconcile = fleet.reconcile_registered_host_installations
 original_install_hook = setup.install_hook
 fleet.reconcile_registered_host_installations = lambda: escape_audit

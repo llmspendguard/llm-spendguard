@@ -185,12 +185,41 @@ try:
        len(set(probed)) == len(registered) and fresh_verdict["N_total"] == len(registered)
        and fresh_verdict["N_verified_fresh"] == len(registered) and fresh_verdict["complete"])
 
+    refreshed = []
+
+    def noneditable_current_probe(python_executable, root, version,
+                                  timeout=fleet._CONSUMER_INSTALL_PROBE_TIMEOUT_S):
+        return {"state": "noneditable_pinned", "code_version": version, "metadata_version": version,
+                "module_path": str(home / "site-packages" / "spendguard" / "__init__.py"), "editable": False,
+                "catalog_verified": pricing.PRICING_VERIFIED}
+
+    fleet._consumer_install_state = noneditable_current_probe
+    fleet._refresh_editable_install = lambda python, root, timeout=fleet._CONSUMER_EDITABLE_REFRESH_TIMEOUT_S: (
+        refreshed.append(str(python)))
+    noneditable_verdict = fleet.verify_and_refresh_registered_interpreters(apply=True)
+    ck("current noneditable deployments are verified fresh without an unnecessary refresh",
+       noneditable_verdict["complete"] and noneditable_verdict["N_verified_fresh"] == len(registered)
+       and refreshed == [])
+
+    def shadowed_probe(python_executable, root, version, timeout=fleet._CONSUMER_INSTALL_PROBE_TIMEOUT_S):
+        return {"state": "editable_shadowed_by_egg_info", "code_version": version, "metadata_version": version,
+                "module_path": str(repo_root / "src" / "spendguard" / "__init__.py"), "editable": False,
+                "catalog_verified": pricing.PRICING_VERIFIED}
+
+    fleet._consumer_install_state = shadowed_probe
+    shadowed_verdict = fleet.verify_and_refresh_registered_interpreters(apply=False)
+    ck("editable metadata shadowing remains an explicit deployment failure despite matching identities",
+       not shadowed_verdict["complete"] and len(shadowed_verdict["failed"]) == len(registered))
+
     stale_python = registered[1]["python_executable"]
+    absent_python = registered[2]["python_executable"]
     probed = []
     refreshed = []
 
     def one_stale_probe(python_executable, root, version, timeout=fleet._CONSUMER_INSTALL_PROBE_TIMEOUT_S):
         probed.append(str(python_executable))
+        if str(python_executable) == absent_python:
+            raise FileNotFoundError(str(python_executable))
         stale = str(python_executable) == stale_python
         return {"state": "editable_stale" if stale else "editable_current", "code_version": version,
                 "metadata_version": PINNED_CONSUMER_VERSION if stale else version,
@@ -203,7 +232,10 @@ try:
     ck("one forced-stale deployment prevents the green completeness verdict",
        len(set(probed)) == len(registered) and refreshed == [stale_python]
        and not failed_verdict["complete"] and failed_verdict["failed"]
-       and failed_verdict["N_verified_fresh"] == len(registered) - 1)
+       and failed_verdict["N_verified_fresh"] == len(registered) - 2)
+    ck("an absent sibling deployment remains failed instead of receiving a blanket freshness pass",
+       any(failure.get("python_executable") == absent_python and failure.get("error")
+           for failure in failed_verdict["failed"]))
     fleet.registered_interpreters = lambda: (_ for _ in ()).throw(PermissionError("registry unreadable"))
     unreadable_verdict = fleet.verify_and_refresh_registered_interpreters(apply=True)
     ck("an unreadable authoritative registry fails deployment completeness loudly",

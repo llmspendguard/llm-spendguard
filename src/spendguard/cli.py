@@ -141,7 +141,7 @@ _GROUPS = [
         ("keys-audit", "scan repo .env files for a provider key that would SHADOW the keys.env SSOT (the stale-shadow 401 doctor can't see)"),
         ("deploy", "run the full gate, then promote committed HEAD → green pointer (running MCP servers roll onto latest+best)"),
         ("release", "what THIS process serves vs the green pointer — are the MCP servers on the latest? (--json)"),
-        ("fleet", "the running spendguard consumers + which are STALE vs the green pointer (--restart restarts them, --json)"),
+        ("fleet", "tracked consumers and deployments (--restart, --json, or deregister <python_executable>)"),
         ("pricing", "print the canonical price table"),
         ("audit", "fail CI if any code hardcodes a disagreeing price"),
         ("token-caps", "list every hardcoded output-token cap; --judge rules on the unjudged ones"),
@@ -583,6 +583,12 @@ def _dispatch(argv=None):
     if cmd == "fleet":                                # the running spendguard consumers + which are STALE vs green
         import json as _json
         from . import fleet as _fleet
+        if rest and rest[0] == "deregister":
+            if len(rest) != 2:
+                print("usage: spendguard fleet deregister <python_executable>", file=sys.stderr)
+                return 2
+            print(_json.dumps(_fleet.deregister_interpreter(rest[1]), indent=2))
+            return 0
         if "--restart" in rest:
             res = _fleet.restart_stale(apply="--dry-run" not in rest)
             print(_json.dumps(res, indent=2))
