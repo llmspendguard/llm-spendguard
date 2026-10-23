@@ -83,6 +83,7 @@ def _test_files():
 
 
 GATE_ISOLATED_HOME_ENV_NAMES = ("HOME", "SPENDGUARD_HOME")
+GATE_ISOLATED_TMPDIR_ENV_NAME = "TMPDIR"
 GATE_TEST_ISOLATED_ENV = "SPENDGUARD_TEST_ISOLATED"
 GATE_TEST_ENABLED = "1"
 
@@ -91,23 +92,28 @@ class GateTestEnvironmentError(RuntimeError):
     """The runner refused an environment that could reach real user state."""
 
 
-def validate_gate_child_environment(env, scratch_home):
+def validate_gate_child_environment(env, scratch_home, scratch_tmpdir):
     """Require the canonical per-file roots immediately before child startup."""
     expected_home = os.path.realpath(scratch_home)
     for root_name in GATE_ISOLATED_HOME_ENV_NAMES:
         root_value = env.get(root_name)
         if not root_value or os.path.realpath(root_value) != expected_home:
             raise GateTestEnvironmentError(f"test isolation violated: {root_name} escaped scratch home")
+    expected_tmpdir = os.path.realpath(scratch_tmpdir)
+    tmpdir_value = env.get(GATE_ISOLATED_TMPDIR_ENV_NAME)
+    if not tmpdir_value or os.path.realpath(tmpdir_value) != expected_tmpdir:
+        raise GateTestEnvironmentError("test isolation violated: TMPDIR escaped per-file temp directory")
     if env.get(GATE_TEST_ISOLATED_ENV) != GATE_TEST_ENABLED:
         raise GateTestEnvironmentError("test isolation violated: isolated test signal missing")
     if env.get(CLI_TEST_OFFLINE_ENVIRONMENT_KEY) != CLI_TEST_OFFLINE_ENABLED_VALUE:
         raise GateTestEnvironmentError("test isolation violated: CLI offline signal missing")
 
 
-def _child_env(scratch_home):
+def _child_env(scratch_home, scratch_tmpdir):
     env = dict(os.environ)
     for root_name in GATE_ISOLATED_HOME_ENV_NAMES:
         env[root_name] = os.path.realpath(scratch_home)
+    env[GATE_ISOLATED_TMPDIR_ENV_NAME] = os.path.realpath(scratch_tmpdir)
     env[GATE_TEST_ISOLATED_ENV] = GATE_TEST_ENABLED
     env[CLI_TEST_OFFLINE_ENVIRONMENT_KEY] = CLI_TEST_OFFLINE_ENABLED_VALUE
     # Mirror test_runner.py so offline runners stay in step: deterministic short recovery schedules; chaos sets its own timing explicitly.
@@ -120,11 +126,12 @@ def _child_env(scratch_home):
     env["no_proxy"] = env["NO_PROXY"] = "localhost,127.0.0.1"
     for k in _STRIP_KEYS:
         env.pop(k, None)
-    validate_gate_child_environment(env, scratch_home)
+    validate_gate_child_environment(env, scratch_home, scratch_tmpdir)
     return env
 
 
 SCRATCH_HOME_PREFIX = "sg-chunk-"           # per-file SPENDGUARD_HOME in $TMPDIR; removed when the file finishes
+GATE_SCRATCH_TMPDIR_PREFIX = "sg-chunk-tmp-"
 
 
 def _run_one(path):
@@ -134,8 +141,10 @@ def _run_one(path):
     if not real.startswith(tests_root):
         return 2, "", f"refused: {path} is not under {TESTS}"
     scratch_home = tempfile.mkdtemp(prefix=SCRATCH_HOME_PREFIX)
+    scratch_tmpdir = None
     try:
-        env = _child_env(scratch_home)
+        scratch_tmpdir = tempfile.mkdtemp(prefix=GATE_SCRATCH_TMPDIR_PREFIX)
+        env = _child_env(scratch_home, scratch_tmpdir)
         p = subprocess.run([sys.executable, real], env=env, timeout=FILE_BUDGET_S,
                            capture_output=True, text=True)
         return p.returncode, p.stdout, p.stderr
@@ -146,6 +155,8 @@ def _run_one(path):
         # (some 0.5GB each — the codex/claudecode state tests write a ~110MB json plus its rotated backups);
         # measured 2026-09-14: 7,794 dirs / 29.9GB in $TMPDIR with the disk at 100%.
         shutil.rmtree(scratch_home, ignore_errors=True)
+        if scratch_tmpdir is not None:
+            shutil.rmtree(scratch_tmpdir, ignore_errors=True)
 
 
 def main(argv=None):

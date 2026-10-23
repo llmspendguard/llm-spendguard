@@ -13,9 +13,25 @@ import sys
 import json
 import tempfile
 
-os.environ.setdefault("SPENDGUARD_TEST_ISOLATED", "1")
-os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
-os.environ.setdefault("SPENDGUARD_HOME", tempfile.mkdtemp(prefix="sg-batch-"))
+BATCH_ENVELOPE_TEST_ISOLATION_ENVIRONMENT_KEY = "SPENDGUARD_TEST_ISOLATED"
+BATCH_ENVELOPE_HOME_ENVIRONMENT_KEY = "SPENDGUARD_HOME"
+BATCH_ENVELOPE_NO_AUTOINSTALL_ENVIRONMENT_KEY = "SPENDGUARD_NO_AUTOINSTALL"
+BATCH_ENVELOPE_TEST_HOME_PREFIX = "sg-batch-"
+BATCH_ENVELOPE_TEST_ISOLATION_ENABLED = "1"
+
+if os.environ.get(BATCH_ENVELOPE_TEST_ISOLATION_ENVIRONMENT_KEY) != BATCH_ENVELOPE_TEST_ISOLATION_ENABLED:
+    batch_envelope_isolated_environment = dict(os.environ)
+    batch_envelope_isolated_environment[BATCH_ENVELOPE_TEST_ISOLATION_ENVIRONMENT_KEY] = (
+        BATCH_ENVELOPE_TEST_ISOLATION_ENABLED
+    )
+    batch_envelope_isolated_environment[BATCH_ENVELOPE_HOME_ENVIRONMENT_KEY] = tempfile.mkdtemp(
+        prefix=BATCH_ENVELOPE_TEST_HOME_PREFIX
+    )
+    batch_envelope_isolated_environment[BATCH_ENVELOPE_NO_AUTOINSTALL_ENVIRONMENT_KEY] = (
+        BATCH_ENVELOPE_TEST_ISOLATION_ENABLED
+    )
+    os.execve(sys.executable, [sys.executable, __file__], batch_envelope_isolated_environment)
+
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
 from spendguard import submit, adapters, models   # noqa: E402
