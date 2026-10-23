@@ -201,6 +201,18 @@ def register_enforcing_interpreter():
         return False
 
 
+def record_enforcing_interpreter_registration_failure(exception=None, captured_stderr=""):
+    """Preserve an install-time registration failure for doctor without writing to the install path."""
+    global _registration_failure
+    failure_details = []
+    if exception is not None:
+        failure_details.append("%s: %s" % (type(exception).__name__, str(exception)))
+    normalized_stderr = captured_stderr.strip()
+    if normalized_stderr:
+        failure_details.append("captured stderr: %s" % normalized_stderr)
+    _registration_failure = "; ".join(failure_details) or "registration failed without diagnostic detail"
+
+
 def enforcing_interpreter_registration_status():
     """Doctor-facing invariant status; a failed mandatory registration is never silently forgotten."""
     return {"registered": _registration_failure is None, "error": _registration_failure,

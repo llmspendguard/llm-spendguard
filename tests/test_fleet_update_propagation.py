@@ -8,6 +8,7 @@ spendguard once at startup and runs that code until it restarts; a later pip/dep
     can't bring back);
   • release.exit_if_stale() self-exits when a respawn would land on green.
 Offline, isolated HOME, no network, no LLM."""
+import contextlib
 import os
 import sqlite3
 import sys
@@ -19,7 +20,7 @@ os.environ.setdefault("SPENDGUARD_TEST_ISOLATED", "1")
 os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
-from spendguard import fleet, release, config, setup  # noqa: E402
+from spendguard import fleet, gate, release, config, setup  # noqa: E402
 
 config.HOME = pathlib.Path(os.environ["SPENDGUARD_HOME"])
 
@@ -55,6 +56,33 @@ registration_status = fleet.enforcing_interpreter_registration_status()
 ck("read-only registry is loudly tracked as enforcing-but-unregistered",
    registration_status["registered"] is False and "read-only" in registration_status["error"])
 fleet._fleet_db = original_fleet_db
+fleet.register_enforcing_interpreter()
+
+original_register_enforcing_interpreter = fleet.register_enforcing_interpreter
+
+
+def emit_and_fail_install_registration():
+    print("registration dependency warning", file=sys.stderr)
+    raise RuntimeError("registration persistence failed")
+
+
+fleet.register_enforcing_interpreter = emit_and_fail_install_registration
+install_registration_stderr = tempfile.TemporaryFile(mode="w+")
+try:
+    with contextlib.redirect_stderr(install_registration_stderr):
+        gate._register_installing_enforcing_interpreter()
+    install_registration_stderr.seek(0)
+    escaped_install_registration_stderr = install_registration_stderr.read()
+finally:
+    install_registration_stderr.close()
+    fleet.register_enforcing_interpreter = original_register_enforcing_interpreter
+registration_status = fleet.enforcing_interpreter_registration_status()
+ck("failed install registration adds no stderr noise",
+   escaped_install_registration_stderr == "")
+ck("failed install registration routes stderr and exception detail to doctor",
+   registration_status["registered"] is False
+   and "registration dependency warning" in registration_status["error"]
+   and "registration persistence failed" in registration_status["error"])
 fleet.register_enforcing_interpreter()
 
 # ── 0b. host discovery reconciles CLI shebang identity against the persistent registry ──

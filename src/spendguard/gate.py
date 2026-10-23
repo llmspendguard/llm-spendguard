@@ -18,6 +18,8 @@ Design for safety on a live submit path:
 
 Audit trail: data/spend_audit/gate_log.jsonl (one line per submission, with decision).
 """
+import contextlib
+import io
 import os, sys, json, functools, datetime, time
 
 from . import pricing
@@ -2631,6 +2633,26 @@ def _patch_imported_sdk_package(module):
     _patch_sdk_package_surfaces(module.__name__)
 
 
+def _register_installing_enforcing_interpreter() -> None:
+    """Register this interpreter silently, routing every diagnostic to fleet status for doctor."""
+    registration_stderr = io.StringIO()
+    enforcing_fleet = None
+    registration_exception = None
+    with contextlib.redirect_stderr(registration_stderr):
+        try:
+            from . import fleet as enforcing_fleet
+            enforcing_fleet.register_enforcing_interpreter()
+        except Exception as exc:
+            registration_exception = exc
+        captured_stderr = registration_stderr.getvalue()
+        if enforcing_fleet is not None and (registration_exception is not None or captured_stderr.strip()):
+            try:
+                enforcing_fleet.record_enforcing_interpreter_registration_failure(
+                    exception=registration_exception, captured_stderr=captured_stderr)
+            except Exception:
+                pass
+
+
 def install(cap: "float | None" = None) -> None:
     """Arm absent SDKs and idempotently patch imported ones; preserve fail-open per-entry warnings."""
     if cap is not None:
@@ -2655,8 +2677,7 @@ def install(cap: "float | None" = None) -> None:
         http_capture.install()
     except Exception as e:
         print(f"[spend_gate] WARN raw-HTTP capture skipped: {e}", file=sys.stderr)
-    from . import fleet as _enforcing_fleet
-    _enforcing_fleet.register_enforcing_interpreter()
+    _register_installing_enforcing_interpreter()
 
 
 def _any_patched():
