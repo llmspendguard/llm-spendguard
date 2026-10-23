@@ -15,6 +15,16 @@ _SENTINEL = "spendguard-gate-hook/v1"
 _PTH_NAME = "spendguard_gate_hook.pth"
 _GATED_SDKS = ("openai", "anthropic", "httpx")
 
+
+def refresh_consumer_editable_package(python_executable, repo_root, timeout):
+    """Install this checkout into a consumer interpreter; shared by install-hook and fleet promotion."""
+    import subprocess
+    result = subprocess.run(
+        [str(python_executable), "-m", "pip", "install", "-e", str(repo_root), "--no-cache-dir"],
+        capture_output=True, text=True, timeout=timeout)
+    if result.returncode:
+        raise RuntimeError((result.stderr or result.stdout or "pip install failed").strip())
+
 _HOOK = '''# Auto-installs the spendguard cost gate for every process in this venv (the `spendguard` package).
 # spendguard-gate-hook/v1 — this marker is how `install-hook --uninstall` knows the file is ours.
 # Kill switches checked HERE first, before the import, so disabling works even if the package is broken:
@@ -427,10 +437,10 @@ def install_hook(venv=None, uninstall=False, install_pkg=True, user=False, pytho
         pkg_root = str(Path(__file__).resolve().parents[2])
         if install_pkg:
             print(f"  pip install -e {pkg_root}  →  {venv}")
-            r = subprocess.run([os.path.join(venv, "bin", "pip"), "install", "-e", pkg_root],
-                               capture_output=True, text=True)
-            if r.returncode != 0:
-                print("  ✗ pip install failed:\n" + (r.stderr or r.stdout)[-600:]); return 1
+            try:
+                refresh_consumer_editable_package(target, pkg_root, timeout=None)
+            except RuntimeError as exc:
+                print("  ✗ pip install failed:\n" + str(exc)); return 1
         open(hook, "w").write(_HOOK)
 
     print(f"  ✓ hook → {hook}")

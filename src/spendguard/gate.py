@@ -2809,6 +2809,7 @@ def _stale_editable_install():
 
 def _cli(cmd="status", live=False):
     _stale_install = False              # set True when _stale_editable_install() finds code!=metadata (a broken install)
+    _consumer_install_drift_found = False
     if cmd == "off":
         open(FLAG, "w").write("disabled\n")
         print(f"🔴 spend gate DISABLED (persistent). Re-enable: spendguard on\n  flag: {FLAG}")
@@ -2838,6 +2839,18 @@ def _cli(cmd="status", live=False):
                   f"exits non-zero while this drift stands.")
         elif _code_v:
             print(f"  version   : 🟢 {_code_v}")
+        if cmd == "doctor":
+            try:
+                from . import fleet as _fleet
+                _consumer_drift = _fleet.consumer_install_drift()
+                _consumer_install_drift_found = bool(_consumer_drift)
+                for _drift in _consumer_drift:
+                    _skew = (f"running source v{_code_v}, install pinned v{_drift.get('metadata_version')}"
+                             if _drift.get("metadata_version") else _drift.get("error", "install state unknown"))
+                    print(f"  consumer  : 🔴 {_drift.get('venv')} — {_skew}; "
+                          f"fix: `{_drift.get('remediation')}`")
+            except Exception as _consumer_audit_error:
+                print(f"  consumer  : ? install audit failed: {_consumer_audit_error}")
         install()
         enforcing = _enforcement_armed()
         print(f"  {ENFORCING_MARKER}: "
@@ -3101,7 +3114,7 @@ def _cli(cmd="status", live=False):
     # BIND the freshness check: `spendguard doctor` exits non-zero on a STALE EDITABLE INSTALL (code != metadata), so CI
     # / an install-verify step / a `doctor && <next>` chain CATCHES the drift instead of proceeding on a broken install
     # whose frozen deps may be missing. `status` stays exit-0 (a casual glance); only the diagnostic `doctor` binds.
-    return 1 if (_stale_install and cmd == "doctor") else 0
+    return 1 if (cmd == "doctor" and (_stale_install or _consumer_install_drift_found)) else 0
 
 
 if __name__ == "__main__":

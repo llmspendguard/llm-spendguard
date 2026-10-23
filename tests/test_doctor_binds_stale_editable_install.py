@@ -14,6 +14,7 @@ import sys
 import io
 import tempfile
 import contextlib
+import pathlib
 
 os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="sg-freshness-")
 os.environ.setdefault("SPENDGUARD_TEST_ISOLATED", "1")
@@ -21,9 +22,14 @@ os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
 import spendguard  # noqa: E402
-from spendguard import gate  # noqa: E402
+from spendguard import config, fleet, gate  # noqa: E402
+
+config.HOME = pathlib.Path(os.environ["SPENDGUARD_HOME"])
 
 fails = []
+PINNED_CONSUMER_VENV = "/isolated/consumer"
+PINNED_CONSUMER_VERSION = "0.14.0"
+RESOLVED_REPOSITORY_PATH = "/resolved/repo"
 
 
 def ck(name, cond, extra=""):
@@ -55,9 +61,11 @@ finally:
 # ── B. doctor EXITS NON-ZERO on a skew (binds); status does not; a fresh install exits 0 ─────────────────────────────
 from spendguard import metadata_audit as _ma  # noqa: E402
 _o_sei, _o_install, _o_bh = gate._stale_editable_install, gate.install, _ma.backbone_health
+_o_consumer_drift = fleet.consumer_install_drift
 try:
     _ma.backbone_health = lambda: {"cache": {"present": True, "models": 1, "age_days": 0}, "ok": True, "drift": []}
     gate.install = lambda *a, **k: None                    # don't patch the real SDKs in the test process
+    fleet.consumer_install_drift = lambda: []
     gate._stale_editable_install = lambda: (True, "9.9.9", "0.0.1")   # simulate a stale editable install
 
     _buf = io.StringIO()
@@ -78,8 +86,21 @@ try:
     with contextlib.redirect_stdout(io.StringIO()):
         rc_fresh = gate._cli("doctor")
     ck("doctor on a FRESH install exits 0", rc_fresh == 0, extra=f"rc_fresh={rc_fresh}")
+
+    fleet.consumer_install_drift = lambda: [{
+        "venv": PINNED_CONSUMER_VENV, "metadata_version": PINNED_CONSUMER_VERSION,
+        "remediation": (f"{PINNED_CONSUMER_VENV}/bin/python -m pip install -e "
+                        f"{RESOLVED_REPOSITORY_PATH}")}]
+    with contextlib.redirect_stdout(_buf := io.StringIO()):
+        rc_pinned = gate._cli("doctor")
+    pinned_out = _buf.getvalue()
+    ck("doctor binds a pinned consumer install", rc_pinned == 1)
+    ck("doctor names venv, version skew, and exact editable remediation",
+       PINNED_CONSUMER_VENV in pinned_out and f"install pinned v{PINNED_CONSUMER_VERSION}" in pinned_out
+       and f"{PINNED_CONSUMER_VENV}/bin/python -m pip install -e {RESOLVED_REPOSITORY_PATH}" in pinned_out)
 finally:
     gate._stale_editable_install, gate.install, _ma.backbone_health = _o_sei, _o_install, _o_bh
+    fleet.consumer_install_drift = _o_consumer_drift
 
 print(f"\n{'OK' if not fails else 'FAIL'} test_doctor_binds_stale_editable_install: {len(fails)} failure(s)")
 sys.exit(1 if fails else 0)

@@ -55,10 +55,25 @@ class CodexAdmissionBoundsGuards(unittest.TestCase):
         with patch.object(broker, "_become_owner_if_available", return_value=False), \
                 patch.object(broker, "_call_owner", return_value=None), \
                 patch.object(broker, "broker_running", return_value=False):
-            self.assertIn("refused", broker.broker_run_warm(ADMISSION_TEST_PROMPT)["error"])
+            self.assertIn("unreachable", broker.broker_run_warm(ADMISSION_TEST_PROMPT)["error"])
             self.assertIs(broker.broker_ensure_running(), False)
         local.run_warm.assert_not_called()
         local.ensure_running.assert_not_called()
+
+    def test_broker_attach_import_failure_is_actionable_and_distinct_from_unreachable(self):
+        local = Mock()
+        local.CALL_TIMEOUT_S = ADMISSION_TEST_WAIT_S
+        local.STARTUP_TIMEOUT_S = ADMISSION_TEST_WAIT_S
+        broker = codex_daemon_broker._CodexDaemonBroker(local)
+        with patch.object(broker, "_become_owner_if_available", return_value=False), \
+                patch.object(codex_daemon_broker.socket, "socket"), \
+                patch.object(codex_daemon_broker, "_send_frame", side_effect=ImportError("missing attach client")):
+            error = broker.broker_run_warm(ADMISSION_TEST_PROMPT)["error"]
+        self.assertIn("stale/broken", error)
+        self.assertIn("attach-client import failed: missing attach client", error)
+        self.assertIn("pip install -e", error)
+        self.assertNotIn("unreachable", error)
+        local.run_warm.assert_not_called()
 
     def test_codex_fifo_bound_order_timeout_and_permit_reuse(self):
         bucket = _Bucket(ADMISSION_TEST_QUEUE_KEY, ADMISSION_TEST_POOL_SIZE, rpm=0,
