@@ -274,5 +274,59 @@ try:
 finally:
     mcp_server.serve_http, _cfg.single_instance_lock = _orig_serve, _orig_lock
 
+print("\n-- HTTP transport: a NOTIFICATION POST gets 202 (no body), never a 200+empty-JSON that kills strict rmcp --")
+# ANTI-REGRESSION for the warm-daemon churn (first seen 2026-10-22 ~23:44:27 in the codex app-server logs):
+# codex's rmcp `StreamableHttpClientWorker` POSTs `notifications/initialized` during the handshake, then reads the
+# response. The old serve_http answered a notification with `200 + Content-Type: application/json + empty body`;
+# rmcp tried to serde_json-parse the zero-byte body and died with "Deserialize error: EOF while parsing a value at
+# line 1 column 0, when send initialized notification", quitting the transport worker and reconnecting in a loop.
+# Per the MCP Streamable HTTP transport a notification-only POST MUST get `202 Accepted` with NO body. We replay the
+# EXACT offending payload over a real socket (as rmcp does) and assert the fixed shape — the unit of the defect is
+# the over-the-wire response, so the guard must bind a socket, not just call handle().
+import threading as _threading
+import urllib.request as _urlreq
+import urllib.error as _urlerr
+from http.server import ThreadingHTTPServer as _THS
+
+os.environ["SPENDGUARD_MCP_AUTO_RESPAWN"] = "0"   # no mid-request self-heal _exit during the test
+
+def _post_mcp(base, payload):
+    data = json.dumps(payload).encode("utf-8")
+    rq = _urlreq.Request(base + "/mcp", data=data, method="POST",
+                         headers={"Content-Type": "application/json",
+                                  "Accept": "application/json, text/event-stream"})
+    try:
+        with _urlreq.urlopen(rq, timeout=5) as resp:
+            return resp.status, resp.headers.get("Content-Type"), resp.read()
+    except _urlerr.HTTPError as e:                 # 4xx/5xx still carry a status + body
+        return e.code, e.headers.get("Content-Type"), e.read()
+
+_srv = _THS(("127.0.0.1", 0), mcp_server.build_mcp_http_handler())
+_t = _threading.Thread(target=_srv.serve_forever, daemon=True)
+_t.start()
+try:
+    _base = f"http://127.0.0.1:{_srv.server_address[1]}"
+
+    # a REQUEST (has id) still returns 200 + a parseable JSON-RPC result body — unchanged
+    st, ct, body = _post_mcp(_base, {"jsonrpc": "2.0", "id": 1, "method": "initialize",
+                                     "params": {"protocolVersion": "2025-06-18", "capabilities": {}}})
+    ck("HTTP initialize request → 200 with a JSON body that parses to a result frame",
+       st == 200 and json.loads(body).get("result", {}).get("serverInfo", {}).get("name") == "spendguard")
+
+    # the EXACT payload that killed the rmcp worker — a notification (no id)
+    st, ct, body = _post_mcp(_base, {"jsonrpc": "2.0", "method": "notifications/initialized"})
+    ck("HTTP notifications/initialized → 202 Accepted (the spec'd ack for a notification-only POST)", st == 202)
+    ck("HTTP notifications/initialized → EMPTY body (nothing for the client to deserialize)", body == b"")
+    # the specific crash shape rmcp chokes on is `200 + application/json + empty body`; prove it is gone
+    ck("HTTP notification is NOT answered with 200+application/json+empty (the rmcp EOF-at-col-0 crash shape)",
+       not (st == 200 and (ct or "").startswith("application/json") and body == b""))
+
+    # an UNKNOWN notification is also just acknowledged (202), never a reply frame
+    st, _ct, body = _post_mcp(_base, {"jsonrpc": "2.0", "method": "notifications/cancelled"})
+    ck("HTTP unknown notification → 202 Accepted, empty body", st == 202 and body == b"")
+finally:
+    _srv.shutdown()
+    _srv.server_close()
+
 print(f"\n{'[FAIL]' if fails else 'OK'} test_mcp_server: {len(fails)} failure(s)")
 sys.exit(1 if fails else 0)
