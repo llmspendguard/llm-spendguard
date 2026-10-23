@@ -47,6 +47,7 @@ STATE_WRITES_REVIEWED = {
     ("src/spendguard/lane_queue.py", "_reclaim_locked"): 2,
     ("src/spendguard/lane_queue.py", "mark_batched"): 1,
     ("src/spendguard/lane_queue.py", "requeue_from_batch"): 1,
+    ("src/spendguard/lane_queue.py", "_archive_then_retire_stale_queue_pass"): 1,
 }
 
 

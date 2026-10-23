@@ -12,7 +12,7 @@ import tempfile
 os.environ.setdefault("SPENDGUARD_TEST_ISOLATED", "1")
 os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="spendguard-parity-")
 
-from spendguard import cli, config_schema, dispatch, mcp_server
+from spendguard import cli, config_schema, dispatch, lane_queue, mcp_server
 
 _fails = []
 def ck(label, cond):
@@ -37,6 +37,18 @@ with contextlib.redirect_stdout(buf):
 cli_data = json.loads(buf.getvalue())
 ck("CLI `dispatch --json` exits 0 and emits the SAME sections (api/MCP/cli parity)",
    rc == 0 and set(cli_data) == set(st))
+
+_saved_queue_row_status = lane_queue.queue_row_status
+lane_queue.queue_row_status = lambda row_id: {"id": row_id, "disposition": "retired", "reason": "stale_age"}
+try:
+    status_tool = mcp_server._TOOLS["spendguard_dispatch_state"][2]({"id": 41})
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        status_rc = cli._dispatch(["dispatch", "--id", "41"])
+    status_cli = json.loads(buf.getvalue())
+    ck("per-id queue status has MCP/CLI parity", status_rc == 0 and status_cli == status_tool)
+finally:
+    lane_queue.queue_row_status = _saved_queue_row_status
 
 # ── (2) config parity: the MCP config tool exposes every NEW knob, with values, and NO secrets ──
 print("-- (2) MCP spendguard_config exposes the new knobs (with current values) and never a secret --")

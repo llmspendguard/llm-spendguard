@@ -65,6 +65,9 @@ try:
     out2 = lane_queue.submit("batch:intent", ["b1", "b2"], sla_class="batch", wait=False,
                              priority=lane_queue.PRIORITY_BULK)
     ck("wait=False returns queued ids + results=None (async)", len(out2.get("queued") or []) == 2 and out2.get("results") is None)
+    ck("wait=False acknowledges accepted work with count, handles, processing, and query instructions",
+       out2.get("accepted") is True and out2.get("queued_count") == 2 and out2.get("will_process") is True
+       and out2.get("status_handles") == out2.get("queued") and "--id" in out2.get("status_query", ""))
     d2 = lane_queue.queue_depth()
     ck("wait=False rows are 'pending' (the daemon drains them on spare capacity)", d2.get("pending", 0) == 2)
 finally:

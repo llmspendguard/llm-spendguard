@@ -120,7 +120,7 @@ def _ensure_queue_schema(c):
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         intent TEXT NOT NULL, task TEXT NOT NULL, system TEXT, reasoning TEXT,
         priority INTEGER DEFAULT 0,
-        state TEXT DEFAULT 'pending',        -- pending | leased | done | failed
+        state TEXT DEFAULT 'pending',        -- pending | leased | done | failed | retired
         lease_until TEXT, attempts INTEGER DEFAULT 0, max_attempts INTEGER DEFAULT 3,
         worker TEXT, result TEXT, lane TEXT, billed INTEGER DEFAULT 0,
         created_ts TEXT, updated_ts TEXT)""")
@@ -135,7 +135,7 @@ def _ensure_queue_schema(c):
     for _col, _decl in (("sla_class", "TEXT DEFAULT 'batch'"), ("deadline_ts", "TEXT"),
                         ("defer_until", "TEXT"), ("parks", "INTEGER DEFAULT 0"),
                         ("fingerprint", "TEXT"), ("batch_handle", "TEXT"), ("batch_model", "TEXT"),
-                        ("result_payload", "TEXT"), ("result_gap", "TEXT"),
+                        ("result_payload", "TEXT"), ("result_gap", "TEXT"), ("terminal_reason", "TEXT"),
                         ("result_migrated", "INTEGER DEFAULT 0")):
         try:
             c.execute(f"ALTER TABLE lane_queue ADD COLUMN {_col} {_decl}")
@@ -937,12 +937,19 @@ def submit(intent, tasks, *, priority=PRIORITY_INTERACTIVE, sla_class="realtime"
     bulk_delegate kwargs (schema, on_miss, base_fallback, lanes, …) pass through."""
     tasks = list(tasks)
     if not intent or not tasks:
-        return {"queued": [], "results": ([] if wait else None), "durable": True}
+        empty_receipt = {"queued": [], "results": ([] if wait else None), "durable": True}
+        if not wait:
+            empty_receipt.update({"accepted": False, "queued_count": 0, "will_process": False,
+                                  "status_handles": [], "status_query": "spendguard dispatch --id <id>"})
+        return empty_receipt
     _dl = _deadline_iso(sla_s)
     if not wait:
         ids = enqueue_many(intent, tasks, system=system, reasoning=reasoning, priority=priority,
                            sla_class=sla_class, deadline_ts=_dl)
-        return {"queued": ids, "results": None, "durable": len(ids) == len(tasks)}
+        durable = len(ids) == len(tasks)
+        return {"accepted": bool(ids), "queued": ids, "queued_count": len(ids), "results": None,
+                "durable": durable, "will_process": bool(ids), "status_handles": ids,
+                "status_query": "spendguard dispatch --id <id>"}
     # SYNC FAST-PATH — own the rows from the start (no daemon race), run inline via the bulletproof engine, settle.
     ids = _enqueue_leased(intent, tasks, system=system, reasoning=reasoning, priority=priority,
                           sla_class=sla_class, deadline_ts=_dl)
@@ -1034,7 +1041,7 @@ def hold_free_recovery(intent, task, invoke, *, deadline_s, poll_s):
 
 
 def queue_depth():
-    """{pending, leased, done, failed, parked} counts — the 'is anything queued' view (parallel to
+    """{pending, leased, done, failed, retired, parked} counts — the 'is anything queued' view (parallel to
     dispatch.queue_state). `parked` is the SUBSET of pending currently DEFERRED for capacity (defer_until in the
     future) — visible backpressure (Step 4), not a separate state. A spend refusal / ledger LOCK propagates; any
     other hiccup returns {} (a status read never crashes a caller)."""
@@ -1044,7 +1051,7 @@ def queue_depth():
             rows = c.execute("SELECT state, COUNT(*) FROM lane_queue GROUP BY state").fetchall()
             parked = c.execute("SELECT COUNT(*) FROM lane_queue WHERE state='pending' AND defer_until IS NOT NULL "
                                "AND defer_until>?", (now,)).fetchone()
-        out = {"pending": 0, "leased": 0, "queued_batch": 0, "done": 0, "failed": 0}
+        out = {"pending": 0, "leased": 0, "queued_batch": 0, "done": 0, "failed": 0, "retired": 0}
         for st, n in rows:
             out[st] = n
         out["parked"] = int(parked[0]) if parked else 0
@@ -1054,6 +1061,60 @@ def queue_depth():
         if _pt._stop_or_locked(_e):
             raise                                      # spend refusal / ledger LOCK PROPAGATES — never masked as empty
         return {}
+
+
+def queue_row_status(row_id, archive_path=None):
+    """Disposition for one enqueue handle, falling back to both bounded archive generations."""
+    try:
+        row_id = int(row_id)
+    except (TypeError, ValueError):
+        return {"id": row_id, "disposition": "not_found"}
+    columns = ("id", "state", "terminal_reason", "created_ts", "updated_ts", "lease_until", "deadline_ts")
+    try:
+        import contextlib
+        with contextlib.closing(_queue_readonly_preview_connection()) as queue_connection:
+            row = queue_connection.execute(
+                f"SELECT {','.join(columns)} FROM lane_queue WHERE id=?", (row_id,)).fetchone()
+        if row:
+            record = dict(zip(columns, row))
+            disposition = "queued" if record["state"] in ("pending", "queued_batch") else record["state"]
+            return {"id": row_id, "disposition": disposition, "reason": record["terminal_reason"],
+                    "created_ts": record["created_ts"], "updated_ts": record["updated_ts"],
+                    "lease_until": record["lease_until"], "deadline_ts": record["deadline_ts"], "source": "live"}
+    except Exception:
+        pass
+    archive = archive_path or str(config.HOME / "lane_queue_archive.jsonl")
+    archived_record = None
+    archive_undecodable_lines = 0
+    for candidate in (archive + ".1", archive):
+        try:
+            with open(candidate, encoding="utf-8") as stream:
+                for line in stream:
+                    try:
+                        record = json.loads(line)
+                    except (ValueError, TypeError):
+                        archive_undecodable_lines += 1
+                        continue
+                    if record.get("id") == row_id:
+                        archived_record = record
+        except (FileNotFoundError, OSError):
+            continue
+    if archived_record is None:
+        if archive_undecodable_lines:
+            import sys as _sysqrs                 # NAMED trace: unreadable archive evidence makes absence unknowable
+            print("[spendguard] lane_queue.queue_row_status: %d undecodable archive line(s) while looking for row "
+                  "%s in %s; disposition is indeterminate"
+                  % (archive_undecodable_lines, row_id, archive), file=_sysqrs.stderr, flush=True)
+            return {"id": row_id, "disposition": "indeterminate", "reason": "archive_unreadable",
+                    "undecodable": archive_undecodable_lines, "archive": archive}
+        return {"id": row_id, "disposition": "not_found"}
+    state = archived_record.get("retired_state") or archived_record.get("state")
+    disposition = "queued" if state in ("pending", "queued_batch") else state
+    return {"id": row_id, "disposition": disposition,
+            "reason": archived_record.get("retired_reason") or archived_record.get("terminal_reason"),
+            "created_ts": archived_record.get("created_ts"), "updated_ts": archived_record.get("updated_ts"),
+            "lease_until": archived_record.get("lease_until"), "deadline_ts": archived_record.get("deadline_ts"),
+            "source": "archive"}
 
 
 def pending_counts(realtime_only=True):
@@ -1152,7 +1213,7 @@ def _archive_then_delete_queue_pass(where_sql, where_parameters, archive_path, c
     cols = ("id", "intent", "task", "system", "reasoning", "priority", "state", "lease_until", "attempts",
             "max_attempts", "worker", "result", "lane", "billed", "sla_class", "deadline_ts", "defer_until",
             "parks", "fingerprint", "batch_handle", "batch_model", "result_payload", "result_gap",
-            "result_migrated", "created_ts", "updated_ts")
+            "result_migrated", "terminal_reason", "created_ts", "updated_ts")
     archived = deleted = 0
     while True:
         with _queue_op() as queue_connection:
@@ -1178,6 +1239,46 @@ def _archive_then_delete_queue_pass(where_sql, where_parameters, archive_path, c
     return {"archived": archived, "deleted": deleted}
 
 
+def _archive_then_retire_stale_queue_pass(where_sql, where_parameters, archive_path, chunk, now):
+    """Archive stale live rows in their original form, then retain them as queryable terminal rows."""
+    columns = ("id", "intent", "task", "system", "reasoning", "priority", "state", "lease_until", "attempts",
+               "max_attempts", "worker", "result", "lane", "billed", "sla_class", "deadline_ts", "defer_until",
+               "parks", "fingerprint", "batch_handle", "batch_model", "result_payload", "result_gap",
+               "result_migrated", "terminal_reason", "created_ts", "updated_ts")
+    archived = retired = 0
+    while True:
+        with _queue_op() as queue_connection:
+            queue_connection.execute("BEGIN IMMEDIATE")
+            try:
+                rows = queue_connection.execute(
+                    f"SELECT {','.join(columns)} FROM lane_queue WHERE {where_sql} ORDER BY updated_ts LIMIT ?",
+                    (*where_parameters, chunk)).fetchall()
+                if not rows:
+                    queue_connection.execute("COMMIT")
+                    break
+                records = []
+                updates = []
+                for row in rows:
+                    record = dict(zip(columns, row))
+                    reason = "stale_deadline" if record["deadline_ts"] and record["deadline_ts"] < now else "stale_age"
+                    records.append({**record, "retired_state": "retired", "retired_reason": reason})
+                    updates.append((reason, now, row[0]))
+                _append_durable_queue_archive(archive_path, records)
+                queue_connection.executemany(
+                    "UPDATE lane_queue SET state='retired',terminal_reason=?,updated_ts=?,lease_until=NULL,worker=NULL "
+                    "WHERE id=?", updates)
+                queue_connection.execute("COMMIT")
+            except Exception:
+                queue_connection.execute("ROLLBACK")
+                raise
+        archived += len(rows)
+        retired += len(rows)
+        _bound_archive(archive_path)
+        if len(rows) < chunk:
+            break
+    return {"archived": archived, "retired": retired, "deleted": 0}
+
+
 def purge(retain_days=None, archive_path=None, chunk=None, stale_days=None):
     """Archive then delete two distinct structural classes: stale live work, then retained terminal history.
 
@@ -1199,15 +1300,15 @@ def purge(retain_days=None, archive_path=None, chunk=None, stale_days=None):
     stale_cutoff = _iso(_utcnow() - datetime.timedelta(days=stale_days))
     archive_path = archive_path or str(config.HOME / "lane_queue_archive.jsonl")
     chunk = max(1, int(chunk if chunk is not None else _qcfg("queue_purge_chunk", PURGE_CHUNK_DEFAULT)))
-    stale_result = {"archived": 0, "deleted": 0}
+    stale_result = {"archived": 0, "retired": 0, "deleted": 0}
     terminal_result = {"archived": 0, "deleted": 0}
     try:
-        stale_result = _archive_then_delete_queue_pass(
+        stale_result = _archive_then_retire_stale_queue_pass(
             "state IN ('pending','leased') AND (state='pending' OR lease_until<?) "
             "AND ((deadline_ts IS NOT NULL AND deadline_ts<?) OR created_ts<?)",
-            (now, now, stale_cutoff), archive_path, chunk)
+            (now, now, stale_cutoff), archive_path, chunk, now)
         terminal_result = _archive_then_delete_queue_pass(
-            "state IN ('done','failed') AND updated_ts<?", (terminal_cutoff,), archive_path, chunk)
+            "state IN ('done','failed','retired') AND updated_ts<?", (terminal_cutoff,), archive_path, chunk)
         if not _queue_meta_set(QUEUE_PURGE_STAMP_KEY, _t.time()):
             return {"stale": stale_result, "terminal": terminal_result,
                     "archived": stale_result["archived"] + terminal_result["archived"],
@@ -1243,7 +1344,7 @@ def queue_management_plan(stale_days=None, retain_days=None):
                 "GROUP BY state,intent ORDER BY state,intent", (now, now, stale_cutoff)).fetchall()
             terminal = queue_connection.execute(
                 "SELECT state,intent,COUNT(*),MIN(updated_ts),MAX(updated_ts) FROM lane_queue "
-                "WHERE state IN ('done','failed') AND updated_ts<? GROUP BY state,intent ORDER BY state,intent",
+                "WHERE state IN ('done','failed','retired') AND updated_ts<? GROUP BY state,intent ORDER BY state,intent",
                 (terminal_cutoff,)).fetchall()
             ready = queue_connection.execute(
                 "SELECT COUNT(*) FROM lane_queue WHERE state='pending' "

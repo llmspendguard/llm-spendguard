@@ -749,7 +749,17 @@ def _dispatch(argv=None):
                   bs.get("settled", 0), bs.get("failed", 0), bs.get("total", 0)))
         return 0
     if cmd == "dispatch":                               # live ADMISSION + QUEUE + reasoning-cut state — the parity view
-        from . import dispatch                           # (same dispatch.admission_state() the MCP tool returns)
+        from . import dispatch, lane_queue               # (same dispatch.admission_state() the MCP tool returns)
+        if "--id" in rest:
+            import argparse as _argparse
+            import json as _json
+            parser = _argparse.ArgumentParser(prog="spendguard dispatch")
+            parser.add_argument("--id", required=True, type=int)
+            parser.add_argument("--json", action="store_true")
+            parsed = parser.parse_args(rest)
+            status = lane_queue.queue_row_status(parsed.id)
+            print(_json.dumps(status, indent=2 if parsed.json else None, default=str))
+            return 0
         st = dispatch.admission_state()
         if "--json" in rest:
             import json as _json
@@ -767,8 +777,8 @@ def _dispatch(argv=None):
             for v, d in ll.items():
                 print("  %-22s tpm=%s rpm=%s (%s)" % (v, d.get("tpm"), d.get("rpm"), d.get("source")))
         q = st.get("queue") or {}
-        print("queue: pending=%s leased=%s parked=%s done=%s failed=%s" % (
-            q.get("pending"), q.get("leased"), q.get("parked"), q.get("done"), q.get("failed")))
+        print("queue: pending=%s leased=%s parked=%s done=%s failed=%s retired=%s" % (
+            q.get("pending"), q.get("leased"), q.get("parked"), q.get("done"), q.get("failed"), q.get("retired")))
         dc = st.get("deadline_cancels") or {}
         if dc:
             print("deadline-cancel waste (reasoning cut mid-thought — invisible to the ledger, reconcile to see $):")
