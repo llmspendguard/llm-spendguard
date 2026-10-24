@@ -23,6 +23,8 @@ from spendguard import calls, cli, mcp_server, receipt
 
 SURFACE_SEED_COUNT = 5
 SURFACE_TEST_CAP = 2
+SURFACE_PROBE_ROW_COUNT = 1
+SURFACE_OVERFLOW_EXTRA_COUNT = 5
 SURFACE_TEST_BUDGET_S = 1.0
 SURFACE_PROGRESS_STEP = 1
 SURFACE_SEED_START = 1
@@ -30,6 +32,7 @@ SURFACE_EXPECTED_CALLS = 1
 SURFACE_EXPECTED_GROUPS = 1
 SURFACE_SEED_DAY = "2026-01-03"
 SURFACE_SEED_SOURCE = "ledger-read-characterization"
+SURFACE_CONVERSATION_SOURCE = "claude-code"
 SURFACE_SEED_PROVIDER = "openai"
 SURFACE_TEST_DATABASE = "ledger-read.sqlite"
 SURFACE_EMPTY_DATABASE = "ledger-empty.sqlite"
@@ -40,6 +43,18 @@ SURFACE_RECURSIVE_STEPS = 100000
 SURFACE_FORMATTED_MONEY = "receipt-ssot-money"
 SURFACE_ESTIMATED_VALUE = "2.0"
 SURFACE_SEED_INTENT = "surface-characterization"
+
+
+def seed_surface_conversations(path, conversation_count):
+    writer = SpendLedger(path)
+    for index in range(conversation_count):
+        writer.record_event({
+            "source": SURFACE_CONVERSATION_SOURCE, "kind": "realtime", "usd": SURFACE_SEED_START,
+            "conv_id": str(index), "attr_what": str(index),
+            "occurred_at": SURFACE_SEED_DAY, "provider": SURFACE_SEED_PROVIDER,
+            "est_chat_usd": SURFACE_ESTIMATED_VALUE,
+        })
+    writer._conn.close()
 
 
 def deny_surface_test_socket(*args, **kwargs):
@@ -105,6 +120,26 @@ def run_surface_guards(failures):
         filtered_count = ledger_read.read_ledger_count(dataclasses.replace(
             too_small, where_sql="source = ?", parameters=(SURFACE_SEED_SOURCE,)), path=path)
         check_surface_guard("count applies typed request filters", filtered_count == SURFACE_SEED_COUNT, failures)
+        for conversation_count in (
+                SURFACE_TEST_CAP - SURFACE_PROBE_ROW_COUNT,
+                SURFACE_TEST_CAP,
+                SURFACE_TEST_CAP + SURFACE_PROBE_ROW_COUNT,
+                SURFACE_TEST_CAP + SURFACE_OVERFLOW_EXTRA_COUNT):
+            paged_path = Path(surface_directory) / f"paged-{conversation_count}.sqlite"
+            seed_surface_conversations(paged_path, conversation_count)
+            try:
+                page = ledger_read.read_cc_top_conversations(limit=SURFACE_TEST_CAP, path=paged_path)
+            except ledger_read.LedgerReadTooLarge:
+                page = ()
+            check_surface_guard(
+                f"paged conversations return min({conversation_count}, {SURFACE_TEST_CAP}) rows without raising",
+                len(page) == min(conversation_count, SURFACE_TEST_CAP), failures)
+        overview_path = Path(surface_directory) / "overview.sqlite"
+        seed_surface_conversations(overview_path, SURFACE_TEST_CAP + SURFACE_PROBE_ROW_COUNT)
+        with patch.object(ledger_read, "DEFAULT_LEDGER_READ_ROW_CAP", SURFACE_TEST_CAP):
+            overview = ledger_read.read_cc_spend_overview(path=overview_path)
+        check_surface_guard("spend overview aggregates more conversations than the default row cap without raising",
+                            overview["est"] is not None, failures)
         call_rows = ledger_read.read_recent_calls(path=path)
         check_surface_guard("recent calls return projected typed evidence",
                             len(call_rows) == SURFACE_EXPECTED_CALLS

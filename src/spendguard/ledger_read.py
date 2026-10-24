@@ -31,6 +31,7 @@ LEDGER_EVENTS_TABLE = "spend_events"
 LEDGER_CALLS_TABLE = "calls"
 LEDGER_INSIGHTS_TABLE = "insights"
 DEFAULT_LEDGER_READ_ROW_CAP = config.LEDGER_READ_ROW_CAP
+LEDGER_READ_OVERFLOW_PROBE_ROW_COUNT = 1
 
 
 def _default_ledger_read_row_cap():
@@ -377,6 +378,7 @@ class LedgerSQLReadRequest:
     parameters: tuple = ()
     row_cap: int = field(default_factory=_default_ledger_read_row_cap)
     time_budget: float = DEFAULT_LEDGER_READ_TIME_BUDGET_S
+    discard_overflow_probe: bool = False
 
 
 @contextmanager
@@ -499,7 +501,9 @@ def read_ledger_sql(request: LedgerSQLReadRequest, path=None) -> tuple[LedgerRea
     with _ledger_read_connection(path, request.time_budget) as connection:
         cursor = connection.execute(request.sql, request.parameters)
         columns = tuple(item[0] for item in cursor.description)
-        rows = cursor.fetchmany(request.row_cap + 1)
+        rows = cursor.fetchmany(request.row_cap + LEDGER_READ_OVERFLOW_PROBE_ROW_COUNT)
+        if request.discard_overflow_probe and len(rows) > request.row_cap:
+            rows = rows[:-LEDGER_READ_OVERFLOW_PROBE_ROW_COUNT]
         if len(rows) > request.row_cap:
             raise LedgerReadTooLarge(request.row_cap, len(rows))
         return tuple(LedgerReadRow(columns, tuple(row)) for row in rows)
@@ -690,7 +694,8 @@ def read_cc_spend_overview(path=None):
 
 def read_cc_top_conversations(limit=None, path=None):
     row_cap = limit if limit is not None else _default_ledger_read_row_cap()
-    return read_ledger_sql(LedgerSQLReadRequest(CC_TOP_CONVERSATIONS_SQL, row_cap=row_cap), path)
+    return read_ledger_sql(LedgerSQLReadRequest(
+        CC_TOP_CONVERSATIONS_SQL, row_cap=row_cap, discard_overflow_probe=True), path)
 
 
 def read_cc_conversation_cost(conv, path=None):
