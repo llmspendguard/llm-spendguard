@@ -1297,6 +1297,11 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
     # caller's explicit `with calls.context(...)` is never overridden — and a $0/lane call is tagged the same way.
     from . import calls as _sig_ctx
     _ctx_before = dict(_sig_ctx.current() or {})
+    _retained_call_id = _ctx_before.get("root_call")
+    if not _retained_call_id and not _no_guard and not _probe:
+        from . import config as _retention_config
+        _retained_call_id = _retention_config.uid()
+        _sig_ctx.set_context(root_call=_retained_call_id, attempt=1)
     if sig and not _ctx_before.get("intent"):
         _sig_ctx.set_context(intent=sig)
     if measurement and not _ctx_before.get("measurement"):
@@ -1376,6 +1381,10 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
                                    schema=schema, timeout_s=timeout_s)
         if _routed_result is not None:
             _sig_ctx._local.ctx = _ctx_before            # returning early — restore the caller's context exactly
+            _routed_result["call_id"] = _routed_result.get("call_id") or _retained_call_id
+            from . import content_retention as _routed_content_retention
+            _routed_content_retention.record_governed_call_content(
+                _routed_result.get("call_id"), prompt, system, dict(_routed_result))
             # A SUCCESS routes home. A coalescer ERROR ({text:None}/error set — e.g. a NO-REPLY) must NOT be returned as
             # a COMPLETED call: the coalescer already spent (its realtime leg and/or the batch divert BILLED), so
             # re-running it below would DOUBLE-SPEND — but returning it with no ledger record is the "failure recorded
@@ -1396,7 +1405,8 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
                                      http_status=_routed_result.get("status_code"),
                                      provider_error=_routed_result.get("provider_error"),
                                      retry_after=_routed_result.get("retry_after"), attempts=_routed_result.get("attempts"),
-                                     disposition="failed", fell_from=_routed_result.get("fell_from"))
+                                     disposition="failed", fell_from=_routed_result.get("fell_from"),
+                                     call_id=_routed_result.get("call_id"))
                 except Exception:
                     pass
             return _routed_result                        # the error is now RECORDED + surfaced — never a silent completed call
@@ -1535,6 +1545,8 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
     # reach for instead — the metered provider API served it (a lane miss fell through, or there was no lane): executor
     # 'api'/'api-fallback', or (defensively) a cost with no lane executor recorded.
     if isinstance(r, dict):
+        if not _no_guard and not _probe:
+            r["call_id"] = r.get("call_id") or _retained_call_id
         if soft_deadline_s is not None:
             r["stall_outcome"] = "produced_tokens_ran"
             r["zero_billable_cancel_feasible"] = False
@@ -1592,9 +1604,14 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
                                 finish=r.get("finish_reason"), executor=r.get("executor"),
                                 effort=r.get("chosen_effort"), outcome=_oc, http_status=r.get("status_code"),
                                 provider_error=r.get("provider_error"), retry_after=r.get("retry_after"),
-                                attempts=r.get("attempts"), disposition="failed", fell_from=r.get("fell_from"))
+                                attempts=r.get("attempts"), disposition="failed", fell_from=r.get("fell_from"),
+                                call_id=r.get("call_id"))
             except Exception:
                 pass
+        if not _no_guard and not _probe:
+            from . import content_retention as _content_retention
+            _content_retention.record_governed_call_content(
+                r.get("call_id"), prompt, system, dict(r))
     if (not _no_guard and intent and isinstance(r, dict) and r.get("lane_recovery")
             and (r.get("error") or not (r.get("text") or "").strip())):
         from . import gate as _exhausted_recovery_gate
