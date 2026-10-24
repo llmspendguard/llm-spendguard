@@ -482,15 +482,8 @@ def _codex_usage_report_uncached():
     """Query the authenticated running Codex app-server and return a complete headroom report."""
     report = {"buckets": None, "source": CODEX_APP_SERVER_RATE_LIMITS_METHOD, "reason": None,
               "n": CODEX_USAGE_UNKNOWN_SAMPLE_COUNT, "window": None, "uncertainty": "provider_data_unknown"}
-    executable = _bin()
-    socket_path = os.path.join(_codex_home(), *CODEX_APP_SERVER_SOCKET_PARTS)
-    if not executable:
-        report["reason"] = "codex_cli_not_available"
-        return report
-    if not os.path.exists(socket_path):
-        report["reason"] = "codex_app_server_socket_not_available"
-        return report
     from . import __version__
+    from . import config
     requests = (
         {"id": CODEX_APP_SERVER_INITIALIZE_REQUEST_ID, "method": CODEX_APP_SERVER_INITIALIZE_METHOD,
          "params": {"clientInfo": {"name": CODEX_APP_SERVER_CLIENT_NAME,
@@ -499,7 +492,14 @@ def _codex_usage_report_uncached():
          "params": None},
     )
     try:
-        from . import config
+        executable = _bin()
+        socket_path = os.path.join(_codex_home(), *CODEX_APP_SERVER_SOCKET_PARTS)
+        if not executable:
+            report["reason"] = "codex_cli_not_available"
+            return report
+        if not os.path.exists(socket_path):
+            report["reason"] = "codex_app_server_socket_not_available"
+            return report
         completed = subprocess.run([executable, *CODEX_APP_SERVER_PROXY_ARGUMENTS, socket_path],
                                    input="".join(json.dumps(request) + "\n" for request in requests),
                                    capture_output=True, text=True, timeout=CODEX_USAGE_READ_TIMEOUT_S,
@@ -518,6 +518,8 @@ def _codex_usage_report_uncached():
             return report
         report["uncertainty"] = ("provider_reported_reset_unknown" if any(
             bucket["reset_ts"] is None for bucket in report["buckets"]) else "provider_reported")
+    except (config.IsolatedCliLaunchError, OSError):
+        report["reason"] = "codex_rate_limits_transport_failed"
     except Exception as error:
         report["reason"] = f"codex_rate_limits_read_gap:{type(error).__name__}"
     return report
