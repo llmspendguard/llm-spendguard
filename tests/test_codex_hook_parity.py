@@ -63,7 +63,7 @@ def test_codex_native_hook_contract():
             pass
         else:
             raise AssertionError("Cross-session evidence must be refused")
-    assert "unavailable" in residency_gate.evaluate_posttooluse({})["systemMessage"]
+        assert residency_gate.evaluate_posttooluse({}) == {}
     os.environ.pop("SPENDGUARD_HOOK_HOST")
 
 
