@@ -23,6 +23,31 @@ def _rows(as_of=None, intent=None):
 # before the field existed). Named rather than inlined so it is visible as a stated assumption: it is NOT
 # what an explicit confidence of 0.0 means, and the two must never collapse into the same number.
 _UNSTATED_CONFIDENCE = 0.7
+_EVIDENCE_GAP_NOTE_TEMPLATE = ("EVIDENCE GAP — present in catalog; no measured evidence for intent `{intent}`; "
+                               "not absent from the catalog.")
+_EVIDENCE_GAP_REMEDY_TEMPLATE = "spendguard bakeoff --intent {intent} --candidates {model_id}"
+_EVIDENCE_GAP_SECTION_LABEL = "unmeasured_for_intent (catalog models with an EVIDENCE GAP):"
+_EMPTY_MEASURED_RANKING_EXPLANATION = ("the empty ranking is an EVIDENCE GAP, not evidence that no good catalog "
+                                       "models exist.")
+
+
+def unmeasured_catalog_models(intent, measured_model_ids):
+    """Priced catalog ids with no measured row for this exact intent, by mechanical set difference."""
+    if not intent:
+        return []
+    from . import model_catalog, pricing
+    catalog_ids = set()
+    for bare_id, record in model_catalog.all_records().items():
+        provider = record.get("provider")
+        try:
+            pricing.price(bare_id, provider=provider)
+        except pricing.PriceUnknownError:
+            continue
+        catalog_ids.add(f"{provider}:{bare_id}")
+    return [dict(id=model_id,
+                 note=_EVIDENCE_GAP_NOTE_TEMPLATE.format(intent=intent),
+                 remedy=_EVIDENCE_GAP_REMEDY_TEMPLATE.format(intent=intent, model_id=model_id))
+            for model_id in sorted(catalog_ids - set(measured_model_ids))]
 
 
 def _resolve_plan(plan, agg):
@@ -146,7 +171,8 @@ def ranked(intent=None, as_of=None, by_effort=False):
                        pick_per_good=(pick_row or {}).get("per_good"))
     result = dict(scope=(f"intent '{intent}'" if intent else "all intents"), as_of=as_of, labeled=labeled_any,
                   metric=("$/good-result" if labeled_any else "$/M output (quality not labeled yet)"),
-                  pick=pick, cheapest_per_token=cpt, models=models)
+                  pick=pick, cheapest_per_token=cpt, models=models,
+                  unmeasured_for_intent=unmeasured_catalog_models(intent, (m["id"] for m in models)))
     if intent:
         from . import route_realized
         result["routing"] = route_realized.routing_summary(intent, as_of=as_of)
@@ -157,8 +183,9 @@ def advise(intent=None, plan=None, as_of=None):
     r = ranked(intent, as_of)
     scope = r["scope"]
     if not r["models"]:
-        print(f"no historical data for {scope}" + (f" as of {as_of}" if as_of else "") +
-              " — run `spendguard backfill` first.")
+        print(f"no measured historical data for {scope}" + (f" as of {as_of}" if as_of else "") +
+              f" — {_EMPTY_MEASURED_RANKING_EXPLANATION}")
+        _print_unmeasured_for_intent(r["unmeasured_for_intent"])
         return 0
     rows, labeled_any, metric = r["models"], r["labeled"], r["metric"]
 
@@ -209,6 +236,7 @@ def advise(intent=None, plan=None, as_of=None):
             print(f"  your plan {plan}: {(pr['per_m_out']-br['per_m_out'])/br['per_m_out']*100:.0f}% costlier per output token than {best}.")
     if not labeled_any:
         print("  ⚠️ no quality labels here yet — this ranks COST only. Add judge/feedback or Layer-2 mining for quality.")
+    _print_unmeasured_for_intent(r["unmeasured_for_intent"])
     print(f"  ⚠️ {sum(m['jobs'] for m in rows)} jobs; confounds possible — confirm head-to-head with "
           f"`spendguard compare` on a fixed sample. (history proposes, compare disposes.)")
     try:                        # learned-calibration confidence (fill ratios etc.) — see `spendguard calibrate`
@@ -218,6 +246,14 @@ def advise(intent=None, plan=None, as_of=None):
     except Exception:
         pass
     return 0
+
+
+def _print_unmeasured_for_intent(gaps):
+    if not gaps:
+        return
+    print(f"\n{_EVIDENCE_GAP_SECTION_LABEL}")
+    for gap in gaps:
+        print(f"  - {gap['id']}: {gap['note']} Remedy: `{gap['remedy']}`")
 
 
 def main(argv=None):

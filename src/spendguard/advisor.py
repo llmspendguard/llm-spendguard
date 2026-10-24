@@ -287,6 +287,10 @@ def optimize(intent=None, plan=None, run=False):
     return dict(cost=r["cost"], model=model, text=r["text"])
 
 
+_EMPTY_INTENT_EVIDENCE_GAP_NOTE = ("EVIDENCE GAP — no models have measured evidence for this intent yet; the measured "
+                                   "ranking is empty, not evidence that no good catalog models exist.")
+
+
 def recommend_models(intent=None, k=5, quality_bar=None, run=False):
     """Agentic TOP-K model recommendation for an intent, on the cost×quality frontier with an intent-set quality
     BAR. The structured (schema-forced) cousin of optimize: the reasoner infers how much precision the job needs
@@ -298,11 +302,13 @@ def recommend_models(intent=None, k=5, quality_bar=None, run=False):
     model = config.advisor_model()
     ev = advise.ranked(intent=intent)
     if not ev["models"]:
-        # COLD-START: no measured evidence for this intent → a grounded, AGENTIC model PRIOR (labelled
-        # source="cold-start-prior", prior=True) so the advisor / best-value start logically instead of "no pick".
-        # Estimate-first is preserved (run flag passes through); the prior is replaced the moment evidence exists.
         from . import intent_model_prior
-        return intent_model_prior.rank_models_for_intent(intent, k=k, run=run)
+        result = intent_model_prior.rank_models_for_intent(intent, k=k, run=run)
+        gaps = ev.get("unmeasured_for_intent", advise.unmeasured_catalog_models(intent, ()))
+        result["unmeasured_for_intent"] = gaps
+        result["measured_ranking"] = []
+        result["note"] = (_EMPTY_INTENT_EVIDENCE_GAP_NOTE + " " + (result.get("note") or ""))
+        return result
     lines = ["id | jobs | $total | $/M-out | good% | $/good"]      # the same numbers advise shows, compacted
     for m in ev["models"]:
         gp = f"{100*m['good_rate']:.0f}%" if m["good_rate"] is not None else "—"
@@ -317,6 +323,7 @@ def recommend_models(intent=None, k=5, quality_bar=None, run=False):
     if not run:
         return dict(intent=intent, requests=1, in_tok=in_tok, out_tok=_REC_OUT, cost=cost, model=model,
                     estimate_only=True, candidates=[m["id"] for m in ev["models"]],
+                    unmeasured_for_intent=ev["unmeasured_for_intent"],
                     note=f"estimate only (~${cost:.4f}); call with run=True to produce the ranking (meta-caged).")
     from . import adapters
     with calls.context(intent=f"{META}:recommend"):
@@ -324,10 +331,12 @@ def recommend_models(intent=None, k=5, quality_bar=None, run=False):
         # bandit can't silently swap the model of record for this measurement
         r = adapters.call(model, prompt, max_tokens=_REC_OUT, system=_REC_SYS, schema=_REC_SCHEMA, no_substitution=True)
     if r.get("error"):
-        return dict(intent=intent, error=r["error"], model=model, cost=r.get("cost"))
+        return dict(intent=intent, error=r["error"], model=model, cost=r.get("cost"),
+                    unmeasured_for_intent=ev["unmeasured_for_intent"])
     parsed = adapters.structured_reply(r)
     if not isinstance(parsed, dict):
         return dict(intent=intent, model=model, cost=r.get("cost"), quality_bar=None, top=[],
+                    unmeasured_for_intent=ev["unmeasured_for_intent"],
                     note="the reasoner's output did not parse as the expected shape.", raw=r.get("text"))
     by_id = {m["id"]: m for m in ev["models"]}
     top = []
@@ -338,6 +347,7 @@ def recommend_models(intent=None, k=5, quality_bar=None, run=False):
                     "per_m_out": m.get("per_m_out"), "cost": m.get("cost"), "jobs": m.get("jobs")})
     return dict(intent=intent, model=model, cost=r.get("cost"), quality_bar=parsed.get("quality_bar"),
                 top=top, ranked_from=len(ev["models"]),
+                unmeasured_for_intent=ev["unmeasured_for_intent"],
                 note="ranked from MEASURED evidence; models you haven't run are added by a bakeoff.")
 
 
@@ -370,7 +380,7 @@ def _meta_spent():
 def main(argv=None):
     import argparse
     ap = argparse.ArgumentParser(prog="spendguard")
-    ap.add_argument("op", choices=["reconstruct", "mine", "optimize"])
+    ap.add_argument("op", choices=["reconstruct", "mine", "optimize", "recommend"])
     ap.add_argument("--intent")
     ap.add_argument("--plan", help="(optimize) the model you're about to use")
     ap.add_argument("--per", type=int, default=15, help="(reconstruct) samples to judge per (intent,model)")
@@ -381,6 +391,15 @@ def main(argv=None):
         reconstruct_advisor_history(run=a.run, per=a.per, limit=a.limit)
     elif a.op == "mine":
         mine(run=a.run, intent=a.intent)
-    else:
+    elif a.op == "optimize":
         optimize(intent=a.intent, plan=a.plan, run=a.run)
+    else:
+        result = recommend_models(intent=a.intent, run=a.run)
+        print(f"spendguard recommend — intent '{a.intent}'")
+        for row in result.get("top", []):
+            print(f"  - {row['id']}: {row.get('why') or ''}")
+        from . import advise as advise_surface
+        advise_surface._print_unmeasured_for_intent(result.get("unmeasured_for_intent", []))
+        if result.get("note"):
+            print(f"  note: {result['note']}")
     return 0

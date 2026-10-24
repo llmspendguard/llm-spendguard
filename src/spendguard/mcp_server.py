@@ -145,7 +145,7 @@ def _tool_advise(args):
                 caveats.append(f"your plan {pick['id']}: {(pick['per_good']-best['per_good'])/best['per_good']*100:.0f}% "
                                f"costlier per good result than {best['id']}.")
     result = {"scope": r["scope"], "ranked_by": r["metric"], "pick": r["pick"],
-              "models": r["models"], "caveats": caveats}
+              "models": r["models"], "unmeasured_for_intent": r["unmeasured_for_intent"], "caveats": caveats}
     if args.get("intent"):
         result["routing"] = r["routing"]
     return result
