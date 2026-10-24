@@ -21,6 +21,8 @@ SUBSTRATE_LABELLED_ROUTE_FIXTURES = (
      delegate_router.DELEGATE_ROUTE_LANE),
     ("Help me choose the next design interactively after each answer.",
      delegate_router.DELEGATE_ROUTE_MAIN_THREAD),
+    ("From the supplied repository, invoke the configured MCP code-intelligence and review tools and report evidence.",
+     delegate_router.DELEGATE_ROUTE_CODEX),
 )
 
 

@@ -34,16 +34,23 @@ DELEGATE_ROUTE_CLAUDE_SUBAGENT = "claude-subagent"
 DELEGATE_ROUTE_LANE = "lane-route"
 DELEGATE_ROUTE_MAIN_THREAD = "main-thread"
 DELEGATE_CLASSIFIER_CACHE_FILENAME = "delegate-route-verdicts.json"
-DELEGATE_CLASSIFIER_PLAN_VERSION = "delegate-route-v1"
+DELEGATE_CLASSIFIER_PLAN_VERSION = "delegate-route-v2"
 DELEGATE_INCREMENTAL_SUBSCRIPTION_USD = 0.0
 DELEGATE_CLI_RESULT_MAX_LINES = 10
 DELEGATE_EXECUTION_RESULT_MAX_LINES = DELEGATE_CLI_RESULT_MAX_LINES - 1
 DELEGATE_TOOL_DEGRADED_MARKER = "DEGRADED_TOOL_ENVELOPE"
 DELEGATE_CONTEXT_BOUNDARY = {
-    DELEGATE_ROUTE_CLAUDE_SUBAGENT: "requires the host's live conversation or Claude desktop application state",
+    DELEGATE_ROUTE_CLAUDE_SUBAGENT: (
+        "requires unsupplied state from the host's live conversation, or requires driving the Claude desktop "
+        "application (ccd_* tools or its in-app browser pane); configured MCP servers available to the delegated "
+        "Codex process do not require this route"
+    ),
     DELEGATE_ROUTE_MAIN_THREAD: "requires interactive, decision-coupled, turn-by-turn work",
     DELEGATE_ROUTE_LANE: "is batchable independent one-shot comprehension",
-    DELEGATE_ROUTE_CODEX: "is a self-contained agentic task with all evidence and workspace supplied",
+    DELEGATE_ROUTE_CODEX: (
+        "is a self-contained agentic task with all evidence and workspace supplied; this includes tasks using MCP "
+        "servers configured for the delegated Codex process"
+    ),
 }
 LEGACY_DELEGATE_KIND_ROUTES = {
     "oneshot": DELEGATE_ROUTE_LANE,
