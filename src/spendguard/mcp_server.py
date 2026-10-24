@@ -1026,6 +1026,20 @@ def _auto_respawn_enabled():
     return bool(config._cfg_get("advisor", "mcp_auto_respawn", True))
 
 
+def _arm_and_verify_mcp_daemon_gate():
+    """Deliberately gate this daemon process, independent of import-time auto-install policy."""
+    from . import gate
+
+    gate.install()
+    if not gate._enforcement_armed():
+        raise gate.SpendGateRefused(
+            "spendguard MCP daemon startup refused: the spend gate is NOT enforcing in this interpreter. "
+            f"Interpreter: {sys.executable}. Launch the daemon from a venv with llm-spendguard and the required "
+            "LLM SDK extras installed, unset GATE_DISABLE, and run `spendguard doctor` until it reports "
+            "`ENFORCING HERE: YES`. SPENDGUARD_NO_AUTOINSTALL may remain set; daemon startup arms explicitly."
+        )
+
+
 def serve_stdio(inp=None, outp=None):
     """Read newline-delimited JSON-RPC from stdin, write responses to stdout — the MCP stdio transport. Blocking;
     ends on EOF. A malformed line gets a parse-error reply and the loop continues (one bad frame never kills the
@@ -1036,6 +1050,7 @@ def serve_stdio(inp=None, outp=None):
     (release.should_respawn, which is loop-safe), the server EXITS. The MCP client respawns it on its next request,
     now running the latest code. Exiting here (never mid-request) means no request is dropped. This is what makes
     'always serve the latest' true for a long-running stdio server; disable with SPENDGUARD_MCP_AUTO_RESPAWN=0."""
+    _arm_and_verify_mcp_daemon_gate()
     from . import fleet, release
     fleet.register_consumer(role=fleet.CONSUMER_ROLE_DAEMON)
     inp = inp or sys.stdin
@@ -1143,6 +1158,7 @@ def build_mcp_http_handler():
     """The `POST /mcp` request handler for the warm HTTP daemon, as a module-level factory so the exact
     over-the-wire response SHAPE is testable without binding the real :4913 daemon or pre-warming codex. Routes
     every POST through the SAME handle() as the stdio transport (stdio + http stay in lockstep)."""
+    _arm_and_verify_mcp_daemon_gate()
     import os as _os
     from http.server import BaseHTTPRequestHandler
     from . import release
@@ -1206,11 +1222,12 @@ def serve_http(host="127.0.0.1", port=4913):
     in-board /mcp. Threaded so concurrent clients are independent; each request is self-contained (no session state).
     Carries the SAME deploy self-heal as serve_stdio: after a response is flushed (between requests, nothing in
     flight), if a newer green commit was deployed the process exits so the supervisor respawns it on the latest code."""
+    handler_class = build_mcp_http_handler()
     from http.server import ThreadingHTTPServer
     from . import fleet
     fleet.register_consumer(role=fleet.CONSUMER_ROLE_DAEMON)
     _prewarm_codex_daemon()
-    ThreadingHTTPServer((host, port), build_mcp_http_handler()).serve_forever()
+    ThreadingHTTPServer((host, port), handler_class).serve_forever()
 
 
 def cmd(argv=None):
