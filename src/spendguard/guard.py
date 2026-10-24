@@ -26,6 +26,11 @@ CERTAIN = ("cache", "block", "cascade", "realized", "prompt_cache")   # vs count
 # saving — that double-counts the same avoided dollars. `plan` is RESERVED for exactly that reason: record_saving
 # refuses it, loudly, rather than silently inflating the tally. (The dominant "advisor/routing" saving IS this axis.)
 _RESERVED_SOURCES = ("plan",)
+SAVED_SINCE_SOURCE_SQL = "SELECT source,COALESCE(SUM(amount),0) AS amount FROM savings {where} GROUP BY source"
+DECISIONS_SUMMARY_TOTAL_SQL = "SELECT COUNT(*) AS decisions,COALESCE(SUM(saved_usd),0) AS saved_usd FROM decisions {where}"
+DECISIONS_SUMMARY_INTENT_SQL = """SELECT COALESCE(intent,'(none)') AS intent,COUNT(*) AS decisions,
+COALESCE(SUM(saved_usd),0) AS saved_usd FROM decisions {where}
+GROUP BY COALESCE(intent,'(none)') ORDER BY saved_usd DESC LIMIT ?"""
 
 
 def _savings_db():
@@ -114,9 +119,15 @@ def saved_since(since=None):
     collapsed to per-source means for a local readout). `certain` sums the MEASURED sources (CERTAIN); everything
     else is `counterfactual` — kept SEPARATE so the two are never blurred into one over-confident number. This is a
     THIRD axis (avoided $), never added into real-$ (billed) or est-value (plan)."""
-    per = {}
-    for r in by_dims_guarded(since=since):
-        per[r["source"]] = per.get(r["source"], 0.0) + float(r["k1"])
+    from .ledger_read import LedgerSQLReadRequest, ledger_read_table_exists, read_ledger_sql
+    if not Path(config.db_path()).exists() or not ledger_read_table_exists("savings"):
+        per = {}
+    else:
+        where = "WHERE day >= ?" if since else ""
+        parameters = (since,) if since else ()
+        rows = read_ledger_sql(LedgerSQLReadRequest(
+            SAVED_SINCE_SOURCE_SQL.format(where=where), parameters=parameters))
+        per = {row["source"]: float(row["amount"]) for row in rows}
     certain = round(sum(v for s, v in per.items() if s in CERTAIN), 4)
     counterfactual = round(sum(v for s, v in per.items() if s not in CERTAIN), 4)
     return {"by_source": {s: round(v, 4) for s, v in per.items()},
@@ -217,21 +228,36 @@ def decisions_since(since=None):
     return [dict(zip(_DECISION_COLS, r.values)) for r in rows]
 
 
-def decisions_summary(since=None):
+def decisions_summary(since=None, intent_limit=None):
     """Aggregate the decision rows → {decisions, saved_usd, by_intent:[{intent, decisions, saved_usd}]} — the value
-    proof, per intent. Σ(by_intent saved) == saved_usd is the un-regressable check that nothing is dropped."""
-    rows = decisions_since(since)
-    by_intent, total = {}, 0.0
-    for d in rows:
-        total += float(d.get("saved_usd") or 0)
-        k = d.get("intent") or "(none)"
-        b = by_intent.setdefault(k, {"intent": k, "decisions": 0, "saved_usd": 0.0})
-        b["decisions"] += 1
-        b["saved_usd"] += float(d.get("saved_usd") or 0)
-    for b in by_intent.values():
-        b["saved_usd"] = round(b["saved_usd"], 4)
-    return {"decisions": len(rows), "saved_usd": round(total, 4),
-            "by_intent": sorted(by_intent.values(), key=lambda x: x["saved_usd"], reverse=True)}
+    proof, per intent. Without a limit, Σ(by_intent saved) == saved_usd is the un-regressable completeness check;
+    a limit deliberately returns only the highest-saving intent groups while preserving the all-row totals."""
+    if intent_limit is None:
+        rows = decisions_since(since)
+        by_intent, total = {}, 0.0
+        for d in rows:
+            total += float(d.get("saved_usd") or 0)
+            k = d.get("intent") or "(none)"
+            b = by_intent.setdefault(k, {"intent": k, "decisions": 0, "saved_usd": 0.0})
+            b["decisions"] += 1
+            b["saved_usd"] += float(d.get("saved_usd") or 0)
+        for b in by_intent.values():
+            b["saved_usd"] = round(b["saved_usd"], 4)
+        return {"decisions": len(rows), "saved_usd": round(total, 4),
+                "by_intent": sorted(by_intent.values(), key=lambda x: x["saved_usd"], reverse=True)}
+    from .ledger_read import LedgerSQLReadRequest, ledger_read_table_exists, read_ledger_sql
+    if not Path(config.db_path()).exists() or not ledger_read_table_exists("decisions"):
+        return {"decisions": 0, "saved_usd": 0.0, "by_intent": []}
+    where = "WHERE day >= ?" if since else ""
+    parameters = (since,) if since else ()
+    total = read_ledger_sql(LedgerSQLReadRequest(
+        DECISIONS_SUMMARY_TOTAL_SQL.format(where=where), parameters=parameters))[0]
+    ranked = read_ledger_sql(LedgerSQLReadRequest(
+        DECISIONS_SUMMARY_INTENT_SQL.format(where=where), parameters=parameters + (int(intent_limit),),
+        row_cap=int(intent_limit)))
+    return {"decisions": int(total["decisions"]), "saved_usd": round(float(total["saved_usd"]), 4),
+            "by_intent": [{"intent": row["intent"], "decisions": int(row["decisions"]),
+                           "saved_usd": round(float(row["saved_usd"]), 4)} for row in ranked]}
 
 
 def _decision_reason_class(d):

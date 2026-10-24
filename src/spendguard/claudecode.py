@@ -17,6 +17,18 @@ import os, json, glob, pathlib, datetime
 from . import config, conv, pricing
 
 _TOOL_FILE_KEYS = ("file_path", "path", "notebook_path")
+OVERAGE_DISCARDED_EVIDENCE_SAMPLE_CAP = 20
+OVERAGE_DISCARD_NON_NUMERIC_REASON = "non_numeric"
+OVERAGE_DISCARD_NON_POSITIVE_REASON = "non_positive"
+OVERAGE_DISCARD_COUNTS_FIELD = "counts_by_reason"
+OVERAGE_DISCARD_SAMPLE_FIELD = "identifier_sample"
+OVERAGE_DISCARD_MONTH_FIELD = "month"
+OVERAGE_DISCARD_CONVERSATION_FIELD = "conversation_id"
+OVERAGE_DISCARD_REASON_FIELD = "reason"
+
+
+class OverageAttributionResult(dict):
+    """Conversation-dollar mapping with queryable evidence-discard metadata."""
 
 
 def _projects_dir():
@@ -731,25 +743,35 @@ def attribute_overage(top=12):
     TOTAL truth per month; the observable window detector gives the per-conversation SHAPE. Months with real overage
     but no observed window can't be attributed (surfaced, not hidden). Read-only, $0."""
     from .ledger_read import read_cc_attribution_evidence
-    real, evidence, fallback = read_cc_attribution_evidence()
+    windows, _anchor = _overage_windows(_overage_events())
+    real, evidence, fallback = read_cc_attribution_evidence(windows)
     real_by_month = {r[0]: float(r[1] or 0.0) for r in real}
     rows = [r.values for r in evidence]
-    windows, _anchor = _overage_windows(_overage_events())
     obs = {}                                                # (month, conv) -> observable overage est-value
     obs_month = {}                                          # month -> total observable overage
-    for occ, conv_id, val in rows:                          # conv_id: don't shadow the module-level `conv` import
-        dt = _parse_iso(occ)
+    discarded_counts = {
+        OVERAGE_DISCARD_NON_NUMERIC_REASON: 0,
+        OVERAGE_DISCARD_NON_POSITIVE_REASON: 0,
+    }
+    discarded_identifier_sample = []
+    for mo, conv_id, val in rows:                           # conv_id: don't shadow the module-level `conv` import
         try:
             v = float(val)
         except (TypeError, ValueError):
-            v = 0.0
-        if dt is None or v <= 0:
+            discard_reason = OVERAGE_DISCARD_NON_NUMERIC_REASON
+        else:
+            discard_reason = OVERAGE_DISCARD_NON_POSITIVE_REASON if v <= 0 else None
+        if discard_reason is not None:
+            discarded_counts[discard_reason] += 1
+            if len(discarded_identifier_sample) < OVERAGE_DISCARDED_EVIDENCE_SAMPLE_CAP:
+                discarded_identifier_sample.append({
+                    OVERAGE_DISCARD_MONTH_FIELD: mo,
+                    OVERAGE_DISCARD_CONVERSATION_FIELD: conv_id or "",
+                    OVERAGE_DISCARD_REASON_FIELD: discard_reason,
+                })
             continue
-        tu = dt.timestamp()
-        if any(b <= tu < r for (b, r) in windows):
-            mo = occ[:7]
-            obs[(mo, conv_id or "")] = obs.get((mo, conv_id or ""), 0.0) + v
-            obs_month[mo] = obs_month.get(mo, 0.0) + v
+        obs[(mo, conv_id or "")] = obs.get((mo, conv_id or ""), 0.0) + v
+        obs_month[mo] = obs_month.get(mo, 0.0) + v
     real_by_conv = {}
     for (mo, conv_id), v in obs.items():
         tot, realm = obs_month.get(mo, 0.0), real_by_month.get(mo, 0.0)
@@ -780,7 +802,12 @@ def attribute_overage(top=12):
           + (f"  ·  ${unattr:,.2f} unattributable" if unattr > 0.5 else ""))
     for conv_id, v in sorted(real_by_conv.items(), key=lambda x: -x[1])[:top]:
         print(f"    ${v:8.2f}  {_conv_label(conv_id, titles)}")
-    return real_by_conv
+    result = OverageAttributionResult(real_by_conv)
+    result.discarded_evidence = {
+        OVERAGE_DISCARD_COUNTS_FIELD: discarded_counts,
+        OVERAGE_DISCARD_SAMPLE_FIELD: discarded_identifier_sample,
+    }
+    return result
 
 
 def _cc_conv_rows(min_day=None):

@@ -25,6 +25,8 @@ SURFACE_SEED_COUNT = 5
 SURFACE_TEST_CAP = 2
 SURFACE_PROBE_ROW_COUNT = 1
 SURFACE_OVERFLOW_EXTRA_COUNT = 5
+SURFACE_OVERVIEW_CONVERSATION_COUNT = 4
+SURFACE_OVERVIEW_RAW_ROW_COUNT = ledger_read.DEFAULT_LEDGER_READ_ROW_CAP + SURFACE_OVERFLOW_EXTRA_COUNT
 SURFACE_TEST_BUDGET_S = 1.0
 SURFACE_PROGRESS_STEP = 1
 SURFACE_SEED_START = 1
@@ -43,6 +45,7 @@ SURFACE_RECURSIVE_STEPS = 100000
 SURFACE_FORMATTED_MONEY = "receipt-ssot-money"
 SURFACE_ESTIMATED_VALUE = "2.0"
 SURFACE_SEED_INTENT = "surface-characterization"
+SURFACE_OVERVIEW_ID_PREFIX = "overview"
 
 
 def seed_surface_conversations(path, conversation_count):
@@ -54,6 +57,17 @@ def seed_surface_conversations(path, conversation_count):
             "occurred_at": SURFACE_SEED_DAY, "provider": SURFACE_SEED_PROVIDER,
             "est_chat_usd": SURFACE_ESTIMATED_VALUE,
         })
+    writer._conn.close()
+
+
+def seed_surface_overview_raw_rows(path, raw_row_count, conversation_count):
+    writer = SpendLedger(path)
+    writer._conn.executemany(
+        "INSERT INTO spend_events(id,source,occurred_at,day,provider,est_chat_usd,conv_id) VALUES (?,?,?,?,?,?,?)",
+        ((f"{SURFACE_OVERVIEW_ID_PREFIX}-{index}", SURFACE_CONVERSATION_SOURCE, SURFACE_SEED_DAY, SURFACE_SEED_DAY,
+          SURFACE_SEED_PROVIDER, SURFACE_ESTIMATED_VALUE, str(index % conversation_count))
+         for index in range(raw_row_count)))
+    writer._conn.commit()
     writer._conn.close()
 
 
@@ -135,11 +149,12 @@ def run_surface_guards(failures):
                 f"paged conversations return min({conversation_count}, {SURFACE_TEST_CAP}) rows without raising",
                 len(page) == min(conversation_count, SURFACE_TEST_CAP), failures)
         overview_path = Path(surface_directory) / "overview.sqlite"
-        seed_surface_conversations(overview_path, SURFACE_TEST_CAP + SURFACE_PROBE_ROW_COUNT)
-        with patch.object(ledger_read, "DEFAULT_LEDGER_READ_ROW_CAP", SURFACE_TEST_CAP):
-            overview = ledger_read.read_cc_spend_overview(path=overview_path)
-        check_surface_guard("spend overview aggregates more conversations than the default row cap without raising",
-                            overview["est"] is not None, failures)
+        seed_surface_overview_raw_rows(
+            overview_path, SURFACE_OVERVIEW_RAW_ROW_COUNT, SURFACE_OVERVIEW_CONVERSATION_COUNT)
+        overview = ledger_read.read_cc_spend_overview(path=overview_path)
+        check_surface_guard("spend overview aggregates more raw rows than the global row cap without raising",
+                            overview["est"] == SURFACE_OVERVIEW_RAW_ROW_COUNT * float(SURFACE_ESTIMATED_VALUE),
+                            failures)
         call_rows = ledger_read.read_recent_calls(path=path)
         check_surface_guard("recent calls return projected typed evidence",
                             len(call_rows) == SURFACE_EXPECTED_CALLS
