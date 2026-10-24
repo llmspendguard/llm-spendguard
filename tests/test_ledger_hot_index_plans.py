@@ -181,16 +181,22 @@ ambiguous_connection.execute(
     "CREATE TABLE semcache(id TEXT PRIMARY KEY,ts TEXT,model TEXT,prompt_hash TEXT,prompt TEXT,output TEXT,emb BLOB)"
 )
 ambiguous_connection.executemany(
-    "INSERT INTO semcache(id,ts,model,prompt_hash) VALUES(?,?,?,?)",
-    (("first", None, "model", "ambiguous"), ("second", None, "model", "ambiguous")),
+    "INSERT INTO semcache(id,ts,model,prompt_hash,output) VALUES(?,?,?,?,?)",
+    (
+        ("first", None, "model", "ambiguous", "first-output"),
+        ("second", None, "model", "ambiguous", "second-output"),
+        ("distinct", None, "model", "distinct", "distinct-output"),
+    ),
 )
-aborted = False
-try:
-    semcache._repair_semcache_unique_key(ambiguous_connection)
-except sqlite3.IntegrityError:
-    aborted = True
-check("unprovable semcache recency aborts without deleting", aborted and
-      ambiguous_connection.execute("SELECT COUNT(*) FROM semcache").fetchone()[0] == 2)
+semcache._repair_semcache_unique_key(ambiguous_connection)
+tied_remaining = ambiguous_connection.execute("SELECT id,output FROM semcache ORDER BY id").fetchall()
+check("tied semcache recency keeps greatest id and every non-duplicate", tied_remaining == [
+    ("distinct", "distinct-output"), ("second", "second-output")
+])
+check("tied semcache repair rebuilds the UNIQUE key", any(
+    columns == ("model", "prompt_hash") and unique
+    for columns, unique, _name in table_index_coverages(ambiguous_connection, "semcache")
+))
 
 print(("FAIL: " + ", ".join(failures)) if failures else "all hot-index checks passed")
 sys.exit(1 if failures else 0)

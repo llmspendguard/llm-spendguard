@@ -37,7 +37,7 @@ def _ensure_semcache_schema(c):
 
 
 def _repair_semcache_unique_key(connection):
-    """Make ``(model, prompt_hash)`` unique, deleting only duplicates with provable timestamp recency."""
+    """Make ``(model, prompt_hash)`` unique, keeping one deterministic cache entry per key."""
     key_columns = ("model", "prompt_hash")
     connection.execute(f"SAVEPOINT {_SEMCACHE_UNIQUE_REPAIR_SAVEPOINT}")
     try:
@@ -46,14 +46,12 @@ def _repair_semcache_unique_key(connection):
         ).fetchall()
         for model, prompt_hash in duplicate_keys:
             candidates = connection.execute(
-                "SELECT id,ts FROM semcache WHERE model IS ? AND prompt_hash IS ? ORDER BY ts DESC",
+                "SELECT id,ts FROM semcache WHERE model IS ? AND prompt_hash IS ? "
+                "ORDER BY ts IS NULL ASC,ts DESC,id DESC",
                 (model, prompt_hash),
             ).fetchall()
-            if any(timestamp is None for _, timestamp in candidates):
-                raise sqlite3.IntegrityError("semcache duplicate recency is unprovable: null ts")
-            newest_timestamp = candidates[0][1]
-            if sum(timestamp == newest_timestamp for _, timestamp in candidates) != 1:
-                raise sqlite3.IntegrityError("semcache duplicate recency is unprovable: tied newest ts")
+            # ``id`` is the table's non-null PRIMARY KEY, so descending id deterministically selects one of
+            # multiple equally recent, interchangeable cache entries without relying on physical row order.
             survivor_id = candidates[0][0]
             connection.execute(
                 "DELETE FROM semcache WHERE model IS ? AND prompt_hash IS ? AND id<>?",
