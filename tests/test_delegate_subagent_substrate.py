@@ -82,6 +82,18 @@ def test_codex_delegate_enables_mcp_and_scoped_automatic_review(tmp_path):
     assert codex_exec.CODEX_AGENTIC_APPROVAL_FLAG in command
     assert "--sandbox" not in command
     assert codex_exec._mcp_disable_flags()[0] not in command
+    config_values = [command[index + 1] for index, argument in enumerate(command[:-1])
+                     if argument == codex_exec.CODEX_CONFIG_OVERRIDE_FLAG]
+    expected_read_only_approvals = {
+        codex_exec.CODEX_MCP_TOOL_APPROVAL_OVERRIDE_TEMPLATE.format(
+            server=server, tool=tool, mode=codex_exec.CODEX_DELEGATE_READ_ONLY_APPROVAL_MODE)
+        for server, tools in codex_exec.CODEX_DELEGATE_REQUIRED_MCP_READ_ONLY_TOOLS.items()
+        for tool in tools
+    }
+    assert set(config_values) == expected_read_only_approvals
+    assert len(config_values) == len(expected_read_only_approvals)
+    assert set(codex_exec.CODEX_DELEGATE_REQUIRED_MCP_READ_ONLY_TOOLS) == set(
+        codex_exec.CODEX_DELEGATE_REQUIRED_MCP_SERVERS)
     assert result["transport"] == "codex-exec-mcp"
     assert result["required_mcp_servers"] == list(codex_exec.CODEX_DELEGATE_REQUIRED_MCP_SERVERS)
 
@@ -184,6 +196,7 @@ if __name__ == "__main__":
     with tempfile.TemporaryDirectory() as substrate_test_directory:
         substrate_test_path = Path(substrate_test_directory)
         test_codex_delegate_enables_mcp_and_scoped_automatic_review(substrate_test_path)
+        test_delegate_required_tool_degradation_fails_loud(substrate_test_path)
         test_delegate_lane_down_fails_closed_without_execution(substrate_test_path)
         test_delegate_cwd_provider_and_timeout_are_applied(substrate_test_path)
     print("OK test_delegate_subagent_substrate")
