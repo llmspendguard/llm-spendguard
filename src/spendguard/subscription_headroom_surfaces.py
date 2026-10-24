@@ -30,7 +30,7 @@ class SubscriptionHeadroomDataGap(ValueError):
 def subscription_surface_settings(section, url_env):
     from . import config
     defaults = json.loads(importlib.resources.files(__package__).joinpath(SURFACE_CONFIG_RESOURCE).read_text())[section]
-    return {**defaults, "url": os.environ.get(url_env) or config._cfg_get(section, "usage_url", defaults["url"])}
+    return {**defaults, "url": os.environ.get(url_env) or config._cfg_get(section, "usage_url", defaults.get("url"))}
 
 
 def subscription_surface_remaining(value, scale):

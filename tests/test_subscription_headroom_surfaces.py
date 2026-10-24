@@ -4,7 +4,10 @@ import copy
 import io
 import json
 import os
+import pathlib
+import tempfile
 import threading
+import urllib.parse
 from unittest.mock import patch
 
 from spendguard import kimi_exec, zai_exec, subscription_headroom_surfaces as surfaces
@@ -17,6 +20,8 @@ FIXTURE_MILLISECONDS = 4070908800000
 FIXTURE_TIMEOUT = 1
 FIXTURE_TTL = 300
 FIXTURE_CONCURRENT_CALLERS = 8
+FIXTURE_SERVER_HOST = "localhost"
+FIXTURE_SERVER_PORT = 43210
 FIXTURE_TOKEN = os.path.basename(__file__)
 FIXTURE_SOURCE = __file__
 FIXTURE_URL = "file:" + __file__
@@ -61,16 +66,55 @@ def assert_subscription_surface_complete_response():
 def assert_subscription_surface_wiring():
     report = {"buckets": [{"bucket": "fixture", "remaining_pct": FIXTURE_REMAINING, "reset_ts": None}],
               "reason": None, "source": FIXTURE_SOURCE}
-    for executor in (kimi_exec, zai_exec):
-        with patch.object(surfaces, "cached_subscription_surface_report", return_value=report):
-            assert executor.usage_report() == report
-            assert executor.usage() == report["buckets"]
+    with (patch.object(kimi_exec, "discover_kimi_server_surface",
+                       return_value=(FIXTURE_SETTINGS, FIXTURE_TOKEN, None)),
+          patch.object(surfaces, "cached_subscription_surface_report", return_value=report)):
+        assert kimi_exec.usage_report() == report
+        assert kimi_exec.usage() == report["buckets"]
+    with patch.object(surfaces, "cached_subscription_surface_report", return_value=report):
+        assert zai_exec.usage_report() == report
+        assert zai_exec.usage() == report["buckets"]
     with patch.dict(os.environ, {"SPENDGUARD_KIMI_USAGE_URL": FIXTURE_URL}):
         assert surfaces.subscription_surface_settings("kimi_code", "SPENDGUARD_KIMI_USAGE_URL")["url"] == FIXTURE_URL
     unknown_settings = {**FIXTURE_SETTINGS, "url": None}
     with patch.object(surfaces.urllib.request, "urlopen", side_effect=AssertionError("must not probe")):
         unknown = surfaces.read_subscription_surface_report(unknown_settings, FIXTURE_TOKEN, FIXTURE_TIMEOUT, None)
     assert unknown["buckets"] is None and unknown["reason"] == "usage_url_not_configured"
+
+
+def assert_kimi_runtime_surface_discovery():
+    settings = {**FIXTURE_SETTINGS, "url": None, "path": "/fixture/usage"}
+    with tempfile.TemporaryDirectory() as temporary_directory:
+        kimi_home = pathlib.Path(temporary_directory)
+        instance_directory = (kimi_home / kimi_exec.KIMI_SERVER_DIRECTORY_NAME /
+                              kimi_exec.KIMI_SERVER_INSTANCES_DIRECTORY_NAME)
+        instance_directory.mkdir(parents=True)
+        instance_file = instance_directory / (FIXTURE_TOKEN + kimi_exec.KIMI_SERVER_INSTANCE_SUFFIX)
+        instance_file.write_text(json.dumps({"pid": FIXTURE_TIMEOUT, "host": FIXTURE_SERVER_HOST,
+                                             "port": FIXTURE_SERVER_PORT, "startedAt": FIXTURE_TIMEOUT}))
+        (kimi_home / kimi_exec.KIMI_SERVER_TOKEN_FILENAME).write_text(FIXTURE_TOKEN)
+        resolved, token, gap = kimi_exec.discover_kimi_server_surface(
+            settings, kimi_home=kimi_home, process_exists=lambda _pid: True)
+        expected_url = urllib.parse.urlunsplit((kimi_exec.KIMI_SERVER_URL_SCHEME,
+                                               f"{FIXTURE_SERVER_HOST}:{FIXTURE_SERVER_PORT}",
+                                               settings["path"], "", ""))
+        assert resolved["url"] == expected_url
+        assert token == FIXTURE_TOKEN and gap is None
+        with patch.object(surfaces.urllib.request, "urlopen",
+                          return_value=io.BytesIO(json.dumps(KIMI_PAYLOAD).encode())):
+            report = surfaces.read_subscription_surface_report(
+                resolved, token, FIXTURE_TIMEOUT, surfaces.parse_kimi_subscription_surface)
+        assert report["buckets"][0]["remaining_pct"] == FIXTURE_REMAINING
+
+    unresolved, token, gap = kimi_exec.discover_kimi_server_surface(
+        settings, kimi_home=kimi_home, process_exists=lambda _pid: True)
+    assert unresolved["url"] is None and token is None and gap == "kimi_server_not_running"
+    with (patch.object(kimi_exec, "discover_kimi_server_surface",
+                       return_value=(unresolved, token, gap)),
+          patch.object(surfaces.urllib.request, "urlopen", side_effect=AssertionError("must not probe"))):
+        unknown = kimi_exec.usage_report()
+    assert unknown["buckets"] is None and unknown["reason"] == "kimi_server_not_running"
+    assert unknown["uncertainty"] == "provider_data_unknown"
 
 
 def assert_subscription_surface_concurrency():
@@ -122,6 +166,7 @@ if __name__ == "__main__":
     assert_subscription_surface_guard()
     assert_subscription_surface_complete_response()
     assert_subscription_surface_wiring()
+    assert_kimi_runtime_surface_discovery()
     assert_subscription_surface_concurrency()
     assert_subscription_surface_mutation_proof()
     print("OK subscription headroom: complete response, fault, concurrency, six mutation guards")

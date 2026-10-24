@@ -18,14 +18,24 @@ meta prompt needs no tools, and the run happens in a throwaway CWD so an agentic
 """
 import json
 import os
+import pathlib
 import shutil
 import subprocess
 import tempfile
 import time
+import urllib.parse
 
 TIMEOUT_S = 300
 _USAGE_TTL_S = 300
 _usage_cache = {"at": 0.0, "val": None}
+KIMI_CODE_HOME_ENV = "KIMI_CODE_HOME"
+KIMI_CODE_HOME_DIRNAME = ".kimi-code"
+KIMI_SERVER_DIRECTORY_NAME = "server"
+KIMI_SERVER_INSTANCES_DIRECTORY_NAME = "instances"
+KIMI_SERVER_TOKEN_FILENAME = "server.token"
+KIMI_SERVER_INSTANCE_SUFFIX = ".json"
+KIMI_SERVER_URL_SCHEME = "http"
+KIMI_PROCESS_EXISTENCE_SIGNAL = 0
 
 
 def usage():
@@ -35,11 +45,82 @@ def usage():
 
 def usage_report():
     """Documented CLI-server quota; missing local server configuration is a named gap."""
-    from . import config, subscription_headroom_surfaces as surfaces
+    from . import subscription_headroom_surfaces as surfaces
     settings = surfaces.subscription_surface_settings("kimi_code", "SPENDGUARD_KIMI_USAGE_URL")
+    settings, token, discovery_gap = discover_kimi_server_surface(settings)
+    if discovery_gap:
+        return {"buckets": None, "source": settings["source"], "reason": discovery_gap,
+                "n": surfaces.SURFACE_UNKNOWN_SAMPLE_COUNT, "window": None,
+                "uncertainty": "provider_data_unknown"}
     return surfaces.cached_subscription_surface_report(_usage_cache, _USAGE_TTL_S, lambda:
-        surfaces.read_subscription_surface_report(settings, config.api_key("SPENDGUARD_KIMI_USAGE_TOKEN"),
-                                                  TIMEOUT_S, surfaces.parse_kimi_subscription_surface))
+        surfaces.read_subscription_surface_report(settings, token, TIMEOUT_S,
+                                                  surfaces.parse_kimi_subscription_surface))
+
+
+def discover_kimi_server_surface(settings, kimi_home=None, process_exists=None):
+    """Resolve the live Kimi web server from its instance registry and persistent auth-token file.
+
+    Kimi writes ``<KIMI_CODE_HOME>/server/instances/<server-id>.json`` with ``pid``, ``host``,
+    ``port`` and timestamps, and ``<KIMI_CODE_HOME>/server.token`` with the bearer token.  No
+    observed address is retained as a fallback: an absent/stale registry is honestly unknown.
+    """
+    home = pathlib.Path(kimi_home) if kimi_home is not None else pathlib.Path(
+        os.environ.get(KIMI_CODE_HOME_ENV) or pathlib.Path.home() / KIMI_CODE_HOME_DIRNAME)
+    instance_directory = home / KIMI_SERVER_DIRECTORY_NAME / KIMI_SERVER_INSTANCES_DIRECTORY_NAME
+    try:
+        instance_files = sorted(instance_directory.glob(f"*{KIMI_SERVER_INSTANCE_SUFFIX}"))
+    except OSError:
+        return settings, None, "kimi_address_not_discoverable"
+    if not instance_files:
+        return settings, None, "kimi_server_not_running"
+
+    live_instances = []
+    unreadable_live_address = False
+    process_probe = process_exists or kimi_server_process_exists
+    for instance_file in instance_files:
+        try:
+            instance = json.loads(instance_file.read_text())
+            pid = instance["pid"]
+            if isinstance(pid, bool) or not isinstance(pid, int) or not process_probe(pid):
+                continue
+            host = instance["host"]
+            port = instance["port"]
+            started_at = instance["startedAt"]
+            if (not isinstance(host, str) or not host or isinstance(port, bool) or
+                    not isinstance(port, int) or port <= 0 or not isinstance(started_at, (int, float))):
+                unreadable_live_address = True
+                continue
+            live_instances.append((started_at, host, port))
+        except (OSError, ValueError, KeyError, TypeError):
+            unreadable_live_address = True
+    if not live_instances:
+        gap = "kimi_address_not_discoverable" if unreadable_live_address else "kimi_server_not_running"
+        return settings, None, gap
+
+    _, host, port = min(live_instances)
+    token_path = home / KIMI_SERVER_TOKEN_FILENAME
+    try:
+        token = token_path.read_text().strip()
+    except OSError:
+        return settings, None, "kimi_auth_token_not_discoverable"
+    if not token:
+        return settings, None, "kimi_auth_token_not_discoverable"
+    netloc_host = f"[{host}]" if ":" in host and not host.startswith("[") else host
+    resolved = dict(settings)
+    resolved["url"] = urllib.parse.urlunsplit(
+        (KIMI_SERVER_URL_SCHEME, f"{netloc_host}:{port}", settings["path"], "", ""))
+    return resolved, token, None
+
+
+def kimi_server_process_exists(pid):
+    """Whether the PID recorded by Kimi's live-instance registry still exists."""
+    try:
+        os.kill(pid, KIMI_PROCESS_EXISTENCE_SIGNAL)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
 
 
 def _bin():

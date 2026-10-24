@@ -38,6 +38,11 @@ ANTIGRAVITY_WORK_DIRECTORY_PREFIX = "spendguard-antigravity-"
 _USAGE_TTL_S = 300            # /usage (the quota oracle) is re-read at most this often — weekly windows don't move fast
 _LANE_FAMILY = "gemini"       # the model family this lane serves; the /usage bucket to consult when a probe has no model
 _usage_cache = {"at": 0.0, "val": None}   # {at: last-read unix ts, val: parsed buckets or None} — see usage()
+_usage_report_cache = {"at": 0.0, "report": None}
+AGY_USAGE_SOURCE = "agy /usage"
+AGY_USAGE_UNKNOWN_SAMPLE_COUNT = 0
+AGY_USAGE_PRINT_TIMEOUT = "30s"
+AGY_USAGE_PROCESS_TIMEOUT_S = 45
 
 
 def _bin():
@@ -188,13 +193,33 @@ def _parse_usage(text):
 def _fetch_usage():
     """Run `agy /usage` on the subscription OAuth (metered keys stripped) and parse it → buckets or None. The raw
     fetch behind usage(); lane_quota.cached_usage wraps it with the TTL + reset-boundary freshness bounds."""
-    exe = _bin()
-    if not exe:
-        return None
+    return _fetch_agy_usage_report()["buckets"]
+
+
+def _fetch_agy_usage_report():
+    """Run agy's structured /usage command and preserve the exact transport/parse gap."""
+    report = {"buckets": None, "source": AGY_USAGE_SOURCE, "reason": None,
+              "n": AGY_USAGE_UNKNOWN_SAMPLE_COUNT, "window": None, "uncertainty": "provider_data_unknown"}
+    executable = _bin()
+    if not executable:
+        report["reason"] = "agy_cli_not_available"
+        return report
     from . import config
-    r = subprocess.run([exe, "-p", "/usage", "--output-format", "text", "--print-timeout", "30s"],
-                       capture_output=True, text=True, timeout=45, env=config.lane_exec_env(exe))
-    return _parse_usage(r.stdout) if r.returncode == 0 else None
+    try:
+        completed = subprocess.run([executable, "-p", "/usage", "--output-format", "text", "--print-timeout",
+                                    AGY_USAGE_PRINT_TIMEOUT], capture_output=True, text=True,
+                                   timeout=AGY_USAGE_PROCESS_TIMEOUT_S, env=config.lane_exec_env(executable))
+        if completed.returncode != 0:
+            report["reason"] = "agy_usage_transport_failed"
+            return report
+        report["buckets"] = _parse_usage(completed.stdout)
+        if not report["buckets"]:
+            report["reason"] = "agy_usage_windows_missing"
+            return report
+        report["uncertainty"] = "provider_reported"
+    except Exception as error:
+        report["reason"] = f"agy_usage_read_gap:{type(error).__name__}"
+    return report
 
 
 def usage():
@@ -204,6 +229,15 @@ def usage():
     recovered lane), so a burst of lane failures costs ONE $0 CLI round-trip."""
     from . import lane_quota
     return lane_quota.cached_usage(_usage_cache, _USAGE_TTL_S, _fetch_usage)
+
+
+def agy_headroom_report():
+    """Cached Gemini quota report with provider-specific UNKNOWN reasons."""
+    from . import subscription_headroom_surfaces as surfaces
+    return surfaces.cached_subscription_surface_report(_usage_report_cache, _USAGE_TTL_S, _fetch_agy_usage_report)
+
+
+HEADROOM_REPORT_READER = agy_headroom_report
 
 
 def _quota_reset_s():

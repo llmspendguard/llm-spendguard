@@ -40,6 +40,15 @@ CODEX_ORPHAN_PARENT_PID = 1
 CODEX_CONFIG_FILENAME = "config.toml"
 CODEX_DEFAULT_HOME = "~/.codex"
 CODEX_MCP_DEFAULT_URL_PORTS = {"http": 80, "https": 443}
+CODEX_APP_SERVER_INITIALIZE_REQUEST_ID = 1
+CODEX_APP_SERVER_RATE_LIMITS_REQUEST_ID = 2
+CODEX_APP_SERVER_CLIENT_NAME = "spendguard"
+CODEX_APP_SERVER_INITIALIZE_METHOD = "initialize"
+CODEX_APP_SERVER_RATE_LIMITS_METHOD = "account/rateLimits/read"
+CODEX_APP_SERVER_PROXY_ARGUMENTS = ("app-server", "proxy", "--sock")
+CODEX_APP_SERVER_SOCKET_PARTS = ("ipc", "ipc.sock")
+CODEX_USAGE_READ_TIMEOUT_S = 10
+CODEX_USAGE_UNKNOWN_SAMPLE_COUNT = 0
 
 
 def _codex_stdio_reap_policy(env, cwd=None):
@@ -388,11 +397,7 @@ def _codex_effort(level):
     return "none" if lv == "minimal" else lv
 
 
-# ── codex QUOTA: read the rate-limit events codex records in its logs sqlite (opportunistic, FILE-based) ───────
-# The ChatGPT plan exposes no quota status command, and `codex exec --json` emits only token counts (verified: no
-# rate-limit field). But the CLI LOGS the rate-limit envelope it receives on every real call into its logs sqlite,
-# as `codex.rate_limits` — {primary/secondary: {used_percent, window_minutes, reset_at (unix ts)}}. Reading the
-# freshest one (read-only) gives real plan headroom, refreshed by traffic, with no extra call. None on any gap.
+# ── codex QUOTA: authenticated app-server control surface (no model turn, no metered call) ──────────────
 def _codex_home():
     """Codex's state dir: $CODEX_HOME, else the documented default ~/.codex. Not hardcoded to one path — an override
     or a relocated home still resolves (and _plugin_disable_flags already reads config.toml from the same home)."""
@@ -447,69 +452,89 @@ def gc_shell_snapshots(max_age_days=7, apply=False):
 
 
 def _parse_rate_limits(obj):
-    """A codex.rate_limits payload → buckets [{bucket, remaining_pct, reset_ts}]. primary/secondary each carry
-    used_percent (remaining = 100 - used) and reset_at (absolute unix ts; reset_after_seconds is the relative
-    fallback). PARSE of a fixed provider schema, not a judgement. None when neither bucket is present."""
-    rl = (obj or {}).get("rate_limits") or {}
+    """Parse the installed app-server GetAccountRateLimitsResponse schema into quota buckets."""
+    response = obj or {}
+    snapshots = response.get("rateLimitsByLimitId")
+    snapshot_rows = (list(snapshots.items()) if isinstance(snapshots, dict) and snapshots
+                     else [(None, response.get("rateLimits"))])
     out = []
-    for name in ("primary", "secondary"):
-        b = rl.get(name)
-        if not isinstance(b, dict) or b.get("used_percent") is None:
+    for limit_id, snapshot in snapshot_rows:
+        if not isinstance(snapshot, dict):
             continue
-        reset = b.get("reset_at")
-        if reset is None and b.get("reset_after_seconds") is not None:
-            reset = time.time() + float(b["reset_after_seconds"])
-        # The event is a point-in-time snapshot; codex logs it per call, so it can be days old and its window may
-        # have CYCLED. Roll a past reset forward by whole windows → the NEXT actual reset, so a stale record shows a
-        # meaningful future date (not a past one) and the reset-boundary cache does not thrash. window_minutes is
-        # the period; without it a past reset is left as-is (best effort).
-        win = float(b.get("window_minutes") or 0) * 60.0
-        if reset is not None and win > 0 and float(reset) < time.time():
-            import math
-            reset = float(reset) + math.ceil((time.time() - float(reset)) / win) * win
-        out.append({"bucket": f"{name} ({int(b.get('window_minutes') or 0)}m window)",
-                    "remaining_pct": max(0, 100 - int(round(float(b["used_percent"])))),
-                    "reset_ts": (float(reset) if reset is not None else None)})
+        label = snapshot.get("limitName") or snapshot.get("limitId") or limit_id
+        for window_name in ("primary", "secondary"):
+            window = snapshot.get(window_name)
+            if not isinstance(window, dict) or window.get("usedPercent") is None:
+                continue
+            used_percent = float(window["usedPercent"])
+            if not 0 <= used_percent <= 100:
+                continue
+            duration = window.get("windowDurationMins")
+            bucket_prefix = str(label) if label is not None else "default"
+            bucket_suffix = f" ({int(duration)}m window)" if duration is not None else ""
+            out.append({"bucket": f"{bucket_prefix}:{window_name}{bucket_suffix}",
+                        "remaining_pct": max(0, 100 - int(round(used_percent))),
+                        "reset_ts": (float(window["resetsAt"]) if window.get("resetsAt") is not None else None)})
     return out or None
 
 
-def _fetch_usage():
-    """The FRESHEST codex.rate_limits event across every logs*.sqlite in the codex home → buckets or None. Freshness
-    is decided by each event's OWN `ts` column, NOT the file's mtime — a restore/rsync/iCloud sync/`touch` can
-    scramble mtimes and make a stale logs_1.sqlite outrank the current logs_2.sqlite, but the event timestamp
-    cannot lie. Read-ONLY (codex is writing live); any absence/lock/parse gap → None (fail safe, quota UNKNOWN)."""
-    import glob
-    import sqlite3
-    best = None                                        # (event_ts, body) with the greatest event_ts seen
-    for db in glob.glob(os.path.join(_codex_home(), "logs*.sqlite")):
-        try:
-            con = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=2.0)
-            try:
-                row = con.execute("SELECT ts, feedback_log_body FROM logs WHERE feedback_log_body LIKE "
-                                  "'%codex.rate_limits%' ORDER BY id DESC LIMIT 1").fetchone()
-            finally:
-                con.close()
-        except Exception:
-            continue
-        if row and row[1] and (best is None or (row[0] or 0) > best[0]):
-            best = ((row[0] or 0), row[1])
-    if not best:
-        return None
-    i = best[1].find("{")
-    if i < 0:
-        return None
+def _codex_usage_report_uncached():
+    """Query the authenticated running Codex app-server and return a complete headroom report."""
+    report = {"buckets": None, "source": CODEX_APP_SERVER_RATE_LIMITS_METHOD, "reason": None,
+              "n": CODEX_USAGE_UNKNOWN_SAMPLE_COUNT, "window": None, "uncertainty": "provider_data_unknown"}
+    executable = _bin()
+    socket_path = os.path.join(_codex_home(), *CODEX_APP_SERVER_SOCKET_PARTS)
+    if not executable:
+        report["reason"] = "codex_cli_not_available"
+        return report
+    if not os.path.exists(socket_path):
+        report["reason"] = "codex_app_server_socket_not_available"
+        return report
+    from . import __version__
+    requests = (
+        {"id": CODEX_APP_SERVER_INITIALIZE_REQUEST_ID, "method": CODEX_APP_SERVER_INITIALIZE_METHOD,
+         "params": {"clientInfo": {"name": CODEX_APP_SERVER_CLIENT_NAME,
+                                    "version": __version__}}},
+        {"id": CODEX_APP_SERVER_RATE_LIMITS_REQUEST_ID, "method": CODEX_APP_SERVER_RATE_LIMITS_METHOD,
+         "params": None},
+    )
     try:
-        return _parse_rate_limits(json.loads(best[1][i:]))
-    except Exception:
-        return None
+        from . import config
+        completed = subprocess.run([executable, *CODEX_APP_SERVER_PROXY_ARGUMENTS, socket_path],
+                                   input="".join(json.dumps(request) + "\n" for request in requests),
+                                   capture_output=True, text=True, timeout=CODEX_USAGE_READ_TIMEOUT_S,
+                                   env=config.lane_exec_env(executable))
+        if completed.returncode != 0:
+            report["reason"] = "codex_rate_limits_transport_failed"
+            return report
+        responses = [json.loads(line) for line in completed.stdout.splitlines() if line.strip()]
+        response = next((row for row in responses if row.get("id") == CODEX_APP_SERVER_RATE_LIMITS_REQUEST_ID), None)
+        if not response or not isinstance(response.get("result"), dict):
+            report["reason"] = "codex_rate_limits_response_missing"
+            return report
+        report["buckets"] = _parse_rate_limits(response["result"])
+        if not report["buckets"]:
+            report["reason"] = "codex_rate_limits_windows_missing"
+            return report
+        report["uncertainty"] = ("provider_reported_reset_unknown" if any(
+            bucket["reset_ts"] is None for bucket in report["buckets"]) else "provider_reported")
+    except Exception as error:
+        report["reason"] = f"codex_rate_limits_read_gap:{type(error).__name__}"
+    return report
+
+
+def codex_headroom_report():
+    """Cached structured report from Codex's authenticated account/rateLimits/read control method."""
+    from . import subscription_headroom_surfaces as surfaces
+    return surfaces.cached_subscription_surface_report(_usage_cache, _USAGE_TTL_S, _codex_usage_report_uncached)
+
+
+HEADROOM_REPORT_READER = codex_headroom_report
 
 
 def usage():
-    """This lane's ChatGPT-plan quota parsed into buckets [{bucket, remaining_pct, reset_ts}], or None (quota
-    UNKNOWN). Read from the rate-limit events codex records in its logs sqlite — reflecting codex's LAST real call,
-    refreshed by traffic. Cached via lane_quota.cached_usage (TTL + reset-boundary invalidation). $0, no call."""
-    from . import lane_quota
-    return lane_quota.cached_usage(_usage_cache, _USAGE_TTL_S, _fetch_usage)
+    """Codex plan quota buckets, or None when the control surface cannot establish headroom."""
+    return codex_headroom_report()["buckets"]
 
 
 def _codex_error_status(err_text):

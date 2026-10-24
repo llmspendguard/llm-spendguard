@@ -8,6 +8,7 @@
   "kimi_code": {
     "auth_prefix": "Bearer ",
     "url": null,
+    "path": "/api/v1/oauth/usage",
     "source": "https://www.kimi.com/code/docs/en/kimi-code-cli/reference/server-api.html#get-api-v1-oauth-usage"
   }
 }
