@@ -51,7 +51,16 @@ CODEX_USAGE_READ_TIMEOUT_S = 10
 CODEX_EXEC_WORK_DIRECTORY_PREFIX = "spendguard-codex-"
 CODEX_USAGE_UNKNOWN_SAMPLE_COUNT = 0
 CODEX_DELEGATE_OUTPUT_FILENAME = "delegate-final.txt"
-CODEX_DELEGATE_REQUIRED_MCP_SERVERS = ("symgrep", "7thsense", "honestreview", "spendguard")
+CODEX_CONFIG_OVERRIDE_FLAG = "--config"
+CODEX_DELEGATE_READ_ONLY_APPROVAL_MODE = "auto"
+CODEX_MCP_TOOL_APPROVAL_OVERRIDE_TEMPLATE = 'mcp_servers.{server}.tools.{tool}.approval_mode="{mode}"'
+CODEX_DELEGATE_REQUIRED_MCP_READ_ONLY_TOOLS = {
+    "symgrep": ("search", "indexed_roots"),
+    "7thsense": ("find", "ask", "index_queue_status", "profile"),
+    "honestreview": ("warm_daemon_metadata",),
+    "spendguard": (),
+}
+CODEX_DELEGATE_REQUIRED_MCP_SERVERS = tuple(CODEX_DELEGATE_REQUIRED_MCP_READ_ONLY_TOOLS)
 
 
 def _codex_stdio_reap_policy(env, cwd=None):
@@ -191,6 +200,17 @@ _AUTH_RECHECK_BACKOFF_S = 0.75  # a non-zero `codex login status` is confirmed o
 _TOKEN_EXPIRY_MARGIN_S = 120    # a token within this of its own exp is not treated as still-valid (leave room to refresh)
 _ABSENT_CONFIRM_TRIES = 3       # a momentarily-ABSENT auth.json (non-atomic refresh rewrite) is confirmed over this many
 #                                 short reads before it is called a real logout — an absent flicker is NOT 'logged out'
+
+
+def _codex_delegate_read_only_tool_approval_arguments():
+    """Build per-invocation auto-approval overrides solely from the delegated MCP SSOT."""
+    arguments = []
+    for server, tools in CODEX_DELEGATE_REQUIRED_MCP_READ_ONLY_TOOLS.items():
+        for tool in tools:
+            override = CODEX_MCP_TOOL_APPROVAL_OVERRIDE_TEMPLATE.format(
+                server=server, tool=tool, mode=CODEX_DELEGATE_READ_ONLY_APPROVAL_MODE)
+            arguments.extend((CODEX_CONFIG_OVERRIDE_FLAG, override))
+    return arguments
 
 
 def _token_unexpired(now=None, margin=None):
@@ -655,11 +675,12 @@ def _run_agentic_codex_exec(prompt, system=None, model=None, timeout=TIMEOUT_S, 
         command = [executable, "exec", "--json", "--output-last-message", output_path,
                    CODEX_AGENTIC_APPROVAL_FLAG,
                    "--cd", os.fspath(cwd), "--skip-git-repo-check"]
+        command.extend(_codex_delegate_read_only_tool_approval_arguments())
         if model:
             command.extend(["--model", model])
         effort = _codex_effort(reasoning)
         if effort:
-            command.extend(["--config", f'model_reasoning_effort="{effort}"'])
+            command.extend([CODEX_CONFIG_OVERRIDE_FLAG, f'model_reasoning_effort="{effort}"'])
         try:
             completed = _run_cold_codex_with_reaper(command + [complete_prompt], timeout, environment, cwd)
         except subprocess.TimeoutExpired:
