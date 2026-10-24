@@ -33,6 +33,8 @@ SQLITE_FILE_URI_SCHEME = "file"
 SQLITE_MEMORY_MODE_QUERY_KEY = "mode"
 SQLITE_MEMORY_MODE_QUERY_VALUE = "memory"
 ISOLATED_SQLITE_ROOT_ENVIRONMENT_KEYS = ("HOME", "SPENDGUARD_HOME", "TMPDIR")
+COVERAGE_DATA_FILE_ENVIRONMENT_KEY = "COVERAGE_FILE"
+COVERAGE_DEFAULT_DATA_FILE_NAME = ".coverage"
 
 
 class IsolatedSQLitePathError(RuntimeError):
@@ -62,10 +64,22 @@ def isolated_sqlite_target_path(database):
     return Path(database_text).expanduser().resolve()
 
 
+def is_coverage_data_file_path(database_path):
+    """Return whether a path follows coverage.py's configured or default data-file convention."""
+    configured_data_file = os.environ.get(COVERAGE_DATA_FILE_ENVIRONMENT_KEY)
+    if configured_data_file:
+        configured_path = Path(configured_data_file).expanduser().resolve()
+        return database_path == configured_path or (
+            database_path.parent == configured_path.parent
+            and database_path.name.startswith(f"{configured_path.name}.")
+        )
+    return database_path.name.startswith(COVERAGE_DEFAULT_DATA_FILE_NAME)
+
+
 def validate_isolated_sqlite_open_path(database):
     """Fail closed when an isolated test's SQLite file escapes every declared scratch root."""
     database_path = isolated_sqlite_target_path(database)
-    if database_path is None:
+    if database_path is None or is_coverage_data_file_path(database_path):
         return
     allowed_roots = tuple(
         Path(root_value).expanduser().resolve()

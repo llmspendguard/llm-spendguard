@@ -17,6 +17,7 @@ HERMETICITY_SUCCESS_RETURN_CODE = 0
 HERMETICITY_SQLITE_FILENAME = "hermeticity.sqlite3"
 HERMETICITY_SQLITE_READ_ONLY_URI_QUERY = "mode=ro"
 HERMETICITY_SQLITE_PROOF_DDL = "CREATE TABLE isolation_proof (proof_value INTEGER)"
+HERMETICITY_COVERAGE_PARALLEL_SUFFIX = "host.pid.random"
 sys.path.insert(0, str(HERMETICITY_REPO_ROOT))
 from scripts.test import chunked_suite  # noqa: E402
 from spendguard import config, conv  # noqa: E402
@@ -24,7 +25,8 @@ import test_runner as hermeticity_pytest_runner  # noqa: E402
 
 
 def verify_gate_hermeticity_isolation_contract():
-    with tempfile.TemporaryDirectory() as scratch_home, tempfile.TemporaryDirectory() as scratch_tmpdir:
+    with tempfile.TemporaryDirectory() as scratch_home, tempfile.TemporaryDirectory() as scratch_tmpdir, \
+            tempfile.TemporaryDirectory() as external_tool_home:
         expected_home = str(Path(scratch_home).resolve())
         expected_tmpdir = str(Path(scratch_tmpdir).resolve())
         environment = chunked_suite._child_env(scratch_home, scratch_tmpdir)
@@ -48,6 +50,12 @@ def verify_gate_hermeticity_isolation_contract():
                 print(f"[OK] SQLite confinement guard fired: {guard_error}")
             else:
                 raise AssertionError("isolated SQLite connection escaped scratch roots")
+            coverage_data_path = Path(external_tool_home) / (
+                f"{config.COVERAGE_DEFAULT_DATA_FILE_NAME}.{HERMETICITY_COVERAGE_PARALLEL_SUFFIX}"
+            )
+            with sqlite3.connect(coverage_data_path) as coverage_connection:
+                coverage_connection.execute(HERMETICITY_SQLITE_PROOF_DDL)
+            assert coverage_data_path.is_file()
         with patch.object(hermeticity_pytest_runner.tempfile, "mkdtemp",
                           side_effect=[scratch_home, scratch_tmpdir]), \
                 patch.object(hermeticity_pytest_runner.time, "monotonic", return_value=HERMETICITY_CLOCK_ORIGIN), \
