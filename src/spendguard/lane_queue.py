@@ -23,8 +23,8 @@ leases + drains locally) — pointed at a LOCAL sqlite table instead:
     AND local CPU saturation (a load ceiling pauses leasing when the machine itself is thrashing).
 
 PURE STATE persisted in the `lane_queue` table (the base sqlite, like lane_bandit) so nothing is re-paid or lost.
-Every function is guarded to never raise into a caller. Knobs are named constants + advisor.* config — never a
-literal at a call site.
+Queue write guard, deliberate-stop, lock, and programming errors propagate rather than becoming empty data; transient
+sqlite operational failures degrade loudly where the caller can retry. Knobs are named constants + advisor.* config.
 """
 import datetime
 import json
@@ -310,19 +310,32 @@ def optimize_queue_db():
 def enqueue(intent, task, system=None, reasoning=None, priority=0, max_attempts=None,
             sla_class="batch", deadline_ts=None, dedup=True):
     """Append ONE task. NEVER blocks and never runs it — that is the point: work is accepted at any utilization and
-    sits `pending` until a drainer has lane capacity. Returns the row id, or None on error. `dedup` (default True):
-    see enqueue_many — identical work is coalesced instead of re-bought."""
+    sits `pending` until a drainer has lane capacity. Returns the row id, or None for a transient sqlite operational
+    failure; other errors propagate. `dedup` (default True): see enqueue_many — identical work is coalesced instead
+    of re-bought."""
     return (enqueue_many(intent, [task], system=system, reasoning=reasoning, priority=priority,
                          max_attempts=max_attempts, sla_class=sla_class, deadline_ts=deadline_ts, dedup=dedup)
             or [None])[0]
+
+
+def _degrade_transient_lane_queue_write_error(operation, error):
+    """Log a transient sqlite write failure; propagate every guard, deliberate stop, and programming error."""
+    from . import provider_tokens as _pt
+    if _pt._stop_or_locked(error) or not isinstance(error, sqlite3.OperationalError):
+        raise error
+    import sys as _sys
+    print("[spendguard] lane_queue.%s: transient DB error (%s: %s) — returning [] so the caller degrades "
+          "HONESTLY (never silent empty data)." % (operation, type(error).__name__, str(error)),
+          file=_sys.stderr, flush=True)
 
 
 def enqueue_many(intent, tasks, system=None, reasoning=None, priority=0, max_attempts=None,
                  sla_class="batch", deadline_ts=None, dedup=True):
     """Append many tasks of ONE intent in a single transaction (a 6k-item backfill is one commit). `sla_class`
     ('realtime' | 'batch') and `deadline_ts` (absolute ISO SLA deadline, or None) are stamped on every row so the
-    scheduler/drain can serve tight-deadline realtime work first within capacity. Returns the row ids in order; [] on
-    error or empty input.
+    scheduler/drain can serve tight-deadline realtime work first within capacity. Returns the row ids in order; empty
+    input or a transient sqlite OperationalError returns [] (the latter with a loud stderr diagnostic). Guard,
+    deliberate-stop, lock, and programming errors propagate.
 
     CONTENT-ADDRESSED DEDUP (`dedup`, default True): the queue NEVER re-buys work it already has. Before inserting,
     each task's fingerprint (_fingerprint of intent/task/system/reasoning) is looked up; if a non-FAILED row with the
@@ -367,7 +380,8 @@ def enqueue_many(intent, tasks, system=None, reasoning=None, priority=0, max_att
                 ids.append(cur.lastrowid)
             c.commit()
             return ids
-    except Exception:
+    except Exception as error:
+        _degrade_transient_lane_queue_write_error("enqueue_many", error)
         return []
 
 
@@ -460,7 +474,9 @@ def lease(n, worker=None, lease_s=None):
     priority, then REALTIME before batch, then the tightest SLA deadline (deadline_ts asc, nulls last), then oldest —
     marking them `leased` with a fresh lease_until and attempts+1. First, within the SAME write lock, RECLAIMS
     expired leases (worker died): those under max_attempts return to `pending`, those at/over it become `failed`.
-    Returns a list of {id,intent,task,system,reasoning,sla_class} dicts (empty if nothing is pending). Never raises.
+    Returns a list of {id,intent,task,system,reasoning,sla_class} dicts (empty if nothing is pending). A transient
+    sqlite OperationalError returns [] with a loud stderr diagnostic; guard, deliberate-stop, lock, and programming
+    errors propagate.
 
     Intent-UNIFORM by design: a batch shares one intent so bulk_delegate routes it with that intent's bandit arms;
     a higher-priority row of a DIFFERENT intent is simply picked up on the next round."""
@@ -523,7 +539,8 @@ def lease(n, worker=None, lease_s=None):
             except Exception:
                 c.execute("ROLLBACK")
                 raise
-    except Exception:
+    except Exception as error:
+        _degrade_transient_lane_queue_write_error("lease", error)
         return []
 
 

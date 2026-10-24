@@ -6,7 +6,9 @@ through bulk_delegate and empties the queue; and the local-load ceiling pauses l
 loadavg stubbed, isolated db, no LLM, no subprocess.
 """
 import contextlib
+import io
 import os
+import sqlite3
 import sys
 from _pytest_fixture_bridge import align_test_startup_home
 
@@ -28,6 +30,42 @@ def ck(name, cond):
 
 
 fails = []
+
+_GUARD_FAILURE_MESSAGE = "forced queue guard rejection"
+_TRANSIENT_FAILURE_MESSAGE = "database is busy"
+
+
+def _raise_queue_write_error(error):
+    raise error
+
+
+print("-- queue writes: guard/logic errors propagate; sqlite operational errors degrade loudly --")
+_orig_queue_op = q._queue_op
+try:
+    for _operation_name, _operation, _arguments in (
+            ("enqueue_many", q.enqueue_many, ("fail-loud-intent", ["task"])),
+            ("lease", q.lease, (1,))):
+        _guard_error = RuntimeError(_GUARD_FAILURE_MESSAGE)
+        q._queue_op = lambda error=_guard_error: _raise_queue_write_error(error)
+        try:
+            _operation(*_arguments)
+            fails += ck(f"{_operation_name} propagates guard/logic errors", False)
+        except RuntimeError as _error:
+            fails += ck(f"{_operation_name} propagates guard/logic errors",
+                        str(_error) == _GUARD_FAILURE_MESSAGE)
+
+        _transient_error = sqlite3.OperationalError(_TRANSIENT_FAILURE_MESSAGE)
+        q._queue_op = lambda error=_transient_error: _raise_queue_write_error(error)
+        _stderr = io.StringIO()
+        with contextlib.redirect_stderr(_stderr):
+            _result = _operation(*_arguments)
+        _diagnostic = _stderr.getvalue()
+        fails += ck(f"{_operation_name} degrades sqlite OperationalError to [] loudly",
+                    _result == [] and _operation_name in _diagnostic
+                    and type(_transient_error).__name__ in _diagnostic
+                    and _TRANSIENT_FAILURE_MESSAGE in _diagnostic)
+finally:
+    q._queue_op = _orig_queue_op
 
 print("-- enqueue accepts work without running it; depth reflects pending --")
 i1 = q.enqueue("intentA", "task-a1", priority=1)
