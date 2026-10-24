@@ -962,7 +962,7 @@ def test_job(sig, run_fn, n=None, verify_fn=None, contract=None, items=None):
 # ── EVAL: the lifecycle checkpoint ABOVE the shape-test. test_job asks "did the sample PARSE the declared shape";
 #    eval_job asks "is the sample GOOD ENOUGH against a STATED bar". The verdict is a JUDGEMENT, so an LLM decides it
 #    (agentic — never a keyword/threshold rubber-stamp, per CLAUDE.md); the gate's later check ("does a passing eval
-#    exist?") is the only mechanical part. Mirrors advisor.reconstruct (config.advisor_judge_model, caged as meta). ──
+#    exist?") is the only mechanical part. Mirrors advisor.reconstruct_advisor_history (config.advisor_judge_model, caged as meta). ──
 _EVAL_SYS = ("You are a strict, honest evaluator. You are given a STATED BAR (the quality criterion a task's output "
              "must meet) and a SAMPLE of that task's actual outputs from a small test run. Decide whether the SAMPLE "
              "AS A WHOLE meets the bar. Be specific and unforgiving: a sample that only partly meets the bar, or that "

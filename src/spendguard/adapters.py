@@ -720,7 +720,8 @@ def _book_substitution(r):
                               requested_model=requested, requested_effort=r.get("requested_effort"),
                               chosen_model=chosen, chosen_effort=r.get("chosen_effort"),
                               counterfactual_usd=base, actual_usd=actual, saved_usd=saved, basis=_basis,
-                              why=r.get("substitution"), reason_class=r.get("decision_reason_class"))
+                              why=r.get("substitution"), reason_class=r.get("decision_reason_class"),
+                              call_id=r.get("call_id"))
         if saved > 0:                                    # metered → cheaper metered: a real counterfactual saving
             guard.record_saving(_basis, saved)
     except Exception:
@@ -884,7 +885,7 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
          sig=None, intent=None, retries=2, files=None, _no_guard=False, no_metered_fallback=False, images=None,
          no_substitution=False, measurement=False, metered_only=False, base_fallback=None, _probe=False, _route=True,
          _internal_pin=False, _coalesce_eligible=True, temperature=None, top_p=None, seed=None,
-         soft_deadline_s=None, auth_over_quota=False, **aliases):
+         soft_deadline_s=None, auth_over_quota=False, decomposition=None, **aliases):
     """Run one one-shot prompt through the governed model/lane router. Returns a CallResult (never raises).
 
     For a classification, gate, or doctrine verdict, pass a stable caller ``intent`` and explicit
@@ -1222,6 +1223,7 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
     _bv_explicit = isinstance(reasoning, str) and reasoning.strip().lower() == "best-value"
     reasoning = _apply_best_value_default(reasoning, intent, sig, no_substitution, _probe)
     _bv_from = _bv_why = _bv_effort = None
+    _pick = None
     if isinstance(reasoning, str) and reasoning.strip().lower() == "best-value":
         reasoning = None                               # consume the sentinel regardless of the outcome below
         if not _probe and not getattr(_resolve_guard, "on", False):
@@ -1281,10 +1283,21 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
         from . import plan_admission as _pa
         _plan_redirect = _pa.decide(model, intent or sig, auth_over_quota=auth_over_quota)
         if _plan_redirect.get("action") == "refuse":
+            from . import calls as _refused_calls, config as _refused_config, routing_audit as _refused_audit
+            _refused_call_id = _refused_config.uid()
+            _refused_snapshot = _refused_audit.build_routing_snapshot(
+                intent=intent or sig, plan_decision=_plan_redirect, best_value_pick=_pick)
+            _refused_calls.record_call(
+                provider_for(model), model, "realtime", 0.0, latency=0.0, intent=intent or sig,
+                effort=reasoning, outcome="refused", disposition="failed",
+                disposition_reason=_plan_redirect["reason"], call_id=_refused_call_id,
+                routing_snapshot=_refused_snapshot, request_schema=schema,
+                request_max_tokens=max_tokens, request_decomposition=decomposition)
             return {"provider": provider_for(model), "model": model, "text": None, "parsed": None,
                     "in_tok": 0, "out_tok": 0, "cost": None, "latency": 0.0, "finish_reason": None,
                     "executor": None, "error_type": "PlanAdmissionRefused", "reason": "plan_exhausted",
-                    "error": _plan_redirect["reason"], "plan_risk": _plan_redirect.get("risk")}
+                    "error": _plan_redirect["reason"], "plan_risk": _plan_redirect.get("risk"),
+                    "call_id": _refused_call_id}
         if _plan_redirect.get("action") == "redirect":
             model = _plan_redirect["model"]
             no_substitution = True
@@ -1302,6 +1315,17 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
         from . import config as _retention_config
         _retained_call_id = _retention_config.uid()
         _sig_ctx.set_context(root_call=_retained_call_id, attempt=1)
+    from . import routing_audit as _routing_audit
+    _sig_ctx.set_context(
+        routing_snapshot=_routing_audit.build_routing_snapshot(
+            intent=intent or sig or _ctx_before.get("intent"),
+            plan_decision=_plan_redirect,
+            best_value_pick=_pick,
+        ),
+        request_schema=schema,
+        request_max_tokens=max_tokens,
+        request_decomposition=decomposition,
+    )
     if sig and not _ctx_before.get("intent"):
         _sig_ctx.set_context(intent=sig)
     if measurement and not _ctx_before.get("measurement"):
@@ -1539,7 +1563,6 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
              "substitution": r.get("substitution") or _plan_redirect["reason"],
              "decision_reason_class": _plan_redirect.get("reason_class"),
              "resolved_lane": r.get("resolved_lane") or _plan_redirect["lane"]}
-    _book_substitution(r)   # book the DECISION (value proof + learner evidence) + any metered→cheaper saving
     # `billed` (cost>0) is NOT "served by the metered API": a per-token key LANE (e.g. zai-coding) costs while still
     # being lane-served, so a caller proving refuse_billed/$0 via `billed` gets false positives. This is the field to
     # reach for instead — the metered provider API served it (a lane miss fell through, or there was no lane): executor
@@ -1547,6 +1570,7 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
     if isinstance(r, dict):
         if not _no_guard and not _probe:
             r["call_id"] = r.get("call_id") or _retained_call_id
+        _book_substitution(r)   # linked call_id is now present; book the value proof + learner evidence
         if soft_deadline_s is not None:
             r["stall_outcome"] = "produced_tokens_ran"
             r["zero_billable_cancel_feasible"] = False

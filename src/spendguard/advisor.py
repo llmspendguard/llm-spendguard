@@ -111,7 +111,7 @@ def _est_line(mode, model, n, in_tok, out_tok, cost):
 
 
 # ─────────────────────────────── reconstruct (judge) ───────────────────────────────
-def reconstruct(run=False, per=15, limit=None):
+def reconstruct_advisor_history(run=False, per=15, limit=None):
     """Judge a bounded sample of the recovered call_io corpus for quality → makes good% / $/good real.
     Estimate-only unless run=True. Realtime judge (synchronous, small, caged by intent spendguard:*)."""
     from . import callio
@@ -378,7 +378,7 @@ def main(argv=None):
     ap.add_argument("--run", action="store_true", help="actually spend (default: estimate only). Capped by caps.meta.")
     a = ap.parse_args(argv)
     if a.op == "reconstruct":
-        reconstruct(run=a.run, per=a.per, limit=a.limit)
+        reconstruct_advisor_history(run=a.run, per=a.per, limit=a.limit)
     elif a.op == "mine":
         mine(run=a.run, intent=a.intent)
     else:

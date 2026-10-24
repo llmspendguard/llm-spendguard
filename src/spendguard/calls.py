@@ -56,7 +56,10 @@ def set_context(intent: Optional[str] = None, chain: Optional[str] = None, who: 
                 call_class: Optional[str] = None, origin_session: Optional[str] = None,
                 defer_batch_booking: Optional[bool] = None, requested_model: Optional[str] = None,
                 redirect_reason: Optional[str] = None, resolved_lane: Optional[str] = None,
-                measurement: Optional[bool] = None, gen_params: Optional[dict] = None, batch_eligible: Optional[bool] = None) -> None:
+                measurement: Optional[bool] = None, gen_params: Optional[dict] = None,
+                batch_eligible: Optional[bool] = None, routing_snapshot: Optional[dict] = None,
+                request_schema=None, request_max_tokens: Optional[int] = None,
+                request_decomposition=None) -> None:
     c = dict(current())
     if batch_eligible is not None:
         c["batch_eligible"] = bool(batch_eligible)
@@ -104,6 +107,14 @@ def set_context(intent: Optional[str] = None, chain: Optional[str] = None, who: 
         c["redirect_reason"] = redirect_reason
     if resolved_lane is not None:
         c["resolved_lane"] = resolved_lane
+    if routing_snapshot is not None:
+        c["routing_snapshot"] = routing_snapshot
+    if request_schema is not None:
+        c["request_schema"] = request_schema
+    if request_max_tokens is not None:
+        c["request_max_tokens"] = request_max_tokens
+    if request_decomposition is not None:
+        c["request_decomposition"] = request_decomposition
     _local.ctx = c                        #   (gate._record_rt fires DURING the SDK call, on this thread, so it reads ctx)
 
 
@@ -377,7 +388,9 @@ def _ensure_call_observation_schema(c):
                         ("call_class", "TEXT"), ("origin_session", "TEXT"),
                         ("requested_model", "TEXT"), ("served_model", "TEXT"),
                         ("resolved_lane", "TEXT"), ("redirect_reason", "TEXT"),
-                        ("cache_read_tok", "INTEGER"), ("cache_write_tok", "INTEGER")):
+                        ("cache_read_tok", "INTEGER"), ("cache_write_tok", "INTEGER"),
+                        ("routing_snapshot_json", "TEXT"), ("request_schema_json", "TEXT"),
+                        ("request_max_tokens", "INTEGER"), ("request_decomposition_json", "TEXT")):
         if _col not in _have:
             c.execute(f"ALTER TABLE calls ADD COLUMN {_col} {_decl}")
     c.execute("CREATE INDEX IF NOT EXISTS idx_calls_executor ON calls(executor)")  # per-lane rollups
@@ -387,6 +400,8 @@ def _ensure_call_observation_schema(c):
     c.execute("CREATE INDEX IF NOT EXISTS idx_calls_class_session ON calls(call_class, origin_session)")
     ensure_ordered_index_coverage(c, "calls", ("kind", "ts"))
     ensure_ordered_index_coverage(c, "calls", ("kind", "provider", "model", "intent"))
+    from . import routing_audit
+    routing_audit.ensure_decisions_call_fk_schema(c, commit=False)
     # Default-on complete content retention shares this connection so large governed fans do not
     # consume a second per-thread ledger connection. Its schema/purge seam is additive and local-only.
     c.commit()
@@ -477,7 +492,8 @@ def record_call(provider, model, kind, cost, in_tok=0, out_tok=0, latency=None,
            provider_error=None, retry_after=None, attempts=None, disposition=None, disposition_reason=None, retry_of=None,
            fell_from=None, fell_reason=None, call_id=None, call_class=None, origin_session=None,
            requested_model=None, served_model=None, resolved_lane=None, redirect_reason=None,
-           cache_read_tok=None, cache_write_tok=None):
+           cache_read_tok=None, cache_write_tok=None, routing_snapshot=None, request_schema=None,
+           request_max_tokens=None, request_decomposition=None):
     """Record one call — its full OUTCOME, success OR failure. Returns call_id. Never raises.
 
     Cache observations remain NULL when unmeasured or when a write tier is unknown.
@@ -540,6 +556,12 @@ def record_call(provider, model, kind, cost, in_tok=0, out_tok=0, latency=None,
         served_model = served_model or model
         resolved_lane = resolved_lane or ctx.get("resolved_lane") or executor
         redirect_reason = redirect_reason or ctx.get("redirect_reason")
+        routing_snapshot = routing_snapshot if routing_snapshot is not None else ctx.get("routing_snapshot")
+        request_schema = request_schema if request_schema is not None else ctx.get("request_schema")
+        request_max_tokens = (request_max_tokens if request_max_tokens is not None
+                              else ctx.get("request_max_tokens"))
+        request_decomposition = (request_decomposition if request_decomposition is not None
+                                 else ctx.get("request_decomposition"))
         cid = call_id or (_root if (_root and _seq == 1) else None) or _uuid()
         sp = _snip()
         ph = hashlib.sha256((prompt or "").encode("utf-8", "ignore")).hexdigest()[:16] if prompt else None
@@ -569,12 +591,15 @@ def record_call(provider, model, kind, cost, in_tok=0, out_tok=0, latency=None,
             # row is written (never migrate/backfill old rows), with a distinct source protected from later feedback.
             from . import bulkgate
             _truncation_quality = bulkgate.is_truncated(finish)
-            _calls_db().execute(
+            from . import routing_audit
+            audit_connection = _calls_db()
+            audit_connection.execute(
                 "INSERT INTO calls (id,ts,chain,intent,caller,provider,model,kind,in_tok,out_tok,"
                 "cost,latency,prompt_hash,prompt_snip,output_snip,finish,executor,project,effort,suspect,"
                 "quality,quality_src,quality_conf,outcome,http_status,provider_error,retry_after,attempts,disposition,disposition_reason,retry_of,fell_from,fell_reason,"
-                "call_class,origin_session,requested_model,served_model,resolved_lane,redirect_reason,cache_read_tok,cache_write_tok) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "call_class,origin_session,requested_model,served_model,resolved_lane,redirect_reason,cache_read_tok,cache_write_tok,"
+                "routing_snapshot_json,request_schema_json,request_max_tokens,request_decomposition_json) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (cid, ts, chain, intent, who or ctx.get("who") or caller(), provider, model, kind,
                  int(in_tok or 0), int(out_tok or 0), float(cost or 0), latency, ph, psnip, osnip, finish,
                  executor, proj, (effort or None), suspect,
@@ -590,8 +615,29 @@ def record_call(provider, model, kind, cost, in_tok=0, out_tok=0, latency=None,
                  (requested_model or None), (served_model or None), (resolved_lane or None),
                  (redirect_reason or None),
                  (int(cache_read_tok) if cache_read_tok is not None else None),
-                 (int(cache_write_tok) if cache_write_tok is not None else None)))
-            _calls_db().commit()
+                 (int(cache_write_tok) if cache_write_tok is not None else None),
+                 routing_audit.encode_audit_json(routing_snapshot),
+                 routing_audit.encode_audit_json(request_schema),
+                 (int(request_max_tokens) if request_max_tokens is not None else None),
+                 routing_audit.encode_audit_json(request_decomposition)))
+            routing_audit.insert_linked_decision(
+                audit_connection,
+                call_id=cid,
+                project=proj,
+                intent=intent,
+                basis=(routing_snapshot or {}).get("basis", routing_audit.DIRECT_ROUTING_BASIS),
+                requested_model=requested_model or model,
+                requested_effort=effort,
+                chosen_model=served_model,
+                chosen_effort=effort,
+                counterfactual_usd=float(cost or 0),
+                actual_usd=float(cost or 0),
+                saved_usd=0.0,
+                why=redirect_reason or routing_audit.DIRECT_ROUTING_REASON,
+                reason_class=(routing_snapshot or {}).get(
+                    "reason_class", routing_audit.DIRECT_ROUTING_REASON_CLASS),
+            )
+            audit_connection.commit()
         # Reuse alone must leave quality unjudged; the compatibility entrypoint never infers a verdict.
         if chain and prompt:
             _link_used(chain, prompt)
