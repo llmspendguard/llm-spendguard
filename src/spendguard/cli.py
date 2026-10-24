@@ -646,7 +646,11 @@ def _dispatch(argv=None):
             for _w in _fr.get("warn", []):
                 print(f"deploy: ⚠ STALE consumer pid {_w.get('pid')} — {_w.get('why')}: {str(_w.get('cmdline'))[:60]}",
                       file=sys.stderr)
-            if not _fr.get("restarted") and not _fr.get("warn"):
+            for _t in _fr.get(_fleet.FLEET_RESTART_TRANSIENT_KEY, []):
+                print(f"deploy: fleet — transient one-shot, self-exiting: pid {_t.get('pid')} "
+                      f"{str(_t.get('cmdline'))[:60]}")
+            if (not _fr.get("restarted") and not _fr.get("warn")
+                    and not _fr.get(_fleet.FLEET_RESTART_TRANSIENT_KEY)):
                 print("deploy: fleet — all tracked consumers already on the green commit.")
         _deployment_verdict = _fleet.verify_and_refresh_registered_interpreters(apply="--no-refresh" not in r)
         print("deploy: completeness — "

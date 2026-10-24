@@ -17,6 +17,7 @@ never a start-time guess):
                       unsupervised ones are returned as a loud WARN (we never kill a process we cannot bring back).
 `spendguard deploy` calls restart_stale() after promoting; `spendguard fleet` shows running(); and
 `release.exit_if_stale()` lets any daemon self-exit→respawn. $0, no LLM. Nothing here ever raises onto a call path."""
+import atexit
 import os
 import hashlib
 import json
@@ -25,6 +26,7 @@ import plistlib
 import sqlite3
 import subprocess
 import sys
+import threading
 from contextlib import closing
 
 import psutil
@@ -32,7 +34,9 @@ import psutil
 from . import config
 from .warm_stdio_daemon import WARM_OWNER_BOOT_EPSILON_S
 
-_registered = False                                  # once-per-process guard for register() (cheap hot-path no-op after)
+_registered_pid = None                               # successful once-per-process register() guard, fork-safe by PID
+_consumer_deregister_hook_pid = None
+_consumer_registration_lock = threading.Lock()
 _FLEET_PID_GONE = "gone"
 _FLEET_PID_VERIFIED_LIVE = "verified_live"
 _FLEET_PID_UNVERIFIABLE = "unverifiable"
@@ -61,6 +65,21 @@ LANE_LEAK_TRIPWIRE_LAUNCHD_COMMAND_ARGUMENTS = (
 FLEET_LAUNCHD_OPERATION_TIMEOUT_S = 15
 FLEET_TEST_ISOLATION_ENV = "SPENDGUARD_TEST_ISOLATED"
 _INTERPRETER_REGISTRATION_TABLE = "registered_interpreters"
+CONSUMER_TABLE_NAME = "consumers"
+CONSUMER_ROLE_COLUMN = "role"
+CONSUMER_ROLE_UNSPECIFIED = "unspecified"
+CONSUMER_ROLE_DAEMON = "daemon"
+CONSUMER_ROLE_EPHEMERAL = "ephemeral"
+CONSUMER_ROLE_PRECEDENCE = {
+    CONSUMER_ROLE_UNSPECIFIED: 0,
+    CONSUMER_ROLE_EPHEMERAL: 1,
+    CONSUMER_ROLE_DAEMON: 2,
+}
+FLEET_RESTART_TRANSIENT_KEY = "transient"
+FLEET_RESTART_TRANSIENT_EPHEMERAL_REASON = (
+    "stale ephemeral one-shot — will exit on its own; not restarted"
+)
+SQLITE_TABLE_OBJECT_TYPE = "table"
 _registration_failure = None
 
 
@@ -160,10 +179,10 @@ def _fleet_db():
     c = sqlite3.connect(p, timeout=5)
     c.execute("PRAGMA journal_mode=WAL")
     c.execute("PRAGMA busy_timeout=5000")
-    c.execute("""CREATE TABLE IF NOT EXISTS consumers(
+    c.execute(f"""CREATE TABLE IF NOT EXISTS consumers(
         pid INTEGER PRIMARY KEY, version TEXT, served_sha TEXT, served_short TEXT, dirty INTEGER,
         cmdline TEXT, launchd_label TEXT, registered_ts TEXT, venv_root TEXT, python_executable TEXT,
-        pid_create_time TEXT)""")
+        pid_create_time TEXT, {CONSUMER_ROLE_COLUMN} TEXT)""")
     c.execute(f"""CREATE TABLE IF NOT EXISTS {_INTERPRETER_REGISTRATION_TABLE}(
         python_executable TEXT PRIMARY KEY, venv_root TEXT NOT NULL, code_version TEXT,
         metadata_version TEXT, catalog_verified TEXT, first_seen TEXT NOT NULL, last_seen TEXT NOT NULL)""")
@@ -173,6 +192,8 @@ def _fleet_db():
     for name in ("venv_root", "python_executable", "pid_create_time", "registered_ts"):
         if name not in columns:
             c.execute("ALTER TABLE consumers ADD COLUMN %s TEXT" % name)
+    if CONSUMER_ROLE_COLUMN not in columns:
+        c.execute("ALTER TABLE consumers ADD COLUMN %s TEXT" % CONSUMER_ROLE_COLUMN)
     migration_time = _fleet_iso()
     c.execute(
         f"INSERT OR IGNORE INTO {_INTERPRETER_REGISTRATION_TABLE}"
@@ -294,34 +315,101 @@ def _classify_fleet_pid_identity(pid, recorded_create_time):
     return _FLEET_PID_VERIFIED_LIVE
 
 
-def register_consumer(label=None):
+def _update_registered_consumer_role_for_current_identity(role):
+    """Upgrade this process identity's declared role without repeating full registration. Never raises."""
+    try:
+        incoming_precedence = CONSUMER_ROLE_PRECEDENCE[role]
+        lower_precedence_roles = tuple(
+            stored_role for stored_role, stored_precedence in CONSUMER_ROLE_PRECEDENCE.items()
+            if stored_precedence < incoming_precedence
+        )
+        if not lower_precedence_roles:
+            return
+        pid = os.getpid()
+        pid_create_time = repr(psutil.Process(pid).create_time())
+        with closing(_fleet_db()) as connection:
+            with connection:
+                table_exists = connection.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type=? AND name=?",
+                    (SQLITE_TABLE_OBJECT_TYPE, CONSUMER_TABLE_NAME),
+                ).fetchone()
+                if table_exists:
+                    lower_role_placeholders = ",".join("?" for _role in lower_precedence_roles)
+                    connection.execute(
+                        f"UPDATE {CONSUMER_TABLE_NAME} SET {CONSUMER_ROLE_COLUMN}=? "
+                        f"WHERE pid=? AND pid_create_time IS ? AND "
+                        f"({CONSUMER_ROLE_COLUMN} IS NULL OR "
+                        f"{CONSUMER_ROLE_COLUMN} IN ({lower_role_placeholders}))",
+                        (role, pid, pid_create_time, *lower_precedence_roles),
+                    )
+    except Exception:
+        pass
+
+
+def register_consumer(label=None, role=None):
     """Record THIS process in the fleet registry — idempotent (once per process), cheap, NEVER raises. Called on the
     first LLM call (adapters.call) and from daemon entrypoints (mcp_server/serve/drain), so every process that could be
     running stale code against a provider is tracked. Stores the EXACT served commit (release.served_sha) + the loaded
     __version__, so staleness is read off the real loaded code, not a start-time guess. `label` is the launchd label
     when the caller knows it; otherwise it is resolved at detection time."""
-    global _registered
-    if _registered:
-        return
-    _registered = True                               # set BEFORE the work: a failure must not retry on every call
+    global _consumer_deregister_hook_pid, _registered_pid
+    _consumer_registration_lock.acquire()
     try:
-        from . import release, _version
-        s = release.served_sha() or {}
-        now = _fleet_iso()
+        current_pid = os.getpid()
+        if _registered_pid == current_pid:
+            if role is not None:
+                _update_registered_consumer_role_for_current_identity(role)
+            return
+        resolved_role = CONSUMER_ROLE_UNSPECIFIED if role is None else role
         try:
-            pid_create_time = repr(psutil.Process(os.getpid()).create_time())
+            from . import release, _version
+            s = release.served_sha() or {}
+            now = _fleet_iso()
+            try:
+                pid_create_time = repr(psutil.Process(current_pid).create_time())
+            except Exception:
+                pid_create_time = None
+            with closing(_fleet_db()) as c:
+                with c:
+                    c.execute("INSERT OR REPLACE INTO consumers "
+                              "(pid,version,served_sha,served_short,dirty,cmdline,launchd_label,registered_ts,"
+                              f"venv_root,python_executable,pid_create_time,{CONSUMER_ROLE_COLUMN}) "
+                              "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                              (current_pid, getattr(_version, "__version__", None), s.get("sha"), s.get("short"),
+                               1 if s.get("dirty") else 0, _cmdline(), label, now, sys.prefix, sys.executable,
+                               pid_create_time, resolved_role))
+            if _consumer_deregister_hook_pid != current_pid:
+                atexit.register(_deregister_consumer_at_exit, current_pid, pid_create_time)
+                _consumer_deregister_hook_pid = current_pid
+            _registered_pid = current_pid
         except Exception:
-            pid_create_time = None
-        with closing(_fleet_db()) as c:
-            with c:
-                c.execute("INSERT OR REPLACE INTO consumers "
-                          "(pid,version,served_sha,served_short,dirty,cmdline,launchd_label,registered_ts,"
-                          "venv_root,python_executable,pid_create_time) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
-                          (os.getpid(), getattr(_version, "__version__", None), s.get("sha"), s.get("short"),
-                           1 if s.get("dirty") else 0, _cmdline(), label, now, sys.prefix, sys.executable,
-                           pid_create_time))
+            pass
+    finally:
+        _consumer_registration_lock.release()
+
+
+def deregister_consumer(pid, pid_create_time):
+    """Remove exactly one consumer identity; shutdown-time registry failures never escape."""
+    try:
+        with closing(_fleet_db()) as connection:
+            with connection:
+                table_exists = connection.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type=? AND name=?",
+                    (SQLITE_TABLE_OBJECT_TYPE, CONSUMER_TABLE_NAME),
+                ).fetchone()
+                if table_exists:
+                    connection.execute(
+                        "DELETE FROM consumers WHERE pid=? AND pid_create_time IS ?",
+                        (pid, pid_create_time),
+                    )
     except Exception:
         pass
+
+
+def _deregister_consumer_at_exit(registered_pid, pid_create_time):
+    """Deregister only in the process that installed this hook, never in an inherited fork."""
+    if os.getpid() == registered_pid:
+        deregister_consumer(registered_pid, pid_create_time)
 
 
 def _fleet_iso():
@@ -355,10 +443,11 @@ def running_consumers(prune=True):
     out, gone = [], []
     try:
         with closing(_fleet_db()) as c:
-            rows = c.execute("SELECT pid,version,served_sha,served_short,dirty,cmdline,launchd_label,registered_ts,"
-                             "pid_create_time "
-                             "FROM consumers").fetchall()
-            for (pid, ver, sha, short, dirty, cmd, label, reg, recorded_create_time) in rows:
+            rows = c.execute(
+                "SELECT pid,version,served_sha,served_short,dirty,cmdline,launchd_label,registered_ts,"
+                f"pid_create_time,{CONSUMER_ROLE_COLUMN} FROM consumers"
+            ).fetchall()
+            for (pid, ver, sha, short, dirty, cmd, label, reg, recorded_create_time, role) in rows:
                 identity_state = _classify_fleet_pid_identity(pid, recorded_create_time)
                 if identity_state == _FLEET_PID_GONE:
                     gone.append((pid, recorded_create_time))
@@ -371,7 +460,7 @@ def running_consumers(prune=True):
                 out.append({"pid": pid, "version": ver, "served_sha": sha, "served_short": short,
                             "dirty": bool(dirty), "cmdline": cmd, "launchd_label": label, "registered_ts": reg,
                             "pid_create_time": recorded_create_time, "identity_verified": identity_verified,
-                            "stale": stale})
+                            "role": role or CONSUMER_ROLE_DAEMON, "stale": stale})
             if prune and gone:
                 c.executemany("DELETE FROM consumers WHERE pid=? AND pid_create_time IS ?", gone)
                 c.commit()
@@ -383,14 +472,16 @@ def running_consumers(prune=True):
 def restart_stale(apply=False):
     """Bring the fleet onto the green commit. For each STALE live consumer, resolve its launchd label; a
     launchd-MANAGED one is kickstarted (`launchctl kickstart -k` → it respawns onto the latest code). An unsupervised
-    stale process is NEVER killed (we could not bring it back) — it is returned in `warn` for the operator to restart.
-    `apply=False` (default) is a DRY RUN: it reports what it WOULD do without touching anything. Returns
-    {restarted:[...], warn:[...], dry_run:bool}. $0, never raises — a restart hiccup is reported, not thrown."""
+    stale process is NEVER killed (we could not bring it back) — daemons are returned in `warn` for the operator to
+    restart, while ephemeral one-shots are returned in `transient` because they will exit on their own. `apply=False`
+    (default) is a DRY RUN: it reports what it WOULD do without touching anything. Returns
+    {restarted:[...], warn:[...], transient:[...], dry_run:bool}. $0, never raises — a restart hiccup is reported,
+    not thrown."""
     import subprocess
     if apply:
         from .codex_broker_owner import ensure_codex_broker_owner_running
         ensure_codex_broker_owner_running()
-    restarted, warn = [], []
+    restarted, warn, transient = [], [], []
     for c in running_consumers():
         if not c.get("identity_verified"):
             warn.append({"pid": c["pid"], "cmdline": c["cmdline"],
@@ -402,7 +493,12 @@ def restart_stale(apply=False):
             continue
         label = c.get("launchd_label") or _launchd_label_for(c["pid"])
         if not label:
-            warn.append({"pid": c["pid"], "cmdline": c["cmdline"], "why": "stale but NOT launchd-managed — restart it manually"})
+            if c.get("role") == CONSUMER_ROLE_EPHEMERAL:
+                transient.append({"pid": c["pid"], "cmdline": c["cmdline"],
+                                  "why": FLEET_RESTART_TRANSIENT_EPHEMERAL_REASON})
+            else:
+                warn.append({"pid": c["pid"], "cmdline": c["cmdline"],
+                             "why": "stale but NOT launchd-managed — restart it manually"})
             continue
         if not apply:
             restarted.append({"pid": c["pid"], "launchd_label": label, "action": "would kickstart"})
@@ -415,7 +511,8 @@ def restart_stale(apply=False):
                               "action": "kickstarted" if r.returncode == 0 else "kickstart FAILED: %s" % (r.stderr.strip()[:80])})
         except Exception as e:
             restarted.append({"pid": c["pid"], "launchd_label": label, "action": "kickstart error: %s" % str(e)[:80]})
-    return {"restarted": restarted, "warn": warn, "dry_run": not apply}
+    return {"restarted": restarted, "warn": warn,
+            FLEET_RESTART_TRANSIENT_KEY: transient, "dry_run": not apply}
 
 
 _INSTALL_FINGERPRINT_MARKER = ".spendguard_dep_fingerprint"

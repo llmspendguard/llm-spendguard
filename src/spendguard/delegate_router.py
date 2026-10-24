@@ -421,6 +421,8 @@ def delegate_task(task, files=None, intent=None, provider="auto", execute=False,
 
 def delegate_cli(argv=None):
     import argparse
+    from . import fleet
+    fleet.register_consumer(role=fleet.CONSUMER_ROLE_EPHEMERAL)
     parser = argparse.ArgumentParser(
         prog="spendguard delegate",
         description="Offload one SELF-CONTAINED AGENTIC workspace-write subtask to another configured provider plan. "
