@@ -384,6 +384,8 @@ def _ensure_call_observation_schema(c):
     c.execute("CREATE INDEX IF NOT EXISTS idx_calls_retry_of ON calls(retry_of)")  # reconstruct one call's retry chain
     c.execute("CREATE INDEX IF NOT EXISTS idx_calls_fell_from ON calls(fell_from)")  # per-lane fallback-spend rollups
     c.execute("CREATE INDEX IF NOT EXISTS idx_calls_class_session ON calls(call_class, origin_session)")
+    # Default-on complete content retention shares this connection so large governed fans do not
+    # consume a second per-thread ledger connection. Its schema/purge seam is additive and local-only.
     c.commit()
 
 

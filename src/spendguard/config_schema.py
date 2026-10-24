@@ -505,6 +505,14 @@ SETTINGS = [
          default=False, kind="bool", secret=False,
          desc="Synonym for callio.capture_live — enables storing call_io prompts for replay. NOTE: distinct from "
               "calls.store_prompts, which gates the SEPARATE calls-table snippet corpus, not the call_io replay corpus."),
+    dict(section="content_retention", key="enabled", store="config.json:content_retention.enabled", env=None,
+         default=True, kind="bool", secret=False,
+         desc="Retain complete governed-call prompts, systems, and responses in the machine-local ledger. Default ON; "
+              "set false to opt out. This content is age-purged and is never selected by SaaS push paths."),
+    dict(section="content_retention", key="retention_days", store="config.json:content_retention.retention_days", env=None,
+         default=30, kind="int", secret=False,
+         desc="Days to retain complete governed-call content locally. Growth is bounded by age, never by truncating "
+              "prompts or responses."),
     dict(section="advisor", key="pool_cooldown_s", store="config.json:advisor.pool_cooldown_s", env="SPENDGUARD_POOL_COOLDOWN_S",
          default=900, kind="float", secret=False,
          desc="After a subscription lane fails (plan window exhausted, CLI missing), skip that lane for this many "
