@@ -59,7 +59,7 @@ class BrokerLedgerAbandonmentGuards(unittest.TestCase):
         from spendguard import claudecode
         with patch.object(claudecode, "context_trajectory", side_effect=deadline):
             result = residency_gate.evaluate_posttooluse({})
-        self.assertIn("ledger gap", result["systemMessage"])
+        self.assertEqual(result, {}, "the PostToolUse advisory must fail open and stay silent")
 
     def test_pool_watchdog_interrupts_inflight_ledger_snapshot_before_recycle(self):
         ledger_path = pathlib.Path(tempfile.mkdtemp(dir=config.HOME)) / pathlib.Path(__file__).stem

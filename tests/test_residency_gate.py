@@ -53,7 +53,8 @@ ck("it is a WARNING, not a block (no permissionDecision=deny)",
 ck("exactly ONE gated verdict call — never a session/subagent spawn", len(_calls) == 1)
 ck("judge is minimal, strict-schema, and output-bounded",
    _calls[0][2].get("reasoning") == "minimal" and _calls[0][2].get("max_tokens") == 120
-   and _calls[0][2].get("schema", {}).get("additionalProperties") is False)
+   and _calls[0][2].get("schema", {}).get("additionalProperties") is False
+   and _calls[0][2].get("no_metered_fallback") is True)
 ck("judge receives the whole tool result", "Y" * 4000 in _calls[0][1])
 
 # ── content-hash cache: the same result is judged ONCE ──
@@ -76,6 +77,36 @@ ck("resident-context threshold can satisfy the long-session gate without many tu
    bool(rg.evaluate_posttooluse({**_big, "session_id": "S-resident"}).get("systemMessage")))
 ck("the resident-context path reuses the content verdict", len(_calls) == 0)
 claudecode.context_trajectory = lambda cid: {"turns": 50, "current": 500, "model": "claude-opus-4-8"}
+
+# ── every threshold/horizon is environment-configured, and the kill switch is a total no-op ──
+os.environ["SPENDGUARD_RESIDENCY_MIN_RESULT_BYTES"] = "5000"
+_calls.clear()
+ck("size threshold override changes gating", rg.evaluate_posttooluse({**_big, "tool_response": "W" * 4000}) == {}
+   and _calls == [])
+os.environ["SPENDGUARD_RESIDENCY_MIN_RESULT_BYTES"] = "100"
+
+os.environ["SPENDGUARD_RESIDENCY_REMAINING_TURNS_EST"] = "2"
+two_turn_warning = rg.evaluate_posttooluse({**_big, "tool_response": "H" * 4000}).get("systemMessage", "")
+os.environ["SPENDGUARD_RESIDENCY_REMAINING_TURNS_EST"] = "200"
+two_hundred_turn_warning = rg.evaluate_posttooluse({**_big, "tool_response": "I" * 4000}).get("systemMessage", "")
+ck("remaining-turn horizon override changes the pricing-derived warning",
+   two_turn_warning and two_hundred_turn_warning and two_turn_warning != two_hundred_turn_warning)
+
+os.environ["SPENDGUARD_RESIDENCY_NUDGE"] = "0"
+_calls.clear()
+ck("kill switch is a total no-op", rg.evaluate_posttooluse({**_big, "tool_response": "K" * 4000}) == {}
+   and _calls == [])
+os.environ["SPENDGUARD_RESIDENCY_NUDGE"] = "1"
+
+# ── any internal failure is silent success; it never warns or blocks the tool ──
+original_trajectory = claudecode.context_trajectory
+claudecode.context_trajectory = lambda cid: (_ for _ in ()).throw(OSError("synthetic unreadable transcript"))
+ck("unreadable transcript fails open without a warning", rg.evaluate_posttooluse(_big) == {})
+claudecode.context_trajectory = original_trajectory
+original_structured_reply = adapters.structured_reply
+adapters.structured_reply = lambda result: (_ for _ in ()).throw(RuntimeError("synthetic judge failure"))
+ck("judge failure fails open without a warning", rg.evaluate_posttooluse({**_big, "tool_response": "J" * 4000}) == {})
+adapters.structured_reply = original_structured_reply
 
 # ── a NON-delegable result (belongs in the thread) is SILENT ──
 _calls.clear()

@@ -25,6 +25,28 @@ from . import config
 from .ledger_read import LedgerReadError
 
 _HOOK_SUFFIX = "residency-gate --posttooluse-hook"
+RESIDENCY_NUDGE_ENABLED_DEFAULT = True
+RESIDENCY_MIN_RESULT_BYTES_DEFAULT = 10240
+RESIDENCY_MIN_TURNS_DEFAULT = 20
+RESIDENCY_MIN_CONTEXT_TOKENS_DEFAULT = 100000
+RESIDENCY_REMAINING_TURNS_DEFAULT = 100
+RESIDENCY_JUDGE_OUTPUT_TOKENS_DEFAULT = 120
+RESIDENCY_SUBAGENT_RETURN_TOKENS_DEFAULT = 400
+RESIDENCY_RECEIPT_TOP_CONTRIBUTORS_DEFAULT = 5
+RESIDENCY_VERDICT_CACHE_ENTRIES_DEFAULT = 512
+RESIDENCY_HOOK_TIMEOUT_SECONDS_DEFAULT = 30
+
+
+def _residency_configured_boolean(key):
+    """Resolve a residency boolean through the declarative config layer and its environment override."""
+    from .config_schema import SETTINGS
+    spec = next(s for s in SETTINGS if s.get("section") == "residency_gate" and s.get("key") == key)
+    value = os.environ.get(spec.get("env") or "")
+    if value is None:
+        value = config._cfg_get("residency_gate", key, spec["default"])
+    return str(value).strip().lower() not in ("0", "false", "no", "off", "")
+
+
 def _residency_configured_integer(key):
     """Resolve a residency setting through the declarative config layer, including its registered default."""
     from .config_schema import SETTINGS
@@ -107,7 +129,9 @@ def _judge_residency_delegability(tool_name, tool_input, result_text):
     if cached is not None:
         return cached
     try:
+        import spendguard
         from . import adapters, plan_admission, calls
+        spendguard.require()
         model = plan_admission.ready_meta_model(config.advisor_judge_model())
         prompt = (f"A tool result from `{tool_name}` ({len(result_text.encode('utf-8', 'ignore'))} bytes) landed in "
                   f"the MAIN conversation thread, so "
@@ -120,6 +144,7 @@ def _judge_residency_delegability(tool_name, tool_input, result_text):
         with calls.context(intent="spendguard:residency-nudge"):
             r = adapters.call(model, prompt, sig="spendguard:residency-nudge", reasoning="minimal",
                               max_tokens=_residency_configured_integer("judge_output_tokens"),
+                              no_metered_fallback=True,
                               schema={"type": "object", "additionalProperties": False, "required": ["delegable"],
                                       "properties": {"delegable": {"type": "boolean"}, "why": {"type": "string"}}})
         j = adapters.structured_reply(r)
@@ -146,6 +171,8 @@ def evaluate_posttooluse(payload):
     which case a systemMessage naming the resident-vs-subagent cost. Never blocks, never raises."""
     silent = {}
     try:
+        if config.disabled() or not _residency_configured_boolean("enabled"):
+            return silent
         tool_name = str(payload.get("tool_name") or "")
         session_id = payload.get("session_id") or "unknown-session"
         text = _result_text(payload)
@@ -155,8 +182,8 @@ def evaluate_posttooluse(payload):
             from .codex import codex_hook_context_trajectory
             try:
                 trajectory = codex_hook_context_trajectory(payload)
-            except (OSError, ValueError) as exc:
-                return {"systemMessage": f"spendguard Codex residency unavailable: {exc}"}
+            except (OSError, ValueError):
+                return silent
         else:
             trajectory = claudecode.context_trajectory(session_id)
         session_turns = int(trajectory.get("turns") or 0)
@@ -184,8 +211,8 @@ def evaluate_posttooluse(payload):
                f"drops it.")
         return {"systemMessage": msg,
                 "hookSpecificOutput": {"hookEventName": "PostToolUse", "additionalContext": msg}}
-    except LedgerReadError as exc:
-        return {"systemMessage": f"spendguard residency ledger gap: {exc}"}
+    except LedgerReadError:
+        return silent
     except Exception:
         return silent
 
@@ -250,7 +277,8 @@ def install_residency_gate(settings_path=None, uninstall=False, executable=None)
             return "already installed", None
         binary = executable or shutil.which("spendguard") or str(pathlib.Path(sys.prefix) / "bin" / "spendguard")
         command = f"env SPENDGUARD_NO_AUTOINSTALL=1 {shlex.quote(binary)} {_HOOK_SUFFIX}"
-        groups.append({"matcher": "*", "hooks": [{"type": "command", "command": command, "timeout": 30}]})
+        groups.append({"matcher": "*", "hooks": [{"type": "command", "command": command,
+                       "timeout": _residency_configured_integer("hook_timeout_seconds")}]})
         hooks["PostToolUse"] = groups
         cfg["hooks"] = hooks
         action = "installed"

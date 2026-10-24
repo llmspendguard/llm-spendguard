@@ -1834,6 +1834,10 @@ def _install_claude_code(remove=False):
         action = "installed"
     p.parent.mkdir(parents=True, exist_ok=True)
     config.update_json(p, lambda _d: cfg)
+    # The residency nudge is another Claude Code receipt/context surface. Install it through this same host
+    # integration entrypoint so one reversible command owns all of spendguard's Claude Code hooks.
+    from .residency_gate import install_residency_gate
+    install_residency_gate(settings_path=p, uninstall=remove, executable=sg)
     print(f"{action} spendguard receipts for Claude Code → {p}")
     print("  restart Claude Code to apply" + ("" if remove else "  (status-line footer + per-turn notice)")
           + (f"  ·  backup: {p.with_suffix('.json.bak').name}" if p.with_suffix('.json.bak').exists() else ""))
