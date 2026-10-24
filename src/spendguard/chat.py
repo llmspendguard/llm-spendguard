@@ -19,6 +19,8 @@ caged LLM reads each conversation and picks the best (org, project) from your ta
 import os, sys, json, sqlite3, hashlib, subprocess, urllib.request, urllib.error, pathlib, tempfile, datetime, time
 import collections
 
+CHAT_COOKIE_COPY_DIRECTORY_PREFIX = "spendguard-chat-cookies-"
+
 from . import config, pricing
 
 _COOKIES = pathlib.Path.home() / "Library" / "Application Support" / "Claude" / "Cookies"
@@ -90,7 +92,7 @@ def _decrypt_cookies():
     if not _COOKIES.exists():
         raise RuntimeError(f"no Claude desktop Cookies at {_COOKIES}")
     key = _derive_key(_keychain_password())
-    tmpdir = pathlib.Path(tempfile.mkdtemp())
+    tmpdir = pathlib.Path(tempfile.mkdtemp(prefix=CHAT_COOKIE_COPY_DIRECTORY_PREFIX))
     tmp = tmpdir / "Cookies"                               # copy the sqlite (the app may hold a lock)
     tmp.write_bytes(_COOKIES.read_bytes())
     # A WAL-mode Cookies db keeps recent writes in the -wal SIDECAR (and -shm is its index). Copying ONLY the

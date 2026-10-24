@@ -25,6 +25,7 @@ import tempfile
 import time
 
 TIMEOUT_S = 300               # meta prompts are small; a hung CLI must not stall the daily report
+SUBSCRIPTION_WORK_DIRECTORY_PREFIX = "spendguard-subscription-"
 # MINIMAL COLD START — the claude CLI reloads MCP server schemas + settings sources on EVERY `-p` spawn, which the $0
 # plan pays for. Suppressing them is a MEASURED ~58% cut of the per-call cache-WRITE (2026-10-08 A/B: 18,874 → 7,866
 # tok; total in 48,655 → 37,647) with the OAuth plan login INTACT and the reply unchanged. EXCLUDED on purpose, with
@@ -205,7 +206,7 @@ def run_prompt(prompt, system=None, model=None, timeout=TIMEOUT_S, reasoning=Non
     t0 = time.time()
     neutral_cwd = None
     try:
-        neutral_cwd = tempfile.mkdtemp(prefix="spendguard-subscription-")
+        neutral_cwd = tempfile.mkdtemp(prefix=SUBSCRIPTION_WORK_DIRECTORY_PREFIX)
         try:
             r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, env=env,
                                stdin=subprocess.DEVNULL, cwd=neutral_cwd)

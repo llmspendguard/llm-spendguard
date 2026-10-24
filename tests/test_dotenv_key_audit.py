@@ -8,13 +8,26 @@ provider key is keys.env's own declaration, never guessed from the name — so a
 line, AND any undeclared name (a provider-looking DEEPSEEK_API_KEY keys.env never set, or an app secret like
 CSRF_TOKEN), never flags. Offline + hermetic: a temp keys.env + temp repo dirs under SPENDGUARD_HOME. Last-4 only —
 the full secret must never appear in any output."""
+import atexit
 import contextlib
 import io
 import os
 import sys
 import tempfile
+import shutil
 
-os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="spendguard-dotenv-audit-")
+DOTENV_AUDIT_OWNED_TEMP_PATHS = []
+DOTENV_AUDIT_HOME_PREFIX = "spendguard-dotenv-audit-"
+DOTENV_AUDIT_REPOSITORY_PREFIX_TEMPLATE = "repo-%s-"
+
+
+def _dotenv_audit_owned_temp_dir(prefix):
+    owned_path = tempfile.mkdtemp(prefix=prefix)
+    DOTENV_AUDIT_OWNED_TEMP_PATHS.append(owned_path)
+    atexit.register(shutil.rmtree, owned_path, ignore_errors=True)
+    return owned_path
+
+os.environ["SPENDGUARD_HOME"] = _dotenv_audit_owned_temp_dir(DOTENV_AUDIT_HOME_PREFIX)
 os.environ.setdefault("SPENDGUARD_TEST_ISOLATED", "1")
 os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
 os.environ.pop("OPENAI_API_KEY", None)
@@ -45,7 +58,7 @@ with open(config.KEYS_ENV, "w") as f:
 
 def _repo(name, env_text, env_local_text=None):
     """A temp repo dir holding a .env (and optionally a .env.local)."""
-    d = tempfile.mkdtemp(prefix="repo-%s-" % name)
+    d = _dotenv_audit_owned_temp_dir(DOTENV_AUDIT_REPOSITORY_PREFIX_TEMPLATE % name)
     with open(os.path.join(d, ".env"), "w") as f:
         f.write(env_text)
     if env_local_text is not None:

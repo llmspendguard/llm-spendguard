@@ -3,16 +3,28 @@ racing a concurrent token refresh) is NOT a logout — the token's own exp is au
 retracts a stale 'logged out' banner. Without this, a valid 10-day token still produced hourly false re-login toasts
 and phantom metered fallback. Offline: subprocess, exec and the token reader are monkeypatched; no codex CLI, no spend."""
 import base64
+import atexit
 import json
 import os
 from unittest.mock import patch
 import sys
 import tempfile
+import shutil
 import time
 from types import SimpleNamespace
 from _script_checks import scripted_process_results
 
-os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="sg-auth-robust-")
+LANE_AUTH_HOME_PREFIX = "sg-auth-robust-"
+LANE_AUTH_RACE_PREFIX = "codex-authrace-"
+LANE_AUTH_CODEX_HOME_PREFIX = "codex-home-"
+
+def _lane_auth_owned_temp_dir(prefix):
+    owned_path = tempfile.mkdtemp(prefix=prefix)
+    atexit.register(shutil.rmtree, owned_path, ignore_errors=True)
+    return owned_path
+
+
+os.environ["SPENDGUARD_HOME"] = _lane_auth_owned_temp_dir(LANE_AUTH_HOME_PREFIX)
 os.environ.setdefault("SPENDGUARD_TEST_ISOLATED", "1")
 os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
 os.environ["OPENAI_API_KEY"] = "sk-test-auth-offline"
@@ -68,7 +80,7 @@ with patch.dict(os.environ):
         # token unreadable + status down on BOTH calls: the verdict now turns on whether auth.json is a refresh write in
         # flight (present-but-unreadable → inconclusive, NO toast) or a genuine logout (absent → False). This is the fix
         # for the recurring hourly banner — an unreadable token is never escalated to a confirmed logout.
-        _ah = tempfile.mkdtemp(prefix="codex-authrace-")
+        _ah = _lane_auth_owned_temp_dir(LANE_AUTH_RACE_PREFIX)
         _prev_ch = os.environ.get("CODEX_HOME")
         os.environ["CODEX_HOME"] = _ah
         try:
@@ -103,7 +115,7 @@ def _jwt(exp):
     return "h." + payload + ".s"
 
 
-_codex_home = tempfile.mkdtemp(prefix="codex-home-")
+_codex_home = _lane_auth_owned_temp_dir(LANE_AUTH_CODEX_HOME_PREFIX)
 _orig_codex_home = os.environ.get("CODEX_HOME")
 os.environ["CODEX_HOME"] = _codex_home
 try:

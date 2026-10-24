@@ -15,7 +15,10 @@ warm server a POOL of independent prompts rather than one growing conversation.
 """
 import atexit
 import contextvars
+import json
 import os
+from pathlib import Path
+import shutil
 import threading
 import time
 
@@ -32,6 +35,70 @@ IDLE_TIMEOUT_S = 600              # reclaim the persistent subprocess after ten 
 _POOL_SLOT_KEY = "codex-daemon-workers"
 _CODEX_AUTH_HTTP_STATUSES = (401, 403)
 _CODEX_AUTH_ERROR_CODES = ("unauthorized", "authenticationError", "authentication_error")
+
+
+def _codex_worker_home_marker_path(worker_home):
+    return Path(worker_home) / config.CODEX_POOL_OWNER_MARKER_FILENAME
+
+
+def _mark_codex_worker_home_owned(worker_home):
+    """Stamp a worker home with this process's recycle-proof owner identity."""
+    from .warm_stdio_daemon import WARM_OWNER_BOOT_ENV, WARM_OWNER_PID_ENV, _warm_owner_marker_env
+    marker = _warm_owner_marker_env(_CodexDaemon._LANE_LABEL)
+    marker_path = _codex_worker_home_marker_path(worker_home)
+    marker_payload = {
+        WARM_OWNER_PID_ENV: marker[WARM_OWNER_PID_ENV],
+        WARM_OWNER_BOOT_ENV: marker[WARM_OWNER_BOOT_ENV],
+    }
+    config.update_json(
+        marker_path, lambda _current: marker_payload,
+        reason="codex daemon worker-home ownership marker", keep_backups=0,
+    )
+
+
+def _remove_codex_worker_home(worker_home):
+    """Best-effort teardown; cleanup failure can never break a pool call or shutdown."""
+    if worker_home is None:
+        return
+    try:
+        shutil.rmtree(worker_home)
+    except FileNotFoundError:
+        return
+    except Exception as exc:
+        config.warn_once(f"[spendguard] codex worker-home cleanup failed for {worker_home}: {exc}")
+
+
+def _reap_orphaned_codex_worker_homes(worker_home_root, now=None):
+    """Remove stale, marked worker homes only when their pid+create-time owner is provably dead."""
+    from .warm_stdio_daemon import (
+        WARM_OWNER_BOOT_ENV, WARM_OWNER_IDENTITY_DEAD, WARM_OWNER_PID_ENV, _warm_owner_identity_state,
+    )
+    root = Path(worker_home_root)
+    report = {"scanned": [], "reaped": [], "preserved": [], "errors": []}
+    if not root.is_dir():
+        return report
+    current_time = time.time() if now is None else now
+    stale_age_s = config.codex_daemon_worker_home_stale_age_s()
+    for worker_home in root.iterdir():
+        if not worker_home.is_dir() or not worker_home.name.startswith(config.CODEX_POOL_WORKER_PREFIX):
+            continue
+        marker_path = _codex_worker_home_marker_path(worker_home)
+        if not marker_path.is_file():
+            continue
+        report["scanned"].append(str(worker_home))
+        try:
+            marker = json.loads(marker_path.read_text())
+            owner_pid = int(marker[WARM_OWNER_PID_ENV])
+            owner_state = _warm_owner_identity_state(owner_pid, marker.get(WARM_OWNER_BOOT_ENV))
+            stale = current_time - marker_path.stat().st_mtime >= stale_age_s
+            if owner_state != WARM_OWNER_IDENTITY_DEAD or not stale:
+                report["preserved"].append(str(worker_home))
+                continue
+            shutil.rmtree(worker_home)
+            report["reaped"].append(str(worker_home))
+        except Exception as exc:
+            report["errors"].append(f"{worker_home}: {exc}")
+    return report
 
 
 def _codex_rpc_auth_failure(error):
@@ -325,11 +392,9 @@ class _CodexDaemonPool:
         self._size = effective_codex_concurrency(self._size)
         self._workers = [worker_factory() for _ in range(self._size)]
         self._pool_worker_factory = worker_factory
+        self._worker_homes = {}
         for index, worker in enumerate(self._workers):
-            worker._keep_warm = True
-            home = config.codex_daemon_worker_home(index) if settings["isolate_homes"] else None
-            if home is not None:
-                worker._environment_overrides = {"CODEX_HOME": str(home)}
+            self._configure_pool_worker(index, worker, settings["isolate_homes"])
         self._slots = _Bucket(_POOL_SLOT_KEY, self._size, rpm=0,
                               max_waiters=config.codex_daemon_admission_settings()["max_waiters"])
         self._pool_lock = threading.Condition()
@@ -339,10 +404,26 @@ class _CodexDaemonPool:
         self._pool_recoveries = set()
         self._pool_degraded = {}
 
+    def _configure_pool_worker(self, index, worker, isolate_homes):
+        worker._keep_warm = True
+        home = config.codex_daemon_worker_home(index) if isolate_homes else None
+        if home is None:
+            return
+        _mark_codex_worker_home_owned(home)
+        worker._environment_overrides = {"CODEX_HOME": str(home)}
+        self._worker_homes[id(worker)] = home
+
+    def _remove_pool_worker_home(self, worker):
+        _remove_codex_worker_home(self._worker_homes.pop(id(worker), None))
+
     def pool_ensure_running(self):
         # Before warming a fresh pool, reclaim any codex app-servers orphaned by a previously-dead host, so a new
         # pool never starts on top of a pile of leaked servers from earlier sessions.
         _reap_codex_orphans()
+        for worker_home in tuple(self._worker_homes.values()):
+            report = _reap_orphaned_codex_worker_homes(Path(worker_home).parent)
+            if report["errors"]:
+                config.warn_once(f"[spendguard] codex worker-home orphan reap gaps: {report['errors']}")
         # Warm concurrently; the inherited per-instance spawn lock also makes concurrent callers safe.
         results = [None] * self._size
 
@@ -434,8 +515,8 @@ class _CodexDaemonPool:
                     if retire:
                         # A late return must not mutate the next lease's daemon/process registries.
                         replacement = self._pool_worker_factory()
-                        replacement._keep_warm = True
-                        replacement._environment_overrides = getattr(worker, "_environment_overrides", {})
+                        self._remove_pool_worker_home(worker)
+                        self._configure_pool_worker(slot_index, replacement, settings["isolate_homes"])
                         with self._pool_lock:
                             self._workers[slot_index] = replacement
                         worker = replacement
@@ -455,6 +536,7 @@ class _CodexDaemonPool:
                 backoff = min(ceiling, backoff * config.CODEX_POOL_RESPAWN_BACKOFF_MULTIPLIER)
             if self._pool_stopping.is_set():
                 worker.shutdown()
+                self._remove_pool_worker_home(worker)
         finally:
             self._pool_checkin_worker(worker)
             with self._pool_lock:
@@ -553,6 +635,7 @@ class _CodexDaemonPool:
         self._pool_stopping.set()
         for worker in self._workers:
             worker.shutdown()
+            self._remove_pool_worker_home(worker)
 
     ensure_running = pool_ensure_running
     run_warm = pool_run_warm

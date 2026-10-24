@@ -4,14 +4,25 @@ CONFIRMED logout (authed=False) → reliability.note_lane_auth_down → the macO
 was valid. Fix: the TOKEN on disk is authoritative; an UNREADABLE (mid-refresh) token is INCONCLUSIVE (None), never a
 confirmed logout. authed is False ONLY for a present-and-expired token or a genuinely ABSENT auth file. Offline — the
 token state, the status subprocess, and auth.json presence are all controlled; zero spend."""
+import atexit
 import os
+import shutil
 from unittest.mock import patch
 import sys
 import tempfile
 
+CODEX_REFRESH_RACE_HOME_PREFIX = "sg-codexauth-"
+CODEX_REFRESH_RACE_CODEX_HOME_PREFIX = "sg-codexhome-"
+
 os.environ["SPENDGUARD_TEST_ISOLATED"] = "1"
 os.environ["SPENDGUARD_NO_AUTOINSTALL"] = "1"
-os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="sg-codexauth-")
+def _codex_refresh_race_owned_temp_dir(prefix):
+    owned_path = tempfile.mkdtemp(prefix=prefix)
+    atexit.register(shutil.rmtree, owned_path, ignore_errors=True)
+    return owned_path
+
+
+os.environ["SPENDGUARD_HOME"] = _codex_refresh_race_owned_temp_dir(CODEX_REFRESH_RACE_HOME_PREFIX)
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
 from spendguard import config  # noqa: E402
@@ -38,7 +49,7 @@ def _set_token(v): codex_exec._token_unexpired = lambda *a, **k: v   # accepts m
 def _run(token, rc=1, auth_present=True):
     _status_rc["rc"] = rc
     _set_token(token)
-    home = tempfile.mkdtemp(prefix="sg-codexhome-")
+    home = _codex_refresh_race_owned_temp_dir(CODEX_REFRESH_RACE_CODEX_HOME_PREFIX)
     os.environ["CODEX_HOME"] = home
     if auth_present:
         open(os.path.join(home, "auth.json"), "w").write("{}")   # file EXISTS (content irrelevant; token stubbed)

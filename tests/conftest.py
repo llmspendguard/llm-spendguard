@@ -8,6 +8,7 @@ silent hang + several redundant full-suite runs on 2026-07-11). This hook turns 
 immediate, explanatory error."""
 import os
 import importlib.util
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -22,6 +23,56 @@ RUNNER_CALIBRATION_MODULE_NAME = "spendguard_test_runner_calibration"
 RUNNER_CALIBRATION_WORKER_KEY = "spendguard_runner_budget_scale"
 RUNNER_CALIBRATION_COVERAGE_ENV = "SPENDGUARD_COVERAGE"
 RUNNER_CALIBRATION_COVERAGE_DISABLED = "0"
+TEST_SESSION_TEMP_ENV = "TMPDIR"
+TEST_SESSION_TEMP_ROOT_PREFIX = "spendguard-test-session-"
+SPENDGUARD_OWNED_TEMP_PREFIXES = (
+    "spendguard-antigravity-", "spendguard-chat-cookies-", "spendguard-codex-",
+    "spendguard-kimi-", "spendguard-subscription-", "codex-home", "codexhome", "codexsess",
+    "codex-authrace-", "fake-repo-", "fake-transcripts-", "repo-cli-", "ghlit-", "ghlit2-",
+    "ghcap-", "__main__", "hr_stress_", "doctor-residency-refusal-", "wd-gitrepo-", "wd-notrepo-",
+    "sg-auth-robust-", "sg-codexauth-", "sg-codexhome-", "spendguard-medA-",
+)
+LEGITIMATE_TEMP_CACHE_PREFIX_ALLOWLIST = (
+    "fastembed_cache", "node-compile-cache", "data-gym-cache", "pytest-", "pytest-of-",
+)
+
+
+def new_owned_temp_entries(initial_entries, temp_root):
+    """Return newly leaked spendguard/test entries, excluding known externally-owned caches."""
+    current_entries = {entry.name for entry in Path(temp_root).iterdir()}
+    new_entries = current_entries - set(initial_entries)
+    return sorted(
+        name for name in new_entries
+        if name.startswith(SPENDGUARD_OWNED_TEMP_PREFIXES)
+        and not name.startswith(LEGITIMATE_TEMP_CACHE_PREFIX_ALLOWLIST)
+    )
+
+
+def assert_no_new_owned_temp_entries(initial_entries, temp_root):
+    leaked_entries = new_owned_temp_entries(initial_entries, temp_root)
+    if leaked_entries:
+        pytest.fail(f"session leaked spendguard-owned temporary entries: {leaked_entries}")
+
+
+@pytest.fixture(scope="session", autouse=True)
+def reject_spendguard_temp_leaks_at_session_end():
+    session_temp_owner = tempfile.TemporaryDirectory(prefix=TEST_SESSION_TEMP_ROOT_PREFIX)
+    temp_root = Path(session_temp_owner.name)
+    prior_temp_env = os.environ.get(TEST_SESSION_TEMP_ENV)
+    prior_tempfile_root = tempfile.tempdir
+    os.environ[TEST_SESSION_TEMP_ENV] = str(temp_root)
+    tempfile.tempdir = str(temp_root)
+    initial_entries = {entry.name for entry in temp_root.iterdir()}
+    try:
+        yield
+        assert_no_new_owned_temp_entries(initial_entries, temp_root)
+    finally:
+        tempfile.tempdir = prior_tempfile_root
+        if prior_temp_env is None:
+            os.environ.pop(TEST_SESSION_TEMP_ENV, None)
+        else:
+            os.environ[TEST_SESSION_TEMP_ENV] = prior_temp_env
+        session_temp_owner.cleanup()
 
 
 def pytest_configure(config):

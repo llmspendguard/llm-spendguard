@@ -2,12 +2,27 @@
 NOT spend a cent. Every network/LLM-touching step is stubbed; the paid reasoning step (6/6) is asserted
 to be called with run=False, and we verify the meta ledger stays at $0 across the whole dry run.
 """
-import os, sys, tempfile
+import atexit, os, shutil, sys, tempfile
+
+BOOTSTRAP_OWNED_HOME_ENV = "SPENDGUARD_BOOTSTRAP_OWNED_HOME"
+BOOTSTRAP_HOME_PREFIX = "spendguard-bootstrap-"
+BOOTSTRAP_FAKE_REPOSITORY_PREFIX = "fake-repo-"
+BOOTSTRAP_FAKE_TRANSCRIPTS_PREFIX = "fake-transcripts-"
+
+
+def _bootstrap_owned_temp_dir(prefix):
+    owned_path = tempfile.mkdtemp(prefix=prefix)
+    atexit.register(shutil.rmtree, owned_path, ignore_errors=True)
+    return owned_path
 
 if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
     os.environ["SPENDGUARD_TEST_ISOLATED"] = "1"
-    os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="spendguard-bootstrap-")
+    os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix=BOOTSTRAP_HOME_PREFIX)
+    os.environ[BOOTSTRAP_OWNED_HOME_ENV] = os.environ["SPENDGUARD_HOME"]
     os.execv(sys.executable, [sys.executable] + sys.argv)
+bootstrap_owned_home = os.environ.pop(BOOTSTRAP_OWNED_HOME_ENV, None)
+if bootstrap_owned_home:
+    atexit.register(shutil.rmtree, bootstrap_owned_home, ignore_errors=True)
 
 from spendguard import bootstrap, backfill, history, callio, conv, review, advisor, budget
 
@@ -46,8 +61,8 @@ advisor.mine = _spy("mine", ret={"requests": 1, "cost": 0.01})
 conv.synth = _spy("synth", ret={"requests": 1, "cost": 0.01})
 advisor.reconstruct = _spy("reconstruct", ret={"requests": 0, "cost": 0.0})
 
-repo = tempfile.mkdtemp(prefix="fake-repo-")
-tdir = tempfile.mkdtemp(prefix="fake-transcripts-")
+repo = _bootstrap_owned_temp_dir(BOOTSTRAP_FAKE_REPOSITORY_PREFIX)
+tdir = _bootstrap_owned_temp_dir(BOOTSTRAP_FAKE_TRANSCRIPTS_PREFIX)
 
 print("-- bootstrap(run=False): DRY RUN completes, returns 0, spends nothing --")
 meta_before = budget.meta_spent_today()

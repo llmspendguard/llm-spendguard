@@ -36,6 +36,7 @@ KIMI_SERVER_TOKEN_FILENAME = "server.token"
 KIMI_SERVER_INSTANCE_SUFFIX = ".json"
 KIMI_SERVER_URL_SCHEME = "http"
 KIMI_PROCESS_EXISTENCE_SIGNAL = 0
+KIMI_WORK_DIRECTORY_PREFIX = "spendguard-kimi-"
 
 
 def usage():
@@ -271,7 +272,7 @@ def run_prompt(prompt, system=None, model=None, timeout=TIMEOUT_S, reasoning=Non
     t0 = time.time()
     tmpdir = None
     try:
-        tmpdir = tempfile.mkdtemp(prefix="spendguard-kimi-")   # neutral CWD: kimi is an agentic CLI; a self-contained
+        tmpdir = tempfile.mkdtemp(prefix=KIMI_WORK_DIRECTORY_PREFIX)   # neutral CWD: kimi is an agentic CLI; a self-contained
         #                                                        meta prompt needs no repo, and a throwaway dir keeps an
         #                                                        agentic step from ever touching the caller's working tree
         try:
