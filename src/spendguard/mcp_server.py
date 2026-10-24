@@ -359,6 +359,9 @@ def _tool_vision(args):
 
 # ── Claude Code spend + compaction tools (read-only, $0). spendguard's own functions PRINT human text, which would
 #    corrupt JSON-RPC on stdout — so any handler that calls one wraps it in redirect_stdout(). ─────────────────────
+SPEND_OVERVIEW_TOP_INTENT_LIMIT = 5
+
+
 def _cc_titles():
     try:
         from . import claudecode
@@ -387,7 +390,7 @@ def _tool_spend_overview(_args):
     # a genuine failure (a corrupt savings/decisions db) must SURFACE, never be masked as "$0 saved, 0 decisions".
     from . import guard as _guard
     _sv = _guard.saved_since()
-    _dec = _guard.decisions_summary()
+    _dec = _guard.decisions_summary(intent_limit=SPEND_OVERVIEW_TOP_INTENT_LIMIT)
     return {"note": "THREE separate axes, NEVER summed: real $ (money out the door), est-value (plan-covered usage "
                     "worth), and guarded savings (avoided $, with a per-decision proof).",
             "real_usd": {"subscription_base": round(sub, 2), "claude_code_overage": round(over, 2),
@@ -395,7 +398,7 @@ def _tool_spend_overview(_args):
             "est_value_usd": {"claude_code_plan_covered": round(est, 2)},
             "saved_usd": {"total": _sv["total"], "certain": _sv["certain"], "counterfactual": _sv["counterfactual"],
                           "by_source": _sv["by_source"], "decisions": _dec["decisions"],
-                          "top_intents_by_saving": _dec["by_intent"][:5]}}
+                          "top_intents_by_saving": _dec["by_intent"]}}
 
 
 def _tool_overage_status(_args):

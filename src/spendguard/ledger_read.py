@@ -121,7 +121,8 @@ CALIBRATION_ACTUAL_COLUMNS = ("in_tok", "out_tok", "cost", "ts", "model")
 CALIBRATION_CORPUS_PREDICATE = "cost > 0 AND in_tok > 0 AND out_tok > 0 AND model IS NOT NULL"
 CC_OVERFLOW_COLUMNS = ("conv_id", "SUM(CAST(realtime_usd AS REAL)) AS billed")
 CC_ATTRIBUTION_MONTH_COLUMNS = ("substr(occurred_at,1,7) AS mo", "SUM(CAST(realtime_usd AS REAL)) AS billed")
-CC_ATTRIBUTION_EVIDENCE_COLUMNS = ("occurred_at", "conv_id", "est_chat_usd")
+CC_ATTRIBUTION_WINDOW_COLUMNS = ("substr(occurred_at,1,7) AS mo", "conv_id",
+                                 "SUM(CAST(est_chat_usd AS REAL)) AS est")
 CC_ATTRIBUTION_FALLBACK_COLUMNS = ("substr(occurred_at,1,7) AS mo", "conv_id", "SUM(CAST(est_chat_usd AS REAL)) AS est")
 CC_CONVERSATION_TURN_COLUMNS = ("conv_id", "occurred_at", "model", "COALESCE(in_tok,0)", "COALESCE(cache_read_tok,0)", "COALESCE(cache_write_tok,0)")
 CC_ESTIMATE_PREDICATE = "source='claude-code' AND est_chat_usd IS NOT NULL"
@@ -1054,11 +1055,21 @@ def read_cc_overflow_conversations(path=None):
         "source='claude-code-overflow'", group_by=("conv_id",)), path)
 
 
-def read_cc_attribution_evidence(path=None):
+def read_cc_attribution_evidence(windows=(), path=None):
     real = read_ledger_rows(LedgerReadRequest(LEDGER_EVENTS_TABLE, CC_ATTRIBUTION_MONTH_COLUMNS,
         "source='anthropic-invoice' AND intent LIKE 'anthropic-invoice:cc-overage%'", group_by=("mo",)), path)
-    evidence = read_ledger_rows(LedgerReadRequest(LEDGER_EVENTS_TABLE, CC_ATTRIBUTION_EVIDENCE_COLUMNS,
-        CC_ESTIMATE_PREDICATE), path)
+    window_predicates = []
+    window_parameters = []
+    for window_start, window_end in windows:
+        window_predicates.append("(occurred_at>=? AND occurred_at<?)")
+        window_parameters.extend((datetime.datetime.fromtimestamp(window_start, datetime.timezone.utc).isoformat(),
+                                  datetime.datetime.fromtimestamp(window_end, datetime.timezone.utc).isoformat()))
+    evidence = ()
+    if window_predicates:
+        evidence = read_ledger_rows(LedgerReadRequest(
+            LEDGER_EVENTS_TABLE, CC_ATTRIBUTION_WINDOW_COLUMNS,
+            CC_ESTIMATE_PREDICATE + " AND (" + " OR ".join(window_predicates) + ")",
+            tuple(window_parameters), group_by=("mo", "conv_id")), path)
     fallback = read_ledger_rows(LedgerReadRequest(LEDGER_EVENTS_TABLE, CC_ATTRIBUTION_FALLBACK_COLUMNS,
         CC_ESTIMATE_PREDICATE, group_by=("mo", "conv_id")), path)
     return real, evidence, fallback
