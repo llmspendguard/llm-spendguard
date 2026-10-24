@@ -6,11 +6,15 @@ never $0-clean), and registry inclusion in reconcile.all_sources.
 OFFLINE-TESTED against the providers' DOCUMENTED response shapes (fixture doc URLs cited inline), NOT
 live-verified against real RunPod/Modal/Lambda accounts — no accounts, no network (dead proxy), no spend.
 Isolated SPENDGUARD_HOME."""
-import os, sys, tempfile, datetime
+import atexit, datetime, os, shutil, sys, tempfile
+
+GPU_PORT_OWNED_HOME_ENV = "SPENDGUARD_GPU_PORT_OWNED_HOME"
+GPU_PORT_HOME_PREFIX = "spendguard-gpuport-"
 
 if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
     os.environ["SPENDGUARD_TEST_ISOLATED"] = "1"
-    os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="spendguard-gpuport-")
+    os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix=GPU_PORT_HOME_PREFIX)
+    os.environ[GPU_PORT_OWNED_HOME_ENV] = os.environ["SPENDGUARD_HOME"]
     # OFFLINE, enforced in-file too (the runner also injects this): any accidental external call dies in ms.
     os.environ["http_proxy"] = os.environ["https_proxy"] = "http://127.0.0.1:9"
     os.environ["HTTP_PROXY"] = os.environ["HTTPS_PROXY"] = "http://127.0.0.1:9"
@@ -18,6 +22,9 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
     for _k in ("RUNPOD_API_KEY", "MODAL_TOKEN_ID", "MODAL_TOKEN_SECRET", "LAMBDA_API_KEY", "VAST_API_KEY"):
         os.environ.pop(_k, None)                     # a real key must never flip an adapter on inside the suite
     os.execv(sys.executable, [sys.executable] + sys.argv)
+gpu_port_owned_home = os.environ.pop(GPU_PORT_OWNED_HOME_ENV, None)
+if gpu_port_owned_home:
+    atexit.register(shutil.rmtree, gpu_port_owned_home, ignore_errors=True)
 
 import json
 from types import SimpleNamespace
@@ -66,6 +73,7 @@ from spendguard import resources, conv
 # SPENDGUARD_HOME does not isolate conv's transcript directory: without this fixture
 # the real attribution reader walks the developer's entire conversation corpus.
 gpu_port_transcript_fixture = tempfile.TemporaryDirectory(prefix=GPU_PORT_TRANSCRIPT_FIXTURE_PREFIX)
+atexit.register(gpu_port_transcript_fixture.cleanup)
 gpu_port_original_segments = conv.segments
 gpu_port_segment_scan_roots = []
 

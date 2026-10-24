@@ -1,6 +1,7 @@
 """Offline guards for exclusive warm Codex worker checkout and isolated recovery."""
 import concurrent.futures
 import fcntl
+import json
 import os
 import pathlib
 import sys
@@ -17,6 +18,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "src"))
 
 from spendguard import codex_daemon
 from spendguard import codex_exec, config
+from spendguard import warm_stdio_daemon
 
 POOL_GUARD_SIZE = 3
 POOL_EVENT_TIMEOUT_S = 10
@@ -33,6 +35,8 @@ POOL_CHAOS_PIPE_BLOCK = b"x" * 65536
 POOL_CHAOS_RECOVERY_PROMPT = "post-chaos"
 POOL_CHAOS_TEMP_PREFIX = "sgc-"
 POOL_CHAOS_SOCKET_FILENAME = "gate.sock"
+DEAD_OWNER_PID = 99999999
+IMMEDIATE_STALE_AGE_S = 0.0
 
 
 def _pool_guard_fake_child(turn_handler=None):
@@ -48,6 +52,53 @@ def _pool_guard_wait_recovery(pool):
     for recovery in recoveries:
         recovery.join(timeout=POOL_EVENT_TIMEOUT_S)
         assert not recovery.is_alive(), "worker recovery failed to return its lease"
+
+
+def test_pool_shutdown_removes_isolated_worker_home():
+    with tempfile.TemporaryDirectory(prefix=POOL_CHAOS_TEMP_PREFIX) as temp_root:
+        created_homes = []
+
+        def create_isolated_worker_home(index):
+            worker_home = pathlib.Path(temp_root) / f"{config.CODEX_POOL_WORKER_PREFIX}{index}"
+            worker_home.mkdir()
+            created_homes.append(worker_home)
+            return worker_home
+
+        settings = {
+            "size": 1, "isolate_homes": True, "health_interval_s": POOL_EVENT_TIMEOUT_S,
+            "respawn_backoff_s": POOL_QUEUE_TIMEOUT_S,
+        }
+        with patch.object(config, "codex_daemon_worker_home", side_effect=create_isolated_worker_home), \
+                patch.object(config, "codex_daemon_pool_settings", return_value=settings):
+            pool = codex_daemon._CodexDaemonPool(_pool_guard_fake_child)
+            assert created_homes[0].is_dir()
+            pool.pool_shutdown()
+            assert not created_homes[0].exists()
+
+
+def test_worker_home_reaper_preserves_live_owner_and_removes_dead_owner():
+    with tempfile.TemporaryDirectory(prefix=POOL_CHAOS_TEMP_PREFIX) as temp_root, patch.object(
+            config, "codex_daemon_worker_home_stale_age_s", return_value=IMMEDIATE_STALE_AGE_S):
+        live_home = pathlib.Path(temp_root) / f"{config.CODEX_POOL_WORKER_PREFIX}live"
+        dead_home = pathlib.Path(temp_root) / f"{config.CODEX_POOL_WORKER_PREFIX}dead"
+        live_home.mkdir()
+        dead_home.mkdir()
+        live_marker = {
+            warm_stdio_daemon.WARM_OWNER_PID_ENV: str(os.getpid()),
+            warm_stdio_daemon.WARM_OWNER_BOOT_ENV: str(warm_stdio_daemon.psutil.Process().create_time()),
+        }
+        dead_marker = {
+            warm_stdio_daemon.WARM_OWNER_PID_ENV: str(DEAD_OWNER_PID),
+            warm_stdio_daemon.WARM_OWNER_BOOT_ENV: live_marker[warm_stdio_daemon.WARM_OWNER_BOOT_ENV],
+        }
+        (live_home / config.CODEX_POOL_OWNER_MARKER_FILENAME).write_text(json.dumps(live_marker))
+        (dead_home / config.CODEX_POOL_OWNER_MARKER_FILENAME).write_text(json.dumps(dead_marker))
+
+        report = codex_daemon._reap_orphaned_codex_worker_homes(temp_root)
+
+        assert live_home.is_dir()
+        assert not dead_home.exists()
+        assert str(dead_home) in report["reaped"]
 
 
 def test_pool_parallel_turns_use_distinct_children_with_real_overlap():
@@ -492,6 +543,8 @@ def _pool_chaos_exercise_wedge(wedge_mode):
 
 if __name__ == "__main__":
     for pool_guard_test in (
+            test_pool_shutdown_removes_isolated_worker_home,
+            test_worker_home_reaper_preserves_live_owner_and_removes_dead_owner,
             test_pool_parallel_turns_use_distinct_children_with_real_overlap,
             test_pool_wedged_child_recycles_without_touching_other_children,
             test_pool_auth_error_recycles_child_and_fails_over_to_healthy_child,

@@ -135,6 +135,8 @@ CODEX_POOL_RESPAWN_BACKOFF_DEFAULT_S = 1.0
 CODEX_POOL_RESPAWN_BACKOFF_MULTIPLIER = 2
 CODEX_POOL_DIRECTORY = "codex-daemon-workers"
 CODEX_POOL_WORKER_PREFIX = "worker-"
+CODEX_POOL_OWNER_MARKER_FILENAME = ".spendguard-owner.json"
+CODEX_POOL_HOME_STALE_AGE_DEFAULT_S = 3600.0
 CODEX_POOL_AUTH_FILENAME = "auth.json"
 CODEX_POOL_CONFIG_FILENAME = "config.toml"
 CODEX_POOL_PRIVATE_FILE_MODE = 0o600
@@ -774,6 +776,16 @@ def codex_daemon_worker_home(index):
         finally:
             temporary_path.unlink(missing_ok=True)
     return worker_home
+
+
+def codex_daemon_worker_home_stale_age_s():
+    """Minimum dead-owner worker-home age before orphan reclamation."""
+    value = os.getenv("SPENDGUARD_CODEX_DAEMON_HOME_STALE_AGE_S", _cfg_get(
+        "advisor", "codex_daemon_home_stale_age_s", CODEX_POOL_HOME_STALE_AGE_DEFAULT_S))
+    age_s = float(value)
+    if not math.isfinite(age_s) or age_s < 0:
+        raise ValueError("advisor.codex_daemon_home_stale_age_s must be nonnegative and finite")
+    return age_s
 
 
 def _advisor_coerced(name, default, coerce):

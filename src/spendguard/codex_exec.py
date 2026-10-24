@@ -48,6 +48,7 @@ CODEX_APP_SERVER_RATE_LIMITS_METHOD = "account/rateLimits/read"
 CODEX_APP_SERVER_PROXY_ARGUMENTS = ("app-server", "proxy", "--sock")
 CODEX_APP_SERVER_SOCKET_PARTS = ("ipc", "ipc.sock")
 CODEX_USAGE_READ_TIMEOUT_S = 10
+CODEX_EXEC_WORK_DIRECTORY_PREFIX = "spendguard-codex-"
 CODEX_USAGE_UNKNOWN_SAMPLE_COUNT = 0
 
 
@@ -586,7 +587,7 @@ def run_prompt(prompt, system=None, model=None, timeout=TIMEOUT_S, reasoning=Non
     neutral_cwd = None
     try:
         if sandbox == "read-only":
-            neutral_cwd = tempfile.mkdtemp(prefix="spendguard-codex-")
+            neutral_cwd = tempfile.mkdtemp(prefix=CODEX_EXEC_WORK_DIRECTORY_PREFIX)
             resolved_cwd = neutral_cwd
         else:
             resolved_cwd = os.path.abspath(os.path.expanduser(os.fspath(cwd)))

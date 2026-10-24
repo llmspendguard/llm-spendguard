@@ -11,15 +11,33 @@
 
 Offline, isolated home; each scan runs over a tiny temp source tree.
 """
+import atexit
 import os
+import shutil
 import sys
 import tempfile
 import pathlib
 
+GUARD_HOLES_OWNED_HOME_ENV = "SPENDGUARD_GUARD_HOLES_OWNED_HOME"
+GUARD_HOLES_HOME_PREFIX = "spendguard-guardholes-"
+GUARD_HOLES_LITERAL_PREFIX = "ghlit-"
+GUARD_HOLES_SECOND_LITERAL_PREFIX = "ghlit2-"
+GUARD_HOLES_CAP_PREFIX = "ghcap-"
+
+
+def _guard_holes_owned_temp_dir(prefix):
+    owned_path = tempfile.mkdtemp(prefix=prefix)
+    atexit.register(shutil.rmtree, owned_path, ignore_errors=True)
+    return owned_path
+
 if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
     os.environ["SPENDGUARD_TEST_ISOLATED"] = "1"
-    os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="spendguard-guardholes-")
+    os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix=GUARD_HOLES_HOME_PREFIX)
+    os.environ[GUARD_HOLES_OWNED_HOME_ENV] = os.environ["SPENDGUARD_HOME"]
     os.execv(sys.executable, [sys.executable] + sys.argv)
+guard_holes_owned_home = os.environ.pop(GUARD_HOLES_OWNED_HOME_ENV, None)
+if guard_holes_owned_home:
+    atexit.register(shutil.rmtree, guard_holes_owned_home, ignore_errors=True)
 
 from spendguard import estimate_literals as el, token_caps as tc   # noqa: E402
 
@@ -34,7 +52,7 @@ def ck(label, cond, extra=""):
 
 
 # ── 1. estimate_literals now flags KEYWORD literals ──────────────────────────────────────────────────────────
-d1 = tempfile.mkdtemp(prefix="ghlit-")
+d1 = _guard_holes_owned_temp_dir(GUARD_HOLES_LITERAL_PREFIX)
 pathlib.Path(d1, "m.py").write_text(
     "from spendguard.pricing import realtime_cost\n"
     "def quote(m):\n"
@@ -44,7 +62,7 @@ lits = [x for s in sites for x in s["literals"]]
 ck("a kwarg-literal cost call is now flagged (was invisible to the positional-only scan)",
    700 in lits and 1500 in lits, str(sites))
 # a model kwarg is a string, not a token literal — must NOT be flagged
-d1b = tempfile.mkdtemp(prefix="ghlit2-")
+d1b = _guard_holes_owned_temp_dir(GUARD_HOLES_SECOND_LITERAL_PREFIX)
 pathlib.Path(d1b, "m.py").write_text(
     "from spendguard.pricing import realtime_cost\n"
     "def quote(a, b):\n"
@@ -53,7 +71,7 @@ ck("a string kwarg (model=) and non-literal args are NOT flagged", el.literal_si
 
 
 # ── 2. token_caps captures BOTH of two identical caps in one symbol, with distinct keys ───────────────────────
-d2 = tempfile.mkdtemp(prefix="ghcap-")
+d2 = _guard_holes_owned_temp_dir(GUARD_HOLES_CAP_PREFIX)
 pathlib.Path(d2, "c.py").write_text(
     "def worker():\n"
     "    a = call(max_tokens=512)\n"

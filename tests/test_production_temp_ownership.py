@@ -1,16 +1,21 @@
 """Offline lifecycle proofs for production temporary batch and agent-exec artifacts."""
 import json
 import pathlib
+import sqlite3
 import subprocess
 import tempfile
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from spendguard import antigravity_exec, adapters, models, submit
+from spendguard import antigravity_exec, adapters, chat, codex_exec, kimi_exec, models, submit, subscription_exec
 
 
 BATCH_REQUEST_PREFIX = submit.CHAT_BATCH_REQUEST_DIRECTORY_PREFIX
 ANTIGRAVITY_WORKDIR_PREFIX = antigravity_exec.ANTIGRAVITY_WORK_DIRECTORY_PREFIX
+CODEX_WORKDIR_PREFIX = codex_exec.CODEX_EXEC_WORK_DIRECTORY_PREFIX
+KIMI_WORKDIR_PREFIX = kimi_exec.KIMI_WORK_DIRECTORY_PREFIX
+SUBSCRIPTION_WORKDIR_PREFIX = subscription_exec.SUBSCRIPTION_WORK_DIRECTORY_PREFIX
+CHAT_COOKIE_WORKDIR_PREFIX = chat.CHAT_COOKIE_COPY_DIRECTORY_PREFIX
 OFFLINE_ANTIGRAVITY_EXECUTABLE = "offline-antigravity"
 OFFLINE_BATCH_MODEL = "offline-model"
 OFFLINE_BATCH_CUSTOM_ID = "owned"
@@ -62,12 +67,72 @@ def test_antigravity_workdir_closes_on_success_and_exception(monkeypatch):
         result = antigravity_exec.run_prompt(OFFLINE_PROMPT)
     assert result["error"] is None
     assert matching_temp_entries(ANTIGRAVITY_WORKDIR_PREFIX) == before
-
     with patch.object(subprocess, "run", side_effect=RuntimeError("offline failure")):
         result = antigravity_exec.run_prompt(OFFLINE_PROMPT)
     assert "offline failure" in result["error"]
     assert matching_temp_entries(ANTIGRAVITY_WORKDIR_PREFIX) == before
 
+
+def test_codex_workdir_closes_on_success_and_exception(monkeypatch):
+    monkeypatch.setattr(codex_exec, "_run_prompt_in_cwd", lambda *args, **kwargs: {"error": None})
+    before = matching_temp_entries(CODEX_WORKDIR_PREFIX)
+    assert codex_exec.run_prompt(OFFLINE_PROMPT)["error"] is None
+    assert matching_temp_entries(CODEX_WORKDIR_PREFIX) == before
+    monkeypatch.setattr(codex_exec, "_run_prompt_in_cwd", lambda *args, **kwargs: (_ for _ in ()).throw(
+        TimeoutError("offline timeout")))
+    try:
+        codex_exec.run_prompt(OFFLINE_PROMPT)
+    except TimeoutError:
+        pass
+    assert matching_temp_entries(CODEX_WORKDIR_PREFIX) == before
+
+
+def test_kimi_workdir_closes_on_success_and_timeout(monkeypatch):
+    monkeypatch.setattr(kimi_exec, "_bin", lambda: OFFLINE_ANTIGRAVITY_EXECUTABLE)
+    monkeypatch.setattr(kimi_exec, "_daemon_enabled", lambda: False)
+    monkeypatch.setattr("spendguard.config.lane_exec_env", lambda executable: {})
+    success = SimpleNamespace(returncode=0, stderr="", stdout='{"role":"assistant","content":"offline"}\n')
+    before = matching_temp_entries(KIMI_WORKDIR_PREFIX)
+    with patch.object(subprocess, "run", return_value=success):
+        kimi_exec.run_prompt(OFFLINE_PROMPT)
+    assert matching_temp_entries(KIMI_WORKDIR_PREFIX) == before
+    with patch.object(subprocess, "run", side_effect=subprocess.TimeoutExpired("kimi", 1)):
+        kimi_exec.run_prompt(OFFLINE_PROMPT)
+    assert matching_temp_entries(KIMI_WORKDIR_PREFIX) == before
+
+
+def test_subscription_workdir_closes_on_success_and_timeout(monkeypatch):
+    monkeypatch.setattr(subscription_exec, "_bin", lambda: OFFLINE_ANTIGRAVITY_EXECUTABLE)
+    monkeypatch.setattr("spendguard.config.lane_exec_env", lambda executable: {})
+    success = SimpleNamespace(returncode=0, stderr="", stdout=json.dumps({"result": "offline", "usage": {}}))
+    before = matching_temp_entries(SUBSCRIPTION_WORKDIR_PREFIX)
+    with patch.object(subprocess, "run", return_value=success):
+        subscription_exec.run_prompt(OFFLINE_PROMPT)
+    assert matching_temp_entries(SUBSCRIPTION_WORKDIR_PREFIX) == before
+    with patch.object(subprocess, "run", side_effect=subprocess.TimeoutExpired("subscription", 1)):
+        subscription_exec.run_prompt(OFFLINE_PROMPT)
+    assert matching_temp_entries(SUBSCRIPTION_WORKDIR_PREFIX) == before
+
+
+def test_chat_cookie_copy_closes_on_success_and_exception(tmp_path, monkeypatch):
+    cookie_database = tmp_path / "Cookies"
+    connection = sqlite3.connect(cookie_database)
+    connection.execute("create table cookies (host_key text, name text, encrypted_value blob)")
+    connection.commit()
+    connection.close()
+    monkeypatch.setattr(chat.sys, "platform", "darwin")
+    monkeypatch.setattr(chat, "_COOKIES", cookie_database)
+    monkeypatch.setattr(chat, "_keychain_password", lambda: "offline")
+    monkeypatch.setattr(chat, "_derive_key", lambda password: b"offline")
+    before = matching_temp_entries(CHAT_COOKIE_WORKDIR_PREFIX)
+    assert chat._decrypt_cookies() == {}
+    assert matching_temp_entries(CHAT_COOKIE_WORKDIR_PREFIX) == before
+    with patch.object(sqlite3, "connect", side_effect=RuntimeError("offline sqlite failure")):
+        try:
+            chat._decrypt_cookies()
+        except RuntimeError:
+            pass
+    assert matching_temp_entries(CHAT_COOKIE_WORKDIR_PREFIX) == before
 
 if __name__ == "__main__":
     from _pytest_fixture_bridge import run_pytest_style

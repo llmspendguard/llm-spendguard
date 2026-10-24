@@ -4,13 +4,24 @@ and at the hourly refresh, the 'codex lane LOGGED OUT' toast fired repeatedly wh
 ~8 more days — because an ABSENT auth.json (refresh rewrite in flight) escalated straight to {'authed': False}, which
 is the sole trigger for reliability.note_lane_auth_down's toast (adapters.py). A real logout (present-but-EXPIRED
 token, or a PERSISTENTLY absent file) must still surface. Offline, no network, no real codex binary, no LLM."""
+import atexit
 import os
+import shutil
 from unittest.mock import patch
 import sys
 import tempfile
 from types import SimpleNamespace
 
-os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="sg-codexauth-")
+CODEX_ABSENT_FLICKER_HOME_PREFIX = "sg-codexauth-"
+CODEX_ABSENT_FLICKER_CODEX_HOME_PREFIX = "codex-home-"
+
+def _codex_absent_flicker_owned_temp_dir(prefix):
+    owned_path = tempfile.mkdtemp(prefix=prefix)
+    atexit.register(shutil.rmtree, owned_path, ignore_errors=True)
+    return owned_path
+
+
+os.environ["SPENDGUARD_HOME"] = _codex_absent_flicker_owned_temp_dir(CODEX_ABSENT_FLICKER_HOME_PREFIX)
 os.environ.setdefault("SPENDGUARD_TEST_ISOLATED", "1")
 os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
@@ -26,7 +37,7 @@ def ck(label, cond):
 
 
 # isolate CODEX_HOME + make the confirm window instant for the test
-_codex_home = tempfile.mkdtemp(prefix="codex-home-")
+_codex_home = _codex_absent_flicker_owned_temp_dir(CODEX_ABSENT_FLICKER_CODEX_HOME_PREFIX)
 os.environ["CODEX_HOME"] = _codex_home
 _auth = os.path.join(_codex_home, "auth.json")
 codex_exec._AUTH_RECHECK_BACKOFF_S = 0.0    # no real sleeping in the confirm loop

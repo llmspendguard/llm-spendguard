@@ -7,15 +7,31 @@
 
 Offline, isolated home; network refresh + state save are stubbed.
 """
+import atexit
 import os
+import shutil
 import sys
 import tempfile
 import json
 
+MEDIUM_CLOSURE_OWNED_HOME_ENV = "SPENDGUARD_MEDIUM_CLOSURE_OWNED_HOME"
+MEDIUM_CLOSURE_HOME_PREFIX = "spendguard-medA-"
+MEDIUM_CLOSURE_CODEX_SESSION_PREFIX = "codexsess-"
+
+
+def _medium_closure_owned_temp_dir(prefix):
+    owned_path = tempfile.mkdtemp(prefix=prefix)
+    atexit.register(shutil.rmtree, owned_path, ignore_errors=True)
+    return owned_path
+
 if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
     os.environ["SPENDGUARD_TEST_ISOLATED"] = "1"
-    os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="spendguard-medA-")
+    os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix=MEDIUM_CLOSURE_HOME_PREFIX)
+    os.environ[MEDIUM_CLOSURE_OWNED_HOME_ENV] = os.environ["SPENDGUARD_HOME"]
     os.execv(sys.executable, [sys.executable] + sys.argv)
+medium_closure_owned_home = os.environ.pop(MEDIUM_CLOSURE_OWNED_HOME_ENV, None)
+if medium_closure_owned_home:
+    atexit.register(shutil.rmtree, medium_closure_owned_home, ignore_errors=True)
 
 from spendguard import reconcile_anthropic as ra, pricing, codex   # noqa: E402
 
@@ -55,7 +71,7 @@ ck("legacy in/out-only record reprices from in/out (== batch_cost)",
    abs(by_day2.get("2026-06-11", 0) - pricing.batch_cost(M, 1_000_000, 0)) < 1e-9)
 
 # ── codex.update prunes a deleted session ───────────────────────────────────────────────────────────────────────
-d = tempfile.mkdtemp(prefix="codexsess-")          # an EXISTING but empty sessions dir → prune activates
+d = _medium_closure_owned_temp_dir(MEDIUM_CLOSURE_CODEX_SESSION_PREFIX)
 codex._sessions_dir = lambda: d
 codex._save_state = lambda s: None                 # don't touch disk
 gone = os.path.join(d, "gone.jsonl")

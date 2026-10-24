@@ -4,12 +4,27 @@ NO network, NO git shell-out (we monkeypatch _git_commits), NO LLM. _batch_inten
 call_io corpus, which we seed directly via callio._callio_db(). Pairs git commit subjects + batch intents per
 (day, project), then rolls them up by day | week | month.
 """
-import os, sys, tempfile, json
+import atexit, json, os, shutil, sys, tempfile
+
+WORKDONE_OWNED_HOME_ENV = "SPENDGUARD_WORKDONE_OWNED_HOME"
+WORKDONE_HOME_PREFIX = "spendguard-workdone-"
+WORKDONE_GIT_REPOSITORY_PREFIX = "wd-gitrepo-"
+WORKDONE_NON_REPOSITORY_PREFIX = "wd-notrepo-"
+
+
+def _workdone_owned_temp_dir(prefix):
+    owned_path = tempfile.mkdtemp(prefix=prefix)
+    atexit.register(shutil.rmtree, owned_path, ignore_errors=True)
+    return owned_path
 
 if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
     os.environ["SPENDGUARD_TEST_ISOLATED"] = "1"
-    os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="spendguard-workdone-")
+    os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix=WORKDONE_HOME_PREFIX)
+    os.environ[WORKDONE_OWNED_HOME_ENV] = os.environ["SPENDGUARD_HOME"]
     os.execv(sys.executable, [sys.executable] + sys.argv)
+workdone_owned_home = os.environ.pop(WORKDONE_OWNED_HOME_ENV, None)
+if workdone_owned_home:
+    atexit.register(shutil.rmtree, workdone_owned_home, ignore_errors=True)
 
 from spendguard import workdone, callio, config
 
@@ -161,7 +176,7 @@ check("cmd with >8 commits (truncation branch) returns 0", rc4 == 0)
 # ─────────────────────────── real _git_commits against a tiny temp git repo ───────────────────────────
 print("-- _git_commits: real git on a tiny temp repo (no monkeypatch) --")
 import subprocess
-gitrepo = tempfile.mkdtemp(prefix="wd-gitrepo-")
+gitrepo = _workdone_owned_temp_dir(WORKDONE_GIT_REPOSITORY_PREFIX)
 env = dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@t",
            GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@t")
 have_git = True
@@ -183,7 +198,7 @@ else:
     print("  [skip] git unavailable")
 
 # a non-git directory → git log returns non-zero → [] (the returncode != 0 branch)
-notrepo = tempfile.mkdtemp(prefix="wd-notrepo-")
+notrepo = _workdone_owned_temp_dir(WORKDONE_NON_REPOSITORY_PREFIX)
 check("_git_commits on a non-repo returns []", _real_git_commits(notrepo, "2000-01-01") == [])
 
 
