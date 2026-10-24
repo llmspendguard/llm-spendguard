@@ -14,6 +14,8 @@ import sys
 _DEPLOY_HOME_ENVIRONMENT_KEY = "SPENDGUARD_HOME"
 _DEPLOY_EDITABLE_INSTALL_ARGUMENTS = ("-m", "pip", "install", "-e", ".", "--no-cache-dir")
 _DEPLOY_GATE_PATH_PARTS = ("scripts", "test", "chunked_suite.py")
+_LANE_LEAK_TRIPWIRE_PATH_PARTS = ("scripts", "protected_lane_leak_tripwire.py")
+_LANE_LEAK_TRIPWIRE_MODULE_NAME = "spendguard_protected_lane_leak_tripwire"
 
 
 def _deploy_execute_subprocess(command, **kwargs):
@@ -88,6 +90,7 @@ _GROUPS = [
         ("install-mcp", "register `spendguard mcp` in Claude Code (~/.claude.json); --remove to undo"),
         ("reap-orphans", "inspect or reap warm-lane servers whose marked owner is provably dead"),
         ("queue-manage", "reclaim, retire, purge, and conditionally drain the durable lane queue"),
+        ("lane-leak-check", "detect protected subscription-lane or metered-provider leakage"),
     ]),
     ("see the money", [
         ("ledger-read", "bounded read-only events, calls and exact counts; oversized reads fail loud"),
@@ -319,6 +322,79 @@ def manage_lane_queue_cli(argv):
     return 1 if report.get("error") else 0
 
 
+def load_protected_lane_tripwire_module():
+    """Load the existing checkout-owned tripwire without duplicating its detection logic."""
+    import importlib.util
+    from pathlib import Path
+
+    repository_root = Path(__file__).resolve().parents[2]
+    tripwire_path = repository_root.joinpath(*_LANE_LEAK_TRIPWIRE_PATH_PARTS)
+    module_spec = importlib.util.spec_from_file_location(_LANE_LEAK_TRIPWIRE_MODULE_NAME, tripwire_path)
+    if module_spec is None or module_spec.loader is None:
+        raise RuntimeError(f"cannot load protected-lane tripwire from {tripwire_path}")
+    tripwire_module = importlib.util.module_from_spec(module_spec)
+    module_spec.loader.exec_module(tripwire_module)
+    return tripwire_module
+
+
+def lane_leak_check_cli(argv):
+    """Run the existing protected-lane tripwire and preserve every terminal status."""
+    import argparse
+    import contextlib
+    import io
+    from . import config, lane_catalog
+
+    parser = argparse.ArgumentParser(prog="spendguard lane-leak-check")
+    parser.add_argument("--protect-executor")
+    parser.add_argument("--protect-provider")
+    parser.add_argument("--hours", type=float)
+    parser.add_argument("--min-other-calls", type=int)
+    parser.add_argument("--ledger-path")
+    parser.add_argument("--bounded-log", metavar="PATH", help=argparse.SUPPRESS)
+    arguments = parser.parse_args(argv)
+    if bool(arguments.protect_executor) != bool(arguments.protect_provider):
+        parser.error("--protect-executor and --protect-provider must be supplied together")
+
+    tripwire_module = load_protected_lane_tripwire_module()
+    if arguments.protect_executor:
+        protected_targets = ((arguments.protect_executor, arguments.protect_provider),)
+    else:
+        protected_targets = tuple(
+            (lane, lane_catalog.lane_provider(lane)) for lane in sorted(config.shed_lanes()))
+
+    rendered_stream = io.StringIO()
+    exit_codes = []
+    with contextlib.redirect_stdout(rendered_stream), contextlib.redirect_stderr(rendered_stream):
+        if not protected_targets:
+            print("INCONCLUSIVE: no protected lanes are configured in advisor.shed_lanes")
+            exit_codes.append(tripwire_module.INCONCLUSIVE_EXIT)
+        for protected_executor, protected_provider in protected_targets:
+            if not protected_provider:
+                print(f"PROBE FAILED: no provider is registered for protected lane {protected_executor!r}")
+                exit_codes.append(tripwire_module.PROBE_FAILED_EXIT)
+                continue
+            tripwire_arguments = ["--protect-executor", protected_executor,
+                                  "--protect-provider", protected_provider]
+            if arguments.hours is not None:
+                tripwire_arguments.extend(("--hours", str(arguments.hours)))
+            if arguments.min_other_calls is not None:
+                tripwire_arguments.extend(("--min-other-calls", str(arguments.min_other_calls)))
+            if arguments.ledger_path is not None:
+                tripwire_arguments.extend(("--ledger-path", arguments.ledger_path))
+            exit_codes.append(tripwire_module.main(tripwire_arguments))
+    rendered = rendered_stream.getvalue()
+    if arguments.bounded_log:
+        from .fleet import append_bounded_fleet_log_record
+        append_bounded_fleet_log_record(arguments.bounded_log, rendered)
+    else:
+        print(rendered, end="")
+    for terminal_code in (tripwire_module.LEAK_EXIT, tripwire_module.PROBE_FAILED_EXIT,
+                          tripwire_module.INCONCLUSIVE_EXIT, tripwire_module.CLEAN_EXIT):
+        if terminal_code in exit_codes:
+            return terminal_code
+    return tripwire_module.PROBE_FAILED_EXIT
+
+
 def main(argv=None):
     """CLI entry. Wraps the dispatch so a MISSING PREREQUISITE (no provider key, no config) exits with one clean
     line instead of a raw traceback: `spendguard report` on a fresh install used to dump 14 lines ending in
@@ -376,6 +452,8 @@ def _dispatch(argv=None):
         return reap_orphaned_warm_servers_cli(rest)
     if cmd == "queue-manage":
         return manage_lane_queue_cli(rest)
+    if cmd == "lane-leak-check":
+        return lane_leak_check_cli(rest)
     if cmd == "ledger-read":
         return ledger_read_cli(rest)
     if cmd == "agent-spawn-gate":

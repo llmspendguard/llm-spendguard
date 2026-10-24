@@ -112,6 +112,23 @@ def test_periodic_fleet_registry_contains_orphan_reaper_job():
     assert job["StandardOutPath"] == os.devnull
 
 
+def test_periodic_fleet_registry_contains_lane_leak_tripwire_job():
+    jobs = fleet.periodic_launchd_job_registry()
+    matches = [job for job in jobs if job["Label"] == fleet.LANE_LEAK_TRIPWIRE_LAUNCHD_LABEL]
+    assert len(matches) == 1
+    job = matches[0]
+    assert job["StartInterval"] == fleet.LANE_LEAK_TRIPWIRE_LAUNCHD_INTERVAL_S
+    assert job["ProgramArguments"][0] == str(fleet.pathlib.Path(fleet.sys.executable).with_name("spendguard"))
+    assert job["ProgramArguments"][1:1 + len(fleet.LANE_LEAK_TRIPWIRE_LAUNCHD_COMMAND_ARGUMENTS)] == list(
+        fleet.LANE_LEAK_TRIPWIRE_LAUNCHD_COMMAND_ARGUMENTS)
+    assert fleet.LANE_LEAK_TRIPWIRE_BOUNDED_LOG_FLAG in job["ProgramArguments"]
+    assert str(fleet.config.HOME / fleet.LANE_LEAK_TRIPWIRE_LOG_BASENAME) in job["ProgramArguments"]
+    install_name = job["Label"] + fleet.FLEET_LAUNCHD_PLIST_SUFFIX
+    assert install_name == fleet.LANE_LEAK_TRIPWIRE_LAUNCHD_LABEL + fleet.FLEET_LAUNCHD_PLIST_SUFFIX
+    assert job["RunAtLoad"] is True
+    assert job["StandardOutPath"] == job["StandardErrorPath"] == os.devnull
+
+
 def test_bounded_fleet_log_rotates_one_generation_and_caps_live_file():
     with tempfile.TemporaryDirectory() as directory:
         log_path = os.path.join(directory, fleet.ORPHAN_REAP_LOG_BASENAME)

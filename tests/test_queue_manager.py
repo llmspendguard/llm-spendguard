@@ -183,7 +183,11 @@ def test_queue_manager_cli_exit_contract(monkeypatch, capsys):
 
 def test_periodic_registry_contains_both_bounded_log_jobs():
     jobs = fleet.periodic_launchd_job_registry()
-    assert {job["Label"] for job in jobs} == {fleet.ORPHAN_REAP_LAUNCHD_LABEL, fleet.QUEUE_MANAGE_LAUNCHD_LABEL}
+    assert {job["Label"] for job in jobs} == {
+        fleet.ORPHAN_REAP_LAUNCHD_LABEL,
+        fleet.QUEUE_MANAGE_LAUNCHD_LABEL,
+        fleet.LANE_LEAK_TRIPWIRE_LAUNCHD_LABEL,
+    }
     queue_job = next(job for job in jobs if job["Label"] == fleet.QUEUE_MANAGE_LAUNCHD_LABEL)
     assert queue_job["StartInterval"] == fleet.QUEUE_MANAGE_LAUNCHD_INTERVAL_S
     assert queue_job["ProgramArguments"][1:1 + len(fleet.QUEUE_MANAGE_LAUNCHD_COMMAND_ARGUMENTS)] == list(
