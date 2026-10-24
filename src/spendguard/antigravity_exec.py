@@ -30,6 +30,7 @@ import time
 
 TIMEOUT_S = 300               # meta prompts are small; a hung CLI must not stall the daily report
 MIN_TIMEOUT_S = 30            # agy's real working latency is ~5s (no big cold-start), and its plan quota OSCILLATES
+ANTIGRAVITY_WORK_DIRECTORY_PREFIX = "spendguard-antigravity-"
 #                              (it is the flaky lane) — so bound a lane ATTEMPT to ~30s: a working call answers well
 #                              within it, a DOWN/hung agy fails fast and degrades to the metered Gemini API in
 #                              seconds instead of the 150s global floor, and the miss then cools the lane. Unlike a
@@ -251,7 +252,7 @@ def run_prompt(prompt, system=None, model=None, timeout=TIMEOUT_S, reasoning=Non
     t0 = time.time()
     neutral_cwd = None
     try:
-        neutral_cwd = tempfile.mkdtemp(prefix="spendguard-antigravity-")
+        neutral_cwd = tempfile.mkdtemp(prefix=ANTIGRAVITY_WORK_DIRECTORY_PREFIX)
         try:
             r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, env=env,
                                stdin=subprocess.DEVNULL, cwd=neutral_cwd)

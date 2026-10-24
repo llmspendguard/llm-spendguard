@@ -67,10 +67,7 @@ def submit_batch_jsonl(rest):
                                         submit=not a.dry_run, endpoint=a.endpoint)
     finally:
         if _built and not a.dry_run:          # keep the built envelope on --dry-run (inspectable); else clean the temp
-            try:
-                os.unlink(_built)
-            except OSError:
-                pass
+            submit.release_chat_batch_jsonl(_built)
     if a.dry_run:
         if _built:
             print(f"[batch-submit] (dry-run) built envelope kept for inspection: {_built}", file=sys.stderr)

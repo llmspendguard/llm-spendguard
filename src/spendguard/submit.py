@@ -27,6 +27,9 @@ from . import bulk_resilience
 
 from .config import HOME as _HOME, api_key as _api_key
 AUDIT_DIR = str(_HOME)
+CHAT_BATCH_REQUEST_FILENAME = "requests.jsonl"
+CHAT_BATCH_REQUEST_DIRECTORY_PREFIX = "spendguard-batch-req-"
+_owned_chat_batch_directories = {}
 
 
 _tiktoken_warned = False
@@ -192,7 +195,8 @@ def build_chat_batch_jsonl(tasks_path, model, system=None, max_out=None, reasoni
     trap). A cap is billed by ACTUAL tokens, so over-provisioning is harmless. `max_out` / `reasoning` override.
 
     Writes to a FRESH temp .jsonl (never a caller-supplied path — so the task input can never be clobbered) and
-    returns (built_path, n_tasks); the caller submits/inspects that path and removes it when done. Refuses a
+    returns (built_path, n_tasks); the caller submits/inspects that path and passes it to
+    ``release_chat_batch_jsonl`` when done. Refuses a
     non-OpenAI model (the OpenAI Batch API serves only OpenAI ids) and a task line missing custom_id/content —
     fail-closed, never a silent drop; a partial temp is unlinked on any error."""
     import json, os, tempfile
@@ -211,10 +215,11 @@ def build_chat_batch_jsonl(tasks_path, model, system=None, max_out=None, reasoni
     _eff = models.resolve_effort(model, reasoning)   # the VERIFIABLY-ACCEPTED reasoning_effort — a batch can't heal
     #   per row, so this resolves up front (discovers + records the accepted set); a family default the endpoint
     #   rejects (gpt-5.6-luna: 'minimal') never reaches a batch. None → OMIT the param (model default).
-    fd, out_path = tempfile.mkstemp(prefix="spendguard-batch-req-", suffix=".jsonl")
+    output_owner = tempfile.TemporaryDirectory(prefix=CHAT_BATCH_REQUEST_DIRECTORY_PREFIX)
+    out_path = os.path.join(output_owner.name, CHAT_BATCH_REQUEST_FILENAME)
     n = 0
     try:
-        with os.fdopen(fd, "w") as fout, open(tasks_path, errors="replace") as fin:   # READ input, WRITE a fresh temp
+        with open(out_path, "x") as fout, open(tasks_path, errors="replace") as fin:   # READ input, WRITE a fresh temp
             for ln in fin:
                 s = ln.strip()
                 if not s:
@@ -252,12 +257,18 @@ def build_chat_batch_jsonl(tasks_path, model, system=None, max_out=None, reasoni
         if not n:
             raise ValueError(f"no tasks in {tasks_path} (each line = a JSON object {{custom_id, content}})")
     except Exception:
-        try:
-            os.unlink(out_path)     # never leave a partial/empty temp envelope behind
-        except OSError:
-            pass
+        output_owner.cleanup()      # never leave a partial/empty temp envelope behind
         raise
+    _owned_chat_batch_directories[out_path] = output_owner
     return out_path, n
+
+
+def release_chat_batch_jsonl(built_path):
+    """Release an exact temporary batch path minted by ``build_chat_batch_jsonl``."""
+    output_owner = _owned_chat_batch_directories.pop(built_path, None)
+    if output_owner is None:
+        raise ValueError(f"not an owned chat batch path: {built_path!r}")
+    output_owner.cleanup()
 
 
 class BatchAdmissionDeadlineRefused(RuntimeError):

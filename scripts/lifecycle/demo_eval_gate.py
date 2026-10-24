@@ -14,7 +14,10 @@ import os
 import sys
 import tempfile
 
-os.environ.setdefault("SPENDGUARD_HOME", tempfile.mkdtemp(prefix="sg-evaldemo-"))
+EVAL_DEMO_HOME_OWNER = None
+if "SPENDGUARD_HOME" not in os.environ:
+    EVAL_DEMO_HOME_OWNER = tempfile.TemporaryDirectory(prefix="sg-evaldemo-")
+    os.environ["SPENDGUARD_HOME"] = EVAL_DEMO_HOME_OWNER.name
 os.environ["SPENDGUARD_ENFORCE"] = "block"                 # the hard gate, so BLOCKED is real, not shadow
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "src"))
 

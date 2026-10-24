@@ -23,6 +23,7 @@ import tempfile
 HERE = os.path.dirname(os.path.abspath(__file__))
 RUNNER = os.path.join(os.path.dirname(HERE), "scripts", "test", "chunked_suite.py")
 SMALLEST_OFFLINE_TEST = os.path.join(HERE, "test_cacheaudit.py")     # pure logic, runs in well under a second
+CHUNK_CLEANUP_ISOLATION_PREFIX = "i-"
 
 
 def check(name, cond):
@@ -47,7 +48,7 @@ runner = _load_runner()
 # both import — at a private root, so `_run_one`'s scratch mkdtemp AND our before/after glob live ONLY here. A
 # concurrent process's sg-chunk-* in the real $TMPDIR can no longer be counted as this test's leak. `_iso` itself
 # is created in the real $TMPDIR first (its own distinct prefix), then becomes the base for everything after.
-_iso = tempfile.mkdtemp(prefix="sg-cleanup-iso-", dir=runner.GATE_SHORT_TMPDIR_BASE)
+_iso = tempfile.mkdtemp(prefix=CHUNK_CLEANUP_ISOLATION_PREFIX, dir=runner.GATE_SHORT_TMPDIR_BASE)
 tempfile.tempdir = _iso
 runner.GATE_SHORT_TMPDIR_BASE = _iso
 

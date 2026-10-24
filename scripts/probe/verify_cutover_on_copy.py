@@ -17,8 +17,12 @@ from spendguard import ledger as L
 
 def main():
     live = config.db_path()
-    tmp = tempfile.mkdtemp(prefix="sg-cutover-verify-")
-    copy = os.path.join(tmp, "spend.db")
+    with tempfile.TemporaryDirectory(prefix="sg-cutover-verify-") as cutover_copy_directory:
+        verify_cutover_on_copy(live, cutover_copy_directory)
+
+
+def verify_cutover_on_copy(live, cutover_copy_directory):
+    copy = os.path.join(cutover_copy_directory, "spend.db")
     for suffix in ("", "-wal", "-shm"):                 # copy WAL sidecars too, or recent writes are invisible
         if os.path.exists(live + suffix):
             shutil.copy2(live + suffix, copy + suffix)

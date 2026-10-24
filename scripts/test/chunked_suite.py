@@ -90,13 +90,13 @@ GATE_TIKTOKEN_CACHE_DIRECTORY_NAME = "data-gym-cache"
 GATE_AMBIENT_TMPDIR = tempfile.gettempdir()
 GATE_AMBIENT_TIKTOKEN_CACHE_DIRECTORY = os.environ.get(GATE_TIKTOKEN_CACHE_ENV_NAME)
 GATE_TIKTOKEN_CACHE_DIRECTORY = os.path.join(GATE_AMBIENT_TMPDIR, GATE_TIKTOKEN_CACHE_DIRECTORY_NAME)
-GATE_SHORT_TMPDIR_DIRECTORY_NAME = "tmp"
-GATE_SHORT_TMPDIR_BASE = os.path.realpath(os.path.join(os.sep, GATE_SHORT_TMPDIR_DIRECTORY_NAME))
+GATE_RUNNER_TMPDIR_BASE_ENV = "SPENDGUARD_GATE_TMPDIR_BASE"
+GATE_SHORT_TMPDIR_BASE = os.path.realpath(os.environ.get(GATE_RUNNER_TMPDIR_BASE_ENV, GATE_AMBIENT_TMPDIR))
 DARWIN_AF_UNIX_SUN_PATH_CAPACITY_BYTES = 104
 AF_UNIX_PATH_TERMINATOR_BYTES = 1
-GATE_BROKER_NESTED_TMPDIR_PREFIX = "sg-chaos-"
+GATE_BROKER_NESTED_TMPDIR_PREFIX = "sgc-"
 GATE_BROKER_NESTED_TMPDIR_RANDOM_SUFFIX = "XXXXXXXX"
-GATE_BROKER_TEST_SOCKET_FILENAME = "broker.sock"
+GATE_BROKER_TEST_SOCKET_FILENAME = "gate.sock"
 GATE_BROKER_DEFAULT_SOCKET_FILENAME = "codex-daemon.sock"
 GATE_TEST_ISOLATED_ENV = "SPENDGUARD_TEST_ISOLATED"
 GATE_TEST_ENABLED = "1"
@@ -131,6 +131,7 @@ def _child_env(scratch_home, scratch_tmpdir):
     for root_name in GATE_ISOLATED_HOME_ENV_NAMES:
         env[root_name] = os.path.realpath(scratch_home)
     env[GATE_ISOLATED_TMPDIR_ENV_NAME] = os.path.realpath(scratch_tmpdir)
+    env[GATE_RUNNER_TMPDIR_BASE_ENV] = GATE_SHORT_TMPDIR_BASE
     env[GATE_TIKTOKEN_CACHE_ENV_NAME] = (
         GATE_AMBIENT_TIKTOKEN_CACHE_DIRECTORY or os.path.realpath(GATE_TIKTOKEN_CACHE_DIRECTORY)
     )
@@ -150,8 +151,11 @@ def _child_env(scratch_home, scratch_tmpdir):
     return env
 
 
-SCRATCH_HOME_PREFIX = "sg-chunk-"           # per-file SPENDGUARD_HOME in $TMPDIR; removed when the file finishes
-GATE_SCRATCH_TMPDIR_PREFIX = "sg-chunk-tmp-"
+# These compact leaf names preserve enough sockaddr_un capacity when this runner
+# is itself executed beneath the pytest runner's isolated TMPDIR. Ownership is
+# established by the exact paths returned from mkdtemp, never by this prefix.
+SCRATCH_HOME_PREFIX = "h-"
+GATE_SCRATCH_TMPDIR_PREFIX = "t-"
 
 
 def validate_gate_broker_socket_path_capacity(scratch_home, scratch_tmpdir):

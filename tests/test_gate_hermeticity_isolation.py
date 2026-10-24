@@ -26,8 +26,9 @@ import test_runner as hermeticity_pytest_runner  # noqa: E402
 
 
 def verify_gate_hermeticity_isolation_contract():
-    with tempfile.TemporaryDirectory() as scratch_home, tempfile.TemporaryDirectory() as scratch_tmpdir, \
-            tempfile.TemporaryDirectory() as external_tool_home:
+    with tempfile.TemporaryDirectory(dir=chunked_suite.GATE_SHORT_TMPDIR_BASE) as scratch_home, \
+            tempfile.TemporaryDirectory(dir=chunked_suite.GATE_SHORT_TMPDIR_BASE) as scratch_tmpdir, \
+            tempfile.TemporaryDirectory(dir=chunked_suite.GATE_SHORT_TMPDIR_BASE) as external_tool_home:
         expected_home = str(Path(scratch_home).resolve())
         expected_tmpdir = str(Path(scratch_tmpdir).resolve())
         environment = chunked_suite._child_env(scratch_home, scratch_tmpdir)

@@ -17,11 +17,21 @@ import inspect
 import itertools
 import os
 import pathlib
+import shutil
 import sys
 import tempfile
 import traceback
 
 from _pytest.monkeypatch import MonkeyPatch
+
+
+BRIDGE_OWNED_STARTUP_HOME_ENV = "SPENDGUARD_BRIDGE_OWNED_STARTUP_HOME"
+
+
+def remove_bridge_owned_startup_home(owned_home):
+    """Remove only the exact startup home this bridge recorded as its own."""
+    if owned_home and os.environ.get(BRIDGE_OWNED_STARTUP_HOME_ENV) == owned_home:
+        shutil.rmtree(owned_home, ignore_errors=True)
 
 
 def align_test_startup_home(prefix):
@@ -30,6 +40,11 @@ def align_test_startup_home(prefix):
     if not test_home:
         test_home = tempfile.mkdtemp(prefix=prefix)
         os.environ["SPENDGUARD_HOME"] = test_home
+        os.environ[BRIDGE_OWNED_STARTUP_HOME_ENV] = test_home
+    owned_home = os.environ.get(BRIDGE_OWNED_STARTUP_HOME_ENV)
+    if owned_home == test_home:
+        import atexit
+        atexit.register(remove_bridge_owned_startup_home, owned_home)
     cached_config = sys.modules.get("spendguard.config")
     if cached_config is not None and cached_config.HOME != pathlib.Path(test_home):
         os.execv(sys.executable, [sys.executable, *sys.argv])
@@ -78,7 +93,9 @@ def _call_kwargs(fn, bound, teardowns, unknown_sink):
             teardowns.append(mp.undo)
             kwargs[name] = mp
         elif name == "tmp_path":
-            kwargs[name] = pathlib.Path(tempfile.mkdtemp(prefix="sg-bridge-"))
+            bridge_tmp_path_owner = tempfile.TemporaryDirectory(prefix="sg-bridge-")
+            teardowns.append(bridge_tmp_path_owner.cleanup)
+            kwargs[name] = pathlib.Path(bridge_tmp_path_owner.name)
         elif param.default is not inspect.Parameter.empty:
             continue  # not injected, not parametrized, but has a default — let the default stand
         else:
@@ -102,12 +119,12 @@ def run_pytest_style(ns):
             unknown = []
             kwargs = _call_kwargs(fn, bound, teardowns, unknown)
             ran += 1
-            if kwargs is None:
-                failures += 1
-                print(f"[FAIL] {label}: unsupported fixture {unknown[0]!r} "
-                      f"(bridge supplies only monkeypatch, tmp_path)")
-                continue
             try:
+                if kwargs is None:
+                    failures += 1
+                    print(f"[FAIL] {label}: unsupported fixture {unknown[0]!r} "
+                          f"(bridge supplies only monkeypatch, tmp_path)")
+                    continue
                 fn(**kwargs)
                 print(f"[OK] {label}")
             except BaseException as exc:  # noqa: BLE001 - surface every failure, never swallow

@@ -8,7 +8,8 @@ import os
 import sys
 import tempfile
 
-os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="sg-lanedemo-")   # ISOLATED — never touches ~/.spendguard
+LANE_DEMO_HOME_OWNER = tempfile.TemporaryDirectory(prefix="sg-lanedemo-")
+os.environ["SPENDGUARD_HOME"] = LANE_DEMO_HOME_OWNER.name   # ISOLATED — never touches ~/.spendguard
 os.environ["SPENDGUARD_TEST_ISOLATED"] = "1"
 os.environ["SPENDGUARD_NO_AUTOINSTALL"] = "1"
 os.environ["SPENDGUARD_CALLS"] = "1"

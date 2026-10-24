@@ -13,6 +13,7 @@ import tempfile
 import sysconfig
 import subprocess
 import math
+import pathlib
 import shutil
 
 import pytest
@@ -77,6 +78,7 @@ from scripts.test.chunked_suite import (  # noqa: E402
 
 RUNNER_SCRATCH_HOME_PREFIX = "sg-pytest-"
 RUNNER_SCRATCH_TMPDIR_PREFIX = "sg-pytest-tmp-"
+RUNNER_SCRATCH_PREFIXES = (RUNNER_SCRATCH_HOME_PREFIX, RUNNER_SCRATCH_TMPDIR_PREFIX)
 SCRIPTS = sorted(
     f for f in glob.glob(os.path.join(HERE, "test_*.py"))
     if os.path.basename(f) != "test_runner.py"
@@ -149,3 +151,21 @@ def test_script(script, runner_budget_scale):
     assert took <= file_budget_s, (
         f"{os.path.basename(script)} took {took:.1f}s (> {file_budget_s}s budget) — a sleep, live network "
         f"call, or runaway loop is hiding in an 'offline' test. Profile it: time python {script}")
+
+
+def runner_scratch_entries():
+    """Return the exact repo-owned runner entries in Python's configured temp directory."""
+    temp_root = pathlib.Path(tempfile.gettempdir())
+    return {entry.name for entry in temp_root.iterdir()
+            if entry.name.startswith(RUNNER_SCRATCH_PREFIXES)}
+
+
+def test_runner_subprocess_scratch_has_no_net_growth(runner_budget_scale):
+    """A real runner-dispatched subprocess must leave no scratch after its result is collected."""
+    scratch_before = runner_scratch_entries()
+    test_script(__file__, runner_budget_scale)
+    scratch_after = runner_scratch_entries()
+    assert scratch_after == scratch_before, (
+        "runner subprocess scratch survived result collection: "
+        f"added={sorted(scratch_after - scratch_before)!r}, removed={sorted(scratch_before - scratch_after)!r}"
+    )
