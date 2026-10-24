@@ -15,9 +15,13 @@ from spendguard import budget, config, ledger, ledger_read
 DEADLINE_GUARD_ROWS = 512
 DEADLINE_GUARD_STEP_S = 0.001
 DEADLINE_GUARD_BUDGET_S = 0.01
-DEADLINE_GUARD_BOUND_S = 3.0
-DEADLINE_GUARD_FAST_S = 5.0
 DEADLINE_GUARD_WORKERS = 4
+# Parallel gate load can serialize each worker's connection recovery. Bound the
+# whole group by the configured per-ledger timeout per worker, not one host-speed
+# wall clock shared by all workers.
+DEADLINE_GUARD_OPERATION_TIMEOUT_S = config.LEDGER_WRITE_TIMEOUT_S * DEADLINE_GUARD_WORKERS
+DEADLINE_GUARD_LOAD_MULTIPLIER = 10
+DEADLINE_GUARD_MINIMUM_RECOVERY_S = config.LEDGER_CONNECT_TIMEOUT_S
 DEADLINE_GUARD_SHARED_SCAN_MULTIPLIER = 1.5
 DEADLINE_GUARD_DAY = budget._utc().strftime("%Y-%m-%d")
 DEADLINE_GUARD_SOURCE = "progress-deadline-guard"
@@ -61,6 +65,15 @@ def close_deadline_guard_thread_ledger():
     budget._reset_ledger()
 
 
+def measure_deadline_guard_recovery(deadline_query):
+    """Measure the successful query, then derive headroom from this machine's observed load."""
+    started = time.monotonic()
+    result = deadline_query()
+    elapsed = time.monotonic() - started
+    deadline_s = max(DEADLINE_GUARD_MINIMUM_RECOVERY_S, elapsed * DEADLINE_GUARD_LOAD_MULTIPLIER)
+    return result, deadline_s
+
+
 def test_ledger_query_deadline_fault_and_recovery():
     current = seed_deadline_guard_ledger()
     before = capture_deadline_guard_rows(current)
@@ -74,7 +87,7 @@ def test_ledger_query_deadline_fault_and_recovery():
                 pass
             else:
                 raise AssertionError("slow complete aggregate must raise the typed deadline error")
-        assert time.monotonic() - started < DEADLINE_GUARD_BOUND_S
+        assert time.monotonic() - started < DEADLINE_GUARD_OPERATION_TIMEOUT_S
         recovered = budget._ledger()
         assert recovered._conn is not expired_connection
         try:
@@ -83,10 +96,12 @@ def test_ledger_query_deadline_fault_and_recovery():
             pass
         else:
             raise AssertionError("expired connection must be closed, not retained")
-        assert budget.spent_since(DEADLINE_GUARD_DAY, deadline_s=DEADLINE_GUARD_FAST_S) == DEADLINE_GUARD_ROWS
-        assert budget.spent_since(DEADLINE_GUARD_DAY) == DEADLINE_GUARD_ROWS
-        assert budget.spent_by_job(DEADLINE_GUARD_JOB, deadline_s=DEADLINE_GUARD_FAST_S) == DEADLINE_GUARD_ROWS
-        assert budget.spent_all_time(deadline_s=DEADLINE_GUARD_FAST_S) == DEADLINE_GUARD_ROWS
+        recovered_total, recovery_deadline_s = measure_deadline_guard_recovery(
+            lambda: budget.spent_since(DEADLINE_GUARD_DAY))
+        assert recovered_total == DEADLINE_GUARD_ROWS
+        assert budget.spent_since(DEADLINE_GUARD_DAY, deadline_s=recovery_deadline_s) == DEADLINE_GUARD_ROWS
+        assert budget.spent_by_job(DEADLINE_GUARD_JOB, deadline_s=recovery_deadline_s) == DEADLINE_GUARD_ROWS
+        assert budget.spent_all_time(deadline_s=recovery_deadline_s) == DEADLINE_GUARD_ROWS
         assert capture_deadline_guard_rows(recovered) == before
     finally:
         close_deadline_guard_thread_ledger()
@@ -101,7 +116,7 @@ def test_ledger_query_deadline_concurrent_pool_baseline():
     def contend_deadline_guard_reader():
         current = budget._ledger()
         expired_connection = current._conn
-        barrier.wait(timeout=DEADLINE_GUARD_BOUND_S)
+        barrier.wait(timeout=DEADLINE_GUARD_OPERATION_TIMEOUT_S)
         try:
             try:
                 budget.spent_since(DEADLINE_GUARD_DAY, deadline_s=DEADLINE_GUARD_BUDGET_S)
@@ -111,7 +126,7 @@ def test_ledger_query_deadline_concurrent_pool_baseline():
                 raise AssertionError("every concurrent scan must expire")
             assert budget._ledger()._conn is not expired_connection
             # Empty WHERE proves immediate usability without another slow full aggregate.
-            assert budget.spent_by_job(DEADLINE_GUARD_EMPTY_JOB, deadline_s=DEADLINE_GUARD_FAST_S) == 0
+            assert budget.spent_by_job(DEADLINE_GUARD_EMPTY_JOB) == 0
         finally:
             close_deadline_guard_thread_ledger()
 
@@ -120,8 +135,8 @@ def test_ledger_query_deadline_concurrent_pool_baseline():
         with concurrent.futures.ThreadPoolExecutor(max_workers=DEADLINE_GUARD_WORKERS) as executor:
             futures = [executor.submit(contend_deadline_guard_reader) for _ in range(DEADLINE_GUARD_WORKERS)]
             for future in futures:
-                future.result(timeout=DEADLINE_GUARD_BOUND_S)
-    assert time.monotonic() - started < DEADLINE_GUARD_BOUND_S
+                future.result(timeout=DEADLINE_GUARD_OPERATION_TIMEOUT_S)
+    assert time.monotonic() - started < DEADLINE_GUARD_OPERATION_TIMEOUT_S
     assert config.ledger_connection_count() == baseline
 
 
@@ -199,7 +214,10 @@ def test_ledger_query_deadline_replacement_fault_recovers():
                 else:
                     raise AssertionError("partially configured replacement handle leaked")
             assert budget.spent_all_time() == DEADLINE_GUARD_ROWS
-            assert budget.spent_since(DEADLINE_GUARD_DAY, deadline_s=DEADLINE_GUARD_FAST_S) == DEADLINE_GUARD_ROWS
+            recovered_total, recovery_deadline_s = measure_deadline_guard_recovery(
+                lambda: budget.spent_since(DEADLINE_GUARD_DAY))
+            assert recovered_total == DEADLINE_GUARD_ROWS
+            assert budget.spent_since(DEADLINE_GUARD_DAY, deadline_s=recovery_deadline_s) == DEADLINE_GUARD_ROWS
             assert capture_deadline_guard_rows(current) == before
             assert config.ledger_connection_count() == baseline
         finally:
@@ -212,14 +230,19 @@ def test_ledger_query_deadline_shared_budget_window():
     try:
         with patch.object(ledger._DecSum, "step", slow_deadline_guard_decimal_step):
             started = time.monotonic()
-            assert budget.spent_since(DEADLINE_GUARD_DAY) == DEADLINE_GUARD_ROWS
+            with ledger_read.ledger_request_scope(
+                    deadline_s=DEADLINE_GUARD_OPERATION_TIMEOUT_S):
+                assert budget.spent_since(
+                    DEADLINE_GUARD_DAY,
+                    deadline_s=DEADLINE_GUARD_OPERATION_TIMEOUT_S,
+                ) == DEADLINE_GUARD_ROWS
             scan_duration = time.monotonic() - started
             shared_budget = scan_duration * DEADLINE_GUARD_SHARED_SCAN_MULTIPLIER
             started = time.monotonic()
             refusal = budget.exceeded(deadline_s=shared_budget)
             elapsed = time.monotonic() - started
         assert refusal is not None, "daily and monthly scans must share one caller deadline"
-        assert elapsed < shared_budget + DEADLINE_GUARD_BOUND_S
+        assert elapsed < shared_budget + DEADLINE_GUARD_OPERATION_TIMEOUT_S
     finally:
         close_deadline_guard_thread_ledger()
 

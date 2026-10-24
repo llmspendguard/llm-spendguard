@@ -17,6 +17,8 @@ import spendguard  # noqa: E402
 
 spendguard.require()
 
+EXACTLY_ONCE_ROW_COUNT = 6
+
 
 def run_exactly_once_chaos_contract():
     # Reuse the existing fake SDK rather than invent a second provider simulation.
@@ -43,8 +45,12 @@ def run_exactly_once_chaos_contract():
     if mutation == "disable_global_ordinals":
         submit._assign_batch_ordinals = lambda tasks: list(tasks)
     model, intent = fixture["MODEL"], "chaos:exactly-once"
-    lane_queue.enqueue_many(intent, [f"ordinal-{n}" for n in range(6)])
-    rows = lane_queue.lease(6)
+    enqueued_ids = lane_queue.enqueue_many(intent, [f"ordinal-{n}" for n in range(EXACTLY_ONCE_ROW_COUNT)])
+    rows = lane_queue.lease(EXACTLY_ONCE_ROW_COUNT)
+    if len(enqueued_ids) != EXACTLY_ONCE_ROW_COUNT or len(rows) != EXACTLY_ONCE_ROW_COUNT:
+        raise AssertionError(
+            f"exactly-once setup lost queued work: enqueued={enqueued_ids!r}, leased={rows!r}"
+        )
     ids = [r["id"] for r in rows]
     real_mark = lane_queue.mark_batched
 
@@ -60,11 +66,13 @@ def run_exactly_once_chaos_contract():
             patch.object(models, "resolve_effort", return_value=None):
         with patch.object(lane_queue, "mark_batched", side_effect=SubmitPersistCrash):
             try:
-                batch_tracker.submit_offload(intent, rows, model)
+                submit_result = batch_tracker.submit_offload(intent, rows, model)
             except SubmitPersistCrash:
                 pass
             else:
-                raise AssertionError("fault did not reach the submit/persist window")
+                raise AssertionError(
+                    f"fault did not reach the submit/persist window: submit_offload returned {submit_result!r}"
+                )
         assert registry.created == 1
         recovered = batch_tracker.submit_offload(intent, rows, model)
         assert recovered.get("adopted"), recovered

@@ -1,6 +1,7 @@
 """Offline regression proof for the shared gate child environment and CLI barrier."""
 import os
 from pathlib import Path
+import sqlite3
 import sys
 import tempfile
 from types import SimpleNamespace
@@ -13,6 +14,11 @@ spendguard.require()
 HERMETICITY_REPO_ROOT = Path(__file__).resolve().parents[1]
 HERMETICITY_CLOCK_ORIGIN = 0
 HERMETICITY_SUCCESS_RETURN_CODE = 0
+HERMETICITY_SQLITE_FILENAME = "hermeticity.sqlite3"
+HERMETICITY_FROZEN_HOME_SQLITE_FILENAME = "frozen-home-hermeticity.sqlite3"
+HERMETICITY_SQLITE_READ_ONLY_URI_QUERY = "mode=ro"
+HERMETICITY_SQLITE_PROOF_DDL = "CREATE TABLE isolation_proof (proof_value INTEGER)"
+HERMETICITY_COVERAGE_PARALLEL_SUFFIX = "host.pid.random"
 sys.path.insert(0, str(HERMETICITY_REPO_ROOT))
 from scripts.test import chunked_suite  # noqa: E402
 from spendguard import config, conv  # noqa: E402
@@ -20,7 +26,8 @@ import test_runner as hermeticity_pytest_runner  # noqa: E402
 
 
 def verify_gate_hermeticity_isolation_contract():
-    with tempfile.TemporaryDirectory() as scratch_home, tempfile.TemporaryDirectory() as scratch_tmpdir:
+    with tempfile.TemporaryDirectory() as scratch_home, tempfile.TemporaryDirectory() as scratch_tmpdir, \
+            tempfile.TemporaryDirectory() as external_tool_home:
         expected_home = str(Path(scratch_home).resolve())
         expected_tmpdir = str(Path(scratch_tmpdir).resolve())
         environment = chunked_suite._child_env(scratch_home, scratch_tmpdir)
@@ -31,6 +38,34 @@ def verify_gate_hermeticity_isolation_contract():
         assert environment[chunked_suite.GATE_ISOLATED_TMPDIR_ENV_NAME] == expected_tmpdir
         assert environment[chunked_suite.GATE_TEST_ISOLATED_ENV] == chunked_suite.GATE_TEST_ENABLED
         assert environment[config.CLI_TEST_OFFLINE_ENVIRONMENT_KEY] == config.CLI_TEST_OFFLINE_ENABLED_VALUE
+        with patch.dict(os.environ, environment):
+            with sqlite3.connect(Path(scratch_home) / HERMETICITY_SQLITE_FILENAME) as isolated_connection:
+                isolated_connection.execute(HERMETICITY_SQLITE_PROOF_DDL)
+            with tempfile.TemporaryDirectory() as redirected_home, patch.dict(
+                    os.environ, {
+                        config.LEDGER_HOME_EXPANSION_ENVIRONMENT_KEY: redirected_home,
+                        config.LEDGER_HOME_ENVIRONMENT_KEY: redirected_home,
+                    }):
+                os.environ.pop(chunked_suite.GATE_ISOLATED_TMPDIR_ENV_NAME, None)
+                frozen_home_database = config.HOME / HERMETICITY_FROZEN_HOME_SQLITE_FILENAME
+                with sqlite3.connect(frozen_home_database) as frozen_home_connection:
+                    frozen_home_connection.execute(HERMETICITY_SQLITE_PROOF_DDL)
+            outside_uri = (
+                f"{config.SQLITE_FILE_URI_SCHEME}:{Path(__file__).resolve()}?"
+                f"{HERMETICITY_SQLITE_READ_ONLY_URI_QUERY}"
+            )
+            try:
+                sqlite3.connect(outside_uri, uri=True)
+            except config.IsolatedSQLitePathError as guard_error:
+                print(f"[OK] SQLite confinement guard fired: {guard_error}")
+            else:
+                raise AssertionError("isolated SQLite connection escaped scratch roots")
+            coverage_data_path = Path(external_tool_home) / (
+                f"{config.COVERAGE_DEFAULT_DATA_FILE_NAME}.{HERMETICITY_COVERAGE_PARALLEL_SUFFIX}"
+            )
+            with sqlite3.connect(coverage_data_path) as coverage_connection:
+                coverage_connection.execute(HERMETICITY_SQLITE_PROOF_DDL)
+            assert coverage_data_path.is_file()
         with patch.object(hermeticity_pytest_runner.tempfile, "mkdtemp",
                           side_effect=[scratch_home, scratch_tmpdir]), \
                 patch.object(hermeticity_pytest_runner.time, "monotonic", return_value=HERMETICITY_CLOCK_ORIGIN), \
