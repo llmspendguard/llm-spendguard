@@ -34,8 +34,12 @@ from .residency_gate import (
 )
 
 from .config import DISK_GUARD_FLOOR_DEFAULT_BYTES, DISK_GUARD_FLOOR_ENV
+from .fleet import FLEET_RESTARTS_ENABLED_DEFAULT, FLEET_RESTARTS_ENABLED_ENV
 
 SETTINGS = [
+    dict(section="fleet", key="restarts_enabled", store="config.json:fleet.restarts_enabled",
+         env=FLEET_RESTARTS_ENABLED_ENV, default=FLEET_RESTARTS_ENABLED_DEFAULT, kind="bool", secret=False,
+         desc="Allow the fleet control plane to restart declared launchd-supervised consumers."),
     dict(section="disk_guard", key="floor_bytes", store="config.json:disk_guard.floor_bytes",
          env=DISK_GUARD_FLOOR_ENV, default=DISK_GUARD_FLOOR_DEFAULT_BYTES, kind="int", secret=False,
          desc="Positive free-byte reserve required before bulk ledger copies; unsafe writes deliberately refuse."),

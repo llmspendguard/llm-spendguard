@@ -142,9 +142,9 @@ ck("gate-host apply consumes every discovered registration escape",
 # control the served commit of THIS process + the green pointer
 release.served_sha = lambda: {"sha": "AAAAAAA", "short": "AAAAAAA", "dirty": False, "describe": "AAAAAAA"}
 
-def _reregister():
-    fleet._registered = False
-    fleet.register_consumer()
+def _reregister(**declarations):
+    fleet._registered_pid = None
+    fleet.register_consumer(**declarations)
 
 # ── 1. register() records this process with its served_sha ──
 release.green_pointer = lambda: {"sha": "AAAAAAA", "short": "AAAAAAA"}   # green == served → not stale
@@ -176,14 +176,15 @@ ck("dead pid pruned from the registry on read", ghost == 0)
 
 # ── 5. restart_stale (dry run): a launchd-managed stale consumer → would kickstart; unsupervised → warn ──
 release.green_pointer = lambda: {"sha": "BBBBBBB", "short": "BBBBBBB"}   # make this process stale
-fleet._launchd_label_for = lambda pid: "com.example.fake"               # pretend it IS launchd-managed
+_reregister(role=fleet.CONSUMER_ROLE_DAEMON, supervision_mode=fleet.SUPERVISION_LAUNCHD,
+            supervision_ref="com.example.fake")
 res = fleet.restart_stale(apply=False)
 ck("dry-run reports it as 'would kickstart' (no real restart)", res["dry_run"] is True
    and any("would kickstart" in r.get("action", "") for r in res["restarted"]))
-fleet._launchd_label_for = lambda pid: None                             # pretend it is NOT supervised
+_reregister(role=fleet.CONSUMER_ROLE_DAEMON)
 res2 = fleet.restart_stale(apply=False)
 ck("an unsupervised stale consumer is WARNed, never killed",
-   any("NOT launchd-managed" in w.get("why", "") for w in res2["warn"]))
+   any("not supervised" in w.get("why", "") for w in res2["warn"]))
 
 # ── 6. exit_if_stale: exits when should_respawn, returns False when not ──
 release.should_respawn = lambda: False
