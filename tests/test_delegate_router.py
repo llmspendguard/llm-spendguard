@@ -41,7 +41,8 @@ lane_calls = []
 codex_calls = []
 decision_calls = []
 saving_calls = []
-classification = {"kind": "oneshot", "provider": "codex", "self_contained": True, "why": "independent answer"}
+classification = {"route": delegate_router.DELEGATE_ROUTE_LANE, "provider": "codex",
+                  "self_contained": True, "why": "independent answer"}
 configured_models = {"codex": {"cheap": "test-cheap", "strong": "test-strong"}}
 demand_test_directory = tempfile.TemporaryDirectory(prefix="sg-agentic-demand-")
 
@@ -88,6 +89,8 @@ try:
     lanes.lanes_status = lambda: {"executor": "pool", "lanes": [
         {"lane": "codex", "enabled": True, "cli": "/fake/codex", "auth": "ok", "activate": None}]}
     reliability.health_reds = lambda: []
+    config.read_json_cache_entry = lambda path, key: None
+    delegate_router._write_cached_delegate_verdict = lambda fingerprint, verdict: None
 
     print("-- delegation readiness is split by route kind --")
     readiness = delegate_router.delegation_lanes_ready("oneshot")
@@ -102,12 +105,15 @@ try:
           delegate_router.delegation_lanes_ready("agentic")["ready"] == ["codex"])
     reliability.health_reds = lambda: []
 
-    print("-- validates every classifier kind and configured provider --")
-    for kind in ("oneshot", "agentic", "needs_claude"):
-        classification.update(kind=kind, self_contained=(kind != "needs_claude"),
-                              provider=(None if kind == "needs_claude" else "codex"))
+    print("-- validates every classifier route and configured provider --")
+    for route in delegate_router.DELEGATE_CONTEXT_BOUNDARY:
+        remote = route in (delegate_router.DELEGATE_ROUTE_CODEX, delegate_router.DELEGATE_ROUTE_LANE)
+        classification.clear()
+        classification.update(route=route, self_contained=remote, provider=("codex" if remote else None),
+                              why="labelled route fixture")
         judged = delegate_router.classify_task("do it")
-        check(f"validated {kind}", judged.get("kind") == kind and not judged.get("error"))
+        check(f"validated {route}", judged.get("route") == route and not judged.get("error")
+              and judged.get("decision_path") == "model")
 
     check("classifier origin omits the caller budget", "max_tokens" not in lane_calls[-1][1])
     with patch.object(lane_balance, "delegate", original_lane), \
@@ -125,10 +131,11 @@ try:
         check("explicit external budget is still forwarded",
               classify_adapter_call.call_args.kwargs.get("max_tokens") == explicit_delegate_budget)
 
-    classification.update(kind="bogus", provider="codex", self_contained=True)
-    check("invalid kind is refused", "error" in delegate_router.classify_task("do it"))
+    classification.update(route="bogus", provider="codex", self_contained=True)
+    check("invalid route is refused", "error" in delegate_router.classify_task("do it"))
     configured_models["gemini"] = {"cheap": "gemini-cheap", "strong": "gemini-strong"}
-    classification.update(kind="oneshot", provider="gemini", self_contained=True, why="off-host answer")
+    classification.update(route=delegate_router.DELEGATE_ROUTE_LANE, provider="gemini",
+                          self_contained=True, why="off-host answer")
     excluded = delegate_router.classify_task("exclusion-check", exclude_plans=["codex"])
     classifier_prompt = lane_calls[-1][0]
     check("classifier exclusions remove the hosting lane from the supplied plan menu",
@@ -136,7 +143,8 @@ try:
     configured_models.pop("gemini")
 
     print("-- dry-run classifies and estimates but executes nothing --")
-    classification.update(kind="agentic", provider="codex", self_contained=True, why="self-contained repo task")
+    classification.update(route=delegate_router.DELEGATE_ROUTE_CODEX, provider="codex",
+                          self_contained=True, why="self-contained repo task")
     before_codex = len(codex_calls)
     dry = delegate_router.delegate_task("edit it", execute=False)
     check("dry-run returns estimate", dry["status"] == "estimate")
@@ -146,15 +154,15 @@ try:
     print("-- a down one-shot lane cannot falsely refuse an authenticated agentic Codex route --")
     lanes.lanes_status = lambda: {"executor": "pool", "lanes": [
         {"lane": "codex", "enabled": True, "cli": None, "auth": "missing", "activate": "install/login"}]}
-    classification.update(kind="agentic", provider="codex", self_contained=True, why="self-contained repo task")
+    classification.update(route=delegate_router.DELEGATE_ROUTE_CODEX, provider="codex", self_contained=True, why="self-contained repo task")
     authenticated_agent = delegate_router.delegate_task("edit it", provider="codex")
     check("agentic Codex remains ready when its CLI is present+authed despite the one-shot probe being down",
           authenticated_agent["status"] == "estimate")
-    classification.update(kind="oneshot", provider="codex", self_contained=True, why="independent answer")
+    classification.update(route=delegate_router.DELEGATE_ROUTE_LANE, provider="codex", self_contained=True, why="independent answer")
     unavailable_oneshot = delegate_router.delegate_task("answer it", provider="codex")
     check("oneshot Codex still refuses when the one-shot lane probe is down",
           unavailable_oneshot["status"] == "refused" and unavailable_oneshot["ready_alternatives"] == [])
-    classification.update(kind="agentic", provider="codex", self_contained=True, why="self-contained repo task")
+    classification.update(route=delegate_router.DELEGATE_ROUTE_CODEX, provider="codex", self_contained=True, why="self-contained repo task")
     codex_exec.auth_status = lambda: {"authed": False}
     unavailable_agent = delegate_router.delegate_task("edit it", provider="codex")
     check("genuinely unauthenticated agent CLI retains the typed refusal",
@@ -163,24 +171,24 @@ try:
     lanes.lanes_status = lambda: {"executor": "pool", "lanes": [
         {"lane": "codex", "enabled": True, "cli": "/fake/codex", "auth": "ok", "activate": None}]}
     configured_models["gemini"] = {"cheap": "gemini-cheap", "strong": "gemini-strong"}
-    classification.update(kind="agentic", provider="gemini", self_contained=True, why="bounded")
+    classification.update(route=delegate_router.DELEGATE_ROUTE_CODEX, provider="gemini", self_contained=True, why="bounded")
     selected_unavailable = delegate_router.delegate_task("edit it")
     check("classifier cannot route to an unavailable configured plan and names ready alternatives",
           selected_unavailable["status"] in ("error", "refused") and "codex" in str(selected_unavailable))
     configured_models.pop("gemini")
 
     print("-- needs_claude is a typed refusal with no hop-2 execution --")
-    classification.update(kind="needs_claude", provider=None, self_contained=False, why="needs live session")
+    classification.update(route=delegate_router.DELEGATE_ROUTE_CLAUDE_SUBAGENT, provider=None, self_contained=False, why="needs live session")
     before_lane, before_codex = len(lane_calls), len(codex_calls)
     refused = delegate_router.delegate_task("continue that", execute=True)
     check("typed refusal returned", refused["status"] == "refused")
     check("no hop-2 ran", len(lane_calls) == before_lane + 1 and len(codex_calls) == before_codex)
 
     print("-- oneshot dispatches to lane; agentic dispatches to writable Codex --")
-    classification.update(kind="oneshot", provider="codex", self_contained=True, why="one independent answer")
+    classification.update(route=delegate_router.DELEGATE_ROUTE_LANE, provider="codex", self_contained=True, why="one independent answer")
     one = delegate_router.delegate_task("answer", execute=True)
     check("oneshot ran through lane", one["execution"]["text"] == "one-shot result")
-    classification.update(kind="agentic", provider="codex", self_contained=True, why="self-contained repo task")
+    classification.update(route=delegate_router.DELEGATE_ROUTE_CODEX, provider="codex", self_contained=True, why="self-contained repo task")
     agent = delegate_router.delegate_task("edit and test", execute=True, cwd=os.path.dirname(__file__))
     check("agentic ran through codex", agent["execution"]["text"] == "agentic result")
     check("codex received workspace-write sandbox", codex_calls[-1][1].get("sandbox") == "workspace-write")
@@ -194,6 +202,8 @@ try:
           set(("real_api_usd", "est_value_usd", "saved_overage_usd")) <= set(receipt)
           and receipt["real_api_usd"] == 0 and receipt["est_value_usd"] == 0.1
           and receipt["saved_overage_usd"] == 0.05)
+    check("saved counterfactual is explicitly sourced from ledger evidence",
+          receipt["saved_overage_basis"] == "ledger counterfactual")
 
     print("-- agentic demand observations bracket successful and exceptional executions --")
     demand_path = delegate_router.codex_agentic_events_path()

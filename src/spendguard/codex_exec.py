@@ -50,6 +50,8 @@ CODEX_APP_SERVER_SOCKET_PARTS = ("ipc", "ipc.sock")
 CODEX_USAGE_READ_TIMEOUT_S = 10
 CODEX_EXEC_WORK_DIRECTORY_PREFIX = "spendguard-codex-"
 CODEX_USAGE_UNKNOWN_SAMPLE_COUNT = 0
+CODEX_DELEGATE_OUTPUT_FILENAME = "delegate-final.txt"
+CODEX_DELEGATE_REQUIRED_MCP_SERVERS = ("symgrep", "7thsense", "honestreview", "spendguard")
 
 
 def _codex_stdio_reap_policy(env, cwd=None):
@@ -569,7 +571,7 @@ def _codex_structured_http_status(payload):
 
 
 def run_prompt(prompt, system=None, model=None, timeout=TIMEOUT_S, reasoning=None, max_tokens=None,
-               sandbox="read-only", cwd=None, recycle_on_timeout=None):   # max_tokens: protocol-uniform; codex exec has no one-shot output-cap flag
+               sandbox="read-only", cwd=None, recycle_on_timeout=None, delegate_context=False):
     """→ {text, in_tok, out_tok, latency, error} from one headless plan-billed Codex run. `system` is
     prepended to the prompt (codex exec has no separate system slot for one-shot prompt mode). `model` IS
     forwarded to `codex -m` when given (e.g. gpt-5.5), so the recorded model is the one that actually ran —
@@ -593,19 +595,24 @@ def run_prompt(prompt, system=None, model=None, timeout=TIMEOUT_S, reasoning=Non
             resolved_cwd = os.path.abspath(os.path.expanduser(os.fspath(cwd)))
         return _run_prompt_in_cwd(prompt, system=system, model=model, timeout=timeout, reasoning=reasoning,
                                   max_tokens=max_tokens, sandbox=sandbox, cwd=resolved_cwd,
-                                  recycle_on_timeout=recycle_on_timeout)
+                                  recycle_on_timeout=recycle_on_timeout, delegate_context=delegate_context)
     finally:
         if neutral_cwd:
             shutil.rmtree(neutral_cwd, ignore_errors=True)
 
 
 def _run_prompt_in_cwd(prompt, system=None, model=None, timeout=TIMEOUT_S, reasoning=None, max_tokens=None,
-                       sandbox="read-only", cwd=None, recycle_on_timeout=None):
+                       sandbox="read-only", cwd=None, recycle_on_timeout=None, delegate_context=False):
     """Execute after ``run_prompt`` has resolved and, when needed, owned the task working directory."""
     _eff = _codex_effort(reasoning)   # the effort ACTUALLY applied on this lane (Codex's own scale: 'minimal'→'none').
     #                                   Reported on the result so the ledger records what RAN, not the requested tier —
     #                                   letting a caller VERIFY the lane matched its metered fallback's applied reasoning.
-    # The broker is the sole admission point. Failure must never start an uncounted cold process.
+    # Agentic delegation needs the user's configured MCP envelope. The warm app-server deliberately disables MCP,
+    # so this one path uses documented headless approval review and leaves configured servers enabled.
+    if sandbox == "workspace-write" and delegate_context:
+        return _run_agentic_codex_exec(prompt, system=system, model=model, timeout=timeout,
+                                       reasoning=reasoning, cwd=cwd)
+    # The broker is the sole admission point for read-only/meta work. Failure must never start an uncounted cold process.
     if _daemon_enabled():
         from . import codex_daemon
         _full = (f"{system.strip()}\n\n{prompt}" if system else prompt)
@@ -629,3 +636,47 @@ def _run_prompt_in_cwd(prompt, system=None, model=None, timeout=TIMEOUT_S, reaso
         return {"error": _derr, "status_code": structured_status if structured_status is not None
                 else _codex_error_status(_derr)}
     return {"error": "codex broker admission disabled; uncounted cold execution refused"}
+
+
+def _run_agentic_codex_exec(prompt, system=None, model=None, timeout=TIMEOUT_S, reasoning=None, cwd=None):
+    """Run the delegated workspace task through cold ``codex exec`` with MCP and reviewed approvals enabled."""
+    executable = _bin()
+    if not executable:
+        return {"error": "codex CLI unavailable for delegated workspace execution"}
+    from . import config
+    environment = config.lane_exec_env(executable)
+    complete_prompt = f"{system.strip()}\n\n{prompt}" if system else prompt
+    started_at = time.time()
+    with tempfile.TemporaryDirectory(prefix=CODEX_EXEC_WORK_DIRECTORY_PREFIX) as output_directory:
+        output_path = os.path.join(output_directory, CODEX_DELEGATE_OUTPUT_FILENAME)
+        # codex-cli >=0.160: `--approve-for-me` runs in (and implies) the workspace-write sandbox and REJECTS a
+        # co-passed `--sandbox` ("cannot be used with '--approve-for-me'"). Older codex accepted the explicit flag
+        # redundantly; the approval flag alone is the version-robust spelling of "agentic workspace-write + auto-review".
+        command = [executable, "exec", "--json", "--output-last-message", output_path,
+                   CODEX_AGENTIC_APPROVAL_FLAG,
+                   "--cd", os.fspath(cwd), "--skip-git-repo-check"]
+        if model:
+            command.extend(["--model", model])
+        effort = _codex_effort(reasoning)
+        if effort:
+            command.extend(["--config", f'model_reasoning_effort="{effort}"'])
+        try:
+            completed = _run_cold_codex_with_reaper(command + [complete_prompt], timeout, environment, cwd)
+        except subprocess.TimeoutExpired:
+            return {"error": f"codex delegated execution timed out after {timeout} seconds",
+                    "execution_started": True}
+        if completed.returncode != 0:
+            return {"error": completed.stderr.strip() or f"codex delegated execution exited {completed.returncode}",
+                    "execution_started": True}
+        try:
+            with open(output_path, encoding="utf-8") as output_stream:
+                answer = output_stream.read()
+        except OSError as error:
+            return {"error": f"codex delegated execution produced no final-message file: {error}",
+                    "execution_started": True}
+        input_tokens, output_tokens = _usage_from_events(completed.stdout)
+        return {"text": answer, "in_tok": input_tokens, "out_tok": output_tokens,
+                "execution_started": True, "transport": "codex-exec-mcp",
+                "approval_mode": CODEX_AGENTIC_APPROVAL_FLAG,
+                "required_mcp_servers": list(CODEX_DELEGATE_REQUIRED_MCP_SERVERS),
+                "latency": round(time.time() - started_at, 2), "effort": effort, "error": None}

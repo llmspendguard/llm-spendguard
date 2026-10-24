@@ -99,15 +99,6 @@ def _verdict_store_path():
     return config.HOME / "residency_gate" / "verdicts.json"
 
 
-def _cached_delegability_verdict(key):
-    """A previously recorded {delegable, why} for this evidence hash, or None."""
-    try:
-        v = (json.loads(_verdict_store_path().read_text()) or {}).get(key)
-        return dict(v) if isinstance(v, dict) else None
-    except Exception:
-        return None
-
-
 def _record_delegability_verdict(key, verdict):
     """Persist a schema-checked verdict by MERGING it into the hook-owned cache (never a whole-file clobber), trimmed
     to verdict_cache_max by insertion order so the file stays bounded. Best-effort: a cache miss only re-judges on a
@@ -137,7 +128,7 @@ def _judge_residency_delegability(tool_name, tool_input, result_text):
     response is bounded."""
     key = "residency:" + hashlib.sha256(json.dumps([tool_name, tool_input, result_text], sort_keys=True,
                                      ensure_ascii=False, separators=(",", ":")).encode()).hexdigest()
-    cached = _cached_delegability_verdict(key)
+    cached = config.read_json_cache_entry(_verdict_store_path(), key)
     if cached is not None:
         return cached
     try:
