@@ -1027,10 +1027,16 @@ def _auto_respawn_enabled():
 
 
 def _arm_and_verify_mcp_daemon_gate():
-    """Deliberately gate this daemon process, independent of import-time auto-install policy."""
+    """Deliberately import and gate core SDKs, independent of import-time auto-install policy."""
+    import importlib
     from . import gate
 
     gate.install()
+    for sdk_package in gate.core_gated_sdk_packages():
+        try:
+            importlib.import_module(sdk_package)
+        except ImportError:
+            continue
     if not gate._enforcement_armed():
         raise gate.SpendGateRefused(
             "spendguard MCP daemon startup refused: the spend gate is NOT enforcing in this interpreter. "

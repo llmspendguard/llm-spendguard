@@ -2657,9 +2657,7 @@ def install(cap: "float | None" = None) -> None:
     """Arm absent SDKs and idempotently patch imported ones; preserve fail-open per-entry warnings."""
     if cap is not None:
         os.environ["GATE_CAP"] = str(cap)
-    packages = {spec[0].partition(".")[0] for spec in
-                INTERCEPTORS + _EXTRA + RT_INTERCEPTORS + STREAM_INTERCEPTORS + UNIT_INTERCEPTORS}
-    for package in sorted(packages):
+    for package in core_gated_sdk_packages():
         _register_gate_package_postimport(package, _patch_imported_sdk_package)
     import importlib
     for _mod in ("litellm_adapter", "bedrock_adapter", "vertex_adapter"):
@@ -2706,6 +2704,12 @@ def gated_sdk_modules():
     return sorted(mods)
 
 
+def core_gated_sdk_packages():
+    """Top-level SDK packages covered by the gate's static interceptor surfaces."""
+    specs = INTERCEPTORS + _EXTRA + RT_INTERCEPTORS + STREAM_INTERCEPTORS + UNIT_INTERCEPTORS
+    return sorted({spec[0].partition(".")[0] for spec in specs})
+
+
 def _enforcement_armed():
     """Each installed core SDK must be fully patched or covered by a live import-completion hook.
 
@@ -2714,7 +2718,7 @@ def _enforcement_armed():
     """
     import importlib.util
     specs = INTERCEPTORS + _EXTRA + RT_INTERCEPTORS + STREAM_INTERCEPTORS + UNIT_INTERCEPTORS
-    packages = {spec[0].partition(".")[0] for spec in specs}
+    packages = set(core_gated_sdk_packages())
     finder = _gate_package_import_finder
     for module_name in gated_sdk_modules():
         package = module_name.partition(".")[0]

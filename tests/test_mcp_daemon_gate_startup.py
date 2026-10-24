@@ -10,6 +10,8 @@ import os
 import socket
 import sys
 import tempfile
+import types
+from contextlib import nullcontext
 
 NO_AUTOINSTALL_ENVIRONMENT_KEY = "SPENDGUARD_NO_AUTOINSTALL"
 NO_AUTOINSTALL_ENABLED_VALUE = "1"
@@ -38,7 +40,13 @@ if os.environ.get(DAEMON_GATE_TEST_BOOTSTRAPPED_ENVIRONMENT_KEY) != TEST_ISOLATI
     os.execv(sys.executable, [sys.executable] + sys.argv)
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
-from spendguard import advisor, gate, mcp_server  # noqa: E402
+from spendguard import advisor, gate, ledger_read, mcp_server  # noqa: E402
+
+CORE_GATE_INTERCEPTOR_SPECS = (
+    gate.INTERCEPTORS + gate._EXTRA + gate.RT_INTERCEPTORS + gate.STREAM_INTERCEPTORS + gate.UNIT_INTERCEPTORS
+)
+CORE_GATE_SDK_PACKAGES = sorted({spec[0].partition(".")[0] for spec in CORE_GATE_INTERCEPTOR_SPECS})
+IN_PROCESS_LEDGER_REQUEST_READS = types.SimpleNamespace(cancel_ledger_request=lambda: None)
 
 
 def record_mcp_daemon_gate_check(check_failures, label, condition):
@@ -80,19 +88,37 @@ def return_mcp_gate_regression_recommendation_estimate(**_kwargs):
             "cost": REGRESSION_ESTIMATED_COST_USD, "candidates": []}
 
 
+def report_framework_startup_enforcement_state(original_enforcement_probe):
+    """Reproduce framework Python: live hooks exist, but enforcement is false until a core SDK is imported."""
+    if not any(sdk_package in sys.modules for sdk_package in CORE_GATE_SDK_PACKAGES):
+        return False
+    return original_enforcement_probe()
+
+
 def run_mcp_daemon_gate_startup_regression():
     check_failures = []
     gate_install_call_records = []
     original_gate_install = gate.install
+    original_enforcement_probe = gate._enforcement_armed
+    record_mcp_daemon_gate_check(
+        check_failures,
+        "framework startup begins with a live hook and no imported core SDK",
+        not any(sdk_package in sys.modules for sdk_package in CORE_GATE_SDK_PACKAGES),
+    )
     gate.install = functools.partial(
         record_explicit_daemon_gate_install,
         gate_install_call_records,
         original_gate_install,
     )
+    gate._enforcement_armed = functools.partial(
+        report_framework_startup_enforcement_state,
+        original_enforcement_probe,
+    )
     try:
         http_handler_class = mcp_server.build_mcp_http_handler()
     finally:
         gate.install = original_gate_install
+        gate._enforcement_armed = original_enforcement_probe
 
     record_mcp_daemon_gate_check(
         check_failures,
@@ -112,11 +138,17 @@ def run_mcp_daemon_gate_startup_regression():
         },
     }
     original_recommend_models = advisor.recommend_models
+    original_ledger_request_scope = ledger_read.ledger_request_scope
     advisor.recommend_models = return_mcp_gate_regression_recommendation_estimate
+    ledger_read.ledger_request_scope = functools.partial(
+        nullcontext,
+        enter_result=IN_PROCESS_LEDGER_REQUEST_READS,
+    )
     try:
         http_status, response_payload = post_mcp_request_over_socket_pair(http_handler_class, request)
     finally:
         advisor.recommend_models = original_recommend_models
+        ledger_read.ledger_request_scope = original_ledger_request_scope
     tool_result = response_payload.get("result", {})
     serialized_response = json.dumps(response_payload)
     spending_tool_returned_normal_result = (
