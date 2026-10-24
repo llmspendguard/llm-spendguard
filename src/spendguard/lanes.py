@@ -259,7 +259,7 @@ def lane_headroom(do_fetch=True):
         if not ln["enabled"]:
             continue
         mod = mods.get(ln["lane"])
-        report_reader = getattr(mod, "usage_report", None)
+        report_reader = getattr(mod, "HEADROOM_REPORT_READER", None) or getattr(mod, "usage_report", None)
         reader = report_reader if callable(report_reader) else getattr(mod, "usage", None)
         reader_present = callable(reader)
         buckets, hr, gap, evidence = None, {}, None, None
