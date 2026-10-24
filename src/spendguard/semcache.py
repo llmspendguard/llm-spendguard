@@ -14,9 +14,11 @@ threshold=0.0 → exact-only (default, zero risk). >0 → also semantic. Returns
 """
 import sqlite3, struct, hashlib, threading, datetime
 from . import config
+from .schema_indexes import ensure_ordered_index_coverage, table_index_coverages
 
 _lock = threading.RLock()
 _stats = {"exact": 0, "semantic": 0, "miss": 0, "saved": 0.0}
+_SEMCACHE_UNIQUE_REPAIR_SAVEPOINT = "semcache_unique_key_repair"
 
 
 def _ensure_semcache_schema(c):
@@ -30,16 +32,46 @@ def _ensure_semcache_schema(c):
     # impossible: without a UNIQUE constraint, any other writer can still create a second row for the same key, and
     # get()'s `LIMIT 1` with no ORDER BY would serve an arbitrary one, so a re-cached prompt could keep returning the
     # OLD output indefinitely. A discipline in one function is not an invariant.
-    try:
-        c.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_sc_hash ON semcache(model, prompt_hash)")
-    except sqlite3.IntegrityError:
-        # A legacy db (random-uuid PK, pre-unique-index) can already hold DUPLICATE (model, prompt_hash) rows; building
-        # the unique index then raises and leaves the cache UNUSABLE. Collapse duplicates (keep the newest row per key
-        # by rowid) and retry — migrate, don't brick.
-        c.execute("DELETE FROM semcache WHERE rowid NOT IN "
-                  "(SELECT MAX(rowid) FROM semcache GROUP BY model, prompt_hash)")
-        c.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_sc_hash ON semcache(model, prompt_hash)")
+    _repair_semcache_unique_key(c)
     c.commit()
+
+
+def _repair_semcache_unique_key(connection):
+    """Make ``(model, prompt_hash)`` unique, keeping one deterministic cache entry per key."""
+    key_columns = ("model", "prompt_hash")
+    connection.execute(f"SAVEPOINT {_SEMCACHE_UNIQUE_REPAIR_SAVEPOINT}")
+    try:
+        duplicate_keys = connection.execute(
+            "SELECT model,prompt_hash FROM semcache GROUP BY model,prompt_hash HAVING COUNT(*)>1"
+        ).fetchall()
+        for model, prompt_hash in duplicate_keys:
+            candidates = connection.execute(
+                "SELECT id,ts FROM semcache WHERE model IS ? AND prompt_hash IS ? "
+                "ORDER BY ts IS NULL ASC,ts DESC,id DESC",
+                (model, prompt_hash),
+            ).fetchall()
+            # ``id`` is the table's non-null PRIMARY KEY, so descending id deterministically selects one of
+            # multiple equally recent, interchangeable cache entries without relying on physical row order.
+            survivor_id = candidates[0][0]
+            connection.execute(
+                "DELETE FROM semcache WHERE model IS ? AND prompt_hash IS ? AND id<>?",
+                (model, prompt_hash, survivor_id),
+            )
+        if connection.execute(
+            "SELECT 1 FROM semcache GROUP BY model,prompt_hash HAVING COUNT(*)>1 LIMIT 1"
+        ).fetchone():
+            raise sqlite3.IntegrityError("semcache duplicate repair left duplicate keys")
+        unique_name = ensure_ordered_index_coverage(
+            connection, "semcache", key_columns, unique=True
+        )
+        for columns, is_unique, index_name in table_index_coverages(connection, "semcache"):
+            if columns == key_columns and not is_unique and index_name != unique_name:
+                connection.execute(f'DROP INDEX "{index_name}"')
+        connection.execute(f"RELEASE SAVEPOINT {_SEMCACHE_UNIQUE_REPAIR_SAVEPOINT}")
+    except Exception:
+        connection.execute(f"ROLLBACK TO SAVEPOINT {_SEMCACHE_UNIQUE_REPAIR_SAVEPOINT}")
+        connection.execute(f"RELEASE SAVEPOINT {_SEMCACHE_UNIQUE_REPAIR_SAVEPOINT}")
+        raise
 
 
 def _semcache_db():

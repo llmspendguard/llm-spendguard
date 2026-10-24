@@ -11,6 +11,7 @@ import threading
 
 from . import config
 from .config_schema import SETTINGS
+from .schema_indexes import ensure_ordered_index_coverage
 
 
 CONTENT_RETENTION_CONFIG_SECTION = "content_retention"
@@ -88,6 +89,7 @@ def _ensure_content_retention_schema(connection):
         system_json TEXT NOT NULL,
         response_json TEXT NOT NULL
     )""")
+    ensure_ordered_index_coverage(connection, CONTENT_RETENTION_TABLE, ("ts",))
     connection.commit()
     try:
         _purge_expired_content_rows(connection)

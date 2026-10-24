@@ -11,6 +11,7 @@ import logging
 import traceback
 import threading
 import math
+import datetime
 
 from . import config
 from .ledger_deadline_polling import LedgerDeadlinePolling
@@ -76,7 +77,7 @@ SUM(COALESCE(cost,0)) AS c,{input_projection} AS i,
 CASE WHEN COUNT(out_tok)=COUNT(*) THEN SUM(out_tok) END AS o,
 {cache_read_projection} AS cache_read_tok,
 {cache_write_projection} AS cache_write_tok FROM calls
-WHERE datetime(ts)>=datetime('now',?) AND kind IN ('realtime','batch')
+WHERE ts>=? AND kind IN ('realtime','batch')
 AND cost IS NOT NULL AND suspect IS NULL GROUP BY model,date(ts),kind{cache_completeness_group}"""
 RECEIPT_LANE_ACTIVITY_SQL = """SELECT executor,COUNT(*) AS n,
 COALESCE(SUM(in_tok),0) AS in_tok,COALESCE(SUM(out_tok),0) AS out_tok
@@ -671,7 +672,8 @@ def read_cost_integrity_buckets(since_days, path=None):
     sql = COST_INTEGRITY_BUCKET_SQL.format(input_projection=input_projection, cache_read_projection=projections[0],
                                           cache_write_projection=projections[1],
                                           cache_completeness_group=completeness_group)
-    return read_ledger_sql(LedgerSQLReadRequest(sql, (f"-{int(since_days)} days",)), path)
+    cutoff = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=int(since_days))
+    return read_ledger_sql(LedgerSQLReadRequest(sql, (cutoff.isoformat(timespec="seconds"),)), path)
 
 
 def read_receipt_lane_activity(since, path=None):
