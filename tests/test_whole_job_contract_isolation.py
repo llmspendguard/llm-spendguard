@@ -11,7 +11,7 @@ from unittest.mock import patch
 os.environ.setdefault("SPENDGUARD_HOME", tempfile.mkdtemp())
 os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
 
-from spendguard import whole_job, lane_balance, route_economics, submit, adapters, config  # noqa: E402
+from spendguard import whole_job, lane_balance, route_economics, submit, adapters, config, pricing  # noqa: E402
 
 WHOLE_JOB_ISOLATION_INTENT = "contract-isolation-fixture"
 WHOLE_JOB_ISOLATION_ESTIMATE = 0.0
@@ -36,7 +36,12 @@ WHOLE_JOB_ISOLATION_BATCHES = []
 
 
 def whole_job_isolation_price_stub(*args, **kwargs):
-    return {"recommend": {"path": "lane_only", "usd": WHOLE_JOB_ISOLATION_ESTIMATE}}
+    return {"recommend": {"path": "lane_only", "usd": WHOLE_JOB_ISOLATION_ESTIMATE},
+            "tokens": {"out_per_task": WHOLE_JOB_ISOLATION_ESTIMATE}}
+
+
+def whole_job_isolation_metered_price_stub(*args, **kwargs):
+    return WHOLE_JOB_ISOLATION_ESTIMATE
 
 
 def whole_job_isolation_execution_spy(tasks, intent, **kwargs):
@@ -56,6 +61,7 @@ def whole_job_isolation_batch_spy(tasks, model, **kwargs):
 
 
 with (patch.object(route_economics, "route_report", whole_job_isolation_price_stub),
+      patch.object(pricing, "realtime_cost", whole_job_isolation_metered_price_stub),
       patch.object(lane_balance, "bulk_delegate", whole_job_isolation_execution_spy)):
     # Reverse the group as an adversarial ordering: neither the first nor last sibling is a contract authority.
     for submitted in (WHOLE_JOB_ISOLATION_JOBS, list(reversed(WHOLE_JOB_ISOLATION_JOBS))):
@@ -66,6 +72,8 @@ with (patch.object(route_economics, "route_report", whole_job_isolation_price_st
                 planned = whole_job.plan_jobs(submitted, {"urgency": urgency})
                 assert list(planned["groups"].values()) == [original]
                 assert all(entry["method"] == "realtime" for entry in planned["plan"])
+                assert "strict-schema→enforce(set): lane/batch ineligible, metered realtime" in \
+                       planned["plan"][0]["why"]
                 result = whole_job.run_jobs(submitted, {"urgency": urgency, "budget_usd": set_cap,
                                                         "quality_bar": True},
                                             checkpoint=os.path.join(tempfile.mkdtemp(), "checkpoint"))
