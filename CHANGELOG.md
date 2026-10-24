@@ -4,6 +4,57 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 
 ## [Unreleased]
 
+## [0.16.0] — 2026-10-24
+
+### Added
+- **Operator and periodic orphan reaping.** `spendguard reap-orphans` provides a dry-run-first view of structurally
+  marked Codex/Kimi warm servers and can reap only provably dead-owner groups; deploy now installs a bounded-log
+  periodic sweep so orphan cleanup still runs when no warm pool is alive. (#177)
+- **Self-pacing lane-queue manager.** A periodic owner reclaims expired leases, structurally retires stale work,
+  purges retained terminal rows, and conditionally performs one bounded, load-gated drain; the same lifecycle is
+  exposed through the dry-run-first `spendguard queue-manage` command. (#178)
+- **Durable async-work visibility and safe queue-manager installation.** Retired jobs remain queryable through the
+  live queue or archive via CLI and MCP, async submissions return row handles and lookup instructions, and a first
+  periodic-job install performs cleanup without executing a pre-existing backlog. (#179)
+- **Axis-4 audit closures.** The bootstrap dry-run conservation claim now has a spend-sensitive negative control,
+  and bakeoff call rows persist requested/served model, resolved lane, and redirect provenance without overwriting
+  evidence already recorded. (#182)
+- **Self-registering interpreter fleet and complete deploy verification.** Every enforcing interpreter registers in
+  the fleet database, doctor exposes discovered registration escapes, and deploy cannot succeed until every
+  registered interpreter is refreshed and verified against code, metadata, and catalog identity. (#183)
+- **Fleet deregistration and identity-based freshness.** Operators can idempotently forget an exact interpreter
+  path, while current non-editable user installs can verify fresh without weakening rejection of shadowed, absent,
+  foreign, or mismatched installations. (#184)
+
+### Changed
+- **SQLite concurrency posture is now measurement-proven.** Cross-process stress through the configured maximum
+  waiter count produced no busy/locked failures or lost writes, establishing that the existing WAL, busy-timeout,
+  and synchronous settings hold without adding a single-writer serializer. (#187)
+
+### Fixed
+- **Per-file test temp isolation.** The deploy gate and test runner give each test file its own `TMPDIR` and clean it
+  up, eliminating cross-test shared-temp races while preserving startup-time spendguard-home isolation. (#174)
+- **Correct MCP notification response.** The warm HTTP MCP daemon returns `202 Accepted` with an empty body for
+  JSON-RPC notifications, preventing clients from parsing a zero-byte `200` response as JSON and reconnecting in a
+  loop. (#175)
+- **Offline tokenizer cache and AF_UNIX capacity under isolated temp roots.** Gate children preserve an inherited
+  Tiktoken cache (or use the ambient cache), create short scratch paths, and validate that the longest broker socket
+  remains within Darwin's path limit. (#176)
+- **Actionable consumer-install and broker-attach diagnosis.** Deploy refreshes stale registered editable installs,
+  doctor fails loudly on unresolved skew, and broker attach/import or protocol failures are distinguished from an
+  unreachable socket with the actual runtime and checkout evidence. (#181)
+- **Path-injected user gates verify fresh.** Fleet probing now treats an absent distribution as an explicit outcome
+  and verifies a managed source-injected interpreter from code and catalog identity, without attempting a PEP 668-
+  incompatible pip refresh or accepting a foreign checkout. (#185)
+- **Owned scratch-file lifecycles.** Production batch envelopes, scripts, fixture bridges, and subprocess test homes
+  now use scoped or explicit owners so every repository-created `mkdtemp`/`mkstemp` artifact is reaped on success and
+  failure paths. (#186)
+- **Fail-closed SQLite confinement and singleton locking.** Isolated tests reject database opens outside authorized
+  scratch/import roots (with an exact coverage-data exemption), and an unavailable lock primitive or lockfile now
+  refuses the protected operation instead of admitting multiple owners. (#187)
+- **Lane-queue writes fail loudly.** `enqueue_many` and `lease` propagate guard, lock, and programming failures;
+  only genuine transient SQLite operational errors degrade to an empty result, with an explicit diagnostic. (#188)
+
 ## [0.15.0] — 2026-10-22
 
 ### Added
