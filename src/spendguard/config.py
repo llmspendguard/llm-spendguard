@@ -35,6 +35,11 @@ SQLITE_MEMORY_MODE_QUERY_VALUE = "memory"
 ISOLATED_SQLITE_ROOT_ENVIRONMENT_KEYS = ("HOME", "SPENDGUARD_HOME", "TMPDIR")
 COVERAGE_DATA_FILE_ENVIRONMENT_KEY = "COVERAGE_FILE"
 COVERAGE_DEFAULT_DATA_FILE_NAME = ".coverage"
+ISOLATED_SQLITE_IMPORT_HOME_ROOT = (
+    HOME.expanduser().resolve()
+    if os.environ.get(ISOLATED_TEST_ENVIRONMENT_KEY) == ISOLATED_TEST_ENABLED_VALUE
+    else None
+)
 
 
 class IsolatedSQLitePathError(RuntimeError):
@@ -81,10 +86,13 @@ def validate_isolated_sqlite_open_path(database):
     database_path = isolated_sqlite_target_path(database)
     if database_path is None or is_coverage_data_file_path(database_path):
         return
-    allowed_roots = tuple(
+    live_allowed_roots = tuple(
         Path(root_value).expanduser().resolve()
         for environment_key in ISOLATED_SQLITE_ROOT_ENVIRONMENT_KEYS
         if (root_value := os.environ.get(environment_key))
+    )
+    allowed_roots = live_allowed_roots + (
+        (ISOLATED_SQLITE_IMPORT_HOME_ROOT,) if ISOLATED_SQLITE_IMPORT_HOME_ROOT is not None else ()
     )
     if any(database_path == allowed_root or allowed_root in database_path.parents for allowed_root in allowed_roots):
         return

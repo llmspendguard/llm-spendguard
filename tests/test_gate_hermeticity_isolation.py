@@ -15,6 +15,7 @@ HERMETICITY_REPO_ROOT = Path(__file__).resolve().parents[1]
 HERMETICITY_CLOCK_ORIGIN = 0
 HERMETICITY_SUCCESS_RETURN_CODE = 0
 HERMETICITY_SQLITE_FILENAME = "hermeticity.sqlite3"
+HERMETICITY_FROZEN_HOME_SQLITE_FILENAME = "frozen-home-hermeticity.sqlite3"
 HERMETICITY_SQLITE_READ_ONLY_URI_QUERY = "mode=ro"
 HERMETICITY_SQLITE_PROOF_DDL = "CREATE TABLE isolation_proof (proof_value INTEGER)"
 HERMETICITY_COVERAGE_PARALLEL_SUFFIX = "host.pid.random"
@@ -40,6 +41,15 @@ def verify_gate_hermeticity_isolation_contract():
         with patch.dict(os.environ, environment):
             with sqlite3.connect(Path(scratch_home) / HERMETICITY_SQLITE_FILENAME) as isolated_connection:
                 isolated_connection.execute(HERMETICITY_SQLITE_PROOF_DDL)
+            with tempfile.TemporaryDirectory() as redirected_home, patch.dict(
+                    os.environ, {
+                        config.LEDGER_HOME_EXPANSION_ENVIRONMENT_KEY: redirected_home,
+                        config.LEDGER_HOME_ENVIRONMENT_KEY: redirected_home,
+                    }):
+                os.environ.pop(chunked_suite.GATE_ISOLATED_TMPDIR_ENV_NAME, None)
+                frozen_home_database = config.HOME / HERMETICITY_FROZEN_HOME_SQLITE_FILENAME
+                with sqlite3.connect(frozen_home_database) as frozen_home_connection:
+                    frozen_home_connection.execute(HERMETICITY_SQLITE_PROOF_DDL)
             outside_uri = (
                 f"{config.SQLITE_FILE_URI_SCHEME}:{Path(__file__).resolve()}?"
                 f"{HERMETICITY_SQLITE_READ_ONLY_URI_QUERY}"
