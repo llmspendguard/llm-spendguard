@@ -1474,6 +1474,8 @@ def drain(worker=None, batch=None, lease_s=None, idle_rounds=None, idle_sleep=No
 
     Reuses the whole existing execution path — governor admission, bandit routing, $0 plan-served, API fallback —
     so the queue is PURELY the durability + priority + crash-recovery layer on top."""
+    from . import fleet
+    fleet.register_consumer(role=fleet.CONSUMER_ROLE_DAEMON)
     _lock_fd = _acquire_drain_lock()
     if _lock_fd is None:                                     # another drain already running → don't start a second one
         return {"ran": 0, "done": 0, "failed": 0, "billed": 0, "by_lane": {}, "rounds": 0,

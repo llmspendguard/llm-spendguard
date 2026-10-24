@@ -71,7 +71,7 @@ def ensure_codex_broker_owner_running():
 def run_codex_broker_owner_entrypoint():
     from . import fleet
     from .codex_daemon import run_dedicated_codex_broker_owner
-    fleet.register_consumer(label=CODEX_BROKER_OWNER_LAUNCHD_LABEL)
+    fleet.register_consumer(label=CODEX_BROKER_OWNER_LAUNCHD_LABEL, role=fleet.CONSUMER_ROLE_DAEMON)
     return 0 if run_dedicated_codex_broker_owner() else 1
 
 
