@@ -63,7 +63,50 @@ def _group_by_intent(jobs):
     return groups, bad, bad_urgency
 
 
-def _method_for(intent, n, goal, in_tok, out_tok):
+def _strict_schema_planning_constraint(items, goal, resolved_model):
+    """Return (must_enforce, fallback_suppressed, provider) for an intent-group's declared schemas.
+
+    This is only structural capability matching: output_contract parses the schema's own constraints, while
+    adapters derives the vendor capability from its request dialect SSOT.  The model is the one economics already
+    resolved; this helper never performs a second model-selection pass.
+    """
+    from . import adapters, output_contract
+    must_enforce = any(output_contract.needs_enforcement(job.get("schema")) for job in items)
+    suppressed = any(job.get("no_metered_fallback") or job.get("refuse_billed") for job in items)
+    suppressed = suppressed or bool((goal or {}).get("no_metered_fallback") or (goal or {}).get("refuse_billed"))
+    provider = adapters.provider_for(resolved_model) if resolved_model else None
+    return must_enforce and adapters.schema_capability(provider) == adapters.SCHEMA_STRICT, suppressed, provider
+
+
+def _record_set_schema_decision(intent, model, suppressed):
+    """Record the set planner's capability decision in the same audit stream as the per-call router."""
+    from . import guard
+    guard.record_decision(intent=intent, requested_model=model, chosen_model=model,
+                          counterfactual_usd=None, actual_usd=None, saved_usd=0, basis="capability",
+                          why=("strict-schema→enforce-suppressed(set):no_metered_fallback" if suppressed
+                               else "strict-schema→enforce(set)"))
+
+
+def _metered_schema_group_estimate(model, n, in_tok, out_tok):
+    """Price the enforcing realtime leg from the canonical pricing SSOT; unknown inputs remain honestly unpriced."""
+    from . import pricing
+    if not model or out_tok is None:
+        return None
+    try:
+        per_call = pricing.realtime_cost(model, int(in_tok), int(out_tok))
+    except Exception:
+        return None
+    return (float(per_call) * int(n)) if per_call is not None else None
+
+
+def _configured_batch_schema_provider():
+    """Provider of the planner's configured batch leg, resolved from config rather than duplicated as a literal."""
+    from . import adapters
+    batch_model = config._cfg_get("advisor", "batch_model", None)
+    return adapters.provider_for(batch_model) if batch_model else None
+
+
+def _method_for(intent, n, goal, in_tok, out_tok, items=None):
     """The execution method for one intent-group — ECONOMICS + the goal's urgency, never a keyword guess. Returns
     (method, est_usd, why). est_usd is None when route_report cannot price the group — an UNKNOWN cost, which the
     budget gate treats as fail-closed (a refusal under a budget), NEVER as $0. urgency forces the axis the caller
@@ -87,12 +130,29 @@ def _method_for(intent, n, goal, in_tok, out_tok):
         # ungated caller (no budget) can still run — but the cost is honestly reported as unknown, never invented free.
         return _REALTIME, None, "route_report could not price this group (%s) — cost UNKNOWN" % (str(e)[:50])
     if urgency == _REALTIME:
-        return _REALTIME, est, "urgency=realtime (forced)"
-    if urgency == _BATCH:
-        return _BATCH, est, "urgency=batch (forced; falls back to realtime if not batch-eligible)"
-    if rec_path == "batch_only":
-        return _BATCH, est, "auto → route_report recommends batch_only"
-    return _REALTIME, est, "auto → route_report recommends %s" % rec_path
+        method, why = _REALTIME, "urgency=realtime (forced)"
+    elif urgency == _BATCH:
+        method, why = _BATCH, "urgency=batch (forced; falls back to realtime if not batch-eligible)"
+    elif rec_path == "batch_only":
+        method, why = _BATCH, "auto → route_report recommends batch_only"
+    else:
+        method, why = _REALTIME, "auto → route_report recommends %s" % rec_path
+
+    resolved = (rep or {}).get("resolved") or {}
+    resolved_model = (resolved.get("batch_model") if method == _BATCH else config.advisor_model())
+    strict_required, suppressed, provider = _strict_schema_planning_constraint(items or (), goal, resolved_model)
+    if not strict_required:
+        return method, est, why
+    _record_set_schema_decision(intent, resolved_model, suppressed)
+    if suppressed:
+        return method, est, why + "; strict-schema→enforce-suppressed(set):no_metered_fallback (coverage caveat)"
+    # The configured chat-batch leg carries the strict binding per task; a different provider cannot use that leg.
+    if method == _BATCH and provider == _configured_batch_schema_provider():
+        return method, est, why + "; strict-schema→enforce(set): configured batch leg is enforcing"
+    tokens = (rep or {}).get("tokens") or {}
+    resolved_out = tokens.get("out_per_task") if out_tok is None else out_tok
+    metered_est = _metered_schema_group_estimate(resolved_model, n, in_tok, resolved_out)
+    return _REALTIME, metered_est, why + "; strict-schema→enforce(set): lane/batch ineligible, metered realtime"
 
 
 def _horizon_plan(groups, goal):
@@ -116,11 +176,35 @@ def _horizon_plan(groups, goal):
                             "urgency": (route_horizon.URGENT if any_urgent else default_urg)})
         rep = route_horizon.horizon_report(hgroups)
         out = {}
+        resolved = rep.get("resolved") or {}
+        realtime_model = resolved.get("realtime_model") or config.advisor_model()
+        batch_model = resolved.get("batch_model")
         for a in (rep.get("allocations") or []):
             method = _REALTIME if a["urgency"] == route_horizon.URGENT else (
                      _BATCH if (a.get("batch_tok") or 0) > 0 else _REALTIME)
+            items = groups.get(a["intent"]) or ()
+            candidate_model = batch_model if method == _BATCH else realtime_model
+            strict_required, suppressed, provider = _strict_schema_planning_constraint(items, goal, candidate_model)
+            capability_why = ""
+            estimate = a.get("usd")
+            if strict_required:
+                _record_set_schema_decision(a["intent"], candidate_model, suppressed)
+                if suppressed:
+                    capability_why = "; strict-schema→enforce-suppressed(set):no_metered_fallback (coverage caveat)"
+                elif not (method == _BATCH and provider == _configured_batch_schema_provider()):
+                    method = _REALTIME
+                    total_tokens = int(a.get("tokens") or 0)
+                    count = max(1, int(a.get("n") or len(items) or 1))
+                    group_in = next((g["in_tok"] for g in hgroups if g["intent"] == a["intent"]), 0)
+                    group_out = max(0, total_tokens // count - int(group_in))
+                    estimate = _metered_schema_group_estimate(realtime_model, count, group_in, group_out)
+                    capability_why = "; strict-schema→enforce(set): lane/batch ineligible, metered realtime"
+                else:
+                    capability_why = "; strict-schema→enforce(set): configured batch leg is enforcing"
             out[a["intent"]] = {"method": method, "est": a.get("usd"),
-                                "why": "horizon (%s → %s): %s" % (a["urgency"], a.get("method"), rep.get("why", ""))}
+                                "why": "horizon (%s → %s): %s%s" %
+                                       (a["urgency"], a.get("method"), rep.get("why", ""), capability_why)}
+            out[a["intent"]]["est"] = estimate
         return out or None
     except Exception as e:
         from . import gate
@@ -155,7 +239,7 @@ def plan_jobs(jobs, goal=None):
             # route_report (expected_output for the intent) so the estimate reflects both the set and the intent's history.
             in_tok = max(1, sum(len(str(j.get("prompt", ""))) for j in items) // max(1, n) // 4)
             execution_goal = {**goal, "urgency": _REALTIME} if requires_realtime else goal
-            method, est, why = _method_for(intent, n, execution_goal, in_tok, None)
+            method, est, why = _method_for(intent, n, execution_goal, in_tok, None, items=items)
             if requires_realtime:
                 why += "; realtime preserves declared per-job quality/reasoning/budget/deadline constraints"
         if est is None:
