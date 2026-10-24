@@ -26,6 +26,7 @@ import math
 import time
 import logging
 from types import MappingProxyType
+from .schema_indexes import ensure_ordered_indexes_coverage
 from decimal import Decimal, InvalidOperation, getcontext
 from . import config
 
@@ -388,14 +389,13 @@ class SpendLedger:
         # index_list is table-scoped, immune to the name squatting) and create any missing single-column index
         # under a table-qualified name that cannot collide. Idempotent: once present each is skipped, so this is
         # a one-time build (~0.1s/index over 356k rows) then a no-op on every later open.
-        indexed_cols = set()
-        for _ixrow in self._conn.execute("PRAGMA index_list(spend_events)"):
-            info = self._conn.execute(f'PRAGMA index_info("{_ixrow[1]}")').fetchall()
-            if len(info) == 1:                           # single-column index → the column it covers (info=[(seq,cid,name)])
-                indexed_cols.add(info[0][2])
-        for ix in _INDEXES:
-            if ix not in indexed_cols:
-                self._conn.execute(f"CREATE INDEX IF NOT EXISTS idx_spendevents_{ix} ON spend_events({ix})")
+        ensure_ordered_indexes_coverage(
+            self._conn,
+            "spend_events",
+            tuple(((index_column,), False) for index_column in _INDEXES) + ((
+                ("source", "cost_type", "cost_basis", "provider", "model", "intent"), False
+            ),),
+        )
         self._conn.execute("CREATE INDEX IF NOT EXISTS idx_audit_event ON spend_audit(event_id)")
         self._conn.commit()
         return tuple(have)
