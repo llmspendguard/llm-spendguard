@@ -19,6 +19,7 @@ os.environ["SPENDGUARD_RESIDENCY_REMAINING_TURNS_EST"] = "100"
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
 from spendguard import residency_gate as rg, adapters, plan_admission, claudecode, pricing  # noqa: E402
+from spendguard.config_schema import SETTINGS  # noqa: E402
 
 fails = []
 from functools import partial
@@ -52,10 +53,42 @@ ck("it is a WARNING, not a block (no permissionDecision=deny)",
    "permissionDecision" not in str(out) and out.get("hookSpecificOutput", {}).get("hookEventName") == "PostToolUse")
 ck("exactly ONE gated verdict call — never a session/subagent spawn", len(_calls) == 1)
 ck("judge is minimal, strict-schema, and output-bounded",
-   _calls[0][2].get("reasoning") == "minimal" and _calls[0][2].get("max_tokens") == 120
+   _calls[0][2].get("reasoning") == "minimal"
+   and _calls[0][2].get("max_tokens") == rg.RESIDENCY_JUDGE_OUTPUT_TOKENS_DEFAULT
    and _calls[0][2].get("schema", {}).get("additionalProperties") is False
    and _calls[0][2].get("no_metered_fallback") is True)
 ck("judge receives the whole tool result", "Y" * 4000 in _calls[0][1])
+
+# ── a bounded long rationale cannot truncate away the required boolean verdict ──
+_calls.clear()
+_long_rationale_payload = {**_big, "tool_input": {"command": "inspect long rationale"},
+                           "tool_response": "R" * 4000}
+def _truncation_sensitive_reply(result):
+    judge_kwargs = _calls[-1][2]
+    rationale_schema = judge_kwargs.get("schema", {}).get("properties", {}).get("why", {})
+    rationale_bound = rationale_schema.get("maxLength")
+    if not isinstance(rationale_bound, int):
+        raise RuntimeError("synthetic old-path truncation: unbounded rationale exceeded the reply ceiling")
+    return {"delegable": True, "why": "r" * rationale_bound}
+adapters.structured_reply = _truncation_sensitive_reply
+long_rationale_out = rg.evaluate_posttooluse(_long_rationale_payload)
+ck("a long bounded rationale cannot silently drop a delegable warning",
+   bool(long_rationale_out.get("systemMessage")) and "permissionDecision" not in str(long_rationale_out))
+long_rationale_schema = _calls[-1][2].get("schema", {})
+residency_setting_defaults = {
+    setting["key"]: setting["default"] for setting in SETTINGS if setting.get("section") == "residency_gate"
+}
+ck("the judge schema bounds why using the configured named default",
+   long_rationale_schema.get("properties", {}).get("why", {}).get("maxLength")
+   == rg.RESIDENCY_JUDGE_RATIONALE_MAX_CHARS_DEFAULT
+   == residency_setting_defaults.get("judge_rationale_max_chars"))
+ck("the judge requires both fields and sizes output for the whole bounded reply",
+   long_rationale_schema.get("required") == ["delegable", "why"]
+   and _calls[-1][2].get("max_tokens") == rg.RESIDENCY_JUDGE_OUTPUT_TOKENS_DEFAULT
+   == residency_setting_defaults.get("judge_output_tokens")
+   and rg.RESIDENCY_JUDGE_OUTPUT_TOKENS_DEFAULT >= rg.residency_judge_minimum_output_tokens(
+       rg.RESIDENCY_JUDGE_RATIONALE_MAX_CHARS_DEFAULT))
+adapters.structured_reply = lambda r: _VERDICT
 
 # ── content-hash cache: the same result is judged ONCE ──
 rg.evaluate_posttooluse(_big)

@@ -30,7 +30,13 @@ RESIDENCY_MIN_RESULT_BYTES_DEFAULT = 10240
 RESIDENCY_MIN_TURNS_DEFAULT = 20
 RESIDENCY_MIN_CONTEXT_TOKENS_DEFAULT = 100000
 RESIDENCY_REMAINING_TURNS_DEFAULT = 100
-RESIDENCY_JUDGE_OUTPUT_TOKENS_DEFAULT = 120
+RESIDENCY_JUDGE_RATIONALE_MAX_CHARS_DEFAULT = 160
+RESIDENCY_JSON_ESCAPE_CHARS_PER_INPUT_CHAR_MAX = 12
+RESIDENCY_JUDGE_REPLY_FIXED_TOKEN_MARGIN = 128
+RESIDENCY_JUDGE_OUTPUT_TOKENS_DEFAULT = (
+    RESIDENCY_JUDGE_RATIONALE_MAX_CHARS_DEFAULT * RESIDENCY_JSON_ESCAPE_CHARS_PER_INPUT_CHAR_MAX
+    + RESIDENCY_JUDGE_REPLY_FIXED_TOKEN_MARGIN
+)
 RESIDENCY_SUBAGENT_RETURN_TOKENS_DEFAULT = 400
 RESIDENCY_RECEIPT_TOP_CONTRIBUTORS_DEFAULT = 5
 RESIDENCY_VERDICT_CACHE_ENTRIES_DEFAULT = 512
@@ -58,6 +64,12 @@ def _residency_configured_integer(key):
         return int(v)
     except (TypeError, ValueError):
         return int(spec["default"])
+
+
+def residency_judge_minimum_output_tokens(rationale_max_chars):
+    """Conservative whole-JSON budget: even surrogate-pair escaping fits at one output token per ASCII byte."""
+    return (rationale_max_chars * RESIDENCY_JSON_ESCAPE_CHARS_PER_INPUT_CHAR_MAX
+            + RESIDENCY_JUDGE_REPLY_FIXED_TOKEN_MARGIN)
 
 
 def _result_text(payload):
@@ -133,6 +145,11 @@ def _judge_residency_delegability(tool_name, tool_input, result_text):
         from . import adapters, plan_admission, calls
         spendguard.require()
         model = plan_admission.ready_meta_model(config.advisor_judge_model())
+        rationale_max_chars = max(1, _residency_configured_integer("judge_rationale_max_chars"))
+        judge_output_tokens = max(
+            _residency_configured_integer("judge_output_tokens"),
+            residency_judge_minimum_output_tokens(rationale_max_chars),
+        )
         prompt = (f"A tool result from `{tool_name}` ({len(result_text.encode('utf-8', 'ignore'))} bytes) landed in "
                   f"the MAIN conversation thread, so "
                   f"it is re-read on EVERY following turn. Could the work that produced it have been DELEGATED to a "
@@ -140,13 +157,16 @@ def _judge_residency_delegability(tool_name, tool_input, result_text):
                   f"— or did it need to stay in the thread (a file about to be edited, interactive multi-step work)?\n"
                   f"Tool input (whole): {json.dumps(tool_input, ensure_ascii=False)}\n"
                   f"Tool result (whole): {result_text}\n"
-                  f'Reply JSON only: {{"delegable": true|false, "why": "<one short line>"}}.')
+                  f'Reply JSON only: {{"delegable": true|false, "why": "<one short line, at most '
+                  f'{rationale_max_chars} characters>"}}.')
         with calls.context(intent="spendguard:residency-nudge"):
             r = adapters.call(model, prompt, sig="spendguard:residency-nudge", reasoning="minimal",
-                              max_tokens=_residency_configured_integer("judge_output_tokens"),
+                              max_tokens=judge_output_tokens,
                               no_metered_fallback=True,
-                              schema={"type": "object", "additionalProperties": False, "required": ["delegable"],
-                                      "properties": {"delegable": {"type": "boolean"}, "why": {"type": "string"}}})
+                              schema={"type": "object", "additionalProperties": False,
+                                      "required": ["delegable", "why"],
+                                      "properties": {"delegable": {"type": "boolean"},
+                                                     "why": {"type": "string", "maxLength": rationale_max_chars}}})
         j = adapters.structured_reply(r)
     except LedgerReadError:
         raise
