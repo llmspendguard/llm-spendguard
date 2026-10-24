@@ -8,7 +8,7 @@ real tasks, JUDGES each output for quality, and RECORDS the cost + good/bad per 
 
 Inside spendguard's rails, always: ESTIMATE-FIRST (run=False is a zero-spend projection + the plan; a
 `budget_usd` refuses before spending), the fan-out prefers $0 subscription LANES and is metered by the gate
-otherwise, and the quality JUDGE is an LLM (never a keyword rule) — the same judge advisor.reconstruct uses.
+otherwise, and the quality JUDGE is an LLM (never a keyword rule) — the same judge advisor.reconstruct_advisor_history uses.
 
   bakeoff('code-review', candidates=['openai:gpt-5.5','deepseek:deepseek-v4-flash'], sample_n=5)  # estimate
   bakeoff('code-review', candidates=[...], sample_n=5, run=True, budget_usd=0.50)                 # measure

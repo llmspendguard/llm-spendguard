@@ -59,7 +59,7 @@ conv.index_cmd = _spy("index_cmd")
 review.review = _spy("review", ret={"requests": 1, "cost": 0.01})
 advisor.mine = _spy("mine", ret={"requests": 1, "cost": 0.01})
 conv.synth = _spy("synth", ret={"requests": 1, "cost": 0.01})
-advisor.reconstruct = _spy("reconstruct", ret={"requests": 0, "cost": 0.0})
+advisor.reconstruct_advisor_history = _spy("reconstruct", ret={"requests": 0, "cost": 0.0})
 
 repo = _bootstrap_owned_temp_dir(BOOTSTRAP_FAKE_REPOSITORY_PREFIX)
 tdir = _bootstrap_owned_temp_dir(BOOTSTRAP_FAKE_TRANSCRIPTS_PREFIX)
@@ -131,7 +131,7 @@ def _ledger_sensitive_review(*a, **k):
 review.review = _ledger_sensitive_review
 advisor.mine = _spy("mine", ret={"insights": 1, "cost": 0.0})
 conv.synth = _spy("synth", ret={"insights": 1, "cost": 0.0})
-advisor.reconstruct = _spy("reconstruct", ret={"judged": 0, "cost": 0.0})
+advisor.reconstruct_advisor_history = _spy("reconstruct", ret={"judged": 0, "cost": 0.0})
 negative_control_meta_before = budget.meta_spent_today()
 rc_run = bootstrap.bootstrap(repo=repo, transcripts=tdir, run=True)
 check("run=True returns 0", rc_run == 0)
@@ -143,7 +143,7 @@ check("negative control records meta spend when run=True",
 review.review = _spy("review", ret={"requests": 1, "cost": 0.0})
 advisor.mine = _spy("mine", ret={"requests": 1, "cost": 0.0})
 conv.synth = _spy("synth", ret={"requests": 1, "cost": 0.0})
-advisor.reconstruct = _spy("reconstruct", ret={"requests": 0, "cost": 0.0})
+advisor.reconstruct_advisor_history = _spy("reconstruct", ret={"requests": 0, "cost": 0.0})
 
 print("-- main(argv): dry-run CLI path returns 0 (no --run) --")
 rc4 = bootstrap.main(["--repo", repo, "--transcripts", tdir, "--cap", "5"])

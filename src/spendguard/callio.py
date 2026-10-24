@@ -10,7 +10,7 @@ Sources (all ZERO token cost):
 
 Storage is BOUNDED: we keep at most `cap` samples per (intent, model) — enough to estimate good% with a
 confidence interval, not every request. Shares the spendguard db. Quality is written back by the caged
-judge (advisor.reconstruct). RLock — reentrant.
+judge (advisor.reconstruct_advisor_history). RLock — reentrant.
 """
 import json, threading, datetime
 import logging

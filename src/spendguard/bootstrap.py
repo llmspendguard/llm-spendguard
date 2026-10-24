@@ -79,7 +79,7 @@ def bootstrap(repo=None, transcripts=None, run=False, cap=50):
                         ("mine — insight synthesis", lambda: advisor.mine(run=run)),
                         ("mine-conv synth — playbook from chat", lambda: conv.synth(transcripts, run=run)),
                         ("reconstruct — output-quality judge (isolated judging is weak without ground truth)",
-                         lambda: advisor.reconstruct(run=run))):
+                         lambda: advisor.reconstruct_advisor_history(run=run))):
         print(f"\n[{_label}]")
         try:
             _fn()

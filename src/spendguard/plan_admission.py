@@ -24,7 +24,8 @@ def lane_risk(lane):
     under SPENDGUARD_TEST_ISOLATED, and that gating env is reported here so the risk verdict is reproducible rather than
     silently host-dependent."""
     test_isolated = bool(os.getenv("SPENDGUARD_TEST_ISOLATED"))   # explicit + recorded (below) — not a hidden env gate
-    row = next((r for r in lanes.lane_headroom(do_fetch=False) if r.get("lane") == lane), None)
+    lane_rows = lanes.lane_headroom(do_fetch=False)
+    row = next((r for r in lane_rows if r.get("lane") == lane), None)
     remaining = row.get("remaining_pct") if row else None
     capped = bool(row and row.get("known") and remaining is not None and float(remaining) <= _threshold())
     spec = lane_registry.lane_spec(lane) or {}
@@ -33,7 +34,8 @@ def lane_risk(lane):
     proactive_shed = lane in _shed_set()
     return {"lane": lane, "remaining_pct": remaining, "known": bool(row and row.get("known")),
             "capped": capped, "paid_overage": paid_overage, "proactive_shed": proactive_shed,
-            "test_isolated": test_isolated, "at_risk": capped or paid_overage or proactive_shed}
+            "test_isolated": test_isolated, "at_risk": capped or paid_overage or proactive_shed,
+            "lane_health": {lane_row.get("lane"): lane_row for lane_row in lane_rows if lane_row.get("lane")}}
 
 
 def _ready(lane):
@@ -115,10 +117,10 @@ def decide(model, intent, auth_over_quota=False):
     provider = adapters.provider_for(model)
     primary = adapters._LANES.get(provider, (None,))[0]
     if not primary:
-        return {"action": "keep", "model": model}
+        return {"action": "keep", "model": model, "risk": None, "candidate_estimates": None}
     risk = lane_risk(primary)
     if not risk["at_risk"]:
-        return {"action": "keep", "model": model}
+        return {"action": "keep", "model": model, "risk": risk, "candidate_estimates": []}
     candidates = []
     for candidate in lane_balance.substitutes_for(intent):
         cprov = adapters.provider_for(candidate)
@@ -138,7 +140,7 @@ def decide(model, intent, auth_over_quota=False):
             why = _admission_base_reason(risk)
             return {"action": "redirect", "model": chosen, "lane": lane, "reason": why,
                     "reason_class": _admission_reason_class(risk),
-                    "requested_model": model}
+                    "requested_model": model, "risk": risk, "candidate_estimates": ranked}
     # AVAILABILITY FALLBACK — the proper shed. No PROVEN substitute exists for this intent, but this is a SUBSTITUTABLE
     # call (a caller model-pin / measurement never reaches decide — the `not _caller_model_pin` gate in adapters.call),
     # so SERVE it on the best READY alternative lane instead of refusing. The proven substitute above is PREFERRED
@@ -151,15 +153,16 @@ def decide(model, intent, auth_over_quota=False):
             lane, chosen = alt
             why = _admission_base_reason(risk) + " → ready lane (substitutable, no confirmed substitute)"
             return {"action": "redirect", "model": chosen, "lane": lane, "reason": why,
-                    "reason_class": _admission_reason_class(risk), "requested_model": model}
+                    "reason_class": _admission_reason_class(risk), "requested_model": model,
+                    "risk": risk, "candidate_estimates": None}
     # No ready alternative. A PROACTIVELY-shed lane (in advisor.shed_lanes but NOT actually capped/on overage) is still
     # AVAILABLE — shedding is a PREFERENCE, so with nowhere to shed to we KEEP using it rather than refuse. Only a truly
     # capped / paid-overage lane cannot serve, so it refuses (never fail open onto the exhausted lane).
     if risk.get("proactive_shed") and not (risk.get("capped") or risk.get("paid_overage")):
-        return {"action": "keep", "model": model}
+        return {"action": "keep", "model": model, "risk": risk, "candidate_estimates": None}
     return {"action": "refuse", "model": model, "lane": primary,
             "reason": "plan is capped/on paid overage and no ready lane can serve this substitutable call",
-            "risk": risk}
+            "risk": risk, "candidate_estimates": []}
 
 
 def ready_meta_model(default_model):

@@ -19,7 +19,7 @@ _SRC = pathlib.Path(__file__).resolve().parent.parent / "src" / "spendguard"
 _B_PINS = [
     ("advisor.py", "optimize", "call", "no_substitution"),          # reports model=model (recommender of record)
     ("advisor.py", "recommend_models", "call", "no_substitution"),  # reports model=model (ranker of record)
-    ("advisor.py", "reconstruct", "call", "no_substitution"),       # records set_quality(src="judge"), reports model=judge
+    ("advisor.py", "reconstruct_advisor_history", "call", "no_substitution"),  # records judge quality for history
     ("lane_balance.py", "propose_substitutes", "call", "no_substitution"),  # records proposed_by=judge
 ]
 # C: (file, enclosing-func, callee-name, required kw present — any value). realtime_cost must receive provider=.

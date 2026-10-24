@@ -1,0 +1,224 @@
+"""Permanent metadata for reconstructing why and how a governed call ran.
+
+Request and response bodies remain solely in the age-bounded ``call_content`` tier.
+"""
+import datetime
+import json
+
+from .schema_indexes import ensure_ordered_index_coverage
+
+
+ROUTING_SNAPSHOT_COLUMN = "routing_snapshot_json"
+REQUEST_SCHEMA_COLUMN = "request_schema_json"
+REQUEST_MAX_TOKENS_COLUMN = "request_max_tokens"
+REQUEST_DECOMPOSITION_COLUMN = "request_decomposition_json"
+PERMANENT_CALL_AUDIT_COLUMNS = (
+    ROUTING_SNAPSHOT_COLUMN,
+    REQUEST_SCHEMA_COLUMN,
+    REQUEST_MAX_TOKENS_COLUMN,
+    REQUEST_DECOMPOSITION_COLUMN,
+)
+RECONSTRUCTION_ITEM_NAMES = (
+    "subject_body",
+    "outcome_body",
+    "model_execution",
+    "routing_decision",
+    "cost_latency",
+    "attribution",
+    "structured_context",
+)
+DECISIONS_TABLE = "decisions"
+DECISIONS_MIGRATION_TABLE = "decisions_with_call_fk"
+DECISION_COLUMNS = (
+    "ts", "day", "project", "intent", "basis", "requested_model", "requested_effort",
+    "chosen_model", "chosen_effort", "counterfactual_usd", "actual_usd", "saved_usd",
+    "why", "reason_class", "call_id",
+)
+DIRECT_ROUTING_BASIS = "direct"
+DIRECT_ROUTING_REASON = "requested route served without a recorded substitution"
+DIRECT_ROUTING_REASON_CLASS = "other"
+UNAVAILABLE_CONTENT_STATUS = "ttl_expired_or_not_retained"
+ROUTING_SNAPSHOT_FIELDS = (
+    "intent", "plan_usage_pct", "on_overage", "lane_health", "candidate_estimates",
+    "basis", "reason_class", "named_gaps",
+)
+
+
+def encode_audit_json(value):
+    """Losslessly encode structured metadata; bodies are never passed to this function."""
+    if value is None:
+        return None
+    return json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+
+
+def decode_audit_json(value):
+    return json.loads(value) if value is not None else None
+
+
+def build_routing_snapshot(*, intent, plan_decision=None, best_value_pick=None):
+    """Normalize already-held router evidence without performing any ledger or lane query."""
+    plan_decision = plan_decision or {}
+    risk = plan_decision.get("risk")
+    remaining = risk.get("remaining_pct") if isinstance(risk, dict) else None
+    plan_usage = (100.0 - float(remaining)) if remaining is not None else None
+    candidate_estimates = plan_decision.get("candidate_estimates")
+    if candidate_estimates is None and isinstance(best_value_pick, dict):
+        candidate_estimates = best_value_pick.get("considered")
+    basis = "best-value" if best_value_pick else "plan-admission" if plan_decision else DIRECT_ROUTING_BASIS
+    reason_class = plan_decision.get("reason_class") or (
+        "best-value" if best_value_pick else DIRECT_ROUTING_REASON_CLASS)
+    values = {
+        "intent": intent,
+        "plan_usage_pct": plan_usage,
+        "on_overage": risk.get("paid_overage") if isinstance(risk, dict) else None,
+        "lane_health": risk.get("lane_health") if isinstance(risk, dict) else None,
+        "candidate_estimates": candidate_estimates,
+        "basis": basis,
+        "reason_class": reason_class,
+    }
+    values["named_gaps"] = [field_name for field_name in ROUTING_SNAPSHOT_FIELDS[:-1]
+                            if values.get(field_name) is None]
+    return values
+
+
+def _create_decisions_table(connection, table_name):
+    connection.execute(
+        f"CREATE TABLE IF NOT EXISTS {table_name} ("
+        "ts TEXT, day TEXT, project TEXT, intent TEXT, basis TEXT, "
+        "requested_model TEXT, requested_effort TEXT, chosen_model TEXT, chosen_effort TEXT, "
+        "counterfactual_usd REAL, actual_usd REAL, saved_usd REAL, why TEXT, reason_class TEXT, "
+        "call_id TEXT REFERENCES calls(id))"
+    )
+
+
+def ensure_decisions_call_fk_schema(connection, *, commit=True):
+    """Create or migrate decisions so nullable historical rows coexist with an enforced call FK."""
+    _create_decisions_table(connection, DECISIONS_TABLE)
+    existing_columns = {row[1] for row in connection.execute(
+        f"PRAGMA table_info({DECISIONS_TABLE})").fetchall()}
+    for column_name in ("why", "reason_class", "call_id"):
+        if column_name not in existing_columns:
+            connection.execute(f"ALTER TABLE {DECISIONS_TABLE} ADD COLUMN {column_name} TEXT")
+    foreign_keys = connection.execute(f"PRAGMA foreign_key_list({DECISIONS_TABLE})").fetchall()
+    has_call_fk = any(
+        row[2] == "calls" and row[3] == "call_id" and row[4] == "id" for row in foreign_keys
+    )
+    if not has_call_fk:
+        connection.execute(f"DROP TABLE IF EXISTS {DECISIONS_MIGRATION_TABLE}")
+        _create_decisions_table(connection, DECISIONS_MIGRATION_TABLE)
+        projection = ",".join(DECISION_COLUMNS)
+        connection.execute(
+            f"INSERT INTO {DECISIONS_MIGRATION_TABLE} ({projection}) "
+            f"SELECT {projection} FROM {DECISIONS_TABLE}"
+        )
+        connection.execute(f"DROP TABLE {DECISIONS_TABLE}")
+        connection.execute(
+            f"ALTER TABLE {DECISIONS_MIGRATION_TABLE} RENAME TO {DECISIONS_TABLE}"
+        )
+    ensure_ordered_index_coverage(connection, DECISIONS_TABLE, ("day",))
+    ensure_ordered_index_coverage(connection, DECISIONS_TABLE, ("intent",))
+    ensure_ordered_index_coverage(connection, DECISIONS_TABLE, ("call_id",))
+    if commit:
+        connection.commit()
+
+
+def insert_linked_decision(connection, *, call_id, project, intent, basis, requested_model,
+                           requested_effort, chosen_model, chosen_effort, counterfactual_usd,
+                           actual_usd, saved_usd, why, reason_class, timestamp=None):
+    """Insert the audit decision on the caller's existing transaction and connection."""
+    recorded_at = timestamp or datetime.datetime.now(datetime.timezone.utc)
+    connection.execute(
+        f"INSERT INTO {DECISIONS_TABLE} ({','.join(DECISION_COLUMNS)}) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        (
+            recorded_at.isoformat(timespec="seconds"), recorded_at.strftime("%Y-%m-%d"), project,
+            intent, basis, requested_model, requested_effort, chosen_model, chosen_effort,
+            float(counterfactual_usd or 0), float(actual_usd or 0), float(saved_usd or 0), why,
+            reason_class, call_id,
+        ),
+    )
+
+
+def _reconstruction_item(value, *, available=True, reason=None):
+    return {
+        "status": "available" if available else "unavailable",
+        "value": value if available else None,
+        "reason": reason,
+    }
+
+
+def reconstruct(call_id):
+    """Return the seven audit items for one physical call, with explicit availability."""
+    from . import calls, content_retention
+
+    connection = calls._calls_db()
+    call_columns = (
+        "id", "ts", "intent", "caller", "provider", "model", "kind", "cost", "latency",
+        "effort", "executor", "project", "outcome", "disposition", "provider_error",
+        "requested_model", "served_model", "resolved_lane", "redirect_reason",
+        ROUTING_SNAPSHOT_COLUMN, REQUEST_SCHEMA_COLUMN, REQUEST_MAX_TOKENS_COLUMN,
+        REQUEST_DECOMPOSITION_COLUMN,
+    )
+    row = connection.execute(
+        f"SELECT {','.join(call_columns)} FROM calls WHERE id=?", (call_id,)
+    ).fetchone()
+    if row is None:
+        raise KeyError(call_id)
+    call = dict(zip(call_columns, row))
+    ensure_decisions_call_fk_schema(connection)
+    decision_rows = connection.execute(
+        f"SELECT {','.join(DECISION_COLUMNS)} FROM {DECISIONS_TABLE} WHERE call_id=? ORDER BY ts",
+        (call_id,),
+    ).fetchall()
+    decisions = [dict(zip(DECISION_COLUMNS, decision_row)) for decision_row in decision_rows]
+    content_row = None
+    try:
+        content_row = connection.execute(
+            f"SELECT prompt_json,system_json,response_json FROM {content_retention.CONTENT_RETENTION_TABLE} "
+            "WHERE call_id=? ORDER BY ts DESC LIMIT 1",
+            (call_id,),
+        ).fetchone()
+    except Exception:
+        content_row = None
+    content_available = content_row is not None
+    prompt_value = decode_audit_json(content_row[0]) if content_available else None
+    system_value = decode_audit_json(content_row[1]) if content_available else None
+    response_value = decode_audit_json(content_row[2]) if content_available else None
+    unavailable_reason = None if content_available else UNAVAILABLE_CONTENT_STATUS
+    items = {
+        "subject_body": _reconstruction_item(
+            {"prompt": prompt_value, "system": system_value},
+            available=content_available,
+            reason=unavailable_reason,
+        ),
+        "outcome_body": _reconstruction_item(
+            response_value, available=content_available, reason=unavailable_reason),
+        "model_execution": _reconstruction_item({
+            "provider": call["provider"], "model": call["model"], "served_model": call["served_model"],
+            "requested_model": call["requested_model"], "effort": call["effort"],
+            "executor": call["executor"], "resolved_lane": call["resolved_lane"],
+            "kind": call["kind"], "outcome": call["outcome"], "disposition": call["disposition"],
+            "provider_error": call["provider_error"],
+        }),
+        "routing_decision": _reconstruction_item({
+            "snapshot": decode_audit_json(call[ROUTING_SNAPSHOT_COLUMN]),
+            "decisions": decisions,
+            "redirect_reason": call["redirect_reason"],
+        }),
+        "cost_latency": _reconstruction_item({"cost": call["cost"], "latency": call["latency"]}),
+        "attribution": _reconstruction_item({
+            "intent": call["intent"], "project": call["project"], "caller": call["caller"],
+        }),
+        "structured_context": _reconstruction_item({
+            "request_schema": decode_audit_json(call[REQUEST_SCHEMA_COLUMN]),
+            "request_max_tokens": call[REQUEST_MAX_TOKENS_COLUMN],
+            "request_decomposition": decode_audit_json(call[REQUEST_DECOMPOSITION_COLUMN]),
+        }),
+    }
+    return {
+        "call_id": call_id,
+        "items": items,
+        "content_retention": {
+            "status": "within_ttl" if content_available else UNAVAILABLE_CONTENT_STATUS,
+            "permanent_body_tier": False,
+        },
+    }
