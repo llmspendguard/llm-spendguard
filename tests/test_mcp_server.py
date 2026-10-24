@@ -281,52 +281,95 @@ print("\n-- HTTP transport: a NOTIFICATION POST gets 202 (no body), never a 200+
 # rmcp tried to serde_json-parse the zero-byte body and died with "Deserialize error: EOF while parsing a value at
 # line 1 column 0, when send initialized notification", quitting the transport worker and reconnecting in a loop.
 # Per the MCP Streamable HTTP transport a notification-only POST MUST get `202 Accepted` with NO body. We replay the
-# EXACT offending payload over a real socket (as rmcp does) and assert the fixed shape — the unit of the defect is
-# the over-the-wire response, so the guard must bind a socket, not just call handle().
-import threading as _threading
-import urllib.request as _urlreq
-import urllib.error as _urlerr
-from http.server import ThreadingHTTPServer as _THS
+# EXACT offending payload through the real HTTP handler over an in-process socket pair and assert the fixed shape —
+# the unit of the defect is the HTTP response, so the guard must exercise the handler, not just call handle().
+import http.client as _http_client
+import socket as _socket
 
 os.environ["SPENDGUARD_MCP_AUTO_RESPAWN"] = "0"   # no mid-request self-heal _exit during the test
+_JSON_RPC_VERSION = "2.0"
+_INITIALIZED_NOTIFICATION_METHOD = "notifications/initialized"
+_HTTP_OK_STATUS = 200
+_HTTP_ACCEPTED_STATUS = 202
+_INITIALIZED_NOTIFICATION_REPETITIONS = 2
+_IN_PROCESS_PEER_ADDRESS = ("in-process", 0)
+_HTTP_CONTENT_TYPE_HEADER = "Content-Type"
+_HTTP_CONTENT_LENGTH_HEADER = "Content-Length"
 
-def _post_mcp(base, payload):
+def _post_mcp_in_process(handler_class, payload):
     data = json.dumps(payload).encode("utf-8")
-    rq = _urlreq.Request(base + "/mcp", data=data, method="POST",
-                         headers={"Content-Type": "application/json",
-                                  "Accept": "application/json, text/event-stream"})
+    request_bytes = (
+        b"POST /mcp HTTP/1.1\r\n"
+        + b"Host: in-process\r\n"
+        + f"{_HTTP_CONTENT_TYPE_HEADER}: application/json\r\n".encode("ascii")
+        + b"Accept: application/json, text/event-stream\r\n"
+        + f"{_HTTP_CONTENT_LENGTH_HEADER}: {len(data)}\r\n".encode("ascii")
+        + b"Connection: close\r\n\r\n"
+        + data
+    )
+    client_socket, server_socket = _socket.socketpair()
     try:
-        with _urlreq.urlopen(rq, timeout=5) as resp:
-            return resp.status, resp.headers.get("Content-Type"), resp.read()
-    except _urlerr.HTTPError as e:                 # 4xx/5xx still carry a status + body
-        return e.code, e.headers.get("Content-Type"), e.read()
+        client_socket.sendall(request_bytes)
+        client_socket.shutdown(_socket.SHUT_WR)
+        handler_class(server_socket, _IN_PROCESS_PEER_ADDRESS, object())
+        response = _http_client.HTTPResponse(client_socket)
+        response.begin()
+        return response.status, response.getheader(_HTTP_CONTENT_TYPE_HEADER), response.read()
+    finally:
+        server_socket.close()
+        client_socket.close()
 
-_srv = _THS(("127.0.0.1", 0), mcp_server.build_mcp_http_handler())
-_t = _threading.Thread(target=_srv.serve_forever, daemon=True)
-_t.start()
-try:
-    _base = f"http://127.0.0.1:{_srv.server_address[1]}"
+_http_handler_class = mcp_server.build_mcp_http_handler()
+# a REQUEST (has id) still returns 200 + a parseable JSON-RPC result body — unchanged
+st, ct, body = _post_mcp_in_process(
+    _http_handler_class,
+    {"jsonrpc": _JSON_RPC_VERSION, "id": 1, "method": "initialize",
+     "params": {"protocolVersion": "2025-06-18", "capabilities": {}}},
+)
+ck("HTTP initialize request → 200 with a JSON body that parses to a result frame",
+   st == _HTTP_OK_STATUS
+   and json.loads(body).get("result", {}).get("serverInfo", {}).get("name") == "spendguard")
 
-    # a REQUEST (has id) still returns 200 + a parseable JSON-RPC result body — unchanged
-    st, ct, body = _post_mcp(_base, {"jsonrpc": "2.0", "id": 1, "method": "initialize",
-                                     "params": {"protocolVersion": "2025-06-18", "capabilities": {}}})
-    ck("HTTP initialize request → 200 with a JSON body that parses to a result frame",
-       st == 200 and json.loads(body).get("result", {}).get("serverInfo", {}).get("name") == "spendguard")
-
-    # the EXACT payload that killed the rmcp worker — a notification (no id)
-    st, ct, body = _post_mcp(_base, {"jsonrpc": "2.0", "method": "notifications/initialized"})
-    ck("HTTP notifications/initialized → 202 Accepted (the spec'd ack for a notification-only POST)", st == 202)
-    ck("HTTP notifications/initialized → EMPTY body (nothing for the client to deserialize)", body == b"")
-    # the specific crash shape rmcp chokes on is `200 + application/json + empty body`; prove it is gone
+# Replay the EXACT payload that killed the rmcp worker TWICE. Idempotent re-initialization does not turn the
+# second envelope into a request: every response must independently remain 202 with literally zero body bytes.
+_initialized_notification = {"jsonrpc": _JSON_RPC_VERSION, "method": _INITIALIZED_NOTIFICATION_METHOD}
+for _attempt_number in range(_INITIALIZED_NOTIFICATION_REPETITIONS):
+    st, ct, body = _post_mcp_in_process(_http_handler_class, _initialized_notification)
+    ck(f"HTTP notifications/initialized attempt {_attempt_number + 1} → 202 Accepted",
+       st == _HTTP_ACCEPTED_STATUS)
+    ck(f"HTTP notifications/initialized attempt {_attempt_number + 1} → EMPTY body", body == b"")
     ck("HTTP notification is NOT answered with 200+application/json+empty (the rmcp EOF-at-col-0 crash shape)",
-       not (st == 200 and (ct or "").startswith("application/json") and body == b""))
+       not (st == _HTTP_OK_STATUS and (ct or "").startswith("application/json") and body == b""))
 
-    # an UNKNOWN notification is also just acknowledged (202), never a reply frame
-    st, _ct, body = _post_mcp(_base, {"jsonrpc": "2.0", "method": "notifications/cancelled"})
-    ck("HTTP unknown notification → 202 Accepted, empty body", st == 202 and body == b"")
+# an UNKNOWN notification is also just acknowledged (202), never a reply frame
+st, _ct, body = _post_mcp_in_process(
+    _http_handler_class, {"jsonrpc": _JSON_RPC_VERSION, "method": "notifications/cancelled"}
+)
+ck("HTTP unknown notification → 202 Accepted, empty body", st == _HTTP_ACCEPTED_STATUS and body == b"")
+
+# Simulate the reported alternate/idempotent re-init dispatcher branch returning an acknowledgement frame. The HTTP
+# response seam must derive notification semantics from the inbound envelope, never from what a branch returned.
+_original_http_dispatch = mcp_server.handle
+_repeat_dispatch_count = {"value": 0}
+
+
+def _dispatch_repeated_initialized_with_ack(request):
+    if "id" not in request and request.get("method") == _INITIALIZED_NOTIFICATION_METHOD:
+        _repeat_dispatch_count["value"] += 1
+        if _repeat_dispatch_count["value"] > 1:
+            return {"jsonrpc": _JSON_RPC_VERSION, "result": {}}
+    return _original_http_dispatch(request)
+
+
+mcp_server.handle = _dispatch_repeated_initialized_with_ack
+_http_handler_class = mcp_server.build_mcp_http_handler()
+try:
+    _post_mcp_in_process(_http_handler_class, _initialized_notification)
+    st, _ct, body = _post_mcp_in_process(_http_handler_class, _initialized_notification)
+    ck("HTTP response seam keeps a repeated initialized notification at 202+empty even if dispatch returns an ack",
+       st == _HTTP_ACCEPTED_STATUS and body == b"")
 finally:
-    _srv.shutdown()
-    _srv.server_close()
+    mcp_server.handle = _original_http_dispatch
 
 print(f"\n{'[FAIL]' if fails else 'OK'} test_mcp_server: {len(fails)} failure(s)")
 sys.exit(1 if fails else 0)
