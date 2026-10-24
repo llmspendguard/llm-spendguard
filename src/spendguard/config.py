@@ -451,6 +451,17 @@ def today_utc():
     return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d")
 
 
+def read_json_cache_entry(path, key):
+    """Return a shallow copy of a dict cache entry, or None on any cache read failure."""
+    try:
+        import json as _json
+        cached = _json.loads(_pathlib.Path(path).read_text())
+        value = cached.get(key)
+        return dict(value) if isinstance(value, dict) else None
+    except Exception:
+        return None
+
+
 def update_json(path, mutate, reason="", keep_backups=None, required=False, quarantine_unparseable=False):
     """The ONE way this package rewrites a whole JSON file. Every such write goes through here.
 

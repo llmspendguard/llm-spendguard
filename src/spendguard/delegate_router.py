@@ -5,6 +5,7 @@ different provider plan. Meaning (task kind and provider suitability) is decided
 code contains no keyword router. Provider/model choices are derived from advisor.lane_models and lane_registry.
 """
 import importlib
+import hashlib
 import json
 import os
 import uuid
@@ -23,9 +24,32 @@ AGENTIC_DELEGATE_TIMEOUT_S = 1800
 CODEX_AGENTIC_EVENTS_FILENAME = "codex-agentic-executions.jsonl"
 CODEX_AGENTIC_EVENTS_SCHEMA_VERSION = 1
 DELEGATE_EXECUTION_INVALID_RESULT = "delegate_execution_invalid_result"
+DELEGATE_EXECUTION_DEGRADED_TOOL_ENVELOPE = "delegate_execution_degraded_tool_envelope"
 DELEGATE_EXECUTION_NO_RESULT = "delegate_execution_no_result"
+DELEGATE_EXECUTION_RESULT_TOO_LONG = "delegate_execution_result_too_long"
 DELEGATE_EXECUTION_REFUSED = "delegate_execution_refused"
 DELEGATE_EXECUTION_NOT_STARTED = "delegate_execution_not_started"
+DELEGATE_ROUTE_CODEX = "codex"
+DELEGATE_ROUTE_CLAUDE_SUBAGENT = "claude-subagent"
+DELEGATE_ROUTE_LANE = "lane-route"
+DELEGATE_ROUTE_MAIN_THREAD = "main-thread"
+DELEGATE_CLASSIFIER_CACHE_FILENAME = "delegate-route-verdicts.json"
+DELEGATE_CLASSIFIER_PLAN_VERSION = "delegate-route-v1"
+DELEGATE_INCREMENTAL_SUBSCRIPTION_USD = 0.0
+DELEGATE_CLI_RESULT_MAX_LINES = 10
+DELEGATE_EXECUTION_RESULT_MAX_LINES = DELEGATE_CLI_RESULT_MAX_LINES - 1
+DELEGATE_TOOL_DEGRADED_MARKER = "DEGRADED_TOOL_ENVELOPE"
+DELEGATE_CONTEXT_BOUNDARY = {
+    DELEGATE_ROUTE_CLAUDE_SUBAGENT: "requires the host's live conversation or Claude desktop application state",
+    DELEGATE_ROUTE_MAIN_THREAD: "requires interactive, decision-coupled, turn-by-turn work",
+    DELEGATE_ROUTE_LANE: "is batchable independent one-shot comprehension",
+    DELEGATE_ROUTE_CODEX: "is a self-contained agentic task with all evidence and workspace supplied",
+}
+LEGACY_DELEGATE_KIND_ROUTES = {
+    "oneshot": DELEGATE_ROUTE_LANE,
+    "agentic": DELEGATE_ROUTE_CODEX,
+    "needs_claude": DELEGATE_ROUTE_CLAUDE_SUBAGENT,
+}
 
 
 def codex_agentic_events_path():
@@ -62,21 +86,40 @@ def _append_codex_agentic_event(event, execution_id, *, plan, model, cwd):
 _CLASSIFY_SCHEMA = {
     "type": "object", "additionalProperties": False,
     "properties": {
-        "kind": {"type": "string", "enum": ["oneshot", "agentic", "needs_claude"]},
+        "route": {"type": "string", "enum": list(DELEGATE_CONTEXT_BOUNDARY)},
         "provider": {"type": ["string", "null"]},
         "self_contained": {"type": "boolean"},
         "why": {"type": "string"},
     },
-    "required": ["kind", "provider", "self_contained", "why"], "nonempty": ["why"],
+    "required": ["route", "provider", "self_contained", "why"], "nonempty": ["why"],
 }
 
 _CLASSIFY_SYSTEM = (
     "Classify a task for safe offloading from the current Claude coding session. Return only the requested JSON. "
-    "oneshot means one independent answer/extraction/summary with no tools; agentic means a self-contained multi-step "
-    "task that may edit the supplied workspace and run commands; needs_claude means it depends on live conversational "
-    "context or state not included in the task/files. Choose provider only from the supplied configured plan names. "
-    "Be conservative: non-self-contained work is needs_claude."
+    "Apply the supplied route-boundary data. Choose provider only for codex or lane-route, from the supplied configured "
+    "plan names. claude-subagent and main-thread have null provider. This is a semantic judgement, not keyword matching."
 )
+
+
+def delegate_route_fingerprint(task, files=None, provider="auto", exclude_plans=None):
+    """Content-address the complete classification plan and evidence."""
+    payload = {"version": DELEGATE_CLASSIFIER_PLAN_VERSION, "task": task,
+               "evidence": _whole_file_evidence(files), "provider": provider,
+               "excluded_plans": sorted(exclude_plans or ()), "configured_plans": _configured_plan_models(),
+               "boundary": DELEGATE_CONTEXT_BOUNDARY}
+    return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
+
+
+def _delegate_classifier_cache_path():
+    configured = config._cfg_get("delegate", "classifier_cache_path", None)
+    path = Path(configured).expanduser() if configured else config.HOME / DELEGATE_CLASSIFIER_CACHE_FILENAME
+    return path if path.is_absolute() else config.HOME / path
+
+
+def _write_cached_delegate_verdict(fingerprint, verdict):
+    path = _delegate_classifier_cache_path()
+    config.update_json(path, lambda cached: {**cached, fingerprint: verdict},
+                       reason="delegate classifier content-addressed verdict")
 
 
 def _configured_plan_models():
@@ -165,6 +208,10 @@ def classify_task(task, files=None, provider="auto", exclude_plans=None):
     """Agentically classify the WHOLE task and WHOLE attached files on an existing $0 lane."""
     from . import gate
     gate.require()                         # fail closed: even this plan-routed LLM call runs only in an enforcing process
+    fingerprint = delegate_route_fingerprint(task, files=files, provider=provider, exclude_plans=exclude_plans)
+    cached = config.read_json_cache_entry(_delegate_classifier_cache_path(), fingerprint)
+    if cached is not None:
+        return {**cached, "fingerprint": fingerprint, "decision_path": "model-cache"}
     plans = _configured_plan_models()
     if not plans:
         return {"error": "no configured plans (set advisor.lane_models)"}
@@ -176,9 +223,10 @@ def classify_task(task, files=None, provider="auto", exclude_plans=None):
     if not menu:
         return {"error": "no eligible configured plans remain after exclusions"}
     prompt = (f"TASK (complete):\n{task}\n{_whole_file_evidence(files)}\n\n"
+              f"ROUTE BOUNDARY DATA: {json.dumps(DELEGATE_CONTEXT_BOUNDARY, sort_keys=True)}\n"
               f"CONFIGURED PLAN NAMES: {json.dumps(menu)}\n"
               f"Provider is {'fixed to ' + explicit if explicit else 'for you to choose from that exact list'}. "
-              "Return kind, provider, self_contained, why.")
+              "Return route, provider, self_contained, why.")
     from . import calls
     with calls.gate_internal():
         response = lane_balance.delegate(prompt, system=_CLASSIFY_SYSTEM, intent=CLASSIFY_INTENT,
@@ -189,17 +237,21 @@ def classify_task(task, files=None, provider="auto", exclude_plans=None):
         obj = json.loads(response["text"])
     except (TypeError, json.JSONDecodeError):
         return {"error": "classifier returned invalid JSON"}
-    kinds = set(_CLASSIFY_SCHEMA["properties"]["kind"]["enum"])
-    valid_provider = obj.get("provider") in menu if obj.get("provider") is not None else obj.get("kind") == "needs_claude"
-    if (set(obj) != set(_CLASSIFY_SCHEMA["required"]) or obj.get("kind") not in kinds
+    routes = set(_CLASSIFY_SCHEMA["properties"]["route"]["enum"])
+    remote_route = obj.get("route") in (DELEGATE_ROUTE_CODEX, DELEGATE_ROUTE_LANE)
+    valid_provider = obj.get("provider") in menu if remote_route else obj.get("provider") is None
+    if (set(obj) != set(_CLASSIFY_SCHEMA["required"]) or obj.get("route") not in routes
             or not isinstance(obj.get("self_contained"), bool) or not isinstance(obj.get("why"), str)
             or not obj.get("why").strip() or not valid_provider):
         return {"error": "classifier result failed validation"}
-    if explicit and obj["provider"] != explicit and obj["kind"] != "needs_claude":
+    if explicit and obj["provider"] != explicit and remote_route:
         return {"error": "classifier changed the explicitly selected provider"}
     obj["classifier_lane"] = response.get("lane")
     obj["classifier_model"] = response.get("model")
-    return obj
+    obj["kind"] = "oneshot" if obj["route"] == DELEGATE_ROUTE_LANE else "agentic"
+    durable = dict(obj)
+    _write_cached_delegate_verdict(fingerprint, durable)
+    return {**durable, "fingerprint": fingerprint, "decision_path": "model"}
 
 
 def _estimated_tokens(task, files, provider, model, intent):
@@ -236,7 +288,7 @@ def _estimate_route(task, files, classification, intent):
     return {"plan": plan, "model": model, "input_tokens": in_tok, "output_tokens": out_tok,
             "output_basis": out_basis, "real_api_usd": 0.0, "est_value_usd": est_value,
             "saved_overage_usd": (est_value * ratio if ratio is not None else None),
-            "overage_basis": "ledger measured" if ratio is not None else "unavailable"}
+            "saved_overage_basis": "ledger counterfactual" if ratio is not None else "unavailable"}
 
 
 # AUTHOR-IN-WORKTREE contract, baked into the delegate prompt so callers stop re-phrasing it and the provider's
@@ -253,6 +305,9 @@ _WORKTREE_AUTHOR_CONSTRAINTS = (
     "- Host write-time hooks (honestreview and similar) are NOT available in your sandbox and are NOT required — the host\n"
     "  reviews your changes via its commit gate. Do NOT bail or refuse for lack of hook-enabled tools; just edit the files.\n"
     "- Make ONLY the file changes the task requires, confined to this working directory.\n"
+    "- Use configured MCP tools for code/content/review/spend evidence. If a required MCP tool is denied or unreachable,\n"
+    f"  report {DELEGATE_TOOL_DEGRADED_MARKER}: <tool>: <exact error>; never silently substitute a fallback.\n"
+    f"- Return no more than {DELEGATE_EXECUTION_RESULT_MAX_LINES} lines: verdict/result, file:line evidence, and unknowns.\n"
 )
 
 
@@ -322,6 +377,7 @@ def _route_agentic(plan, prompt, model, timeout, cwd):
             kwargs["timeout"] = float(config._cfg_get("delegate", "agentic_timeout_s", AGENTIC_DELEGATE_TIMEOUT_S)
                                       or AGENTIC_DELEGATE_TIMEOUT_S)
         kwargs["recycle_on_timeout"] = config.codex_daemon_admission_settings()["recycle_on_timeout"]
+        kwargs["delegate_context"] = True
         prompt = prompt + _WORKTREE_AUTHOR_CONSTRAINTS    # bake the sandbox/git/hook contract into what codex actually receives
     if spec["exec"] != "codex_exec":
         return module.run_prompt(prompt, **kwargs)
@@ -345,8 +401,12 @@ def delegate_task(task, files=None, intent=None, provider="auto", execute=False,
     classification = classify_task(task, files=files, provider=(resolved_provider or provider))
     if classification.get("error"):
         return {"status": "error", "classification": classification}
-    if classification["kind"] == "needs_claude" or not classification["self_contained"]:
-        return {"status": "refused", "classification": classification, "why": classification["why"]}
+    route = classification.get("route") or LEGACY_DELEGATE_KIND_ROUTES.get(classification.get("kind"))
+    if route in (DELEGATE_ROUTE_CLAUDE_SUBAGENT, DELEGATE_ROUTE_MAIN_THREAD) or not classification["self_contained"]:
+        defect = route == DELEGATE_ROUTE_CLAUDE_SUBAGENT
+        return {"status": "refused", "classification": classification, "why": classification["why"],
+                "reason": "delegate_brief_not_self_contained" if defect else "delegate_requires_main_thread",
+                "brief_defect": defect}
     readiness = delegation_lanes_ready(classification["kind"])
     ready = readiness["ready"]
     if classification.get("provider") not in ready:
@@ -388,6 +448,15 @@ def delegate_task(task, files=None, intent=None, provider="auto", execute=False,
         return {**result, "status": "error", "execution": execution,
                 "reason": DELEGATE_EXECUTION_REFUSED if execution_error else DELEGATE_EXECUTION_NO_RESULT,
                 "why": str(execution_error) if execution_error else "executor produced no final result"}
+    if DELEGATE_TOOL_DEGRADED_MARKER in execution_text:
+        return {**result, "status": "error", "execution": execution,
+                "reason": DELEGATE_EXECUTION_DEGRADED_TOOL_ENVELOPE,
+                "why": "delegated execution reported a required MCP tool as denied or unreachable"}
+    if len(execution_text.splitlines()) > DELEGATE_EXECUTION_RESULT_MAX_LINES:
+        return {**result, "status": "error", "execution": execution,
+                "reason": DELEGATE_EXECUTION_RESULT_TOO_LONG,
+                "why": ("delegated execution exceeded the result line contract; complete evidence remains "
+                        "available in the structured execution result")}
     executor_spec = lane_registry.lane_spec(estimate["plan"])
     if (classification["kind"] == "agentic" and executor_spec["exec"] == "codex_exec"
             and execution.get("execution_started") is not True):
@@ -414,7 +483,10 @@ def delegate_task(task, files=None, intent=None, provider="auto", execute=False,
     est_value_basis = ("lane-measured tokens" if classification["kind"] == "oneshot"
                        else "token estimate (warm daemon); reconcile plan value via `spendguard codex sync`")
     receipt = {"plan": estimate["plan"], "model": estimate["model"], "real_api_usd": actual_api,
-               "est_value_usd": actual_value, "saved_overage_usd": avoided, "est_value_basis": est_value_basis}
+               "subscription_usd": DELEGATE_INCREMENTAL_SUBSCRIPTION_USD,
+               "est_value_usd": actual_value, "saved_overage_usd": avoided,
+               "saved_overage_basis": "ledger counterfactual" if ratio is not None else "unavailable",
+               "est_value_basis": est_value_basis}
     return {**result, "status": "executed", "execution": execution,
             "receipt": receipt, "changed_files": changed_files}
 
@@ -447,11 +519,12 @@ def delegate_cli(argv=None):
                            provider=args.provider, execute=args.yes and not args.estimate, timeout=args.timeout,
                            cwd=args.cwd)
     classification = result.get("classification") or {}
-    print(f"classification: {classification.get('kind', 'error')}"
-          f"{(' → ' + str(classification.get('provider'))) if classification.get('provider') else ''}"
-          f" — {classification.get('why') or classification.get('error', '')}")
     estimate = result.get("estimate") or {}
-    if estimate and not estimate.get("error"):
+    if result["status"] != "executed":
+        print(f"classification: {classification.get('kind', 'error')}"
+              f"{(' → ' + str(classification.get('provider'))) if classification.get('provider') else ''}"
+              f" — {classification.get('why') or classification.get('error', '')}")
+    if result["status"] == "estimate" and estimate and not estimate.get("error"):
         saved = (f"~${estimate['saved_overage_usd']:.4f}" if estimate.get("saved_overage_usd") is not None
                  else "unavailable (no measured ledger rate)")
         print(f"route: {estimate['plan']} ({estimate['model']})  ::  real API $0.0000  ::  "
@@ -461,8 +534,10 @@ def delegate_cli(argv=None):
         receipt = result["receipt"]
         saved = (f"~${receipt['saved_overage_usd']:.4f}" if receipt["saved_overage_usd"] is not None
                  else "unavailable")
-        print(f"delegated to {receipt['plan']} ({receipt['model']})  ::  real API ${receipt['real_api_usd']:.4f}  ::  "
-              f"est-value ${receipt['est_value_usd']:.4f} on {receipt['plan']}  ::  saved {saved} vs Claude overage")
+        real_total = receipt["real_api_usd"] + receipt["subscription_usd"]
+        print(f"Real ${real_total:.4f} = ${receipt['real_api_usd']:.4f} codex API/overage + "
+              f"${receipt['subscription_usd']:.4f} Subscription ({receipt['plan']})  ::  "
+              f"Est sub value ${receipt['est_value_usd']:.4f}  ::  Saved vs Anthropic-overage {saved}")
     elif result["status"] in ("refused", "error"):
         execution = result.get("execution")
         execution_error = execution.get("error") if isinstance(execution, dict) else None
