@@ -1037,7 +1037,10 @@ def serve_stdio(inp=None, outp=None):
     now running the latest code. Exiting here (never mid-request) means no request is dropped. This is what makes
     'always serve the latest' true for a long-running stdio server; disable with SPENDGUARD_MCP_AUTO_RESPAWN=0."""
     from . import fleet, release
-    fleet.register_consumer(role=fleet.CONSUMER_ROLE_DAEMON)
+    from .launchd_labels import MCP_STDIO_LAUNCHD_LABEL
+    fleet.register_consumer(role=fleet.CONSUMER_ROLE_DAEMON,
+                            supervision_mode=fleet.SUPERVISION_LAUNCHD,
+                            supervision_ref=MCP_STDIO_LAUNCHD_LABEL)
     inp = inp or sys.stdin
     outp = outp or sys.stdout
     respawn_on_deploy = _auto_respawn_enabled()
@@ -1208,7 +1211,10 @@ def serve_http(host="127.0.0.1", port=4913):
     flight), if a newer green commit was deployed the process exits so the supervisor respawns it on the latest code."""
     from http.server import ThreadingHTTPServer
     from . import fleet
-    fleet.register_consumer(role=fleet.CONSUMER_ROLE_DAEMON)
+    from .launchd_labels import MCP_HTTP_LAUNCHD_LABEL
+    fleet.register_consumer(role=fleet.CONSUMER_ROLE_DAEMON,
+                            supervision_mode=fleet.SUPERVISION_LAUNCHD,
+                            supervision_ref=MCP_HTTP_LAUNCHD_LABEL)
     _prewarm_codex_daemon()
     ThreadingHTTPServer((host, port), build_mcp_http_handler()).serve_forever()
 

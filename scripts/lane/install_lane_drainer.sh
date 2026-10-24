@@ -22,7 +22,7 @@ VENV_PY="$REPO/.venv.nosync/bin/python"
 INTERVAL="${1:-300}"                                                # seconds between drains
 SG_HOME="${SPENDGUARD_HOME:-$HOME/.spendguard}"
 LOG="$SG_HOME/lane-drain.log"
-LABEL="com.spendguard.lane-drain"
+LABEL="$("$VENV_PY" -c 'from spendguard.launchd_labels import LANE_DRAIN_LAUNCHD_LABEL; print(LANE_DRAIN_LAUNCHD_LABEL)')"
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
 mkdir -p "$SG_HOME" "$HOME/Library/LaunchAgents"
 

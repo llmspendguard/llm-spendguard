@@ -129,8 +129,11 @@ def serve(host=DEFAULT_HOST, port=DEFAULT_PORT, token=None):
     """Start the localhost cross-LLM ask server (blocking; Ctrl-C to stop)."""
     import spendguard
     from . import fleet
+    from .launchd_labels import ASK_SERVE_LAUNCHD_LABEL
     spendguard.require()         # the server SPENDS — fail closed if this interpreter is not gated
-    fleet.register_consumer(role=fleet.CONSUMER_ROLE_DAEMON)
+    fleet.register_consumer(role=fleet.CONSUMER_ROLE_DAEMON,
+                            supervision_mode=fleet.SUPERVISION_LAUNCHD,
+                            supervision_ref=ASK_SERVE_LAUNCHD_LABEL)
     httpd = make_server(host, port, token)
     print(f"spendguard ask server on http://{host}:{port}  (POST /ask · GET /health · /metadata)"
           + ("  [Bearer token required]" if token else "  [localhost, no auth]"))

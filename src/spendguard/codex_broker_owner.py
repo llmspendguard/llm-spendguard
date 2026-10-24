@@ -6,13 +6,21 @@ import subprocess
 import sys
 
 from . import config
+from .launchd_labels import CODEX_BROKER_OWNER_LAUNCHD_LABEL
 
 
-CODEX_BROKER_OWNER_LAUNCHD_LABEL = "com.spendguard.codex-broker-owner"
 CODEX_BROKER_OWNER_ROLE = "codex-broker-owner"
 CODEX_BROKER_OWNER_PLIST_SUFFIX = ".plist"
 CODEX_BROKER_OWNER_LAUNCHD_DIRECTORY_PARTS = ("Library", "LaunchAgents")
 CODEX_BROKER_OWNER_KICKSTART_TIMEOUT_S = 15
+LAUNCHD_GUI_DOMAIN_TEMPLATE = "gui/%d"
+
+
+def run_declared_launchd_action(action_arguments, label):
+    """Run one launchctl action against an explicitly declared label; never discovers by command line."""
+    domain_label = "%s/%s" % (LAUNCHD_GUI_DOMAIN_TEMPLATE % os.getuid(), label)
+    return subprocess.run(["launchctl", *action_arguments, domain_label], capture_output=True, text=True,
+                          timeout=CODEX_BROKER_OWNER_KICKSTART_TIMEOUT_S)
 
 
 def launchd_codex_broker_owner_supported():
@@ -56,12 +64,10 @@ def ensure_codex_broker_owner_running():
         return False
     try:
         path = install_codex_broker_owner_launchd()
-        domain = "gui/%d" % os.getuid()
-        domain_label = "%s/%s" % (domain, CODEX_BROKER_OWNER_LAUNCHD_LABEL)
+        domain = LAUNCHD_GUI_DOMAIN_TEMPLATE % os.getuid()
         subprocess.run(["launchctl", "bootstrap", domain, str(path)], capture_output=True, text=True,
                        timeout=CODEX_BROKER_OWNER_KICKSTART_TIMEOUT_S)
-        result = subprocess.run(["launchctl", "kickstart", domain_label], capture_output=True, text=True,
-                                timeout=CODEX_BROKER_OWNER_KICKSTART_TIMEOUT_S)
+        result = run_declared_launchd_action(("kickstart",), CODEX_BROKER_OWNER_LAUNCHD_LABEL)
         return result.returncode == 0
     except Exception as exc:
         config.warn_once("[spendguard] dedicated codex broker owner could not be started: %s" % str(exc)[:160])
@@ -71,7 +77,9 @@ def ensure_codex_broker_owner_running():
 def run_codex_broker_owner_entrypoint():
     from . import fleet
     from .codex_daemon import run_dedicated_codex_broker_owner
-    fleet.register_consumer(label=CODEX_BROKER_OWNER_LAUNCHD_LABEL, role=fleet.CONSUMER_ROLE_DAEMON)
+    fleet.register_consumer(role=fleet.CONSUMER_ROLE_DAEMON,
+                            supervision_mode=fleet.SUPERVISION_LAUNCHD,
+                            supervision_ref=CODEX_BROKER_OWNER_LAUNCHD_LABEL)
     return 0 if run_dedicated_codex_broker_owner() else 1
 
 

@@ -643,15 +643,20 @@ def _dispatch(argv=None):
             _fr = _fleet.restart_stale(apply=True)
             for _x in _fr.get("restarted", []):
                 print(f"deploy: fleet — {_x.get('action')} {_x.get('launchd_label')} (pid {_x.get('pid')})")
+            for _f in _fr.get(_fleet.FLEET_RESTART_FAILURE_KEY, []):
+                print(f"deploy: 🔴 fleet restart FAILED {_f.get('launchd_label')} (pid {_f.get('pid')}) — "
+                      f"{_f.get('why')}", file=sys.stderr)
             for _w in _fr.get("warn", []):
                 print(f"deploy: ⚠ STALE consumer pid {_w.get('pid')} — {_w.get('why')}: {str(_w.get('cmdline'))[:60]}",
                       file=sys.stderr)
             for _t in _fr.get(_fleet.FLEET_RESTART_TRANSIENT_KEY, []):
                 print(f"deploy: fleet — transient one-shot, self-exiting: pid {_t.get('pid')} "
                       f"{str(_t.get('cmdline'))[:60]}")
-            if (not _fr.get("restarted") and not _fr.get("warn")
+            if (not _fr.get("restarted") and not _fr.get("warn") and not _fr.get(_fleet.FLEET_RESTART_FAILURE_KEY)
                     and not _fr.get(_fleet.FLEET_RESTART_TRANSIENT_KEY)):
                 print("deploy: fleet — all tracked consumers already on the green commit.")
+            if _fr.get(_fleet.FLEET_RESTART_FAILURE_KEY):
+                return _deploy_failed_verdict("one or more supervised consumers failed to return on green")
         _deployment_verdict = _fleet.verify_and_refresh_registered_interpreters(apply="--no-refresh" not in r)
         print("deploy: completeness — "
               f"N_total={_deployment_verdict['N_total']} N_updated={_deployment_verdict['N_updated']} "
@@ -671,6 +676,46 @@ def _dispatch(argv=None):
                 return 2
             print(_json.dumps(_fleet.deregister_interpreter(rest[1]), indent=2))
             return 0
+        if rest and rest[0] == "consumers":
+            from . import release as _release
+
+            consumers = _fleet.running_consumers(prune=False)
+            green_sha = (_release.green_pointer() or {}).get("sha") or "—"
+            if "--json" in rest:
+                print(_json.dumps(consumers, indent=2, default=str))
+                return 0
+            for consumer in consumers:
+                print(f"{consumer['pid']} identity={consumer.get('pid_create_time')} role={consumer.get('role')} "
+                      f"supervision={consumer.get('supervision_mode') or 'none'} "
+                      f"ref={consumer.get('supervision_ref') or '—'} served={consumer.get('served_sha') or '—'} "
+                      f"green={green_sha} "
+                      f"liveness={consumer.get('liveness')} classification={consumer.get('classification')}")
+            return 0
+        if rest and rest[0] == "restart":
+            selections = sum(flag in rest for flag in ("--consumer", "--stale", "--all-supervised"))
+            if selections != 1:
+                print("usage: spendguard fleet restart [--consumer <id> | --stale | --all-supervised] [--apply]",
+                      file=sys.stderr)
+                return 2
+            selected_consumer = None
+            if "--consumer" in rest:
+                selected_index = rest.index("--consumer")
+                if selected_index + 1 >= len(rest):
+                    print("fleet restart: --consumer requires an id", file=sys.stderr)
+                    return 2
+                selected_consumer = rest[selected_index + 1]
+            result = _fleet.restart_stale(apply="--apply" in rest, consumer_id=selected_consumer,
+                                          all_supervised="--all-supervised" in rest)
+            print(_json.dumps(result, indent=2))
+            return 1 if result.get(_fleet.FLEET_RESTART_FAILURE_KEY) else 0
+        if rest and rest[0] == "stop":
+            if "--consumer" not in rest or rest.index("--consumer") + 1 >= len(rest):
+                print("usage: spendguard fleet stop --consumer <id>", file=sys.stderr)
+                return 2
+            selected_consumer = rest[rest.index("--consumer") + 1]
+            result = _fleet.stop_supervised_consumer(selected_consumer, apply=True)
+            print(_json.dumps(result, indent=2))
+            return 0 if result.get("ok") else 1
         if "--restart" in rest:
             res = _fleet.restart_stale(apply="--dry-run" not in rest)
             print(_json.dumps(res, indent=2))

@@ -1,7 +1,6 @@
 """Offline mutation guard: fleet actions require a recycle-proof (pid, create_time) identity."""
 import os
 import sqlite3
-import subprocess
 import sys
 import tempfile
 
@@ -42,8 +41,9 @@ LEGACY_LABEL = "com.example.legacy"
 def _insert_consumer(pid, create_time, label):
     with sqlite3.connect(str(config.HOME / "fleet.db")) as connection:
         connection.execute(
-            "INSERT INTO consumers(pid,served_sha,cmdline,launchd_label,pid_create_time) VALUES(?,?,?,?,?)",
-            (pid, STALE_SHA, "fixture consumer", label, create_time),
+            "INSERT INTO consumers(pid,served_sha,cmdline,pid_create_time,supervision_mode,supervision_ref) "
+            "VALUES(?,?,?,?,?,?)",
+            (pid, STALE_SHA, "fixture consumer", create_time, fleet.SUPERVISION_LAUNCHD, label),
         )
 
 
@@ -61,7 +61,6 @@ def test_fleet_pid_identity_controls_reporting_pruning_and_kickstarts():
     }
     kickstarts = []
     real_psutil = fleet.psutil
-    real_subprocess_run = subprocess.run
     real_green_pointer = release.green_pointer
 
     def fake_process(pid):
@@ -69,10 +68,12 @@ def test_fleet_pid_identity_controls_reporting_pruning_and_kickstarts():
             raise _FakeNoSuchProcess(pid)
         return living[pid]
 
-    def fake_subprocess_run(argv, **kwargs):
-        if argv[:3] == ["launchctl", "kickstart", "-k"]:
-            kickstarts.append(list(argv))
-        return type("_FakeCompletedProcess", (), {"returncode": 0, "stderr": "", "stdout": ""})()
+    real_kickstart = fleet.kickstart_declared_launchd_consumer
+    real_verify = fleet.verify_launchd_consumer_green_return
+
+    def fake_kickstart(label):
+        kickstarts.append(label)
+        return {"ok": True, "detail": ""}
 
     fake_psutil = type(
         "_FakePsutil",
@@ -80,7 +81,8 @@ def test_fleet_pid_identity_controls_reporting_pruning_and_kickstarts():
         {"NoSuchProcess": _FakeNoSuchProcess, "Process": staticmethod(fake_process)},
     )
     fleet.psutil = fake_psutil
-    subprocess.run = fake_subprocess_run
+    fleet.kickstart_declared_launchd_consumer = fake_kickstart
+    fleet.verify_launchd_consumer_green_return = lambda **_kwargs: True
     release.green_pointer = lambda: {"sha": GREEN_SHA, "short": GREEN_SHA}
     try:
         consumers = fleet.running_consumers()
@@ -97,7 +99,7 @@ def test_fleet_pid_identity_controls_reporting_pruning_and_kickstarts():
         assert VANISHED_PID not in remaining and RECYCLED_PID not in remaining
 
         result = fleet.restart_stale(apply=True)
-        targets = [argv[-1] for argv in kickstarts]
+        targets = kickstarts
         assert any(VERIFIED_LABEL in target for target in targets), targets
         assert not any(VANISHED_LABEL in target for target in targets), targets
         assert not any(RECYCLED_LABEL in target for target in targets), targets
@@ -110,7 +112,8 @@ def test_fleet_pid_identity_controls_reporting_pruning_and_kickstarts():
         assert fleet.fleet_summary()["unverifiable"] == 1
     finally:
         fleet.psutil = real_psutil
-        subprocess.run = real_subprocess_run
+        fleet.kickstart_declared_launchd_consumer = real_kickstart
+        fleet.verify_launchd_consumer_green_return = real_verify
         release.green_pointer = real_green_pointer
 
 
