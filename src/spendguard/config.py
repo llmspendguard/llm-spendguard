@@ -9,10 +9,12 @@ import contextlib
 import datetime
 import math
 import os
+import sys
 import threading
 import sqlite3
 import gc
 import time
+from urllib.parse import parse_qs, unquote, urlsplit
 from functools import lru_cache, partialmethod
 from pathlib import Path
 
@@ -22,6 +24,72 @@ try:
     HOME.mkdir(parents=True, exist_ok=True)
 except Exception:
     pass
+
+ISOLATED_TEST_ENVIRONMENT_KEY = "SPENDGUARD_TEST_ISOLATED"
+ISOLATED_TEST_ENABLED_VALUE = "1"
+SQLITE_CONNECT_AUDIT_EVENT = "sqlite3.connect"
+SQLITE_MEMORY_DATABASE_NAME = ":memory:"
+SQLITE_FILE_URI_SCHEME = "file"
+SQLITE_MEMORY_MODE_QUERY_KEY = "mode"
+SQLITE_MEMORY_MODE_QUERY_VALUE = "memory"
+ISOLATED_SQLITE_ROOT_ENVIRONMENT_KEYS = ("HOME", "SPENDGUARD_HOME", "TMPDIR")
+
+
+class IsolatedSQLitePathError(RuntimeError):
+    """An isolated test tried to open SQLite state outside its scratch roots."""
+
+
+class SingleInstanceLockUnavailableError(RuntimeError):
+    """A singleton lock could not establish cross-process exclusion."""
+
+
+def isolated_sqlite_target_path(database):
+    """Return the resolved file target for a SQLite connect argument, or None for memory databases."""
+    try:
+        database_text = os.fsdecode(os.fspath(database))
+    except TypeError:
+        return None
+    if database_text == SQLITE_MEMORY_DATABASE_NAME:
+        return None
+    parsed_database_uri = urlsplit(database_text)
+    if parsed_database_uri.scheme == SQLITE_FILE_URI_SCHEME:
+        database_query = parse_qs(parsed_database_uri.query)
+        if database_query.get(SQLITE_MEMORY_MODE_QUERY_KEY) == [SQLITE_MEMORY_MODE_QUERY_VALUE]:
+            return None
+        database_text = unquote(parsed_database_uri.path)
+        if database_text == SQLITE_MEMORY_DATABASE_NAME:
+            return None
+    return Path(database_text).expanduser().resolve()
+
+
+def validate_isolated_sqlite_open_path(database):
+    """Fail closed when an isolated test's SQLite file escapes every declared scratch root."""
+    database_path = isolated_sqlite_target_path(database)
+    if database_path is None:
+        return
+    allowed_roots = tuple(
+        Path(root_value).expanduser().resolve()
+        for environment_key in ISOLATED_SQLITE_ROOT_ENVIRONMENT_KEYS
+        if (root_value := os.environ.get(environment_key))
+    )
+    if any(database_path == allowed_root or allowed_root in database_path.parents for allowed_root in allowed_roots):
+        return
+    allowed_root_list = ", ".join(os.fspath(allowed_root) for allowed_root in allowed_roots) or "<none>"
+    raise IsolatedSQLitePathError(
+        f"isolated SQLite path escaped scratch roots: {database_path}; allowed roots: {allowed_root_list}"
+    )
+
+
+def isolated_sqlite_connect_audit_hook(event, arguments):
+    """Audit every Python SQLite open made after spendguard config is imported."""
+    if event != SQLITE_CONNECT_AUDIT_EVENT or not arguments:
+        return
+    if os.environ.get(ISOLATED_TEST_ENVIRONMENT_KEY) != ISOLATED_TEST_ENABLED_VALUE:
+        return
+    validate_isolated_sqlite_open_path(arguments[0])
+
+
+sys.addaudithook(isolated_sqlite_connect_audit_hook)
 
 FLAG = HOME / "disabled"                      # persistent kill switch (touch to disable)
 LOG = HOME / "gate_log.jsonl"                 # batch-gate audit trail
@@ -1008,23 +1076,23 @@ def single_instance_lock(name):
 
     flock(LOCK_EX|LOCK_NB) on HOME/<name>.lock: the FIRST process into the body holds it and yields True (proceed);
     a SECOND process finds it held and yields False (do NOT start a duplicate — the caller bails). The OS drops the
-    lock when this process exits (flock is bound to the fd), so a crash leaves NO stale lock to reap. Degrades
-    FAIL-OPEN (yields True) when locking is genuinely unavailable — non-POSIX, or the lockfile can't be opened — so a
-    lock hiccup never blocks legitimate work; on macOS/Linux flock is always present, so that path is Windows-only.
+    lock when this process exits (flock is bound to the fd), so a crash leaves NO stale lock to reap. Fails closed
+    and loudly when locking is unavailable or the lockfile cannot be opened: proceeding without exclusion could
+    create two owners while falsely reporting singleton protection.
 
     This is the SSOT for process-singleton locking (e.g. `spendguard deploy`, whose two concurrent gate runs each
     spawn a full test suite and starve each other's CPU → the flaky-timeout failures). lane_queue's own
     `_acquire_drain_lock` is the same mechanism specialised to the drain; this is the general, reusable form."""
     try:
         import fcntl as _fcntl
-    except ImportError:
-        yield True                                           # non-POSIX → no flock; proceed UNGUARDED, never block
-        return
+    except ImportError as error:
+        raise SingleInstanceLockUnavailableError("cross-process singleton locking requires fcntl.flock") from error
     try:
         fd = os.open(str(HOME / f"{name}.lock"), os.O_CREAT | os.O_RDWR, 0o644)
-    except OSError:
-        yield True                                           # cannot open the lockfile → fail-open, never block work
-        return
+    except OSError as error:
+        raise SingleInstanceLockUnavailableError(
+            f"cannot open singleton lockfile under configured spendguard home: {HOME}"
+        ) from error
     try:
         _fcntl.flock(fd, _fcntl.LOCK_EX | _fcntl.LOCK_NB)
     except OSError:

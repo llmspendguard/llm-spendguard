@@ -1,6 +1,7 @@
 """Offline regression proof for the shared gate child environment and CLI barrier."""
 import os
 from pathlib import Path
+import sqlite3
 import sys
 import tempfile
 from types import SimpleNamespace
@@ -13,6 +14,9 @@ spendguard.require()
 HERMETICITY_REPO_ROOT = Path(__file__).resolve().parents[1]
 HERMETICITY_CLOCK_ORIGIN = 0
 HERMETICITY_SUCCESS_RETURN_CODE = 0
+HERMETICITY_SQLITE_FILENAME = "hermeticity.sqlite3"
+HERMETICITY_SQLITE_READ_ONLY_URI_QUERY = "mode=ro"
+HERMETICITY_SQLITE_PROOF_DDL = "CREATE TABLE isolation_proof (proof_value INTEGER)"
 sys.path.insert(0, str(HERMETICITY_REPO_ROOT))
 from scripts.test import chunked_suite  # noqa: E402
 from spendguard import config, conv  # noqa: E402
@@ -31,6 +35,19 @@ def verify_gate_hermeticity_isolation_contract():
         assert environment[chunked_suite.GATE_ISOLATED_TMPDIR_ENV_NAME] == expected_tmpdir
         assert environment[chunked_suite.GATE_TEST_ISOLATED_ENV] == chunked_suite.GATE_TEST_ENABLED
         assert environment[config.CLI_TEST_OFFLINE_ENVIRONMENT_KEY] == config.CLI_TEST_OFFLINE_ENABLED_VALUE
+        with patch.dict(os.environ, environment):
+            with sqlite3.connect(Path(scratch_home) / HERMETICITY_SQLITE_FILENAME) as isolated_connection:
+                isolated_connection.execute(HERMETICITY_SQLITE_PROOF_DDL)
+            outside_uri = (
+                f"{config.SQLITE_FILE_URI_SCHEME}:{Path(__file__).resolve()}?"
+                f"{HERMETICITY_SQLITE_READ_ONLY_URI_QUERY}"
+            )
+            try:
+                sqlite3.connect(outside_uri, uri=True)
+            except config.IsolatedSQLitePathError as guard_error:
+                print(f"[OK] SQLite confinement guard fired: {guard_error}")
+            else:
+                raise AssertionError("isolated SQLite connection escaped scratch roots")
         with patch.object(hermeticity_pytest_runner.tempfile, "mkdtemp",
                           side_effect=[scratch_home, scratch_tmpdir]), \
                 patch.object(hermeticity_pytest_runner.time, "monotonic", return_value=HERMETICITY_CLOCK_ORIGIN), \

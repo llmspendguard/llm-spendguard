@@ -8,6 +8,7 @@ import sys
 import pathlib
 import subprocess
 import tempfile
+from unittest.mock import patch
 from _pytest_fixture_bridge import align_test_startup_home
 
 align_test_startup_home(prefix="sg-silock-")
@@ -70,6 +71,16 @@ with config.single_instance_lock(NAME) as got_outer:
 # ── 3. once the first `with` exits, the lock is released — a fresh acquire succeeds again ──
 with config.single_instance_lock(NAME) as got_again:
     ck("acquire after release yields True (OS dropped the flock on fd close)", got_again is True)
+
+# Infrastructure failure must never masquerade as exclusive ownership.
+with patch.dict(sys.modules, {"fcntl": None}):
+    try:
+        with config.single_instance_lock(NAME):
+            raise AssertionError("missing fcntl must not enter the protected body")
+    except config.SingleInstanceLockUnavailableError:
+        ck("missing locking primitive fails closed and loudly", True)
+    else:
+        ck("missing locking primitive fails closed and loudly", False)
 
 # ── 4. release happens even if the body RAISES (finally drops the fd) ──
 class _Boom(Exception):
