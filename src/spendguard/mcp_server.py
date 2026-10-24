@@ -34,12 +34,17 @@ import logging
 import sys
 import traceback
 from contextlib import contextmanager
+from http import HTTPStatus
 
 PROTOCOL_VERSION = "2024-11-05"     # echoed back to the client if it names one; this is the safe default
 LEDGER_READ_OPERATIONS = ("events", "event", "calls", "count", "aggregate",
                           "recorded-call-total", "conversation-spend-since", "metrics")
 MCP_PEER_DISCONNECT_PEEK_BYTES = 1
 MCP_PEER_OBSERVER_THREAD_NAME = "spendguard-mcp-ledger-abandonment"
+JSON_RPC_ID_MEMBER = "id"
+HTTP_CONTENT_TYPE_HEADER = "Content-Type"
+HTTP_CONTENT_LENGTH_HEADER = "Content-Length"
+JSON_CONTENT_TYPE = "application/json"
 
 
 @contextmanager
@@ -1142,11 +1147,11 @@ def build_mcp_http_handler():
         def log_message(self, *a):            # quiet — no stderr access log per request
             pass
 
-        def _send(self, body, code=200):
+        def _send(self, body, code=HTTPStatus.OK):
             data = (body or "").encode("utf-8")
             self.send_response(code)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(data)))
+            self.send_header(HTTP_CONTENT_TYPE_HEADER, JSON_CONTENT_TYPE)
+            self.send_header(HTTP_CONTENT_LENGTH_HEADER, str(len(data)))
             self.end_headers()
             if data:
                 self.wfile.write(data)
@@ -1160,23 +1165,23 @@ def build_mcp_http_handler():
             # "Deserialize error: EOF while parsing a value at line 1 column 0, when send initialized notification",
             # the rmcp transport worker quits fatally ("Transport channel closed"), and the app-server reconnects
             # in a loop (the warm-daemon churn). A bare 202 tells the client there is nothing to read.
-            self.send_response(202)
-            self.send_header("Content-Length", "0")
+            self.send_response(HTTPStatus.ACCEPTED)
+            self.send_header(HTTP_CONTENT_LENGTH_HEADER, str(0))
             self.end_headers()
 
         def do_POST(self):
             if self.path.rstrip("/") != "/mcp":
-                self._send(json.dumps(_err(None, -32601, "not found: POST /mcp")), 404)
+                self._send(json.dumps(_err(None, -32601, "not found: POST /mcp")), HTTPStatus.NOT_FOUND)
                 return
             try:
-                n = int(self.headers.get("Content-Length") or 0)
+                n = int(self.headers.get(HTTP_CONTENT_LENGTH_HEADER) or 0)
                 req = json.loads(self.rfile.read(n).decode("utf-8")) if n else {}
             except Exception as e:
                 self._send(json.dumps(_err(None, -32700, f"parse error: {e}")))
                 return
             with _mcp_http_request_ledger_lifetime(self.connection):
                 resp = handle(req)             # the ONE shared dispatch (stdio + http in lockstep)
-            if resp is None:                   # a NOTIFICATION (handle() returns None only for these) → 202, no body
+            if isinstance(req, dict) and JSON_RPC_ID_MEMBER not in req:
                 self._send_accepted()          # NEVER a 200 with an empty application/json body (kills strict rmcp)
             else:
                 self._send(json.dumps(resp, default=str))
