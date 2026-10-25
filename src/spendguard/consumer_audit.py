@@ -124,7 +124,11 @@ def repository_import_facts(repository):
     imports = set()
     source_text_mentions = set()
     for source_path in sorted(repository.rglob(f"*{CONSUMER_AUDIT_SOURCE_SUFFIX}"), key=os.fspath):
-        if any(_is_venv_directory(parent) for parent in source_path.parents if parent != repository):
+        if any(
+            _path_is_within(parent, repository) and _is_venv_directory(parent)
+            for parent in source_path.parents
+            if parent != repository
+        ):
             continue
         try:
             source_text = source_path.read_text(errors="replace")

@@ -61,6 +61,21 @@ with tempfile.TemporaryDirectory(prefix="consumer-audit-proof-") as temporary:
                            consumer_audit._is_venv_directory(structurally_valid_venv))
     failure_count += check("venv-like name without structure is rejected",
                            not consumer_audit._is_venv_directory(misleadingly_named_directory))
+    venv_like_ancestor = fixture_root / "venv-like-ancestor"
+    venv_like_ancestor.mkdir()
+    (venv_like_ancestor / "pyvenv.cfg").write_text("fixture = true\n")
+    ancestor_nested_repo = venv_like_ancestor / "repository"
+    ancestor_nested_repo.mkdir()
+    (ancestor_nested_repo / "client.py").write_text("import openai\n")
+    nested_venv = ancestor_nested_repo / ".venv"
+    nested_venv.mkdir()
+    (nested_venv / "pyvenv.cfg").write_text("fixture = true\n")
+    (nested_venv / "ignored.py").write_text("import anthropic\n")
+    ancestor_nested_facts = consumer_audit.repository_import_facts(ancestor_nested_repo)
+    failure_count += check(
+        "venv-like ancestor does not suppress repository source while nested venv source stays skipped",
+        ancestor_nested_facts["sdk"] == ("openai",),
+    )
     repo = fixture_root / "consumer"
     repo.mkdir()
     (repo / ".git").mkdir()
