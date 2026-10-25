@@ -659,17 +659,18 @@ def tally(project=None, conv=None) -> dict:
     subscription uses month). Missing/stale usage refuses allocation rather than inventing a share."""
     today, week, month = _windows()
     api = {"today": None, "week": None, "month": None}
+    gaps = []
     try:
         from . import budget
         # THE SCOPE IS PASSED THROUGH. tally() took `project` and `conv` and used NEITHER, while
         # budget.spent_since has supported both all along — so `tally(project=repo)`, which is how the
         # per-repo receipt is built, returned the GLOBAL total under a per-repo heading. The number the
         # receipt exists to make honest was the one number in it that was not.
-        api = {"today": budget.spent_since(today, project=project, conv=conv),
-               "week": budget.spent_since(week, project=project, conv=conv),
-               "month": budget.spent_since(month, project=project, conv=conv)}
-    except Exception:
-        pass
+        api = {"today": budget.spent_since(today, project=project, conv=conv, read_only=True),
+               "week": budget.spent_since(week, project=project, conv=conv, read_only=True),
+               "month": budget.spent_since(month, project=project, conv=conv, read_only=True)}
+    except Exception as error:
+        gaps.append(f"CAPTURE GAP: ledger read unavailable: {error!r}")
     remote = _remote_tally()                       # billed GPU/remote compute (None until resources.sync stamps it)
     external = _external_tally()                    # billed MCP/tool + external-API cost (None when there's none)
     sub, sub_assumed = _plan_usd()                 # flat monthly subscription fee — a REAL cost (out the door)
@@ -702,6 +703,15 @@ def tally(project=None, conv=None) -> dict:
     out = {"api": api, "actual": api, "remote": remote, "external": external, "subscription": sub,
            "subscription_assumed": sub_assumed,
            "est_value": est_value}
+    try:
+        from . import budget as _budget
+        pending = [str(path) for path in _budget.spend_event_retry_paths()
+                   if path.exists() and path.stat().st_size]
+        if pending:
+            gaps.append("CAPTURE GAP: unposted spend queued for retry: " + ", ".join(pending))
+    except Exception as error:
+        gaps.append(f"CAPTURE GAP: retry-marker inspection unavailable: {error!r}")
+    out["gaps"] = gaps
     try:
         out["input_cache"] = budget.input_cache_split(month, project=project, conv=conv)
     except Exception:
@@ -938,6 +948,8 @@ def render_line(t: Optional[dict] = None) -> str:
     seg = _lane_seg(t)
     if seg:                                        # the every-turn Stop-hook line: name the plan(s) that served work
         s += f"  · lanes: {seg} ($0)"
+    if t.get("gaps"):
+        s += "  · " + " | ".join(t["gaps"])
     return s
 
 
@@ -1169,6 +1181,7 @@ def render_tree(scope_org=None, project=None) -> str:
     scope_label = f" [{project}]" if project else ""
     parts = [_PREFIX + "spend this month" + scope_label]
     parts += [_INDENT + ln for ln in _two_axis_table(t)]
+    parts += [_INDENT + gap for gap in t.get("gaps") or []]
     cache_line = _cache_split_line(t)
     if cache_line:
         parts.append(_INDENT + cache_line)

@@ -51,7 +51,7 @@ fails += ck("cache-only receipt retains the separately addressable source",
             receipt._est_by_source().get(receipt.CLAUDE_CODE_SOURCE, {}).get("today") == (g or {}).get("today"))
 
 print("\n-- tally() wires it: per-repo est is scoped; the global tally stays global --")
-budget.spent_since = lambda day, project=None, conv=None: 0.0     # isolate the est axis from the API axis
+budget.spent_since = lambda day, project=None, conv=None, **kwargs: 0.0     # isolate the est axis from the API axis
 ta = receipt.tally(project="repo-a")
 fails += ck("tally(project='repo-a').est_value is REPO-SCOPED ($10, not $14)",
             (ta.get("est_value") or {}).get("today") == 10.0)
