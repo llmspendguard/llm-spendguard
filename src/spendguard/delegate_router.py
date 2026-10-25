@@ -39,6 +39,7 @@ DELEGATE_INCREMENTAL_SUBSCRIPTION_USD = 0.0
 DELEGATE_CLI_RESULT_MAX_LINES = 10
 DELEGATE_EXECUTION_RESULT_MAX_LINES = DELEGATE_CLI_RESULT_MAX_LINES - 1
 DELEGATE_TOOL_DEGRADED_MARKER = "DEGRADED_TOOL_ENVELOPE"
+DELEGATE_TOOL_DEGRADED_PREFIX = f"{DELEGATE_TOOL_DEGRADED_MARKER}:"
 DELEGATE_CONTEXT_BOUNDARY = {
     DELEGATE_ROUTE_CLAUDE_SUBAGENT: (
         "requires unsupplied state from the host's live conversation, or requires driving the Claude desktop "
@@ -312,10 +313,31 @@ _WORKTREE_AUTHOR_CONSTRAINTS = (
     "- Host write-time hooks (honestreview and similar) are NOT available in your sandbox and are NOT required — the host\n"
     "  reviews your changes via its commit gate. Do NOT bail or refuse for lack of hook-enabled tools; just edit the files.\n"
     "- Make ONLY the file changes the task requires, confined to this working directory.\n"
-    "- Use configured MCP tools for code/content/review/spend evidence. If a required MCP tool is denied or unreachable,\n"
-    f"  report {DELEGATE_TOOL_DEGRADED_MARKER}: <tool>: <exact error>; never silently substitute a fallback.\n"
+    "- Use configured capabilities for code/content/review/spend evidence by any sanctioned configured interface; an\n"
+    "  equivalent interface is not a fallback or degradation. Only when a required capability is unavailable by every\n"
+    f"  configured means AND that blocks completion, report {DELEGATE_TOOL_DEGRADED_MARKER}: <tool>: <exact error>.\n"
     f"- Return no more than {DELEGATE_EXECUTION_RESULT_MAX_LINES} lines: verdict/result, file:line evidence, and unknowns.\n"
 )
+
+
+def _delegate_degraded_tool_lines(execution_text):
+    """Mechanically extract deliberate line-leading degradation signals and their structured payloads.
+
+    The fixed wire form is ``MARKER: tool: error``. A line-leading but malformed marker is retained for warning
+    visibility, but cannot by itself produce the fatal typed error. Mentions or quotations elsewhere in prose are not
+    signals. Meaning is deliberately not inferred here.
+    """
+    signalled_lines = []
+    structured_payloads = []
+    for execution_line in execution_text.splitlines():
+        if not execution_line.startswith(DELEGATE_TOOL_DEGRADED_PREFIX):
+            continue
+        signalled_lines.append(execution_line)
+        payload = execution_line[len(DELEGATE_TOOL_DEGRADED_PREFIX):].strip()
+        tool, separator, error = payload.partition(":")
+        if separator and tool.strip() and error.strip():
+            structured_payloads.append({"tool": tool.strip(), "error": error.strip()})
+    return signalled_lines, structured_payloads
 
 
 def _worktree_state(cwd):
@@ -455,10 +477,13 @@ def delegate_task(task, files=None, intent=None, provider="auto", execute=False,
         return {**result, "status": "error", "execution": execution,
                 "reason": DELEGATE_EXECUTION_REFUSED if execution_error else DELEGATE_EXECUTION_NO_RESULT,
                 "why": str(execution_error) if execution_error else "executor produced no final result"}
-    if DELEGATE_TOOL_DEGRADED_MARKER in execution_text:
+    degraded_signal_lines, degraded_tool_payloads = _delegate_degraded_tool_lines(execution_text)
+    if degraded_tool_payloads:
         return {**result, "status": "error", "execution": execution,
                 "reason": DELEGATE_EXECUTION_DEGRADED_TOOL_ENVELOPE,
-                "why": "delegated execution reported a required MCP tool as denied or unreachable"}
+                "why": ("delegated execution reported an unavailable required capability; "
+                        "the task could not be confirmed complete"),
+                "degraded_tools": degraded_tool_payloads}
     if len(execution_text.splitlines()) > DELEGATE_EXECUTION_RESULT_MAX_LINES:
         return {**result, "status": "error", "execution": execution,
                 "reason": DELEGATE_EXECUTION_RESULT_TOO_LONG,
@@ -494,8 +519,13 @@ def delegate_task(task, files=None, intent=None, provider="auto", execute=False,
                "est_value_usd": actual_value, "saved_overage_usd": avoided,
                "saved_overage_basis": "ledger counterfactual" if ratio is not None else "unavailable",
                "est_value_basis": est_value_basis}
-    return {**result, "status": "executed", "execution": execution,
-            "receipt": receipt, "changed_files": changed_files}
+    completed_result = {**result, "status": "executed", "execution": execution,
+                        "receipt": receipt, "changed_files": changed_files}
+    if degraded_signal_lines:
+        completed_result["warnings"] = [{"reason": DELEGATE_EXECUTION_DEGRADED_TOOL_ENVELOPE,
+                                         "signals": degraded_signal_lines,
+                                         "degraded_tools": degraded_tool_payloads}]
+    return completed_result
 
 
 def delegate_cli(argv=None):
