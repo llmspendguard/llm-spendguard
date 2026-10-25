@@ -137,6 +137,9 @@ try:
        managed_pathinjected_state["state"] == "pathinjected_managed")
 
     refresh_repo = pathlib.Path(tempfile.mkdtemp(prefix="sg-egg-shadow-"))
+    source_repo = pathlib.Path(setup.__file__).resolve().parents[2]
+    pyproject_name = setup._PYPROJECT_CONFIGURATION_FILE_NAME
+    (refresh_repo / pyproject_name).write_bytes((source_repo / pyproject_name).read_bytes())
     shadow = refresh_repo / "src" / "llm_spendguard.egg-info"
     shadow.mkdir(parents=True)
     (shadow / "PKG-INFO").write_text("stale")

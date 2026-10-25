@@ -35,7 +35,6 @@ def run_install_hook_end_to_end_regression():
             "SPENDGUARD_HOME": os.fspath(isolated_spendguard_home),
             "SPENDGUARD_TEST_ISOLATED": "1",
             "PIP_NO_INDEX": "1",
-            "PIP_NO_BUILD_ISOLATION": "false",
             "PIP_NO_DEPS": "1",
             "OPENAI_API_KEY": FAKE_OPENAI_API_KEY,
             "ANTHROPIC_API_KEY": FAKE_ANTHROPIC_API_KEY,
