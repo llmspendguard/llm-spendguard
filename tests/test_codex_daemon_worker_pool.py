@@ -22,6 +22,9 @@ from spendguard import warm_stdio_daemon
 
 POOL_GUARD_SIZE = 3
 POOL_EVENT_TIMEOUT_S = 10
+# A loaded CI runner can starve fake workers behind roughly twenty parallel shards.
+# Keep thread-entry and rendezvous waits bounded, but allow a full scheduler minute.
+POOL_THREAD_ENTRY_TIMEOUT_S = 60
 POOL_QUEUE_TIMEOUT_S = 0.02
 POOL_TRANSPORT_TIMEOUT_S = 0.5
 POOL_TEST_PROMPT = "pool-guard"
@@ -113,7 +116,7 @@ def test_pool_parallel_turns_use_distinct_children_with_real_overlap():
         def pool_parallel_turn(*args, **kwargs):
             with identities_lock:
                 worker_identities.add(id(worker))
-            rendezvous.wait(timeout=POOL_EVENT_TIMEOUT_S)
+            rendezvous.wait(timeout=POOL_THREAD_ENTRY_TIMEOUT_S)
             return dict(POOL_SUCCESS_REPLY)
 
         worker.run_warm.side_effect = pool_parallel_turn
@@ -153,7 +156,7 @@ def test_pool_wedged_child_recycles_without_touching_other_children():
         pool.ensure_running()
         with concurrent.futures.ThreadPoolExecutor(max_workers=POOL_GUARD_SIZE) as executor:
             wedged = executor.submit(pool.run_warm, prompt=POOL_TEST_PROMPT)
-            assert entered.wait(POOL_EVENT_TIMEOUT_S)
+            assert entered.wait(POOL_THREAD_ENTRY_TIMEOUT_S)
             healthy = executor.submit(pool.run_warm, prompt=POOL_TEST_PROMPT)
             assert healthy.result(timeout=POOL_EVENT_TIMEOUT_S) == POOL_SUCCESS_REPLY
             assert not workers[0].shutdown.called
@@ -192,7 +195,7 @@ def test_pool_auth_error_recycles_child_and_fails_over_to_healthy_child():
 
         workers[0].ensure_running.side_effect = pool_auth_stalled_restart
         assert pool.run_warm(prompt=POOL_TEST_PROMPT) == POOL_SUCCESS_REPLY
-        assert recovery_entered.wait(POOL_EVENT_TIMEOUT_S)
+        assert recovery_entered.wait(POOL_THREAD_ENTRY_TIMEOUT_S)
         assert not recovery_release.is_set()
         recovery_release.set()
         _pool_guard_wait_recovery(pool)
@@ -286,7 +289,7 @@ def test_pool_all_busy_wait_is_bounded_and_raised_worker_releases_slot():
     released = threading.Event()
 
     def pool_busy_turn(*args, **kwargs):
-        entered.wait(timeout=POOL_EVENT_TIMEOUT_S)
+        entered.wait(timeout=POOL_THREAD_ENTRY_TIMEOUT_S)
         assert released.wait(POOL_EVENT_TIMEOUT_S)
         return dict(POOL_SUCCESS_REPLY)
 
@@ -296,7 +299,7 @@ def test_pool_all_busy_wait_is_bounded_and_raised_worker_releases_slot():
         with concurrent.futures.ThreadPoolExecutor(max_workers=POOL_GUARD_SIZE) as executor:
             turns = [executor.submit(pool.run_warm, prompt=POOL_TEST_PROMPT)
                      for _ in range(POOL_GUARD_SIZE)]
-            entered.wait(timeout=POOL_EVENT_TIMEOUT_S)
+            entered.wait(timeout=POOL_THREAD_ENTRY_TIMEOUT_S)
             blocked_result = pool.run_warm(prompt=POOL_TEST_PROMPT, timeout=POOL_QUEUE_TIMEOUT_S)
             assert blocked_result["error"]
             assert blocked_result["text"] is None
@@ -373,7 +376,7 @@ def test_pool_transport_timeout_recycles_only_the_unresponsive_real_worker():
         with concurrent.futures.ThreadPoolExecutor(max_workers=POOL_GUARD_SIZE) as executor:
             unresponsive = executor.submit(
                 pool.run_warm, prompt=POOL_TEST_PROMPT, timeout=POOL_TRANSPORT_TIMEOUT_S)
-            assert entered.wait(POOL_EVENT_TIMEOUT_S)
+            assert entered.wait(POOL_THREAD_ENTRY_TIMEOUT_S)
             healthy = executor.submit(pool.run_warm, prompt=POOL_TEST_PROMPT)
             assert healthy.result(timeout=POOL_EVENT_TIMEOUT_S) == POOL_SUCCESS_REPLY
             timeout_result = unresponsive.result(timeout=POOL_EVENT_TIMEOUT_S)
@@ -402,7 +405,7 @@ def test_pool_retirement_prevents_late_retry_and_inflight_spawn_leaks():
             daemon, "_terminate") as terminate, concurrent.futures.ThreadPoolExecutor() as executor:
         pending_spawn = executor.submit(daemon.ensure_running)
         try:
-            assert entered_spawn.wait(POOL_EVENT_TIMEOUT_S)
+            assert entered_spawn.wait(POOL_THREAD_ENTRY_TIMEOUT_S)
             daemon._retired_from_pool = True
             daemon.shutdown()
         finally:
@@ -445,7 +448,7 @@ def _pool_chaos_exercise_wedge(wedge_mode):
 
     def pool_chaos_healthy_turn(**kwargs):
         if kwargs["prompt"] == POOL_TEST_PROMPT:
-            healthy_barrier.wait(timeout=POOL_EVENT_TIMEOUT_S)
+            healthy_barrier.wait(timeout=POOL_THREAD_ENTRY_TIMEOUT_S)
         return dict(POOL_SUCCESS_REPLY)
 
     def pool_chaos_stuck_turn(**kwargs):
@@ -493,7 +496,7 @@ def _pool_chaos_exercise_wedge(wedge_mode):
             wedged = executor.submit(broker._call_owner, {
                 "prompt": "chaos-wedge", "timeout": POOL_CHAOS_TURN_BUDGET_S,
                 "recycle_on_timeout": True})
-            assert entered.wait(POOL_EVENT_TIMEOUT_S)
+            assert entered.wait(POOL_THREAD_ENTRY_TIMEOUT_S)
             # Force a failed first respawn; recovery must retry rather than silently return a dead slot.
             original_respawn_outcomes = iter((None, object()))
 
