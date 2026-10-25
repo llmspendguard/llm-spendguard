@@ -11,6 +11,9 @@ SUBSTRATE_TEST_PLAN = "codex"
 SUBSTRATE_TEST_MODEL = "fixture-model"
 SUBSTRATE_TEST_PROVIDER = "openai"
 SUBSTRATE_TEST_TASK = "labelled routing fixture"
+SUBSTRATE_TEST_TOOL = "configured-code-intelligence"
+SUBSTRATE_CHANGED_FILE = "delegate-fixture.py"
+SUBSTRATE_NON_COMPLETION_RESULT = "I could not complete the requested task."
 SUBSTRATE_TEST_TIMEOUT_SECONDS = 7
 SUBSTRATE_LABELLED_ROUTE_FIXTURES = (
     ("Edit the supplied repository and run its tests without asking follow-up questions.",
@@ -98,14 +101,72 @@ def test_codex_delegate_enables_mcp_and_scoped_automatic_review(tmp_path):
     assert result["required_mcp_servers"] == list(codex_exec.CODEX_DELEGATE_REQUIRED_MCP_SERVERS)
 
 
-def test_delegate_required_tool_degradation_fails_loud(tmp_path):
+def test_delegate_self_narrated_sanctioned_equivalent_is_warning_not_failure(tmp_path):
+    classification = {"route": delegate_router.DELEGATE_ROUTE_CODEX, "kind": "agentic",
+                      "provider": SUBSTRATE_TEST_PLAN, "self_contained": True,
+                      "why": "requires the configured code-intelligence capability", "fingerprint": "fixture"}
+    estimate = {"plan": SUBSTRATE_TEST_PLAN, "model": SUBSTRATE_TEST_MODEL,
+                "input_tokens": 1, "output_tokens": 1, "real_api_usd": 0.0}
+    narrated_result = {
+        "text": (f"{delegate_router.DELEGATE_TOOL_DEGRADED_MARKER}: {SUBSTRATE_TEST_TOOL} MCP unavailable; "
+                 "sanctioned CLI equivalent succeeded."),
+        "execution_started": True,
+    }
+    with patch.object(delegate_router, "classify_task", return_value=classification), \
+            patch.object(delegate_router, "delegation_lanes_ready",
+                         return_value={"ready": [SUBSTRATE_TEST_PLAN], "unavailable": []}), \
+            patch.object(delegate_router, "_estimate_route", return_value=estimate), \
+            patch.object(delegate_router, "_route_agentic", return_value=narrated_result), \
+            patch.object(delegate_router, "_worktree_changed_files",
+                         return_value=[SUBSTRATE_CHANGED_FILE]), \
+            patch.object(delegate_router.lane_registry, "lane_spec",
+                         return_value={"exec": "codex_exec", "provider": SUBSTRATE_TEST_PROVIDER}), \
+            patch.object(delegate_router.pricing, "realtime_cost", return_value=0.0), \
+            patch.object(delegate_router, "_measured_claude_overage_ratio", return_value=None), \
+            patch.object(delegate_router.guard, "record_decision"), \
+            patch.object(delegate_router.guard, "record_saving"):
+        result = delegate_router.delegate_task(SUBSTRATE_TEST_TASK, execute=True, cwd=tmp_path)
+    assert result["status"] == "executed"
+    assert result["changed_files"] == [SUBSTRATE_CHANGED_FILE]
+    assert result["warnings"][0]["reason"] == delegate_router.DELEGATE_EXECUTION_DEGRADED_TOOL_ENVELOPE
+
+
+def test_delegate_structured_required_tool_degradation_with_partial_edit_fails_loud(tmp_path):
     classification = {"route": delegate_router.DELEGATE_ROUTE_CODEX, "kind": "agentic",
                       "provider": SUBSTRATE_TEST_PLAN, "self_contained": True,
                       "why": "requires the configured code-intelligence tool", "fingerprint": "fixture"}
     estimate = {"plan": SUBSTRATE_TEST_PLAN, "model": SUBSTRATE_TEST_MODEL,
                 "input_tokens": 1, "output_tokens": 1, "real_api_usd": 0.0}
     degraded_result = {"text": (f"{delegate_router.DELEGATE_TOOL_DEGRADED_MARKER}: "
-                                "symgrep: approval denied; fallback not used"),
+                                f"{SUBSTRATE_TEST_TOOL}: unavailable"),
+                       "execution_started": True}
+    with patch.object(delegate_router, "classify_task", return_value=classification), \
+            patch.object(delegate_router, "delegation_lanes_ready",
+                         return_value={"ready": [SUBSTRATE_TEST_PLAN], "unavailable": []}), \
+            patch.object(delegate_router, "_estimate_route", return_value=estimate), \
+            patch.object(delegate_router, "_route_agentic", return_value=degraded_result), \
+            patch.object(delegate_router, "_worktree_changed_files",
+                         return_value=[SUBSTRATE_CHANGED_FILE]), \
+            patch.object(delegate_router.lane_registry, "lane_spec",
+                         return_value={"exec": "codex_exec", "provider": SUBSTRATE_TEST_PROVIDER}), \
+            patch.object(delegate_router.pricing, "realtime_cost", return_value=0.0), \
+            patch.object(delegate_router, "_measured_claude_overage_ratio", return_value=None), \
+            patch.object(delegate_router.guard, "record_decision"), \
+            patch.object(delegate_router.guard, "record_saving"):
+        result = delegate_router.delegate_task(SUBSTRATE_TEST_TASK, execute=True, cwd=tmp_path)
+    assert result["status"] == "error"
+    assert result["reason"] == delegate_router.DELEGATE_EXECUTION_DEGRADED_TOOL_ENVELOPE
+    assert result["degraded_tools"] == [{"tool": SUBSTRATE_TEST_TOOL, "error": "unavailable"}]
+
+
+def test_delegate_structured_required_tool_degradation_without_work_fails_loud(tmp_path):
+    classification = {"route": delegate_router.DELEGATE_ROUTE_CODEX, "kind": "agentic",
+                      "provider": SUBSTRATE_TEST_PLAN, "self_contained": True,
+                      "why": "requires the configured code-intelligence tool", "fingerprint": "fixture"}
+    estimate = {"plan": SUBSTRATE_TEST_PLAN, "model": SUBSTRATE_TEST_MODEL,
+                "input_tokens": 1, "output_tokens": 1, "real_api_usd": 0.0}
+    degraded_result = {"text": (f"{delegate_router.DELEGATE_TOOL_DEGRADED_MARKER}: "
+                                f"{SUBSTRATE_TEST_TOOL}: approval denied"),
                        "execution_started": True}
     with patch.object(delegate_router, "classify_task", return_value=classification), \
             patch.object(delegate_router, "delegation_lanes_ready",
@@ -115,6 +176,59 @@ def test_delegate_required_tool_degradation_fails_loud(tmp_path):
         result = delegate_router.delegate_task(SUBSTRATE_TEST_TASK, execute=True, cwd=tmp_path)
     assert result["status"] == "error"
     assert result["reason"] == delegate_router.DELEGATE_EXECUTION_DEGRADED_TOOL_ENVELOPE
+    assert result["degraded_tools"] == [{"tool": SUBSTRATE_TEST_TOOL, "error": "approval denied"}]
+
+
+def test_delegate_degradation_with_non_completion_prose_without_work_fails_loud(tmp_path):
+    classification = {"route": delegate_router.DELEGATE_ROUTE_CODEX, "kind": "agentic",
+                      "provider": SUBSTRATE_TEST_PLAN, "self_contained": True,
+                      "why": "requires the configured code-intelligence tool", "fingerprint": "fixture"}
+    estimate = {"plan": SUBSTRATE_TEST_PLAN, "model": SUBSTRATE_TEST_MODEL,
+                "input_tokens": 1, "output_tokens": 1, "real_api_usd": 0.0}
+    degraded_result = {
+        "text": (f"{delegate_router.DELEGATE_TOOL_DEGRADED_MARKER}: "
+                 f"{SUBSTRATE_TEST_TOOL}: unavailable\n{SUBSTRATE_NON_COMPLETION_RESULT}"),
+        "execution_started": True,
+    }
+    with patch.object(delegate_router, "classify_task", return_value=classification), \
+            patch.object(delegate_router, "delegation_lanes_ready",
+                         return_value={"ready": [SUBSTRATE_TEST_PLAN], "unavailable": []}), \
+            patch.object(delegate_router, "_estimate_route", return_value=estimate), \
+            patch.object(delegate_router, "_route_agentic", return_value=degraded_result), \
+            patch.object(delegate_router, "_worktree_changed_files", return_value=[]), \
+            patch.object(delegate_router.lane_registry, "lane_spec",
+                         return_value={"exec": "codex_exec", "provider": SUBSTRATE_TEST_PROVIDER}), \
+            patch.object(delegate_router.pricing, "realtime_cost", return_value=0.0), \
+            patch.object(delegate_router, "_measured_claude_overage_ratio", return_value=None), \
+            patch.object(delegate_router.guard, "record_decision"), \
+            patch.object(delegate_router.guard, "record_saving"):
+        result = delegate_router.delegate_task(SUBSTRATE_TEST_TASK, execute=True, cwd=tmp_path)
+    assert result["status"] == "error"
+    assert result["reason"] == delegate_router.DELEGATE_EXECUTION_DEGRADED_TOOL_ENVELOPE
+    assert result["degraded_tools"] == [{"tool": SUBSTRATE_TEST_TOOL, "error": "unavailable"}]
+
+
+def test_delegate_ordinary_success_without_degradation_stays_successful(tmp_path):
+    classification = {"route": delegate_router.DELEGATE_ROUTE_CODEX, "kind": "agentic",
+                      "provider": SUBSTRATE_TEST_PLAN, "self_contained": True,
+                      "why": "self-contained fixture", "fingerprint": "fixture"}
+    estimate = {"plan": SUBSTRATE_TEST_PLAN, "model": SUBSTRATE_TEST_MODEL,
+                "input_tokens": 1, "output_tokens": 1, "real_api_usd": 0.0}
+    with patch.object(delegate_router, "classify_task", return_value=classification), \
+            patch.object(delegate_router, "delegation_lanes_ready",
+                         return_value={"ready": [SUBSTRATE_TEST_PLAN], "unavailable": []}), \
+            patch.object(delegate_router, "_estimate_route", return_value=estimate), \
+            patch.object(delegate_router, "_route_agentic",
+                         return_value={"text": "completed result", "execution_started": True}), \
+            patch.object(delegate_router.lane_registry, "lane_spec",
+                         return_value={"exec": "codex_exec", "provider": SUBSTRATE_TEST_PROVIDER}), \
+            patch.object(delegate_router.pricing, "realtime_cost", return_value=0.0), \
+            patch.object(delegate_router, "_measured_claude_overage_ratio", return_value=None), \
+            patch.object(delegate_router.guard, "record_decision"), \
+            patch.object(delegate_router.guard, "record_saving"):
+        result = delegate_router.delegate_task(SUBSTRATE_TEST_TASK, execute=True, cwd=tmp_path)
+    assert result["status"] == "executed"
+    assert "warnings" not in result
 
 
 def test_delegate_overlong_result_fails_without_truncating_execution_evidence(tmp_path):
@@ -196,7 +310,11 @@ if __name__ == "__main__":
     with tempfile.TemporaryDirectory() as substrate_test_directory:
         substrate_test_path = Path(substrate_test_directory)
         test_codex_delegate_enables_mcp_and_scoped_automatic_review(substrate_test_path)
-        test_delegate_required_tool_degradation_fails_loud(substrate_test_path)
+        test_delegate_self_narrated_sanctioned_equivalent_is_warning_not_failure(substrate_test_path)
+        test_delegate_structured_required_tool_degradation_with_partial_edit_fails_loud(substrate_test_path)
+        test_delegate_structured_required_tool_degradation_without_work_fails_loud(substrate_test_path)
+        test_delegate_degradation_with_non_completion_prose_without_work_fails_loud(substrate_test_path)
+        test_delegate_ordinary_success_without_degradation_stays_successful(substrate_test_path)
         test_delegate_lane_down_fails_closed_without_execution(substrate_test_path)
         test_delegate_cwd_provider_and_timeout_are_applied(substrate_test_path)
     print("OK test_delegate_subagent_substrate")
