@@ -24,7 +24,8 @@ _EDITABLE_METADATA_PROBE = (
 def purge_shadowing_in_tree_egg_info(repo_root):
     """Remove only stale package metadata contained by this checkout's source root."""
     import shutil
-    source_root = (repo_root / "src").resolve()
+    from pathlib import Path
+    source_root = (Path(repo_root) / "src").resolve()
     removed = []
     for candidate in source_root.glob("*.egg-info"):
         resolved = candidate.resolve()
@@ -444,7 +445,7 @@ def install_hook(venv=None, uninstall=False, install_pkg=True, user=False, pytho
             print(f"  ✗ couldn't resolve {target}'s active purelib; refusing to guess from lib/python*/site-packages.")
             return 1
         hook = os.path.join(sp, "sitecustomize.py")
-    pth_hook = os.path.join(sp, _PTH_NAME)
+    pth_hook = Path(sp) / _PTH_NAME
 
     # OWNERSHIP IS A SENTINEL WE WROTE, NOT THE WORD "spendguard" APPEARING SOMEWHERE. A user's own
     # sitecustomize that merely mentions spendguard in a comment satisfied the substring test — so
@@ -497,7 +498,7 @@ def install_hook(venv=None, uninstall=False, install_pkg=True, user=False, pytho
                 print(f"  ✗ startup gate INACTIVE: {resolved} shadows {hook}, and {pth_hook} is not ours; "
                       "refusing to overwrite it.")
                 return 1
-            Path(pth_hook).write_text(_PTH_HOOK)
+            pth_hook.write_text(_PTH_HOOK)
             print(f"  ! {resolved} shadows {hook}; installed shadow-proof fallback → {pth_hook}")
             active = _startup_gate_active(target)
     if not active:
