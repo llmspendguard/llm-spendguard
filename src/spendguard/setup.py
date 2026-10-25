@@ -14,11 +14,14 @@ from . import config, config_schema
 _SENTINEL = "spendguard-gate-hook/v1"
 _PTH_NAME = "spendguard_gate_hook.pth"
 _GATED_SDKS = ("openai", "anthropic", "httpx")
+_STARTUP_GATE_PROBE_HOME_PREFIX = "spendguard-startup-probe-"
+_SPENDGUARD_HOME_ENVIRONMENT_VARIABLE = "SPENDGUARD_HOME"
 _EDITABLE_METADATA_PROBE = (
     "import importlib.metadata as m,json;"
     "print(int(any((d.metadata.get('Name') or '').lower().replace('_','-')=='llm-spendguard' "
     "and (lambda u: bool(u and json.loads(u).get('dir_info',{}).get('editable')))"
     "(d.read_text('direct_url.json')) for d in m.distributions())))")
+_EDITABLE_INSTALL_OPTIONS = ("--no-cache-dir", "--no-build-isolation")
 
 
 def purge_shadowing_in_tree_egg_info(repo_root):
@@ -40,7 +43,7 @@ def refresh_consumer_editable_package(python_executable, repo_root, timeout):
     """Install this checkout into a consumer interpreter; shared by install-hook and fleet promotion."""
     import subprocess
     result = subprocess.run(
-        [str(python_executable), "-m", "pip", "install", "-e", str(repo_root), "--no-cache-dir"],
+        [str(python_executable), "-m", "pip", "install", "-e", str(repo_root), *_EDITABLE_INSTALL_OPTIONS],
         capture_output=True, text=True, timeout=timeout)
     if result.returncode:
         raise RuntimeError((result.stderr or result.stdout or "pip install failed").strip())
@@ -347,13 +350,17 @@ def _interpreter_purelib(target, timeout=10):
 def _startup_gate_active(target, timeout=10):
     """True only when startup itself loaded spendguard's existing public install path (no probe-side import)."""
     import subprocess
+    import tempfile
     code = ("import sys;"
             "m=sys.modules.get('spendguard');"
             "print(int(m is not None and callable(getattr(m,'install',None)) "
             "and 'spendguard.gate' in sys.modules))")
     try:
-        r = subprocess.run([target, "-c", code], capture_output=True, text=True,
-                           check=True, timeout=timeout)
+        with tempfile.TemporaryDirectory(prefix=_STARTUP_GATE_PROBE_HOME_PREFIX) as probe_home:
+            probe_environment = os.environ.copy()
+            probe_environment[_SPENDGUARD_HOME_ENVIRONMENT_VARIABLE] = probe_home
+            r = subprocess.run([target, "-c", code], capture_output=True, text=True,
+                               check=True, timeout=timeout, env=probe_environment)
         return r.stdout.strip() == "1"
     except Exception:
         return False

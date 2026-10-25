@@ -12,7 +12,7 @@ DOCTOR_RESIDENCY_REFUSAL_HOME_PREFIX = "doctor-residency-refusal-"
 align_test_startup_home(DOCTOR_RESIDENCY_REFUSAL_HOME_PREFIX)
 
 import spendguard
-from spendguard import budget, calls, claudecode, config, gate, ledger_read
+from spendguard import budget, calls, claudecode, config, gate, ledger_read, setup
 
 DOCTOR_RESIDENCY_TIMEOUT_LINE = "residency : unavailable (ledger scan exceeded its time budget)"
 DOCTOR_RESIDENCY_SCHEMA_REASON = "injected missing residency schema"
@@ -59,6 +59,7 @@ def run_doctor_residency_refusal_containment():
             # Fault only the optional axis during the full doctor invocation; other ledger
             # consumers retain their real isolated fixture connection and containment.
             with patch.object(ledger_read, "read_cc_residency_totals", side_effect=refusal), \
+                    patch.object(setup, "_startup_gate_active", return_value=True), \
                     patch("spendguard.delegate_router.delegation_doctor_line",
                           return_value=DOCTOR_RESIDENCY_CONTINUATION_LINE), \
                     contextlib.redirect_stdout(doctor_output), \

@@ -105,6 +105,8 @@ def audit_metered_cost_vs_tokens(since_days=7):
     is not 'no findings'). Read-only; own short-lived connection."""
     try:
         rows = ledger_read.read_cost_integrity_buckets(since_days)
+    except ledger_read.LedgerReadSchemaError as e:
+        return {"ok": False, "error": str(e), "findings": [], "unpriced": 0, "checked": 0}
     except Exception as e:
         COST_INTEGRITY_LOGGER.exception("Cost integrity ledger read failed")
         return {"ok": False, "error": f"{e!r}\n{traceback.format_exc()}", "findings": [], "unpriced": 0, "checked": 0}

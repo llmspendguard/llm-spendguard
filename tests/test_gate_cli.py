@@ -45,11 +45,12 @@ ck("_cli() default is status, returns 0", gate._cli() == 0)
 import io
 import time
 import contextlib
-from spendguard import ledger_sync
+from spendguard import ledger_sync, setup
+from unittest.mock import patch
 
 buf = io.StringIO()
 t0 = time.monotonic()
-with contextlib.redirect_stdout(buf):
+with patch.object(setup, "_startup_gate_active", return_value=True), contextlib.redirect_stdout(buf):
     rc = gate._cli("doctor")
 took = time.monotonic() - t0
 ck("_cli('doctor') returns 0", rc == 0)
@@ -64,13 +65,13 @@ ck("leak_line persists its verdict as a byproduct", line and ledger_sync._leak_c
 got = ledger_sync.cached_leak_line()
 ck("cached_leak_line returns (line, age)", got and got[0] == line and got[1] < 60)
 buf2 = io.StringIO()
-with contextlib.redirect_stdout(buf2):
+with patch.object(setup, "_startup_gate_active", return_value=True), contextlib.redirect_stdout(buf2):
     gate._cli("doctor")
 ck("doctor shows the CACHED verdict with its age", "as of" in buf2.getvalue() and "accounted" in buf2.getvalue())
 ck("doctor SURFACES price-table freshness (pricing.freshness was computed but shown nowhere before)",
    "pricing" in buf2.getvalue() and "verified" in buf2.getvalue())
 buf3 = io.StringIO()
-with contextlib.redirect_stdout(buf3):
+with patch.object(setup, "_startup_gate_active", return_value=True), contextlib.redirect_stdout(buf3):
     gate._cli("doctor", live=True)
 ck("doctor --live forces the full computation", "accounted" in buf3.getvalue() and "as of" not in buf3.getvalue())
 
@@ -92,10 +93,10 @@ def _spy_backbone(*a, **k):
 
 _ma.backbone_health = _spy_backbone
 try:
-    with contextlib.redirect_stdout(io.StringIO()):
+    with patch.object(setup, "_startup_gate_active", return_value=True), contextlib.redirect_stdout(io.StringIO()):
         gate._cli("doctor")                       # DEFAULT path
     ck("default doctor does NOT run the networked backbone audit (no live pull)", _bh["n"] == 0)
-    with contextlib.redirect_stdout(io.StringIO()):
+    with patch.object(setup, "_startup_gate_active", return_value=True), contextlib.redirect_stdout(io.StringIO()):
         gate._cli("doctor", live=True)            # --live path
     ck("`doctor --live` DOES run the full backbone audit", _bh["n"] >= 1)
 finally:
