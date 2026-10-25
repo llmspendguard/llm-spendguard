@@ -445,9 +445,9 @@ def running_consumers(prune=True):
         with closing(_fleet_db()) as c:
             rows = c.execute(
                 "SELECT pid,version,served_sha,served_short,dirty,cmdline,launchd_label,registered_ts,"
-                f"pid_create_time,{CONSUMER_ROLE_COLUMN} FROM consumers"
+                f"pid_create_time,{CONSUMER_ROLE_COLUMN},python_executable FROM consumers"
             ).fetchall()
-            for (pid, ver, sha, short, dirty, cmd, label, reg, recorded_create_time, role) in rows:
+            for (pid, ver, sha, short, dirty, cmd, label, reg, recorded_create_time, role, python_executable) in rows:
                 identity_state = _classify_fleet_pid_identity(pid, recorded_create_time)
                 if identity_state == _FLEET_PID_GONE:
                     gone.append((pid, recorded_create_time))
@@ -460,7 +460,8 @@ def running_consumers(prune=True):
                 out.append({"pid": pid, "version": ver, "served_sha": sha, "served_short": short,
                             "dirty": bool(dirty), "cmdline": cmd, "launchd_label": label, "registered_ts": reg,
                             "pid_create_time": recorded_create_time, "identity_verified": identity_verified,
-                            "role": role or CONSUMER_ROLE_DAEMON, "stale": stale})
+                            "role": role or CONSUMER_ROLE_DAEMON, "stale": stale,
+                            "python_executable": python_executable})
             if prune and gone:
                 c.executemany("DELETE FROM consumers WHERE pid=? AND pid_create_time IS ?", gone)
                 c.commit()
