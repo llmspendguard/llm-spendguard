@@ -142,6 +142,7 @@ _GROUPS = [
         ("preflight", "resolve model ids (served + priced; stale→fix) BEFORE a batch — catches a bad id for $0"),
         ("verify", "self-check every money path: model ids · failover map · keys · economics (--probe = live)"),
         ("keys-audit", "scan repo .env files for a provider key that would SHADOW the keys.env SSOT (the stale-shadow 401 doctor can't see)"),
+        ("consumer-audit", "prove every workspace LLM consumer is gated and on the deployed sha; safely arm fixable venvs"),
         ("deploy", "run the full gate, then promote committed HEAD → green pointer (running MCP servers roll onto latest+best)"),
         ("release", "what THIS process serves vs the green pointer — are the MCP servers on the latest? (--json)"),
         ("fleet", "tracked consumers and deployments (--restart, --json, or deregister <python_executable>)"),
@@ -423,8 +424,12 @@ def _dispatch(argv=None):
         return 0
     if any(arg in ("--help", "-h") for arg in rest):
         descriptions = {command: description for _group, items in _GROUPS for command, description in items}
-        option_hint = ("\n\noptions: --no-gate --allow-dirty --no-restart --no-refresh"
-                       if cmd == "deploy" else "")
+        option_hint = (
+            "\n\noptions: --no-gate --allow-dirty --no-restart --no-refresh --skip-consumer-verify "
+            "--no-auto-arm --dry-run" if cmd == "deploy"
+            else "\n\noptions: --json --roots ROOT [ROOT ...] --dry-run --no-auto-arm"
+            if cmd == "consumer-audit" else ""
+        )
         print(f"usage: spendguard {cmd} [args]\n\n{descriptions.get(cmd, 'spendguard command')}{option_hint}")
         return 0
     from . import _load_public_api_and_install_gate
@@ -571,6 +576,9 @@ def _dispatch(argv=None):
     if cmd == "mcp":                                  # the model-advisor over MCP (stdio) — for any MCP client
         from . import mcp_server
         return mcp_server.cmd(rest)
+    if cmd == "consumer-audit":
+        from .consumer_audit import consumer_audit_command
+        return consumer_audit_command(rest)
     if cmd == "deploy":
         # Promote the current HEAD to the GREEN POINTER so already-running MCP servers roll onto the latest code —
         # but ONLY when it is COMMITTED and the full gate passes, so "green" (blue/green) == "green" (suite + ruff
@@ -586,12 +594,16 @@ def _dispatch(argv=None):
             # manual arg handling, took the single-instance lock, and RAN the full gate/promote — and a hung --help
             # then held the lock, blocking real deploys with "another deploy already running" (hit live 2026-10-10).
             print("usage: spendguard deploy [--no-gate] [--allow-dirty] [--no-restart] [--no-refresh]\n"
+                  "                         [--skip-consumer-verify] [--no-auto-arm] [--dry-run]\n"
                   "  Promote the current committed HEAD to the green pointer so running MCP servers + gated consumers\n"
                   "  roll onto it. Runs the full gate (chunked_suite) first; the pointer only advances if it passes.\n"
                   "    --no-gate      trust a just-run gate; skip re-running the suite\n"
                   "    --allow-dirty  promote an uncommitted tree (discouraged — the pointer then names no commit)\n"
                   "    --no-restart   do not restart stale launchd-managed fleet consumers after promoting\n"
-                  "    --no-refresh   do not refresh stale editable-install dependency metadata after promoting")
+                  "    --no-refresh   do not refresh stale editable-install dependency metadata after promoting\n"
+                  "    --skip-consumer-verify  skip deterministic workspace consumer verification\n"
+                  "    --no-auto-arm  audit consumers without arming safely-fixable venvs\n"
+                  "    --dry-run      show which safely-fixable venvs would be armed; write no hooks")
             return 0
         _no_gate, _allow_dirty = ("--no-gate" in r), ("--allow-dirty" in r)
         if _rel._tracked_dirty() and not _allow_dirty:
@@ -627,6 +639,16 @@ def _dispatch(argv=None):
                 return _deploy_failed_verdict(f"green-pointer promotion failed: {exc}")
         print(f"deploy: 🟢 promoted {rec['short']} ({rec['describe']}) → green pointer  [{rec['gate']}]")
         print("        already-running MCP servers serve it on their next request (they hand off between requests).")
+        if "--skip-consumer-verify" not in r:
+            from .consumer_audit import audit_consumer_workspaces, render_consumer_audit_table
+            _consumer_result = audit_consumer_workspaces(
+                rec["sha"], auto_arm="--no-auto-arm" not in r, dry_run="--dry-run" in r,
+            )
+            print(render_consumer_audit_table(_consumer_result))
+            if _consumer_result["remaining_gaps"]:
+                print(f"deploy: promoted; armed {_consumer_result['armed']}; "
+                      f"{_consumer_result['remaining_gaps']} consumers STILL not on latest/gated", file=sys.stderr)
+                return 1
         from . import fleet as _fleet
         try:
             for _job in _fleet.install_periodic_launchd_fleet_jobs():

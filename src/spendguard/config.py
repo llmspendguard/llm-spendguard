@@ -145,6 +145,9 @@ CODEX_POOL_CREDENTIAL_STORE_KEY = "cli_auth_credentials_store"
 CODEX_POOL_CREDENTIAL_STORE_VALUE = "file"
 CODEX_POOL_TRUE_VALUES = frozenset(("1", "true", "yes", "on"))
 EXPLICIT_TRUE_VALUES = (True, "true", "1", 1)
+WORKSPACE_ROOTS_DEFAULT = ()
+WORKSPACE_EXTRA_VENV_DIRS_DEFAULT = ("~/.venvs",)
+WORKSPACE_SCAN_DEPTH_DEFAULT = 2
 
 
 def is_explicit_true(value):
@@ -683,6 +686,20 @@ def _cfg():
 
 def _cfg_get(section, key, default=None):
     return (_cfg().get(section) or {}).get(key, default)
+
+
+def consumer_audit_settings(checkout_path=None):
+    """Resolve consumer-audit roots without embedding a machine-specific workspace path."""
+    checkout = Path(checkout_path or Path(__file__).resolve().parents[2]).resolve()
+    configured_roots = _cfg().get("workspace_roots", WORKSPACE_ROOTS_DEFAULT)
+    configured_extras = _cfg().get("workspace_extra_venv_dirs", WORKSPACE_EXTRA_VENV_DIRS_DEFAULT)
+    scan_depth = int(_cfg().get("workspace_scan_depth", WORKSPACE_SCAN_DEPTH_DEFAULT))
+    roots = configured_roots or (str(checkout.parent),)
+    return {
+        "workspace_roots": tuple(Path(value).expanduser().resolve() for value in roots),
+        "workspace_extra_venv_dirs": tuple(Path(value).expanduser().resolve() for value in configured_extras),
+        "workspace_scan_depth": scan_depth,
+    }
 
 
 def codex_daemon_pool_settings():

@@ -25,6 +25,14 @@ fleet.verify_and_refresh_registered_interpreters = lambda apply=True: {
     "N_total": 0, "N_updated": 0, "N_verified_fresh": 0, "failed": [], "complete": True}
 
 fails = []
+DIRTY_TREE_MESSAGE = (
+    "deploy: the working tree has uncommitted changes to tracked files — commit first (the green pointer must name "
+    "committed code), or pass --allow-dirty deliberately."
+)
+PROMOTED_COMMIT_MESSAGE = (
+    "deploy: 🟢 promoted abc1234 (v0.10.0-1-gabc1234) → green pointer  [skipped (--no-gate)]"
+)
+CONSUMER_GAP_MESSAGE = "deploy: promoted; armed 0; 1 consumers STILL not on latest/gated"
 
 
 def ck(name, cond):
@@ -40,31 +48,58 @@ def _run(argv):
     return rc, buf.getvalue()
 
 
-_promoted = {"n": 0, "gate": None}
+class PromotionRecorder:
+    def __init__(self):
+        self.count = 0
+        self.gate = None
+
+    def promote_release(self, **keywords):
+        self.count += 1
+        self.gate = keywords.get("gate")
+        return {"sha": "abc1234", "short": "abc1234", "describe": "v0.10.0-1-gabc1234",
+                "gate": keywords.get("gate", "")}
 
 
-def _fake_promote(**kw):
-    _promoted["n"] += 1
-    _promoted["gate"] = kw.get("gate")
-    return {"short": "abc1234", "describe": "v0.10.0-1-gabc1234", "gate": kw.get("gate", "")}
+promotion_recorder = PromotionRecorder()
 
-
-release.promote_release = _fake_promote
+release.promote_release = promotion_recorder.promote_release
 
 print("-- deploy REFUSES a dirty tree and does not promote --")
 release._tracked_dirty = lambda: True
-rc, out = _run(["deploy", "--no-gate"])
+rc, out = _run(["deploy", "--no-gate", "--skip-consumer-verify"])
 ck("deploy on a DIRTY tree exits non-zero (refuses)", rc == 2)
-ck("... and does NOT promote", _promoted["n"] == 0)
-ck("... telling the user to commit first", "uncommitted" in out.lower() or "commit first" in out.lower())
+ck("... and does NOT promote", promotion_recorder.count == 0)
+ck("... telling the user to commit first", out.splitlines()[0] == DIRTY_TREE_MESSAGE)
 
 print("\n-- deploy --no-gate on a CLEAN tree promotes exactly once --")
 release._tracked_dirty = lambda: False
-rc, out = _run(["deploy", "--no-gate"])
+rc, out = _run(["deploy", "--no-gate", "--skip-consumer-verify"])
 ck("deploy --no-gate on a clean tree exits 0", rc == 0)
-ck("... promotes exactly once, through release.promote_release", _promoted["n"] == 1)
-ck("... and records that the gate was skipped (--no-gate), not faked as green", "no-gate" in (_promoted["gate"] or ""))
-ck("... reporting the promoted commit", "promoted" in out.lower())
+ck("... promotes exactly once, through release.promote_release", promotion_recorder.count == 1)
+ck("... and records that the gate was skipped (--no-gate), not faked as green", "no-gate" in (promotion_recorder.gate or ""))
+ck("... reporting the promoted commit", PROMOTED_COMMIT_MESSAGE in out.splitlines())
+
+print("\n-- deploy consumer verification fails closed after promotion --")
+from spendguard import consumer_audit as _consumer_audit  # noqa: E402
+
+_original_consumer_audit = _consumer_audit.audit_consumer_workspaces
+_original_consumer_render = _consumer_audit.render_consumer_audit_table
+_consumer_audit.audit_consumer_workspaces = lambda deployed_sha, auto_arm, dry_run: {
+    "deployed_sha": deployed_sha, "armed": 0, "remaining_gaps": 1, "exit_code": 1,
+    "dry_run": dry_run, "consumers": [],
+}
+_consumer_audit.render_consumer_audit_table = lambda _result: "fixture consumer audit"
+rc, out = _run(["deploy", "--no-gate", "--no-restart", "--no-refresh"])
+ck("deploy promotes but exits non-zero when consumer verification retains a gap",
+   rc == 1 and PROMOTED_COMMIT_MESSAGE in out.splitlines() and CONSUMER_GAP_MESSAGE in out.splitlines())
+_consumer_audit.audit_consumer_workspaces = lambda deployed_sha, auto_arm, dry_run: {
+    "deployed_sha": deployed_sha, "armed": 1, "remaining_gaps": 0, "exit_code": 0,
+    "dry_run": dry_run, "consumers": [],
+}
+rc, out = _run(["deploy", "--no-gate", "--no-restart", "--no-refresh"])
+ck("deploy continues after a complete consumer proof", rc == 0 and "fixture consumer audit" in out)
+_consumer_audit.audit_consumer_workspaces = _original_consumer_audit
+_consumer_audit.render_consumer_audit_table = _original_consumer_render
 
 print("\n-- release renders served / green / staleness --")
 release.release_status = lambda: {"served": {"short": "aaaaaaa", "describe": "v0.10.0-9-gaaaaaaa"},
@@ -87,7 +122,7 @@ def _lock_must_not_be_taken(_name):
 
 _config.single_instance_lock = _lock_must_not_be_taken
 release._tracked_dirty = lambda: True       # even a DIRTY tree must still give help (help is before the dirty check)
-_before = _promoted["n"]
+_before = promotion_recorder.count
 try:
     rc, out = _run(["deploy", "--help"])
     _lock_ok = True
@@ -96,7 +131,7 @@ except AssertionError:
 ck("deploy --help never acquires the deploy lock", _lock_ok)
 ck("deploy --help exits 0", rc == 0)
 ck("deploy --help prints usage (flags shown)", "usage: spendguard deploy" in out and "--no-gate" in out and "--no-restart" in out)
-ck("deploy --help does NOT promote / run the gate", _promoted["n"] == _before)
+ck("deploy --help does NOT promote / run the gate", promotion_recorder.count == _before)
 
 print(f"\n{'[FAIL]' if fails else 'OK'} test_deploy_release_cli: {len(fails)} failure(s)")
 sys.exit(1 if fails else 0)
