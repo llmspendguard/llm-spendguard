@@ -21,47 +21,7 @@ _EDITABLE_METADATA_PROBE = (
     "print(int(any((d.metadata.get('Name') or '').lower().replace('_','-')=='llm-spendguard' "
     "and (lambda u: bool(u and json.loads(u).get('dir_info',{}).get('editable')))"
     "(d.read_text('direct_url.json')) for d in m.distributions())))")
-_EDITABLE_INSTALL_OPTIONS = ("--no-cache-dir", "--no-build-isolation")
-_PYPROJECT_CONFIGURATION_FILE_NAME = "pyproject.toml"
-_BUILD_BACKEND_IMPORT_PROBE = "import importlib,sys; importlib.import_module(sys.argv[1])"
-
-
-def environment_with_editable_build_backend(repo_root, python_executable, timeout):
-    """Expose this installation's declared backend to an offline consumer build."""
-    import importlib.util
-    import subprocess
-    import sys
-    import tomllib
-    from pathlib import Path
-
-    pyproject_path = Path(repo_root) / _PYPROJECT_CONFIGURATION_FILE_NAME
-    with pyproject_path.open("rb") as pyproject_file:
-        backend_module = tomllib.load(pyproject_file)["build-system"]["build-backend"].partition(":")[0]
-    backend_package = backend_module.partition(".")[0]
-    backend_spec = importlib.util.find_spec(backend_package)
-    if backend_spec is None or backend_spec.origin is None:
-        raise RuntimeError(f"Declared build backend is unavailable offline: {backend_module}")
-    backend_origin = Path(backend_spec.origin).resolve()
-    backend_import_root = next(
-        (Path(entry).resolve() for entry in sys.path
-         if entry and backend_origin.is_relative_to(Path(entry).resolve())),
-        None,
-    )
-    if backend_import_root is None:
-        raise RuntimeError(f"Cannot locate the import root for offline build backend: {backend_module}")
-    build_environment = os.environ.copy()
-    existing_python_path = build_environment.get("PYTHONPATH")
-    python_path_entries = [os.fspath(backend_import_root)]
-    if existing_python_path:
-        python_path_entries.append(existing_python_path)
-    build_environment["PYTHONPATH"] = os.pathsep.join(python_path_entries)
-    backend_probe = subprocess.run(
-        [str(python_executable), "-c", _BUILD_BACKEND_IMPORT_PROBE, backend_module],
-        capture_output=True, text=True, timeout=timeout, env=build_environment)
-    if backend_probe.returncode:
-        raise RuntimeError((backend_probe.stderr or backend_probe.stdout or
-                            f"Consumer cannot import offline build backend: {backend_module}").strip())
-    return build_environment
+_EDITABLE_INSTALL_OPTIONS = ("--no-cache-dir",)
 
 
 def purge_shadowing_in_tree_egg_info(repo_root):
@@ -82,10 +42,9 @@ def purge_shadowing_in_tree_egg_info(repo_root):
 def refresh_consumer_editable_package(python_executable, repo_root, timeout):
     """Install this checkout into a consumer interpreter; shared by install-hook and fleet promotion."""
     import subprocess
-    build_environment = environment_with_editable_build_backend(repo_root, python_executable, timeout)
     result = subprocess.run(
         [str(python_executable), "-m", "pip", "install", "-e", str(repo_root), *_EDITABLE_INSTALL_OPTIONS],
-        capture_output=True, text=True, timeout=timeout, env=build_environment)
+        capture_output=True, text=True, timeout=timeout)
     if result.returncode:
         raise RuntimeError((result.stderr or result.stdout or "pip install failed").strip())
     metadata_probe = subprocess.run([str(python_executable), "-c", _EDITABLE_METADATA_PROBE],
