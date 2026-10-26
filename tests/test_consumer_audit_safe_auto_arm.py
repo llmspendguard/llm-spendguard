@@ -14,6 +14,10 @@ from spendguard import config, consumer_audit  # noqa: E402
 
 FIXTURE_DEPLOYED_SHA = "fixture-deployed-sha"
 FIXTURE_MAXIMUM_DEPTH = 2
+FIXTURE_REPOSITORY_DISCOVERY_DEPTH = 1
+FIXTURE_PRUNED_BOUNDARY_DEPTH = 0
+FIXTURE_VENV_MARKER_CONTENT = "fixture = true\n"
+FIXTURE_EXHAUSTION_SCAN_BUDGET = 1
 failure_count = 0
 
 
@@ -82,7 +86,7 @@ with tempfile.TemporaryDirectory(prefix="consumer-audit-proof-") as temporary:
     (repo / "client.py").write_text("import openai\n")
     fixable_venv = make_fake_venv(repo)
     settings = {"workspace_roots": (fixture_root,), "workspace_extra_venv_dirs": (),
-                "workspace_scan_depth": FIXTURE_MAXIMUM_DEPTH}
+                "workspace_scan_depth": FIXTURE_MAXIMUM_DEPTH, "consumer_audit_exempt": ()}
     extra_venv_root = fixture_root / "external-environments"
     extra_venv_root.mkdir()
     external_venv = make_fake_venv(extra_venv_root)
@@ -198,6 +202,143 @@ with tempfile.TemporaryDirectory(prefix="consumer-audit-proof-") as temporary:
         )
         failure_count += check("bounded repository discovery reports the exact pruned subtree",
                                bounded_discovery["pruned_at_depth"] == (deep_repository.resolve(),))
+
+        guard_root = fixture_root / "consumer-audit-guards"
+        guard_root.mkdir()
+        exempt_repository = guard_root / "declared-consumer"
+        sibling_repository = guard_root / "sibling-consumer"
+        for consumer_repository in (exempt_repository, sibling_repository):
+            consumer_repository.mkdir()
+            (consumer_repository / consumer_audit.CONSUMER_AUDIT_GIT_MARKER_NAME).mkdir()
+            (consumer_repository / "client.py").write_text("import openai\n")
+            consumer_venv = consumer_repository / "environment"
+            consumer_venv.mkdir()
+            (consumer_venv / consumer_audit.CONSUMER_AUDIT_VENV_CONFIGURATION_NAME).write_text(
+                FIXTURE_VENV_MARKER_CONTENT
+            )
+        exempt_venv = exempt_repository / "environment"
+        sibling_venv = sibling_repository / "environment"
+        guard_settings = {"workspace_roots": (guard_root,), "workspace_extra_venv_dirs": (),
+                          "workspace_scan_depth": FIXTURE_REPOSITORY_DISCOVERY_DEPTH,
+                          "consumer_audit_exempt": ()}
+        original_probe = consumer_audit.probe_consumer_interpreter
+        consumer_audit.probe_consumer_interpreter = lambda _python: {
+            "confirmed": False, "probe_error": "offline fixture"
+        }
+        without_exemption = consumer_audit.audit_consumer_workspaces(
+            FIXTURE_DEPLOYED_SHA, settings=guard_settings, auto_arm=False
+        )
+        with_exemption = consumer_audit.audit_consumer_workspaces(
+            FIXTURE_DEPLOYED_SHA,
+            settings={**guard_settings, "consumer_audit_exempt": (exempt_repository,)},
+            auto_arm=False,
+        )
+        without_exempt_row = next(
+            row for row in without_exemption["consumers"] if row["venv"] == os.fspath(exempt_venv.resolve())
+        )
+        exempt_row = next(
+            row for row in with_exemption["consumers"] if row["venv"] == os.fspath(exempt_venv.resolve())
+        )
+        sibling_row = next(
+            row for row in with_exemption["consumers"] if row["venv"] == os.fspath(sibling_venv.resolve())
+        )
+        failure_count += check(
+            "consumer_audit_exempt fail-before/pass-after changes only the declared consumer",
+            without_exempt_row["final_verdict"] == consumer_audit.CONSUMER_AUDIT_UNCONFIRMED_INTERPRETER
+            and without_exemption["remaining_gaps"] == 2
+            and exempt_row["initial_verdict"] == consumer_audit.CONSUMER_AUDIT_EXEMPT
+            and exempt_row["final_verdict"] == consumer_audit.CONSUMER_AUDIT_EXEMPT
+            and exempt_row["action"] == consumer_audit.CONSUMER_AUDIT_ACTION_NONE
+            and sibling_row["final_verdict"] == consumer_audit.CONSUMER_AUDIT_UNCONFIRMED_INTERPRETER
+            and with_exemption["remaining_gaps"] == 1
+            and with_exemption["exit_code"] == 1,
+        )
+        all_exempt = consumer_audit.audit_consumer_workspaces(
+            FIXTURE_DEPLOYED_SHA,
+            settings={**guard_settings, "consumer_audit_exempt": (guard_root,)},
+            auto_arm=False,
+        )
+        failure_count += check(
+            "all terminal EXEMPT consumers produce zero gaps and exit zero",
+            all_exempt["remaining_gaps"] == 0 and all_exempt["exit_code"] == 0,
+        )
+        consumer_audit.probe_consumer_interpreter = original_probe
+
+        pruned_guard_root = fixture_root / "pruned-gap-guards"
+        noise_subtree = pruned_guard_root / "noise-subtree"
+        hidden_venv_subtree = pruned_guard_root / "hidden-consumer-subtree"
+        exempt_hidden_subtree = pruned_guard_root / "exempt-hidden-subtree"
+        noise_subtree.mkdir(parents=True)
+        hidden_marker_parent = hidden_venv_subtree / "first" / "second" / "third"
+        exempt_marker_parent = exempt_hidden_subtree / "first" / "second" / "third"
+        clean_nested_directory = noise_subtree / "first" / "second"
+        hidden_marker_parent.mkdir(parents=True)
+        exempt_marker_parent.mkdir(parents=True)
+        clean_nested_directory.mkdir(parents=True)
+        (hidden_marker_parent / consumer_audit.CONSUMER_AUDIT_VENV_CONFIGURATION_NAME).write_text(
+            FIXTURE_VENV_MARKER_CONTENT
+        )
+        (exempt_marker_parent / consumer_audit.CONSUMER_AUDIT_VENV_CONFIGURATION_NAME).write_text(
+            FIXTURE_VENV_MARKER_CONTENT
+        )
+        # Fail-before: the former depth-2 ceiling dropped this depth-3 marker as clean.
+        failure_count += check(
+            "three-level-deep pruned venv fail-before/pass-after is detected",
+        consumer_audit._pruned_subtree_may_contain_venv(hidden_venv_subtree) is True,
+        )
+        failure_count += check(
+            "clean fully exhausted pruned subtree still drops",
+        consumer_audit._pruned_subtree_may_contain_venv(noise_subtree) is False,
+        )
+        original_pruned_scan_budget = consumer_audit.CONSUMER_AUDIT_PRUNED_VENV_SCAN_BUDGET
+        consumer_audit.CONSUMER_AUDIT_PRUNED_VENV_SCAN_BUDGET = FIXTURE_EXHAUSTION_SCAN_BUDGET
+        try:
+            failure_count += check(
+                "pruned subtree scan budget exhaustion fails closed",
+        consumer_audit._pruned_subtree_may_contain_venv(noise_subtree) is True,
+            )
+        finally:
+            consumer_audit.CONSUMER_AUDIT_PRUNED_VENV_SCAN_BUDGET = original_pruned_scan_budget
+        pruned_result = consumer_audit.audit_consumer_workspaces(
+            FIXTURE_DEPLOYED_SHA,
+            settings={"workspace_roots": (pruned_guard_root,), "workspace_extra_venv_dirs": (),
+                      "workspace_scan_depth": FIXTURE_PRUNED_BOUNDARY_DEPTH,
+                      "consumer_audit_exempt": (exempt_hidden_subtree,)},
+            auto_arm=False,
+        )
+        failure_count += check(
+            "deep pruned venv fail-before/pass-after counts while clean and exempt drop",
+            pruned_result["pruned_at_depth"] == (os.fspath(hidden_venv_subtree.resolve()),)
+            and pruned_result["remaining_gaps"] == 1 and pruned_result["exit_code"] == 1
+            and os.fspath(noise_subtree.resolve()) not in pruned_result["pruned_at_depth"]
+            and os.fspath(exempt_hidden_subtree.resolve()) not in pruned_result["pruned_at_depth"],
+        )
+        pruned_clean = consumer_audit.audit_consumer_workspaces(
+            FIXTURE_DEPLOYED_SHA,
+            settings={"workspace_roots": (pruned_guard_root,), "workspace_extra_venv_dirs": (),
+                      "workspace_scan_depth": FIXTURE_PRUNED_BOUNDARY_DEPTH,
+                      "consumer_audit_exempt": (hidden_venv_subtree, exempt_hidden_subtree)},
+            auto_arm=False,
+        )
+        failure_count += check(
+            "filtered pruned set controls end-to-end zero exit",
+            pruned_clean["pruned_at_depth"] == () and pruned_clean["remaining_gaps"] == 0
+            and pruned_clean["exit_code"] == 0,
+        )
+
+        original_cfg = config._cfg
+        config._cfg = lambda: {
+            "workspace_roots": (os.fspath(guard_root),),
+            "workspace_extra_venv_dirs": (),
+            "workspace_scan_depth": FIXTURE_REPOSITORY_DISCOVERY_DEPTH,
+            "consumer_audit_exempt": (os.fspath(exempt_repository),),
+        }
+        resolved_guard_settings = config.consumer_audit_settings(checkout_path=guard_root)
+        config._cfg = original_cfg
+        failure_count += check(
+            "consumer_audit_settings resolves the declared consumer_audit_exempt paths",
+            resolved_guard_settings["consumer_audit_exempt"] == (exempt_repository.resolve(),),
+        )
         failure_count += check("sha equality classification", consumer_audit.classify_deployed_sha(
             FIXTURE_DEPLOYED_SHA, FIXTURE_DEPLOYED_SHA, FIXTURE_DEPLOYED_SHA) == "==")
         failure_count += check("sha behind classification", consumer_audit.classify_deployed_sha(

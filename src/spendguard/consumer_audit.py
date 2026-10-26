@@ -14,6 +14,9 @@ CONSUMER_AUDIT_PROBE_TIMEOUT_SECONDS = 10.0
 CONSUMER_AUDIT_GIT_TIMEOUT_SECONDS = 5.0
 CONSUMER_AUDIT_VENV_PREFIX = ".venv"
 CONSUMER_AUDIT_VENV_CONFIGURATION_NAME = "pyvenv.cfg"
+# A realistic project subtree should fit within 4,096 visited directories. Exhausting
+# this containment budget produces a fail-closed gap, so a conservative bound is safe.
+CONSUMER_AUDIT_PRUNED_VENV_SCAN_BUDGET = 4096
 CONSUMER_AUDIT_POSIX_EXECUTABLE_PATHS = (("bin", "python"), ("bin", "python3"))
 CONSUMER_AUDIT_WINDOWS_EXECUTABLE_PATH = ("Scripts", "python.exe")
 CONSUMER_AUDIT_SOURCE_SUFFIX = ".py"
@@ -35,6 +38,7 @@ CONSUMER_AUDIT_BEHIND = "BEHIND"
 CONSUMER_AUDIT_UNGATED_INTERPRETER = "UNGATED-INTERP"
 CONSUMER_AUDIT_UNCONFIRMED_INTERPRETER = "INTERP-UNCONFIRMED"
 CONSUMER_AUDIT_NOT_LLM = "NOT-LLM"
+CONSUMER_AUDIT_EXEMPT = "EXEMPT"
 CONSUMER_AUDIT_LLM_USE_UNDETERMINED = "LLM-USE-UNDETERMINED"
 CONSUMER_AUDIT_ASSOCIATION_REPOSITORY = "repository"
 CONSUMER_AUDIT_ASSOCIATION_UNASSOCIATED = "unassociated"
@@ -104,6 +108,30 @@ def _is_venv_directory(path):
     return any(
         (candidate := path.joinpath(*relative_path)).is_file() and os.access(candidate, os.X_OK)
         for relative_path in executable_paths
+    )
+
+
+def _pruned_subtree_may_contain_venv(pruned_path):
+    """Return whether a full bounded scan finds a venv or cannot prove absence."""
+    if _is_venv_directory(pruned_path):
+        return True
+    visited_directory_count = 0
+    traversal_errors = []
+    for _directory, _names, files in os.walk(pruned_path, onerror=traversal_errors.append):
+        visited_directory_count += 1
+        if CONSUMER_AUDIT_VENV_CONFIGURATION_NAME in files:
+            return True
+        if visited_directory_count > CONSUMER_AUDIT_PRUNED_VENV_SCAN_BUDGET:
+            return True
+    return bool(traversal_errors)
+
+
+def _consumer_path_is_exempt(repository, venv, exempt_paths):
+    """Apply declared repo-or-venv path containment without semantic inference."""
+    return any(
+        (venv is not None and _path_is_within(venv, exempt_path))
+        or (repository is not None and _path_is_within(repository, exempt_path))
+        for exempt_path in exempt_paths
     )
 
 
@@ -238,9 +266,14 @@ def audit_consumer_workspaces(deployed_sha, roots=None, auto_arm=True, dry_run=F
     resolved_settings = settings or config.consumer_audit_settings()
     workspace_roots = tuple(Path(value).resolve() for value in (roots or resolved_settings["workspace_roots"]))
     extras = tuple(resolved_settings["workspace_extra_venv_dirs"])
+    exempt_paths = tuple(Path(value).resolve() for value in resolved_settings["consumer_audit_exempt"])
     discovery = enumerate_consumer_repositories(workspace_roots, resolved_settings["workspace_scan_depth"])
     repositories = discovery["repositories"]
-    pruned_at_depth = discovery["pruned_at_depth"]
+    pruned_at_depth = tuple(
+        path for path in discovery["pruned_at_depth"]
+        if not any(_path_is_within(path, exempt_path) for exempt_path in exempt_paths)
+                and _pruned_subtree_may_contain_venv(path)
+    )
     external_venv_names = {
         _normalized_consumer_name(child.name) for extra_root in extras if extra_root.is_dir()
         for child in extra_root.iterdir() if child.is_dir()
@@ -254,17 +287,22 @@ def audit_consumer_workspaces(deployed_sha, roots=None, auto_arm=True, dry_run=F
         )
         if (not repository_venvs and llm_repository
                 and _normalized_consumer_name(repository.name) not in external_venv_names):
+            repository_is_exempt = _consumer_path_is_exempt(repository, None, exempt_paths)
+            repository_verdict = (CONSUMER_AUDIT_EXEMPT if repository_is_exempt
+                                  else CONSUMER_AUDIT_UNGATED_INTERPRETER)
             rows.append({"repo": os.fspath(repository), "venv": None, "python": None,
                          "sdk_imports_source": source_import_facts["sdk"],
                          "spendguard_import_source": source_import_facts["spendguard_import"],
                          "source_text_mentions": source_import_facts["source_text_mentions"],
                          "completeness_flag": source_import_facts["completeness_flag"],
-                         "live_pids": [], "initial_verdict": CONSUMER_AUDIT_UNGATED_INTERPRETER,
-                         "action": CONSUMER_AUDIT_ACTION_NONE, "final_verdict": CONSUMER_AUDIT_UNGATED_INTERPRETER,
-                         "hint": "configure a gated virtualenv interpreter"})
+                         "live_pids": [], "initial_verdict": repository_verdict,
+                         "action": CONSUMER_AUDIT_ACTION_NONE, "final_verdict": repository_verdict,
+                         "hint": (None if repository_is_exempt
+                                  else "configure a gated virtualenv interpreter")})
         for venv in repository_venvs:
             rows.append(_audit_consumer_venv(repository, venv, source_import_facts, llm_repository, deployed_sha,
-                                             auto_arm, dry_run))
+                                             auto_arm, dry_run,
+                                             _consumer_path_is_exempt(repository, venv, exempt_paths)))
     for extra_root in sorted(extras, key=os.fspath):
         if not extra_root.is_dir():
             continue
@@ -282,9 +320,11 @@ def audit_consumer_workspaces(deployed_sha, roots=None, auto_arm=True, dry_run=F
             }
             repository_llm = bool(associated_import_facts["sdk"]) if associated_repository else None
             rows.append(_audit_consumer_venv(associated_repository, venv, associated_import_facts, repository_llm,
-                                             deployed_sha, auto_arm, dry_run))
+                                             deployed_sha, auto_arm, dry_run,
+                                             _consumer_path_is_exempt(associated_repository, venv, exempt_paths)))
     rows.sort(key=lambda row: ((row["repo"] or ""), (row["venv"] or "")))
-    remaining = sum(row["final_verdict"] not in (CONSUMER_AUDIT_SUCCESS, CONSUMER_AUDIT_NOT_LLM) for row in rows)
+    terminal_verdicts = (CONSUMER_AUDIT_SUCCESS, CONSUMER_AUDIT_NOT_LLM, CONSUMER_AUDIT_EXEMPT)
+    remaining = sum(row["final_verdict"] not in terminal_verdicts for row in rows)
     remaining += len(pruned_at_depth)
     armed = sum(row["action"] == CONSUMER_AUDIT_ACTION_ARMED for row in rows)
     return {"deployed_sha": deployed_sha, "armed": armed, "remaining_gaps": remaining,
@@ -297,7 +337,8 @@ def _normalized_consumer_name(name):
     return "".join(character.casefold() for character in name if character.isalnum())
 
 
-def _audit_consumer_venv(repository, venv, source_import_facts, repository_llm, deployed_sha, auto_arm, dry_run):
+def _audit_consumer_venv(repository, venv, source_import_facts, repository_llm, deployed_sha, auto_arm, dry_run,
+                         consumer_is_exempt=False):
     python_executable = venv / CONSUMER_AUDIT_BIN_DIRECTORY_NAME / CONSUMER_AUDIT_PYTHON_EXECUTABLE_NAME
     probe = probe_consumer_interpreter(python_executable)
     checkout = _checkout_for_module(probe.get("module_path")) if probe.get("confirmed") else None
@@ -309,7 +350,8 @@ def _audit_consumer_venv(repository, venv, source_import_facts, repository_llm, 
     probe["sha_relation"] = classify_deployed_sha(head, origin, deployed_sha) if head else None
     llm_calling = repository_llm
     live_pids = _live_pids(python_executable) if python_executable.exists() else []
-    initial = _consumer_verdict(llm_calling, probe, deployed_sha)
+    initial = (CONSUMER_AUDIT_EXEMPT if consumer_is_exempt
+               else _consumer_verdict(llm_calling, probe, deployed_sha))
     action = CONSUMER_AUDIT_ACTION_NONE
     final_probe = probe
     fixable = initial == CONSUMER_AUDIT_NOT_ENFORCING and not live_pids
@@ -322,7 +364,8 @@ def _audit_consumer_venv(repository, venv, source_import_facts, repository_llm, 
                 action = CONSUMER_AUDIT_ACTION_ARMED
                 final_probe = probe_consumer_interpreter(python_executable)
                 final_probe.update({key: probe[key] for key in ("checkout", "checkout_head", "origin_main", "sha_relation")})
-    final = _consumer_verdict(llm_calling, final_probe, deployed_sha)
+    final = (CONSUMER_AUDIT_EXEMPT if consumer_is_exempt
+             else _consumer_verdict(llm_calling, final_probe, deployed_sha))
     hint = None
     if live_pids and initial != CONSUMER_AUDIT_SUCCESS:
         hint = "restart needed; live pids were not modified"
