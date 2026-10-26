@@ -2713,8 +2713,9 @@ def core_gated_sdk_packages():
 def _enforcement_armed():
     """Each installed core SDK must be fully patched or covered by a live import-completion hook.
 
-    Optional adapters retain their historical any-surface probe. Importability failures are indeterminate,
-    never evidence that a provider is absent. No package is imported by the core SDK probe.
+    Unimported optional adapters are covered by armed core-SDK hooks; imported adapters retain their historical
+    any-surface probe. Importability failures are indeterminate, never evidence that a provider is absent. No
+    package is imported by the core SDK probe.
     """
     import importlib.util
     specs = INTERCEPTORS + _EXTRA + RT_INTERCEPTORS + STREAM_INTERCEPTORS + UNIT_INTERCEPTORS
@@ -2730,6 +2731,13 @@ def _enforcement_armed():
         except Exception:
             return False
         if package not in packages:
+            if package not in sys.modules:
+                with finder.lock:
+                    core_armed = finder in sys.meta_path and all(
+                        _patch_imported_sdk_package in finder.callbacks.get(core_package, ())
+                        for core_package in packages)
+                if core_armed:
+                    continue
             if not _any_patched():
                 return False
             continue

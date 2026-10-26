@@ -13,6 +13,8 @@ again. A regex/keyword could not make this call — it is the structural fact "i
 import os
 import sys
 import tempfile
+from types import SimpleNamespace
+from unittest import mock
 
 # Isolated HOME, re-exec'd before spendguard is imported (no ledger pollution; same pattern as the suite's
 # other gate tests). This test writes nothing — it only exercises require()'s enforcement branch.
@@ -36,6 +38,9 @@ def check(label, ok, extra=""):
 
 _orig_any = gate._any_patched
 _orig_mods = gate.gated_sdk_modules
+OPTIONAL_ADAPTER_FIXTURE_PACKAGE = "litellm"
+OPTIONAL_ADAPTER_FIXTURE_API_KEY = "offline-optional-adapter-key"
+OPTIONAL_ADAPTER_FIXTURE_KEY_ENV = "OPENAI_API_KEY"
 
 
 def test_no_provider_sdk_importable_passes():
@@ -64,6 +69,55 @@ def test_present_but_unpatched_refuses():
         gate._any_patched, gate.gated_sdk_modules = _orig_any, _orig_mods
 
 
+def test_optional_adapter_unimported_with_core_hooks_is_armed():
+    """An importable optional adapter is covered before import by armed core SDK hooks."""
+    finder = gate._GatePackagePostImportFinder()
+    finder.callbacks = {
+        core_package: [gate._patch_imported_sdk_package]
+        for core_package in gate.core_gated_sdk_packages()
+    }
+    finder_meta_path = [finder, *sys.meta_path]
+    with (mock.patch.dict(os.environ, {OPTIONAL_ADAPTER_FIXTURE_KEY_ENV: OPTIONAL_ADAPTER_FIXTURE_API_KEY}),
+          mock.patch.dict(sys.modules) as fixture_modules,
+          mock.patch.object(sys, "meta_path", finder_meta_path),
+          mock.patch.object(gate, "_gate_package_import_finder", finder),
+          mock.patch.object(gate, "gated_sdk_modules", return_value=[OPTIONAL_ADAPTER_FIXTURE_PACKAGE]),
+          mock.patch("importlib.util.find_spec", return_value=SimpleNamespace()),
+          mock.patch.object(gate, "_any_patched", return_value=False),
+          mock.patch.object(gate, "install")):
+        fixture_modules.pop(OPTIONAL_ADAPTER_FIXTURE_PACKAGE, None)
+        check("unimported optional adapter with core hooks → enforcement armed",
+              gate._enforcement_armed())
+        try:
+            gate.require()
+            check("unimported optional adapter with core hooks → require() passes", True)
+        except SpendGateRefused as error:
+            check("unimported optional adapter with core hooks → require() passes", False, str(error))
+
+
+def test_optional_adapter_unimported_without_core_hooks_still_refuses():
+    """An importable optional adapter cannot pass when neither hooks nor patches are live."""
+    finder = gate._GatePackagePostImportFinder()
+    finder_meta_path = [entry for entry in sys.meta_path if entry is not finder]
+    with (mock.patch.dict(os.environ, {OPTIONAL_ADAPTER_FIXTURE_KEY_ENV: OPTIONAL_ADAPTER_FIXTURE_API_KEY}),
+          mock.patch.dict(sys.modules) as fixture_modules,
+          mock.patch.object(sys, "meta_path", finder_meta_path),
+          mock.patch.object(gate, "_gate_package_import_finder", finder),
+          mock.patch.object(gate, "gated_sdk_modules", return_value=[OPTIONAL_ADAPTER_FIXTURE_PACKAGE]),
+          mock.patch("importlib.util.find_spec", return_value=SimpleNamespace()),
+          mock.patch.object(gate, "_any_patched", return_value=False),
+          mock.patch.object(gate, "install")):
+        fixture_modules.pop(OPTIONAL_ADAPTER_FIXTURE_PACKAGE, None)
+        check("unimported optional adapter without core hooks → enforcement disarmed",
+              not gate._enforcement_armed())
+        try:
+            gate.require()
+            check("unimported optional adapter without core hooks → require() REFUSES", False,
+                  "did not raise")
+        except SpendGateRefused:
+            check("unimported optional adapter without core hooks → require() REFUSES", True)
+
+
 def test_disabled_still_refuses():
     """A disabled gate is never a pass, regardless of SDK presence."""
     os.environ["GATE_DISABLE"] = "1"
@@ -78,6 +132,8 @@ def test_disabled_still_refuses():
 
 for _fn in (test_no_provider_sdk_importable_passes,
             test_present_but_unpatched_refuses,
+            test_optional_adapter_unimported_with_core_hooks_is_armed,
+            test_optional_adapter_unimported_without_core_hooks_still_refuses,
             test_disabled_still_refuses):
     _fn()
 
