@@ -14,15 +14,29 @@ from .adapters import llm_capability_import_names
 from .setup import _PTH_SENTINEL, _SENTINEL
 
 
-# Defaults: the iCloud-safe venv home + venvs sitting inside repos near the cwd (1–2 levels up's siblings). Generic
+def _registry_venv_roots():
+    """Return resolved, de-duplicated registry venv roots and whether the registry was readable."""
+    try:
+        from . import fleet
+        registered = fleet.registered_interpreters()
+        roots = sorted({os.path.realpath(os.path.expanduser(row["venv_root"]))
+                        for row in registered if row.get("venv_root")})
+    except Exception:
+        return [], False
+    return roots, True
+
+
+# Defaults: the iCloud-safe venv home + repo-local venv homes derived from the authoritative registry. Generic
 # globs, not user-specific paths; override with SPENDGUARD_COVERAGE_ROOTS / config coverage.roots.
 def _default_roots():
-    here = os.getcwd()
-    parents = [os.path.dirname(here), os.path.dirname(os.path.dirname(here))]
     roots = ["~/.venvs/*"]
-    for p in parents:
-        if p and p not in ("/", os.path.expanduser("~")):
-            roots.append(os.path.join(p, "*", ".venv*"))
+    home = os.path.expanduser("~")
+    registry_roots, _registry_readable = _registry_venv_roots()
+    for venv_root in registry_roots:
+        container = os.path.dirname(os.path.dirname(venv_root))  # repo container; scan sibling repo venvs
+        candidate_glob = os.path.join(container, "*", ".venv*")
+        if container and container not in ("/", home) and candidate_glob not in roots:
+            roots.append(candidate_glob)
     return roots
 
 
@@ -89,23 +103,32 @@ def _is_own(sp, venv):
     return False
 
 
+def _candidate_venvs(roots):
+    """Return deterministic venv candidates before interpreter probing."""
+    pats = _roots() if roots is None else roots
+    candidates = {venv for pat in pats for venv in glob.glob(os.path.expanduser(pat))}
+    # Explicit roots, including [], are an exact caller scope; registry union is default discovery only.
+    if roots is None:
+        registry_roots, _registry_readable = _registry_venv_roots()
+        candidates.update(registry_roots)
+    return sorted(candidates)
+
+
 def audit_gating_coverage(roots=None):
     """[{venv, llm:[providers], gated:bool, own:bool}] for every venv (under roots) that has an LLM SDK installed.
     `own` = it's spendguard's own venv, which self-gates via `import spendguard; spendguard.require()` in its scripts
     (gating it via sitecustomize would spam the receipt on every dev `python` — so that's intentional, not a gap)."""
-    pats = _roots() if roots is None else roots   # explicit roots=[] means scan NOTHING, not fall back to defaults
     seen, out = set(), []
-    for pat in pats:
-        for venv in glob.glob(os.path.expanduser(pat)):
-            sp = _purelib(venv)
-            if not sp or sp in seen:
-                continue
-            seen.add(sp)
-            llm = sorted(p for p in llm_capability_import_names() if os.path.isdir(os.path.join(sp, p)))
-            if not llm:
-                continue
-            out.append({"venv": venv, "llm": llm, "gated": _is_gated(venv, sp),
-                        "own": _is_own(sp, venv)})
+    for venv in _candidate_venvs(roots):
+        sp = _purelib(venv)
+        if not sp or sp in seen:
+            continue
+        seen.add(sp)
+        llm = sorted(p for p in llm_capability_import_names() if os.path.isdir(os.path.join(sp, p)))
+        if not llm:
+            continue
+        out.append({"venv": venv, "llm": llm, "gated": _is_gated(venv, sp),
+                    "own": _is_own(sp, venv)})
     return out
 
 
@@ -143,8 +166,11 @@ def _captured_spend_sources():
 
 
 def cmd(argv=None):
+    _registry_roots, registry_readable = _registry_venv_roots()
     rows = audit_gating_coverage()
     print("spendguard coverage — LLM-calling venvs (gated = live realtime captured at the source, no reconstruction):")
+    if not registry_readable:
+        print("  ⚠️ deployment registry unreadable; enumeration fell back to glob-only discovery and may be incomplete")
     if not rows:
         print("  (no venvs with an LLM SDK found under the scanned roots; set SPENDGUARD_COVERAGE_ROOTS to widen)")
     # WHAT COUNTS AS A GAP IS DEFINED IN gaps(), ONCE. This loop used to rebuild the same condition inline
