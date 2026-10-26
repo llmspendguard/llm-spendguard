@@ -148,6 +148,7 @@ EXPLICIT_TRUE_VALUES = (True, "true", "1", 1)
 WORKSPACE_ROOTS_DEFAULT = ()
 WORKSPACE_EXTRA_VENV_DIRS_DEFAULT = ("~/.venvs",)
 WORKSPACE_SCAN_DEPTH_DEFAULT = 2
+CONSUMER_AUDIT_EXEMPT_DEFAULT = ()
 
 
 def is_explicit_true(value):
@@ -693,11 +694,13 @@ def consumer_audit_settings(checkout_path=None):
     checkout = Path(checkout_path or Path(__file__).resolve().parents[2]).resolve()
     configured_roots = _cfg().get("workspace_roots", WORKSPACE_ROOTS_DEFAULT)
     configured_extras = _cfg().get("workspace_extra_venv_dirs", WORKSPACE_EXTRA_VENV_DIRS_DEFAULT)
+    configured_exempt = _cfg().get("consumer_audit_exempt", CONSUMER_AUDIT_EXEMPT_DEFAULT)
     scan_depth = int(_cfg().get("workspace_scan_depth", WORKSPACE_SCAN_DEPTH_DEFAULT))
     roots = configured_roots or (str(checkout.parent),)
     return {
         "workspace_roots": tuple(Path(value).expanduser().resolve() for value in roots),
         "workspace_extra_venv_dirs": tuple(Path(value).expanduser().resolve() for value in configured_extras),
+        "consumer_audit_exempt": tuple(Path(value).expanduser().resolve() for value in configured_exempt),
         "workspace_scan_depth": scan_depth,
     }
 
