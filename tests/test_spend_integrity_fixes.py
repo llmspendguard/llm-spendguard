@@ -15,6 +15,7 @@ Offline, isolated home.
 import os
 import sys
 import tempfile
+import builtins
 
 if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
     os.environ["SPENDGUARD_TEST_ISOLATED"] = "1"
@@ -23,6 +24,8 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
 
 from spendguard import budget, backfill, trust, saas, config   # noqa: E402
 from spendguard import estimate_divergence as ed               # noqa: E402
+
+EMERGENCY_SPOOL_FIXTURE_COST = 0.5
 
 fails = 0
 
@@ -53,6 +56,25 @@ budget._record_spend_event("openai", "gpt-deadletter", "realtime", 0.5, intent="
 _dl = config.HOME / "spend_events_deadletter.jsonl"
 ck("a failed ledger write is durably captured to the dead-letter file",
    _dl.exists() and "gpt-deadletter" in _dl.read_text())
+
+_real_open = builtins.open
+
+
+def _reject_home_deadletter(path, *args, **kwargs):
+    if str(path) == str(_dl):
+        raise PermissionError("readonly capture home")
+    return _real_open(path, *args, **kwargs)
+
+
+builtins.open = _reject_home_deadletter
+try:
+    budget._record_spend_event("openai", "gpt-emergency-spool", "realtime",
+                               EMERGENCY_SPOOL_FIXTURE_COST, intent="test:spool")
+finally:
+    builtins.open = _real_open
+_fallback_dl = budget.spend_event_retry_paths()[1]
+ck("an unwritable primary dead-letter queues a durable emergency retry marker",
+   _fallback_dl.exists() and "gpt-emergency-spool" in _fallback_dl.read_text())
 
 
 # ── 3. backfill ingests an unpriced (None cost) row without crashing on round(None) ──────────────────────────

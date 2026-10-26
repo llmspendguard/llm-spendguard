@@ -59,7 +59,7 @@ ck("est-value: billed rows excluded; two sources SUM to $7.00", ev and abs(ev["t
 ck("est-value: carries an as-of date", ev and ev.get("asof") == TODAY)
 
 # ── the tally: two axes, separate, never summed ──────────────────────────────
-budget.spent_since = lambda day, project=None, conv=None: {TODAY: 4.20, WEEK: 31.50, MONTH: 212.40}.get(day, 99.0)   # stub the gate ledger
+budget.spent_since = lambda day, project=None, conv=None, **kwargs: {TODAY: 4.20, WEEK: 31.50, MONTH: 212.40}.get(day, 99.0)   # stub the gate ledger
 # Metered ledger rows retain fresh input, cache READ, and cache WRITE independently. Processed input is
 # 200+400+300=900; read=400/900 (44.4%), write=300/900 (33.3%).
 budget._record_spend_event("anthropic", "claude-test", "realtime", 0.01, occurred_at=TODAY + "T12:00:00+00:00",

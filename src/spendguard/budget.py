@@ -5,12 +5,22 @@ spend across ALL processes before allowing more. Default `backend = memory` keep
 real-time cap only (this module is then never touched). Per-call SQLite I/O is fine for moderate
 real-time volume; very high-volume loops should stay on the in-process cap.
 """
-import contextlib, datetime, threading
+import contextlib, datetime, hashlib, pathlib, tempfile, threading
 import time
 from . import config
 
 _conn = None
 _lock = threading.RLock()   # reentrant: record_charge()/spent_since() hold it AND call _ledger_db() which re-acquires
+_SPEND_EVENT_DEADLETTER_FILENAME = "spend_events_deadletter.jsonl"
+_SPEND_EVENT_EMERGENCY_SPOOL_PREFIX = "spendguard-capture-gap-"
+
+
+def spend_event_retry_paths():
+    """Ordered durable retry spools; the OS temp fallback survives an unwritable spendguard home."""
+    home_key = hashlib.sha256(str(config.HOME).encode()).hexdigest()
+    return (config.HOME / _SPEND_EVENT_DEADLETTER_FILENAME,
+            pathlib.Path(tempfile.gettempdir()) /
+            f"{_SPEND_EVENT_EMERGENCY_SPOOL_PREFIX}{home_key}.jsonl")
 
 
 def _ledger_db():
@@ -155,22 +165,25 @@ def _record_spend_event(provider, model, kind, cost, *, conv_id="", basis="", in
         # DURABLY CAPTURE IT so the loss never depends on this stderr being seen: a headless/daemon consumer
         # discards stderr, and provider-truth reconcile recovers BATCH spend but cannot re-book a realtime charge
         # without an admin key. The dead-letter file is the honest record of exactly what the ledger dropped.
-        try:
-            import json as _json
-            with open(config.HOME / "spend_events_deadletter.jsonl", "a") as _dl:
-                _dl.write(_json.dumps({
-                    "provider": provider, "model": model, "kind": kind, "cost": str(cost),
-                    "in_tok": int(in_tok or 0), "out_tok": int(out_tok or 0), "occurred_at": occurred_at,
-                    "intent": intent, "project": project, "source": source,
-                    "error": f"{type(e).__name__}: {str(e)[:120]}"}) + "\n")
-        except Exception:
-            pass
+        retry_path, retry_error = None, None
+        payload = {"provider": provider, "model": model, "kind": kind, "cost": str(cost),
+                   "in_tok": int(in_tok or 0), "out_tok": int(out_tok or 0), "occurred_at": occurred_at,
+                   "intent": intent, "project": project, "source": source,
+                   "error": repr(e), "capture_gap": True}
+        import json as _json
+        for candidate in spend_event_retry_paths():
+            try:
+                with open(candidate, "a") as _dl:
+                    _dl.write(_json.dumps(payload) + "\n")
+                retry_path = candidate
+                break
+            except Exception as spool_error:
+                retry_error = spool_error
         import sys as _sys
-        _sys.stderr.write(
-            f"[budget] WARN spend_events write failed for {provider}/{model} ${cost} "
-            f"({type(e).__name__}: {str(e)[:100]}) — captured to spend_events_deadletter.jsonl (this charge is "
-            f"MISSING from the ledger; spend_events is the sole money-of-record). `spendguard reconcile` re-books "
-            f"batch spend from provider truth.\n")
+        marker = f"queued for retry at {retry_path}" if retry_path else f"RETRY MARKER FAILED: {retry_error!r}"
+        _sys.stderr.write(f"[budget] CAPTURE GAP: spend_events write failed for {provider}/{model} ${cost}: "
+                          f"{e!r}; {marker}. This charge is MISSING from the ledger; `spendguard reconcile` "
+                          f"can re-book provider-truth spend.\n")
 
 
 def _project():
@@ -667,7 +680,7 @@ def charge_to_event(provider, model, kind, cost, conv_id="", basis="", intent=""
     return ev
 
 
-def spent_since(day, project=None, conv=None, *, deadline_s=config.LEDGER_QUERY_DEADLINE_S):
+def spent_since(day, project=None, conv=None, *, deadline_s=config.LEDGER_QUERY_DEADLINE_S, read_only=False):
     """Gate-recorded workload $ since `day` — the LLM cap's number, now read from spend_events via the single
     `_COUNTABLE` filter (batch+realtime, excluding meta / reconciliation / voided-impossible / reconstructed).
     `deadline_s` optionally bounds this aggregate by a relative wall-clock duration; expiry raises
@@ -683,6 +696,7 @@ def spent_since(day, project=None, conv=None, *, deadline_s=config.LEDGER_QUERY_
         where["project_primary"] = str(project).strip().lower()
     if conv is not None:
         where["conv_id"] = str(conv)
+    if conv is not None or read_only:
         # Conversation consumers must never initialize/migrate the write ledger.
         # The bounded reader owns setup, lock waiting, stepping and disposal;
         # spent_dec remains the single definition of the countable aggregate.

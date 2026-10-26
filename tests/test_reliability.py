@@ -17,6 +17,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(
 from spendguard import reliability, adapters, config, catalog, pricing, lanes, lane_catalog   # noqa: E402
 
 fails = []
+PROBE_TIMEOUT_SECONDS = 3
+DIAGNOSTIC_REPEAT_COUNT = 40
 
 
 def check(name, cond):
@@ -74,6 +76,22 @@ check("one metered call per keyed provider", _calls["n"] == 2)
 check("lane matrix from the $0 probe (codex reachable, gemini not)",
       res["lanes"]["codex"]["reachable"] is True and res["lanes"]["gemini"]["reachable"] is False)
 check("metered matrix carries model + reachable + cost", res["metered"]["openai"]["reachable"] and res["metered"]["openai"]["model"] == "gpt-5-nano")
+
+print("\n-- probe failures retain complete diagnostics and request shape --")
+diagnostic_message = "unexpected request keyword " + ("detail" * DIAGNOSTIC_REPEAT_COUNT)
+
+
+def _raise_probe_typeerror(*args, **kwargs):
+    raise TypeError(diagnostic_message)
+
+
+adapters.call = _raise_probe_typeerror
+_provider, failed_probe = reliability._probe_metered_one("anthropic", "probe-model", PROBE_TIMEOUT_SECONDS)
+check("TypeError repr is complete, including its untruncated message",
+      repr(TypeError(diagnostic_message)) in failed_probe["reason"])
+check("failure records request shape and traceback location",
+      "request_shape=" in failed_probe["reason"] and "metered_only" in failed_probe["reason"]
+      and "_raise_probe_typeerror" in failed_probe["reason"])
 
 print(f"\n{'[FAIL]' if fails else 'OK'} test_reliability: {len(fails)} failure(s)")
 sys.exit(1 if fails else 0)

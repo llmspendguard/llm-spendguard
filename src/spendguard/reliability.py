@@ -119,8 +119,13 @@ def _probe_metered_one(prov, mid, timeout_s):
         r = adapters.call(f"{prov}:{mid}", "Reply with one word: ok.", sig="spendguard:reliability-sweep",
                           max_tokens=_PROBE_OUT_TOKENS, timeout_s=timeout_s, _probe=True, metered_only=True)
     except Exception as e:                               # a probe must never break the sweep — record it as down
+        import traceback
+        request_shape = {"model": f"{prov}:{mid}", "prompt_type": "str", "sig": "spendguard:reliability-sweep",
+                         "max_tokens": _PROBE_OUT_TOKENS, "timeout_s": timeout_s,
+                         "_probe": True, "metered_only": True}
         return prov, {"model": mid, "reachable": False, "cost": None, "executor": None,
-                      "latency": round(_t.time() - t0, 2), "reason": f"{type(e).__name__}: {str(e)[:80]}"}
+                      "latency": round(_t.time() - t0, 2),
+                      "reason": f"{e!r}\nrequest_shape={request_shape!r}\n{traceback.format_exc()}"}
     # adapters' TYPED `truncated` flag means the model produced MORE than the tiny probe cap — it ANSWERED (a
     # verbose model overruns "ok") — so the endpoint is REACHABLE. Reading that structured boolean is parsing a
     # known field, not judging the reply. The RAW KEY is VERIFIED only if the metered API actually served it —
