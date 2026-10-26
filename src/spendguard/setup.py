@@ -22,6 +22,16 @@ _EDITABLE_METADATA_PROBE = (
     "and (lambda u: bool(u and json.loads(u).get('dir_info',{}).get('editable')))"
     "(d.read_text('direct_url.json')) for d in m.distributions())))")
 _EDITABLE_INSTALL_OPTIONS = ("--no-cache-dir",)
+_PEP517_EDITABLE_INSTALL_OPTION = "--use-pep517"
+_NO_BUILD_ISOLATION_OPTION = "--no-build-isolation"
+_PIP_NO_INDEX_ENVIRONMENT_VARIABLE = "PIP_NO_INDEX"
+_PIP_FALSE_ENVIRONMENT_VALUES = frozenset(("", "0", "false", "no", "off"))
+_SETUPTOOLS_DISTRIBUTION_NAME = "setuptools"
+_SETUPTOOLS_VERSION_PROBE = (
+    "import importlib.metadata as m;"
+    "import setuptools;"
+    "print(m.version('setuptools'))"
+)
 
 
 def purge_shadowing_in_tree_egg_info(repo_root):
@@ -39,12 +49,59 @@ def purge_shadowing_in_tree_egg_info(repo_root):
     return removed
 
 
+def _declared_setuptools_build_requirement(repo_root):
+    """Return this checkout's setuptools build requirement from its pyproject SSOT."""
+    import tomllib
+    from pathlib import Path
+    try:
+        from packaging.requirements import Requirement
+    except ModuleNotFoundError:
+        from pip._vendor.packaging.requirements import Requirement
+
+    build_configuration = tomllib.loads((Path(repo_root) / "pyproject.toml").read_text())
+    build_requirements = build_configuration["build-system"]["requires"]
+    for requirement_text in build_requirements:
+        parsed_requirement = Requirement(requirement_text)
+        if parsed_requirement.name.lower() == _SETUPTOOLS_DISTRIBUTION_NAME:
+            return parsed_requirement
+    raise RuntimeError("pyproject.toml build-system.requires does not declare setuptools")
+
+
+def _consumer_has_satisfying_setuptools(python_executable, setuptools_requirement, timeout):
+    """Mechanically verify that the target interpreter can import the declared setuptools version."""
+    import subprocess
+    probe_result = subprocess.run(
+        [str(python_executable), "-c", _SETUPTOOLS_VERSION_PROBE],
+        capture_output=True, text=True, timeout=timeout)
+    return (probe_result.returncode == 0
+            and probe_result.stdout.strip() in setuptools_requirement.specifier)
+
+
+def _pip_index_is_disabled(environment):
+    configured_value = environment.get(_PIP_NO_INDEX_ENVIRONMENT_VARIABLE)
+    return (configured_value is not None
+            and configured_value.strip().lower() not in _PIP_FALSE_ENVIRONMENT_VALUES)
+
+
+def _consumer_editable_install_command(python_executable, repo_root, timeout, environment=None):
+    """Build the pip argv, reusing a satisfactory target backend or retaining online isolation."""
+    setuptools_requirement = _declared_setuptools_build_requirement(repo_root)
+    backend_is_importable = _consumer_has_satisfying_setuptools(
+        python_executable, setuptools_requirement, timeout)
+    if not backend_is_importable and _pip_index_is_disabled(os.environ if environment is None else environment):
+        raise RuntimeError(
+            "editable build backend unavailable offline: "
+            f"{setuptools_requirement} not importable in {python_executable} and no index")
+    isolation_options = (_NO_BUILD_ISOLATION_OPTION,) if backend_is_importable else ()
+    return [str(python_executable), "-m", "pip", "install", "-e", str(repo_root),
+            _PEP517_EDITABLE_INSTALL_OPTION, *isolation_options, *_EDITABLE_INSTALL_OPTIONS]
+
+
 def refresh_consumer_editable_package(python_executable, repo_root, timeout):
     """Install this checkout into a consumer interpreter; shared by install-hook and fleet promotion."""
     import subprocess
-    result = subprocess.run(
-        [str(python_executable), "-m", "pip", "install", "-e", str(repo_root), *_EDITABLE_INSTALL_OPTIONS],
-        capture_output=True, text=True, timeout=timeout)
+    install_command = _consumer_editable_install_command(python_executable, repo_root, timeout)
+    result = subprocess.run(install_command, capture_output=True, text=True, timeout=timeout)
     if result.returncode:
         raise RuntimeError((result.stderr or result.stdout or "pip install failed").strip())
     metadata_probe = subprocess.run([str(python_executable), "-c", _EDITABLE_METADATA_PROBE],
