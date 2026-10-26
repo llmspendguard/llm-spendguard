@@ -978,6 +978,11 @@ class SpendLedger:
             where_sql="1=1" + w, parameters=tuple(args)), path=self.db_path)
         return sorted(r[0] for r in rows if r[0] not in (None, ""))
 
+    def captured_spend_source_paths(self):
+        """Sorted repo/cwd paths represented by live, non-void ledger capture."""
+        return sorted(set(self.distinct("repo", filt=self._LIVE_FILTER))
+                      | set(self.distinct("cwd", filt=self._LIVE_FILTER)))
+
     def source_rows(self, source, cols=("id",), only_billed=None, intent_like=None, source_is_like=False):
         """Rows [(col, ...)] from a `source` (the money-of-record), for reconciliation/attribution that needs
         identity + a few fields — a GENERAL selector so callers never reach past the ledger with raw SQL. `cols`

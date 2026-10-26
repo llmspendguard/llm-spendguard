@@ -8,7 +8,7 @@ import os
 from pathlib import Path
 import subprocess
 
-from . import config
+from . import adapters, config
 
 CONSUMER_AUDIT_PROBE_TIMEOUT_SECONDS = 10.0
 CONSUMER_AUDIT_GIT_TIMEOUT_SECONDS = 5.0
@@ -26,11 +26,11 @@ CONSUMER_AUDIT_PYTHON_EXECUTABLE_NAME = "python"
 CONSUMER_AUDIT_GIT_EXECUTABLE = "git"
 CONSUMER_AUDIT_GIT_HEAD_ARGUMENTS = ("rev-parse", "HEAD")
 CONSUMER_AUDIT_GIT_ORIGIN_MAIN_ARGUMENTS = ("rev-parse", "origin/main")
-CONSUMER_AUDIT_SDK_IMPORT_NAMES = frozenset(("openai", "anthropic"))
-CONSUMER_AUDIT_SPENDGUARD_IMPORT_NAME = "spendguard"
-CONSUMER_AUDIT_SOURCE_TEXT_TOKENS = tuple(sorted(
-    (*CONSUMER_AUDIT_SDK_IMPORT_NAMES, CONSUMER_AUDIT_SPENDGUARD_IMPORT_NAME)
-))
+CONSUMER_AUDIT_SPENDGUARD_IMPORT_NAME = adapters.SPENDGUARD_IMPORT_NAME
+
+
+def _consumer_audit_sdk_import_names():
+    return adapters.llm_capability_import_names() - {CONSUMER_AUDIT_SPENDGUARD_IMPORT_NAME}
 CONSUMER_AUDIT_SUCCESS = "GATED+LATEST"
 CONSUMER_AUDIT_NOT_ENFORCING = "NOT-ENFORCING"
 CONSUMER_AUDIT_NO_SPENDGUARD = "NO-SPENDGUARD"
@@ -149,6 +149,8 @@ def enumerate_consumer_venvs(repository, extra_venv_directories):
 
 def repository_import_facts(repository):
     """Parse Python imports outside virtualenvs; syntax, not semantic inference, defines LLM use."""
+    sdk_import_names = _consumer_audit_sdk_import_names()
+    source_text_tokens = tuple(sorted((*sdk_import_names, CONSUMER_AUDIT_SPENDGUARD_IMPORT_NAME)))
     imports = set()
     source_text_mentions = set()
     for source_path in sorted(repository.rglob(f"*{CONSUMER_AUDIT_SOURCE_SUFFIX}"), key=os.fspath):
@@ -162,7 +164,7 @@ def repository_import_facts(repository):
             source_text = source_path.read_text(errors="replace")
         except OSError:
             continue
-        source_text_mentions.update(token for token in CONSUMER_AUDIT_SOURCE_TEXT_TOKENS if token in source_text)
+        source_text_mentions.update(token for token in source_text_tokens if token in source_text)
         try:
             tree = ast.parse(source_text, filename=os.fspath(source_path))
         except SyntaxError:
@@ -172,7 +174,7 @@ def repository_import_facts(repository):
                 imports.update(alias.name.partition(".")[0] for alias in node.names)
             elif isinstance(node, ast.ImportFrom) and node.module:
                 imports.add(node.module.partition(".")[0])
-    sdk_imports = tuple(sorted(imports & CONSUMER_AUDIT_SDK_IMPORT_NAMES))
+    sdk_imports = tuple(sorted(imports & sdk_import_names))
     spendguard_import = CONSUMER_AUDIT_SPENDGUARD_IMPORT_NAME in imports
     imported_names = set(sdk_imports)
     if spendguard_import:
@@ -281,7 +283,7 @@ def audit_consumer_workspaces(deployed_sha, roots=None, auto_arm=True, dry_run=F
     rows = []
     for repository in repositories:
         source_import_facts = repository_import_facts(repository)
-        llm_repository = bool(source_import_facts["sdk"])
+        llm_repository = bool(source_import_facts["sdk"]) or source_import_facts["spendguard_import"]
         repository_venvs = tuple(
             venv for venv in enumerate_consumer_venvs(repository, ()) if _path_is_within(venv, repository)
         )
@@ -318,7 +320,10 @@ def audit_consumer_workspaces(deployed_sha, roots=None, auto_arm=True, dry_run=F
             associated_import_facts = repository_import_facts(associated_repository) if associated_repository else {
                 "sdk": (), "spendguard_import": False, "source_text_mentions": (), "completeness_flag": None,
             }
-            repository_llm = bool(associated_import_facts["sdk"]) if associated_repository else None
+            repository_llm = (
+                bool(associated_import_facts["sdk"]) or associated_import_facts["spendguard_import"]
+                if associated_repository else None
+            )
             rows.append(_audit_consumer_venv(associated_repository, venv, associated_import_facts, repository_llm,
                                              deployed_sha, auto_arm, dry_run,
                                              _consumer_path_is_exempt(associated_repository, venv, exempt_paths)))
