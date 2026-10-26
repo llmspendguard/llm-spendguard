@@ -12,6 +12,7 @@ from . import config, config_schema
 # ours to overwrite. A distinctive marker we emit ourselves is the only honest test of authorship, and
 # deleting someone else's interpreter hook is not something they can recover from here.
 _SENTINEL = "spendguard-gate-hook/v1"
+_PTH_SENTINEL = "spendguard-gate-hook/v2"
 _PTH_NAME = "spendguard_gate_hook.pth"
 _GATED_SDKS = ("openai", "anthropic", "httpx")
 _STARTUP_GATE_PROBE_HOME_PREFIX = "spendguard-startup-probe-"
@@ -109,7 +110,50 @@ def refresh_consumer_editable_package(python_executable, repo_root, timeout):
     if metadata_probe.returncode == 0 and metadata_probe.stdout.strip() == "1":
         purge_shadowing_in_tree_egg_info(repo_root)
 
-_HOOK = '''# Auto-installs the spendguard cost gate for every process in this venv (the `spendguard` package).
+_FAILCLOSED_FINDER_SOURCE = '''class _SpendguardGateFailclosedFinder:
+    _spendguard_gate_failclosed = True
+
+    def __init__(self, gated_modules, gate_failure_reason):
+        self._spendguard_gated_modules = gated_modules
+        self._spendguard_gate_failure_reason = gate_failure_reason
+
+    def find_spec(self, fullname, path=None, target=None):
+        if any(fullname == module_name or fullname.startswith(module_name + ".")
+               for module_name in self._spendguard_gated_modules):
+            raise ImportError(
+                f"[spendguard-gate-hook] gate could not arm "
+                f"({self._spendguard_gate_failure_reason}); refusing to import "
+                f"'{fullname}' UNGATED. Fix the spendguard checkout, or set "
+                "GATE_DISABLE=1 to bypass.")
+        return None
+
+if not any(getattr(finder, "_spendguard_gate_failclosed", False) for finder in sys.meta_path):
+    sys.meta_path.insert(0, _SpendguardGateFailclosedFinder(%(gated_modules)r, str(_e)))
+'''
+
+
+def _resolved_gated_sdk_modules(gated_modules):
+    if gated_modules is None:
+        from .gate import gated_sdk_modules
+        return tuple(gated_sdk_modules())
+    return tuple(gated_modules)
+
+
+def _baked_failclosed_finder_source(gated_modules):
+    return _FAILCLOSED_FINDER_SOURCE % {
+        "gated_modules": _resolved_gated_sdk_modules(gated_modules),
+    }
+
+
+def _sitecustomize_hook_source(inject_src=None, gated_modules=None):
+    injected_source_line = ""
+    if inject_src is not None:
+        injected_source_line = f"        sys.path.insert(0, {inject_src!r})\n"
+    finder_source = "".join(
+        f"            {line}\n" if line else "\n"
+        for line in _baked_failclosed_finder_source(gated_modules).splitlines()
+    )
+    return f'''# Auto-installs the spendguard cost gate for every process in this venv (the `spendguard` package).
 # spendguard-gate-hook/v1 — this marker is how `install-hook --uninstall` knows the file is ours.
 # Kill switches checked HERE first, before the import, so disabling works even if the package is broken:
 #   GATE_DISABLE=1 (per-run)  OR  `spendguard off` (persistent flag).  Nuclear option: delete this file.
@@ -118,18 +162,45 @@ from pathlib import Path
 _home = os.environ.get("SPENDGUARD_HOME") or str(Path.home() / ".spendguard")
 if os.environ.get("GATE_DISABLE") != "1" and not os.path.exists(os.path.join(_home, "disabled")):
     try:
-        import spendguard
+{injected_source_line}        import spendguard
         spendguard.install()
     except Exception as _e:  # never let the gate break a process
-        sys.stderr.write(f"[sitecustomize] spendguard not installed: {_e}\\n")
+        sys.stderr.write(f"[sitecustomize] spendguard not installed: {{_e}}\\n")
+        try:
+{finder_source}        except Exception:
+            pass
 '''
 
+
+_HOOK = _sitecustomize_hook_source()
+
 # A .pth executable line is the shadow-proof fallback when an earlier stdlib/site entry owns the
-# ``sitecustomize`` import. Keep the kill switches identical to _HOOK and carry the same ownership marker.
-_PTH_HOOK = ("import os;exec(\"from pathlib import Path\\n"
-             "_h=os.environ.get('SPENDGUARD_HOME') or str(Path.home() / '.spendguard')\\n"
-             "if os.environ.get('GATE_DISABLE') != '1' and not os.path.exists(os.path.join(_h, 'disabled')):\\n"
-             " import spendguard\\n spendguard.install()\")  # " + _SENTINEL + "\n")
+# ``sitecustomize`` import. Keep the kill switches identical to _HOOK. The checkout source directory
+# is supplied by the same _pkg_src() derivation used by the editable install, because sitecustomize may
+# discard the editable .pth path after site.addpackage processes it.
+def _gate_hook_for_checkout_src(checkout_src, gated_modules=None):
+    finder_source = "".join(
+        f"            {line}\n" if line else "\n"
+        for line in _baked_failclosed_finder_source(gated_modules).splitlines()
+    )
+    hook_source = f'''import sys
+from pathlib import Path
+_src = {checkout_src!r}
+_home = os.environ.get("SPENDGUARD_HOME") or str(Path.home() / ".spendguard")
+if os.environ.get("GATE_DISABLE") != "1" and not os.path.exists(os.path.join(_home, "disabled")):
+    try:
+        if os.path.isdir(_src) and _src not in sys.path:
+            sys.path.insert(0, _src)
+        import spendguard
+        spendguard.install()
+    except Exception as _e:
+        sys.stderr.write(f"[spendguard-gate-hook] spendguard not installed: {{_e}}\\n")
+        try:
+{finder_source}        except Exception:
+            pass
+# {_SENTINEL}
+'''
+    return f"import os;exec({hook_source!r})  # {_PTH_SENTINEL}\n"
 
 # A portable rule for any AI coding assistant (Claude Code, Cursor, etc.). `install-rule` drops it into a
 # CLAUDE.md so EVERY conversation in that project automatically wires spendguard into whatever it builds.
@@ -482,6 +553,9 @@ def _pkg_src():
     return str(Path(__file__).resolve().parents[2] / "src")
 
 
+_PTH_HOOK = _gate_hook_for_checkout_src(_pkg_src())
+
+
 def install_hook(venv=None, uninstall=False, install_pkg=True, user=False, python=None):
     """Gate every process in another interpreter:
       --venv <path>            pip-install spendguard + a sitecustomize hook (clean venv).
@@ -526,7 +600,8 @@ def install_hook(venv=None, uninstall=False, install_pkg=True, user=False, pytho
     if uninstall:
         refused = False
         for owned_hook in (hook, pth_hook):
-            if os.path.exists(owned_hook) and _SENTINEL in _reads(owned_hook):
+            if os.path.exists(owned_hook) and any(
+                    marker in _reads(owned_hook) for marker in (_SENTINEL, _PTH_SENTINEL)):
                 os.remove(owned_hook); print(f"  ✓ removed gate hook: {owned_hook}")
             elif os.path.exists(owned_hook):
                 print(f"  ✗ {owned_hook} exists but carries no spendguard marker — NOT removing someone else's "
@@ -535,13 +610,13 @@ def install_hook(venv=None, uninstall=False, install_pkg=True, user=False, pytho
             else:
                 print(f"  (no spendguard hook at {owned_hook})")
         return 1 if refused else 0
-    if os.path.exists(hook) and _SENTINEL not in _reads(hook):
+    if os.path.exists(hook) and not any(
+            marker in _reads(hook) for marker in (_SENTINEL, _PTH_SENTINEL)):
         print(f"  ✗ {hook} exists and isn't ours — not overwriting. Merge the spendguard.install() snippet manually.")
         return 1
 
     if cross:                                       # path-injected — no pip (PEP668-safe)
-        body = _HOOK.replace("import spendguard\n        spendguard.install()",
-                             f"sys.path.insert(0, {_pkg_src()!r})\n        import spendguard\n        spendguard.install()")
+        body = _sitecustomize_hook_source(inject_src=_pkg_src())
         open(hook, "w").write(body)
     else:
         pkg_root = str(Path(__file__).resolve().parents[2])
@@ -551,14 +626,15 @@ def install_hook(venv=None, uninstall=False, install_pkg=True, user=False, pytho
                 refresh_consumer_editable_package(target, pkg_root, timeout=None)
             except RuntimeError as exc:
                 print("  ✗ pip install failed:\n" + str(exc)); return 1
-        open(hook, "w").write(_HOOK)
+        open(hook, "w").write(_sitecustomize_hook_source())
 
     print(f"  ✓ hook → {hook}")
     active = _startup_gate_active(target)
     if not active and not cross:
         resolved = _resolved_sitecustomize(target)
         if resolved and os.path.realpath(resolved) != os.path.realpath(hook):
-            if os.path.exists(pth_hook) and _SENTINEL not in _reads(pth_hook):
+            if os.path.exists(pth_hook) and not any(
+                    marker in _reads(pth_hook) for marker in (_SENTINEL, _PTH_SENTINEL)):
                 print(f"  ✗ startup gate INACTIVE: {resolved} shadows {hook}, and {pth_hook} is not ours; "
                       "refusing to overwrite it.")
                 return 1
