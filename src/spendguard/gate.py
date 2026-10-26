@@ -2837,6 +2837,7 @@ def _stale_editable_install():
 def _cli(cmd="status", live=False):
     _stale_install = False              # set True when _stale_editable_install() finds code!=metadata (a broken install)
     _consumer_install_drift_found = False
+    _doctor_startup_gate_gap_found = False
     if cmd == "off":
         open(FLAG, "w").write("disabled\n")
         print(f"🔴 spend gate DISABLED (persistent). Re-enable: spendguard on\n  flag: {FLAG}")
@@ -2888,9 +2889,20 @@ def _cli(cmd="status", live=False):
                 print(f"  consumer  : ? install audit failed: {_consumer_audit_error}")
         install()
         enforcing = _enforcement_armed()
-        print(f"  {ENFORCING_MARKER}: "
-              f"{'🟢 ' + ENFORCING_YES + ' — calls from this interpreter are gated' if enforcing else '🔴 ' + ENFORCING_NO + ' — calls from THIS interpreter are NOT gated (bypass!)'}")
-        if not enforcing:
+        startup_gate_active = True
+        if cmd == "doctor":
+            from . import setup as _doctor_setup
+            startup_gate_active = _doctor_setup._startup_gate_active(sys.executable)
+            _doctor_startup_gate_gap_found = enforcing and not startup_gate_active
+        if _doctor_startup_gate_gap_found:
+            print(f"  {ENFORCING_MARKER}: 🔴 {ENFORCING_NO} — this process is armed, but startup does NOT "
+                  "auto-load the gate — scripts run via bare `python` here are NOT governed")
+            print("    fix: install the startup hook with `spendguard install-hook --venv <v>` / `--user`, "
+                  "then rerun `spendguard doctor` from that interpreter.")
+        else:
+            print(f"  {ENFORCING_MARKER}: "
+                  f"{'🟢 ' + ENFORCING_YES + ' — calls from this interpreter are gated' if enforcing else '🔴 ' + ENFORCING_NO + ' — calls from THIS interpreter are NOT gated (bypass!)'}")
+        if not enforcing and not _doctor_startup_gate_gap_found:
             print("    fix: run under a gated venv, `spendguard install-hook --venv <v>` / `--user`, "
                   "or `import spendguard; spendguard.require()` at the top of the script.")
         try:
@@ -3162,7 +3174,9 @@ def _cli(cmd="status", live=False):
     # BIND the freshness check: `spendguard doctor` exits non-zero on a STALE EDITABLE INSTALL (code != metadata), so CI
     # / an install-verify step / a `doctor && <next>` chain CATCHES the drift instead of proceeding on a broken install
     # whose frozen deps may be missing. `status` stays exit-0 (a casual glance); only the diagnostic `doctor` binds.
-    return 1 if (cmd == "doctor" and (_stale_install or _consumer_install_drift_found)) else 0
+    return 1 if (cmd == "doctor" and (
+        _stale_install or _consumer_install_drift_found or _doctor_startup_gate_gap_found
+    )) else 0
 
 
 if __name__ == "__main__":

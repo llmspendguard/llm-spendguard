@@ -13,6 +13,7 @@ render cases."""
 import os
 import sys
 import tempfile
+from unittest.mock import patch
 
 os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="sg-costint-")
 os.environ.setdefault("SPENDGUARD_TEST_ISOLATED", "1")
@@ -64,6 +65,13 @@ ratios = [(f["ratio"] if f["ratio"] is not None else float("inf")) for f in foun
 ck("findings sorted by ratio descending", ratios == sorted(ratios, reverse=True), extra=str(ratios))
 
 print("-- render: read failure is UNKNOWN, never green --")
+with patch.object(ci.ledger_read, "read_cost_integrity_buckets",
+                  side_effect=ci.ledger_read.LedgerReadSchemaError("no such table: calls")), \
+        patch.object(ci.COST_INTEGRITY_LOGGER, "exception") as unexpected_schema_traceback:
+    schema_gap_result = ci.audit_metered_cost_vs_tokens()
+ck("an unmigrated first-run ledger is a named UNKNOWN, not a propagated crash",
+   not schema_gap_result["ok"] and "no such table: calls" in schema_gap_result["error"]
+   and not unexpected_schema_traceback.called)
 ci.audit_metered_cost_vs_tokens = lambda since_days=7: {"ok": False, "error": "no such column: suspect",
                                                         "findings": [], "unpriced": 0, "checked": 0}
 lines = ci.cost_integrity_lines()

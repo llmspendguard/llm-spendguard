@@ -14,17 +14,31 @@ from . import config, config_schema
 _SENTINEL = "spendguard-gate-hook/v1"
 _PTH_NAME = "spendguard_gate_hook.pth"
 _GATED_SDKS = ("openai", "anthropic", "httpx")
+_STARTUP_GATE_PROBE_HOME_PREFIX = "spendguard-startup-probe-"
+_SPENDGUARD_HOME_ENVIRONMENT_VARIABLE = "SPENDGUARD_HOME"
 _EDITABLE_METADATA_PROBE = (
     "import importlib.metadata as m,json;"
     "print(int(any((d.metadata.get('Name') or '').lower().replace('_','-')=='llm-spendguard' "
     "and (lambda u: bool(u and json.loads(u).get('dir_info',{}).get('editable')))"
     "(d.read_text('direct_url.json')) for d in m.distributions())))")
+_EDITABLE_INSTALL_OPTIONS = ("--no-cache-dir",)
+_PEP517_EDITABLE_INSTALL_OPTION = "--use-pep517"
+_NO_BUILD_ISOLATION_OPTION = "--no-build-isolation"
+_PIP_NO_INDEX_ENVIRONMENT_VARIABLE = "PIP_NO_INDEX"
+_PIP_FALSE_ENVIRONMENT_VALUES = frozenset(("", "0", "false", "no", "off"))
+_SETUPTOOLS_DISTRIBUTION_NAME = "setuptools"
+_SETUPTOOLS_VERSION_PROBE = (
+    "import importlib.metadata as m;"
+    "import setuptools;"
+    "print(m.version('setuptools'))"
+)
 
 
 def purge_shadowing_in_tree_egg_info(repo_root):
     """Remove only stale package metadata contained by this checkout's source root."""
     import shutil
-    source_root = (repo_root / "src").resolve()
+    from pathlib import Path
+    source_root = (Path(repo_root) / "src").resolve()
     removed = []
     for candidate in source_root.glob("*.egg-info"):
         resolved = candidate.resolve()
@@ -35,12 +49,59 @@ def purge_shadowing_in_tree_egg_info(repo_root):
     return removed
 
 
+def _declared_setuptools_build_requirement(repo_root):
+    """Return this checkout's setuptools build requirement from its pyproject SSOT."""
+    import tomllib
+    from pathlib import Path
+    try:
+        from packaging.requirements import Requirement
+    except ModuleNotFoundError:
+        from pip._vendor.packaging.requirements import Requirement
+
+    build_configuration = tomllib.loads((Path(repo_root) / "pyproject.toml").read_text())
+    build_requirements = build_configuration["build-system"]["requires"]
+    for requirement_text in build_requirements:
+        parsed_requirement = Requirement(requirement_text)
+        if parsed_requirement.name.lower() == _SETUPTOOLS_DISTRIBUTION_NAME:
+            return parsed_requirement
+    raise RuntimeError("pyproject.toml build-system.requires does not declare setuptools")
+
+
+def _consumer_has_satisfying_setuptools(python_executable, setuptools_requirement, timeout):
+    """Mechanically verify that the target interpreter can import the declared setuptools version."""
+    import subprocess
+    probe_result = subprocess.run(
+        [str(python_executable), "-c", _SETUPTOOLS_VERSION_PROBE],
+        capture_output=True, text=True, timeout=timeout)
+    return (probe_result.returncode == 0
+            and probe_result.stdout.strip() in setuptools_requirement.specifier)
+
+
+def _pip_index_is_disabled(environment):
+    configured_value = environment.get(_PIP_NO_INDEX_ENVIRONMENT_VARIABLE)
+    return (configured_value is not None
+            and configured_value.strip().lower() not in _PIP_FALSE_ENVIRONMENT_VALUES)
+
+
+def _consumer_editable_install_command(python_executable, repo_root, timeout, environment=None):
+    """Build the pip argv, reusing a satisfactory target backend or retaining online isolation."""
+    setuptools_requirement = _declared_setuptools_build_requirement(repo_root)
+    backend_is_importable = _consumer_has_satisfying_setuptools(
+        python_executable, setuptools_requirement, timeout)
+    if not backend_is_importable and _pip_index_is_disabled(os.environ if environment is None else environment):
+        raise RuntimeError(
+            "editable build backend unavailable offline: "
+            f"{setuptools_requirement} not importable in {python_executable} and no index")
+    isolation_options = (_NO_BUILD_ISOLATION_OPTION,) if backend_is_importable else ()
+    return [str(python_executable), "-m", "pip", "install", "-e", str(repo_root),
+            _PEP517_EDITABLE_INSTALL_OPTION, *isolation_options, *_EDITABLE_INSTALL_OPTIONS]
+
+
 def refresh_consumer_editable_package(python_executable, repo_root, timeout):
     """Install this checkout into a consumer interpreter; shared by install-hook and fleet promotion."""
     import subprocess
-    result = subprocess.run(
-        [str(python_executable), "-m", "pip", "install", "-e", str(repo_root), "--no-cache-dir"],
-        capture_output=True, text=True, timeout=timeout)
+    install_command = _consumer_editable_install_command(python_executable, repo_root, timeout)
+    result = subprocess.run(install_command, capture_output=True, text=True, timeout=timeout)
     if result.returncode:
         raise RuntimeError((result.stderr or result.stdout or "pip install failed").strip())
     metadata_probe = subprocess.run([str(python_executable), "-c", _EDITABLE_METADATA_PROBE],
@@ -346,13 +407,17 @@ def _interpreter_purelib(target, timeout=10):
 def _startup_gate_active(target, timeout=10):
     """True only when startup itself loaded spendguard's existing public install path (no probe-side import)."""
     import subprocess
+    import tempfile
     code = ("import sys;"
             "m=sys.modules.get('spendguard');"
             "print(int(m is not None and callable(getattr(m,'install',None)) "
             "and 'spendguard.gate' in sys.modules))")
     try:
-        r = subprocess.run([target, "-c", code], capture_output=True, text=True,
-                           check=True, timeout=timeout)
+        with tempfile.TemporaryDirectory(prefix=_STARTUP_GATE_PROBE_HOME_PREFIX) as probe_home:
+            probe_environment = os.environ.copy()
+            probe_environment[_SPENDGUARD_HOME_ENVIRONMENT_VARIABLE] = probe_home
+            r = subprocess.run([target, "-c", code], capture_output=True, text=True,
+                               check=True, timeout=timeout, env=probe_environment)
         return r.stdout.strip() == "1"
     except Exception:
         return False
@@ -444,7 +509,7 @@ def install_hook(venv=None, uninstall=False, install_pkg=True, user=False, pytho
             print(f"  ✗ couldn't resolve {target}'s active purelib; refusing to guess from lib/python*/site-packages.")
             return 1
         hook = os.path.join(sp, "sitecustomize.py")
-    pth_hook = os.path.join(sp, _PTH_NAME)
+    pth_hook = Path(sp) / _PTH_NAME
 
     # OWNERSHIP IS A SENTINEL WE WROTE, NOT THE WORD "spendguard" APPEARING SOMEWHERE. A user's own
     # sitecustomize that merely mentions spendguard in a comment satisfied the substring test — so
@@ -497,7 +562,7 @@ def install_hook(venv=None, uninstall=False, install_pkg=True, user=False, pytho
                 print(f"  ✗ startup gate INACTIVE: {resolved} shadows {hook}, and {pth_hook} is not ours; "
                       "refusing to overwrite it.")
                 return 1
-            Path(pth_hook).write_text(_PTH_HOOK)
+            pth_hook.write_text(_PTH_HOOK)
             print(f"  ! {resolved} shadows {hook}; installed shadow-proof fallback → {pth_hook}")
             active = _startup_gate_active(target)
     if not active:

@@ -4,6 +4,7 @@ import io
 import os
 import json
 import pathlib
+import shutil
 import sqlite3
 import sys
 import tempfile
@@ -137,16 +138,21 @@ try:
        managed_pathinjected_state["state"] == "pathinjected_managed")
 
     refresh_repo = pathlib.Path(tempfile.mkdtemp(prefix="sg-egg-shadow-"))
+    shutil.copy2(pathlib.Path(fleet.__file__).resolve().parents[2] / "pyproject.toml",
+                 refresh_repo / "pyproject.toml")
     shadow = refresh_repo / "src" / "llm_spendguard.egg-info"
     shadow.mkdir(parents=True)
     (shadow / "PKG-INFO").write_text("stale")
     original_setup_run = __import__("subprocess").run
+    original_backend_probe = setup._consumer_has_satisfying_setuptools
     setup.subprocess = __import__("subprocess")
     setup.subprocess.run = lambda *args, **kwargs: SimpleNamespace(returncode=0, stderr="", stdout="1\n")
+    setup._consumer_has_satisfying_setuptools = lambda *args, **kwargs: True
     try:
         setup.refresh_consumer_editable_package(sys.executable, refresh_repo, 10)
     finally:
         setup.subprocess.run = original_setup_run
+        setup._consumer_has_satisfying_setuptools = original_backend_probe
     ck("successful refresh purges only the in-tree egg-info shadow", not shadow.exists())
     fleet._consumer_install_state = lambda python, root, version, timeout=fleet._CONSUMER_INSTALL_PROBE_TIMEOUT_S: {
         "state": "editable_current", "code_version": version, "metadata_version": version,
