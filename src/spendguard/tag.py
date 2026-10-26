@@ -7,21 +7,59 @@
      follows the API spend protocol (estimate → confirm → run, with a meta-budget cap). See estimate_llm_retag().
 """
 
+import sys
+
 
 _EMPTY_PROJECT = "(project_primary IS NULL OR project_primary='')"   # an untagged row, in spend_events terms
+_UNRESOLVED_PROJECT = f"({_EMPTY_PROJECT[1:-1]} OR project_primary=?)"
+VENV_BACKFILL_SKIP_PREFIX = "[spendguard tag] skipped venv backfill"
+VENV_BACKFILL_NO_PRIOR_REASON = "no usable project prior"
+VENV_BACKFILL_UNATTRIBUTED_REASON = "prior resolved to unattributed-project sentinel"
+
+
+def backfill_project_from_venv(led):
+    """Fill unresolved project tags from distinct virtual-environment priors without classification spend."""
+    from . import budget, conv
+    unresolved_venvs = set(led.distinct(
+        "venv", filt=f"{_EMPTY_PROJECT} AND venv IS NOT NULL AND venv != ''"))
+    unresolved_venvs.update(led.distinct(
+        "venv", where={"project_primary": budget.UNATTRIBUTED_PROJECT},
+        filt="venv IS NOT NULL AND venv != ''"))
+    retagged = 0
+    for venv in unresolved_venvs:
+        determination = conv.resolve({"venv": venv}, classify_on_miss=False)
+        project = (determination or {}).get("project")
+        if not project or project == budget.UNATTRIBUTED_PROJECT:
+            reason = (VENV_BACKFILL_NO_PRIOR_REASON if not project
+                      else VENV_BACKFILL_UNATTRIBUTED_REASON)
+            print(f"{VENV_BACKFILL_SKIP_PREFIX}: {venv} ({reason})", file=sys.stderr)
+            continue
+        retagged += int(led.bulk_retag_project(
+            project, filt=f"{_UNRESOLVED_PROJECT} AND venv=?",
+            args=(budget.UNATTRIBUTED_PROJECT, venv), actor="tag",
+            reason="deterministic: venv prior") or 0)
+    return retagged
 
 
 def retag_deterministic():
-    """FREE pass: fill EMPTY project tags from context (meta → 'llm-spendguard', else the repo/config project). Never
-    overrides an existing tag. Returns the number of rows changed. Reads/writes spend_events (the money-of-record)."""
+    """FREE pass: fill still-unresolved tags in order: meta → venv prior → coarse repo.
+
+    Each pass only touches rows that remain unresolved, so meta precedence is preserved. Returns the number of
+    rows changed. Reads/writes spend_events (the money-of-record).
+    """
     from . import budget
     led = budget._ledger()
     with budget._lock:
-        a = led.bulk_retag_project("llm-spendguard", filt=f"{_EMPTY_PROJECT} AND COALESCE(is_meta,0)=1",
-                                   actor="tag", reason="deterministic: meta → llm-spendguard")
-        b = led.bulk_retag_project(budget._project(), filt=_EMPTY_PROJECT,
-                                   actor="tag", reason="deterministic: empty → repo project")
-    return int(a or 0) + int(b or 0)
+        a = led.bulk_retag_project(
+            "llm-spendguard", filt=f"{_UNRESOLVED_PROJECT} AND COALESCE(is_meta,0)=1",
+            args=(budget.UNATTRIBUTED_PROJECT,), actor="tag",
+            reason="deterministic: meta → llm-spendguard")
+        venv_retagged = backfill_project_from_venv(led)
+        b = led.bulk_retag_project(
+            budget._project(), filt=_UNRESOLVED_PROJECT,
+            args=(budget.UNATTRIBUTED_PROJECT,), actor="tag",
+            reason="deterministic: unresolved → repo project")
+    return venv_retagged + int(a or 0) + int(b or 0)
 
 
 def move_project(old, new):
@@ -50,8 +88,9 @@ def cmd(argv=None):
 def ambiguous_count():
     """Rows a human/LLM might still need to disambiguate — untagged after the free pass (should be ~0 once
     deterministic runs, but non-repo or mixed-context charges can remain). Zero-spend."""
-    from . import ledger_read
-    return ledger_read.read_ledger_count(ledger_read.LedgerReadRequest(where_sql=_EMPTY_PROJECT))
+    from . import budget, ledger_read
+    return ledger_read.read_ledger_count(ledger_read.LedgerReadRequest(
+        where_sql=_UNRESOLVED_PROJECT, parameters=(budget.UNATTRIBUTED_PROJECT,)))
 
 
 def estimate_llm_retag():

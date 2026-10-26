@@ -596,6 +596,29 @@ def _prior_org_team(prior):
     return _conversation_prior_index().get(_canon(prior), ("", ""))
 
 
+REPO_LOCAL_VENV_DIR_NAMES = frozenset({".venv", ".venv.nosync"})
+
+
+def repo_prior_from_venv(venv):
+    """Parse a repo-name PRIOR only from the repo-local venv convention.
+
+    A directory named exactly ``.venv`` or ``.venv.nosync`` identifies its immediate parent as the repo, a
+    format-level fact. The resulting prior has the same non-authoritative status as the cwd prior: it is a hint that
+    an agentic classify pass may confirm or override. For example, ``.../services/billing/.venv`` yields ``billing``.
+
+    A venv's own arbitrary basename is a human naming choice, so interpreting it is a judgement rather than a
+    format-fact. Such paths yield no prior and flow to the coarse-repo / LLM-residual path instead of receiving a
+    plausible-but-wrong mechanical label. Thus ``/opt/shared/.venv-tools`` and ``~/.venvs/<name>`` both return ``""``.
+    """
+    venv_path = (venv or "").strip()
+    if not venv_path:
+        return ""
+    venv_name = os.path.basename(venv_path)
+    if venv_name in REPO_LOCAL_VENV_DIR_NAMES:
+        return _canon(os.path.basename(os.path.dirname(venv_path)))
+    return ""
+
+
 def _is_spendguard_session(sid, segs=None, store=None):
     """True if a session's work IS spendguard itself (cost reconstruction/analysis OR spendguard-dev) — project resolves
     to 'llm-spendguard'. Such sessions must NOT be primary EVIDENCE for realtime workload reconstruction: spendguard's
@@ -625,7 +648,7 @@ def resolve(evidence, tdir=None, classify_on_miss=False, segs=None, store=None):
     return that segment's RECORDED agentic determination (org/team/project; cwd was the PRIOR the LLM confirmed). On an
     unclassified segment: classify_on_miss=True → classify it now (LLM, recorded); else the cwd PRIOR (the repo, source
     ='prior') — NEVER a regex keyword guess, NEVER blanket 'unattributed' for evidenced spend. Generalises
-    batch_project_map. `evidence` keys: batch_id | conv_id/sid + cwd + script | seg_id | host/label."""
+    batch_project_map. `evidence` keys: batch_id | conv_id/sid + cwd + script | seg_id | host/label | venv."""
     store = _seg_get_all() if store is None else store      # callers pass cached segs/store → no transcript re-read per run
     segs = segments(tdir) if segs is None else segs
     seg = _match_segment(evidence, segs, store)
@@ -651,6 +674,12 @@ def resolve(evidence, tdir=None, classify_on_miss=False, segs=None, store=None):
     if sc:
         return {**sc, "confidence": 0, "source": "session", "how": "session-fallback",
                 "seg_id": None, "prior": None, "evidenced": bool(evidence.get("cwd"))}
+    venv_prior = repo_prior_from_venv(evidence.get("venv"))
+    if venv_prior:
+        o, t = _prior_org_team(venv_prior)
+        return {"org": o, "team": t, "project": venv_prior, "confidence": 0,
+                "source": "prior", "how": "venv-prior", "seg_id": None, "prior": venv_prior,
+                "evidenced": True}
     return {"org": "", "team": "", "project": "", "confidence": 0, "source": "none", "how": "none",
             "seg_id": None, "prior": None, "evidenced": False}
 
