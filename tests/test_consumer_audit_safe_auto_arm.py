@@ -158,9 +158,10 @@ with tempfile.TemporaryDirectory(prefix="consumer-audit-proof-") as temporary:
             row for row in spendguard_only["consumers"]
             if row["venv"] == os.fspath(spendguard_only_venv.resolve())
         )
-        failure_count += check("spendguard-only source is not classified as an LLM consumer",
-                               spendguard_only_row["final_verdict"] == "LLM-USE-UNDETERMINED"
-                               and spendguard_only_row["action"] == "none")
+        failure_count += check("spendguard-only source is classified as an LLM consumer",
+                               spendguard_only_row["initial_verdict"] == "NOT-ENFORCING"
+                               and spendguard_only_row["action"] == "armed"
+                               and spendguard_only_row["final_verdict"] == "GATED+LATEST")
         failure_count += check("source AST facts report SDK and spendguard imports separately",
                                spendguard_only_row["sdk_imports_source"] == ()
                                and spendguard_only_row["spendguard_import_source"] is True)

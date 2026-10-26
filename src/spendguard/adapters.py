@@ -14,20 +14,24 @@ import contextlib
 import sys
 from . import config, pricing
 
-# name -> {base_url, key_env, prefixes, kind}
+SPENDGUARD_IMPORT_NAME = "spendguard"
+
+# name -> {base_url, key_env, prefixes, kind, optional sdk_import}
 PROVIDERS = {
     "openai":    {"base_url": None, "key_env": "OPENAI_API_KEY",
                   "prefixes": ("gpt-", "o1", "o3", "chatgpt"), "kind": "openai", "batch": True},
     "anthropic": {"base_url": None, "key_env": "ANTHROPIC_API_KEY",
                   "prefixes": ("claude-",), "kind": "anthropic"},
     "gemini":    {"base_url": "https://generativelanguage.googleapis.com/v1beta/openai/",
-                  "key_env": "GEMINI_API_KEY", "prefixes": ("gemini-",), "kind": "openai"},
+                  "key_env": "GEMINI_API_KEY", "prefixes": ("gemini-",), "kind": "openai",
+                  "sdk_import": "google"},  # Native Google SDK is separate from spendguard's compat path.
     "deepseek":  {"base_url": "https://api.deepseek.com",
                   "key_env": "DEEPSEEK_API_KEY", "prefixes": ("deepseek",), "kind": "openai"},
     "qwen":      {"base_url": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
                   "key_env": "DASHSCOPE_API_KEY", "prefixes": ("qwen", "qwq"), "kind": "openai"},
     "zai":       {"base_url": "https://api.z.ai/api/paas/v4",   # z.ai / Zhipu GLM — OpenAI-compatible (verify base_url with your key)
-                  "key_env": "ZAI_API_KEY", "prefixes": ("glm-",), "kind": "openai"},
+                  "key_env": "ZAI_API_KEY", "prefixes": ("glm-",), "kind": "openai",
+                  "sdk_import": "zhipuai"},  # Native Zhipu SDK is separate from spendguard's compat path.
     "voyage":    {"base_url": "https://api.voyageai.com/v1",     # Voyage AI — OpenAI-compatible /EMBEDDINGS only (no
                   #                                                chat, no async Batch API). Anthropic's recommended
                   #                                                embeddings; reached via adapters.embed(model="voyage-…").
@@ -40,9 +44,24 @@ PROVIDERS = {
 }
 
 
-def register_provider(name, base_url, key_env, prefixes, kind="openai"):
+def llm_capability_import_names() -> frozenset[str]:
+    """Top-level imports that mechanically establish an LLM-calling capability."""
+    names = {SPENDGUARD_IMPORT_NAME}
+    for provider in PROVIDERS.values():
+        kind = provider.get("kind")
+        if kind in ("openai", "anthropic"):
+            names.add(kind)
+        if provider.get("sdk_import"):
+            names.add(provider["sdk_import"])
+    return frozenset(names)
+
+
+def register_provider(name, base_url, key_env, prefixes, kind="openai", sdk_import=None):
     """Add/override a provider. kind: 'openai' (OpenAI-compatible) or 'anthropic'."""
-    PROVIDERS[name] = {"base_url": base_url, "key_env": key_env, "prefixes": tuple(prefixes), "kind": kind}
+    entry = {"base_url": base_url, "key_env": key_env, "prefixes": tuple(prefixes), "kind": kind}
+    if sdk_import:
+        entry["sdk_import"] = sdk_import
+    PROVIDERS[name] = entry
 
 
 def provider_for(model):

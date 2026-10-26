@@ -10,6 +10,9 @@ import os
 import glob
 import subprocess
 
+from .adapters import llm_capability_import_names
+from .setup import _PTH_SENTINEL, _SENTINEL
+
 
 # Defaults: the iCloud-safe venv home + venvs sitting inside repos near the cwd (1–2 levels up's siblings). Generic
 # globs, not user-specific paths; override with SPENDGUARD_COVERAGE_ROOTS / config coverage.roots.
@@ -58,7 +61,8 @@ def _is_gated(venv, purelib=None):
         try:
             if os.path.exists(hp):
                 with open(hp, errors="ignore") as _fh:        # closed deterministically (was a leaked handle)
-                    if "spendguard-gate-hook/v1" in _fh.read():
+                    hook_text = _fh.read()
+                    if _SENTINEL in hook_text or _PTH_SENTINEL in hook_text:
                         return True
         except Exception:
             pass
@@ -97,7 +101,7 @@ def audit_gating_coverage(roots=None):
             if not sp or sp in seen:
                 continue
             seen.add(sp)
-            llm = [p for p in ("openai", "anthropic") if os.path.isdir(os.path.join(sp, p))]
+            llm = sorted(p for p in llm_capability_import_names() if os.path.isdir(os.path.join(sp, p)))
             if not llm:
                 continue
             out.append({"venv": venv, "llm": llm, "gated": _is_gated(venv, sp),
@@ -114,12 +118,35 @@ def gaps(rows=None, roots=None):
             if r["llm"] and not r["gated"] and not r["own"]]
 
 
+def _ledger_code_crosscheck(rows, captured_sources):
+    """Return unmatched code venvs and ledger source paths using mechanical path containment."""
+    def matches(source, venv):
+        source_path = os.path.realpath(os.path.expanduser(source))
+        venv_path = os.path.realpath(os.path.expanduser(venv))
+        try:
+            return os.path.commonpath((source_path, venv_path)) in (source_path, venv_path)
+        except ValueError:
+            return False
+
+    code_venvs = {row["venv"] for row in rows if row["llm"]}
+    ledger_sources = {source for source in captured_sources if source}
+    unmatched_code = sorted(venv for venv in code_venvs
+                            if not any(matches(source, venv) for source in ledger_sources))
+    unmatched_ledger = sorted(source for source in ledger_sources
+                              if not any(matches(source, venv) for venv in code_venvs))
+    return unmatched_code, unmatched_ledger
+
+
+def _captured_spend_sources():
+    from .ledger import SpendLedger
+    return SpendLedger().captured_spend_source_paths()
+
+
 def cmd(argv=None):
     rows = audit_gating_coverage()
     print("spendguard coverage — LLM-calling venvs (gated = live realtime captured at the source, no reconstruction):")
     if not rows:
         print("  (no venvs with an LLM SDK found under the scanned roots; set SPENDGUARD_COVERAGE_ROOTS to widen)")
-        return 0
     # WHAT COUNTS AS A GAP IS DEFINED IN gaps(), ONCE. This loop used to rebuild the same condition inline
     # (`not gated and not own`) while gaps() sat directly above it with no caller — so the definition of "a
     # coverage gap" lived in two places, free to drift, and the named one was the copy nobody exercised.
@@ -142,4 +169,16 @@ def cmd(argv=None):
             print("  spendguard install-hook --venv %s" % r["venv"].replace(os.path.expanduser("~"), "~"))
     else:
         print("\n✓ every LLM-calling venv is gated (or self-gates) — no ungated realtime sources.")
+    try:
+        captured_sources = _captured_spend_sources()
+    except Exception as exc:
+        print("\nledger×code cross-check unavailable — %s: %s" % (type(exc).__name__, exc))
+    else:
+        unmatched_code, unmatched_ledger = _ledger_code_crosscheck(rows, captured_sources)
+        for venv in unmatched_code:
+            print("\n⚠️ LLM-capable but no captured spend — not run yet OR running ungated; "
+                  "verify with `spendguard doctor` in that venv. [%s]" % venv)
+        for source in unmatched_ledger:
+            print("\n🔴 captured spend but no LLM code path found — a missed transitive path or an "
+                  "attribution bug; investigate. [%s]" % source)
     return 1 if g else 0
