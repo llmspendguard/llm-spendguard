@@ -438,7 +438,12 @@ class SpendLedger:
                            [rec[c] for c in cols])
 
     # ── C: create (a draft event; logged to the audit chain) ──
-    def record_event(self, ev):
+    def record_event(self, ev, venv=None):
+        """Record a spend event and return its evidence ID.
+
+        ``venv`` is gate-only interpreter provenance (the calling process's ``sys.prefix``), written directly
+        to the ``venv`` column so its raw path never enters diagnostic or logging reads of the event mapping.
+        """
         ev = dict(ev)
         kind = (ev.pop("kind", None) or "").lower()
         usd = ev.pop("usd", None)
@@ -503,8 +508,15 @@ class SpendLedger:
             if jc in ev and not isinstance(ev.get(jc), (str, type(None))):
                 ev[jc] = json.dumps(ev[jc])
         cols = [c for c in self._cols if c in ev]
+        vals = [ev[c] for c in cols]
+        # venv arrives as an explicit argument (gate provenance), not an `ev` key, so the raw interpreter path
+        # never taints the diagnostic reads of `ev` above. Honor an `ev["venv"]` too, for any legacy caller that
+        # still carries it, without duplicating the column.
+        if venv is not None and "venv" in self._cols and "venv" not in cols:
+            cols.append("venv")
+            vals.append(venv)
         self._conn.execute(f"INSERT INTO spend_events ({','.join(cols)}) VALUES ({','.join('?' for _ in cols)})",
-                           [ev.get(c) for c in cols])
+                           vals)
         self._audit(ev["id"], ev.get("recorded_by") or ev.get("source") or "?", "ingest", "(create)", None,
                     f"{ev.get('cost_type')} {sum((to_dec(ev.get(c)) for c in USD_COLS), Decimal(0))} USD", "ingested")
         if not self._defer:

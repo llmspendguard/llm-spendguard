@@ -136,8 +136,10 @@ def _record_spend_event(provider, model, kind, cost, *, conv_id="", basis="", in
         from .ledger import live_dedup_key
         ev = charge_to_event(provider, model, kind, cost, conv_id=conv_id, basis=basis,
                              intent=intent, actor=actor, key_fp=key_fp, chain=chain)
-        if source == LIVE_GATE_SOURCE:
-            ev["venv"] = sys.prefix
+        # Gate-only interpreter provenance. Captured as a LOCAL and handed to the ledger writer as an explicit
+        # argument — never set as a key of `ev`, so the username-bearing path never enters the diagnostic reads
+        # of `ev` (stderr capture-gap log, rate-provenance warning). record_event writes it straight to the column.
+        running_venv = sys.prefix if source == LIVE_GATE_SOURCE else None
         _attribute(ev, project)
         oa = occurred_at or datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
         ev["occurred_at"] = ev["ts_utc"] = oa
@@ -161,7 +163,7 @@ def _record_spend_event(provider, model, kind, cost, *, conv_id="", basis="", in
         if invoice_id:                                # FOCUS InvoiceId anchor — set only when reconciled to a bill
             ev["invoice_id"] = invoice_id
         with _lock:
-            (maintenance_ledger if maintenance_ledger is not None else _ledger()).record_event(ev)
+            (maintenance_ledger if maintenance_ledger is not None else _ledger()).record_event(ev, venv=running_venv)
     except Exception as e:
         if maintenance_ledger is not None:
             # The offline owner rolls back this entire correction rebuild on every write failure.

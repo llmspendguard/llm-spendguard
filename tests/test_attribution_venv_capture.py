@@ -22,6 +22,9 @@ TEST_PROVIDER = "attribution-fixture-provider"
 TEST_MODEL = "attribution-fixture-model"
 TEST_COST = 0.01
 UNATTRIBUTED_EXPECTED = "unattributed"
+PARAM_WRITTEN_VENV = "/workspace/medical-app/.venv.nosync"
+PARAM_WRITTEN_SOURCE = "attribution-param-venv"
+OMITTED_VENV_SOURCE = "attribution-omitted-venv"
 
 failures = 0
 
@@ -56,6 +59,27 @@ non_gate_row = active_ledger._conn.execute(
 failures += check_attribution_venv_capture_condition(
     "non-gate row leaves venv absent", non_gate_row["venv"] in (None, ""))
 
+param_written_event_id = active_ledger.record_event(
+    {"provider": TEST_PROVIDER, "model": TEST_MODEL, "kind": "realtime", "usd": TEST_COST,
+     "source": PARAM_WRITTEN_SOURCE},
+    venv=PARAM_WRITTEN_VENV,
+)
+param_written_row = active_ledger._conn.execute(
+    "SELECT venv FROM spend_events WHERE id=?", (param_written_event_id,)
+).fetchone()
+failures += check_attribution_venv_capture_condition(
+    "record_event venv parameter writes the venv column", param_written_row["venv"] == PARAM_WRITTEN_VENV)
+
+omitted_venv_event_id = active_ledger.record_event(
+    {"provider": TEST_PROVIDER, "model": TEST_MODEL, "kind": "realtime", "usd": TEST_COST,
+     "source": OMITTED_VENV_SOURCE}
+)
+omitted_venv_row = active_ledger._conn.execute(
+    "SELECT venv FROM spend_events WHERE id=?", (omitted_venv_event_id,)
+).fetchone()
+failures += check_attribution_venv_capture_condition(
+    "record_event without venv leaves the venv column absent", omitted_venv_row["venv"] in (None, ""))
+
 failures += check_attribution_venv_capture_condition(
     "gate row keeps its captured venv while using the visible sentinel",
     bool(gate_row["venv"])
@@ -67,6 +91,8 @@ failures += check_attribution_venv_capture_condition(
 captured_paths = active_ledger.captured_spend_source_paths()
 failures += check_attribution_venv_capture_condition(
     "captured spend source paths include the running venv", sys.prefix in captured_paths)
+failures += check_attribution_venv_capture_condition(
+    "captured spend source paths include the parameter-written venv", PARAM_WRITTEN_VENV in captured_paths)
 
 print(("[OK]" if not failures else "[FAIL]")
       + " attribution venv capture: %d failure(s)" % failures)
