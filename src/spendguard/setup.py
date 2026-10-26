@@ -657,8 +657,12 @@ def _resolve_setting(s):
     if store == "env":
         return s["default"], "default"
     if store.startswith("config.json:"):
-        sec, key = store[len("config.json:"):].split(".", 1)
-        v = (config._cfg().get(sec) or {}).get(key)
+        remainder = store[len("config.json:"):]
+        if "." in remainder:
+            sec, key = remainder.split(".", 1)
+            v = (config._cfg().get(sec) or {}).get(key)
+        else:
+            v = config._cfg().get(remainder)
         return (v, "config.json") if v is not None else (s["default"], "default")
     if store.startswith("email.json:"):
         v = config.email_config().get(store[len("email.json:"):])
@@ -692,17 +696,26 @@ def _write_store(s, value):
     import json
     store = s["store"]
     if store.startswith("config.json:"):
-        sec, key = store[len("config.json:"):].split(".", 1)
+        remainder = store[len("config.json:"):]
+        if (store == "config.json:consumer_audit_exempt" and value is not None
+                and (not isinstance(value, list) or any(not isinstance(item, str) for item in value))):
+            raise ValueError("consumers.audit_exempt must be a JSON list of absolute path strings")
         p = config.CONFIG_JSON
         try:
             cfg = json.loads(p.read_text()) if p.exists() else {}
         except Exception:
             raise ValueError(f"{p} is not valid JSON — fix or remove it first")
-        cfg.setdefault(sec, {})
-        if value is None:
-            cfg[sec].pop(key, None)                     # explicit null = unset → fall back to the default
+        if "." in remainder:
+            sec, key = remainder.split(".", 1)
+            cfg.setdefault(sec, {})
+            if value is None:
+                cfg[sec].pop(key, None)                 # explicit null = unset → fall back to the default
+            else:
+                cfg[sec][key] = value
+        elif value is None:
+            cfg.pop(remainder, None)
         else:
-            cfg[sec][key] = value
+            cfg[remainder] = value
         p.parent.mkdir(parents=True, exist_ok=True)
         config.update_json(p, lambda _d: cfg,
                            required=True)               # p is CONFIG_JSON (merged settings): a corrupt file RAISES rather

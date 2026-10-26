@@ -44,6 +44,13 @@ SETTINGS = [
          kind="path", secret=False,
          desc="Directory for logs, kill-switch flag, price cache, spend db, and config files."),
 
+    dict(section="consumers", key="audit_exempt", store="config.json:consumer_audit_exempt",
+         env=None, default=[], kind="json", secret=False,
+         desc="Absolute paths of consumer repos/venvs deliberately OUT of llm-spendguard scope; `spendguard deploy` "
+              "reports each as EXEMPT (distinct from SUCCESS, never auto-armed, not a gap). Matched by path "
+              "containment (repo OR venv within an exempt path), never by name/keyword. JSON list of absolute path "
+              "strings."),
+
     *[dict(section="lane_recovery", key=key, store="config.json:lane_recovery." + key,
            env="SPENDGUARD_LANE_" + key.upper(), default=default, kind=kind, secret=False, desc=desc)
       for key, default, kind, desc in (
