@@ -674,15 +674,43 @@ def _dispatch(argv=None):
             if (not _fr.get("restarted") and not _fr.get("warn")
                     and not _fr.get(_fleet.FLEET_RESTART_TRANSIENT_KEY)):
                 print("deploy: fleet — all tracked consumers already on the green commit.")
-        _deployment_verdict = _fleet.verify_and_refresh_registered_interpreters(apply="--no-refresh" not in r)
+        _refresh_deployments = "--no-refresh" not in r
+        _host_install_audit = _fleet.reconcile_registered_host_installations()
+        _host_escape_count = len(_host_install_audit["escapes"])
+        _host_install_failures = []
+        if _refresh_deployments:
+            from .setup import install_hook as _install_host_gate
+            for _escape in _host_install_audit["escapes"]:
+                _interpreter = _escape["python_executable"]
+                try:
+                    if _install_host_gate(user=True, python=_interpreter) != 0:
+                        _host_install_failures.append({"python_executable": _interpreter,
+                                                       "error": "install-hook did not establish enforcement"})
+                except Exception as _escape_error:
+                    _host_install_failures.append({"python_executable": _interpreter,
+                                                   "error": str(_escape_error)})
+            _host_install_audit = _fleet.reconcile_registered_host_installations()
+        print("deploy: registry — "
+              f"discovered={len(_host_install_audit['discovered'])} "
+              f"reconciled={_host_escape_count - len(_host_install_audit['escapes'])} "
+              f"remaining={len(_host_install_audit['escapes'])}")
+        for _escape in _host_install_audit["escapes"]:
+            print(f"deploy: 🔴 registry escape {_escape['python_executable']}: {_escape['remediation']}",
+                  file=sys.stderr)
+        for _failure in _host_install_failures:
+            print(f"deploy: 🔴 registry escape FAILED {_failure['python_executable']}: {_failure['error']}",
+                  file=sys.stderr)
+        _deployment_verdict = _fleet.verify_and_refresh_registered_interpreters(apply=_refresh_deployments)
         print("deploy: completeness — "
               f"N_total={_deployment_verdict['N_total']} N_updated={_deployment_verdict['N_updated']} "
               f"N_verified_fresh={_deployment_verdict['N_verified_fresh']}")
         for _failure in _deployment_verdict["failed"]:
             print(f"deploy: 🔴 registered deployment FAILED {_failure.get('python_executable')}: "
                   f"{_failure.get('error') or _failure.get('state')}", file=sys.stderr)
-        if not _deployment_verdict["complete"]:
-            return _deploy_failed_verdict("one or more registered deployments remain stale or unreachable")
+        if _host_install_failures or not _host_install_audit["complete"] or not _deployment_verdict["complete"]:
+            return _deploy_failed_verdict(
+                "one or more host installations remain escaped or registered deployments remain stale or unreachable"
+            )
         return _deploy_succeeded_verdict(rec)
     if cmd == "fleet":                                # the running spendguard consumers + which are STALE vs green
         import json as _json

@@ -93,5 +93,92 @@ check("failure records request shape and traceback location",
       "request_shape=" in failed_probe["reason"] and "metered_only" in failed_probe["reason"]
       and "_raise_probe_typeerror" in failed_probe["reason"])
 
+print("\n-- returned adapter failures distinguish a client bug from a provider outage --")
+adapter_message = "invalid local argument " + ("evidence" * DIAGNOSTIC_REPEAT_COUNT)
+adapters.call = lambda *args, **kwargs: {
+    "error": adapter_message, "error_type": "TypeError", "error_module": "builtins",
+    "error_origin": "adapters.py:3016 in _astream", "status_code": None, "executor": "api",
+    "served_by_metered_api": False, "failure_kind": "client_bug",
+}
+_provider, client_bug_probe = reliability._probe_metered_one("anthropic", "probe-model", PROBE_TIMEOUT_SECONDS)
+check("client-side TypeError is fail-closed but classified as adapter/client bug",
+      client_bug_probe["reachable"] is False and client_bug_probe["failure_kind"] == "client_bug"
+      and client_bug_probe["reason"].startswith("adapter/client bug: TypeError"))
+check("client-bug diagnostic preserves the full message and originating frame",
+      adapter_message in client_bug_probe["reason"] and "adapters.py:3016 in _astream" in client_bug_probe["reason"])
+
+adapters.call = lambda *args, **kwargs: {
+    "error": "service unavailable", "error_type": "APIStatusError", "status_code": 503,
+    "executor": "api", "served_by_metered_api": False, "failure_kind": "provider_error",
+}
+_provider, outage_probe = reliability._probe_metered_one("anthropic", "probe-model", PROBE_TIMEOUT_SECONDS)
+check("HTTP 5xx proves the provider was reached and is classified as provider error",
+      outage_probe["reachable"] is False and outage_probe["failure_kind"] == "provider_error"
+      and outage_probe["reason"].startswith("provider error:"))
+
+print("\n-- statusless fallback uses structural origin and remains fail-closed --")
+provider_origin = os.path.join(os.path.dirname(os.path.abspath(adapters.__file__)), "provider-origin.py")
+provider_package_origin = os.path.join(os.path.dirname(os.path.abspath(__import__("anthropic").__file__)),
+                                       "provider-origin.py")
+unknown_origin = os.path.join(os.path.dirname(os.path.abspath(__file__)), "unknown-origin.py")
+failure_cases = (
+    (provider_package_origin, "TypeError", None, "indeterminate"),
+    (provider_origin, "ValueError", None, "indeterminate"),
+    (unknown_origin, "TypeError", None, "indeterminate"),
+    (None, "JSONDecodeError", None, "indeterminate"),
+    (None, "APIStatusError", 400, "client_bug"),
+    (None, "APIStatusError", 404, "client_bug"),
+    # HTTP 408 means the client did not complete its request within the server's wait window.
+    (None, "APIStatusError", 408, "client_bug"),
+    (None, "APIStatusError", 429, "provider_error"),
+    (None, "APIStatusError", 503, "provider_error"),
+    (None, "APIStatusError", 399, "indeterminate"),
+)
+for error_origin_path, error_type_name, status_code, expected_kind in failure_cases:
+    adapters.call = lambda *args, _origin=error_origin_path, _error_type_name=error_type_name, \
+            _status_code=status_code, **kwargs: {
+        "error": "offline constructed failure", "error_type": _error_type_name, "status_code": _status_code,
+        "error_origin": f"{_origin}:1 in probe" if _origin else None,
+        "executor": "api", "served_by_metered_api": False,
+    }
+    _provider, structural_probe = reliability._probe_metered_one(
+        "anthropic", "probe-model", PROBE_TIMEOUT_SECONDS)
+    check(f"{error_type_name} at {error_origin_path!r} fallback is {expected_kind} and fail-closed",
+          structural_probe["reachable"] is False and structural_probe["failure_kind"] == expected_kind)
+
+adapters.call = lambda *args, **kwargs: {
+    "error": "transport failed", "error_type": "ConnectionError", "status_code": None,
+    "executor": "api", "served_by_metered_api": False, "failure_kind": "provider_unreachable",
+}
+_provider, transport_probe = reliability._probe_metered_one("anthropic", "probe-model", PROBE_TIMEOUT_SECONDS)
+check("adapter-computed transport kind is preferred and remains fail-closed",
+      transport_probe["reachable"] is False and transport_probe["failure_kind"] == "provider_unreachable")
+
+adapters.call = lambda *args, **kwargs: {
+    "error": "could not interpret local failure", "error_type": "ValueError", "status_code": None,
+    "executor": "api", "served_by_metered_api": False,
+}
+_provider, indeterminate_probe = reliability._probe_metered_one("anthropic", "probe-model", PROBE_TIMEOUT_SECONDS)
+check("indeterminate health reason names the attribution gap rather than an adapter/client bug",
+      indeterminate_probe["reason"].startswith(
+          "indeterminate failure (cannot attribute to provider vs client): ValueError"))
+
+saved_health_reds = reliability.health_reds
+try:
+    reliability.health_reds = lambda: [{"resource": "anthropic", "failure_kind": "client_bug",
+                                        "reason": client_bug_probe["reason"], "fix": None, "command": None}]
+    check("health alert names adapter/client bugs without claiming the provider is unreachable",
+          "adapter/client bug" in reliability.health_alert() and "resource(s) unreachable" not in reliability.health_alert())
+finally:
+    reliability.health_reds = saved_health_reds
+
+try:
+    reliability.health_reds = lambda: [{"resource": "anthropic", "failure_kind": "indeterminate",
+                                        "reason": indeterminate_probe["reason"], "fix": None, "command": None}]
+    check("health alert surfaces an indeterminate failure as not healthy and cannot attribute it",
+          "not healthy" in reliability.health_alert() and "cannot attribute" in reliability.health_alert())
+finally:
+    reliability.health_reds = saved_health_reds
+
 print(f"\n{'[FAIL]' if fails else 'OK'} test_reliability: {len(fails)} failure(s)")
 sys.exit(1 if fails else 0)

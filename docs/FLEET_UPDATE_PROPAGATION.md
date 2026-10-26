@@ -24,13 +24,15 @@ A supervised daemon can instead call `release.exit_if_stale()` periodically or b
 
 `spendguard deploy` holds a non-blocking single-instance deploy lock, runs the full gate unless `--no-gate` is supplied, and promotes only after the gate succeeds. The green pointer names committed code; dirty promotion requires the explicit `--allow-dirty` escape hatch ([`src/spendguard/cli.py:285`](https://github.com/llmspendguard/llm-spendguard/blob/main/src/spendguard/cli.py#L285), [`src/spendguard/release.py:145`](https://github.com/llmspendguard/llm-spendguard/blob/main/src/spendguard/release.py#L145)).
 
-After promotion, deploy calls `restart_stale(apply=True)` by default. It prints each launchd restart and emits warnings for stale consumers it cannot safely restart. `--no-restart` suppresses this fleet step ([`src/spendguard/cli.py:300`](https://github.com/llmspendguard/llm-spendguard/blob/main/src/spendguard/cli.py#L300)). This yields the operational sequence:
+After promotion, deploy calls `restart_stale(apply=True)` by default. It prints each launchd restart and emits warnings for stale consumers it cannot safely restart. `--no-restart` suppresses this fleet step. Deploy then uses the same structural PATH/pipx discovery as doctor to find in-scope host installations that escaped the persistent registry. Unless `--no-refresh` was requested, each escape is passed through the existing user-gate installation path and the host inventory is reconciled again. Out-of-scope pipx applications are not discovered, registered, or changed: the existing classifier accepts only a pipx environment whose declared main package is `llm-spendguard`. Finally, every registered interpreter, including each newly registered escape, is refreshed when allowed and re-probed. An install failure, a remaining escape, or any stale or unreachable registered interpreter fails deploy closed ([`src/spendguard/cli.py`](https://github.com/llmspendguard/llm-spendguard/blob/main/src/spendguard/cli.py), [`src/spendguard/fleet.py`](https://github.com/llmspendguard/llm-spendguard/blob/main/src/spendguard/fleet.py)). This yields the operational sequence:
 
 1. Gate and promote the new green SHA.
 2. Compare registered consumers' loaded SHAs with green.
 3. Restart launchd-managed stale consumers.
 4. Warn about unsupervised or uncomparable consumers so an operator can restart or inspect them.
-5. Let supervised consumers using `exit_if_stale()` hand off at their next safe point.
+5. Discover and reconcile registry-escaped in-scope host installations.
+6. Verify or refresh every registered interpreter, including newly reconciled escapes, and fail closed on any gap.
+7. Let supervised consumers using `exit_if_stale()` hand off at their next safe point.
 
 Promotion alone completes only step 1. A deployment is not fully propagated until stale long-lived consumers have restarted or safely self-exited.
 

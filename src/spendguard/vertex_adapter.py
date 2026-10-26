@@ -9,6 +9,10 @@ import functools
 import sys
 
 
+_VERTEX_CAPTURE_METHODS = ("generate_content", "embed_content")
+_VERTEX_CAPTURE_CLASSES = (("Models", False), ("AsyncModels", True))
+
+
 def _toks(result):
     """(in_tok, out_tok) from a GenerateContentResponse.usage_metadata, else None (→ nothing recorded)."""
     um = getattr(result, "usage_metadata", None)
@@ -64,6 +68,26 @@ def _capture_vertex_usage_wrapper(orig, is_async, toks_fn=_toks):
     return w
 
 
+def vertex_adapter_is_wired() -> bool:
+    """True only when at least one imported google-genai spend surface is actually wrapped."""
+    models_module = sys.modules.get("google.genai.models")
+    if models_module is None:
+        return False
+    found_surface = False
+    for class_name, _is_async in _VERTEX_CAPTURE_CLASSES:
+        models_class = getattr(models_module, class_name, None)
+        if models_class is None:
+            continue
+        for method_name in _VERTEX_CAPTURE_METHODS:
+            method = getattr(models_class, method_name, None)
+            if method is None:
+                continue
+            found_surface = True
+            if not getattr(method, "_spend_gated", False):
+                return False
+    return found_surface
+
+
 def install(force: bool = False) -> bool:
     """Patch google-genai generate_content + embed_content (sync + async) to capture usage (idempotent). Only
     wires if the SDK is already imported, unless `force`. Returns True iff at least one method is now patched."""
@@ -74,11 +98,11 @@ def install(force: bool = False) -> bool:
     except Exception:
         return False
     wired = False
-    for cls_name, is_async in (("Models", False), ("AsyncModels", True)):
+    for cls_name, is_async in _VERTEX_CAPTURE_CLASSES:
         cls = getattr(gm, cls_name, None)
         if cls is None:
             continue
-        for method, toks_fn in (("generate_content", _toks), ("embed_content", _embed_toks)):
+        for method, toks_fn in ((_VERTEX_CAPTURE_METHODS[0], _toks), (_VERTEX_CAPTURE_METHODS[1], _embed_toks)):
             cur = getattr(cls, method, None)
             if cur is None:
                 continue
@@ -87,4 +111,4 @@ def install(force: bool = False) -> bool:
                 continue
             setattr(cls, method, _capture_vertex_usage_wrapper(cur, is_async, toks_fn))
             wired = True
-    return wired
+    return wired and vertex_adapter_is_wired()

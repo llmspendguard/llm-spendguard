@@ -17,6 +17,12 @@ import sys
 _SDK_GATED = {"openai", "azure", "azure_ai", "azure_text"}
 
 
+def litellm_adapter_is_wired() -> bool:
+    """True only when the imported LiteLLM module will call spendguard after a successful request."""
+    lm = sys.modules.get("litellm")
+    return lm is not None and record_litellm in (getattr(lm, "success_callback", None) or [])
+
+
 def _usage(response_obj):
     """(prompt_tokens, completion_tokens) from a LiteLLM ModelResponse (pydantic-like) or a dict. Best-effort → (0,0)."""
     u = getattr(response_obj, "usage", None)
@@ -68,4 +74,4 @@ def install(force: bool = False) -> bool:
     cbs = list(getattr(lm, "success_callback", None) or [])
     if record_litellm not in cbs:
         lm.success_callback = cbs + [record_litellm]   # litellm fires this for sync AND async completions
-    return True
+    return litellm_adapter_is_wired()

@@ -28,7 +28,7 @@ def ck(label, cond):
 # ── 0. the capability SSOT maps the ONE surface onto each vendor correctly (standardized) ──
 ck("non-reasoning OpenAI honors all three", adapters.generation_support("openai", "gpt-4.1-mini") == {"temperature", "top_p", "seed"})
 ck("reasoning OpenAI honors seed only (sampling knobs rejected)", adapters.generation_support("openai", "gpt-5.5") == {"seed"})
-ck("anthropic honors temperature/top_p, no seed", adapters.generation_support("anthropic", "claude-opus-4-8") == {"temperature", "top_p"})
+ck("anthropic obeys the installed stream signature", adapters.generation_support("anthropic", "claude-opus-4-8") == set())
 ck("a compat vendor honors temperature/top_p, no seed", adapters.generation_support("gemini", "gemini-3.7-flash") == {"temperature", "top_p"})
 
 
@@ -101,7 +101,7 @@ ck("a measurement call with no knobs sends no temperature/seed", "temperature" n
 ck("a measurement call with no knobs has no gen_params on the result", not r3.get("gen_params"))
 
 
-# ── 4. anthropic: temperature applied, seed dropped (no anthropic seed param) — same standardized surface ──
+# ── 4. anthropic: installed stream rejects both requested knobs, so both are recorded as dropped ──
 _acap = {}
 class _AntUsage:  input_tokens = 500; output_tokens = 50; cache_read_input_tokens = 0; cache_creation_input_tokens = 0
 class _AntBlock:
@@ -131,9 +131,10 @@ try:
 finally:
     _anthropic_mod.Anthropic = _orig_anthropic
 ck("anthropic measurement call succeeded", ra.get("text") == "stub claude reply" and not ra.get("error"))
-ck("temperature reached the anthropic request", _acap.get("temperature") == 0)
+ck("temperature was NOT sent to the anthropic stream", "temperature" not in _acap)
 ck("seed was NOT sent to anthropic (no seed param)", "seed" not in _acap)
-ck("anthropic seed recorded as dropped", ra.get("gen_params_dropped") == {"seed": 20261008})
+ck("anthropic unsupported knobs recorded as dropped",
+   ra.get("gen_params_dropped") == {"temperature": 0, "seed": 20261008})
 
 # ── 5. the EFFORT SENTINEL: a measurement call that sent no reasoning_effort records an explicit value, not NULL ──
 # (the ledger write is gate._record_rt → _calls.record_call; capture its effort arg, and stub the DB-touching helpers)

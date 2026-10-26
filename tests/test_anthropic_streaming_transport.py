@@ -20,10 +20,12 @@ strips real provider keys, and the metered path short-circuits at the no-key che
 is reached, so the script must supply its own — the green-locally/red-on-keyless-CI trap).
 """
 import os
+from pathlib import Path
 
 os.environ.setdefault("ANTHROPIC_API_KEY", "sk-ant-test-offline")
 
 import anthropic                                                    # noqa: E402
+import httpx                                                       # noqa: E402
 from spendguard import adapters                                     # noqa: E402
 
 MODEL = "anthropic:claude-opus-4-8"
@@ -104,6 +106,97 @@ def test_final_message_is_read_from_the_stream_not_the_stream_object(monkeypatch
     assert box["final_message_read"], "must resolve the stream to its final message before reading usage/content"
     assert r.get("text") == CAPTION             # the caption lives on the final message, not the stream object
     assert not r.get("error"), r.get("error")
+
+
+def test_sdk_rejected_sampling_kwarg_is_dropped_before_stream(monkeypatch):
+    # Proof of bite against the installed SDK contract: argument binding fails before the method body can open a
+    # transport, so this is deterministic and offline.  This was the exact production failure under SDK 1.15.0.
+    rejected_kwargs = {"model": "probe-model", "max_tokens": 1,
+                       "messages": [{"role": "user", "content": "ok"}], "temperature": 0}
+    try:
+        anthropic.resources.messages.Messages.stream(object(), **rejected_kwargs)
+    except TypeError as exc:
+        assert "temperature" in str(exc)
+    else:
+        raise AssertionError("SDK stream unexpectedly accepted the regression-triggering temperature kwarg")
+
+    fake, box = _recording_anthropic()
+    monkeypatch.setattr(anthropic, "Anthropic", fake)
+    result = adapters._call_once(MODEL, "Say the caption.", max_tokens=64, temperature=0,
+                                 _skip_lane=True)
+    assert not result.get("error"), result.get("error")
+    assert "temperature" not in box["stream_kw"]
+    assert result["gen_params_dropped"] == {"temperature": 0}
+    assert result["gen_params_applied"] is None
+
+
+def test_uninspectable_sdk_contract_records_why_knobs_were_dropped(monkeypatch):
+    import inspect
+    fake, box = _recording_anthropic()
+    monkeypatch.setattr(anthropic, "Anthropic", fake)
+    monkeypatch.setattr(inspect, "signature", lambda _callable: (_ for _ in ()).throw(ValueError("uninspectable")))
+    result = adapters._call_once(MODEL, "Say the caption.", max_tokens=64, temperature=0, _skip_lane=True)
+    assert not result.get("error"), result.get("error")
+    assert "temperature" not in box["stream_kw"]
+    assert result["gen_params_dropped"] == {"temperature": 0}
+    assert result["gen_params_dropped_reason"] == adapters.SDK_CONTRACT_UNAVAILABLE_REASON
+
+
+def _exception_raised_from_file(filename, exception):
+    namespace = {"exception": exception}
+    try:
+        exec(compile("raise exception", str(filename), "exec"), namespace)
+    except BaseException as raised:
+        return raised
+    raise AssertionError("constructed exception did not raise")
+
+
+def test_structural_failure_kinds_use_transport_and_status_range_only():
+    provider_origin = Path(anthropic.__file__).resolve().parent / "origin_contract_test.py"
+    spendguard_origin = Path(adapters.__file__).resolve().parent / "origin_contract_test.py"
+    unknown_origin = Path(__file__).resolve().parent / "origin_contract_test.py"
+    cases = (
+        (_exception_raised_from_file(provider_origin, TypeError("invalid client argument")), None, "indeterminate"),
+        (_exception_raised_from_file(spendguard_origin, ValueError("malformed provider response")), None,
+         "indeterminate"),
+        (_exception_raised_from_file(unknown_origin, TypeError("origin is not owned")), None, "indeterminate"),
+        (RuntimeError("served server failure"), 503, "provider_error"),
+        (RuntimeError("provider throttled request"), 429, "provider_error"),
+        (RuntimeError("served client rejection"), 400, "client_bug"),
+        (RuntimeError("served missing resource"), 404, "client_bug"),
+        # HTTP 408 means the client did not complete its request within the server's wait window.
+        (RuntimeError("client request timed out"), 408, "client_bug"),
+        (RuntimeError("served non-error status"), 418, "client_bug"),
+        (RuntimeError("served unexpected status"), 399, "indeterminate"),
+        (ConnectionError("transport failed"), None, "provider_unreachable"),
+        (httpx.ConnectError("connection refused"), None, "provider_unreachable"),
+    )
+    for exception, status_code, expected_kind in cases:
+        assert adapters._exception_failure_kind(exception, status_code) == expected_kind
+
+
+def test_internal_redirect_pin_is_applied_at_guarded_lane_selection_boundary(monkeypatch):
+    from spendguard import plan_admission
+    redirected_model = "openai:redirected-model"
+    redirected_lane = adapters._LANES[adapters.provider_for(redirected_model)][0]
+    observed = {}
+
+    monkeypatch.setattr(plan_admission, "decide", lambda *args, **kwargs: {
+        "action": "redirect", "model": redirected_model, "requested_model": MODEL, "lane": redirected_lane,
+        "reason": "offline pin regression guard"
+    })
+    monkeypatch.setattr(adapters, "_route_through_queue_enabled", lambda: False)
+
+    # _internal_pin is required here with no default: deleting it from call→_call_guarded forwarding makes this
+    # controlled boundary double raise TypeError (the historical failure), while dropping confinement flips _no_sub.
+    def _guarded_boundary(model, prompt, max_tokens=None, sig=None, retries=None, *, _internal_pin, **kwargs):
+        observed.update(model=model, internal_pin=_internal_pin, no_sub=kwargs.get("_no_sub"))
+        return {"text": "ok", "error": None, "model": model, "executor": "test"}
+
+    monkeypatch.setattr(adapters, "_call_guarded", _guarded_boundary)
+    result = adapters.call(MODEL, "pin this route", max_tokens=64, intent="test:internal-pin-boundary")
+    assert not result.get("error"), result
+    assert observed == {"model": redirected_model, "internal_pin": True, "no_sub": True}
 
 
 if __name__ == "__main__":

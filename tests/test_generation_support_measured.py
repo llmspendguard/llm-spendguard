@@ -25,10 +25,10 @@ def ck(label, cond):
     if not cond:
         fails.append(label)
 
-# A non-reasoning anthropic model defaults to {temperature, top_p} (no seed — anthropic has no seed param).
+# The installed Anthropic stream signature is authoritative; this SDK exposes neither sampling knob there.
 M = "claude-haiku-5-5"
 base = adapters.generation_support("anthropic", M)
-ck("default (pre-fact) grants temperature+top_p for a non-reasoning model", base == {"temperature", "top_p"})
+ck("default support intersects the installed SDK stream signature", base == set())
 
 # Record the MEASURED facts (the vendor 400'd both as 'deprecated for this model', confirmed 2026-10-09).
 models.mark_gen_unsupported(M, "temperature")
@@ -40,8 +40,9 @@ ck("unsupported_gen_knobs reports both", models.unsupported_gen_knobs(M) == {"te
 # The fact resolves for a provider-qualified id too (bare-id fallback).
 ck("a provider-qualified id resolves the same fact", adapters.generation_support("anthropic", "anthropic:" + M) == set())
 
-# A DIFFERENT model is unaffected — only the measured model loses the knobs.
-ck("an unrecorded model keeps its default support", adapters.generation_support("anthropic", "claude-3-5-sonnet") == {"temperature", "top_p"})
+# A DIFFERENT model remains subject to the same installed transport contract.
+ck("an unrecorded model still obeys the SDK stream signature",
+   adapters.generation_support("anthropic", "claude-3-5-sonnet") == set())
 
 # seed stays OpenAI-only, and a recorded temperature fact there still leaves seed.
 models.mark_gen_unsupported("gpt-x-test", "temperature")

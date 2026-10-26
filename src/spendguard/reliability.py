@@ -106,6 +106,11 @@ def sweep_estimate(pl=None):
 
 _PROBE_OUT_TOKENS = 64          # a reachability ping only needs room for "ok" — deliberately tiny so a reasoning model's probe stays fast
 
+_FAILURE_KIND_LABELS = {
+    "client_bug": "adapter/client bug",
+    "indeterminate": "indeterminate failure (cannot attribute to provider vs client)",
+}
+
 
 def _probe_metered_one(prov, mid, timeout_s):
     """One raw-metered-key liveness probe (metered_only) → (prov, {model, reachable, cost, executor, latency,
@@ -138,12 +143,22 @@ def _probe_metered_one(prov, mid, timeout_s):
     _reached = (not _err) or _truncated
     _key_ok = _reached and bool(r.get("served_by_metered_api"))
     _reason = None
+    _failure_kind = None
     if not _key_ok:
-        _reason = ("probe routed via lane %r — raw metered key NOT verified" % _executor
-                   if _reached and not r.get("served_by_metered_api")
-                   else (r.get("error_type") or _err))
+        if _reached and not r.get("served_by_metered_api"):
+            _failure_kind = "routing_bug"
+            _reason = "probe routed via lane %r — raw metered key NOT verified" % _executor
+        else:
+            _failure_kind = r.get("failure_kind")
+            if _failure_kind is None:
+                _failure_kind = adapters._exception_failure_kind(None, r.get("status_code"))
+            label = _FAILURE_KIND_LABELS.get(_failure_kind, _failure_kind.replace("_", " "))
+            origin = " at %s" % r["error_origin"] if r.get("error_origin") else ""
+            detail = "%s: %s" % (r.get("error_type"), _err) if r.get("error_type") else str(_err)
+            _reason = f"{label}: {detail}{origin}"
     return prov, {"model": mid, "reachable": _key_ok, "cost": r.get("cost"),
-                  "executor": _executor, "latency": round(_t.time() - t0, 2), "reason": _reason}
+                  "executor": _executor, "latency": round(_t.time() - t0, 2), "reason": _reason,
+                  "failure_kind": _failure_kind}
 
 
 def sweep(run=False, timeout_s=20):
@@ -313,7 +328,7 @@ def _health_db():
                    "(resource TEXT PRIMARY KEY, kind TEXT, reachable INTEGER, reason TEXT, fix TEXT, command TEXT, "
                    "ts TEXT, source TEXT, notified_ts TEXT)")
         cols = [r[1] for r in db.execute("PRAGMA table_info(lane_health)")]
-        for c in ("source", "notified_ts"):              # migrate a table created before event-driven health
+        for c in ("source", "notified_ts", "failure_kind"):  # migrate tables created before typed health failures
             if c not in cols:
                 db.execute(f"ALTER TABLE lane_health ADD COLUMN {c} TEXT")
         db.commit()
@@ -533,13 +548,15 @@ def _persist_health(sweep_result, acts=None):
             _pf, _pc = prior.get(res, (None, None))
             fix = f.get("fix") if f.get("fix") is not None else _pf      # still-down → keep a KNOWN fix, never NULL it
             cmd = f.get("command") if f.get("command") is not None else _pc
-        return (res, kind, 1 if reachable else 0, d.get("reason"), fix, cmd, ts, "sweep", None)
+        return (res, kind, 1 if reachable else 0, d.get("reason"), fix, cmd, ts, "sweep", None,
+                d.get("failure_kind"))
 
     rows = [_health_row(lane, "lane", d) for lane, d in (sweep_result.get("lanes") or {}).items()]
     rows += [_health_row(prov, "metered", d) for prov, d in (sweep_result.get("metered") or {}).items()]
     with budget._lock:
         db.executemany("INSERT OR REPLACE INTO lane_health "
-                       "(resource,kind,reachable,reason,fix,command,ts,source,notified_ts) VALUES (?,?,?,?,?,?,?,?,?)", rows)
+                       "(resource,kind,reachable,reason,fix,command,ts,source,notified_ts,failure_kind) "
+                       "VALUES (?,?,?,?,?,?,?,?,?,?)", rows)
         db.commit()
 
 
@@ -554,10 +571,11 @@ def health_reds(since_hours=48):
     try:
         db = _health_db()
         with budget._lock:
-            rows = db.execute("SELECT resource,kind,reason,fix,command,source,ts FROM lane_health WHERE reachable=0 AND ts>=?",
+            rows = db.execute("SELECT resource,kind,reason,fix,command,source,ts,failure_kind FROM lane_health "
+                              "WHERE reachable=0 AND ts>=?",
                               (cutoff,)).fetchall()
         out, recovered, stale, stale_lanes = [], [], [], []
-        for resource, kind, reason, fix, command, source, row_ts in rows:
+        for resource, kind, reason, fix, command, source, row_ts, failure_kind in rows:
             if source == "event" and kind == "lane":     # an EVENT down is stale once the lane stops cooling: it
                 try:                                      # RECOVERED. Resolve it (below) rather than silently drop it.
                     from . import adapters
@@ -597,7 +615,8 @@ def health_reds(since_hours=48):
                         continue
                 except Exception:
                     pass
-            out.append({"resource": resource, "kind": kind, "reason": reason, "fix": fix, "command": command})
+            out.append({"resource": resource, "kind": kind, "reason": reason, "fix": fix, "command": command,
+                        "failure_kind": failure_kind})
         if recovered:                                    # SELF-HEAL, traced (a DB write, not a silent skip): a recovered
             with budget._lock:                            # event-lane is marked reachable so it clears everywhere at once
                 db.executemany("UPDATE lane_health SET reachable=1 WHERE resource=? AND source='event'",
@@ -646,8 +665,17 @@ def health_alert():
     if not reds:
         return None
     tip = next((r for r in reds if r.get("fix")), None)
-    head = "⚠ spendguard: %d resource(s) unreachable (%s)" % (
-        len(reds), ", ".join(r["resource"] for r in reds[:4]) + ("…" if len(reds) > 4 else ""))
+    client_bug_count = sum(r.get("failure_kind") == "client_bug" for r in reds)
+    indeterminate_count = sum(r.get("failure_kind") == "indeterminate" for r in reds)
+    conditions = []
+    if client_bug_count:
+        conditions.append("%d adapter/client bug(s)" % client_bug_count)
+    if indeterminate_count:
+        conditions.append("%d indeterminate failure(s) (cannot attribute to provider vs client)" % indeterminate_count)
+    condition = "not healthy; " + ", ".join(conditions) if conditions else "unreachable"
+    head = "⚠ spendguard: %d resource(s) %s (%s)" % (
+        len(reds), condition,
+        ", ".join(r["resource"] for r in reds[:4]) + ("…" if len(reds) > 4 else ""))
     if tip and tip.get("fix"):
         head += " — %s: %s" % (tip["resource"], tip["fix"]) + (" [%s]" % tip["command"] if tip.get("command") else "")
     else:

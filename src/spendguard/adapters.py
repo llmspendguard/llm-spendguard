@@ -573,7 +573,10 @@ def schema_capability(provider):
 GEN_KNOBS = ("temperature", "top_p", "seed")   # the caller-facing STANDARDIZED determinism surface (measurement-only)
 
 
-def generation_support(provider, model):
+SDK_CONTRACT_UNAVAILABLE_REASON = "provider SDK generation contract unavailable; requested knobs were not sent"
+
+
+def generation_support_details(provider, model):
     """The subset of GEN_KNOBS (temperature, top_p, seed) that `provider`/`model`'s METERED API actually honors — the
     SSOT that maps the caller's ONE standardized determinism surface onto each vendor's real capability, so the same
     `adapters.call(..., measurement=True, temperature=0, seed=…)` is correct across providers and a knob the vendor
@@ -584,13 +587,28 @@ def generation_support(provider, model):
       • `temperature`/`top_p` are sampling knobs a REASONING model rejects or constrains (OpenAI 400s 'temperature
         does not support 0 with this model'; anthropic ties temperature to the thinking budget), so they are dropped
         for a reasoning model (reasons_by_default) and determinism there rests on seed where the vendor has it.
-    Returns a set; the caller applies the requested∩supported and records the remainder as gen_params_dropped."""
+    Returns ``(supported, unavailable_reason)``; the caller records both any dropped knobs and why the installed
+    SDK contract could not be inspected.  The reason is None when the contract was inspectable."""
     from . import models as _gm
     support = set()
     if not _gm.reasons_by_default(model):                 # non-reasoning: sampling knobs are honored
         support |= {"temperature", "top_p"}
     if provider == "openai":                              # seed is OpenAI-only (compat/anthropic have no seed param)
         support.add("seed")
+    unavailable_reason = None
+    if provider == "anthropic":
+        # The SDK's stream surface is narrower than messages.create in some releases.  In particular, 1.15.0
+        # rejects sampling knobs in Python before opening a request.  The gate wrapper preserves __wrapped__, so
+        # inspect.signature follows through to the installed SDK's real contract.  Intersecting with that contract
+        # keeps this version-independent and records unsupported requested knobs through gen_params_dropped.
+        try:
+            import inspect
+            import anthropic
+            stream_parameters = inspect.signature(anthropic.resources.messages.Messages.stream).parameters
+            support &= set(stream_parameters)
+        except (ImportError, AttributeError, TypeError, ValueError):
+            support.clear()                               # cannot prove the SDK accepts a knob → never send it
+            unavailable_reason = SDK_CONTRACT_UNAVAILABLE_REASON
     # SUBTRACT knobs the vendor has TOLD us it does not honor — a measured 400 like '`temperature` is deprecated for
     # this model' recorded as a model fact (models.mark_gen_unsupported), so the SSOT reflects REALITY instead of an
     # assumption and NEVER advertises a knob that 400s. Claude 5 (e.g. claude-haiku-5-5) deprecated BOTH temperature
@@ -599,7 +617,12 @@ def generation_support(provider, model):
         support -= _gm.unsupported_gen_knobs(model)
     except Exception:
         pass
-    return support
+    return support, unavailable_reason
+
+
+def generation_support(provider, model):
+    """Backward-compatible supported-knob view; observability is consumed by the metered call boundary."""
+    return generation_support_details(provider, model)[0]
 
 
 def _generation_config_defaults():
@@ -2287,12 +2310,62 @@ def _exc_cause(e):
     told 'ConnectTimeout: timed out' — the whole point of being transparent to spendguard's consumers. Returns
     None when there is no distinct cause."""
     parts, seen, cur = [], set(), (getattr(e, "__cause__", None) or getattr(e, "__context__", None))
-    while cur is not None and id(cur) not in seen and len(parts) < 4:
+    while cur is not None and id(cur) not in seen:
         seen.add(id(cur))
         msg = str(cur).strip()
-        parts.append(type(cur).__name__ + (f": {msg[:120]}" if msg else ""))
+        parts.append(type(cur).__name__ + (f": {msg}" if msg else ""))
         cur = getattr(cur, "__cause__", None) or getattr(cur, "__context__", None)
     return " ← ".join(parts) or None
+
+
+def _exception_origin_frame(e):
+    """Innermost application/SDK frame for a returned exception, preserved as diagnosable evidence."""
+    import traceback
+    frames = traceback.extract_tb(e.__traceback__)
+    if not frames:
+        return None
+    frame = frames[-1]
+    return f"{frame.filename}:{frame.lineno} in {frame.name}"
+
+
+HTTP_CLIENT_ERROR_STATUS_MIN = 400
+HTTP_PROVIDER_THROTTLE_STATUS = 429
+HTTP_SERVER_ERROR_STATUS_MIN = 500
+
+
+def _exception_failure_kind(e, status_code):
+    """Classify health failure from structural evidence only.
+
+    Fault is attributed only from transport-vs-response and HTTP status range; frame ownership is not a fault signal
+    because a statusless raise can originate from provider-caused malformed output or client-caused bad input and the
+    frame cannot tell them apart.
+    """
+    transport_types = [ConnectionError, TimeoutError]
+    for module_name, class_names in (
+        ("httpx", ("TransportError", "TimeoutException")),
+        ("anthropic", ("APIConnectionError", "APITimeoutError")),
+        ("openai", ("APIConnectionError", "APITimeoutError")),
+    ):
+        try:
+            module = __import__(module_name)
+            transport_types.extend(cls for name in class_names if isinstance((cls := getattr(module, name, None)), type))
+        except ImportError:
+            pass
+    seen, current = set(), e
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if isinstance(current, tuple(transport_types)):
+            return "provider_unreachable"
+        current = getattr(current, "__cause__", None) or getattr(current, "__context__", None)
+    if status_code is not None:
+        if status_code >= HTTP_SERVER_ERROR_STATUS_MIN:
+            return "provider_error"
+        if status_code == HTTP_PROVIDER_THROTTLE_STATUS:
+            return "provider_error"
+        if status_code >= HTTP_CLIENT_ERROR_STATUS_MIN:
+            return "client_bug"
+        return "indeterminate"
+    return "indeterminate"
 
 
 def _media_type_of(path, raw):
@@ -2527,11 +2600,13 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
     _gen_params = {k: v for k, v in (("temperature", temperature), ("top_p", top_p), ("seed", seed)) if v is not None}
     _gen_applied = {}
     if _gen_params:
-        _support = generation_support(prov, raw)
+        _support, _support_unavailable_reason = generation_support_details(prov, raw)
         _gen_applied = {k: v for k, v in _gen_params.items() if k in _support}
         _gen_dropped = {k: v for k, v in _gen_params.items() if k not in _support}
         base = {**base, "gen_params": _gen_params, "gen_params_applied": _gen_applied or None,
                 "gen_params_dropped": _gen_dropped or None}
+        if _gen_dropped and _support_unavailable_reason:
+            base["gen_params_dropped_reason"] = _support_unavailable_reason
         if _gen_dropped:
             config.warn_once(
                 "[spendguard] %s/%s does not honor %s on a measurement call — applied %s, DROPPED %s (recorded on the "
@@ -3433,7 +3508,9 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
         # TRANSPARENT TO THE CONSUMER: this is the metered API path (a lane miss/error is returned earlier with
         # executor=<lane>), so say `executor="api"` — a caller can now tell lane-vs-API from the result alone.
         # `cause` surfaces the real reason behind a generic wrapper (e.g. 'Connection error.' ← 'ConnectTimeout').
-        return {**base, "latency": time.time() - t0, "error": str(e)[:140], "error_type": type(e).__name__,
+        return {**base, "latency": time.time() - t0, "error": str(e), "error_type": type(e).__name__,
+                "error_module": type(e).__module__, "error_origin": _exception_origin_frame(e),
+                "failure_kind": _exception_failure_kind(e, _status),
                 "status_code": _status, "provider_error": _perr, "retry_after": _retry,
                 "executor": "api", "cause": _exc_cause(e)}
 
