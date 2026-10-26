@@ -2578,6 +2578,13 @@ class _GatePackagePostImportFinder:
 
 _gate_package_import_finder = _GatePackagePostImportFinder()
 
+_ADAPTER_GATED_SDK_MODULES = {
+    "litellm": ("litellm_adapter", "litellm_adapter_is_wired"),
+    "google.generativeai": ("vertex_adapter", "vertex_adapter_is_wired"),
+    "google.genai": ("vertex_adapter", "vertex_adapter_is_wired"),
+    "vertexai": ("vertex_adapter", "vertex_adapter_is_wired"),
+}
+
 
 def _register_gate_package_postimport(package, callback):
     """Patch an existing package now, or its first successful import before it becomes reachable.
@@ -2633,6 +2640,24 @@ def _patch_imported_sdk_package(module):
     _patch_sdk_package_surfaces(module.__name__)
 
 
+def _install_imported_adapter_sdk(module):
+    """Wire the adapter selected for an SDK whose import has just completed."""
+    import importlib
+    adapter_module_name, _verifier_name = _ADAPTER_GATED_SDK_MODULES[module.__name__]
+    adapter_module = importlib.import_module("." + adapter_module_name, __package__)
+    if not adapter_module.install(force=False):
+        print(f"[spend_gate] WARN adapter {adapter_module_name} did not wire imported SDK {module.__name__}",
+              file=sys.stderr)
+
+
+def _imported_adapter_sdk_is_wired(module_name):
+    """Use each adapter's real capture signal; an imported-but-unwired SDK is never covered."""
+    import importlib
+    adapter_module_name, verifier_name = _ADAPTER_GATED_SDK_MODULES[module_name]
+    adapter_module = importlib.import_module("." + adapter_module_name, __package__)
+    return bool(getattr(adapter_module, verifier_name)())
+
+
 def _register_installing_enforcing_interpreter() -> None:
     """Register this interpreter silently, routing every diagnostic to fleet status for doctor."""
     registration_stderr = io.StringIO()
@@ -2659,12 +2684,17 @@ def install(cap: "float | None" = None) -> None:
         os.environ["GATE_CAP"] = str(cap)
     for package in core_gated_sdk_packages():
         _register_gate_package_postimport(package, _patch_imported_sdk_package)
+    for module_name in _ADAPTER_GATED_SDK_MODULES:
+        try:
+            _register_gate_package_postimport(module_name, _install_imported_adapter_sdk)
+        except Exception as e:
+            print(f"[spend_gate] WARN adapter import hook for {module_name} skipped: {e}", file=sys.stderr)
     import importlib
     for _mod in ("litellm_adapter", "bedrock_adapter", "vertex_adapter"):
         try:                                    # provider breadth (LiteLLM / direct Bedrock / direct Vertex) — wire
             importlib.import_module("." + _mod, __package__).install(force=False)   # only if the underlying SDK is
-        except Exception:                        # ALREADY imported; never force-import a heavy optional dep at startup.
-            pass                                 # Users call spendguard.install_{litellm,bedrock,vertex}() explicitly.
+        except Exception as e:                   # ALREADY imported; never force-import a heavy optional dep at startup.
+            print(f"[spend_gate] WARN adapter {_mod} startup wiring skipped: {e}", file=sys.stderr)
     try:                                         # third-party providers: `pip install spendguard-provider-X` is all a
         from . import provider_plugins           # user does — entry points activate here, fail-open per plugin
         provider_plugins.load_plugins()                  # (recipe: docs/PROVIDERS.md; conformance: spendguard.provider_kit)
@@ -2700,7 +2730,7 @@ def gated_sdk_modules():
     does not imply LLM use, and which only gates after an explicit install_bedrock()."""
     mods = {spec[0].split(".")[0]
             for spec in INTERCEPTORS + _EXTRA + RT_INTERCEPTORS + UNIT_INTERCEPTORS + STREAM_INTERCEPTORS}
-    mods.update({"litellm", "google.generativeai", "google.genai", "vertexai"})   # litellm + vertex/genai adapters
+    mods.update(_ADAPTER_GATED_SDK_MODULES)
     return sorted(mods)
 
 
@@ -2713,8 +2743,8 @@ def core_gated_sdk_packages():
 def _enforcement_armed():
     """Each installed core SDK must be fully patched or covered by a live import-completion hook.
 
-    Optional adapters retain their historical any-surface probe. Importability failures are indeterminate,
-    never evidence that a provider is absent. No package is imported by the core SDK probe.
+    Optional adapters must have their exact live callback armed before import, or their real capture signal after
+    import. Importability failures are indeterminate, never evidence that a provider is absent. No SDK is imported.
     """
     import importlib.util
     specs = INTERCEPTORS + _EXTRA + RT_INTERCEPTORS + STREAM_INTERCEPTORS + UNIT_INTERCEPTORS
@@ -2729,8 +2759,24 @@ def _enforcement_armed():
                 continue
         except Exception:
             return False
-        if package not in packages:
-            if not _any_patched():
+        if module_name in _ADAPTER_GATED_SDK_MODULES:
+            with finder.lock:
+                armed = (finder in sys.meta_path
+                         and _install_imported_adapter_sdk in finder.callbacks.get(module_name, ()))
+            adapter_module = sys.modules.get(module_name)
+            if adapter_module is None:
+                if not armed:
+                    return False
+                continue
+            adapter_spec = getattr(adapter_module, "__spec__", None)
+            if getattr(adapter_spec, "_initializing", False):
+                if not armed or not isinstance(adapter_spec.loader, _GatePackagePostImportLoader):
+                    return False
+                continue
+            try:
+                if not _imported_adapter_sdk_is_wired(module_name):
+                    return False
+            except Exception:
                 return False
             continue
         with finder.lock:
