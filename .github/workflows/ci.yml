@@ -66,6 +66,16 @@ jobs:
           # deterministic — a backtracking resolve once pulled pydantic 1.x and broke `import anthropic` (httpx2.Timeout).
           # Refresh the editable install even on a cache hit, so checkout metadata always matches the current tree.
           uv pip install --python "${CI_TEST_VENV}/bin/python" -e "$CI_TEST_EXTRAS" "$CI_PYDANTIC_FLOOR"
+      - name: Provision the declared build backend for offline consumers
+        run: |
+          # The install-hook regression creates a consumer with --system-site-packages. A venv created by this
+          # intermediate test venv inherits setup-python's BASE site-packages, not the test venv's packages.
+          # Provision every declared build requirement there while the network is live so Python 3.12's bare base
+          # can perform a genuinely offline --no-build-isolation editable install. Keep the requirements' floors in
+          # pyproject.toml as the single source of truth.
+          mapfile -t declared_build_requirements < <(python -c \
+            "import pathlib, tomllib; print(*tomllib.loads(pathlib.Path('pyproject.toml').read_text())['build-system']['requires'], sep='\n')")
+          uv pip install --python "${{ steps.python.outputs.python-path }}" "${declared_build_requirements[@]}"
       - name: Warm the tiktoken o200k cache (the offline suite can't download it)
         run: python -c "import tiktoken; tiktoken.get_encoding('o200k_base'); print('o200k cached')"
       - name: Lint (ruff — pyflakes + bugbear correctness rules)
