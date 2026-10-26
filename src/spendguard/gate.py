@@ -2173,6 +2173,7 @@ _STREAM_PASSTHROUGH = "passthrough:inner-create-records"
 
 
 def _wrap_async_stream(orig, final_attr, est_fn, act_fn):
+    @functools.wraps(orig)
     def stream(self, *a, **kw):
         mgr = orig(self, *a, **kw)                    # NOT awaited: .stream() returns the manager directly
         if final_attr == _STREAM_PASSTHROUGH:
@@ -2192,6 +2193,7 @@ def _wrap_async_stream(orig, final_attr, est_fn, act_fn):
 
 
 def _wrap_stream(orig, final_attr, est_fn, act_fn):
+    @functools.wraps(orig)
     def stream(self, *a, **kw):
         mgr = orig(self, *a, **kw)
         if final_attr == _STREAM_PASSTHROUGH:

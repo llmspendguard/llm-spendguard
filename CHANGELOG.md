@@ -20,8 +20,9 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
   and bakeoff call rows persist requested/served model, resolved lane, and redirect provenance without overwriting
   evidence already recorded. (#182)
 - **Self-registering interpreter fleet and complete deploy verification.** Every enforcing interpreter registers in
-  the fleet database, doctor exposes discovered registration escapes, and deploy cannot succeed until every
-  registered interpreter is refreshed and verified against code, metadata, and catalog identity. (#183)
+  the fleet database; doctor exposes discovered registration escapes; and deploy discovers, reconciles, and then
+  verifies those escapes alongside every already-registered interpreter against code, metadata, and catalog identity.
+  Deploy cannot succeed while an in-scope host installation remains escaped, stale, or unreachable. (#183)
 - **Fleet deregistration and identity-based freshness.** Operators can idempotently forget an exact interpreter
   path, while current non-editable user installs can verify fresh without weakening rejection of shadowed, absent,
   foreign, or mismatched installations. (#184)

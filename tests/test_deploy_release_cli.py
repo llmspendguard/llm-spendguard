@@ -101,6 +101,65 @@ ck("deploy continues after a complete consumer proof", rc == 0 and "fixture cons
 _consumer_audit.audit_consumer_workspaces = _original_consumer_audit
 _consumer_audit.render_consumer_audit_table = _original_consumer_render
 
+print("\n-- deploy discovers, registers, then fails closed on a stale registry escape --")
+from spendguard import setup as _setup  # noqa: E402
+
+_escape_root = pathlib.Path(tempfile.mkdtemp(prefix="spendguard-deploy-escape-"))
+_registered_python = _escape_root / "registered-python"
+_escaped_python = _escape_root / "escaped-python"
+_registered_python.write_text("")
+_escaped_python.write_text("")
+with fleet._fleet_db() as _fleet_connection:
+    _fleet_connection.execute(
+        "INSERT OR REPLACE INTO registered_interpreters"
+        "(python_executable,venv_root,first_seen,last_seen) VALUES(?,?,?,?)",
+        (str(_registered_python.resolve()), str(_escape_root), "first", "last"),
+    )
+    _fleet_connection.commit()
+_original_host_discovery = fleet.discover_host_spendguard_installations
+_original_host_install = _setup.install_hook
+_original_deployment_verify = fleet.verify_and_refresh_registered_interpreters
+fleet.discover_host_spendguard_installations = lambda: [
+    {"source": "test-host", "python_executable": str(_escaped_python.resolve())}
+]
+
+
+def _register_discovered_escape(user, python):
+    with fleet._fleet_db() as _fleet_connection:
+        _fleet_connection.execute(
+            "INSERT OR REPLACE INTO registered_interpreters"
+            "(python_executable,venv_root,first_seen,last_seen) VALUES(?,?,?,?)",
+            (str(pathlib.Path(python).resolve()), str(_escape_root), "first", "last"),
+        )
+        _fleet_connection.commit()
+    return 0
+
+
+def _fail_stale_discovered_escape(apply):
+    registered = {row["python_executable"] for row in fleet.registered_interpreters()}
+    escaped = str(_escaped_python.resolve())
+    failed = ([{"python_executable": escaped, "state": "editable_stale"}]
+              if escaped in registered else [])
+    return {"N_total": len(registered), "N_updated": 0,
+            "N_verified_fresh": len(registered) - len(failed), "updated": [],
+            "verified_fresh": list(registered - {escaped}), "failed": failed, "complete": not failed}
+
+
+_setup.install_hook = _register_discovered_escape
+fleet.verify_and_refresh_registered_interpreters = _fail_stale_discovered_escape
+rc, out = _run(["deploy", "--no-gate", "--skip-consumer-verify", "--no-restart"])
+registered_after_deploy = {row["python_executable"] for row in fleet.registered_interpreters()}
+ck("deploy registers a structurally discovered host escape before registered-interpreter verification",
+   str(_escaped_python.resolve()) in registered_after_deploy
+   and "deploy: registry — discovered=1 reconciled=1 remaining=0" in out)
+ck("a newly registered stale escape fails deploy closed at the registered-interpreter bar",
+   rc == 1 and f"registered deployment FAILED {_escaped_python.resolve()}" in out)
+# Mutation bite: removing the reconcile/install wire-in leaves the escape absent from the registry; this verifier then
+# sees only the pre-registered fresh interpreter, returns complete, and both assertions above fail (deploy exits 0).
+fleet.discover_host_spendguard_installations = _original_host_discovery
+_setup.install_hook = _original_host_install
+fleet.verify_and_refresh_registered_interpreters = _original_deployment_verify
+
 print("\n-- release renders served / green / staleness --")
 release.release_status = lambda: {"served": {"short": "aaaaaaa", "describe": "v0.10.0-9-gaaaaaaa"},
                                   "green": {"short": "bbbbbbb", "describe": "v0.10.0-9-gbbbbbbb"},
