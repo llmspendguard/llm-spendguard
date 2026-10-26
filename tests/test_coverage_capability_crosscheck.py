@@ -105,10 +105,19 @@ with tempfile.TemporaryDirectory(prefix="coverage-cells-") as directory:
     repo = os.path.join(directory, "repo")
     venv = os.path.join(repo, ".venv")
     row = {"venv": venv, "llm": ["spendguard"], "gated": True, "own": False}
-    danger = crosscheck_output([row], [])
-    failures += check_guard("code-capable/no-spend prints DANGER", "LLM-capable but no captured spend" in danger)
-    failures += check_guard("DANGER fixture does not print CONTRADICTION",
-                            "captured spend but no LLM code path found" not in danger)
+    no_source_truth = crosscheck_output([row], [])
+    failures += check_guard(
+        "empty captured sources print source-attribution advisory",
+        "ledger×code cross-check skipped — no source-path attribution in the ledger" in no_source_truth,
+    )
+    failures += check_guard("empty captured sources do not print DANGER",
+                            "LLM-capable but no captured spend" not in no_source_truth)
+    failures += check_guard("empty captured sources do not print CONTRADICTION",
+                            "captured spend but no LLM code path found" not in no_source_truth)
+    uncovered_source = os.path.join(directory, "uncovered", "source")
+    danger = crosscheck_output([row], [uncovered_source])
+    failures += check_guard("code-capable/nonmatching-spend prints DANGER",
+                            "LLM-capable but no captured spend" in danger)
     contradiction = crosscheck_output([], [repo])
     failures += check_guard("captured-spend/no-code prints CONTRADICTION",
                             "captured spend but no LLM code path found" in contradiction)

@@ -174,11 +174,15 @@ def cmd(argv=None):
     except Exception as exc:
         print("\nledger×code cross-check unavailable — %s: %s" % (type(exc).__name__, exc))
     else:
-        unmatched_code, unmatched_ledger = _ledger_code_crosscheck(rows, captured_sources)
-        for venv in unmatched_code:
-            print("\n⚠️ LLM-capable but no captured spend — not run yet OR running ungated; "
-                  "verify with `spendguard doctor` in that venv. [%s]" % venv)
-        for source in unmatched_ledger:
-            print("\n🔴 captured spend but no LLM code path found — a missed transitive path or an "
-                  "attribution bug; investigate. [%s]" % source)
+        if not captured_sources:
+            print("\nℹ️ ledger×code cross-check skipped — no source-path attribution in the ledger "
+                  "(repo/cwd unpopulated); gating coverage above is still authoritative.")
+        else:
+            unmatched_code, unmatched_ledger = _ledger_code_crosscheck(rows, captured_sources)
+            for venv in unmatched_code:
+                print("\n⚠️ LLM-capable but no captured spend — not run yet OR running ungated; "
+                      "verify with `spendguard doctor` in that venv. [%s]" % venv)
+            for source in unmatched_ledger:
+                print("\n🔴 captured spend but no LLM code path found — a missed transitive path or an "
+                      "attribution bug; investigate. [%s]" % source)
     return 1 if g else 0
