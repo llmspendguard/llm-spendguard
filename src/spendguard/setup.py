@@ -14,6 +14,7 @@ from . import config, config_schema
 _SENTINEL = "spendguard-gate-hook/v1"
 _PTH_SENTINEL = "spendguard-gate-hook/v2"
 _PTH_NAME = "spendguard_gate_hook.pth"
+_FILEPROVIDER_XATTR_PREFIX = "com.apple.fileprovider."
 _GATED_SDKS = ("openai", "anthropic", "httpx")
 _STARTUP_GATE_PROBE_HOME_PREFIX = "spendguard-startup-probe-"
 _SPENDGUARD_HOME_ENVIRONMENT_VARIABLE = "SPENDGUARD_HOME"
@@ -473,6 +474,41 @@ def _interpreter_purelib(target, timeout=10):
         return path or None
     except Exception:
         return None
+
+
+def gate_pth_hidden_diagnosis(target, timeout=10):
+    """Describe a macOS-hidden installed gate hook, or return None."""
+    import stat
+    import sys
+    from pathlib import Path
+
+    # This is fixed-format filesystem flag/xattr parsing, not a semantic judgement.
+    if sys.platform != "darwin" or not hasattr(stat, "UF_HIDDEN"):
+        return None
+    purelib = _interpreter_purelib(target, timeout)
+    if not purelib:
+        return None
+    gate_pth_path = Path(purelib) / _PTH_NAME
+    try:
+        gate_pth_stat = gate_pth_path.stat()
+    except OSError:
+        return None
+    if not hasattr(gate_pth_stat, "st_flags") or not gate_pth_stat.st_flags & stat.UF_HIDDEN:
+        return None
+
+    under_fileprovider = False
+    try:
+        under_fileprovider = any(
+            attribute.startswith(_FILEPROVIDER_XATTR_PREFIX)
+            for attribute in os.listxattr(gate_pth_path.parent)
+        )
+    except (AttributeError, OSError):
+        pass
+    return {
+        "hidden": True,
+        "path": gate_pth_path,
+        "under_fileprovider": under_fileprovider,
+    }
 
 
 def _startup_gate_active(target, timeout=10):

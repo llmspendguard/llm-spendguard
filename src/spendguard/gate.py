@@ -2945,8 +2945,18 @@ def _cli(cmd="status", live=False):
         if _doctor_startup_gate_gap_found:
             print(f"  {ENFORCING_MARKER}: 🔴 {ENFORCING_NO} — this process is armed, but startup does NOT "
                   "auto-load the gate — scripts run via bare `python` here are NOT governed")
-            print("    fix: install the startup hook with `spendguard install-hook --venv <v>` / `--user`, "
-                  "then rerun `spendguard doctor` from that interpreter.")
+            _hidden_gate_pth = _doctor_setup.gate_pth_hidden_diagnosis(sys.executable)
+            if _hidden_gate_pth:
+                print(f"    diagnosis: installed {_hidden_gate_pth['path'].name} carries macOS UF_HIDDEN, "
+                      "so CPython site.addpackage silently skips it at startup.")
+                if _hidden_gate_pth["under_fileprovider"]:
+                    print("    iCloud Drive FileProvider metadata causes its daemon to re-apply the hidden bit.")
+                print("    fix: move this venv out of the iCloud/FileProvider tree (for example, recreate or "
+                      "move it under `~/.venvs/<project>` and symlink the project's `.venv` back); the flag "
+                      "is re-asserted in place, and `.nosync` does NOT exclude the directory from FileProvider.")
+            else:
+                print("    fix: install the startup hook with `spendguard install-hook --venv <v>` / `--user`, "
+                      "then rerun `spendguard doctor` from that interpreter.")
         else:
             print(f"  {ENFORCING_MARKER}: "
                   f"{'🟢 ' + ENFORCING_YES + ' — calls from this interpreter are gated' if enforcing else '🔴 ' + ENFORCING_NO + ' — calls from THIS interpreter are NOT gated (bypass!)'}")
