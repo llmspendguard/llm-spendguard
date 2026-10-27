@@ -126,6 +126,7 @@ CREATE TABLE IF NOT EXISTS spend_events (
   seg_id        TEXT,
   call_id       TEXT,
   cwd           TEXT,
+  venv          TEXT,
   batch_id      TEXT,
   from_message_ids  TEXT,
   prior_message_ids TEXT,
@@ -225,7 +226,8 @@ SUMMABLE_INT_COLS = ("in_tok", "out_tok", "cache_read_tok", "cache_write_tok", "
 # Forward-only additive columns: one added after the v5 schema shipped is ALTER-ADDed to an existing table
 # (CREATE TABLE IF NOT EXISTS never adds a column to a table that already exists). Append new columns here.
 # intent/actor are the FORENSIC pair carried from charges: WHAT the money bought · WHAT RAN IT.
-_ADDITIVE_COLUMNS = (("intent", "TEXT"), ("actor", "TEXT"), ("external_usd", "TEXT"), ("chain", "TEXT"))
+_ADDITIVE_COLUMNS = (("intent", "TEXT"), ("actor", "TEXT"), ("external_usd", "TEXT"), ("chain", "TEXT"),
+                     ("venv", "TEXT"))
 _KIND_TO_USD = {"batch": "batch_usd", "realtime": "realtime_usd",
                 "est_chat": "est_chat_usd", "est-chat": "est_chat_usd", "estchat": "est_chat_usd",
                 "remote": "remote_compute_usd", "remote_compute": "remote_compute_usd", "gpu": "remote_compute_usd",
@@ -436,7 +438,12 @@ class SpendLedger:
                            [rec[c] for c in cols])
 
     # ── C: create (a draft event; logged to the audit chain) ──
-    def record_event(self, ev):
+    def record_event(self, ev, venv=None):
+        """Record a spend event and return its evidence ID.
+
+        ``venv`` is gate-only interpreter provenance (the calling process's ``sys.prefix``), written directly
+        to the ``venv`` column so its raw path never enters diagnostic or logging reads of the event mapping.
+        """
         ev = dict(ev)
         kind = (ev.pop("kind", None) or "").lower()
         usd = ev.pop("usd", None)
@@ -501,8 +508,15 @@ class SpendLedger:
             if jc in ev and not isinstance(ev.get(jc), (str, type(None))):
                 ev[jc] = json.dumps(ev[jc])
         cols = [c for c in self._cols if c in ev]
+        vals = [ev[c] for c in cols]
+        # venv arrives as an explicit argument (gate provenance), not an `ev` key, so the raw interpreter path
+        # never taints the diagnostic reads of `ev` above. Honor an `ev["venv"]` too, for any legacy caller that
+        # still carries it, without duplicating the column.
+        if venv is not None and "venv" in self._cols and "venv" not in cols:
+            cols.append("venv")
+            vals.append(venv)
         self._conn.execute(f"INSERT INTO spend_events ({','.join(cols)}) VALUES ({','.join('?' for _ in cols)})",
-                           [ev.get(c) for c in cols])
+                           vals)
         self._audit(ev["id"], ev.get("recorded_by") or ev.get("source") or "?", "ingest", "(create)", None,
                     f"{ev.get('cost_type')} {sum((to_dec(ev.get(c)) for c in USD_COLS), Decimal(0))} USD", "ingested")
         if not self._defer:
@@ -979,9 +993,10 @@ class SpendLedger:
         return sorted(r[0] for r in rows if r[0] not in (None, ""))
 
     def captured_spend_source_paths(self):
-        """Sorted repo/cwd paths represented by live, non-void ledger capture."""
+        """Sorted repo/cwd/venv paths represented by live, non-void ledger capture."""
         return sorted(set(self.distinct("repo", filt=self._LIVE_FILTER))
-                      | set(self.distinct("cwd", filt=self._LIVE_FILTER)))
+                      | set(self.distinct("cwd", filt=self._LIVE_FILTER))
+                      | set(self.distinct("venv", filt=self._LIVE_FILTER)))
 
     def source_rows(self, source, cols=("id",), only_billed=None, intent_like=None, source_is_like=False):
         """Rows [(col, ...)] from a `source` (the money-of-record), for reconciliation/attribution that needs

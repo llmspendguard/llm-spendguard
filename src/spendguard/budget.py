@@ -6,6 +6,7 @@ real-time cap only (this module is then never touched). Per-call SQLite I/O is f
 real-time volume; very high-volume loops should stay on the in-process cap.
 """
 import contextlib, datetime, hashlib, pathlib, tempfile, threading
+import sys
 import time
 from . import config
 
@@ -13,8 +14,9 @@ _conn = None
 _lock = threading.RLock()   # reentrant: record_charge()/spent_since() hold it AND call _ledger_db() which re-acquires
 _SPEND_EVENT_DEADLETTER_FILENAME = "spend_events_deadletter.jsonl"
 _SPEND_EVENT_EMERGENCY_SPOOL_PREFIX = "spendguard-capture-gap-"
-
-
+# Visible attribution fallback for events with no explicit project or captured venv.
+UNATTRIBUTED_PROJECT = "unattributed"
+LIVE_GATE_SOURCE = "gate"
 def spend_event_retry_paths():
     """Ordered durable retry spools; the OS temp fallback survives an unwritable spendguard home."""
     home_key = hashlib.sha256(str(config.HOME).encode()).hexdigest()
@@ -106,6 +108,8 @@ def _attribute(ev, project):
     cheap cached dict lookup, NOT an LLM (agentic refinement is the later attribute/reconcile pass, never the
     hot path). Keeps the same attribution the charges ledger carried, in the typed columns."""
     proj = (project or "").strip().lower()
+    if not proj:
+        proj = UNATTRIBUTED_PROJECT
     try:
         from . import conv as _conv_mod
         org, team = _conv_mod._prior_org_team(proj) if proj else ("", "")
@@ -132,6 +136,10 @@ def _record_spend_event(provider, model, kind, cost, *, conv_id="", basis="", in
         from .ledger import live_dedup_key
         ev = charge_to_event(provider, model, kind, cost, conv_id=conv_id, basis=basis,
                              intent=intent, actor=actor, key_fp=key_fp, chain=chain)
+        # Gate-only interpreter provenance. Captured as a LOCAL and handed to the ledger writer as an explicit
+        # argument — never set as a key of `ev`, so the username-bearing path never enters the diagnostic reads
+        # of `ev` (stderr capture-gap log, rate-provenance warning). record_event writes it straight to the column.
+        running_venv = sys.prefix if source == LIVE_GATE_SOURCE else None
         _attribute(ev, project)
         oa = occurred_at or datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
         ev["occurred_at"] = ev["ts_utc"] = oa
@@ -155,7 +163,7 @@ def _record_spend_event(provider, model, kind, cost, *, conv_id="", basis="", in
         if invoice_id:                                # FOCUS InvoiceId anchor — set only when reconciled to a bill
             ev["invoice_id"] = invoice_id
         with _lock:
-            (maintenance_ledger if maintenance_ledger is not None else _ledger()).record_event(ev)
+            (maintenance_ledger if maintenance_ledger is not None else _ledger()).record_event(ev, venv=running_venv)
     except Exception as e:
         if maintenance_ledger is not None:
             # The offline owner rolls back this entire correction rebuild on every write failure.

@@ -38,11 +38,11 @@ posting_guard_original_record = ledger.SpendLedger.record_event
 posting_guard_fault_calls = []
 
 
-def interrupt_posting_midstep(self, event):
+def interrupt_posting_midstep(self, event, venv=None):
     if len(posting_guard_fault_calls) == POSTING_GUARD_FAULT_AT:
         raise PostingClockFault("interrupted posting")
     posting_guard_fault_calls.append(event["dedup_key"])
-    return posting_guard_original_record(self, event)
+    return posting_guard_original_record(self, event, venv=venv)
 
 
 posting_guard_metadata = ledger.ledger_posting_metadata()
