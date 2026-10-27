@@ -2,6 +2,7 @@
 import ast
 import copy
 import inspect
+import io
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -9,6 +10,7 @@ from unittest.mock import patch
 
 from spendguard import distribution_daemon as daemon
 from spendguard import mcp_fd_lifecycle as lifecycle
+from spendguard import mcp_server
 
 DAEMON_FIXTURE_PID = 217
 DAEMON_FIXTURE_CREATED = 101.0
@@ -35,6 +37,9 @@ def build_distribution_daemon_check_mutant(axis):
                 if any(isinstance(target, ast.Subscript) and isinstance(target.slice, ast.Constant)
                        and target.slice.value == field for target in node.targets):
                     node.value = ast.Constant(value=True)
+            if axis == "gate" and any(isinstance(target, ast.Name) and target.id == "gate_enforcing"
+                                      for target in node.targets):
+                node.value = ast.Constant(value=True)
             return node
 
         def visit_ExceptHandler(self, node):
@@ -54,6 +59,7 @@ def exercise_distribution_daemon_red_green():
                 "supervision_ref": daemon.MCP_HTTP_LAUNCHD_LABEL}
     clean = {"pid": DAEMON_FIXTURE_PID, "imported_version": DAEMON_FIXTURE_VERSION,
              "metadata_version": DAEMON_FIXTURE_VERSION, "ledger_path": DAEMON_FIXTURE_LEDGER_PATH,
+             "gate_enforcing": True,
              "served": {"sha": DAEMON_FIXTURE_SHA, "dirty": False}}
     state = {"status": copy.deepcopy(clean), "broken_probe": False, "leaked": False}
     policy = {"mcp_endpoint": DAEMON_FIXTURE_ENDPOINT}
@@ -84,6 +90,7 @@ def exercise_distribution_daemon_red_green():
         ("dirty", lambda: state["status"]["served"].update(dirty=True)),
         ("live-probe", lambda: state.update(broken_probe=True)),
         ("fd", lambda: state.update(leaked=True)),
+        ("gate", lambda: state["status"].update(gate_enforcing=False)),
     )
     with patch.object(daemon.fleet, "running_consumers", return_value=[consumer]), \
          patch.object(daemon.fleet, "_classify_fleet_pid_identity", return_value=daemon.fleet._FLEET_PID_VERIFIED_LIVE), \
@@ -149,6 +156,8 @@ def exercise_distribution_daemon_enumeration():
 def exercise_distribution_wire_rpc():
     reply = {"jsonrpc": "2.0", "id": daemon.DISTRIBUTION_RPC_ID, "result": {"live": True}}
     class DistributionWireFixture:
+        headers = {mcp_server.MCP_READ_ONLY_ATTESTATION_HEADER:
+                   mcp_server.MCP_READ_ONLY_ATTESTATION_HEADER_VALUE}
         def __enter__(self):
             return self
 
@@ -161,7 +170,62 @@ def exercise_distribution_wire_rpc():
     with patch.object(daemon, "urlopen", return_value=DistributionWireFixture()) as request:
         assert daemon.request_distribution_mcp_rpc(DAEMON_FIXTURE_ENDPOINT, "initialize", {}, 1.0) == {"live": True}
         assert json.loads(request.call_args.args[0].data)["method"] == "initialize"
+        assert json.loads(request.call_args.args[0].data)["params"]["_meta"][
+            mcp_server.MCP_READ_ONLY_ATTESTATION_META_KEY] is True
+        assert request.call_args_list[0].args[0].method == "HEAD"
+        DistributionWireFixture.headers = {}
+        request.reset_mock()
+        try:
+            daemon.request_distribution_mcp_rpc(DAEMON_FIXTURE_ENDPOINT, "initialize", {}, 1.0)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("legacy HTTP daemon accepted without read-only capability")
+        assert request.call_count == 1 and request.call_args.args[0].method == "HEAD"
     print("[OK] live proof uses HTTP JSON-RPC request seam, without network in tests")
+
+
+def exercise_distribution_probe_prevents_http_self_restart():
+    """A stale daemon must remain observable throughout a read-only check."""
+    from spendguard import release
+    with patch.object(mcp_server, "_arm_and_verify_mcp_daemon_gate"):
+        handler_class = mcp_server.build_mcp_http_handler()
+    handler = object.__new__(handler_class)
+    handler.path = daemon.DISTRIBUTION_MCP_PATH
+    handler.wfile = io.BytesIO()
+    handler.connection = SimpleNamespace()
+    with patch.object(handler_class, "send_response") as head_status, \
+         patch.object(handler_class, "send_header") as head_header, \
+         patch.object(handler_class, "end_headers"), \
+         patch.object(mcp_server, "handle") as head_dispatch, \
+         patch.object(release, "should_respawn") as head_respawn:
+        handler.do_HEAD()
+        head_status.assert_called_once_with(mcp_server.HTTPStatus.OK)
+        head_header.assert_any_call(mcp_server.MCP_READ_ONLY_ATTESTATION_HEADER,
+                                    mcp_server.MCP_READ_ONLY_ATTESTATION_HEADER_VALUE)
+        head_dispatch.assert_not_called()
+        head_respawn.assert_not_called()
+    with patch.object(handler_class, "_send"), \
+         patch.object(mcp_server, "_mcp_http_request_ledger_lifetime"), \
+         patch.object(mcp_server, "handle", return_value={}), \
+         patch.object(mcp_server, "_auto_respawn_enabled", return_value=True), \
+         patch.object(release, "should_respawn", return_value=True), \
+         patch("os._exit") as exit_process:
+        for method, params in (("initialize", {}), ("tools/call", {"name": daemon.DISTRIBUTION_VERSION_TOOL})):
+            params["_meta"] = {mcp_server.MCP_READ_ONLY_ATTESTATION_META_KEY: True}
+            payload = json.dumps({"jsonrpc": "2.0", "id": daemon.DISTRIBUTION_RPC_ID,
+                                  "method": method, "params": params}).encode()
+            handler.headers = {mcp_server.HTTP_CONTENT_LENGTH_HEADER: str(len(payload))}
+            handler.rfile = io.BytesIO(payload)
+            handler.do_POST()
+        exit_process.assert_not_called()
+        payload = json.dumps({"jsonrpc": "2.0", "id": daemon.DISTRIBUTION_RPC_ID,
+                              "method": "initialize", "params": {}}).encode()
+        handler.headers = {mcp_server.HTTP_CONTENT_LENGTH_HEADER: str(len(payload))}
+        handler.rfile = io.BytesIO(payload)
+        handler.do_POST()
+        exit_process.assert_called_once_with(0)
+    print("[OK] attestation initialize/version requests cannot restart stale HTTP daemon; ordinary self-heal preserved")
 
 
 def exercise_distribution_missing_http_owner_restart():
@@ -188,4 +252,5 @@ if __name__ == "__main__":
     exercise_distribution_descriptor_external_process()
     exercise_distribution_daemon_enumeration()
     exercise_distribution_wire_rpc()
+    exercise_distribution_probe_prevents_http_self_restart()
     exercise_distribution_missing_http_owner_restart()

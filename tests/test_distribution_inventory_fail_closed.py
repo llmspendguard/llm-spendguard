@@ -133,6 +133,30 @@ def test_distribution_related_host_inventory_failures_are_not_empty():
 original_inventory_discovery = fleet.discover_host_spendguard_installations
 
 
+def test_distribution_unidentified_host_launcher_is_named_gap():
+    launcher_inventory_discovery = fleet.discover_host_spendguard_installations
+    with distribution_inventory_fixture() as (root, _state, _workspace, settings):
+        launcher = root / "unidentified-spendguard-launcher"
+        launcher.write_bytes(b"\x7fELF\n")
+        with patch.object(fleet, "discover_host_spendguard_installations", side_effect=lambda:
+                          launcher_inventory_discovery(cli_paths=[launcher], pipx_document={})):
+            result = distribution.distribute_fleet(check=True, settings=settings)
+        assert_distribution_inventory_named_red(result, "host installations")
+        assert str(launcher) in next(row["straggler_reason"] for row in result["surfaces"]
+                                   if row["surface"] == "host installations"), result
+
+
+def test_distribution_unlocated_pipx_installation_is_named_gap():
+    unlocated_pipx_discovery = fleet.discover_host_spendguard_installations
+    pipx_inventory = {"venvs": {"unlocated-installation": {
+        "metadata": {"main_package": {"package": "llm-spendguard"}}}}}
+    with distribution_inventory_fixture() as (_root, _state, _workspace, settings), patch.object(
+            fleet, "discover_host_spendguard_installations", side_effect=lambda:
+            unlocated_pipx_discovery(cli_paths=[], pipx_document=pipx_inventory)):
+        assert_distribution_inventory_named_red(distribution.distribute_fleet(check=True, settings=settings),
+                                                "host installations")
+
+
 def test_distribution_inventory_guards_are_load_bearing():
     mutations = (
         (setup, "discover_distribution_interpreters", "if linked_directory.is_symlink():", "if False:",
@@ -145,6 +169,12 @@ def test_distribution_inventory_guards_are_load_bearing():
         (fleet, "running_consumers",
          'raise inventory_error from exc',
          'pass', test_distribution_failed_consumer_row_is_named_gap),
+        (fleet, "discover_host_spendguard_installations",
+         'raise RuntimeError(f"installation {cli_path} has no interpreter shebang; identity unproven")',
+         'pass', test_distribution_unidentified_host_launcher_is_named_gap),
+        (fleet, "discover_host_spendguard_installations",
+         'raise RuntimeError("pipx spendguard installation has no interpreter location; identity unproven")',
+         'pass', test_distribution_unlocated_pipx_installation_is_named_gap),
     )
     for module, symbol, guard, replacement, regression in mutations:
         original = getattr(module, symbol)
@@ -168,6 +198,8 @@ if __name__ == "__main__":
                        test_distribution_check_empty_registry_is_read_only,
                        test_distribution_failed_consumer_row_is_named_gap,
                        test_distribution_related_host_inventory_failures_are_not_empty,
+                       test_distribution_unidentified_host_launcher_is_named_gap,
+                       test_distribution_unlocated_pipx_installation_is_named_gap,
                        test_distribution_inventory_guards_are_load_bearing):
         try:
             regression()

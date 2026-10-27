@@ -42,6 +42,9 @@ LEDGER_READ_OPERATIONS = ("events", "event", "calls", "count", "aggregate",
 MCP_PEER_DISCONNECT_PEEK_BYTES = 1
 MCP_PEER_OBSERVER_THREAD_NAME = "spendguard-mcp-ledger-abandonment"
 JSON_RPC_ID_MEMBER = "id"
+MCP_READ_ONLY_ATTESTATION_META_KEY = "spendguard/readOnlyAttestation"
+MCP_READ_ONLY_ATTESTATION_HEADER = "X-Spendguard-Read-Only-Attestation"
+MCP_READ_ONLY_ATTESTATION_HEADER_VALUE = "supported"
 HTTP_CONTENT_TYPE_HEADER = "Content-Type"
 HTTP_CONTENT_LENGTH_HEADER = "Content-Length"
 JSON_CONTENT_TYPE = "application/json"
@@ -583,10 +586,11 @@ def _tool_version(args):
     from importlib import metadata
     from pathlib import Path
     import spendguard
-    from . import config, release
+    from . import config, gate, release
     return {**release.release_status(), "pid": os.getpid(),
             "imported_version": spendguard.__version__,
             "metadata_version": metadata.version("llm-spendguard"),
+            "gate_enforcing": bool(not config.disabled() and gate._enforcement_armed()),
             "ledger_path": str(Path(config.db_path()).resolve())}
 
 
@@ -1248,6 +1252,16 @@ def build_mcp_http_handler():
         def log_message(self, *a):            # quiet — no stderr access log per request
             pass
 
+        def do_HEAD(self):
+            """Advertise a mutation-free attestation protocol without dispatch or self-heal."""
+            if self.path.rstrip("/") != "/mcp":
+                self.send_response(HTTPStatus.NOT_FOUND)
+            else:
+                self.send_response(HTTPStatus.OK)
+                self.send_header(MCP_READ_ONLY_ATTESTATION_HEADER, MCP_READ_ONLY_ATTESTATION_HEADER_VALUE)
+            self.send_header(HTTP_CONTENT_LENGTH_HEADER, str(0))
+            self.end_headers()
+
         def _send(self, body, code=HTTPStatus.OK):
             data = (body or "").encode("utf-8")
             self.send_response(code)
@@ -1287,7 +1301,11 @@ def build_mcp_http_handler():
             else:
                 self._send(json.dumps(resp, default=str))
             try:                               # deploy self-heal — exit BETWEEN requests so the supervisor respawns
-                if _auto_respawn_enabled() and release.should_respawn():
+                request_params = req.get("params") if isinstance(req, dict) else None
+                request_meta = request_params.get("_meta") if isinstance(request_params, dict) else None
+                read_only_attestation = (isinstance(request_meta, dict)
+                                         and request_meta.get(MCP_READ_ONLY_ATTESTATION_META_KEY) is True)
+                if not read_only_attestation and _auto_respawn_enabled() and release.should_respawn():
                     self.wfile.flush()
                     _os._exit(0)
             except Exception:

@@ -21,6 +21,7 @@ import atexit
 import os
 import hashlib
 import json
+import math
 import pathlib
 import plistlib
 import sqlite3
@@ -367,7 +368,10 @@ def _classify_fleet_pid_identity(pid, recorded_create_time):
     except (TypeError, ValueError):
         return _FLEET_PID_UNVERIFIABLE
     try:
-        if abs(process.create_time() - recorded) >= WARM_OWNER_BOOT_EPSILON_S:
+        observed = float(process.create_time())
+        if not math.isfinite(recorded) or not math.isfinite(observed):
+            return _FLEET_PID_UNVERIFIABLE
+        if abs(observed - recorded) >= WARM_OWNER_BOOT_EPSILON_S:
             return _FLEET_PID_GONE
     except Exception:
         return _FLEET_PID_UNVERIFIABLE
@@ -891,6 +895,8 @@ def discover_host_spendguard_installations(cli_paths=None, pipx_document=None):
         if first_line.startswith("#!"):
             candidates.append({"source": str(pathlib.Path(cli_path).resolve()),
                                "python_executable": first_line[2:].strip().split()[0]})
+        else:
+            raise RuntimeError(f"installation {cli_path} has no interpreter shebang; identity unproven")
     for package in (pipx_document.get("venvs") or {}).values():
         metadata = package.get("metadata") or {}
         main_package = metadata.get("main_package") or {}
@@ -899,6 +905,8 @@ def discover_host_spendguard_installations(cli_paths=None, pipx_document=None):
         venv_dir = main_package.get("package_or_url") or package.get("venv_dir")
         if venv_dir:
             candidates.append({"source": "pipx", "python_executable": str(pathlib.Path(venv_dir) / "bin" / "python")})
+        else:
+            raise RuntimeError("pipx spendguard installation has no interpreter location; identity unproven")
     unique = {}
     for candidate in candidates:
         executable = str(pathlib.Path(candidate["python_executable"]).resolve())

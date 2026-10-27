@@ -5,7 +5,7 @@ import tempfile
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from spendguard import distribution, distribution_daemon, mcp_fd_lifecycle, mcp_server
+from spendguard import distribution, distribution_daemon, gate, mcp_fd_lifecycle, mcp_server
 
 LEDGER_BINDING_PID = 812
 LEDGER_BINDING_VERSION = "ledger-binding-current"
@@ -26,10 +26,17 @@ def exercise_distribution_foreign_home_ledger_binding():
         target = {"version": LEDGER_BINDING_VERSION, "sha": LEDGER_BINDING_SHA}
         status = {"pid": LEDGER_BINDING_PID, "imported_version": LEDGER_BINDING_VERSION,
                   "metadata_version": LEDGER_BINDING_VERSION, "ledger_path": str(daemon_ledger),
+                  "gate_enforcing": True,
                   "served": {"sha": LEDGER_BINDING_SHA, "dirty": False}}
         with patch.object(distribution.release, "release_status", return_value={}), patch.object(
                 mcp_fd_lifecycle.config, "db_path", return_value=str(daemon_ledger)):
             assert mcp_server._tool_version({})["ledger_path"] == str(daemon_ledger.resolve())
+            with patch.object(mcp_fd_lifecycle.config, "disabled", return_value=True), \
+                 patch.object(gate, "_enforcement_armed", return_value=True):
+                assert mcp_server._tool_version({})["gate_enforcing"] is False
+            with patch.object(mcp_fd_lifecycle.config, "disabled", return_value=False), \
+                 patch.object(gate, "_enforcement_armed", return_value=False):
+                assert mcp_server._tool_version({})["gate_enforcing"] is False
         consumer = {"pid": LEDGER_BINDING_PID,
                     "supervision_ref": distribution_daemon.MCP_HTTP_LAUNCHD_LABEL}
         files = [SimpleNamespace(path=str(daemon_ledger), fd=LEDGER_BINDING_FD)]
@@ -82,6 +89,12 @@ def exercise_distribution_foreign_home_ledger_binding():
             files.clear()
             result = distribution.distribute_fleet(check=True, settings={})
             assert result["exit_code"] == 0 and result["summary"]["stragglers"] == [], result
+            for unproven_gate in (False, None, "true"):
+                status["gate_enforcing"] = unproven_gate
+                result = distribution.distribute_fleet(check=True, settings={})
+                assert result["exit_code"] != 0, result
+                assert f"mcp-process:{LEDGER_BINDING_PID}" in result["summary"]["stragglers"], result
+            status["gate_enforcing"] = True
             del status["ledger_path"]
             assert_foreign_home_ledger_is_red()
     print("OK foreign-home ledger leak named and nonzero; checker-home mutant red; clean fixture green; missing binding closed")

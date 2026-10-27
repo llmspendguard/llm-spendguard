@@ -31,7 +31,16 @@ def distribution_daemon_settings(settings=None):
 
 def request_distribution_mcp_rpc(endpoint, method, params, timeout):
     """Send a real, bounded JSON-RPC request to an already running HTTP daemon."""
-    document = {"jsonrpc": "2.0", "id": DISTRIBUTION_RPC_ID, "method": method, "params": params}
+    from .mcp_server import (MCP_READ_ONLY_ATTESTATION_META_KEY,
+                             MCP_READ_ONLY_ATTESTATION_HEADER,
+                             MCP_READ_ONLY_ATTESTATION_HEADER_VALUE)
+    # Legacy servers self-restart after any POST. Their HEAD is safely rejected;
+    # never send them an attestation that could turn a read-only check into repair.
+    with urlopen(Request(endpoint, method="HEAD"), timeout=timeout) as response:
+        if response.headers.get(MCP_READ_ONLY_ATTESTATION_HEADER) != MCP_READ_ONLY_ATTESTATION_HEADER_VALUE:
+            raise ValueError("daemon does not prove support for mutation-free attestation")
+    readonly_params = {**params, "_meta": {MCP_READ_ONLY_ATTESTATION_META_KEY: True}}
+    document = {"jsonrpc": "2.0", "id": DISTRIBUTION_RPC_ID, "method": method, "params": readonly_params}
     request = Request(endpoint, data=json.dumps(document).encode(),
                       headers={"Content-Type": "application/json"}, method="POST")
     with urlopen(request, timeout=timeout) as response:
@@ -82,7 +91,10 @@ def prove_distribution_mcp_daemon(consumer, target, settings):
         row["fd_ok"] = descriptors["fd_ok"]
         if not row["fd_ok"]:
             reasons.append(descriptors.get("reason") or "daemon descriptor proof failed")
-        row["healthy"] = row["fd_ok"]
+        gate_enforcing = status.get("gate_enforcing") is True
+        if not gate_enforcing:
+            reasons.append("live MCP daemon gate enforcement is unproven")
+        row["healthy"] = bool(row["fd_ok"] and gate_enforcing)
         row["evidence"] = {"initialize": initialize, "version": status, "descriptors": descriptors}
     except Exception as exc:
         reasons.append(f"live MCP proof failed: {type(exc).__name__}: {exc}")

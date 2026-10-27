@@ -1,8 +1,10 @@
 """Offline mutation guard: fleet actions require a recycle-proof (pid, create_time) identity."""
 import os
+import inspect
 import sqlite3
 import sys
 import tempfile
+from unittest.mock import patch
 
 if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
     os.environ["SPENDGUARD_TEST_ISOLATED"] = "1"
@@ -36,6 +38,32 @@ VANISHED_LABEL = "com.example.vanished"
 RECYCLED_LABEL = "com.example.recycled"
 VERIFIED_LABEL = "com.example.verified"
 LEGACY_LABEL = "com.example.legacy"
+NONFINITE_FLEET_CREATE_TIMES = ("nan", "inf", "-inf")
+
+
+def assert_fleet_nonfinite_birth_proofs_are_unverifiable():
+    for recorded_birth in NONFINITE_FLEET_CREATE_TIMES:
+        with patch.object(fleet.psutil, "Process", return_value=_FakeProcess(RECORDED_CREATE_TIME)):
+            assert fleet._classify_fleet_pid_identity(VERIFIED_STALE_PID, recorded_birth) == fleet._FLEET_PID_UNVERIFIABLE
+    for observed_birth in NONFINITE_FLEET_CREATE_TIMES:
+        with patch.object(fleet.psutil, "Process", return_value=_FakeProcess(float(observed_birth))):
+            assert fleet._classify_fleet_pid_identity(VERIFIED_STALE_PID, RECORDED_CREATE_TIME) == fleet._FLEET_PID_UNVERIFIABLE
+
+
+def test_fleet_nonfinite_birth_proofs_and_guard_mutation():
+    assert_fleet_nonfinite_birth_proofs_are_unverifiable()
+    original = fleet._classify_fleet_pid_identity
+    source = inspect.getsource(original)
+    guard = "        if not math.isfinite(recorded) or not math.isfinite(observed):\n            return _FLEET_PID_UNVERIFIABLE\n"
+    assert guard in source
+    namespace = dict(vars(fleet))
+    exec(compile(source.replace(guard, ""), inspect.getfile(original), "exec"), namespace)
+    with patch.object(fleet, original.__name__, namespace[original.__name__]):
+        try:
+            assert_fleet_nonfinite_birth_proofs_are_unverifiable()
+        except AssertionError:
+            return
+    raise AssertionError("nonfinite fleet birth proof guard removal survived")
 
 
 def _insert_consumer(pid, create_time, label):
