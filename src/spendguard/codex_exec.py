@@ -40,14 +40,7 @@ CODEX_ORPHAN_PARENT_PID = 1
 CODEX_CONFIG_FILENAME = "config.toml"
 CODEX_DEFAULT_HOME = "~/.codex"
 CODEX_MCP_DEFAULT_URL_PORTS = {"http": 80, "https": 443}
-CODEX_APP_SERVER_INITIALIZE_REQUEST_ID = 1
-CODEX_APP_SERVER_RATE_LIMITS_REQUEST_ID = 2
-CODEX_APP_SERVER_CLIENT_NAME = "spendguard"
-CODEX_APP_SERVER_INITIALIZE_METHOD = "initialize"
 CODEX_APP_SERVER_RATE_LIMITS_METHOD = "account/rateLimits/read"
-CODEX_APP_SERVER_PROXY_ARGUMENTS = ("app-server", "proxy", "--sock")
-CODEX_APP_SERVER_SOCKET_PARTS = ("ipc", "ipc.sock")
-CODEX_USAGE_READ_TIMEOUT_S = 10
 CODEX_EXEC_WORK_DIRECTORY_PREFIX = "spendguard-codex-"
 CODEX_USAGE_UNKNOWN_SAMPLE_COUNT = 0
 CODEX_DELEGATE_OUTPUT_FILENAME = "delegate-final.txt"
@@ -505,46 +498,24 @@ def _codex_usage_report_uncached():
     """Query the authenticated running Codex app-server and return a complete headroom report."""
     report = {"buckets": None, "source": CODEX_APP_SERVER_RATE_LIMITS_METHOD, "reason": None,
               "n": CODEX_USAGE_UNKNOWN_SAMPLE_COUNT, "window": None, "uncertainty": "provider_data_unknown"}
-    from . import __version__
-    from . import config
-    requests = (
-        {"id": CODEX_APP_SERVER_INITIALIZE_REQUEST_ID, "method": CODEX_APP_SERVER_INITIALIZE_METHOD,
-         "params": {"clientInfo": {"name": CODEX_APP_SERVER_CLIENT_NAME,
-                                    "version": __version__}}},
-        {"id": CODEX_APP_SERVER_RATE_LIMITS_REQUEST_ID, "method": CODEX_APP_SERVER_RATE_LIMITS_METHOD,
-         "params": None},
-    )
     try:
-        executable = _bin()
-        socket_path = os.path.join(_codex_home(), *CODEX_APP_SERVER_SOCKET_PARTS)
-        if not executable:
-            report["reason"] = "codex_cli_not_available"
+        from . import codex_daemon
+        response = codex_daemon.read_rate_limits(timeout=codex_daemon.RATE_LIMITS_READ_TIMEOUT_S)
+        if not isinstance(response, dict) or response.get("error"):
+            report["reason"] = "codex_warm_pool_rate_limits_unavailable"
             return report
-        if not os.path.exists(socket_path):
-            report["reason"] = "codex_app_server_socket_not_available"
+        payload = response.get("rate_limits")
+        if not isinstance(payload, dict):
+            report["reason"] = "codex_warm_pool_rate_limits_response_malformed"
             return report
-        completed = subprocess.run([executable, *CODEX_APP_SERVER_PROXY_ARGUMENTS, socket_path],
-                                   input="".join(json.dumps(request) + "\n" for request in requests),
-                                   capture_output=True, text=True, timeout=CODEX_USAGE_READ_TIMEOUT_S,
-                                   env=config.lane_exec_env(executable))
-        if completed.returncode != 0:
-            report["reason"] = "codex_rate_limits_transport_failed"
-            return report
-        responses = [json.loads(line) for line in completed.stdout.splitlines() if line.strip()]
-        response = next((row for row in responses if row.get("id") == CODEX_APP_SERVER_RATE_LIMITS_REQUEST_ID), None)
-        if not response or not isinstance(response.get("result"), dict):
-            report["reason"] = "codex_rate_limits_response_missing"
-            return report
-        report["buckets"] = _parse_rate_limits(response["result"])
+        report["buckets"] = _parse_rate_limits(payload)
         if not report["buckets"]:
             report["reason"] = "codex_rate_limits_windows_missing"
             return report
         report["uncertainty"] = ("provider_reported_reset_unknown" if any(
             bucket["reset_ts"] is None for bucket in report["buckets"]) else "provider_reported")
-    except (config.IsolatedCliLaunchError, OSError):
-        report["reason"] = "codex_rate_limits_transport_failed"
-    except Exception as error:
-        report["reason"] = f"codex_rate_limits_read_gap:{type(error).__name__}"
+    except Exception:
+        report["reason"] = "codex_warm_pool_rate_limits_request_failed"
     return report
 
 
