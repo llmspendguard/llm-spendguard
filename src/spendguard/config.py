@@ -1324,9 +1324,23 @@ def budget_ledger_connection_memory(c, ceiling=None):
     """Share named process cache/mmap budgets across the configured ceiling."""
     ceiling = ledger_connection_limit() if ceiling is None else ceiling
     # ceiling * floor(budget / ceiling) <= budget: 256 MiB cache, 512 MiB mmap.
-    for pragma in (f"cache_size={-(LEDGER_CACHE_BUDGET_KIB // ceiling)}",
-                   f"mmap_size={LEDGER_MMAP_BUDGET_BYTES // ceiling}"):
-        c.execute("PRAGMA " + pragma)
+    pragmas = (f"cache_size={-(LEDGER_CACHE_BUDGET_KIB // ceiling)}",
+               f"mmap_size={LEDGER_MMAP_BUDGET_BYTES // ceiling}")
+    if isinstance(c, _CountedLedgerConnection):
+        # A home-aligned connection's own cursor dispatches through managed-request
+        # cursor state; offline reconcile correction runs under a guard that forbids
+        # that dispatch. Honor the home boundary explicitly, then run setup PRAGMAs
+        # on a raw base cursor so connection setup never counts as a managed step.
+        require_ledger_home_alignment(
+            c._ledger_home_path,
+            opened_path_identity=c._ledger_opened_path_identity,
+        )
+        with contextlib.closing(sqlite3.Connection.cursor(c, sqlite3.Cursor)) as setup_cursor:
+            for pragma in pragmas:
+                sqlite3.Cursor.execute(setup_cursor, "PRAGMA " + pragma)
+    else:
+        for pragma in pragmas:
+            c.execute("PRAGMA " + pragma)
 
 
 class _HomeAlignedLedgerCursor(sqlite3.Cursor):
@@ -1335,6 +1349,8 @@ class _HomeAlignedLedgerCursor(sqlite3.Cursor):
     def _dispatch_home_aligned_cursor_operation(self, operation, *args, **kwargs):
         require_ledger_home_alignment(self.connection._ledger_home_path,
                                      opened_path_identity=self.connection._ledger_opened_path_identity)
+        if getattr(self.connection, "_ledger_owned_read_deadline", False):
+            return operation(self, *args, **kwargs)
         from spendguard.ledger_request_cursor import ManagedRequestCursorState
         state = getattr(self, "_ledger_request_cursor_state", None)
         if state is None:
