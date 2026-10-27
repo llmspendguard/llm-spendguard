@@ -39,7 +39,7 @@ def test_the_sdk_gets_a_real_timeout_so_abandonment_cancels():
     # vendor fails on connect fast instead of holding the slot for the whole budget — still the caller's budget,
     # just applied smartly. Both clients must get it.
     check("both SDK clients get the caller's budget as a client timeout — a client without one runs to completion",
-          src.count("_http_timeout(timeout_s)") >= 2, str(src.count("_http_timeout(timeout_s)")))
+          src.count("_http_timeout(timeout_s,") >= 2, str(src.count("_http_timeout(timeout_s,")))
     check("...and max_retries=0, so the SDK's own retry loop cannot triple a down vendor's wall time",
           src.count("max_retries=0") >= 2, str(src.count("max_retries=0")))
     check("_attempt hands the SDK the same budget the caller is enforcing",

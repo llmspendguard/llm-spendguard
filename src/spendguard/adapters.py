@@ -1819,11 +1819,13 @@ def _oai_compat_client(provider, timeout_s=None):
     key = config.api_key(spec["key_env"])
     if not key:
         raise ValueError(f"no key ({spec['key_env']}) for {provider}")
-    from openai import OpenAI
+    import openai
+    OpenAI = openai.OpenAI
+    openai_compat_sdk_base_client = getattr(openai, "_base_client", None)
     compat_retry_count = _sdk_client_max_retries(timeout_s)
     compat_client_options = {} if compat_retry_count is None else {"max_retries": compat_retry_count}
     if timeout_s:
-        compat_client_options["timeout"] = _http_timeout(timeout_s)
+        compat_client_options["timeout"] = _http_timeout(timeout_s, openai_compat_sdk_base_client)
     return OpenAI(api_key=key, base_url=spec["base_url"], **compat_client_options)
 
 
@@ -2222,22 +2224,40 @@ LANE_MIN_TIMEOUT_S = 150.0   # a subscription LANE (CLI cold-start + ~14K contex
                              # TIMEOUT_S. MEASURED: codex timed out at exactly 30s on a real panel file and fell back.
 
 
-def _http_timeout(timeout_s):
-    """An httpx.Timeout that fails FAST on a DEAD endpoint but gives a live-but-slow one the full read budget.
+def _sdk_timeout_cls(sdk_base_client):
+    """Resolve the Timeout class from the transport module imported by an SDK client.
+
+    The transport is identified by its module type and HTTP client surface rather than by package name, so an
+    SDK can change transport packages without requiring a matching change here. Returns None when the SDK base
+    client does not expose a matching transport module.
+    """
+    import types
+    if not isinstance(sdk_base_client, types.ModuleType):
+        return None
+    for sdk_base_client_value in vars(sdk_base_client).values():
+        if isinstance(sdk_base_client_value, types.ModuleType) and all(
+            hasattr(sdk_base_client_value, transport_attribute)
+            for transport_attribute in ("Timeout", "URL", "HTTPTransport")
+        ):
+            return sdk_base_client_value.Timeout
+    return None
+
+
+def _http_timeout(timeout_s, sdk_base_client):
+    """An SDK-native Timeout that fails FAST on a DEAD endpoint but gives a live one the full read budget.
 
     A bare float handed to the SDK sets connect == read == write == budget, so a vendor that BLACKHOLES the
     connection (measured: z.ai, SYN dropped) held a fan_out slot for the entire budget — up to 600s — just
     trying to connect, and one such vendor made every file in the panel wait that long. Splitting the two so
     CONNECT is short and READ is the budget lets a down vendor be declared unavailable in ~10s while a genuinely
-    slow-but-alive one still gets its measured time. Falls back to the plain float if httpx is somehow absent
-    (it is a hard dependency of both SDKs, so this is belt-and-suspenders, not a real branch)."""
+    slow-but-alive one still gets its measured time. Falls back to the plain float if the SDK base client does
+    not expose its transport module, allowing the SDK to coerce the timeout itself."""
     if not timeout_s:
         return None
-    try:
-        import httpx
-        return httpx.Timeout(float(timeout_s), connect=min(CONNECT_TIMEOUT_S, float(timeout_s)))
-    except Exception:
+    timeout_cls = _sdk_timeout_cls(sdk_base_client)
+    if timeout_cls is None:
         return float(timeout_s)
+    return timeout_cls(float(timeout_s), connect=min(CONNECT_TIMEOUT_S, float(timeout_s)))
 
 
 class _CallDeadline(TimeoutError):
@@ -3027,6 +3047,7 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
     try:
         if spec["kind"] == "anthropic":
             import anthropic
+            anthropic_sdk_base_client = getattr(anthropic, "_base_client", None)
             # A CLIENT-SIDE TIMEOUT IS THE ONLY THING THAT ACTUALLY CANCELS A REQUEST. A caller that merely
             # stops waiting (thread.join(timeout=...)) leaves the request running to completion, and it BILLS:
             # measured, a review that saw 18 results was billed for 146 calls, because every abandoned call
@@ -3044,7 +3065,7 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
             anthropic_retry_count = _sdk_client_max_retries(timeout_s)
             anthropic_client_options = {} if anthropic_retry_count is None else {"max_retries": anthropic_retry_count}
             if timeout_s and not images:
-                anthropic_client_options["timeout"] = _http_timeout(timeout_s)
+                anthropic_client_options["timeout"] = _http_timeout(timeout_s, anthropic_sdk_base_client)
             c = anthropic.Anthropic(api_key=key, **anthropic_client_options)
             _uc = ([{"type": "text", "text": prompt}] + _image_parts(images, "anthropic")) if images else prompt
             kw = {"model": raw, "max_tokens": max_tokens, "messages": [{"role": "user", "content": _uc}]}
@@ -3163,13 +3184,15 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
             # every caller checking it learned nothing. Anthropic calls it stop_reason.
             _finish = getattr(m, "stop_reason", None)
         else:
-            from openai import OpenAI
+            import openai
+            OpenAI = openai.OpenAI
+            openai_sdk_base_client = getattr(openai, "_base_client", None)
             # Same fast-connect / no-SDK-retry discipline as the anthropic branch: a blackholed OpenAI-compatible
             # endpoint (z.ai, moonshot) must fail on CONNECT in ~10s, not hold the slot for the whole read budget.
             openai_retry_count = _sdk_client_max_retries(timeout_s)
             openai_client_options = {} if openai_retry_count is None else {"max_retries": openai_retry_count}
             if timeout_s:
-                openai_client_options["timeout"] = _http_timeout(timeout_s)
+                openai_client_options["timeout"] = _http_timeout(timeout_s, openai_sdk_base_client)
             c = OpenAI(api_key=key, base_url=spec["base_url"], **openai_client_options)
             _uc = ([{"type": "text", "text": prompt}] + _image_parts(images, "openai")) if images else prompt
             msgs = ([{"role": "system", "content": system}] if system else []) + [{"role": "user", "content": _uc}]
