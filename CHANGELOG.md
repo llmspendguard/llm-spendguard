@@ -4,6 +4,21 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 
 ## [Unreleased]
 
+## [0.16.3] — 2026-10-27
+
+### Fixed
+- **The codex-exec approval/sandbox boundary is now a durable, repo-wide invariant.**
+  `_run_agentic_codex_exec` no longer combines the sandbox and agentic approval flags rejected by codex-cli;
+  `_validate_codex_exec_approval_boundary` rejects any constructed argv containing both, and a repo-wide AST test
+  discovers every codex-exec argv construction under `src/spendguard` and enforces the same absence invariant.
+- **`spendguard delegate` surfaces its own editable state.** A tracked-dirty or green-pointer-stale spendguard
+  checkout now emits a one-line served-vs-green warning from the existing release-status machinery, without
+  refusing the delegation.
+- **The ungoverned fallback is named honestly.** A failed codex delegation now preserves the underlying error while
+  explaining that the governed route is unavailable and raw `codex exec` runs outside spendguard's gate and ledger,
+  losing attribution; failed detached jobs record a structured result payload so `collect` reports the reason.
+  (#237)
+
 ## [0.16.2] — 2026-10-27
 
 ### Fixed
