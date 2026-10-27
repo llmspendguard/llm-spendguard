@@ -14,7 +14,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import config, guard, lane_balance, lane_registry, pricing, provider_tokens
+from . import config, guard, lane_balance, lane_registry, pricing, provider_tokens, release as _release
 
 CLASSIFY_INTENT = "spendguard:classify"
 DEFAULT_DELEGATE_INTENT = "spendguard:delegate-task"
@@ -52,6 +52,7 @@ DELEGATE_CLI_RESULT_MAX_LINES = 10
 DELEGATE_EXECUTION_RESULT_MAX_LINES = DELEGATE_CLI_RESULT_MAX_LINES - 1
 DELEGATE_TOOL_DEGRADED_MARKER = "DEGRADED_TOOL_ENVELOPE"
 DELEGATE_TOOL_DEGRADED_PREFIX = f"{DELEGATE_TOOL_DEGRADED_MARKER}:"
+DELEGATE_UNGOVERNED_CODEX_FALLBACK = "raw `codex exec`"
 DELEGATE_CONTEXT_BOUNDARY = {
     DELEGATE_ROUTE_CLAUDE_SUBAGENT: (
         "requires unsupplied state from the host's live conversation, or requires driving the Claude desktop "
@@ -70,6 +71,42 @@ LEGACY_DELEGATE_KIND_ROUTES = {
     "agentic": DELEGATE_ROUTE_CODEX,
     "needs_claude": DELEGATE_ROUTE_CLAUDE_SUBAGENT,
 }
+
+
+def _delegate_release_state_warning():
+    """Describe tracked dirt/staleness in the spendguard checkout serving this delegate command."""
+    status = _release.release_status()
+    tracked_dirty = _release._tracked_dirty()
+    if not tracked_dirty and not status.get("served_dirty") and not status.get("stale"):
+        return None
+    served = status.get("served") or {}
+    green = status.get("green") or {}
+    conditions = []
+    if tracked_dirty or status.get("served_dirty"):
+        conditions.append("uncommitted")
+    if status.get("stale"):
+        conditions.append("stale")
+    served_label = served.get("describe") or served.get("short") or "unknown"
+    green_label = green.get("short") or "unknown"
+    return (f"⚠ delegate served from {'/'.join(conditions)} spendguard "
+            f"({served_label} vs green {green_label}) — governed behavior may differ from the released build")
+
+
+def _codex_governed_route_unavailable_message():
+    return (f"spendguard governed Codex delegation route unavailable; the ungoverned alternative "
+            f"{DELEGATE_UNGOVERNED_CODEX_FALLBACK} runs outside spendguard's gate and ledger, "
+            "so cost attribution is lost")
+
+
+def _delegate_result_selected_codex(result, requested_provider):
+    classification = result.get("classification") or {}
+    selected_plan = classification.get("provider")
+    if selected_plan:
+        spec = lane_registry.lane_spec(selected_plan)
+        return bool(spec and spec.get("exec") == "codex_exec")
+    resolved = _resolve_plan_name(requested_provider) if requested_provider != "auto" else None
+    spec = lane_registry.lane_spec(resolved) if resolved else None
+    return bool(spec and spec.get("exec") == "codex_exec")
 
 
 def codex_agentic_events_path():
@@ -505,7 +542,9 @@ def _run_delegate_job_to_completion(job_id, plan, prompt, model, timeout, cwd, d
             error=None if terminal_state == "done" else completed.get("why"))
     except Exception as exc:
         reason = "delegate-executor-timeout" if isinstance(exc, TimeoutError) else "delegate-executor-exception"
-        delegate_jobs.finish_delegate_job(job_id, state="failed", terminal_reason=reason, error=str(exc))
+        failed_result = {**result, "status": "error", "reason": reason, "why": str(exc)}
+        delegate_jobs.finish_delegate_job(job_id, state="failed", result_payload=failed_result,
+                                          terminal_reason=reason, error=str(exc))
 
 
 def start_delegate_job(task, files=None, intent=None, provider="auto", cwd=None, timeout=None):
@@ -639,6 +678,9 @@ def delegate_cli(argv=None):
         return 2 if result.get("error") else 0
     if not args.task:
         parser.error("task is required unless --collect or --status is supplied")
+    release_warning = _delegate_release_state_warning()
+    if release_warning:
+        print(release_warning)
     files = [p for p in (args.files or "").split(",") if p]
     if args.yes and not args.estimate:
         classification = classify_task(args.task, files=files, provider=args.provider)
@@ -680,6 +722,8 @@ def delegate_cli(argv=None):
         detail = (result.get("why") or execution_error or estimate.get("error") or classification.get("error")
                   or "delegation failed without a result")
         print(f"delegate {result['status']}: {reason + ': ' if reason else ''}{detail}")
+        if _delegate_result_selected_codex(result, args.provider):
+            print(_codex_governed_route_unavailable_message())
     elif result["status"] == "running":
         print(json.dumps(result, indent=2, sort_keys=True))
     return 0 if result["status"] in ("estimate", "executed", "running") else 2
