@@ -19,23 +19,23 @@ def check_venv_determiner_backfill_condition(name, condition):
 
 TEST_PROVIDER = "venv-determiner-provider"
 TEST_COST = 0.01
-MEDICAL_MODEL = "medical-app-row"
-BILLING_MODEL = "billing-service-row"
+INVENTORY_MODEL = "inventory-app-row"
+CATALOG_MODEL = "catalog-service-row"
 AMBIGUOUS_MODEL = "ambiguous-venv-row"
 NO_VENV_MODEL = "no-venv-row"
-MEDICAL_VENV = "/workspace/medical-app/.venv"
-SECOND_REPO_VENV = "/workspace/billing-service/.venv"
+INVENTORY_VENV = "/workspace/inventory-app/.venv"
+CATALOG_VENV = "/workspace/catalog-service/.venv"
 AMBIGUOUS_VENV = "/opt/shared/.venv-tools"
 
-for model in (MEDICAL_MODEL, BILLING_MODEL, AMBIGUOUS_MODEL, NO_VENV_MODEL):
+for model in (INVENTORY_MODEL, CATALOG_MODEL, AMBIGUOUS_MODEL, NO_VENV_MODEL):
     budget._record_spend_event(
         TEST_PROVIDER, model, "batch", TEST_COST, project="", source="reconstructed")
 
 active_ledger = budget._ledger()
 active_ledger._conn.execute(
-    "UPDATE spend_events SET venv=? WHERE model=?", (MEDICAL_VENV, MEDICAL_MODEL))
+    "UPDATE spend_events SET venv=? WHERE model=?", (INVENTORY_VENV, INVENTORY_MODEL))
 active_ledger._conn.execute(
-    "UPDATE spend_events SET venv=? WHERE model=?", (SECOND_REPO_VENV, BILLING_MODEL))
+    "UPDATE spend_events SET venv=? WHERE model=?", (CATALOG_VENV, CATALOG_MODEL))
 active_ledger._conn.execute(
     "UPDATE spend_events SET venv=? WHERE model=?", (AMBIGUOUS_VENV, AMBIGUOUS_MODEL))
 active_ledger._conn.commit()
@@ -49,11 +49,11 @@ projects_by_model = {
 
 failures = 0
 failures += check_venv_determiner_backfill_condition(
-    "medical-app venv resolves to medical-app",
-    projects_by_model[MEDICAL_MODEL] == "medical-app")
+    "inventory-app venv resolves to inventory-app",
+    projects_by_model[INVENTORY_MODEL] == "inventory-app")
 failures += check_venv_determiner_backfill_condition(
-    "billing-service repo-local venv resolves to billing-service",
-    projects_by_model[BILLING_MODEL] == "billing-service")
+    "catalog-service repo-local venv resolves to catalog-service",
+    projects_by_model[CATALOG_MODEL] == "catalog-service")
 failures += check_venv_determiner_backfill_condition(
     "ambiguous venv remains unresolved for the agentic or coarse path",
     projects_by_model[AMBIGUOUS_MODEL] == budget.UNATTRIBUTED_PROJECT)
