@@ -18,6 +18,8 @@ os.environ.setdefault("SPENDGUARD_TEST_ISOLATED", "1")
 os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
+from _script_checks import record_script_check  # noqa: E402
+
 from spendguard import cli, release, config, fleet   # noqa: E402
 
 config.HOME = pathlib.Path(os.environ["SPENDGUARD_HOME"])
@@ -33,12 +35,6 @@ PROMOTED_COMMIT_MESSAGE = (
     "deploy: 🟢 promoted abc1234 (v0.10.0-1-gabc1234) → green pointer  [skipped (--no-gate)]"
 )
 CONSUMER_GAP_MESSAGE = "deploy: promoted; armed 0; 1 consumers STILL not on latest/gated"
-
-
-def ck(name, cond):
-    print(("  [OK] " if cond else "  [FAIL] ") + name)
-    if not cond:
-        fails.append(name)
 
 
 def _run(argv):
@@ -67,17 +63,17 @@ release.promote_release = promotion_recorder.promote_release
 print("-- deploy REFUSES a dirty tree and does not promote --")
 release._tracked_dirty = lambda: True
 rc, out = _run(["deploy", "--no-gate", "--skip-consumer-verify"])
-ck("deploy on a DIRTY tree exits non-zero (refuses)", rc == 2)
-ck("... and does NOT promote", promotion_recorder.count == 0)
-ck("... telling the user to commit first", out.splitlines()[0] == DIRTY_TREE_MESSAGE)
+record_script_check(fails, "deploy on a DIRTY tree exits non-zero (refuses)", rc == 2)
+record_script_check(fails, "... and does NOT promote", promotion_recorder.count == 0)
+record_script_check(fails, "... telling the user to commit first", out.splitlines()[0] == DIRTY_TREE_MESSAGE)
 
 print("\n-- deploy --no-gate on a CLEAN tree promotes exactly once --")
 release._tracked_dirty = lambda: False
 rc, out = _run(["deploy", "--no-gate", "--skip-consumer-verify"])
-ck("deploy --no-gate on a clean tree exits 0", rc == 0)
-ck("... promotes exactly once, through release.promote_release", promotion_recorder.count == 1)
-ck("... and records that the gate was skipped (--no-gate), not faked as green", "no-gate" in (promotion_recorder.gate or ""))
-ck("... reporting the promoted commit", PROMOTED_COMMIT_MESSAGE in out.splitlines())
+record_script_check(fails, "deploy --no-gate on a clean tree exits 0", rc == 0)
+record_script_check(fails, "... promotes exactly once, through release.promote_release", promotion_recorder.count == 1)
+record_script_check(fails, "... and records that the gate was skipped (--no-gate), not faked as green", "no-gate" in (promotion_recorder.gate or ""))
+record_script_check(fails, "... reporting the promoted commit", PROMOTED_COMMIT_MESSAGE in out.splitlines())
 
 print("\n-- deploy consumer verification fails closed after promotion --")
 from spendguard import consumer_audit as _consumer_audit  # noqa: E402
@@ -90,14 +86,14 @@ _consumer_audit.audit_consumer_workspaces = lambda deployed_sha, auto_arm, dry_r
 }
 _consumer_audit.render_consumer_audit_table = lambda _result: "fixture consumer audit"
 rc, out = _run(["deploy", "--no-gate", "--no-restart", "--no-refresh"])
-ck("deploy promotes but exits non-zero when consumer verification retains a gap",
+record_script_check(fails, "deploy promotes but exits non-zero when consumer verification retains a gap",
    rc == 1 and PROMOTED_COMMIT_MESSAGE in out.splitlines() and CONSUMER_GAP_MESSAGE in out.splitlines())
 _consumer_audit.audit_consumer_workspaces = lambda deployed_sha, auto_arm, dry_run: {
     "deployed_sha": deployed_sha, "armed": 1, "remaining_gaps": 0, "exit_code": 0,
     "dry_run": dry_run, "consumers": [],
 }
 rc, out = _run(["deploy", "--no-gate", "--no-restart", "--no-refresh"])
-ck("deploy continues after a complete consumer proof", rc == 0 and "fixture consumer audit" in out)
+record_script_check(fails, "deploy continues after a complete consumer proof", rc == 0 and "fixture consumer audit" in out)
 _consumer_audit.audit_consumer_workspaces = _original_consumer_audit
 _consumer_audit.render_consumer_audit_table = _original_consumer_render
 
@@ -149,10 +145,10 @@ _setup.install_hook = _register_discovered_escape
 fleet.verify_and_refresh_registered_interpreters = _fail_stale_discovered_escape
 rc, out = _run(["deploy", "--no-gate", "--skip-consumer-verify", "--no-restart"])
 registered_after_deploy = {row["python_executable"] for row in fleet.registered_interpreters()}
-ck("deploy registers a structurally discovered host escape before registered-interpreter verification",
+record_script_check(fails, "deploy registers a structurally discovered host escape before registered-interpreter verification",
    str(_escaped_python.resolve()) in registered_after_deploy
    and "deploy: registry — discovered=1 reconciled=1 remaining=0" in out)
-ck("a newly registered stale escape fails deploy closed at the registered-interpreter bar",
+record_script_check(fails, "a newly registered stale escape fails deploy closed at the registered-interpreter bar",
    rc == 1 and f"registered deployment FAILED {_escaped_python.resolve()}" in out)
 # Mutation bite: removing the reconcile/install wire-in leaves the escape absent from the registry; this verifier then
 # sees only the pre-registered fresh interpreter, returns complete, and both assertions above fail (deploy exits 0).
@@ -166,8 +162,8 @@ release.release_status = lambda: {"served": {"short": "aaaaaaa", "describe": "v0
                                   "stale": True, "served_dirty": False,
                                   "pointer_path": "/x/current_release.json", "note": "STALE: a… behind b…"}
 rc, out = _run(["release"])
-ck("release exits 0", rc == 0)
-ck("release shows served, green, and a STALE status", "aaaaaaa" in out and "bbbbbbb" in out and "STALE" in out)
+record_script_check(fails, "release exits 0", rc == 0)
+record_script_check(fails, "release shows served, green, and a STALE status", "aaaaaaa" in out and "bbbbbbb" in out and "STALE" in out)
 
 print("\n-- deploy --help prints usage WITHOUT acquiring the lock or running the gate --")
 # Regression (2026-10-10): `deploy --help` fell through the manual arg handling, took the single-instance lock, and
@@ -187,10 +183,10 @@ try:
     _lock_ok = True
 except AssertionError:
     rc, out, _lock_ok = 1, "", False
-ck("deploy --help never acquires the deploy lock", _lock_ok)
-ck("deploy --help exits 0", rc == 0)
-ck("deploy --help prints usage (flags shown)", "usage: spendguard deploy" in out and "--no-gate" in out and "--no-restart" in out)
-ck("deploy --help does NOT promote / run the gate", promotion_recorder.count == _before)
+record_script_check(fails, "deploy --help never acquires the deploy lock", _lock_ok)
+record_script_check(fails, "deploy --help exits 0", rc == 0)
+record_script_check(fails, "deploy --help prints usage (flags shown)", "usage: spendguard deploy" in out and "--no-gate" in out and "--no-restart" in out)
+record_script_check(fails, "deploy --help does NOT promote / run the gate", promotion_recorder.count == _before)
 
 print(f"\n{'[FAIL]' if fails else 'OK'} test_deploy_release_cli: {len(fails)} failure(s)")
 sys.exit(1 if fails else 0)

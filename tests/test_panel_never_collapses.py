@@ -15,15 +15,11 @@ os.environ.setdefault("SPENDGUARD_TEST_ISOLATED", "1")
 os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
+from _script_checks import record_script_check
 from spendguard import vendor_call, adapters   # noqa: E402
 
 fails = []
 
-
-def ck(name, cond):
-    print(("  [OK] " if cond else "  [FAIL] ") + name)
-    if not cond:
-        fails.append(name)
 
 
 _seen = []
@@ -40,18 +36,18 @@ vendor_call.served_check = lambda prov, raw: "unchecked"   # skip the live-catal
 print("-- vendor_call.call PINS the named vendor (no_substitution=True) --")
 _seen.clear()
 vendor_call.call("openai", "gpt-5.5", "hi", deadline_s=10, purpose="panel", max_tokens=64)
-ck("the dispatch happened", len(_seen) == 1)
-ck("no_substitution=True — the bandit can NEVER swap a vendor_call-named vendor",
+record_script_check(fails, "the dispatch happened", len(_seen) == 1)
+record_script_check(fails, "no_substitution=True — the bandit can NEVER swap a vendor_call-named vendor",
    bool(_seen) and _seen[0].get("no_substitution") is True)
 
 print("-- fan_out PINS EVERY arm → an N-vendor panel cannot collapse to one vendor --")
 _seen.clear()
 vendor_call.fan_out([("openai", "gpt-5.5"), ("anthropic", "claude-opus-4-8"), ("gemini", "gemini-3.8-flash")],
                     "hi", deadline_s=10, purpose="panel", max_tokens=64)
-ck("all three arms dispatched", len(_seen) == 3)
-ck("EVERY arm pinned no_substitution=True (no arm is bandit-substitutable → the panel cannot collapse)",
+record_script_check(fails, "all three arms dispatched", len(_seen) == 3)
+record_script_check(fails, "EVERY arm pinned no_substitution=True (no arm is bandit-substitutable → the panel cannot collapse)",
    len(_seen) == 3 and all(s.get("no_substitution") is True for s in _seen))
-ck("each arm named a DISTINCT vendor namespace (openai/anthropic/gemini) — a real cross-vendor panel",
+record_script_check(fails, "each arm named a DISTINCT vendor namespace (openai/anthropic/gemini) — a real cross-vendor panel",
    {s["model"].split(":", 1)[0] for s in _seen} == {"openai", "anthropic", "gemini"})
 
 print(f"\n{'[FAIL]' if fails else 'OK'} test_panel_never_collapses: {len(fails)} failure(s)")

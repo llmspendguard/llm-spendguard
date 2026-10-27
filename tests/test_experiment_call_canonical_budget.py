@@ -20,6 +20,7 @@ os.environ.setdefault("OPENAI_API_KEY", "sk-test-not-used")     # the fake clien
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
 import openai                                                    # noqa: E402
+from _script_checks import record_script_check
 from spendguard import experiment, adapters, models             # noqa: E402
 
 MODEL = "gpt-5-nano"                                             # a real OpenAI reasoning-capable model (priced)
@@ -28,10 +29,6 @@ MODEL = "gpt-5-nano"                                             # a real OpenAI
 def main():
     fails = []
 
-    def ck(name, cond, extra=""):
-        print(("  [OK] " if cond else "  [FAIL] ") + name + (("  — " + str(extra)) if extra and not cond else ""))
-        if not cond:
-            fails.append(name)
 
     captured = {}
 
@@ -71,18 +68,18 @@ def main():
         # tokens param) — NOT a hand-picked 400/1500.
         wire = captured.get("max_tokens", captured.get("max_completion_tokens"))
         exp_budget = adapters.output_budget(MODEL, vendor="openai")
-        ck("wire output budget == adapters.output_budget(model) (no hand-picked cap)", wire == exp_budget,
-           (wire, exp_budget))
-        ck("the budget is NOT the old hardcodes (400 / 1500)", wire not in (400, 1500), wire)
+        record_script_check(fails, "wire output budget == adapters.output_budget(model) (no hand-picked cap)", wire == exp_budget,
+           str((wire, exp_budget)))
+        record_script_check(fails, "the budget is NOT the old hardcodes (400 / 1500)", wire not in (400, 1500), str(wire))
 
         # an explicit effort is resolved through normalize_reasoning (the reasoning home), dropped when it returns None.
         exp_eff = models.normalize_reasoning(MODEL, "minimal")
         if exp_eff is None:
-            ck("effort that normalizes to None is dropped (no raw literal sent)", "reasoning_effort" not in captured,
-               captured.get("reasoning_effort"))
+            record_script_check(fails, "effort that normalizes to None is dropped (no raw literal sent)", "reasoning_effort" not in captured,
+               str(captured.get("reasoning_effort")))
         else:
-            ck("reasoning_effort == normalize_reasoning(model, 'minimal') (canonical, not the raw literal)",
-               captured.get("reasoning_effort") == exp_eff, (captured.get("reasoning_effort"), exp_eff))
+            record_script_check(fails, "reasoning_effort == normalize_reasoning(model, 'minimal') (canonical, not the raw literal)",
+               captured.get("reasoning_effort") == exp_eff, str((captured.get("reasoning_effort"), exp_eff)))
     finally:
         openai.OpenAI = _real
 

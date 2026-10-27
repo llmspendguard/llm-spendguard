@@ -24,6 +24,7 @@ os.environ["OPENAI_API_KEY"] = "sk-test-FAKE"
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
 from _fake_anthropic import FakeAnthropic, FakeBatches, batch_obj, succeeded_text   # noqa: E402
+from _script_checks import record_script_check
 from spendguard import batch_tracker, submit, lane_queue, callio                    # noqa: E402
 
 ANTHRO = "claude-haiku-4-5"
@@ -68,10 +69,6 @@ def main():
         _orig.setdefault((mod, name), getattr(mod, name))
         setattr(mod, name, fn)
 
-    def ck(name, cond, extra=""):
-        print(("  [OK] " if cond else "  [FAIL] ") + name + (("  — " + str(extra)) if extra and not cond else ""))
-        if not cond:
-            fails.append(name)
 
     calls = _install(monkey)
     rows = [{"id": "101", "task": "classify A"}, {"id": "102", "task": "classify B"}]
@@ -90,52 +87,52 @@ def main():
         # 1) provider DERIVED from batch_model — Anthropic model → submit_message_batch (not submit_chat_tasks)
         _reset()
         r = batch_tracker.submit_offload(INTENT, rows, ANTHRO)       # no provider arg → derive 'anthropic'
-        ck("anthropic batch_model → submit_message_batch called", calls["msg"] == 1 and calls["chat"] == 0, (calls["msg"], calls["chat"]))
-        ck("fresh anthropic offload returns the batch_id", r.get("batch_id") == "msgbatch_fresh", r)
+        record_script_check(fails, "anthropic batch_model → submit_message_batch called", calls["msg"] == 1 and calls["chat"] == 0, str((calls["msg"], calls["chat"])))
+        record_script_check(fails, "fresh anthropic offload returns the batch_id", r.get("batch_id") == "msgbatch_fresh", str(r))
         rec = batch_tracker._pending_lookup(_key(ANTHRO, "anthropic"))
-        ck("fresh submit CONFIRMED the pending record with the batch_id", rec and rec.get("batch_id") == "msgbatch_fresh", rec)
+        record_script_check(fails, "fresh submit CONFIRMED the pending record with the batch_id", rec and rec.get("batch_id") == "msgbatch_fresh", str(rec))
 
         # sanity: an OpenAI batch_model still routes to submit_chat_tasks (unchanged path)
         _reset()
         r = batch_tracker.submit_offload(INTENT, rows, OPENAI)
-        ck("openai batch_model → submit_chat_tasks (unchanged path)", calls["chat"] == 1 and calls["msg"] == 0, (calls["msg"], calls["chat"]))
+        record_script_check(fails, "openai batch_model → submit_chat_tasks (unchanged path)", calls["chat"] == 1 and calls["msg"] == 0, str((calls["msg"], calls["chat"])))
 
         # 2) ADOPT a confirmed pending record whose batch is still live — no second submit
         _reset(FakeBatches(batches={"msgbatch_existing": batch_obj("msgbatch_existing", "in_progress", 2)}))
         batch_tracker._pending_note(_key(ANTHRO, "anthropic"), "anthropic", ANTHRO, INTENT, 2)
         batch_tracker._pending_confirm(_key(ANTHRO, "anthropic"), "msgbatch_existing")
         r = batch_tracker.submit_offload(INTENT, rows, ANTHRO)
-        ck("confirmed+live pending → ADOPT (adopted=True)", r.get("adopted") is True and r.get("batch_id") == "msgbatch_existing", r)
-        ck("adopt made NO second submit", calls["msg"] == 0, calls["msg"])
+        record_script_check(fails, "confirmed+live pending → ADOPT (adopted=True)", r.get("adopted") is True and r.get("batch_id") == "msgbatch_existing", str(r))
+        record_script_check(fails, "adopt made NO second submit", calls["msg"] == 0, str(calls["msg"]))
 
         # 3) RECOVER an orphan: 'submitting' record + an ENDED provider batch carrying our row id → adopt, no new submit
         _reset(FakeBatches(list_return=[batch_obj("msgbatch_orphan", "ended", 2)],
                            results={"msgbatch_orphan": [succeeded_text("101", "x")]}))   # our row id → it is ours
         batch_tracker._pending_note(_key(ANTHRO, "anthropic"), "anthropic", ANTHRO, INTENT, 2)   # submitting, no batch_id
         r = batch_tracker.submit_offload(INTENT, rows, ANTHRO)
-        ck("orphan recovery → ADOPT the found batch (adopted=True)", r.get("adopted") is True and r.get("batch_id") == "msgbatch_orphan", r)
-        ck("orphan recovery made NO new submit", calls["msg"] == 0, calls["msg"])
+        record_script_check(fails, "orphan recovery → ADOPT the found batch (adopted=True)", r.get("adopted") is True and r.get("batch_id") == "msgbatch_orphan", str(r))
+        record_script_check(fails, "orphan recovery made NO new submit", calls["msg"] == 0, str(calls["msg"]))
 
         # 4) IN-FLIGHT HOLD: 'submitting' + an IN-PROGRESS matching batch → {error: inflight-hold}, no submit
         _reset(FakeBatches(list_return=[batch_obj("msgbatch_inflight", "in_progress", 2, results_url=None)]))
         batch_tracker._pending_note(_key(ANTHRO, "anthropic"), "anthropic", ANTHRO, INTENT, 2)
         r = batch_tracker.submit_offload(INTENT, rows, ANTHRO)
-        ck("in-flight unconfirmed → HOLD ({error: inflight-hold})", (r.get("error") or "").startswith("inflight-hold"), r)
-        ck("in-flight HOLD made NO submit (never resubmit past a possible match)", calls["msg"] == 0, calls["msg"])
-        ck("in-flight HOLD returns no batch_id", r.get("batch_id") is None)
+        record_script_check(fails, "in-flight unconfirmed → HOLD ({error: inflight-hold})", (r.get("error") or "").startswith("inflight-hold"), str(r))
+        record_script_check(fails, "in-flight HOLD made NO submit (never resubmit past a possible match)", calls["msg"] == 0, str(calls["msg"]))
+        record_script_check(fails, "in-flight HOLD returns no batch_id", r.get("batch_id") is None)
 
         # 5) PROVE-NONE: 'submitting' + NO matching provider batch → the create never happened → submit FRESH
         _reset(FakeBatches(list_return=[]))
         batch_tracker._pending_note(_key(ANTHRO, "anthropic"), "anthropic", ANTHRO, INTENT, 2)
         r = batch_tracker.submit_offload(INTENT, rows, ANTHRO)
-        ck("submitting + no provider batch → submit FRESH", calls["msg"] == 1 and r.get("batch_id") == "msgbatch_fresh", (calls["msg"], r))
+        record_script_check(fails, "submitting + no provider batch → submit FRESH", calls["msg"] == 1 and r.get("batch_id") == "msgbatch_fresh", str((calls["msg"], r)))
 
         # 6) a different-sized provider batch is NOT mistaken for ours (count guard) → prove-none → fresh
         _reset(FakeBatches(list_return=[batch_obj("msgbatch_other", "ended", 5)],
                            results={"msgbatch_other": [succeeded_text("999", "x")]}))   # 5 != our 2
         batch_tracker._pending_note(_key(ANTHRO, "anthropic"), "anthropic", ANTHRO, INTENT, 2)
         r = batch_tracker.submit_offload(INTENT, rows, ANTHRO)
-        ck("different-sized batch ignored (count guard) → submit FRESH", calls["msg"] == 1 and r.get("batch_id") == "msgbatch_fresh", (calls["msg"], r))
+        record_script_check(fails, "different-sized batch ignored (count guard) → submit FRESH", calls["msg"] == 1 and r.get("batch_id") == "msgbatch_fresh", str((calls["msg"], r)))
 
         # 7) a STALE 'submitting' record + an UNRELATED in-progress matching batch → NOT blocked: our own batch would have
         #    ENDED by now, so a still-in-flight one cannot be ours → submit FRESH (the fix for the unrelated-batch block)
@@ -147,8 +144,8 @@ def main():
                                              (_t.time() - 100000, _key(ANTHRO, "anthropic")))
             batch_tracker._jobs_db().commit()
         r = batch_tracker.submit_offload(INTENT, rows, ANTHRO)
-        ck("STALE record + unrelated in-progress batch → NOT blocked, submit FRESH",
-           calls["msg"] == 1 and r.get("batch_id") == "msgbatch_fresh", (calls["msg"], r))
+        record_script_check(fails, "STALE record + unrelated in-progress batch → NOT blocked, submit FRESH",
+           calls["msg"] == 1 and r.get("batch_id") == "msgbatch_fresh", str((calls["msg"], r)))
 
         # 8) FAIL CLOSED: an unreadable pending record (DB read error) must NOT read as 'no prior submit' → a reconcile
         #    error, NEVER a blind fresh submit (which could DUPLICATE a confirmed batch)
@@ -163,8 +160,8 @@ def main():
             r = batch_tracker.submit_offload(INTENT, rows, ANTHRO)
         finally:
             batch_tracker._pending_lookup = _real_lookup
-        ck("unreadable pending record → reconcile error (fail closed)", (r.get("error") or "").startswith("reconcile"), r)
-        ck("fail-closed reconcile made NO submit (never a blind duplicate)", calls["msg"] == 0, calls["msg"])
+        record_script_check(fails, "unreadable pending record → reconcile error (fail closed)", (r.get("error") or "").startswith("reconcile"), str(r))
+        record_script_check(fails, "fail-closed reconcile made NO submit (never a blind duplicate)", calls["msg"] == 0, str(calls["msg"]))
     finally:
         for (mod, name), fn in _orig.items():
             setattr(mod, name, fn)

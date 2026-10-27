@@ -26,14 +26,11 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
 # this test self-re-execs OR the pytest runner pre-isolated it via SPENDGUARD_TEST_ISOLATED (which skips the block).
 os.environ["SPENDGUARD_CC_DIR"] = os.path.join(os.environ["SPENDGUARD_HOME"], "projects")
 
+from _script_checks import record_script_check  # noqa: E402
+
 from spendguard import claudecode, budget, config
 
 fails = []
-def ck(name, cond):
-    print(("  [OK] " if cond else "  [FAIL] ") + name)
-    if not cond:
-        fails.append(name)
-
 UTC = datetime.timezone.utc
 RESET = datetime.datetime(2026, 8, 24, 16, 0, 0, tzinfo=UTC).timestamp()   # the week's reset (provider resetsAt)
 
@@ -61,39 +58,39 @@ seed("convB", "2026-08-24T20:00:00+00:00", 20, "after")     # AFTER the reset �
 
 # 1. observable signals + window construction
 ev = claudecode._overage_events()
-ck("provider weekly reset grid captured (resetsAt from the seven_day record)", RESET in ev["weekly_resets"])
-ck("seven_day cap-hit captured as a weekly-hit boundary", len(ev["weekly_hits"]) >= 1)
+record_script_check(fails, "provider weekly reset grid captured (resetsAt from the seven_day record)", RESET in ev["weekly_resets"])
+record_script_check(fails, "seven_day cap-hit captured as a weekly-hit boundary", len(ev["weekly_hits"]) >= 1)
 wins, anchor = claudecode._overage_windows(ev)
-ck("exactly ONE overage window [B, reset) is built (five_hour does NOT make a window)", len(wins) == 1)
+record_script_check(fails, "exactly ONE overage window [B, reset) is built (five_hour does NOT make a window)", len(wins) == 1)
 
 # 2. reclassify by window: only the two in-window turns are real paid
 claudecode.reconcile_billing_state()
 ov = claudecode.overflow_by_conversation()
-ck("overage = $130 upper bound (the two in-window turns: convA $100 + convB $30)", round(sum(ov.values()), 2) == 130.0)
-ck("convA in-window turn billed $100 (its BEFORE-window $50 is not)", round(ov.get("convA", 0), 2) == 100.0)
-ck("convB in-window turn billed $30 (its AFTER-reset $20 is not)", round(ov.get("convB", 0), 2) == 30.0)
+record_script_check(fails, "overage = $130 upper bound (the two in-window turns: convA $100 + convB $30)", round(sum(ov.values()), 2) == 130.0)
+record_script_check(fails, "convA in-window turn billed $100 (its BEFORE-window $50 is not)", round(ov.get("convA", 0), 2) == 100.0)
+record_script_check(fails, "convB in-window turn billed $30 (its AFTER-reset $20 is not)", round(ov.get("convB", 0), 2) == 30.0)
 con = sqlite3.connect(config.db_path())
 n, rt, bl = con.execute("SELECT count(*), COALESCE(SUM(CAST(realtime_usd AS REAL)),0), COALESCE(SUM(billed),0) "
                         "FROM spend_events WHERE source='claude-code-overflow'").fetchone()
 con.close()
-ck("overage booked as realtime_usd, billed=1", round(rt, 2) == 130.0 and bl == n and n >= 1)
+record_script_check(fails, "overage booked as realtime_usd, billed=1", round(rt, 2) == 130.0 and bl == n and n >= 1)
 
 # 3. the split: gross est_chat unchanged; plan-covered = gross − overage (est-value is subscription-windows-only)
 led = budget._ledger()
 gross = Decimal(led.est_value_dec(since="2026-01-01"))
-ck("gross est_chat still $200 (the ingest is not mutated)", gross == Decimal("200"))
-ck("plan-covered = gross − overage = $70 (subscription windows only)", gross - Decimal("130") == Decimal("70"))
+record_script_check(fails, "gross est_chat still $200 (the ingest is not mutated)", gross == Decimal("200"))
+record_script_check(fails, "plan-covered = gross − overage = $70 (subscription windows only)", gross - Decimal("130") == Decimal("70"))
 
 # 4. idempotent
 claudecode.reconcile_billing_state()
-ck("re-reconcile is idempotent — still $130", round(sum(claudecode.overflow_by_conversation().values()), 2) == 130.0)
+record_script_check(fails, "re-reconcile is idempotent — still $130", round(sum(claudecode.overflow_by_conversation().values()), 2) == 130.0)
 
 # 5. no observable grid + cap-hit → nothing is overage (drop the quota signals)
 with open(os.path.join(CC, "sess.jsonl"), "w") as f:
     f.write(json.dumps({"timestamp": "2026-08-23T01:00:00Z", "type": "user",
                         "message": {"role": "user", "content": "hi"}}) + "\n")
 claudecode.reconcile_billing_state()
-ck("no weekly reset grid + cap-hit observed → $0 overage (all plan-covered)",
+record_script_check(fails, "no weekly reset grid + cap-hit observed → $0 overage (all plan-covered)",
    round(sum(claudecode.overflow_by_conversation().values()), 2) == 0.0)
 
 print(("[OK]" if not fails else "[FAIL]") + " claude-code-billing-state-windows: %d failure(s)" % len(fails))

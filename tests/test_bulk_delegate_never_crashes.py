@@ -31,16 +31,12 @@ os.environ.setdefault("SPENDGUARD_TEST_ISOLATED", "1")
 os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
+from _script_checks import record_script_check  # noqa: E402
+
 from spendguard import lane_balance, adapters, calls, dispatch   # noqa: E402
 from spendguard.gate import SpendGateRefused                     # noqa: E402
 
 fails = []
-
-
-def ck(name, cond):
-    print(("  [OK] " if cond else "  [FAIL] ") + name)
-    if not cond:
-        fails.append(name)
 
 
 INTENT = "test-crashproof"
@@ -72,11 +68,11 @@ try:
     dispatch.acquire_or_none = lambda *a, **k: None
     adapters.call = _served_call
     res = _run()
-    ck("bulk_delegate RETURNED a row per task on full saturation (did not raise)",
+    record_script_check(fails, "bulk_delegate RETURNED a row per task on full saturation (did not raise)",
        isinstance(res, list) and len(res) == len(TASKS))
-    ck("every row is a MISS (text=None) — a saturated vendor never fakes a served answer",
+    record_script_check(fails, "every row is a MISS (text=None) — a saturated vendor never fakes a served answer",
        bool(res) and all((r or {}).get("text") is None for r in res))
-    ck("every miss is reason=dispatch_saturated (a queue timeout, distinct from a model/shape miss)",
+    record_script_check(fails, "every miss is reason=dispatch_saturated (a queue timeout, distinct from a model/shape miss)",
        bool(res) and all((r or {}).get("reason") == "dispatch_saturated" for r in res))
 
     # ── (b) an UNEXPECTED per-task exception (raised OUTSIDE a runner try) → contained by the belt, still returns ──
@@ -89,9 +85,9 @@ try:
     adapters.provider_for = _boom                      # provider_for runs BEFORE the runner's try → escapes → belt
     adapters.call = _served_call
     res = _run()
-    ck("bulk_delegate RETURNED a row per task despite an unexpected per-task raise (belt-and-suspenders)",
+    record_script_check(fails, "bulk_delegate RETURNED a row per task despite an unexpected per-task raise (belt-and-suspenders)",
        isinstance(res, list) and len(res) == len(TASKS))
-    ck("the unexpected raise became a task_crashed MISS row, not a crash",
+    record_script_check(fails, "the unexpected raise became a task_crashed MISS row, not a crash",
        bool(res) and all((r or {}).get("reason") == "task_crashed" and (r or {}).get("text") is None for r in res))
     adapters.provider_for = _provider_for              # restore for (c)
 
@@ -108,7 +104,7 @@ try:
         _run()
     except SpendGateRefused:
         propagated = True                              # the ONLY catch: the exact type this claim asserts propagates
-    ck("a SpendGateRefused from the call PROPAGATES out of bulk_delegate (never buried as a miss)", propagated)
+    record_script_check(fails, "a SpendGateRefused from the call PROPAGATES out of bulk_delegate (never buried as a miss)", propagated)
 finally:
     adapters.call, adapters.provider_for, calls.set_context, dispatch.acquire_or_none = _saved
 

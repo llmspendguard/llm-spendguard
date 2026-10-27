@@ -21,14 +21,10 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
     os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="spendguard-e2e-")
     os.execv(sys.executable, [sys.executable] + sys.argv)
 
+from _script_checks import record_script_check
 from spendguard import reconcile, budget, ledger_sync, resources
 
 fails = []
-def ck(name, cond):
-    print(("  [OK] " if cond else "  [FAIL] ") + name)
-    if not cond:
-        fails.append(name)
-
 # ── 1) build a KNOWN dated ledger (two months, three projects) directly in the gate store ──────────────────
 #    gate (captured) batch rows: model != reconciled-marker so gate_by_project_day counts them.
 GATE = [  # (day, provider, model, project, cost)
@@ -62,13 +58,13 @@ EXPECT = {                                                  # Σ of GATE rows wi
     "2026-07-01":   0.0,    # future → empty
 }
 for since, exp in EXPECT.items():
-    ck(f"trim exactness: captured(since={since}) == ${exp:.0f}", captured_total(since) == exp)
+    record_script_check(fails, f"trim exactness: captured(since={since}) == ${exp:.0f}", captured_total(since) == exp)
     # pivot closes: the (project,day) pivot sums to the same flat total — nothing lost or double-counted
     pivot = round(sum(budget.gate_by_project_day(kind="batch", since=since).values()), 2)
-    ck(f"pivot closes at {since}: Σ(project,day) == flat total", pivot == exp)
+    record_script_check(fails, f"pivot closes at {since}: Σ(project,day) == flat total", pivot == exp)
 
 mono = [captured_total(s) for s in ("2026-05-01", "2026-05-15", "2026-06-01", "2026-07-01")]
-ck("trim monotonic: earlier cutoff ⇒ total never decreases", all(a >= b for a, b in zip(mono, mono[1:])))
+record_script_check(fails, "trim monotonic: earlier cutoff ⇒ total never decreases", all(a >= b for a, b in zip(mono, mono[1:])))
 
 # ── 3) the unified reconcile loop adds up PER SOURCE at every cutoff (constant residual under trim) ─────────
 #   stub ONLY the external billing fetch: provider truth = real captured(since) + real attributed(since) + a fixed
@@ -84,24 +80,24 @@ ledger_sync._provider_total = fake_provider_total
 for since in ("2026-05-01", "2026-05-15", "2026-06-01"):
     r = reconcile.run(ledger_sync.LLMSource(conn={"owns_account": True}, since=since), ptmap, since=since)
     inv = round(r["truth_total"] - r["captured"] - r["attributed"], 2)
-    ck(f"LLM loop @ {since}: truth − captured − attributed == residual", inv == r["residual"])
-    ck(f"LLM loop @ {since}: residual is the fixed $15 remainder (exact under trim)", r["residual"] == RESID)
-    ck(f"LLM loop @ {since}: by_org closes (Σ == captured + attributed)",
+    record_script_check(fails, f"LLM loop @ {since}: truth − captured − attributed == residual", inv == r["residual"])
+    record_script_check(fails, f"LLM loop @ {since}: residual is the fixed $15 remainder (exact under trim)", r["residual"] == RESID)
+    record_script_check(fails, f"LLM loop @ {since}: by_org closes (Σ == captured + attributed)",
        round(sum(r["by_org"].values()), 2) == round(r["captured"] + r["attributed"], 2))
 
 # future cutoff → genuinely zero everywhere, no crash, no false warning
 rf = reconcile.run(ledger_sync.LLMSource(conn={"owns_account": True}, since="2026-07-01"), ptmap, since="2026-07-01")
-ck("LLM loop @ future: truth 0 / captured 0 / residual 0 / no warning",
+record_script_check(fails, "LLM loop @ future: truth 0 / captured 0 / residual 0 / no warning",
    rf["truth_total"] == 0.0 and rf["captured"] == 0.0 and rf["residual"] == 0.0 and rf["warning"] is None)
 
 # ── 4) GPU source (account-anchored, owner only) reconciles in the SAME shape ──────────────────────────────
 resources.account_gpu_total = lambda since_ts=None: 600.0   # real sig is account_gpu_total(since_ts=…); truth_total now forwards it
 resources.vast_gpu_accounting_rows_by_day = lambda *a, **k: [{"cost": 250.0, "project": "lmm"}, {"cost": 300.0, "project": "manga2anime"}]
 rg = reconcile.run(resources.GPUSource(conn={"owns_account": True}), ptmap)
-ck("GPU loop: truth 600 − captured 550 == residual 50", rg["residual"] == 50.0 and rg["captured"] == 550.0)
-ck("GPU loop: by_org closes (Healiom 250 + Ensight 300 == captured)",
+record_script_check(fails, "GPU loop: truth 600 − captured 550 == residual 50", rg["residual"] == 50.0 and rg["captured"] == 550.0)
+record_script_check(fails, "GPU loop: by_org closes (Healiom 250 + Ensight 300 == captured)",
    round(sum(rg["by_org"].values()), 2) == rg["captured"])
-ck("GPU non-owner claims nothing on the shared account (truth 0)",
+record_script_check(fails, "GPU non-owner claims nothing on the shared account (truth 0)",
    reconcile.run(resources.GPUSource(conn={"enabled": True, "owns_account": False}), ptmap)["truth_total"] == 0.0)
 
 # ── 5) PORTFOLIO: the grand total across BOTH sources reconciles ───────────────────────────────────────────
@@ -112,15 +108,15 @@ T = round(sum(s["truth_total"] for s in srcs), 2)
 C = round(sum(s["captured"] for s in srcs), 2)
 A = round(sum(s["attributed"] for s in srcs), 2)
 R = round(sum(s["residual"] for s in srcs), 2)
-ck(f"PORTFOLIO adds up: Σtruth({T}) − Σcaptured({C}) − Σattributed({A}) == Σresidual({R})", round(T - C - A, 2) == R)
-ck("PORTFOLIO residual == LLM $15 + GPU $50 == $65", R == 65.0)
+record_script_check(fails, f"PORTFOLIO adds up: Σtruth({T}) − Σcaptured({C}) − Σattributed({A}) == Σresidual({R})", round(T - C - A, 2) == R)
+record_script_check(fails, "PORTFOLIO residual == LLM $15 + GPU $50 == $65", R == 65.0)
 
 # ── 6) UNKNOWN truth (external bill unreadable) must NOT masquerade as reconciled in the grand total ────────
 ledger_sync._provider_total = lambda since: None             # provider fetch fails
 ru = reconcile.run(ledger_sync.LLMSource(conn={"owns_account": True}, since=since), ptmap, since=since)
-ck("UNKNOWN: residual None + loud UNKNOWN warning (never silent $0 / 100%-covered)",
+record_script_check(fails, "UNKNOWN: residual None + loud UNKNOWN warning (never silent $0 / 100%-covered)",
    ru["residual"] is None and "UNKNOWN" in (ru["warning"] or "") and ru["captured"] == 90.0)
-ck("UNKNOWN: a None-truth source can't be summed into a reconciled portfolio total (caller must surface it)",
+record_script_check(fails, "UNKNOWN: a None-truth source can't be summed into a reconciled portfolio total (caller must surface it)",
    any(s["residual"] is None for s in [ru]) is True)
 
 print(("\n[FAIL] " if fails else "\n[OK] ") + f"reconcile_e2e: {len(fails)} failure(s)")

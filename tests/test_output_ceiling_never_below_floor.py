@@ -17,16 +17,13 @@ os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="sg-floorgate-")
 os.environ.setdefault("SPENDGUARD_TEST_ISOLATED", "1")
 os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
 
+from _script_checks import record_script_check
 from spendguard import pricing, catalog, adapters  # noqa: E402
 
 FLOOR = pricing.OUTPUT_FLOOR
 BACKSTOP = adapters.MAX_TOKEN_CEILING
 
 fails = []
-def ck(name, cond):
-    print(("  [OK] " if cond else "  [FAIL] ") + name)
-    if not cond:
-        fails.append(name)
 
 # The catalog tier hits the network for a live /models ceiling; stub it OFF so the gate is a pure, offline test of the
 # resolver's floor logic (published cache + learned fact + backstop). A live ceiling only ever RAISES authority, never
@@ -38,27 +35,27 @@ _orig_pub, _orig_fact = pricing.max_output_tokens, pricing.max_output
 try:
     pricing.max_output_tokens = lambda m: None          # no published ceiling
     pricing.max_output = lambda m: 2000                 # a poisoned auto-heal fact, well below the floor
-    ck("DEFAULT learned_floor → poison 2000 raised to the floor (never truncates below it)",
+    record_script_check(fails, "DEFAULT learned_floor → poison 2000 raised to the floor (never truncates below it)",
        pricing.output_ceiling("moonshot", "poison-model", BACKSTOP) == FLOOR)
-    ck("explicit learned_floor=0 still exposes the raw fact (the escape hatch is intact)",
+    record_script_check(fails, "explicit learned_floor=0 still exposes the raw fact (the escape hatch is intact)",
        pricing.output_ceiling("moonshot", "poison-model", BACKSTOP, learned_floor=0) == 2000)
     pricing.max_output = lambda m: None                 # nothing known at all
-    ck("nothing-known → the backstop, itself never below the floor",
+    record_script_check(fails, "nothing-known → the backstop, itself never below the floor",
        pricing.output_ceiling("x", "unknown-model", BACKSTOP) >= FLOOR)
     pricing.max_output_tokens = lambda m: 8192          # a GENUINELY-published low ceiling
-    ck("an AUTHORITATIVE published max below the floor is honoured as-is (the model truly can't do more)",
+    record_script_check(fails, "an AUTHORITATIVE published max below the floor is honoured as-is (the model truly can't do more)",
        pricing.output_ceiling("x", "small-model", BACKSTOP) == 8192)
 finally:
     pricing.max_output_tokens, pricing.max_output = _orig_pub, _orig_fact
 
 print("-- (2) the two models that actually truncated in production now clear the floor --")
 for prov, m in [("moonshot", "kimi-k3"), ("zai", "glm-5.3")]:
-    ck(f"{prov}:{m} ceiling ≥ floor (poison fact can no longer truncate it)",
+    record_script_check(fails, f"{prov}:{m} ceiling ≥ floor (poison fact can no longer truncate it)",
        pricing.output_ceiling(prov, m, BACKSTOP) >= FLOOR)
 
 print("-- (3) THE SWEEP: EVERY priced model clears the floor, unless it AUTHORITATIVELY publishes a lower max --")
 models = sorted(pricing.PRICING.keys())
-ck("there are priced models to sweep (the gate is not vacuous)", len(models) > 0)
+record_script_check(fails, "there are priced models to sweep (the gate is not vacuous)", len(models) > 0)
 below = []
 for m in models:
     oc = pricing.output_ceiling(None, m, BACKSTOP)
@@ -66,7 +63,7 @@ for m in models:
     # A ceiling below the floor is ONLY acceptable when the model authoritatively PUBLISHES a max that low.
     if oc < FLOOR and not (pub is not None and int(pub) == oc and int(pub) < FLOOR):
         below.append((m, oc, pub))
-ck("NO priced model resolves below the floor via a non-authoritative path",
+record_script_check(fails, "NO priced model resolves below the floor via a non-authoritative path",
    not below)
 if below:
     for m, oc, pub in below[:20]:

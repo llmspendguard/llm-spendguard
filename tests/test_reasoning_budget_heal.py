@@ -24,15 +24,11 @@ os.environ.setdefault("SPENDGUARD_TEST_ISOLATED", "1")
 os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
+from _script_checks import record_script_check
 from spendguard import adapters, vendor_call, models, bulkgate      # noqa: E402
 
 fails = []
 
-
-def ck(name, cond):
-    print(("  [OK] " if cond else "  [FAIL] ") + name)
-    if not cond:
-        fails.append(name)
 
 
 NEED = 20000          # the model needs this many completion tokens (reasoning + answer) before a visible word appears
@@ -70,16 +66,16 @@ def _run(**kw):
 _REASONS["on"] = True
 _CEIL["v"] = 128000
 r = _run(max_tokens=1200, sig="describe-ceiling")
-ck("the small caller cap (1200) is IGNORED — the model's ceiling is sent", _budgets and _budgets[0] == 128000)
-ck("...so the reasoning model answers on the FIRST call (no empty, no retry)",
+record_script_check(fails, "the small caller cap (1200) is IGNORED — the model's ceiling is sent", _budgets and _budgets[0] == 128000)
+record_script_check(fails, "...so the reasoning model answers on the FIRST call (no empty, no retry)",
    r.get("text") == "REAL-ANSWER" and len(_budgets) == 1)
 
 # ── JUMBO SURFACED: the model's REAL ceiling is genuinely below the reasoning need → empty at the ceiling → text=None ──
 _REASONS["on"] = True
 _CEIL["v"] = 8000            # < NEED(20000): even at the max, reasoning+answer does not fit — the jumbo case
 r = _run(max_tokens=1200, sig="describe-jumbo")
-ck("at the ceiling (8000 < need) the empty reply is SURFACED as text=None, not a silent ''", r.get("text") is None)
-ck("...in ONE attempt — there is nothing larger to grow into (the ceiling IS the max)",
+record_script_check(fails, "at the ceiling (8000 < need) the empty reply is SURFACED as text=None, not a silent ''", r.get("text") is None)
+record_script_check(fails, "...in ONE attempt — there is nothing larger to grow into (the ceiling IS the max)",
    len(_budgets) == 1 and _budgets[0] == 8000)
 
 # ── LEARNING: a successful call's out_tok becomes the recommend (the ESTIMATE input — a different concern from the budget) ──
@@ -87,14 +83,14 @@ _CEIL["v"] = 128000
 _run(sig="describe-learn")                                  # succeeds first call, out_tok=NEED
 _sig_key = bulkgate.sig("openai:gpt-5-nano", template_id="describe-learn")
 _rec = int((bulkgate.maxtokens(_sig_key) or {}).get("recommend") or 0)
-ck("the learned recommend reflects the real out_tok (for the estimate, not the budget)", _rec >= NEED)
+record_script_check(fails, "the learned recommend reflects the real out_tok (for the estimate, not the budget)", _rec >= NEED)
 
 # ── PROBES: _probe=True keeps the caller's deliberate tiny cap (one bounded shot), never the ceiling ──
 _REASONS["on"] = True
 _CEIL["v"] = 128000
 r = _run(max_tokens=1200, sig="describe-probe", _probe=True)
-ck("a probe keeps the caller's tiny cap (1200), not the ceiling", _budgets[0] == 1200)
-ck("...one shot, and an empty is surfaced as text=None (never balloons)", r.get("text") is None and len(_budgets) == 1)
+record_script_check(fails, "a probe keeps the caller's tiny cap (1200), not the ceiling", _budgets[0] == 1200)
+record_script_check(fails, "...one shot, and an empty is surfaced as text=None (never balloons)", r.get("text") is None and len(_budgets) == 1)
 
 print(("[OK]" if not fails else "[FAIL]") + " reasoning budget heal: %d failure(s)" % len(fails))
 sys.exit(1 if fails else 0)

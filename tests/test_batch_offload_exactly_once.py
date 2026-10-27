@@ -25,6 +25,8 @@ os.environ.setdefault("OPENAI_API_KEY", "sk-test-not-used")     # the fake clien
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
 import openai                                                    # noqa: E402
+from _script_checks import record_script_check  # noqa: E402
+
 from spendguard import batch_tracker, lane_queue, callio         # noqa: E402
 from spendguard import models as _models                         # noqa: E402
 
@@ -126,11 +128,6 @@ def _inject_noise(reg, n):
 def main():
     fails = []
 
-    def ck(name, cond, extra=""):
-        print(("  [OK] " if cond else "  [FAIL] ") + name + (("  — " + str(extra)) if extra and not cond else ""))
-        if not cond:
-            fails.append(name)
-
     reg = _Registry()                                           # owned here; passed into every fake client below
     _real_openai, _real_effort = openai.OpenAI, _models.resolve_effort
     openai.OpenAI = lambda *a, **k: _FakeOpenAI(reg)            # guarded_submit's client AND callio._oai_client share reg
@@ -140,14 +137,14 @@ def main():
         print("-- CASE A: re-run on the same rows adopts, never double-submits --")
         rows = _seed_leased(3)
         r1 = batch_tracker.submit_offload(INTENT, rows, MODEL, cap_dollars=5.0)
-        ck("first offload created a batch", bool(r1.get("batch_id")) and not r1.get("error"), r1)
-        ck("exactly one paid batch created", reg.created == 1, reg.created)
+        record_script_check(fails, "first offload created a batch", bool(r1.get("batch_id")) and not r1.get("error"), str(r1))
+        record_script_check(fails, "exactly one paid batch created", reg.created == 1, str(reg.created))
         key = batch_tracker._offload_key([r["id"] for r in rows], INTENT, MODEL, "openai")
-        ck("the batch is stamped with the deterministic offload key",
-           reg.all[0].metadata.get(batch_tracker._OFFLOAD_KEY_FIELD) == key, reg.all[0].metadata)
+        record_script_check(fails, "the batch is stamped with the deterministic offload key",
+           reg.all[0].metadata.get(batch_tracker._OFFLOAD_KEY_FIELD) == key, str(reg.all[0].metadata))
         r2 = batch_tracker.submit_offload(INTENT, rows, MODEL, cap_dollars=5.0)
-        ck("the re-run ADOPTED the existing batch (same id)", r2.get("adopted") and r2.get("batch_id") == r1["batch_id"], r2)
-        ck("STILL exactly one paid batch after the re-run (no duplicate)", reg.created == 1, reg.created)
+        record_script_check(fails, "the re-run ADOPTED the existing batch (same id)", r2.get("adopted") and r2.get("batch_id") == r1["batch_id"], str(r2))
+        record_script_check(fails, "STILL exactly one paid batch after the re-run (no duplicate)", reg.created == 1, str(reg.created))
 
         # ── CASE B — crash BETWEEN submit and mark: the recovery re-run adopts the orphan, never a second batch ──
         print("\n-- CASE B: crash between submit and mark → recovery adopts, no second paid batch --")
@@ -162,12 +159,12 @@ def main():
             crashed = True
         finally:
             lane_queue.mark_batched = _real_mark
-        ck("the crash fired AFTER the paid submit (one batch exists, rows unmarked)", crashed and reg.created == 1,
-           (crashed, reg.created))
+        record_script_check(fails, "the crash fired AFTER the paid submit (one batch exists, rows unmarked)", crashed and reg.created == 1,
+           str((crashed, reg.created)))
         rec = batch_tracker.submit_offload(INTENT, rows, MODEL, cap_dollars=5.0)   # lease-reclaim recovery re-run
-        ck("recovery ADOPTED the crash-orphaned batch", rec.get("adopted") and rec.get("batch_id") == reg.all[0].id, rec)
-        ck("NO second paid batch was created by the recovery", reg.created == 1, reg.created)
-        ck("the rows are now marked to the adopted batch", rec.get("marked") == 3, rec)
+        record_script_check(fails, "recovery ADOPTED the crash-orphaned batch", rec.get("adopted") and rec.get("batch_id") == reg.all[0].id, str(rec))
+        record_script_check(fails, "NO second paid batch was created by the recovery", reg.created == 1, str(reg.created))
+        record_script_check(fails, "the rows are now marked to the adopted batch", rec.get("marked") == 3, str(rec))
 
         # ── CASE C — a TERMINAL (failed) keyed batch is NOT re-adopted; a legitimate re-offer submits fresh ──
         print("\n-- CASE C: a dead (failed) keyed batch is skipped → re-offer submits fresh --")
@@ -176,9 +173,9 @@ def main():
         r1 = batch_tracker.submit_offload(INTENT, rows, MODEL, cap_dollars=5.0)
         reg.all[0].status = "failed"                            # the batch went terminal-bad (its rows would fall back)
         r2 = batch_tracker.submit_offload(INTENT, rows, MODEL, cap_dollars=5.0)
-        ck("a failed keyed batch is NOT adopted", not r2.get("adopted"), r2)
-        ck("the re-offer created a SECOND, distinct batch", reg.created == 2 and r2.get("batch_id") != r1["batch_id"],
-           (reg.created, r1.get("batch_id"), r2.get("batch_id")))
+        record_script_check(fails, "a failed keyed batch is NOT adopted", not r2.get("adopted"), str(r2))
+        record_script_check(fails, "the re-offer created a SECOND, distinct batch", reg.created == 2 and r2.get("batch_id") != r1["batch_id"],
+           str((reg.created, r1.get("batch_id"), r2.get("batch_id"))))
 
         # ── CASE D — different row-sets get different keys → distinct batches (no FALSE adoption) ──
         print("\n-- CASE D: different rows → different key → distinct batches --")
@@ -187,9 +184,9 @@ def main():
         rows_b = _seed_leased(2)                                 # different row ids
         ra = batch_tracker.submit_offload(INTENT, rows_a, MODEL, cap_dollars=5.0)
         rb = batch_tracker.submit_offload(INTENT, rows_b, MODEL, cap_dollars=5.0)
-        ck("a different row-set is NOT adopted onto the first batch",
-           not rb.get("adopted") and rb.get("batch_id") != ra.get("batch_id"), (ra, rb))
-        ck("two distinct paid batches for two distinct row-sets", reg.created == 2, reg.created)
+        record_script_check(fails, "a different row-set is NOT adopted onto the first batch",
+           not rb.get("adopted") and rb.get("batch_id") != ra.get("batch_id"), str((ra, rb)))
+        record_script_check(fails, "two distinct paid batches for two distinct row-sets", reg.created == 2, str(reg.created))
 
         # ── CASE E — the hook's scenario: the orphan is found even behind MANY newer batches (no COUNT-cap miss) ──
         print("\n-- CASE E: orphan found behind 250 newer batches (recent-first scan to list-end, never count-capped) --")
@@ -197,11 +194,11 @@ def main():
         rows = _seed_leased(2)
         r1 = batch_tracker.submit_offload(INTENT, rows, MODEL, cap_dollars=5.0)   # the orphan (created first = oldest)
         _inject_noise(reg, 250)                                  # 250 newer unrelated batches — well past the old 200-cap
-        ck("the orphan now sits behind 250 newer batches", len(reg.all) == 251, len(reg.all))
+        record_script_check(fails, "the orphan now sits behind 250 newer batches", len(reg.all) == 251, str(len(reg.all)))
         r2 = batch_tracker.submit_offload(INTENT, rows, MODEL, cap_dollars=5.0)
-        ck("the orphan is STILL found and adopted (a count cap here would have missed it → duplicate)",
-           r2.get("adopted") and r2.get("batch_id") == r1["batch_id"], r2)
-        ck("no duplicate paid batch was created", reg.created == 1, reg.created)
+        record_script_check(fails, "the orphan is STILL found and adopted (a count cap here would have missed it → duplicate)",
+           r2.get("adopted") and r2.get("batch_id") == r1["batch_id"], str(r2))
+        record_script_check(fails, "no duplicate paid batch was created", reg.created == 1, str(reg.created))
 
         # ── CASE F — an un-completable scan RAISES, never a silent None that would authorize a fresh submit ──
         print("\n-- CASE F: a scan that can't reach the recency boundary RAISES (never a truncated 'none') --")
@@ -217,7 +214,7 @@ def main():
             raised = True
         finally:
             callio._RECONCILE_SCAN_CEILING = _real_ceiling
-        ck("a scan past the ceiling RAISES (a truncated scan is never concluded as 'none' → no duplicate)", raised)
+        record_script_check(fails, "a scan past the ceiling RAISES (a truncated scan is never concluded as 'none' → no duplicate)", raised)
 
         # ── CASE G — a MATCHED live batch with no id RAISES (an id-less match is never read as 'none') ──
         print("\n-- CASE G: a matched live batch with no id RAISES (never a silent None that authorizes a fresh submit) --")
@@ -228,7 +225,7 @@ def main():
             callio.find_live_batch_by_metadata(batch_tracker._OFFLOAD_KEY_FIELD, "seek-key")
         except RuntimeError:
             raised_noid = True
-        ck("an id-less matched live batch RAISES (never concluded as 'none' → no duplicate)", raised_noid)
+        record_script_check(fails, "an id-less matched live batch RAISES (never concluded as 'none' → no duplicate)", raised_noid)
     finally:
         openai.OpenAI, _models.resolve_effort = _real_openai, _real_effort
 

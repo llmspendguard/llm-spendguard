@@ -13,16 +13,12 @@ os.environ["OPENAI_API_KEY"] = "sk-test-fake-not-real"
 os.environ["ANTHROPIC_API_KEY"] = "sk-ant-test-fake-not-real"
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
+from _script_checks import record_script_check  # noqa: E402
+
 from spendguard import callio, calls, config, gate, pricing  # noqa: E402
 config.budget_backend = lambda: "sqlite"
 
 failures = []
-
-
-def check_batch_booking(name, condition):
-    print(("  [OK] " if condition else "  [FAIL] ") + name)
-    if not condition:
-        failures.append(name)
 
 
 intent = "test:batch-settle"
@@ -41,8 +37,8 @@ has_spend = con.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name
 spend_count = con.execute("SELECT COUNT(*) FROM spend_events").fetchone()[0] if has_spend else 0
 has_calls = con.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='calls'").fetchone()
 call_count = con.execute("SELECT COUNT(*) FROM calls").fetchone()[0] if has_calls else 0
-check_batch_booking("a REFUSED submit books zero spend rows", spend_count == 0)
-check_batch_booking("a REFUSED submit books zero calls rows", call_count == 0)
+record_script_check(failures, "a REFUSED submit books zero spend rows", spend_count == 0)
+record_script_check(failures, "a REFUSED submit books zero calls rows", call_count == 0)
 
 print("\n-- accepted estimate is revised in place when measured usage is collected --")
 gate.record_accepted_batch_estimate(estimate)
@@ -74,10 +70,10 @@ finally:
 actual_cost = pricing.batch_cost(model, 110, 25, 10, provider="anthropic")
 money = con.execute("SELECT batch_usd,in_tok,out_tok,cost_basis FROM spend_events ORDER BY rowid DESC LIMIT 1").fetchone()
 corpus = con.execute("SELECT cost,in_tok,out_tok FROM calls WHERE kind='batch' ORDER BY rowid DESC LIMIT 1").fetchone()
-check_batch_booking("collect reports the measured usage", result["usage"]["in_tok"] == 110 and result["usage"]["out_tok"] == 25)
-check_batch_booking("collect reconciles the money row estimate to measured actual tokens and billed dollars",
+record_script_check(failures, "collect reports the measured usage", result["usage"]["in_tok"] == 110 and result["usage"]["out_tok"] == 25)
+record_script_check(failures, "collect reconciles the money row estimate to measured actual tokens and billed dollars",
                     money and abs(float(money[0]) - actual_cost) < 1e-12 and money[1:] == (110, 25, "billed"))
-check_batch_booking("collect reconciles the calls row in place to measured actuals",
+record_script_check(failures, "collect reconciles the calls row in place to measured actuals",
                     corpus and abs(corpus[0] - actual_cost) < 1e-12 and corpus[1:] == (110, 25))
 con.close()
 

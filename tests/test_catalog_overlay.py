@@ -20,6 +20,8 @@ os.environ["SPENDGUARD_TEST_ISOLATED"] = "1"
 os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
+from _script_checks import record_script_check  # noqa: E402
+
 from spendguard import model_catalog   # noqa: E402
 
 
@@ -36,48 +38,43 @@ def _emb(model_id, provider, cap):
 def main():
     fails = []
 
-    def ck(name, cond, extra=""):
-        print(("  [OK] " if cond else "  [FAIL] ") + name + (("  — " + str(extra)) if extra and not cond else ""))
-        if not cond:
-            fails.append(name)
-
     ovp = model_catalog._overlay_path() or ""
-    ck("overlay path is catalog_synced.json under SPENDGUARD_HOME (not the package model_catalog.json)",
-       ovp.endswith("catalog_synced.json") and os.environ["SPENDGUARD_HOME"] in ovp, ovp)
+    record_script_check(fails, "overlay path is catalog_synced.json under SPENDGUARD_HOME (not the package model_catalog.json)",
+       ovp.endswith("catalog_synced.json") and os.environ["SPENDGUARD_HOME"] in ovp, str(ovp))
 
     # floor-only baseline (no overlay yet)
-    ck("floor-only: gemini-embedding-001 ceiling is the shipped 100",
+    record_script_check(fails, "floor-only: gemini-embedding-001 ceiling is the shipped 100",
        model_catalog.embed_batch_ceiling("gemini-embedding-001") == 100,
-       model_catalog.embed_batch_ceiling("gemini-embedding-001"))
+       str(model_catalog.embed_batch_ceiling("gemini-embedding-001")))
     floor_n = len(model_catalog._load_records())
-    ck("floor-only: the catalog is non-empty", floor_n > 0, floor_n)
+    record_script_check(fails, "floor-only: the catalog is non-empty", floor_n > 0, str(floor_n))
 
     # overlay OVERRIDES a field + ADDS a new model
     _write_overlay({**_emb("gemini-embedding-001", "gemini", 250), **_emb("brand-new-embed-9", "acme", 77)})
-    ck("overlay OVERRIDES the floor by id: gemini ceiling now 250 (was 100)",
+    record_script_check(fails, "overlay OVERRIDES the floor by id: gemini ceiling now 250 (was 100)",
        model_catalog.embed_batch_ceiling("gemini-embedding-001") == 250,
-       model_catalog.embed_batch_ceiling("gemini-embedding-001"))
-    ck("overlay ADDS a new model: brand-new-embed-9 → 77", model_catalog.embed_batch_ceiling("brand-new-embed-9") == 77)
-    ck("a non-overlaid floor model still resolves (text-embedding-3-small → 2048)",
+       str(model_catalog.embed_batch_ceiling("gemini-embedding-001")))
+    record_script_check(fails, "overlay ADDS a new model: brand-new-embed-9 → 77", model_catalog.embed_batch_ceiling("brand-new-embed-9") == 77)
+    record_script_check(fails, "a non-overlaid floor model still resolves (text-embedding-3-small → 2048)",
        model_catalog.embed_batch_ceiling("text-embedding-3-small") == 2048)
 
     # CONTENT-keyed cache: rewriting the overlay is reflected (no mtime reliance)
     _write_overlay(_emb("gemini-embedding-001", "gemini", 300))
-    ck("rewriting the overlay is reflected (content-keyed cache): gemini now 300",
+    record_script_check(fails, "rewriting the overlay is reflected (content-keyed cache): gemini now 300",
        model_catalog.embed_batch_ceiling("gemini-embedding-001") == 300,
-       model_catalog.embed_batch_ceiling("gemini-embedding-001"))
+       str(model_catalog.embed_batch_ceiling("gemini-embedding-001")))
 
     # CORRUPT overlay → floor only (never wipes the floor)
     with open(model_catalog._overlay_path(), "w") as f:
         f.write("{ this is not json")
-    ck("corrupt overlay degrades to floor-only: gemini back to shipped 100",
+    record_script_check(fails, "corrupt overlay degrades to floor-only: gemini back to shipped 100",
        model_catalog.embed_batch_ceiling("gemini-embedding-001") == 100)
-    ck("corrupt overlay does NOT wipe the floor (catalog still non-empty)",
+    record_script_check(fails, "corrupt overlay does NOT wipe the floor (catalog still non-empty)",
        len(model_catalog._load_records()) >= floor_n)
 
     # ABSENT overlay → floor only
     os.remove(model_catalog._overlay_path())
-    ck("absent overlay: floor-only restored (gemini 100 + count back to floor)",
+    record_script_check(fails, "absent overlay: floor-only restored (gemini 100 + count back to floor)",
        model_catalog.embed_batch_ceiling("gemini-embedding-001") == 100 and len(model_catalog._load_records()) == floor_n)
 
     print(f"\n{'[FAIL]' if fails else 'OK'} test_catalog_overlay: {len(fails)} failure(s)")

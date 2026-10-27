@@ -34,16 +34,13 @@ os.environ.pop("OPENAI_API_KEY", None)
 os.environ.pop("SPENDGUARD_KEY_PROFILE", None)
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
+from _script_checks import record_script_check
 from spendguard import config          # noqa: E402
 from spendguard import keys_audit      # noqa: E402
 
 fails = []
 
 
-def ck(name, cond):
-    print(("  [OK] " if cond else "  [FAIL] ") + name)
-    if not cond:
-        fails.append(name)
 
 
 # Full secrets (never printed) — the SSOT value vs a stale shadow; last-4 are the only thing any output may show.
@@ -75,22 +72,22 @@ print("-- DIFFER: a repo .env holds a DIFFERENT value than keys.env (the warden 
 r = _repo("differ", "OPENAI_API_KEY=%s\n" % _STALE_OPENAI)
 rep = config.dotenv_key_shadow_report([r])
 d = _by_name(rep).get("OPENAI_API_KEY", {})
-ck("one finding for OPENAI_API_KEY", len(rep) == 1 and "OPENAI_API_KEY" in _by_name(rep))
-ck("state is 'differ'", d.get("state") == "differ")
-ck("file4 = the stale key's last-4, declared4 = the SSOT's last-4", d.get("file4") == "AyIA" and d.get("declared4") == "qjMA")
+record_script_check(fails, "one finding for OPENAI_API_KEY", len(rep) == 1 and "OPENAI_API_KEY" in _by_name(rep))
+record_script_check(fails, "state is 'differ'", d.get("state") == "differ")
+record_script_check(fails, "file4 = the stale key's last-4, declared4 = the SSOT's last-4", d.get("file4") == "AyIA" and d.get("declared4") == "qjMA")
 
 print("-- DUP: a repo .env duplicates the SSOT value exactly --")
 r = _repo("dup", "OPENAI_API_KEY=%s\n" % _SSOT_OPENAI)
 d = _by_name(config.dotenv_key_shadow_report([r])).get("OPENAI_API_KEY", {})
-ck("state is 'dup'", d.get("state") == "dup")
-ck("dup carries declared4", d.get("declared4") == "qjMA")
+record_script_check(fails, "state is 'dup'", d.get("state") == "dup")
+record_script_check(fails, "dup carries declared4", d.get("declared4") == "qjMA")
 
 print("-- UNDECLARED names are SKIPPED: provider-ness is keys.env's declaration, never a name guess --")
 r = _repo("undeclared",
           "DEEPSEEK_API_KEY=%s\n"                              # provider-LOOKING, but keys.env never declares it → shadows nothing
           "CSRF_TOKEN=app-csrf-secret-not-a-provider-key\n" % _EXTRA_DEEPSEEK)  # app secret ending _TOKEN → must NOT read as a provider key
-ck("a provider-looking key keys.env never declares is not flagged", config.dotenv_key_shadow_report([r]) == [])
-ck("an app secret ending _TOKEN is NOT mistaken for a provider key (the enforcer's case)",
+record_script_check(fails, "a provider-looking key keys.env never declares is not flagged", config.dotenv_key_shadow_report([r]) == [])
+record_script_check(fails, "an app secret ending _TOKEN is NOT mistaken for a provider key (the enforcer's case)",
    all(f["name"] != "CSRF_TOKEN" for f in config.dotenv_key_shadow_report([r])))
 
 print("-- SKIP: commented / profile-suffixed / empty never flag (even for a keys.env-declared name) --")
@@ -98,14 +95,14 @@ r = _repo("skips",
           "# OPENAI_API_KEY=%s  (moved to keys.env SSOT)\n"   # commented → parser skips
           "OPENAI_API_KEY__warden=%s\n"                        # a declared per-repo profile — not a bare shadow
           "ANTHROPIC_API_KEY=\n" % (_STALE_OPENAI, _STALE_OPENAI))  # empty value shadows nothing
-ck("no findings from commented / profile / empty lines", config.dotenv_key_shadow_report([r]) == [])
+record_script_check(fails, "no findings from commented / profile / empty lines", config.dotenv_key_shadow_report([r]) == [])
 
 print("-- directory scans .env AND .env.local; explicit-file + dir dedups --")
 r = _repo("multi", "OPENAI_API_KEY=%s\n" % _STALE_OPENAI, env_local_text="ANTHROPIC_API_KEY=%s\n" % _STALE_OPENAI)
 rep = config.dotenv_key_shadow_report([r])
-ck("both .env and .env.local are scanned", {f["name"] for f in rep} == {"OPENAI_API_KEY", "ANTHROPIC_API_KEY"})
+record_script_check(fails, "both .env and .env.local are scanned", {f["name"] for f in rep} == {"OPENAI_API_KEY", "ANTHROPIC_API_KEY"})
 rep2 = config.dotenv_key_shadow_report([r, os.path.join(r, ".env")])   # dir + explicit same file
-ck("a file named via dir AND explicitly is audited once", len([f for f in rep2 if f["path"].endswith("/.env")]) == 1)
+record_script_check(fails, "a file named via dir AND explicitly is audited once", len([f for f in rep2 if f["path"].endswith("/.env")]) == 1)
 
 print("-- CLI exit codes: differ→1, clean→0, dup→0 but --strict→1 --")
 r_differ = _repo("cli-differ", "OPENAI_API_KEY=%s\n" % _STALE_OPENAI)
@@ -116,10 +113,10 @@ with contextlib.redirect_stdout(io.StringIO()):
     rc_clean = keys_audit.cmd([r_clean])
     rc_dup = keys_audit.cmd([r_dup])
     rc_dup_strict = keys_audit.cmd([r_dup, "--strict"])
-ck("differ → exit 1", rc_differ == 1)
-ck("clean → exit 0", rc_clean == 0)
-ck("dup → exit 0 (not dangerous)", rc_dup == 0)
-ck("dup --strict → exit 1", rc_dup_strict == 1)
+record_script_check(fails, "differ → exit 1", rc_differ == 1)
+record_script_check(fails, "clean → exit 0", rc_clean == 0)
+record_script_check(fails, "dup → exit 0 (not dangerous)", rc_dup == 0)
+record_script_check(fails, "dup --strict → exit 1", rc_dup_strict == 1)
 
 print("-- the FULL secret never appears in human or json output (last-4 only) --")
 buf = io.StringIO()
@@ -127,8 +124,8 @@ with contextlib.redirect_stdout(buf):
     keys_audit.cmd([r_differ])
     keys_audit.cmd([r_differ, "--json"])
 out = buf.getvalue()
-ck("no full OPENAI secret in output", _STALE_OPENAI not in out and _SSOT_OPENAI not in out)
-ck("the last-4 IS present", "AyIA" in out)
+record_script_check(fails, "no full OPENAI secret in output", _STALE_OPENAI not in out and _SSOT_OPENAI not in out)
+record_script_check(fails, "the last-4 IS present", "AyIA" in out)
 
 print(f"\n{'[FAIL]' if fails else 'OK'} test_dotenv_key_audit: {len(fails)} failure(s)")
 sys.exit(1 if fails else 0)

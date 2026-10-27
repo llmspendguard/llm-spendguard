@@ -9,36 +9,33 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
     os.execv(sys.executable, [sys.executable] + sys.argv)
 os.environ.pop("SPENDGUARD_AUTO_FRESH", None)
 
+from _script_checks import record_script_check  # noqa: E402
+
 from spendguard import review, config
 
 fails = []
-def ck(name, cond):
-    print(("  [OK] " if cond else "  [FAIL] ") + name)
-    if not cond:
-        fails.append(name)
-
 calls = []
 review.review = lambda run=False, top=10: calls.append((run, top))
 
 os.environ["SPENDGUARD_AUTO_FRESH"] = "off"
-ck("off → skipped, review never called", "skipped" in review.auto_fresh() and not calls)
+record_script_check(fails, "off → skipped, review never called", "skipped" in review.auto_fresh() and not calls)
 
 os.environ["SPENDGUARD_AUTO_FRESH"] = "weekly"
 r1 = review.auto_fresh(now=1_000_000)
-ck("weekly + never-ran → runs caged review(run=True, top=3)", r1.get("ran") and calls == [(True, 3)])
+record_script_check(fails, "weekly + never-ran → runs caged review(run=True, top=3)", r1.get("ran") and calls == [(True, 3)])
 state = json.loads((config.HOME / "review_state.json").read_text())
-ck("state recorded", abs(state["last_fresh"] - 1_000_000) < 1)
+record_script_check(fails, "state recorded", abs(state["last_fresh"] - 1_000_000) < 1)
 r2 = review.auto_fresh(now=1_000_000 + 3 * 86400)
-ck("3 days later on weekly → not due", "skipped" in r2 and len(calls) == 1)
+record_script_check(fails, "3 days later on weekly → not due", "skipped" in r2 and len(calls) == 1)
 r3 = review.auto_fresh(now=1_000_000 + 8 * 86400)
-ck("8 days later → due again", r3.get("ran") and len(calls) == 2)
+record_script_check(fails, "8 days later → due again", r3.get("ran") and len(calls) == 2)
 
 def _boom(run=False, top=10):
     raise RuntimeError("synthesis exploded")
 review.review = _boom
 (config.HOME / "review_state.json").write_text("{}")
 r4 = review.auto_fresh(now=time.time())
-ck("a synthesis failure returns {error}, never raises (report-safe)", "error" in r4)
+record_script_check(fails, "a synthesis failure returns {error}, never raises (report-safe)", "error" in r4)
 del os.environ["SPENDGUARD_AUTO_FRESH"]
 
 # ── close --account: the account-axis section prints ──
@@ -54,23 +51,23 @@ truth.rows = lambda since=None: [{"day": d, "provider": "openai", "usd": 10.0} f
 fs = close.build_close(_today.strftime("%Y-%m"))
 _last = (datetime.date(_today.year + (_today.month == 12), _today.month % 12 + 1, 1)
          - datetime.timedelta(days=1)).day
-ck("forecast present for the open month with ≥5 observed days", "forecast" in fs)
-ck("run-rate math: MTD + remaining × daily median ($10/day flat)",
+record_script_check(fails, "forecast present for the open month with ≥5 observed days", "forecast" in fs)
+record_script_check(fails, "run-rate math: MTD + remaining × daily median ($10/day flat)",
    abs(fs["forecast"]["p50_usd"] - (60.0 + (_last - _today.day) * 10.0)) < 1e-6
    and fs["forecast"]["p50_usd"] == fs["forecast"]["p90_usd"])   # flat series → p50 == p90
 fs2 = close.build_close((_today.replace(day=1) - datetime.timedelta(days=1)).strftime("%Y-%m"))
-ck("no forecast for a CLOSED month (nothing to extrapolate)", "forecast" not in fs2)
+record_script_check(fails, "no forecast for a CLOSED month (nothing to extrapolate)", "forecast" not in fs2)
 truth.rows = lambda since=None: [{"day": _days[0], "provider": "openai", "usd": 10.0}]
-ck("<5 observed days → no forecast (honest, not noisy)", "forecast" not in close.build_close(_today.strftime("%Y-%m")))
+record_script_check(fails, "<5 observed days → no forecast (honest, not noisy)", "forecast" not in close.build_close(_today.strftime("%Y-%m")))
 truth.rows = lambda since=None: [{"day": "2026-06-01", "provider": "openai", "usd": 10.0}]
 import io, contextlib
 buf = io.StringIO()
 with contextlib.redirect_stdout(buf):
     rc = close.main(["--month", "2026-06", "--account"])
 out = buf.getvalue()
-ck("close --account runs", rc == 0)
-ck("account axis printed with the shared-account caveat", "account axis" in out and "sibling orgs" in out)
-ck("machine accounted-vs-provider line included", "leak $0.50" in out)
+record_script_check(fails, "close --account runs", rc == 0)
+record_script_check(fails, "account axis printed with the shared-account caveat", "account axis" in out and "sibling orgs" in out)
+record_script_check(fails, "machine accounted-vs-provider line included", "leak $0.50" in out)
 
 print(("[OK]" if not fails else "[FAIL]") + " auto-fresh + account view: %d failure(s)" % len(fails))
 sys.exit(1 if fails else 0)

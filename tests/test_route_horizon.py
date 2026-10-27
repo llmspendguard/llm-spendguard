@@ -22,15 +22,11 @@ os.environ.setdefault("SPENDGUARD_TEST_ISOLATED", "1")
 os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
+from _script_checks import record_script_check
 from spendguard import route_horizon as rh, pricing  # noqa: E402
 
 fails = []
 
-
-def ck(name, cond, extra=""):
-    print(("  [OK] " if cond else "  [FAIL] ") + name + (("  — " + extra) if extra and not cond else ""))
-    if not cond:
-        fails.append(name)
 
 
 # Deterministic prices: batch $1/Mtok, realtime $4/Mtok (realtime > batch, as in reality). Stubbed on the pricing
@@ -64,26 +60,26 @@ rA = rh.plan_horizon([{"intent": "u", "n": 1, "in_tok": 0, "out_tok": 200_000, "
                      lane_binding=binding(EFF_HI), lane_label="codex", batch_model="bm", realtime_model="rm",
                      reserve_frac=RES, now=NOW)
 a = _alloc(rA, "u")
-ck("urgent: 50k ~free lane tok at $0", abs(a["lane_free_tok"] - 50_000) < 1)
-ck("urgent: 30k eff lane tok (fills the budget)", abs(a["lane_eff_tok"] - 30_000) < 1)
-ck("urgent: 120k overflow → METERED REALTIME, not batch", abs(a["meter_tok"] - 120_000) < 1 and a["batch_tok"] == 0)
-ck("urgent cost = 30k×$5/M + 120k×$4/M = $0.63", abs(a["usd"] - (30_000 * EFF_HI + 120_000 * RT_RATE)) < 1e-9, extra=str(a["usd"]))
+record_script_check(fails, "urgent: 50k ~free lane tok at $0", abs(a["lane_free_tok"] - 50_000) < 1)
+record_script_check(fails, "urgent: 30k eff lane tok (fills the budget)", abs(a["lane_eff_tok"] - 30_000) < 1)
+record_script_check(fails, "urgent: 120k overflow → METERED REALTIME, not batch", abs(a["meter_tok"] - 120_000) < 1 and a["batch_tok"] == 0)
+record_script_check(fails, "urgent cost = 30k×$5/M + 120k×$4/M = $0.63", abs(a["usd"] - (30_000 * EFF_HI + 120_000 * RT_RATE)) < 1e-9, extra=str(a["usd"]))
 
 print("-- DEFERRABLE overflow → cheap cap-free BATCH (never meter); eff skipped when batch undercuts it --")
 rB = rh.plan_horizon([{"intent": "d", "n": 1, "in_tok": 0, "out_tok": 200_000, "urgency": "deferrable"}],
                      lane_binding=binding(EFF_HI), lane_label="codex", batch_model="bm", realtime_model="rm",
                      reserve_frac=RES, now=NOW)
 b = _alloc(rB, "d")
-ck("deferrable: 50k ~free reclaimed; eff SKIPPED (batch $1/M < eff $5/M)", abs(b["lane_free_tok"] - 50_000) < 1 and b["lane_eff_tok"] == 0)
-ck("deferrable: 150k overflow → BATCH, not meter", abs(b["batch_tok"] - 150_000) < 1 and b["meter_tok"] == 0)
-ck("deferrable cost = 150k×$1/M = $0.15", abs(b["usd"] - 150_000 * BATCH_RATE) < 1e-9, extra=str(b["usd"]))
+record_script_check(fails, "deferrable: 50k ~free reclaimed; eff SKIPPED (batch $1/M < eff $5/M)", abs(b["lane_free_tok"] - 50_000) < 1 and b["lane_eff_tok"] == 0)
+record_script_check(fails, "deferrable: 150k overflow → BATCH, not meter", abs(b["batch_tok"] - 150_000) < 1 and b["meter_tok"] == 0)
+record_script_check(fails, "deferrable cost = 150k×$1/M = $0.15", abs(b["usd"] - 150_000 * BATCH_RATE) < 1e-9, extra=str(b["usd"]))
 
 print("-- DEFERRABLE uses lane-eff BEFORE batch when eff undercuts batch --")
 rBl = rh.plan_horizon([{"intent": "d", "n": 1, "in_tok": 0, "out_tok": 200_000, "urgency": "deferrable"}],
                       lane_binding=binding(EFF_LO), lane_label="codex", batch_model="bm", realtime_model="rm",
                       reserve_frac=RES, now=NOW)
 bl = _alloc(rBl, "d")
-ck("deferrable w/ cheap lane: 50k free + 30k eff then 120k batch", abs(bl["lane_eff_tok"] - 30_000) < 1 and abs(bl["batch_tok"] - 120_000) < 1)
+record_script_check(fails, "deferrable w/ cheap lane: 50k free + 30k eff then 120k batch", abs(bl["lane_eff_tok"] - 30_000) < 1 and abs(bl["batch_tok"] - 120_000) < 1)
 
 print("-- SHARED budget: urgent banks the ~free tokens BEFORE a deferrable group --")
 rC = rh.plan_horizon([{"intent": "d", "n": 1, "in_tok": 0, "out_tok": 40_000, "urgency": "deferrable"},
@@ -91,40 +87,40 @@ rC = rh.plan_horizon([{"intent": "d", "n": 1, "in_tok": 0, "out_tok": 40_000, "u
                      lane_binding=binding(EFF_HI), lane_label="codex", batch_model="bm", realtime_model="rm",
                      reserve_frac=RES, now=NOW)
 cu, cd = _alloc(rC, "u"), _alloc(rC, "d")
-ck("urgent group banks 40k of the 50k free pool first", abs(cu["lane_free_tok"] - 40_000) < 1)
-ck("deferrable group gets only the remaining 10k free (not double-counted)", abs(cd["lane_free_tok"] - 10_000) < 1)
-ck("deferrable remainder (30k) → batch", abs(cd["batch_tok"] - 30_000) < 1)
+record_script_check(fails, "urgent group banks 40k of the 50k free pool first", abs(cu["lane_free_tok"] - 40_000) < 1)
+record_script_check(fails, "deferrable group gets only the remaining 10k free (not double-counted)", abs(cd["lane_free_tok"] - 10_000) < 1)
+record_script_check(fails, "deferrable remainder (30k) → batch", abs(cd["batch_tok"] - 30_000) < 1)
 
 print("-- RESERVE held out: lane tokens used never exceed remaining − reserve (80k) --")
 used_lane = sum(x["lane_free_tok"] + x["lane_eff_tok"] for x in rA["allocations"])
-ck("lane tokens used (80k) ≤ remaining(100k) − reserve(20k)", used_lane <= 80_000 + 1)
+record_script_check(fails, "lane tokens used (80k) ≤ remaining(100k) − reserve(20k)", used_lane <= 80_000 + 1)
 
 print("-- HONEST DEGRADE: no converged lane → urgent→meter, deferrable→batch (no free pool invented) --")
 rD = rh.plan_horizon([{"intent": "u", "n": 1, "in_tok": 0, "out_tok": 100_000, "urgency": "urgent"},
                       {"intent": "d", "n": 1, "in_tok": 0, "out_tok": 100_000, "urgency": "deferrable"}],
                      lane_binding=None, batch_model="bm", realtime_model="rm", reserve_frac=RES, converged=False, now=NOW)
 du, dd = _alloc(rD, "u"), _alloc(rD, "d")
-ck("no lane → urgent 100k all metered, $0 free", du["lane_free_tok"] == 0 and abs(du["meter_tok"] - 100_000) < 1)
-ck("no lane → deferrable 100k all batch", abs(dd["batch_tok"] - 100_000) < 1 and dd["meter_tok"] == 0)
+record_script_check(fails, "no lane → urgent 100k all metered, $0 free", du["lane_free_tok"] == 0 and abs(du["meter_tok"] - 100_000) < 1)
+record_script_check(fails, "no lane → deferrable 100k all batch", abs(dd["batch_tok"] - 100_000) < 1 and dd["meter_tok"] == 0)
 
 print("-- HONEST DEGRADE: no priced batch path for deferrable → UNPRICED (usd None), never $0 --")
 rE = rh.plan_horizon([{"intent": "d", "n": 1, "in_tok": 0, "out_tok": 100_000, "urgency": "deferrable"}],
                      lane_binding=None, batch_model=None, realtime_model="rm", reserve_frac=RES, converged=False, now=NOW)
 e = _alloc(rE, "d")
-ck("unpriceable deferrable overflow → unpriced_tok=100k, usd None (not invented $0)",
+record_script_check(fails, "unpriceable deferrable overflow → unpriced_tok=100k, usd None (not invented $0)",
    abs(e["unpriced_tok"] - 100_000) < 1 and e["usd"] is None and e["unpriced"])
-ck("the set total is None when any group is unpriced (fail-closed for a budget gate)", rE["totals"]["usd"] is None)
+record_script_check(fails, "the set total is None when any group is unpriced (fail-closed for a budget gate)", rE["totals"]["usd"] is None)
 
 print("-- urgency is a CLOSED enum: declared values parse, an UNKNOWN word RAISES (never a free-text meaning guess) --")
-ck("'urgent' → URGENT", rh.normalize_urgency("urgent") == rh.URGENT)
-ck("'deferrable' → DEFERRABLE", rh.normalize_urgency("deferrable") == rh.DEFERRABLE)
-ck("None / '' → the declared default (deferrable)", rh.normalize_urgency(None) == rh.DEFERRABLE and rh.normalize_urgency("") == rh.DEFERRABLE)
+record_script_check(fails, "'urgent' → URGENT", rh.normalize_urgency("urgent") == rh.URGENT)
+record_script_check(fails, "'deferrable' → DEFERRABLE", rh.normalize_urgency("deferrable") == rh.DEFERRABLE)
+record_script_check(fails, "None / '' → the declared default (deferrable)", rh.normalize_urgency(None) == rh.DEFERRABLE and rh.normalize_urgency("") == rh.DEFERRABLE)
 _raised = False
 try:
     rh.normalize_urgency("critical")       # the agentic_decisions failing input: must NOT be guessed as deferrable
 except ValueError:
     _raised = True
-ck("an unknown urgency ('critical') RAISES — spendguard never guesses what an arbitrary word means", _raised)
+record_script_check(fails, "an unknown urgency ('critical') RAISES — spendguard never guesses what an arbitrary word means", _raised)
 
 print(f"\n{'OK' if not fails else 'FAIL'} test_route_horizon: {len(fails)} failure(s)")
 sys.exit(1 if fails else 0)

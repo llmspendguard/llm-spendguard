@@ -15,15 +15,11 @@ os.environ["OPENAI_API_KEY"] = "sk-test-fake-not-real"
 os.environ["ANTHROPIC_API_KEY"] = "sk-ant-test-fake-not-real"
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
+from _script_checks import record_script_check
 from spendguard import calls   # noqa: E402
 
 fails = []
 
-
-def ck(name, cond):
-    print(("  [OK] " if cond else "  [FAIL] ") + name)
-    if not cond:
-        fails.append(name)
 
 
 def _raises_on_paid_unintented(fn):
@@ -36,8 +32,8 @@ def _raises_on_paid_unintented(fn):
 
 print("-- both write paths enforce intent on a paid row (one shared brain, not two policies) --")
 os.environ["SPENDGUARD_REQUIRE_INTENT"] = "1"            # make the shared enforcement a hard raise (deterministic)
-ck("record_call raises on a paid un-intented row", _raises_on_paid_unintented(calls.record_call))
-ck("insert raises on the SAME paid un-intented row (shares calls._attribute — was ungated before)",
+record_script_check(fails, "record_call raises on a paid un-intented row", _raises_on_paid_unintented(calls.record_call))
+record_script_check(fails, "insert raises on the SAME paid un-intented row (shares calls._attribute — was ungated before)",
    _raises_on_paid_unintented(calls.insert))
 os.environ.pop("SPENDGUARD_REQUIRE_INTENT", None)
 
@@ -45,8 +41,8 @@ print("\n-- insert records the PROJECT, exactly like record_call (attribution pa
 cid = calls.insert("openai", "gpt-x", "realtime", 0.01, intent="test:insert-attr", project="MyRepo")
 con = calls._calls_db()
 row = con.execute("SELECT intent, project FROM calls WHERE id=?", (cid,)).fetchone()
-ck("insert wrote the row with its intent", row and row[0] == "test:insert-attr")
-ck("insert wrote the project (lowercased, like the money ledger) — no more un-attributed second INSERT",
+record_script_check(fails, "insert wrote the row with its intent", row and row[0] == "test:insert-attr")
+record_script_check(fails, "insert wrote the project (lowercased, like the money ledger) — no more un-attributed second INSERT",
    row and row[1] == "myrepo")
 
 print("\n-- call class + stable process-session attribution reaches BOTH insert paths --")
@@ -56,10 +52,10 @@ with calls.gate_internal():
     meta_id = calls.insert("openai", "gpt-x", "realtime", 0)
 rows = con.execute("SELECT id, call_class, origin_session, intent FROM calls WHERE id IN (?,?) ORDER BY id",
                    (work_id, meta_id)).fetchall()
-ck("record_call accepts probe attribution", any(r[0] == work_id and r[1] == "probe" for r in rows))
-ck("insert inherits gate_internal even under a workload intent",
+record_script_check(fails, "record_call accepts probe attribution", any(r[0] == work_id and r[1] == "probe" for r in rows))
+record_script_check(fails, "insert inherits gate_internal even under a workload intent",
    any(r[0] == meta_id and r[1] == "gate_internal" and r[3] == "outer-workload" for r in rows))
-ck("every new row has the same stable per-process origin_session",
+record_script_check(fails, "every new row has the same stable per-process origin_session",
    len({r[2] for r in rows if r[2]}) == 1 and len(rows) == 2)
 
 print("\n-- a legacy calls table migrates additively and legacy rows remain NULL --")
@@ -73,7 +69,7 @@ legacy.execute("INSERT INTO calls (id,ts,model,kind,cost) VALUES ('old','2020-01
 legacy.commit()
 calls._ensure_call_observation_schema(legacy)
 old = legacy.execute("SELECT call_class, origin_session FROM calls WHERE id='old'").fetchone()
-ck("additive migration leaves both new columns NULL on the legacy row", old == (None, None))
+record_script_check(fails, "additive migration leaves both new columns NULL on the legacy row", old == (None, None))
 legacy.close()
 
 print(f"\n{'[FAIL]' if fails else 'OK'} test_record_paths_share_attribution: {len(fails)} failure(s)")

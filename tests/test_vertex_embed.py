@@ -15,11 +15,6 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
 fails = []
 
 
-def ck(name, cond):
-    print(("  [OK] " if cond else "  [FAIL] ") + name)
-    if not cond:
-        fails.append(name)
-
 
 # ── stub the google.genai module tree (models.Models / AsyncModels with both methods) ──
 class Models:
@@ -52,31 +47,32 @@ sys.modules["google"] = google
 sys.modules["google.genai"] = genai
 sys.modules["google.genai.models"] = gm
 
+from _script_checks import record_script_check
 from spendguard import vertex_adapter, gate  # noqa: E402
 
 captured = []
 gate._record_rt = lambda model, kw, i, o, **k: captured.append((model, i, o, k.get("provider")))
 
-ck("install() wires the stubbed SDK", vertex_adapter.install(force=True) is True)
-ck("generate_content patched", getattr(Models.generate_content, "_spend_gated", False))
-ck("embed_content patched (sync + async)",
+record_script_check(fails, "install() wires the stubbed SDK", vertex_adapter.install(force=True) is True)
+record_script_check(fails, "generate_content patched", getattr(Models.generate_content, "_spend_gated", False))
+record_script_check(fails, "embed_content patched (sync + async)",
    getattr(Models.embed_content, "_spend_gated", False) and getattr(AsyncModels.embed_content, "_spend_gated", False))
 
 m = Models()
 m.embed_content(model="text-embedding-004", contents=["a", "b"])
-ck("embed_content usage captured from per-embedding statistics (700+300, out=0)",
+record_script_check(fails, "embed_content usage captured from per-embedding statistics (700+300, out=0)",
    captured and captured[-1] == ("text-embedding-004", 1000, 0, "google"))
 
 import asyncio
 asyncio.run(AsyncModels().embed_content(model="text-embedding-004", contents="x"))
-ck("async embed_content captured via usage_metadata fallback (55, out=0)",
+record_script_check(fails, "async embed_content captured via usage_metadata fallback (55, out=0)",
    captured[-1] == ("text-embedding-004", 55, 0, "google"))
 
 m.generate_content(model="gemini-2.0-flash")
-ck("generate_content capture unchanged (100 in / 40 out)",
+record_script_check(fails, "generate_content capture unchanged (100 in / 40 out)",
    captured[-1] == ("gemini-2.0-flash", 100, 40, "google"))
 
-ck("install() is idempotent", vertex_adapter.install(force=True) is True and
+record_script_check(fails, "install() is idempotent", vertex_adapter.install(force=True) is True and
    getattr(Models.embed_content, "_spend_gated", False))
 
 print(("[OK]" if not fails else "[FAIL]") + " vertex embed capture: %d failure(s)" % len(fails))

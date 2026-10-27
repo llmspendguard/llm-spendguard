@@ -9,21 +9,17 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
     os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="spendguard-saas-")
     os.execv(sys.executable, [sys.executable] + sys.argv)
 
+from _script_checks import record_script_check
 from spendguard import saas
 
 fails = []
-def ck(name, cond):
-    print(("  [OK] " if cond else "  [FAIL] ") + name)
-    if not cond:
-        fails.append(name)
-
 # ── _project_filter: None = all · list/single → set · owns_account widens to the shared llm-spendguard/unattributed ──
-ck("_project_filter: no project → None (push all)", saas._project_filter({}) is None)
-ck("_project_filter: projects list → lowercased set", saas._project_filter({"projects": ["LMM", "SlideKit"]}) == {"lmm", "slidekit"})
-ck("_project_filter: single project", saas._project_filter({"project": "Lmm"}) == {"lmm"})
-ck("_project_filter: owns_account adds the shared llm-spendguard + unattributed",
+record_script_check(fails, "_project_filter: no project → None (push all)", saas._project_filter({}) is None)
+record_script_check(fails, "_project_filter: projects list → lowercased set", saas._project_filter({"projects": ["LMM", "SlideKit"]}) == {"lmm", "slidekit"})
+record_script_check(fails, "_project_filter: single project", saas._project_filter({"project": "Lmm"}) == {"lmm"})
+record_script_check(fails, "_project_filter: owns_account adds the shared llm-spendguard + unattributed",
    saas._project_filter({"project": "lmm", "owns_account": True}) == {"lmm", "llm-spendguard", "unattributed"})
-ck("_conn_project_base: does NOT widen (guarded sources aren't shared)",
+record_script_check(fails, "_conn_project_base: does NOT widen (guarded sources aren't shared)",
    saas._conn_project_base({"project": "lmm", "owns_account": True}) == {"lmm"})
 
 # ── ORG-BASED filter: push EVERY taxonomy project under the connection's org (the agentic-attribution-safe path) ──
@@ -35,25 +31,25 @@ _PT = {"lmm": ("Healiom", "clinical-ai"), "concept-model": ("Healiom", "clinical
        "llm-spendguard": ("Ensight", "engineering")}
 _attr.taxonomy = lambda *a, **k: ({}, {})            # org-mode reads project_team_map, not the raw taxonomy
 _attr.project_team_map = lambda *a, **k: _PT
-ck("org-mode: Healiom connection pushes EVERY Healiom project (concept-model/medical-taxonomy NOT dropped)",
+record_script_check(fails, "org-mode: Healiom connection pushes EVERY Healiom project (concept-model/medical-taxonomy NOT dropped)",
    saas._project_filter({"org": "Healiom"}) == {"lmm", "concept-model", "medical-taxonomy"})
-ck("org-mode: owner also absorbs 'unattributed' residual — but NOT 'llm-spendguard' (that's Ensight's, no cross-org leak)",
+record_script_check(fails, "org-mode: owner also absorbs 'unattributed' residual — but NOT 'llm-spendguard' (that's Ensight's, no cross-org leak)",
    saas._project_filter({"org": "Healiom", "owns_account": True}) == {"lmm", "concept-model", "medical-taxonomy", "unattributed"})
-ck("org-mode: Ensight connection gets ITS projects (incl llm-spendguard), none of Healiom's",
+record_script_check(fails, "org-mode: Ensight connection gets ITS projects (incl llm-spendguard), none of Healiom's",
    saas._project_filter({"org": "Ensight"}) == {"manga2anime", "llm-spendguard"})
-ck("org-mode: _conn_project_base is also org-based (guarded rows follow the same scope)",
+record_script_check(fails, "org-mode: _conn_project_base is also org-based (guarded rows follow the same scope)",
    saas._conn_project_base({"org": "Healiom"}) == {"lmm", "concept-model", "medical-taxonomy"})
-ck("org-mode: unknown/typo'd org → empty set = push NOTHING (fail-closed, never cross-org push-all)",
+record_script_check(fails, "org-mode: unknown/typo'd org → empty set = push NOTHING (fail-closed, never cross-org push-all)",
    saas._project_filter({"org": "Nonexistent"}) == set())
 
 # ── crosscheck axis: _is_actual_row keeps the ACTUAL-$ axis, drops est-VALUE (claude-code/claude-ai, billed=false) ──
 # Guards the false 'server_only' bug: crosscheck models actual-$ locally, so est-value rows must be excluded server-side
 # (else in_sync is permanently False). `billed` flag wins when present; channel convention is the pre-billed fallback.
-ck("is_actual: explicit billed=true → actual", saas._is_actual_row({"billed": True, "channel": "claude-code"}) is True)
-ck("is_actual: explicit billed=false → NOT actual (flag beats channel)", saas._is_actual_row({"billed": False, "channel": "batch"}) is False)
-ck("is_actual: no flag + batch/realtime → actual", saas._is_actual_row({"channel": "batch"}) and saas._is_actual_row({"channel": "realtime"}))
-ck("is_actual: no flag + claude-code/claude-ai → est-value, excluded", not saas._is_actual_row({"channel": "claude-code"}) and not saas._is_actual_row({"channel": "claude-ai"}))
-ck("is_actual: no flag + unknown channel → actual (don't silently drop)", saas._is_actual_row({}) is True)
+record_script_check(fails, "is_actual: explicit billed=true → actual", saas._is_actual_row({"billed": True, "channel": "claude-code"}) is True)
+record_script_check(fails, "is_actual: explicit billed=false → NOT actual (flag beats channel)", saas._is_actual_row({"billed": False, "channel": "batch"}) is False)
+record_script_check(fails, "is_actual: no flag + batch/realtime → actual", saas._is_actual_row({"channel": "batch"}) and saas._is_actual_row({"channel": "realtime"}))
+record_script_check(fails, "is_actual: no flag + claude-code/claude-ai → est-value, excluded", not saas._is_actual_row({"channel": "claude-code"}) and not saas._is_actual_row({"channel": "claude-ai"}))
+record_script_check(fails, "is_actual: no flag + unknown channel → actual (don't silently drop)", saas._is_actual_row({}) is True)
 
 # ── build_rollup_rows: filter + kind/channel map + $→micros + contributor stamp + uid + scrub ──
 raw = [
@@ -65,18 +61,18 @@ raw = [
 ]
 rows = saas.build_rollup_rows(raw, "alice@x.test", {"lmm", "llm-spendguard", "unattributed"})
 projs = [r["project"] for r in rows]
-ck("rollup: filters to the connection's projects (manga2anime dropped)", "manga2anime" not in projs and "lmm" in projs)
+record_script_check(fails, "rollup: filters to the connection's projects (manga2anime dropped)", "manga2anime" not in projs and "lmm" in projs)
 lmm_batch = next(r for r in rows if r["project"] == "lmm" and r["channel"] == "batch")
-ck("rollup: $→micros (2.5 → 2_500_000)", lmm_batch["spend_micros"] == 2_500_000)
-ck("rollup: realtime kind→workload + channel realtime", next(r for r in rows if r["model"] == "o")["channel"] == "realtime")
-ck("rollup: meta kind→meta", next(r for r in rows if r["project"] == "llm-spendguard")["kind"] == "meta")
-ck("rollup: contributor stamped on workload", lmm_batch["member_ref"] == "alice@x.test")
-ck("rollup: unattributed gap carries NO contributor", next(r for r in rows if r["project"] == "unattributed")["member_ref"] == "")
-ck("rollup: every row has a uid == _row_uid(row)", all(r["uid"] == saas._row_uid(r) for r in rows))
+record_script_check(fails, "rollup: $→micros (2.5 → 2_500_000)", lmm_batch["spend_micros"] == 2_500_000)
+record_script_check(fails, "rollup: realtime kind→workload + channel realtime", next(r for r in rows if r["model"] == "o")["channel"] == "realtime")
+record_script_check(fails, "rollup: meta kind→meta", next(r for r in rows if r["project"] == "llm-spendguard")["kind"] == "meta")
+record_script_check(fails, "rollup: contributor stamped on workload", lmm_batch["member_ref"] == "alice@x.test")
+record_script_check(fails, "rollup: unattributed gap carries NO contributor", next(r for r in rows if r["project"] == "unattributed")["member_ref"] == "")
+record_script_check(fails, "rollup: every row has a uid == _row_uid(row)", all(r["uid"] == saas._row_uid(r) for r in rows))
 allowed = {"day", "provider", "model", "kind", "channel", "spend_micros", "calls", "member_ref", "project", "uid",
            "in_tokens", "out_tokens", "cached_in_tokens"}   # token COUNTS (no content) — the server's unit-econ view
-ck("rollup: SCRUBBED — only contract fields leave (no prompt/content)", all(set(r) <= allowed for r in rows))
-ck("rollup: flt=None pushes everything", len(saas.build_rollup_rows(raw, "a", None)) == len(raw))
+record_script_check(fails, "rollup: SCRUBBED — only contract fields leave (no prompt/content)", all(set(r) <= allowed for r in rows))
+record_script_check(fails, "rollup: flt=None pushes everything", len(saas.build_rollup_rows(raw, "a", None)) == len(raw))
 
 # ── INVARIANT: est-VALUE NEVER lands on the actual-$ axis. Plan-covered usage (claude-code/claude-ai/zai, billed=
 #    false) is NOT real money; it reaches the server on its OWN axis (chat loop + lane_value), never the /v1/ledger
@@ -87,9 +83,9 @@ est_mixed = [
     {"day": "2026-06-22", "provider": "zai", "model": "glm-5.3", "kind": "workload", "billed": False, "cost": 500.0, "calls": 7, "project": "lmm"},
 ]
 er = saas.build_rollup_rows(est_mixed, "alice@x.test", None)
-ck("est-value: est_chat kind is DROPPED from the actual-$ push (never summed as real spend)",
+record_script_check(fails, "est-value: est_chat kind is DROPPED from the actual-$ push (never summed as real spend)",
    all(r["kind"] != "est_chat" for r in er) and sum(x["spend_micros"] for x in er) == 2_500_000)
-ck("est-value: an explicit billed=False row is DROPPED too (defense in depth, even with flt=None)",
+record_script_check(fails, "est-value: an explicit billed=False row is DROPPED too (defense in depth, even with flt=None)",
    not any(r["provider"] == "zai" for r in er) and len(er) == 1)
 
 # ── build_guarded_rows: filter (empty base = all) + cumulants pass through ──
@@ -98,23 +94,23 @@ grows = [
     {"day": "2026-06-22", "project": "manga2anime", "source": "block", "n": 2, "k1": 4.0, "k2": 1.0, "k3": 0.0, "k4": 0.0},
 ]
 g = saas.build_guarded_rows(grows, {"lmm"})
-ck("guarded: filters to base (manga2anime dropped)", len(g) == 1 and g[0]["project"] == "lmm")
-ck("guarded: cumulants pass through", g[0]["k1"] == 10.0 and g[0]["n"] == 5)
-ck("guarded: empty base → push all", len(saas.build_guarded_rows(grows, set())) == 2)
+record_script_check(fails, "guarded: filters to base (manga2anime dropped)", len(g) == 1 and g[0]["project"] == "lmm")
+record_script_check(fails, "guarded: cumulants pass through", g[0]["k1"] == 10.0 and g[0]["n"] == 5)
+record_script_check(fails, "guarded: empty base → push all", len(saas.build_guarded_rows(grows, set())) == 2)
 
 # ── #3 OVER-SHARE FIX (2026-09-28 "get to honest"): the guarded filter must NOT collapse the three scope states.
 #    An org configured but resolved to NO projects (lookup failed / maps nothing) is None = push NOTHING — it must never
 #    read as empty-means-all and over-share every project under an unresolved org (the fail-open leak). None ≠ empty. ──
-ck("guarded: None base (org unresolved) → push NOTHING (never over-share)", saas.build_guarded_rows(grows, None) == [])
-ck("guarded: None ≠ empty — empty pushes all, None pushes nothing (states don't collapse)",
+record_script_check(fails, "guarded: None base (org unresolved) → push NOTHING (never over-share)", saas.build_guarded_rows(grows, None) == [])
+record_script_check(fails, "guarded: None ≠ empty — empty pushes all, None pushes nothing (states don't collapse)",
    len(saas.build_guarded_rows(grows, set())) == 2 and saas.build_guarded_rows(grows, None) == [])
 # _conn_project_base returns None for an org that maps to nothing (was: empty set = push-all = the leak).
 # _PT (patched above) has NO project under 'Nonexistent', so _org_projects('Nonexistent') is empty → None.
-ck("_conn_project_base: org set but resolves to NO projects → None (refuse), NOT empty=push-all",
+record_script_check(fails, "_conn_project_base: org set but resolves to NO projects → None (refuse), NOT empty=push-all",
    saas._conn_project_base({"org": "Nonexistent"}) is None)
-ck("_conn_project_base: no scope configured at all → empty set (push this install's own guarded rows)",
+record_script_check(fails, "_conn_project_base: no scope configured at all → empty set (push this install's own guarded rows)",
    saas._conn_project_base({}) == set())
-ck("_conn_project_base: resolvable org → its non-empty project set (unchanged)",
+record_script_check(fails, "_conn_project_base: resolvable org → its non-empty project set (unchanged)",
    saas._conn_project_base({"org": "Healiom"}) == {"lmm", "concept-model", "medical-taxonomy"})
 
 # ── crosscheck robustness: a vast.ai outage must NOT turn correctly-pushed GPU rows into false server_only ──
@@ -132,9 +128,9 @@ saas._request = lambda *a, **k: {"rows": [
 _res.sync = lambda dry=False: {"day_totals": []}
 _res._all_instances = lambda: []
 ccA = saas.crosscheck(since="2026-06-01")
-ck("crosscheck: GPU source dark → vastai server row is gpu_unverified, NOT server_only",
+record_script_check(fails, "crosscheck: GPU source dark → vastai server row is gpu_unverified, NOT server_only",
    ccA.get("gpu_unverified") == 1 and ccA["server_only"] == 0)
-ck("crosscheck: gpu_unverified alone does NOT flip in_sync (couldn't check ≠ drift)", ccA["in_sync"] is True and ccA["matched"] == 1)
+record_script_check(fails, "crosscheck: gpu_unverified alone does NOT flip in_sync (couldn't check ≠ drift)", ccA["in_sync"] is True and ccA["matched"] == 1)
 
 # (B) DARK source but a genuinely-stale NON-gpu row is still flagged server_only (we don't suppress real drift)
 saas._request = lambda *a, **k: {"rows": [
@@ -143,7 +139,7 @@ saas._request = lambda *a, **k: {"rows": [
     {"uid": "gpu1", "project": "lmm", "provider": "vastai", "kind": "gpu", "channel": "realtime", "spend_micros": 4_200_000, "billed": True},
 ]}
 ccB = saas.crosscheck(since="2026-06-01")
-ck("crosscheck: real stale NON-gpu row still server_only even when GPU is dark",
+record_script_check(fails, "crosscheck: real stale NON-gpu row still server_only even when GPU is dark",
    ccB["server_only"] == 1 and ccB.get("gpu_unverified") == 1 and ccB["in_sync"] is False)
 
 # (C) GPU source OK → the GPU row is derived locally + matches; nothing unverified, in_sync True
@@ -154,7 +150,7 @@ saas._request = lambda *a, **k: {"rows": [
     {"uid": "gpu1", "project": "lmm", "provider": "vastai", "kind": "gpu", "channel": "realtime", "spend_micros": 4_200_000, "billed": True},
 ]}
 ccC = saas.crosscheck(since="2026-06-01")
-ck("crosscheck: GPU source OK → GPU row matches, none unverified, in_sync True",
+record_script_check(fails, "crosscheck: GPU source OK → GPU row matches, none unverified, in_sync True",
    "gpu_unverified" not in ccC and ccC["matched"] == 2 and ccC["in_sync"] is True)
 
 # ── CROSS-REPO UID PARITY: the row uid is the local↔server cross-check key; if client _row_uid and server rowUid
@@ -168,7 +164,7 @@ _UID_GOLDENS = [
       "model": "H100", "kind": "gpu", "channel": "realtime", "team": "engineering"}, "f04218efdceb6fd00756eb4c"),
 ]
 for _row, _g in _UID_GOLDENS:
-    ck(f"uid parity golden ({_row['project']}, team={'team' in _row}) == pinned server rowUid", saas._row_uid(_row) == _g)
+    record_script_check(fails, f"uid parity golden ({_row['project']}, team={'team' in _row}) == pinned server rowUid", saas._row_uid(_row) == _g)
 
 print(("\n[FAIL] " if fails else "\n[OK] ") + f"saas_payload: {len(fails)} failure(s)")
 sys.exit(1 if fails else 0)

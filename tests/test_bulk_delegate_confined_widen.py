@@ -21,15 +21,11 @@ os.environ.setdefault("SPENDGUARD_TEST_ISOLATED", "1")
 os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
+from _script_checks import record_script_check  # noqa: E402
+
 from spendguard import lane_balance, adapters, calls, lane_catalog, lane_economics, dispatch   # noqa: E402
 
 fails = []
-
-
-def ck(name, cond):
-    print(("  [OK] " if cond else "  [FAIL] ") + name)
-    if not cond:
-        fails.append(name)
 
 
 DEFAULT_ARM = ("gemini", "g-model")
@@ -50,16 +46,16 @@ adapters.call = lambda model, task, **kw: {"text": "ans", "provider": "google", 
 print("-- (a) confined lanes with no viable arm → widen to the default lanes and RUN --")
 lane_balance._bulk_arms = lambda intent, lanes=None: ([] if lanes else [DEFAULT_ARM])
 res = lane_balance.bulk_delegate(list(TASKS), "fresh:intent", lanes=["confined-lane"], force=True)
-ck("confined-empty + default-available → the fan RUNS (no 'no_viable_lane' rows)",
+record_script_check(fails, "confined-empty + default-available → the fan RUNS (no 'no_viable_lane' rows)",
    len(res) == len(TASKS) and all((r or {}).get("reason") != "no_viable_lane" for r in res))
-ck("every task was served on the widened default lane (text present)",
+record_script_check(fails, "every task was served on the widened default lane (text present)",
    all((r or {}).get("text") == "ans" for r in res))
 
 # ── (b) NOTHING viable anywhere → honest refusal (we widen, never invent) ──
 print("\n-- (b) no lane viable at all → honest no_viable_lane, never invents a lane --")
 lane_balance._bulk_arms = lambda intent, lanes=None: []
 res_none = lane_balance.bulk_delegate(list(TASKS), "fresh:intent", lanes=["confined-lane"], force=True)
-ck("no lane viable at all → 'no_viable_lane' rows (widen never invents a lane)",
+record_script_check(fails, "no lane viable at all → 'no_viable_lane' rows (widen never invents a lane)",
    all((r or {}).get("reason") == "no_viable_lane" and (r or {}).get("text") is None for r in res_none))
 
 # ── (c) an UNCONFINED caller is UNCHANGED — the widen branch is confined-only ──
@@ -75,7 +71,7 @@ def _arms_track(intent, lanes=None):
 
 lane_balance._bulk_arms = _arms_track
 res_unconf = lane_balance.bulk_delegate(list(TASKS), "fresh:intent", force=True)   # lanes=None
-ck("unconfined caller runs directly (served), and _bulk_arms(lanes=None) is called exactly once (no widen retry)",
+record_script_check(fails, "unconfined caller runs directly (served), and _bulk_arms(lanes=None) is called exactly once (no widen retry)",
    all((r or {}).get("text") == "ans" for r in res_unconf) and _calls_with_no_lanes["n"] == 1)
 
 print(f"\n{'[FAIL]' if fails else 'OK'} test_bulk_delegate_confined_widen: {len(fails)} failure(s)")

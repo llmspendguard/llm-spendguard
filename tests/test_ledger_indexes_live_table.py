@@ -17,13 +17,10 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
     os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="spendguard-idx-")
     os.execv(sys.executable, [sys.executable] + sys.argv)
 
+from _script_checks import record_script_check
 from spendguard.ledger import SpendLedger, _INDEXES
 
 fails = []
-def ck(name, cond):
-    print(("  [OK] " if cond else "  [FAIL] ") + name)
-    if not cond:
-        fails.append(name)
 
 def cols_indexed_on(conn, table):
     """The set of columns covered by a SINGLE-column index ON `table` — table-scoped, so it is immune to another
@@ -45,7 +42,7 @@ c.execute(f"CREATE TABLE spend_events_precutover (id TEXT PRIMARY KEY, {decl})")
 for ix in _INDEXES:
     c.execute(f"CREATE INDEX idx_se_{ix} ON spend_events_precutover({ix})")   # take the canonical names
 c.commit()
-ck("precutover squatters present before _ensure_schema",           # (the set also holds the PK autoindex col 'id')
+record_script_check(fails, "precutover squatters present before _ensure_schema",           # (the set also holds the PK autoindex col 'id')
    set(_INDEXES) <= cols_indexed_on(c, "spend_events_precutover"))
 c.close()
 
@@ -53,7 +50,7 @@ c.close()
 led = SpendLedger(db_path=db)
 covered = cols_indexed_on(led._conn, "spend_events")
 missing = [ix for ix in _INDEXES if ix not in covered]
-ck("spend_events indexed on EVERY declared column despite the name-squatters", not missing)
+record_script_check(fails, "spend_events indexed on EVERY declared column despite the name-squatters", not missing)
 if missing:
     print("    MISSING single-column index on spend_events for:", missing)
 
@@ -61,7 +58,7 @@ if missing:
 c2 = sqlite3.connect(db)
 pre = cols_indexed_on(c2, "spend_events_precutover")
 c2.close()
-ck("precutover backup indexes left intact", set(_INDEXES) <= pre)
+record_script_check(fails, "precutover backup indexes left intact", set(_INDEXES) <= pre)
 
 print(("FAIL: " + ", ".join(fails)) if fails else "all live-table index checks passed")
 sys.exit(1 if fails else 0)

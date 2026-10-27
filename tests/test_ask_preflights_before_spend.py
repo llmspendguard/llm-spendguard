@@ -10,18 +10,15 @@ Hermetic: preflight + fan_out are stubbed, so no network and zero spend; the poi
 handed to fan_out, an all-bad set refuses before fan_out, and a mixed set fans out only the usable models."""
 import sys
 
+from _script_checks import record_script_check  # noqa: E402
+
 from spendguard import crossllm
 import spendguard.model_preflight as mp
 from spendguard.crossllm import ModelPreflightRefused
 from spendguard.gate import SpendGateRefused
 
 fails = []
-def ck(name, cond):
-    print(("  [OK] " if cond else "  [FAIL] ") + name)
-    if not cond:
-        fails.append(name)
-
-ck("ModelPreflightRefused is a SpendGateRefused (propagates by construction)",
+record_script_check(fails, "ModelPreflightRefused is a SpendGateRefused (propagates by construction)",
    issubclass(ModelPreflightRefused, SpendGateRefused))
 
 # ── stub fan_out (the only spend path) so a 'proceed' never actually calls a model ──────────────────────────────
@@ -55,47 +52,47 @@ try:
     # 1. a BAD (stale) model → refuse, and fan_out is NEVER reached (no spend)
     try:
         crossllm.ask("hi", vendors=["x:bad-model"], preflight=True)
-        ck("a bad model is refused (raised)", False)
+        record_script_check(fails, "a bad model is refused (raised)", False)
     except ModelPreflightRefused as e:
-        ck("bad model → ModelPreflightRefused with its fix", "STALE" in str(e))
-    ck("fan_out NEVER called on a refusal — nothing spent", len(_fan_calls) == 0)
+        record_script_check(fails, "bad model → ModelPreflightRefused with its fix", "STALE" in str(e))
+    record_script_check(fails, "fan_out NEVER called on a refusal — nothing spent", len(_fan_calls) == 0)
 
     # 2. a CLEAN set → proceeds to fan_out
     crossllm.ask("hi", vendors=["x:good-model"], preflight=True)
-    ck("clean set → fan_out reached (the call proceeds)", len(_fan_calls) == 1)
+    record_script_check(fails, "clean set → fan_out reached (the call proceeds)", len(_fan_calls) == 1)
 
     # 3. the SAME clean set again → preflight RE-CHECKED (never a stale cached OK), and the call still fans out
     n_pf = len(_pf_calls)
     crossllm.ask("hi again", vendors=["x:good-model"], preflight=True)
-    ck("repeated identical vendor-set → RE-CHECKED every call (no stale cached OK)", len(_pf_calls) == n_pf + 1)
-    ck("...and the 2nd call still fanned out", len(_fan_calls) == 2)
+    record_script_check(fails, "repeated identical vendor-set → RE-CHECKED every call (no stale cached OK)", len(_pf_calls) == n_pf + 1)
+    record_script_check(fails, "...and the 2nd call still fanned out", len(_fan_calls) == 2)
 
     # 4. preflight=False opts out (a caller that already validated) — no preflight consulted
     n_pf2 = len(_pf_calls)
     crossllm.ask("hi", vendors=["x:another-model"], preflight=False)
-    ck("preflight=False skips the gate entirely", len(_pf_calls) == n_pf2)
+    record_script_check(fails, "preflight=False skips the gate entirely", len(_pf_calls) == n_pf2)
 
     # 5. HONEST PARTIAL: a MIX (usable + bad) → fan out ONLY the usable model (the bad one is never handed to
     #    fan_out, never spent) and MARK the bad one PREFLIGHT_UNMET. One bad id does NOT refuse the whole batch.
     _fan_calls.clear()
     r = crossllm.ask("hi", vendors=["a:good-model", "x:bad-model"], preflight=True)
-    ck("mix → fan_out reached with ONLY the usable model (bad one never handed to it)",
+    record_script_check(fails, "mix → fan_out reached with ONLY the usable model (bad one never handed to it)",
        len(_fan_calls) == 1 and _fan_calls[0] == [("a", "good-model")])
-    ck("mix → usable model answers, bad one is PREFLIGHT_UNMET in by_vendor (honest, not silently dropped)",
+    record_script_check(fails, "mix → usable model answers, bad one is PREFLIGHT_UNMET in by_vendor (honest, not silently dropped)",
        r.by_vendor.get("a") == crossllm.vendor_call.OK
        and r.by_vendor.get("x") == crossllm.vendor_call.PREFLIGHT_UNMET)
-    ck("mix → coverage INCOMPLETE (a requested model was skipped); n counts both, n_ok only the answer",
+    record_script_check(fails, "mix → coverage INCOMPLETE (a requested model was skipped); n counts both, n_ok only the answer",
        r.complete is False and r.n == 2 and r.n_ok == 1)
-    ck("mix → the unmet model carries NO text (the Result invariant holds — never a failure-as-answer)",
+    record_script_check(fails, "mix → the unmet model carries NO text (the Result invariant holds — never a failure-as-answer)",
        all(not res.ok for res in r.results if res.vendor == "x"))
 
     # 6. ALL bad → STILL refused: there is no partial coverage to give, so the whole batch is refused before spend
     _fan_calls.clear()
     try:
         crossllm.ask("hi", vendors=["x:bad-model", "x:bad-model-2"], preflight=True)
-        ck("all-bad set → refused", False)
+        record_script_check(fails, "all-bad set → refused", False)
     except ModelPreflightRefused:
-        ck("all-bad set → ModelPreflightRefused (nothing callable), fan_out never reached", len(_fan_calls) == 0)
+        record_script_check(fails, "all-bad set → ModelPreflightRefused (nothing callable), fan_out never reached", len(_fan_calls) == 0)
 finally:
     crossllm.vendor_call.fan_out = _orig_fan
     mp.preflight_models = _orig_pf

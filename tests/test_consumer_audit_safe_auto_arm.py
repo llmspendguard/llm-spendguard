@@ -10,6 +10,8 @@ os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
 os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="consumer-audit-home-")
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
+from _script_checks import record_script_check  # noqa: E402
+
 from spendguard import config, consumer_audit  # noqa: E402
 
 FIXTURE_DEPLOYED_SHA = "fixture-deployed-sha"
@@ -18,12 +20,7 @@ FIXTURE_REPOSITORY_DISCOVERY_DEPTH = 1
 FIXTURE_PRUNED_BOUNDARY_DEPTH = 0
 FIXTURE_VENV_MARKER_CONTENT = "fixture = true\n"
 FIXTURE_EXHAUSTION_SCAN_BUDGET = 1
-failure_count = 0
-
-
-def check(label, condition):
-    print(("  [OK] " if condition else "  [FAIL] ") + label)
-    return 0 if condition else 1
+failure_count = []
 
 
 def make_fake_venv(root, package_present=True):
@@ -61,9 +58,9 @@ with tempfile.TemporaryDirectory(prefix="consumer-audit-proof-") as temporary:
     (structurally_valid_venv / "pyvenv.cfg").write_text("fixture = true\n")
     misleadingly_named_directory = fixture_root / "venv"
     misleadingly_named_directory.mkdir()
-    failure_count += check("nonstandard venv name is accepted from structure",
+    record_script_check(failure_count, "nonstandard venv name is accepted from structure",
                            consumer_audit._is_venv_directory(structurally_valid_venv))
-    failure_count += check("venv-like name without structure is rejected",
+    record_script_check(failure_count, "venv-like name without structure is rejected",
                            not consumer_audit._is_venv_directory(misleadingly_named_directory))
     venv_like_ancestor = fixture_root / "venv-like-ancestor"
     venv_like_ancestor.mkdir()
@@ -76,7 +73,7 @@ with tempfile.TemporaryDirectory(prefix="consumer-audit-proof-") as temporary:
     (nested_venv / "pyvenv.cfg").write_text("fixture = true\n")
     (nested_venv / "ignored.py").write_text("import anthropic\n")
     ancestor_nested_facts = consumer_audit.repository_import_facts(ancestor_nested_repo)
-    failure_count += check(
+    record_script_check(failure_count, 
         "venv-like ancestor does not suppress repository source while nested venv source stays skipped",
         ancestor_nested_facts["sdk"] == ("openai",),
     )
@@ -96,7 +93,7 @@ with tempfile.TemporaryDirectory(prefix="consumer-audit-proof-") as temporary:
     enumerated_venvs = consumer_audit.enumerate_consumer_venvs(
         repo, extra_directory_settings["workspace_extra_venv_dirs"]
     )
-    failure_count += check(
+    record_script_check(failure_count, 
         "configured extra directory includes only structurally valid venv children",
         external_venv.resolve() in enumerated_venvs
         and external_non_venv.resolve() not in enumerated_venvs,
@@ -110,16 +107,16 @@ with tempfile.TemporaryDirectory(prefix="consumer-audit-proof-") as temporary:
     consumer_audit._live_pids = lambda _python: []
     try:
         initial_probe = consumer_audit.probe_consumer_interpreter(fixable_venv / "bin" / "python")
-        failure_count += check("fixture starts NOT-ENFORCING", not initial_probe["gate_enforcing"])
+        record_script_check(failure_count, "fixture starts NOT-ENFORCING", not initial_probe["gate_enforcing"])
         first = consumer_audit.audit_consumer_workspaces(FIXTURE_DEPLOYED_SHA, settings=settings)
         fixable_row = first["consumers"][0]
-        failure_count += check("armed-fixable -> ENFORCING + zero", fixable_row["initial_verdict"] == "NOT-ENFORCING"
+        record_script_check(failure_count, "armed-fixable -> ENFORCING + zero", fixable_row["initial_verdict"] == "NOT-ENFORCING"
               and fixable_row["action"] == "armed" and fixable_row["final_verdict"] == "GATED+LATEST"
               and first["exit_code"] == 0)
 
         settled_once = consumer_audit.audit_consumer_workspaces(FIXTURE_DEPLOYED_SHA, settings=settings)
         settled_twice = consumer_audit.audit_consumer_workspaces(FIXTURE_DEPLOYED_SHA, settings=settings)
-        failure_count += check("deterministic repeated final audit output",
+        record_script_check(failure_count, "deterministic repeated final audit output",
               consumer_audit.render_consumer_audit_table(settled_once)
               == consumer_audit.render_consumer_audit_table(settled_twice))
 
@@ -132,9 +129,9 @@ with tempfile.TemporaryDirectory(prefix="consumer-audit-proof-") as temporary:
         broken = consumer_audit.audit_consumer_workspaces(FIXTURE_DEPLOYED_SHA, settings=settings)
         broken_row = next(row for row in broken["consumers"] if row["venv"] == os.fspath(broken_venv.resolve()))
         after = tuple(sorted(path.relative_to(broken_venv) for path in broken_venv.rglob("*")))
-        failure_count += check("unfixable -> untouched + non-zero", broken_row["initial_verdict"] == "NO-SPENDGUARD"
+        record_script_check(failure_count, "unfixable -> untouched + non-zero", broken_row["initial_verdict"] == "NO-SPENDGUARD"
               and broken_row["action"] == "none" and broken["exit_code"] != 0 and before == after)
-        failure_count += check("deliberately unfixable audit exits non-zero", broken["remaining_gaps"] > 0)
+        record_script_check(failure_count, "deliberately unfixable audit exits non-zero", broken["remaining_gaps"] > 0)
 
         uncertain_repo = fixture_root / "uncertain"
         uncertain_repo.mkdir()
@@ -144,7 +141,7 @@ with tempfile.TemporaryDirectory(prefix="consumer-audit-proof-") as temporary:
         uncertain_row = next(
             row for row in uncertain["consumers"] if row["venv"] == os.fspath(uncertain_venv.resolve())
         )
-        failure_count += check("absent LLM-import fact stays undetermined and non-zero",
+        record_script_check(failure_count, "absent LLM-import fact stays undetermined and non-zero",
                                uncertain_row["final_verdict"] == "LLM-USE-UNDETERMINED"
                                and uncertain_row["action"] == "none" and uncertain["exit_code"] != 0)
 
@@ -158,11 +155,11 @@ with tempfile.TemporaryDirectory(prefix="consumer-audit-proof-") as temporary:
             row for row in spendguard_only["consumers"]
             if row["venv"] == os.fspath(spendguard_only_venv.resolve())
         )
-        failure_count += check("spendguard-only source is classified as an LLM consumer",
+        record_script_check(failure_count, "spendguard-only source is classified as an LLM consumer",
                                spendguard_only_row["initial_verdict"] == "NOT-ENFORCING"
                                and spendguard_only_row["action"] == "armed"
                                and spendguard_only_row["final_verdict"] == "GATED+LATEST")
-        failure_count += check("source AST facts report SDK and spendguard imports separately",
+        record_script_check(failure_count, "source AST facts report SDK and spendguard imports separately",
                                spendguard_only_row["sdk_imports_source"] == ()
                                and spendguard_only_row["spendguard_import_source"] is True)
 
@@ -181,17 +178,17 @@ with tempfile.TemporaryDirectory(prefix="consumer-audit-proof-") as temporary:
         unflagged_row = next(
             row for row in unflagged["consumers"] if row["venv"] == os.fspath(tripwire_venv.resolve())
         )
-        failure_count += check("text mention without AST import raises the completeness tripwire",
+        record_script_check(failure_count, "text mention without AST import raises the completeness tripwire",
                                flagged_row["source_text_mentions"] == ("anthropic",)
                                and flagged_row["completeness_flag"] == "text-mentions-not-imported:anthropic"
                                and flagged_row["sdk_imports_source"] == ())
-        failure_count += check("completeness tripwire is advisory only",
+        record_script_check(failure_count, "completeness tripwire is advisory only",
                                flagged_row["final_verdict"] == unflagged_row["final_verdict"]
                                and flagged["remaining_gaps"] == unflagged["remaining_gaps"]
                                and flagged["exit_code"] == unflagged["exit_code"])
 
         discovered = consumer_audit.enumerate_consumer_repositories((fixture_root,), FIXTURE_MAXIMUM_DEPTH)
-        failure_count += check("repository enumeration is sorted and complete",
+        record_script_check(failure_count, "repository enumeration is sorted and complete",
                                discovered["repositories"]
                                == tuple(sorted((repo.resolve(), broken_repo.resolve(), uncertain_repo.resolve(),
                                                 spendguard_only_repo.resolve(), tripwire_repo.resolve()))))
@@ -201,7 +198,7 @@ with tempfile.TemporaryDirectory(prefix="consumer-audit-proof-") as temporary:
         bounded_discovery = consumer_audit.enumerate_consumer_repositories(
             (fixture_root,), FIXTURE_MAXIMUM_DEPTH
         )
-        failure_count += check("bounded repository discovery reports the exact pruned subtree",
+        record_script_check(failure_count, "bounded repository discovery reports the exact pruned subtree",
                                bounded_discovery["pruned_at_depth"] == (deep_repository.resolve(),))
 
         guard_root = fixture_root / "consumer-audit-guards"
@@ -243,7 +240,7 @@ with tempfile.TemporaryDirectory(prefix="consumer-audit-proof-") as temporary:
         sibling_row = next(
             row for row in with_exemption["consumers"] if row["venv"] == os.fspath(sibling_venv.resolve())
         )
-        failure_count += check(
+        record_script_check(failure_count, 
             "consumer_audit_exempt fail-before/pass-after changes only the declared consumer",
             without_exempt_row["final_verdict"] == consumer_audit.CONSUMER_AUDIT_UNCONFIRMED_INTERPRETER
             and without_exemption["remaining_gaps"] == 2
@@ -259,7 +256,7 @@ with tempfile.TemporaryDirectory(prefix="consumer-audit-proof-") as temporary:
             settings={**guard_settings, "consumer_audit_exempt": (guard_root,)},
             auto_arm=False,
         )
-        failure_count += check(
+        record_script_check(failure_count, 
             "all terminal EXEMPT consumers produce zero gaps and exit zero",
             all_exempt["remaining_gaps"] == 0 and all_exempt["exit_code"] == 0,
         )
@@ -283,18 +280,18 @@ with tempfile.TemporaryDirectory(prefix="consumer-audit-proof-") as temporary:
             FIXTURE_VENV_MARKER_CONTENT
         )
         # Fail-before: the former depth-2 ceiling dropped this depth-3 marker as clean.
-        failure_count += check(
+        record_script_check(failure_count, 
             "three-level-deep pruned venv fail-before/pass-after is detected",
         consumer_audit._pruned_subtree_may_contain_venv(hidden_venv_subtree) is True,
         )
-        failure_count += check(
+        record_script_check(failure_count, 
             "clean fully exhausted pruned subtree still drops",
         consumer_audit._pruned_subtree_may_contain_venv(noise_subtree) is False,
         )
         original_pruned_scan_budget = consumer_audit.CONSUMER_AUDIT_PRUNED_VENV_SCAN_BUDGET
         consumer_audit.CONSUMER_AUDIT_PRUNED_VENV_SCAN_BUDGET = FIXTURE_EXHAUSTION_SCAN_BUDGET
         try:
-            failure_count += check(
+            record_script_check(failure_count, 
                 "pruned subtree scan budget exhaustion fails closed",
         consumer_audit._pruned_subtree_may_contain_venv(noise_subtree) is True,
             )
@@ -307,7 +304,7 @@ with tempfile.TemporaryDirectory(prefix="consumer-audit-proof-") as temporary:
                       "consumer_audit_exempt": (exempt_hidden_subtree,)},
             auto_arm=False,
         )
-        failure_count += check(
+        record_script_check(failure_count, 
             "deep pruned venv fail-before/pass-after counts while clean and exempt drop",
             pruned_result["pruned_at_depth"] == (os.fspath(hidden_venv_subtree.resolve()),)
             and pruned_result["remaining_gaps"] == 1 and pruned_result["exit_code"] == 1
@@ -321,7 +318,7 @@ with tempfile.TemporaryDirectory(prefix="consumer-audit-proof-") as temporary:
                       "consumer_audit_exempt": (hidden_venv_subtree, exempt_hidden_subtree)},
             auto_arm=False,
         )
-        failure_count += check(
+        record_script_check(failure_count, 
             "filtered pruned set controls end-to-end zero exit",
             pruned_clean["pruned_at_depth"] == () and pruned_clean["remaining_gaps"] == 0
             and pruned_clean["exit_code"] == 0,
@@ -336,18 +333,18 @@ with tempfile.TemporaryDirectory(prefix="consumer-audit-proof-") as temporary:
         }
         resolved_guard_settings = config.consumer_audit_settings(checkout_path=guard_root)
         config._cfg = original_cfg
-        failure_count += check(
+        record_script_check(failure_count, 
             "consumer_audit_settings resolves the declared consumer_audit_exempt paths",
             resolved_guard_settings["consumer_audit_exempt"] == (exempt_repository.resolve(),),
         )
-        failure_count += check("sha equality classification", consumer_audit.classify_deployed_sha(
+        record_script_check(failure_count, "sha equality classification", consumer_audit.classify_deployed_sha(
             FIXTURE_DEPLOYED_SHA, FIXTURE_DEPLOYED_SHA, FIXTURE_DEPLOYED_SHA) == "==")
-        failure_count += check("sha behind classification", consumer_audit.classify_deployed_sha(
+        record_script_check(failure_count, "sha behind classification", consumer_audit.classify_deployed_sha(
             "older-sha", "older-sha", FIXTURE_DEPLOYED_SHA) == "behind")
     finally:
         consumer_audit._checkout_for_module = original_checkout
         consumer_audit._git_output = original_git_output
         consumer_audit._live_pids = original_live_pids
 
-print(f"\n{'[FAIL]' if failure_count else 'OK'} test_consumer_audit_safe_auto_arm: {failure_count} failure(s)")
+print(f"\n{'[FAIL]' if failure_count else 'OK'} test_consumer_audit_safe_auto_arm: {len(failure_count)} failure(s)")
 sys.exit(1 if failure_count else 0)

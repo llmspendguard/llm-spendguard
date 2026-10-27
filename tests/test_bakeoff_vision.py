@@ -20,15 +20,11 @@ os.environ.setdefault("SPENDGUARD_TEST_ISOLATED", "1")
 os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
+from _script_checks import record_script_check  # noqa: E402
+
 from spendguard import bakeoff, adapters   # noqa: E402
 
 fails = []
-
-
-def ck(name, cond):
-    print(("  [OK] " if cond else "  [FAIL] ") + name)
-    if not cond:
-        fails.append(name)
 
 
 # a real, tiny 1x1 PNG as a data URL — adapters._load_image parses it (reads dims), so the vision path runs for real
@@ -47,10 +43,10 @@ print("-- (a) the vision estimate includes the image input-token cost --")
 _IMG_TOK["n"] = 0
 est_text = bakeoff.bakeoff(INTENT, candidates=CANDS, prompts=[TASK_TXT], run=False)["estimate_usd"]
 est_v0 = bakeoff.bakeoff(INTENT, candidates=CANDS, prompts=[VISION_TASK], run=False)["estimate_usd"]
-ck("with 0 image tokens, a vision task prices EXACTLY like the same text task", abs(est_v0 - est_text) < 1e-9)
+record_script_check(fails, "with 0 image tokens, a vision task prices EXACTLY like the same text task", abs(est_v0 - est_text) < 1e-9)
 _IMG_TOK["n"] = 50000
 est_v = bakeoff.bakeoff(INTENT, candidates=CANDS, prompts=[VISION_TASK], run=False)["estimate_usd"]
-ck("with image tokens > 0, the vision estimate is STRICTLY higher (image tokens are in the estimate)",
+record_script_check(fails, "with image tokens > 0, the vision estimate is STRICTLY higher (image tokens are in the estimate)",
    est_v > est_text + 1e-9)
 
 # ── (b)+(c) capture the images kwarg on every adapters.call, by sig ──
@@ -84,24 +80,24 @@ def _imgs_for(suffix):
 print("\n-- (b) requirement-aware: candidate + SCREEN + ADJUDICATOR see the image; EXTRACTION does not --")
 SEEN.clear()
 bakeoff.bakeoff(INTENT, candidates=CANDS, prompts=[VISION_TASK], run=True, budget_usd=999, requirement_aware=True)
-ck("candidate run RECEIVED images=[PNG]", _imgs_for(INTENT) and _imgs_for(INTENT)[0] == [PNG])
-ck("requirement SCREEN judge RECEIVED images=[PNG]", _imgs_for("requirement-screen") and _imgs_for("requirement-screen")[0] == [PNG])
-ck("requirement ADJUDICATOR RECEIVED images=[PNG] (screen not confident → escalated)",
+record_script_check(fails, "candidate run RECEIVED images=[PNG]", _imgs_for(INTENT) and _imgs_for(INTENT)[0] == [PNG])
+record_script_check(fails, "requirement SCREEN judge RECEIVED images=[PNG]", _imgs_for("requirement-screen") and _imgs_for("requirement-screen")[0] == [PNG])
+record_script_check(fails, "requirement ADJUDICATOR RECEIVED images=[PNG] (screen not confident → escalated)",
    _imgs_for("requirement-adjudicate") and _imgs_for("requirement-adjudicate")[0] == [PNG])
-ck("requirement EXTRACTION did NOT receive images (criteria come from the prompt text)",
+record_script_check(fails, "requirement EXTRACTION did NOT receive images (criteria come from the prompt text)",
    _imgs_for("requirement-extract") and _imgs_for("requirement-extract")[0] is None)
 
 print("\n-- (b) generic judge also sees the image --")
 SEEN.clear()
 bakeoff.bakeoff(INTENT, candidates=CANDS, prompts=[VISION_TASK], run=True, budget_usd=999)
-ck("generic bakeoff-judge RECEIVED images=[PNG]", _imgs_for("bakeoff-judge") and _imgs_for("bakeoff-judge")[0] == [PNG])
+record_script_check(fails, "generic bakeoff-judge RECEIVED images=[PNG]", _imgs_for("bakeoff-judge") and _imgs_for("bakeoff-judge")[0] == [PNG])
 
 print("\n-- (c) a plain-STRING task passes NO images kwarg (byte-for-byte) --")
 SEEN.clear()
 bakeoff.bakeoff(INTENT, candidates=CANDS, prompts=[TASK_TXT], run=True, budget_usd=999)
 cand = _imgs_for(INTENT)                                        # the candidate call's sig == the intent
-ck("a text task's candidate call has NO images (None captured), never images=[…]", cand and all(i is None for i in cand))
-ck("and no call in a text bakeoff carried an image", all(imgs is None for _s, imgs in SEEN))
+record_script_check(fails, "a text task's candidate call has NO images (None captured), never images=[…]", cand and all(i is None for i in cand))
+record_script_check(fails, "and no call in a text bakeoff carried an image", all(imgs is None for _s, imgs in SEEN))
 
 print(f"\n{'[FAIL]' if fails else 'OK'} test_bakeoff_vision: {len(fails)} failure(s)")
 sys.exit(1 if fails else 0)

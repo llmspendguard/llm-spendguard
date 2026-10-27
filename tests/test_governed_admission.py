@@ -19,29 +19,26 @@ os.environ["SPENDGUARD_DISPATCH_XP_OFF"] = "1"
 os.environ["SPENDGUARD_DISPATCH_LANE_CONCURRENCY"] = "1"       # 1 lane slot → one held acquire saturates it
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
+from _script_checks import record_script_check
 from spendguard import dispatch, adapters   # noqa: E402
 
 fails = []
 
 
-def ck(name, cond):
-    print(("  [OK] " if cond else "  [FAIL] ") + name)
-    if not cond:
-        fails.append(name)
 
 
 adapters._lane_for = lambda prov: ("claude-code", object()) if prov == "anthropic" else None   # anthropic rides a lane
 
 print("-- a free $0 lane admits: held, not shed --")
 a = dispatch.admit("anthropic", "m", deadline_s=5)
-ck("free lane → ok + held + not shed", a.ok and a.held and not a.shed)
+record_script_check(fails, "free lane → ok + held + not shed", a.ok and a.held and not a.shed)
 a.release()
 
 print("\n-- a SATURATED $0 lane sheds to its metered twin (the concurrent-fan case) --")
 dispatch.acquire("anthropic", "m", deadline_s=10)             # hold the only claude-code lane slot
 try:
     b = dispatch.admit("anthropic", "m", deadline_s=0.6)
-    ck("saturated $0 lane → ok + SHED + held (run metered_only, not a hard deadline)", b.ok and b.shed and b.held)
+    record_script_check(fails, "saturated $0 lane → ok + SHED + held (run metered_only, not a hard deadline)", b.ok and b.shed and b.held)
     b.release()
 finally:
     dispatch.release("anthropic", "m")
@@ -51,7 +48,7 @@ os.environ["SPENDGUARD_DISPATCH_VENDOR_CONCURRENCY"] = "1"
 dispatch.acquire("openai", "m", deadline_s=10)                # openai is not a lane → vendor key
 try:
     c = dispatch.admit("openai", "m", deadline_s=0.5)
-    ck("saturated metered vendor → NOT ok, no shed, carries the deadline reason", (not c.ok) and (not c.shed) and bool(c.error))
+    record_script_check(fails, "saturated metered vendor → NOT ok, no shed, carries the deadline reason", (not c.ok) and (not c.shed) and bool(c.error))
 finally:
     dispatch.release("openai", "m")
     os.environ.pop("SPENDGUARD_DISPATCH_VENDOR_CONCURRENCY", None)
@@ -60,13 +57,13 @@ print("\n-- no_metered_fallback: a saturated lane is an honest deadline, never a
 dispatch.acquire("anthropic", "m", deadline_s=10)
 try:
     d = dispatch.admit("anthropic", "m", deadline_s=0.6, no_metered_fallback=True)
-    ck("no_metered_fallback → saturated lane NOT ok (no shed)", (not d.ok) and (not d.shed))
+    record_script_check(fails, "no_metered_fallback → saturated lane NOT ok (no shed)", (not d.ok) and (not d.shed))
 finally:
     dispatch.release("anthropic", "m")
 
 print("\n-- deadline<=0 → ungoverned admit (proceed, nothing held); release() is a no-op --")
 e = dispatch.admit("anthropic", "m", deadline_s=0)
-ck("deadline<=0 → ok + NOT held (ungoverned)", e.ok and not e.held)
+record_script_check(fails, "deadline<=0 → ok + NOT held (ungoverned)", e.ok and not e.held)
 e.release()
 
 print(f"\n{'[FAIL]' if fails else 'OK'} test_governed_admission: {len(fails)} failure(s)")

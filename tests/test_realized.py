@@ -11,14 +11,10 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
 
 import sqlite3
 import unittest
+from _script_checks import record_script_check
 from spendguard import realized, config, learn, guard
 
 fails = []
-def ck(name, cond):
-    print(("  [OK] " if cond else "  [FAIL] ") + name)
-    if not cond:
-        fails.append(name)
-
 ADOPT = "2026-06-15T00:00:00"
 REALIZED_THIN_AFTER_CALLS = 100
 con = sqlite3.connect(config.db_path())
@@ -58,22 +54,22 @@ for db in glob.glob(str(config.HOME / "*.db")):
 
 with unittest.TestCase().assertLogs(realized.__name__, level="DEBUG") as realized_skip_logs:
     rows = realized.measure()
-ck("thin intent rejection names intent and below-minimum before count",
+record_script_check(fails, "thin intent rejection names intent and below-minimum before count",
    any(record.args == ("thin", realized.MIN_EACH - 1, REALIZED_THIN_AFTER_CALLS,
                        realized.MIN_EACH, True, False, False, False)
        for record in realized_skip_logs.records))
 by = {r["intent"]: r for r in rows}
-ck("improved intent measured (+$0.06/call × 10 = $0.60)",
+record_script_check(fails, "improved intent measured (+$0.06/call × 10 = $0.60)",
    "typing" in by and abs(by["typing"]["realized_usd"] - 0.60) < 1e-6 and by["typing"]["after_calls"] == 10)
-ck("regression SHOWN, negative", "summarize" in by and by["summarize"]["realized_usd"] < 0)
-ck("thin history not judged", "thin" not in by)
-ck("ranked best-first", rows[0]["intent"] == "typing")
+record_script_check(fails, "regression SHOWN, negative", "summarize" in by and by["summarize"]["realized_usd"] < 0)
+record_script_check(fails, "thin history not judged", "thin" not in by)
+record_script_check(fails, "ranked best-first", rows[0]["intent"] == "typing")
 
 # ── incremental, idempotent sync into guarded(source=realized) ──
 r1 = realized.sync_to_guarded()
-ck("first sync records only the POSITIVE delta ($0.60)", abs(r1["synced_usd"] - 0.60) < 1e-6 and r1["intents"] == 1)
+record_script_check(fails, "first sync records only the POSITIVE delta ($0.60)", abs(r1["synced_usd"] - 0.60) < 1e-6 and r1["intents"] == 1)
 r2 = realized.sync_to_guarded()
-ck("re-run syncs NOTHING new (idempotent)", r2["synced_usd"] == 0 and r2["intents"] == 0)
+record_script_check(fails, "re-run syncs NOTHING new (idempotent)", r2["synced_usd"] == 0 and r2["intents"] == 0)
 gcon = sqlite3.connect(str(config.HOME / "guarded.db")) if (config.HOME / "guarded.db").exists() else None
 found = 0.0
 for db in glob.glob(str(config.HOME / "*.db")):
@@ -83,8 +79,8 @@ for db in glob.glob(str(config.HOME / "*.db")):
     except Exception:
         pass
     c.close()
-ck("guarded savings table holds realized $0.60 exactly once", abs(found - 0.60) < 1e-6)
-ck("realized is a CERTAIN source with high confidence",
+record_script_check(fails, "guarded savings table holds realized $0.60 exactly once", abs(found - 0.60) < 1e-6)
+record_script_check(fails, "realized is a CERTAIN source with high confidence",
    "realized" in guard.CERTAIN and guard.CONFIDENCE.get("realized", 0) >= 0.85)
 
 # ── new after-calls later → only the increment syncs ──
@@ -93,12 +89,12 @@ for i in range(5):
     call(200 + i, "typing", f"2026-06-29T0{i}:00:00", 0.04)
 con.commit(); con.close()
 r3 = realized.sync_to_guarded()
-ck("later calls sync only the increment (5 × $0.06 = $0.30)", abs(r3["synced_usd"] - 0.30) < 1e-6)
+record_script_check(fails, "later calls sync only the increment (5 × $0.06 = $0.30)", abs(r3["synced_usd"] - 0.30) < 1e-6)
 
 import inspect
 from spendguard import cli, report
-ck("CLI wired: `spendguard realized`", '"realized"' in inspect.getsource(cli))
-ck("report wired: realized sync + auto_fresh", "sync_to_guarded" in inspect.getsource(report.generate_report)
+record_script_check(fails, "CLI wired: `spendguard realized`", '"realized"' in inspect.getsource(cli))
+record_script_check(fails, "report wired: realized sync + auto_fresh", "sync_to_guarded" in inspect.getsource(report.generate_report)
    and "auto_fresh" in inspect.getsource(report.generate_report))
 
 print(("[OK]" if not fails else "[FAIL]") + " realized: %d failure(s)" % len(fails))

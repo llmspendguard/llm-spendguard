@@ -14,15 +14,12 @@ os.environ.setdefault("SPENDGUARD_TEST_ISOLATED", "1")
 os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
+from _script_checks import record_script_check
 from spendguard import calls  # noqa: E402
 
 fails = []
 
 
-def ck(name, cond, extra=""):
-    print(("  [OK] " if cond else "  [FAIL] ") + name + (("  — " + extra) if extra and not cond else ""))
-    if not cond:
-        fails.append(name)
 
 
 INTENT = "suspect-exclusion-intent"
@@ -38,10 +35,10 @@ with calls._lock:
 
 norms = calls.mean_out_by_executor_model(INTENT)
 arm = norms.get(("openai", "gpt-5-nano"), {})
-ck("the arm is present (the clean row is counted)", bool(arm), extra=repr(norms))
-ck("mean_out reflects ONLY the clean row (200), not the 2M-tok suspect artifact",
+record_script_check(fails, "the arm is present (the clean row is counted)", bool(arm), extra=repr(norms))
+record_script_check(fails, "mean_out reflects ONLY the clean row (200), not the 2M-tok suspect artifact",
    abs(arm.get("mean_out", 0) - 200.0) < 1e-9, extra=f"mean_out={arm.get('mean_out')}")
-ck("n counts ONLY the clean row (the suspect row is excluded, not just down-weighted)", arm.get("n") == 1,
+record_script_check(fails, "n counts ONLY the clean row (the suspect row is excluded, not just down-weighted)", arm.get("n") == 1,
    extra=f"n={arm.get('n')}")
 
 print(f"\n{'[FAIL]' if fails else 'OK'} test_mean_out_excludes_suspect: {len(fails)} failure(s)")

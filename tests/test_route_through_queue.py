@@ -21,15 +21,11 @@ os.environ.setdefault("SPENDGUARD_TEST_ISOLATED", "1")
 os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
+from _script_checks import record_script_check
 from spendguard import adapters, lane_queue   # noqa: E402
 
 fails = []
 
-
-def ck(name, cond):
-    print(("  [OK] " if cond else "  [FAIL] ") + name)
-    if not cond:
-        fails.append(name)
 
 
 def _served(model, prompt, **kw):
@@ -51,8 +47,8 @@ try:
     before = lane_queue.queue_depth()
     r = adapters.call("acme:m", "p", intent="cold-intent")
     after = lane_queue.queue_depth()
-    ck("flag OFF: the call runs normally (served)", r.get("text") == "served:acme:m")
-    ck("flag OFF: NO durable row recorded (dormant)", _total(after) == _total(before))
+    record_script_check(fails, "flag OFF: the call runs normally (served)", r.get("text") == "served:acme:m")
+    record_script_check(fails, "flag OFF: NO durable row recorded (dormant)", _total(after) == _total(before))
 
     # ── (a2) flag UNSET → routed (ON is the new default now the queue write is pooled) ──
     print("\n-- (a2) flag UNSET: routed by default (default is now ON) --")
@@ -60,7 +56,7 @@ try:
     b1 = lane_queue.queue_depth()
     adapters.call("acme:m", "p", intent="default-on-intent")
     a1 = lane_queue.queue_depth()
-    ck("flag UNSET → routed by default (exactly one durable row)", (a1.get("done", 0) - b1.get("done", 0)) == 1)
+    record_script_check(fails, "flag UNSET → routed by default (exactly one durable row)", (a1.get("done", 0) - b1.get("done", 0)) == 1)
 
     # ── (b) flag ON → a labelled call runs normally AND is recorded once ──
     print("\n-- (b) flag ON: labelled call runs normally + exactly one durable row --")
@@ -68,21 +64,21 @@ try:
     b2 = lane_queue.queue_depth()
     r2 = adapters.call("acme:m", "p", intent="test-2c")
     a2 = lane_queue.queue_depth()
-    ck("flag ON: the call still runs normally, model/lane unchanged (served)", r2.get("text") == "served:acme:m")
-    ck("flag ON: exactly ONE durable row recorded + settled 'done' for the call",
+    record_script_check(fails, "flag ON: the call still runs normally, model/lane unchanged (served)", r2.get("text") == "served:acme:m")
+    record_script_check(fails, "flag ON: exactly ONE durable row recorded + settled 'done' for the call",
        (a2.get("done", 0) - b2.get("done", 0)) == 1)
 
     # ── (c) flag ON + UNLABELLED → NOT routed ──
     print("\n-- (c) flag ON but UNLABELLED (no intent/sig) → not routed --")
     b3 = lane_queue.queue_depth()
     adapters.call("acme:m", "p")
-    ck("flag ON but UNLABELLED → NOT routed (no row)", _total(lane_queue.queue_depth()) == _total(b3))
+    record_script_check(fails, "flag ON but UNLABELLED → NOT routed (no row)", _total(lane_queue.queue_depth()) == _total(b3))
 
     # ── (d) flag ON + probe → NOT routed ──
     print("\n-- (d) flag ON but a _probe call → not routed --")
     b4 = lane_queue.queue_depth()
     adapters.call("acme:m", "p", intent="test-2c", _probe=True)
-    ck("flag ON but a probe → NOT routed (no row)", _total(lane_queue.queue_depth()) == _total(b4))
+    record_script_check(fails, "flag ON but a probe → NOT routed (no row)", _total(lane_queue.queue_depth()) == _total(b4))
 
     # ── (e) flag ON + already inside a routed record → NOT re-recorded ──
     print("\n-- (e) flag ON but already inside a routed record (guard on) → not re-recorded --")
@@ -91,7 +87,7 @@ try:
     adapters.call("acme:m", "p", intent="test-2c")
     a5 = lane_queue.queue_depth()
     adapters._route_guard.on = False
-    ck("flag ON but inside a routed record → NOT re-recorded (no double-record / no loop)", _total(a5) == _total(b5))
+    record_script_check(fails, "flag ON but inside a routed record → NOT re-recorded (no double-record / no loop)", _total(a5) == _total(b5))
 finally:
     adapters._call_guarded = _saved
     os.environ.pop("SPENDGUARD_ROUTE_THROUGH_QUEUE", None)

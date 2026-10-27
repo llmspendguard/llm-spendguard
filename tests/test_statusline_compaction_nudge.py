@@ -15,14 +15,10 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
     os.environ["SPENDGUARD_HOME"] = home
     os.execv(sys.executable, [sys.executable] + sys.argv)
 
+from _script_checks import record_script_check
 from spendguard import receipt
 
 fails = []
-def ck(name, cond):
-    print(("  [OK] " if cond else "  [FAIL] ") + name)
-    if not cond:
-        fails.append(name)
-
 HOME = os.environ["SPENDGUARD_HOME"]
 with open(os.path.join(HOME, "compaction_hint.json"), "w") as f:
     json.dump({"threshold_tokens": 100000, "k": 11.2}, f)
@@ -39,17 +35,17 @@ with open(small, "w") as f:
     f.write(turn(1000, 4000, 0, 50) + "\n")                # context = 5,000 << threshold
 
 n_big = receipt._compaction_nudge({"transcript_path": big}, HOME)
-ck("bloated session → the EXACT claim-free one-liner (tok/turn + /compact, no savings multiplier)",
+record_script_check(fails, "bloated session → the EXACT claim-free one-liner (tok/turn + /compact, no savings multiplier)",
    n_big == "⚠ 500K tok/turn · /compact (guided)")
-ck("nudge signals it is (guided) — so the user knows the hook will preserve context", "(guided)" in n_big)
-ck("small session → no nudge", receipt._compaction_nudge({"transcript_path": small}, HOME) == "")
-ck("no transcript → no nudge (graceful)", receipt._compaction_nudge({}, HOME) == "")
-ck("missing transcript file → no nudge", receipt._compaction_nudge({"transcript_path": "/no/such.jsonl"}, HOME) == "")
+record_script_check(fails, "nudge signals it is (guided) — so the user knows the hook will preserve context", "(guided)" in n_big)
+record_script_check(fails, "small session → no nudge", receipt._compaction_nudge({"transcript_path": small}, HOME) == "")
+record_script_check(fails, "no transcript → no nudge (graceful)", receipt._compaction_nudge({}, HOME) == "")
+record_script_check(fails, "missing transcript file → no nudge", receipt._compaction_nudge({"transcript_path": "/no/such.jsonl"}, HOME) == "")
 
 # it reads the LAST turn: after a compaction, the newest turn is small → the nudge disappears
 with open(big, "a") as f:
     f.write(turn(1000, 2000, 0, 50) + "\n")                # a post-compaction small turn is now the last
-ck("reads the LAST turn — once compacted (below threshold) the nudge is gone",
+record_script_check(fails, "reads the LAST turn — once compacted (below threshold) the nudge is gone",
    receipt._compaction_nudge({"transcript_path": big}, HOME) == "")
 
 print(("[OK]" if not fails else "[FAIL]") + " statusline-compaction-nudge: %d failure(s)" % len(fails))

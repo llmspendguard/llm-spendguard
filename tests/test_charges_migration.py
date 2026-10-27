@@ -17,15 +17,12 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
     os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="spendguard-mig-")
     os.execv(sys.executable, [sys.executable] + sys.argv)
 
+from _script_checks import record_script_check  # noqa: E402
+
 from spendguard import budget, conv, migrate_charges
 from spendguard import ledger as L
 
 fails = []
-def ck(name, cond):
-    print(("  [OK] " if cond else "  [FAIL] ") + name)
-    if not cond:
-        fails.append(name)
-
 # isolated home has no taxonomy/transcripts → pin the repo→org map + make resolve hermetic (no real transcript reads)
 conv._conversation_prior_index = lambda: {"lmm": ("healiom", "lmm"), "manga2anime": ("ensight", "manga2anime"),
                              "llm-spendguard": ("ensight", "llm-spendguard")}
@@ -55,29 +52,29 @@ SRC_TOTAL = 1.50 + 2.00 + 0.25 + 10.00 + 0.75 + 0.75                            
 
 led = L.SpendLedger()
 st = migrate_charges.to_spend_events(led=led)
-ck("Σ conserved — delta 0 (no dollar lost/added)", abs(st["delta_usd"]) < 1e-6)
-ck("migrated 6 nonzero rows, skipped the 1 zero", st["migrated"] == 6 and st["skipped_zero"] == 1)
-ck("dst total == src total == 15.25", abs(st["dst_total_usd"] - SRC_TOTAL) < 1e-6 and abs(st["src_total_usd"] - SRC_TOTAL) < 1e-6)
+record_script_check(fails, "Σ conserved — delta 0 (no dollar lost/added)", abs(st["delta_usd"]) < 1e-6)
+record_script_check(fails, "migrated 6 nonzero rows, skipped the 1 zero", st["migrated"] == 6 and st["skipped_zero"] == 1)
+record_script_check(fails, "dst total == src total == 15.25", abs(st["dst_total_usd"] - SRC_TOTAL) < 1e-6 and abs(st["src_total_usd"] - SRC_TOTAL) < 1e-6)
 
 rows = led.query(where={"source": "migrate:charges"})
-ck("duplicate-cost pair BOTH survived (rowid dedup, not value dedup)",
+record_script_check(fails, "duplicate-cost pair BOTH survived (rowid dedup, not value dedup)",
    len([r for r in rows if L.to_dec(r["realtime_usd"]) == Decimal("0.75")]) == 2)
 metas = [r for r in rows if r.get("is_meta")]
-ck("meta row flagged is_meta + booked as realtime $", len(metas) == 1 and L.to_dec(metas[0]["realtime_usd"]) == Decimal("0.25"))
+record_script_check(fails, "meta row flagged is_meta + booked as realtime $", len(metas) == 1 and L.to_dec(metas[0]["realtime_usd"]) == Decimal("0.25"))
 recon = [r for r in rows if r.get("reconciled")]
-ck("marker row → reconciled + status=reconciled + batch $", len(recon) == 1
+record_script_check(fails, "marker row → reconciled + status=reconciled + batch $", len(recon) == 1
    and recon[0]["status"] == "reconciled" and L.to_dec(recon[0]["batch_usd"]) == Decimal("10"))
-ck("attribution lmm → org healiom", any(r["org"] == "healiom" and r["project_primary"] == "lmm" for r in rows))
-ck("attribution manga2anime → org ensight", any(r["org"] == "ensight" and L.to_dec(r["batch_usd"]) == Decimal("2") for r in rows))
+record_script_check(fails, "attribution lmm → org healiom", any(r["org"] == "healiom" and r["project_primary"] == "lmm" for r in rows))
+record_script_check(fails, "attribution manga2anime → org ensight", any(r["org"] == "ensight" and L.to_dec(r["batch_usd"]) == Decimal("2") for r in rows))
 
 # idempotency: a SECOND migration (fresh ledger handle, same db) must book NOTHING new
 st2 = migrate_charges.to_spend_events(led=L.SpendLedger())
 rows2 = L.SpendLedger().query(where={"source": "migrate:charges"})
-ck("idempotent — re-run leaves 6 rows + same $ (dedup, no double-count)",
+record_script_check(fails, "idempotent — re-run leaves 6 rows + same $ (dedup, no double-count)",
    len(rows2) == 6 and abs(st2["dst_total_usd"] - SRC_TOTAL) < 1e-6)
 
 ok, bad = led.verify_audit_chain()
-ck("spend_audit hash chain intact after bulk migration", ok)
+record_script_check(fails, "spend_audit hash chain intact after bulk migration", ok)
 
 
 # ── AND once the cutover is COMPLETE (charges dropped), the migration REFUSES — it must never touch the live
@@ -97,12 +94,12 @@ db.execute("DROP TABLE charges")                                      # simulate
 db.commit()
 _st3 = migrate_charges.run_cutover()
 _names_after = {r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-ck("run_cutover REFUSES cleanly when charges is gone (already_cutover)", _st3.get("already_cutover") is True)
-ck("...created NO spend_events_precutover (did NOT rename the live ledger aside)",
+record_script_check(fails, "run_cutover REFUSES cleanly when charges is gone (already_cutover)", _st3.get("already_cutover") is True)
+record_script_check(fails, "...created NO spend_events_precutover (did NOT rename the live ledger aside)",
    "spend_events_precutover" not in _names_after)
-ck("...spend_events untouched — same row count, still the sole ledger",
+record_script_check(fails, "...spend_events untouched — same row count, still the sole ledger",
    "spend_events" in _names_after and L.SpendLedger().count_events() == _before)
-ck("...a DIRECT to_spend_events() call raises a CLEAR error, not a raw no-such-table crash",
+record_script_check(fails, "...a DIRECT to_spend_events() call raises a CLEAR error, not a raw no-such-table crash",
    _raises_valueerror(lambda: migrate_charges.to_spend_events(led=L.SpendLedger())))
 
 print(("[OK]" if not fails else "[FAIL]") + " charges-migration: %d failure(s)" % len(fails))

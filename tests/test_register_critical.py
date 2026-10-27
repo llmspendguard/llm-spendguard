@@ -12,15 +12,11 @@ os.environ.setdefault("SPENDGUARD_TEST_ISOLATED", "1")
 os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
+from _script_checks import record_script_check
 from spendguard import lane_balance, config   # noqa: E402
 
 fails = []
 
-
-def ck(name, cond):
-    print(("  [OK] " if cond else "  [FAIL] ") + name)
-    if not cond:
-        fails.append(name)
 
 
 # an EMPTY calls table → read_ok=True, every pin unmatched (nothing recorded) — the state that makes coverage's
@@ -34,34 +30,34 @@ print("-- register_critical merges pins into advisor.bandit_denylist + records t
 merged = lane_balance.register_critical(["warden:govern_adjudicate*", "warden:card_faithful*"], source="warden")
 config.cfg_invalidate()
 dl = config._cfg_get("advisor", "bandit_denylist", None) or []
-ck("both pins land in advisor.bandit_denylist", "warden:govern_adjudicate*" in dl and "warden:card_faithful*" in dl)
-ck("returns the merged list", set(merged) >= {"warden:govern_adjudicate*", "warden:card_faithful*"})
+record_script_check(fails, "both pins land in advisor.bandit_denylist", "warden:govern_adjudicate*" in dl and "warden:card_faithful*" in dl)
+record_script_check(fails, "returns the merged list", set(merged) >= {"warden:govern_adjudicate*", "warden:card_faithful*"})
 src = config._cfg_get("advisor", "bandit_denylist_sources", None) or {}
-ck("the source is recorded per pattern", src.get("warden:govern_adjudicate*") == "warden")
+record_script_check(fails, "the source is recorded per pattern", src.get("warden:govern_adjudicate*") == "warden")
 
 print("-- idempotent: re-registering the same pattern does not duplicate --")
 lane_balance.register_critical(["warden:card_faithful*"], source="warden")
 config.cfg_invalidate()
 dl2 = config._cfg_get("advisor", "bandit_denylist", None) or []
-ck("no duplicate entry after re-register", dl2.count("warden:card_faithful*") == 1)
-ck("list stays sorted + deduped", dl2 == sorted(set(dl2)))
+record_script_check(fails, "no duplicate entry after re-register", dl2.count("warden:card_faithful*") == 1)
+record_script_check(fails, "list stays sorted + deduped", dl2 == sorted(set(dl2)))
 
 print("-- a DIFFERENT source adds more without dropping the first --")
 lane_balance.register_critical(["review:"], source="honestreview")
 config.cfg_invalidate()
 dl3 = config._cfg_get("advisor", "bandit_denylist", None) or []
 src3 = config._cfg_get("advisor", "bandit_denylist_sources", None) or {}
-ck("the new pin is added, warden's preserved", "review:" in dl3 and "warden:card_faithful*" in dl3)
-ck("each pin keeps its own source", src3.get("review:") == "honestreview" and src3.get("warden:card_faithful*") == "warden")
+record_script_check(fails, "the new pin is added, warden's preserved", "review:" in dl3 and "warden:card_faithful*" in dl3)
+record_script_check(fails, "each pin keeps its own source", src3.get("review:") == "honestreview" and src3.get("warden:card_faithful*") == "warden")
 
 print("-- coverage exposes sources so doctor attributes a not-yet-run pin (registered, not a suspect typo) --")
 cov = (lane_balance.bandit_list_coverage() or {}).get("bandit_denylist", {})
-ck("coverage carries the sources map", cov.get("sources", {}).get("warden:govern_adjudicate*") == "warden")
+record_script_check(fails, "coverage carries the sources map", cov.get("sources", {}).get("warden:govern_adjudicate*") == "warden")
 _un = cov.get("unmatched") or []
 _registered = [e for e in _un if e in (cov.get("sources") or {})]
 _suspect = [e for e in _un if e not in (cov.get("sources") or {})]
-ck("a registered pin reads as registered-unmatched (benign)", "warden:govern_adjudicate*" in _registered)
-ck("no unregistered suspects here (every pin was registered with a source)", _suspect == [])
+record_script_check(fails, "a registered pin reads as registered-unmatched (benign)", "warden:govern_adjudicate*" in _registered)
+record_script_check(fails, "no unregistered suspects here (every pin was registered with a source)", _suspect == [])
 
 print("-- reader self-heals a list replaced without its source-credited pins --")
 config.update_json(config.CONFIG_JSON, lambda d: {**d, "advisor": {
@@ -69,14 +65,14 @@ config.update_json(config.CONFIG_JSON, lambda d: {**d, "advisor": {
     reason="test-external-replacement", required=True)
 config.cfg_invalidate()
 effective = lane_balance._effective_bandit_denylist()
-ck("a dropped source-credited review pin remains effective",
+record_script_check(fails, "a dropped source-credited review pin remains effective",
    lane_balance._intent_listed("review:catalog.py", effective))
-ck("the reader's union preserves both configured and credited pins",
+record_script_check(fails, "the reader's union preserves both configured and credited pins",
    "warden:card_faithful*" in effective and "review:" in effective)
 
 print("-- empty call is a no-op returning the current list unchanged --")
 before = config._cfg_get("advisor", "bandit_denylist", None) or []
-ck("register_critical([]) is a no-op", lane_balance.register_critical([]) == before)
+record_script_check(fails, "register_critical([]) is a no-op", lane_balance.register_critical([]) == before)
 
 print(f"\n{'[FAIL]' if fails else 'OK'} test_register_critical: {len(fails)} failure(s)")
 sys.exit(1 if fails else 0)

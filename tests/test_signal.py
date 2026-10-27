@@ -8,14 +8,10 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
     os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="spendguard-signal-")
     os.execv(sys.executable, [sys.executable] + sys.argv)
 
+from _script_checks import record_script_check
 from spendguard import signal, callio, backfill, conv
 
 fails = []
-def ck(name, cond):
-    print(("  [OK] " if cond else "  [FAIL] ") + name)
-    if not cond:
-        fails.append(name)
-
 # recommend() is a closure inside build(); its three rules (low good-rate, opus-heavy, tiny-prompts) are exercised
 # through build() below on seeded data.
 
@@ -54,19 +50,19 @@ reconcile_openai.fetch_batches = lambda _k=None: []
 rows = {(r["intent"], r["model"]): r for r in signal.build_signals(since="2026-01-01")}
 
 ex = rows.get(("extract", "gpt-5.5"))
-ck("build: extract group present, 2 calls", ex and ex["calls"] == 2)
-ck("build: batch cost counted ONCE ($4 = 4_000_000 micros), not per-call", ex and ex["cost_micros"] == 4_000_000)
-ck("build: good_rate = good/judged = 0.5", ex and abs(ex["good_rate"] - 0.5) < 1e-9 and ex["judged"] == 2)
-ck("build: waste = cost × (1 − good_rate) = $2", ex and ex["waste_micros"] == 2_000_000)
-ck("build: recommend fires on low good-rate (0.5 < 0.7)", ex and "low good-rate" in ex["recommendation"])
+record_script_check(fails, "build: extract group present, 2 calls", ex and ex["calls"] == 2)
+record_script_check(fails, "build: batch cost counted ONCE ($4 = 4_000_000 micros), not per-call", ex and ex["cost_micros"] == 4_000_000)
+record_script_check(fails, "build: good_rate = good/judged = 0.5", ex and abs(ex["good_rate"] - 0.5) < 1e-9 and ex["judged"] == 2)
+record_script_check(fails, "build: waste = cost × (1 − good_rate) = $2", ex and ex["waste_micros"] == 2_000_000)
+record_script_check(fails, "build: recommend fires on low good-rate (0.5 < 0.7)", ex and "low good-rate" in ex["recommendation"])
 
 su = rows.get(("summarize", "claude-opus-4-8"))
-ck("build: unjudged group → good_rate None, waste 0", su and su["good_rate"] is None and su["waste_micros"] == 0)
-ck("build: opus-heavy spend (>$20) → A/B recommendation", su and "A/B a cheaper model" in su["recommendation"])
-ck("build: tokens summed", su and su["tokens_in"] == 200 and su["tokens_out"] == 80)
+record_script_check(fails, "build: unjudged group → good_rate None, waste 0", su and su["good_rate"] is None and su["waste_micros"] == 0)
+record_script_check(fails, "build: opus-heavy spend (>$20) → A/B recommendation", su and "A/B a cheaper model" in su["recommendation"])
+record_script_check(fails, "build: tokens summed", su and su["tokens_in"] == 200 and su["tokens_out"] == 80)
 
 # cancellation_rows() with no provider key → fetch_batches raises → [] (offline-safe, no crash)
-ck("cancellation_rows is [] offline (no provider key)", signal.cancellation_rows() == [])
+record_script_check(fails, "cancellation_rows is [] offline (no provider key)", signal.cancellation_rows() == [])
 
 print(("\n[FAIL] " if fails else "\n[OK] ") + f"signal: {len(fails)} failure(s)")
 sys.exit(1 if fails else 0)

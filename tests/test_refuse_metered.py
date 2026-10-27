@@ -14,37 +14,33 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
         raise SystemExit("refusing to re-exec a path outside the test directory: %s" % _self)
     os.execv(sys.executable, [sys.executable, _self])
 
+from _script_checks import record_script_check
 from spendguard import gate
 
 _fails = []
-def ck(n, c):
-    print(("  [OK] " if c else "  [FAIL] ") + n)
-    if not c:
-        _fails.append(n)
-
 os.environ.pop("SPENDGUARD_REFUSE_METERED", None)
-ck("default: refuse_metered is NOT active", not gate._refuse_metered_active())
+record_script_check(_fails, "default: refuse_metered is NOT active", not gate._refuse_metered_active())
 
 print("-- refuse_metered() context: both metered chokepoints raise MeteredCallRefused --")
 with gate.refuse_metered():
-    ck("active inside the context", gate._refuse_metered_active())
+    record_script_check(_fails, "active inside the context", gate._refuse_metered_active())
     raised = None
     try:
         gate._rt_precheck_usd("openai", "gpt-5.5", 0.01)
     except gate.MeteredCallRefused:
         raised = "metered"
-    ck("a metered REALTIME call raises MeteredCallRefused", raised == "metered")
+    record_script_check(_fails, "a metered REALTIME call raises MeteredCallRefused", raised == "metered")
     r2 = None
     try:
         gate._decide({"provider": "openai", "model": "gpt-5.5", "cost": 0.01, "requests": 1, "in_tok": 10, "out_tok": 10})
     except gate.MeteredCallRefused:
         r2 = "metered"
-    ck("a metered BATCH submission raises MeteredCallRefused", r2 == "metered")
-ck("NOT active after the context exits (restored)", not gate._refuse_metered_active())
+    record_script_check(_fails, "a metered BATCH submission raises MeteredCallRefused", r2 == "metered")
+record_script_check(_fails, "NOT active after the context exits (restored)", not gate._refuse_metered_active())
 
 print("-- MeteredCallRefused is a deliberate stop (propagates through fail-open handlers) --")
-ck("subclass of SpendGateRefused", issubclass(gate.MeteredCallRefused, gate.SpendGateRefused))
-ck("covered by deliberate_stop_types()", isinstance(gate.MeteredCallRefused("x"), gate.deliberate_stop_types()))
+record_script_check(_fails, "subclass of SpendGateRefused", issubclass(gate.MeteredCallRefused, gate.SpendGateRefused))
+record_script_check(_fails, "covered by deliberate_stop_types()", isinstance(gate.MeteredCallRefused("x"), gate.deliberate_stop_types()))
 
 print("-- env SPENDGUARD_REFUSE_METERED: process-wide, FAIL-CLOSED (unrecognised → refuse, never allow) --")
 for val, expect in [("1", True), ("true", True), ("TRUE", True), ("yes", True), ("on", True), ("enabled", True),
@@ -53,7 +49,7 @@ for val, expect in [("1", True), ("true", True), ("TRUE", True), ("yes", True), 
         os.environ.pop("SPENDGUARD_REFUSE_METERED", None)
     else:
         os.environ["SPENDGUARD_REFUSE_METERED"] = val
-    ck(f"env={val!r} → active={expect}", gate._refuse_metered_active() == expect)
+    record_script_check(_fails, f"env={val!r} → active={expect}", gate._refuse_metered_active() == expect)
 os.environ.pop("SPENDGUARD_REFUSE_METERED", None)
 
 print(("[OK]" if not _fails else "[FAIL]") + " refuse_metered: %d failure(s)" % len(_fails))

@@ -29,6 +29,7 @@ os.environ["SPENDGUARD_TEST_ISOLATED"] = "1"
 os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
+from _script_checks import record_script_check
 from spendguard import adapters, model_catalog   # noqa: E402
 
 
@@ -57,24 +58,20 @@ class _Client:
 def main():
     fails = []
 
-    def ck(name, cond, extra=""):
-        print(("  [OK] " if cond else "  [FAIL] ") + name + (("  — " + str(extra)) if extra and not cond else ""))
-        if not cond:
-            fails.append(name)
 
     # ── PART 1: the catalog accessor ──
     print("-- PART 1: model_catalog.embed_batch_ceiling — measured caps; None for chat/uncurated --")
-    ck("gemini-embedding-001 → 100", model_catalog.embed_batch_ceiling("gemini-embedding-001") == 100,
-       model_catalog.embed_batch_ceiling("gemini-embedding-001"))
-    ck("gemini:gemini-embedding-001 (with provider prefix) → 100",
+    record_script_check(fails, "gemini-embedding-001 → 100", model_catalog.embed_batch_ceiling("gemini-embedding-001") == 100,
+       str(model_catalog.embed_batch_ceiling("gemini-embedding-001")))
+    record_script_check(fails, "gemini:gemini-embedding-001 (with provider prefix) → 100",
        model_catalog.embed_batch_ceiling("gemini:gemini-embedding-001") == 100)
-    ck("text-embedding-3-small → 2048", model_catalog.embed_batch_ceiling("text-embedding-3-small") == 2048,
-       model_catalog.embed_batch_ceiling("text-embedding-3-small"))
-    ck("text-embedding-3-large → 2048", model_catalog.embed_batch_ceiling("text-embedding-3-large") == 2048)
-    ck("voyage-3.5 → 1000", model_catalog.embed_batch_ceiling("voyage-3.5") == 1000,
-       model_catalog.embed_batch_ceiling("voyage-3.5"))
-    ck("a CHAT model → None (no embed cap)", model_catalog.embed_batch_ceiling("gpt-5") is None)
-    ck("an UNCURATED id → None (caller's own default, not a guess)",
+    record_script_check(fails, "text-embedding-3-small → 2048", model_catalog.embed_batch_ceiling("text-embedding-3-small") == 2048,
+       str(model_catalog.embed_batch_ceiling("text-embedding-3-small")))
+    record_script_check(fails, "text-embedding-3-large → 2048", model_catalog.embed_batch_ceiling("text-embedding-3-large") == 2048)
+    record_script_check(fails, "voyage-3.5 → 1000", model_catalog.embed_batch_ceiling("voyage-3.5") == 1000,
+       str(model_catalog.embed_batch_ceiling("voyage-3.5")))
+    record_script_check(fails, "a CHAT model → None (no embed cap)", model_catalog.embed_batch_ceiling("gpt-5") is None)
+    record_script_check(fails, "an UNCURATED id → None (caller's own default, not a guess)",
        model_catalog.embed_batch_ceiling("no-such-embed-model-xyz") is None)
 
     _real = adapters._oai_compat_client
@@ -85,16 +82,16 @@ def main():
         adapters._oai_compat_client = lambda prov, timeout_s=None: _Client(_RecordingEmbeddings(sizes))
         texts = [f"t{i}" for i in range(250)]
         r = adapters.embed(list(texts), model="gemini:gemini-embedding-001", max_batch=500, checkpoint=False)
-        ck("max_batch=500 is CLAMPED to 100 — no chunk exceeds the cap", sizes and max(sizes) <= 100, max(sizes) if sizes else None)
-        ck("all 250 inputs embedded (no partial loss — the incident)",
-           not r.get("error") and sum(1 for v in r["vectors"] if v is not None) == 250, r.get("error"))
-        ck("vectors stay ALIGNED to inputs under clamped chunking", all(r["vectors"][i] == [float(i)] * 3 for i in range(250)),
-           [r["vectors"][i] for i in (0, 99, 100, 249)])
+        record_script_check(fails, "max_batch=500 is CLAMPED to 100 — no chunk exceeds the cap", sizes and max(sizes) <= 100, str(max(sizes) if sizes else None))
+        record_script_check(fails, "all 250 inputs embedded (no partial loss — the incident)",
+           not r.get("error") and sum(1 for v in r["vectors"] if v is not None) == 250, str(r.get("error")))
+        record_script_check(fails, "vectors stay ALIGNED to inputs under clamped chunking", all(r["vectors"][i] == [float(i)] * 3 for i in range(250)),
+           str([r["vectors"][i] for i in (0, 99, 100, 249)]))
 
         sizes2 = []
         adapters._oai_compat_client = lambda prov, timeout_s=None: _Client(_RecordingEmbeddings(sizes2))
         adapters.embed([f"s{i}" for i in range(120)], model="gemini:gemini-embedding-001", max_batch=40, checkpoint=False)
-        ck("a smaller max_batch (40) is honored (clamp is min, not force to 100)", sizes2 and max(sizes2) <= 40, max(sizes2) if sizes2 else None)
+        record_script_check(fails, "a smaller max_batch (40) is honored (clamp is min, not force to 100)", sizes2 and max(sizes2) <= 40, str(max(sizes2) if sizes2 else None))
 
         # ── PART 3: EMPIRICAL RECOVERY (bisection) on an uncurated provider that still rejects the batch ──
         print("\n-- PART 3: an UNCURATED model that rejects the batch → embed() BISECTS, all inputs embed, aligned --")
@@ -103,13 +100,13 @@ def main():
             _RecordingEmbeddings(sizes3, ceiling=50, msg="400 - at most 50 requests can be in one batch"))
         # openai:<uncurated> → provider resolves (openai) but the model has NO catalog ceiling → no clamp → default 128
         rr = adapters.embed([f"u{i}" for i in range(130)], model="openai:uncurated-embed-x", max_batch=128, checkpoint=False)
-        ck("the default 128 batch was attempted first (no clamp for an uncurated model)", 128 in sizes3, sizes3[:3])
-        ck("it BISECTED — some request fit under the provider's cap (<=50)", any(0 < s <= 50 for s in sizes3), sizes3)
-        ck("ALL 130 inputs embedded via bisection (none failed)",
-           not rr.get("error") and sum(1 for v in rr["vectors"] if v is not None) == 130, rr.get("error"))
-        ck("bisected vectors stay ALIGNED to inputs (no mismap on re-slice)",
+        record_script_check(fails, "the default 128 batch was attempted first (no clamp for an uncurated model)", 128 in sizes3, str(sizes3[:3]))
+        record_script_check(fails, "it BISECTED — some request fit under the provider's cap (<=50)", any(0 < s <= 50 for s in sizes3), str(sizes3))
+        record_script_check(fails, "ALL 130 inputs embedded via bisection (none failed)",
+           not rr.get("error") and sum(1 for v in rr["vectors"] if v is not None) == 130, str(rr.get("error")))
+        record_script_check(fails, "bisected vectors stay ALIGNED to inputs (no mismap on re-slice)",
            all(rr["vectors"][i] == [float(i)] * 3 for i in range(130)),
-           [rr["vectors"][i] for i in (0, 49, 50, 100, 129)])
+           str([rr["vectors"][i] for i in (0, 49, 50, 100, 129)]))
     finally:
         adapters._oai_compat_client = _real
 

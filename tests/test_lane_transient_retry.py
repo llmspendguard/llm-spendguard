@@ -19,15 +19,12 @@ os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
 os.environ["SPENDGUARD_AVOID_CLAUDE_LANE"] = "off"
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
+from _script_checks import record_script_check
 from spendguard import adapters, resource_state, dispatch, lane_balance, lane_queue   # noqa: E402
 
 fails = []
 
 
-def ck(name, cond):
-    print(("  [OK] " if cond else "  [FAIL] ") + name)
-    if not cond:
-        fails.append(name)
 
 
 _n = {"flaky": 0, "fail": 0}
@@ -66,7 +63,7 @@ adapters._lane_for = lambda prov: ("claude-code", _FlakyLane) if prov == "anthro
 resource_state.note_proven_good(resource_state.lane_key("claude-code"), 1000)   # it answered a big prompt before
 _n["flaky"] = 0
 r = adapters._call_once("anthropic:claude-x", "hi", max_tokens=100)
-ck("retried once (2 lane calls) and recovered on the lane — no metered spill",
+record_script_check(fails, "retried once (2 lane calls) and recovered on the lane — no metered spill",
    _n["flaky"] == 2 and r.get("text") == "recovered" and r.get("executor") == "claude-code")
 
 print("\n-- a lane with NO proven-good history still confirms a miss before metered --")
@@ -84,7 +81,7 @@ try:
 finally:
     lane_balance.quality_equivalent_free_substitutes = _original_quality_substitutes
     lane_queue.hold_free_recovery = _original_hold_free_recovery
-ck("no proven-good history → bounded confirmation attempts", _n["fail"] == 2)
+record_script_check(fails, "no proven-good history → bounded confirmation attempts", _n["fail"] == 2)
 
 print("\n-- a DELIBERATE stop from the lane PROPAGATES (halts), never swallowed + retried --")
 adapters._lane_for = lambda prov: ("claude-code", _DeadlineLane) if prov == "anthropic" else None
@@ -94,7 +91,7 @@ try:
     adapters._call_once("anthropic:claude-y", "hi", max_tokens=100)
 except dispatch.DispatchTimeout:
     raised = True
-ck("a deliberate stop halts (propagates), not downgraded to an error dict + retried", raised)
+record_script_check(fails, "a deliberate stop halts (propagates), not downgraded to an error dict + retried", raised)
 
 print(f"\n{'[FAIL]' if fails else 'OK'} test_lane_transient_retry: {len(fails)} failure(s)")
 sys.exit(1 if fails else 0)

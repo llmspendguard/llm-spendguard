@@ -21,6 +21,7 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
     os.execv(sys.executable, [sys.executable] + sys.argv)
 
 import spendguard
+from _script_checks import record_script_check
 from spendguard import budget
 from spendguard.ledger import SpendLedger
 from spendguard.ledger_read import LedgerQueryDeadline
@@ -30,10 +31,6 @@ _FLOW_EXPLICIT_READ_DEADLINE_S = budget.config.LEDGER_QUERY_DEADLINE_S / _FLOW_D
 _FLOW_INVALID_READ_DEADLINE_S = float("nan")
 
 fails = []
-def ck(name, cond):
-    print(("  [OK] " if cond else "  [FAIL] ") + name)
-    if not cond:
-        fails.append(name)
 
 # seed a ledger with real countable spend so there IS a table to (not) scan
 for _ in range(50):
@@ -59,7 +56,7 @@ scan["n"] = 0
 for _ in range(K):
     with spendguard.context(intent="probe"):
         pass
-ck(f"receipts=off: {K} empty flow contexts → 0 full-ledger rescans (was {K})", scan["n"] == 0)
+record_script_check(fails, f"receipts=off: {K} empty flow contexts → 0 full-ledger rescans (was {K})", scan["n"] == 0)
 print(f"    full-ledger recomputes across {K} contexts (off): {scan['n']}")
 
 # B) receipts=flow (the DEFAULT real-world path: enter AND exit both read the baseline). Still O(1), not O(K).
@@ -68,7 +65,7 @@ scan["n"] = 0
 for _ in range(K):
     with spendguard.context(intent="probe"):
         pass
-ck(f"receipts=flow: {K} empty flow contexts → O(1) not O(K) rescans", scan["n"] <= 2)
+record_script_check(fails, f"receipts=flow: {K} empty flow contexts → O(1) not O(K) rescans", scan["n"] <= 2)
 print(f"    full-ledger recomputes across {K} contexts (flow): {scan['n']}")
 os.environ["SPENDGUARD_RECEIPTS"] = "off"
 
@@ -76,9 +73,9 @@ os.environ["SPENDGUARD_RECEIPTS"] = "off"
 b0 = budget.spent_all_time()
 budget.record_charge("openai", "gpt-4o-mini", "realtime", 0.25)
 b1 = budget.spent_all_time()
-ck("memoized baseline reflects a new charge exactly (delta = the charge)", round(b1 - b0, 6) == 0.25)
+record_script_check(fails, "memoized baseline reflects a new charge exactly (delta = the charge)", round(b1 - b0, 6) == 0.25)
 live = float(budget._ledger().spent_dec())         # the un-memoized whole-ledger total
-ck("memoized baseline == live un-memoized whole-ledger sum", round(b1 - live, 9) == 0.0)
+record_script_check(fails, "memoized baseline == live un-memoized whole-ledger sum", round(b1 - live, 9) == 0.0)
 
 SpendLedger.spent_dec = _orig_spent_dec
 
@@ -88,22 +85,22 @@ with patch.object(SpendLedger, "spent_dec", side_effect=LedgerQueryDeadline(_FLO
     try:
         budget.spent_all_time(deadline_s=_FLOW_EXPLICIT_READ_DEADLINE_S)
     except LedgerQueryDeadline:
-        ck("a failed cold baseline read propagates its typed deadline", True)
+        record_script_check(fails, "a failed cold baseline read propagates its typed deadline", True)
     else:
-        ck("a failed cold baseline read propagates its typed deadline", False)
-ck("a failed baseline read never fills the memo", budget._ledger()._total_memo is None)
+        record_script_check(fails, "a failed cold baseline read propagates its typed deadline", False)
+record_script_check(fails, "a failed baseline read never fills the memo", budget._ledger()._total_memo is None)
 with patch.object(SpendLedger, "spent_dec", autospec=True, side_effect=_orig_spent_dec) as bounded_retry:
     recovered = budget.spent_all_time(deadline_s=_FLOW_EXPLICIT_READ_DEADLINE_S)
     remaining_budget = bounded_retry.call_args.kwargs["deadline_s"]
-    ck("a retry retains the explicit bounded-read deadline",
+    record_script_check(fails, "a retry retains the explicit bounded-read deadline",
        remaining_budget is not None and 0 < remaining_budget <= _FLOW_EXPLICIT_READ_DEADLINE_S)
-    ck("the recovered baseline is complete", recovered == live)
+    record_script_check(fails, "the recovered baseline is complete", recovered == live)
 try:
     budget.spent_all_time(deadline_s=_FLOW_INVALID_READ_DEADLINE_S)
 except LedgerQueryDeadline:
-    ck("an invalid deadline is refused even with a warm memo", True)
+    record_script_check(fails, "an invalid deadline is refused even with a warm memo", True)
 else:
-    ck("an invalid deadline is refused even with a warm memo", False)
+    record_script_check(fails, "an invalid deadline is refused even with a warm memo", False)
 
 print(("FAIL: " + ", ".join(fails)) if fails else "all flow-start no-rescan checks passed")
 sys.exit(1 if fails else 0)

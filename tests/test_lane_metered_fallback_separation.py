@@ -24,15 +24,12 @@ os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
 import openai                                                    # noqa: E402
+from _script_checks import record_script_check
 from spendguard import adapters, vendor_call, config, pricing, lane_balance, lane_queue   # noqa: E402
 
 fails = []
 
 
-def ck(name, cond):
-    print(("  [OK] " if cond else "  [FAIL] ") + name)
-    if not cond:
-        fails.append(name)
 
 
 MODEL = "deepseek:deepseek-v4-flash"            # a kind='openai' metered provider WITH a (stubbed) lane in front
@@ -126,31 +123,31 @@ def _run(**kw):
 
 # ── no_substitution=True STILL falls back to the SAME-model metered API when the lane misses ──
 r = _run(no_substitution=True, no_metered_fallback=False)
-ck("pinned (no_substitution=True): a lane miss falls back to the metered API", r.get("executor") == "api" and r.get("error") is None)
-ck("...and the metered call actually happened for the SAME model", _metered_calls == ["deepseek-v4-flash"])
-ck("...and the model was NOT swapped (no different-model substitution)", r.get("model") == "deepseek-v4-flash" and "substituted_from" not in r)
-ck("...and no_substitution=True SKIPS the different-model failover", _substitute_queries == [])
+record_script_check(fails, "pinned (no_substitution=True): a lane miss falls back to the metered API", r.get("executor") == "api" and r.get("error") is None)
+record_script_check(fails, "...and the metered call actually happened for the SAME model", _metered_calls == ["deepseek-v4-flash"])
+record_script_check(fails, "...and the model was NOT swapped (no different-model substitution)", r.get("model") == "deepseek-v4-flash" and "substituted_from" not in r)
+record_script_check(fails, "...and no_substitution=True SKIPS the different-model failover", _substitute_queries == [])
 
 # ── no_metered_fallback is literal $0-or-fail for both task misses and down lanes ──
 # (a) a DOWN lane under the explicit flag is still $0-or-fail.
 adapters._lane_for = lambda prov: ("deadlane", _DeadLane())
 r = _run(no_substitution=True, no_metered_fallback=True)
-ck("refuse_billed + a DOWN lane returns a free error and never calls metered",
+record_script_check(fails, "refuse_billed + a DOWN lane returns a free error and never calls metered",
    _metered_calls == [] and r.get("executor") == "deadlane" and r.get("cost") is None and r.get("error"))
 # (b) a TASK miss (ran, empty, NO error) under refuse_billed → $0 refusal, metered NEVER called (the preserved contract).
 #     Asserted structurally: the metered leg never ran, the row is attributed to the LANE, nothing was answered/charged.
 adapters._lane_for = lambda prov: ("emptylane", _EmptyLane())
 r = _run(no_substitution=True, no_metered_fallback=True)
-ck("refuse_billed + a TASK miss (empty) → the metered API is NEVER called ($0 by construction)", _metered_calls == [])
-ck("...and the miss is attributed to the LANE executor, not 'api'", r.get("executor") == "emptylane")
-ck("...and nothing was answered or charged (a refusal row, not an answer)", r.get("text") is None and r.get("cost") is None and r.get("error") is not None)
+record_script_check(fails, "refuse_billed + a TASK miss (empty) → the metered API is NEVER called ($0 by construction)", _metered_calls == [])
+record_script_check(fails, "...and the miss is attributed to the LANE executor, not 'api'", r.get("executor") == "emptylane")
+record_script_check(fails, "...and nothing was answered or charged (a refusal row, not an answer)", r.get("text") is None and r.get("cost") is None and r.get("error") is not None)
 
 # ── no_substitution=False DOES consult the different-model failover (the other half of the separation) ──
 adapters._lane_for = lambda prov: ("deadlane", _DeadLane())    # a failing lane → the reactive different-model path
 r = _run(no_substitution=False, no_metered_fallback=False)
-ck("unpinned (no_substitution=False): measured-quality substitutes are consulted before metered",
+record_script_check(fails, "unpinned (no_substitution=False): measured-quality substitutes are consulted before metered",
    len(_substitute_queries) == 2)  # initial shed and fresh availability check immediately before paid admission
-ck("...and with no confirmed substitute it STILL reaches the same-model metered API", _metered_calls == ["deepseek-v4-flash"] and r.get("executor") == "api")
+record_script_check(fails, "...and with no confirmed substitute it STILL reaches the same-model metered API", _metered_calls == ["deepseek-v4-flash"] and r.get("executor") == "api")
 
 print(("[OK]" if not fails else "[FAIL]") + " lane/metered fallback separation: %d failure(s)" % len(fails))
 sys.exit(1 if fails else 0)

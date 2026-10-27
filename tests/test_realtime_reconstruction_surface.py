@@ -17,15 +17,11 @@ os.environ.setdefault("SPENDGUARD_TEST_ISOLATED", "1")
 os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
+from _script_checks import record_script_check
 from spendguard import ledger_sync, reconcile, config   # noqa: E402
 
 fails = []
 
-
-def ck(name, cond):
-    print(("  [OK] " if cond else "  [FAIL] ") + name)
-    if not cond:
-        fails.append(name)
 
 
 _CACHE = str(config.HOME / "realtime_reconstruction.json")
@@ -55,12 +51,12 @@ def _rm_cache():
 
 print("-- realtime_reconstruction_estimate: absence vs corrupt vs fresh vs stale (a corrupt cache is NOT absence) --")
 _rm_cache()
-ck("no cache -> None (the find has never run)", ledger_sync.realtime_reconstruction_estimate("2026-09-01") is None)
+record_script_check(fails, "no cache -> None (the find has never run)", ledger_sync.realtime_reconstruction_estimate("2026-09-01") is None)
 
 with open(_CACHE, "w") as f:
     f.write('{"rows": [')                                  # truncated JSON
 _bad = ledger_sync.realtime_reconstruction_estimate("2026-09-01")
-ck("corrupt cache -> {'error': …} (a dependency FAILURE, never masked as absence)",
+record_script_check(fails, "corrupt cache -> {'error': …} (a dependency FAILURE, never masked as absence)",
    isinstance(_bad, dict) and bool(_bad.get("error")))
 
 _write_cache([{"day": "2026-09-05", "usd": 12.0, "org": RT_SURFACE_ORG, "project": RT_SURFACE_PROJECT_ALPHA},
@@ -68,11 +64,11 @@ _write_cache([{"day": "2026-09-05", "usd": 12.0, "org": RT_SURFACE_ORG, "project
               {"day": "2026-08-20", "usd": 99.0, "org": "ensight"},   # out of window
               {"day": "2026-09-07", "usd": 0.0, "org": "ensight"}])   # nonpositive
 _fresh = ledger_sync.realtime_reconstruction_estimate("2026-09-01")
-ck("fresh cache covers the window", _fresh["covers_window"] is True)
-ck("window total sums only in-window POSITIVE rows (12+8=20)", _fresh["total"] == 20.0)
-ck("out-of-window + nonpositive rows are COUNTED, never dropped silently",
+record_script_check(fails, "fresh cache covers the window", _fresh["covers_window"] is True)
+record_script_check(fails, "window total sums only in-window POSITIVE rows (12+8=20)", _fresh["total"] == 20.0)
+record_script_check(fails, "out-of-window + nonpositive rows are COUNTED, never dropped silently",
    _fresh["dropped"]["out_of_window"] == 1 and _fresh["dropped"]["nonpositive"] == 1)
-ck("by_project preserves distinct evidence projects sharing one org, including their costs",
+record_script_check(fails, "by_project preserves distinct evidence projects sharing one org, including their costs",
    _fresh["by_project"] == [{"project": RT_SURFACE_PROJECT_ALPHA, "cost": 12.0},
                             {"project": RT_SURFACE_PROJECT_BETA, "cost": 8.0}])
 
@@ -84,52 +80,52 @@ rt_surface_runs.append(dict(day=RT_SURFACE_DAY, usd=RT_SURFACE_UNATTRIBUTED_USD,
 rt_surface_truth = [dict(day=RT_SURFACE_DAY, provider=RT_SURFACE_PROVIDER, usd=RT_SURFACE_TRUTH_USD)]
 rt_surface_payload = rt_surface_producer._reconstruction_cache_payload(
     rt_surface_runs, rt_surface_truth, RT_SURFACE_DAY)
-ck("producer retains canonical provider truth on its independent axis", rt_surface_payload["truth"] == rt_surface_truth)
-ck("provider-month compares account truth against all reconstructed rows with signed residual",
+record_script_check(fails, "producer retains canonical provider truth on its independent axis", rt_surface_payload["truth"] == rt_surface_truth)
+record_script_check(fails, "provider-month compares account truth against all reconstructed rows with signed residual",
    rt_surface_payload["provider_months"] == [dict(provider=RT_SURFACE_PROVIDER, month=RT_SURFACE_DAY.rsplit("-", 1)[0],
                                                 truth_total=RT_SURFACE_TRUTH_USD,
                                                 reconstructed=_fresh["total"] + RT_SURFACE_UNATTRIBUTED_USD,
                                                 residual=RT_SURFACE_TRUTH_USD - _fresh["total"] - RT_SURFACE_UNATTRIBUTED_USD)])
-ck("missing project has a named unattributed gap instead of inheriting org identity",
+record_script_check(fails, "missing project has a named unattributed gap instead of inheriting org identity",
    rt_surface_payload["gaps"] == [dict(kind="unattributed", row=len(rt_surface_runs) - 1, sessions=None)])
 with open(_CACHE, "w") as rt_surface_stream:
     json.dump(rt_surface_payload, rt_surface_stream)
 rt_surface_estimate = ledger_sync.realtime_reconstruction_estimate(RT_SURFACE_DAY)
-ck("consumer preserves producer projects and explicitly unattributed money without adding account truth",
+record_script_check(fails, "consumer preserves producer projects and explicitly unattributed money without adding account truth",
    rt_surface_estimate["by_project"] == _fresh["by_project"] + [dict(project="unattributed", cost=RT_SURFACE_UNATTRIBUTED_USD)]
    and rt_surface_estimate["total"] == rt_surface_payload["total"]
    and rt_surface_payload["rows"][-1]["project"] == "unattributed")
 
 _write_cache([{"day": "2026-07-15", "usd": 50.0, "org": "ensight"}])
 _stale = ledger_sync.realtime_reconstruction_estimate("2026-09-01")
-ck("cache whose newest row predates the window -> covers_window False (STALE)", _stale["covers_window"] is False)
+record_script_check(fails, "cache whose newest row predates the window -> covers_window False (STALE)", _stale["covers_window"] is False)
 
 print("-- RealtimeSource.truth_total: None truth, but an ESTIMATE + note (admin-free), never a fake bill --")
 os.environ.pop("SPENDGUARD_ADMIN_ORACLE", None)
 _write_cache([{"day": "2026-09-05", "usd": 20.0, "org": "ensight"}])
 _src = ledger_sync.RealtimeSource(conn={}, since="2026-09-01")
-ck("truth_total stays None without an admin key (no verified bill)", _src.truth_total("2026-09-01") is None)
-ck("but a reconstructed ESTIMATE is surfaced ($20)", _src.estimate is not None and _src.estimate["total"] == 20.0)
-ck("the note says 'reconstructed estimate' (not 'bill could not be read')",
+record_script_check(fails, "truth_total stays None without an admin key (no verified bill)", _src.truth_total("2026-09-01") is None)
+record_script_check(fails, "but a reconstructed ESTIMATE is surfaced ($20)", _src.estimate is not None and _src.estimate["total"] == 20.0)
+record_script_check(fails, "the note says 'reconstructed estimate' (not 'bill could not be read')",
    "RECONSTRUCTED estimate" in (_src.note or ""))
 
 _rm_cache()
 _src2 = ledger_sync.RealtimeSource(conn={}, since="2026-09-01")
-ck("no cache -> None truth, no estimate, a 'run the find' note",
+record_script_check(fails, "no cache -> None truth, no estimate, a 'run the find' note",
    _src2.truth_total("2026-09-01") is None and _src2.estimate is None and "run" in (_src2.note or "").lower())
 
 print("-- reconcile.completeness: an estimated realtime source is NOT 'unknown/INCOMPLETE' --")
 _res = {"realtime": {"truth_total": None, "captured": 200.0, "residual": None,
                      "estimate": {"total": 20.0, "by_project": []}, "note": "reconstructed"}}
 _comp = reconcile.completeness(_res)
-ck("an estimated source does NOT sink completeness (complete stays True)", _comp["complete"] is True)
-ck("the verdict names it ESTIMATED (reconstructed), not UNKNOWN",
+record_script_check(fails, "an estimated source does NOT sink completeness (complete stays True)", _comp["complete"] is True)
+record_script_check(fails, "the verdict names it ESTIMATED (reconstructed), not UNKNOWN",
    "ESTIMATED" in _comp["msg"] and "UNKNOWN" not in _comp["msg"].upper())
-ck("the source status is 'estimated'", _comp["sources"]["realtime"]["status"] == "estimated")
+record_script_check(fails, "the source status is 'estimated'", _comp["sources"]["realtime"]["status"] == "estimated")
 
 _res2 = {"realtime": {"truth_total": None, "captured": 200.0, "residual": None, "estimate": None}}
 _comp2 = reconcile.completeness(_res2)
-ck("truth None AND no reconstruction -> UNKNOWN, still sinks completeness",
+record_script_check(fails, "truth None AND no reconstruction -> UNKNOWN, still sinks completeness",
    _comp2["complete"] is False and _comp2["sources"]["realtime"]["status"] == "unknown")
 
 print(f"\n{'[FAIL]' if fails else 'OK'} test_realtime_reconstruction_surface: {len(fails)} failure(s)")

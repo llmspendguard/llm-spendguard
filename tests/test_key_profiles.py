@@ -27,13 +27,10 @@ for _v in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY"):
     os.environ.pop(_v, None)      # a leaked real/runner env key must not shadow the seeded file
 
 import hashlib
+from _script_checks import record_script_check
 from spendguard import config, budget
 
 fails = []
-def ck(name, cond):
-    print(("  [OK] " if cond else "  [FAIL] ") + name)
-    if not cond:
-        fails.append(name)
 
 
 def reset_keys(profile=None, real_env=None):
@@ -50,28 +47,28 @@ def reset_keys(profile=None, real_env=None):
 
 print("-- no profile: unsuffixed entries load; suffixed entries NEVER leak --")
 reset_keys()
-ck("base key loads", os.environ.get("OPENAI_API_KEY") == "sk-base-oai-0001")
-ck("suffixed entry does not leak without its profile", "ANTHROPIC_API_KEY" not in os.environ)
+record_script_check(fails, "base key loads", os.environ.get("OPENAI_API_KEY") == "sk-base-oai-0001")
+record_script_check(fails, "suffixed entry does not leak without its profile", "ANTHROPIC_API_KEY" not in os.environ)
 
 print("-- profile active: profile entries override file base; base stands where no profile entry exists --")
 reset_keys(profile="lmm")
-ck("profile overrides the unsuffixed file entry", os.environ.get("OPENAI_API_KEY") == "sk-lmm-oai-1111")
-ck("profile supplies vars the base lacks", os.environ.get("ANTHROPIC_API_KEY") == "sk-lmm-ant-2222")
-ck("vars with no profile entry keep the base value", os.environ.get("GEMINI_API_KEY") == "g-base-3333")
+record_script_check(fails, "profile overrides the unsuffixed file entry", os.environ.get("OPENAI_API_KEY") == "sk-lmm-oai-1111")
+record_script_check(fails, "profile supplies vars the base lacks", os.environ.get("ANTHROPIC_API_KEY") == "sk-lmm-ant-2222")
+record_script_check(fails, "vars with no profile entry keep the base value", os.environ.get("GEMINI_API_KEY") == "g-base-3333")
 
 print("-- a REAL environment variable always wins, even over the profile --")
 reset_keys(profile="lmm", real_env={"OPENAI_API_KEY": "sk-real-from-ci"})
-ck("real env beats the profile entry", os.environ.get("OPENAI_API_KEY") == "sk-real-from-ci")
-ck("profile still fills the vars real env didn't set", os.environ.get("ANTHROPIC_API_KEY") == "sk-lmm-ant-2222")
+record_script_check(fails, "real env beats the profile entry", os.environ.get("OPENAI_API_KEY") == "sk-real-from-ci")
+record_script_check(fails, "profile still fills the vars real env didn't set", os.environ.get("ANTHROPIC_API_KEY") == "sk-lmm-ant-2222")
 
 print("-- key fingerprint: sha256[:8]:last4 of the serving key; '' when unknown --")
 reset_keys(profile="lmm")
 key = os.environ["ANTHROPIC_API_KEY"]
 want = hashlib.sha256(key.encode()).hexdigest()[:8] + ":" + key[-4:]
-ck("fingerprint shape + value", config.key_fingerprint("anthropic") == want)
-ck("unknown provider → ''", config.key_fingerprint("vast.ai") == "")
+record_script_check(fails, "fingerprint shape + value", config.key_fingerprint("anthropic") == want)
+record_script_check(fails, "unknown provider → ''", config.key_fingerprint("vast.ai") == "")
 os.environ.pop("ANTHROPIC_API_KEY")
-ck("no key set → ''", config.key_fingerprint("anthropic") == "")
+record_script_check(fails, "no key set → ''", config.key_fingerprint("anthropic") == "")
 os.environ["ANTHROPIC_API_KEY"] = key
 
 print("-- charges stamp the key; by_key rolls up per (provider, key); marker rows carry none --")
@@ -83,22 +80,22 @@ budget.record_reconciled("2026-06-03", "anthropic", 7.0, project="lmm")         
 budget.record_true_down("2026-06-03", "anthropic", "claude-haiku-4-5", 1.0, "lmm")  # correction row: no key
 bk = budget.by_key()
 fp2 = hashlib.sha256(b"sk-second-key-9999").hexdigest()[:8] + ":9999"
-ck("first key carries batch+realtime ($15)", abs(bk[("anthropic", want)]["cost"] - 15.0) < 1e-6
+record_script_check(fails, "first key carries batch+realtime ($15)", abs(bk[("anthropic", want)]["cost"] - 15.0) < 1e-6
    and bk[("anthropic", want)]["calls"] == 2)
-ck("second key attributed separately ($5)", abs(bk[("anthropic", fp2)]["cost"] - 5.0) < 1e-6)
-ck("reconcile/true-down marker rows excluded from the per-key view",
+record_script_check(fails, "second key attributed separately ($5)", abs(bk[("anthropic", fp2)]["cost"] - 5.0) < 1e-6)
+record_script_check(fails, "reconcile/true-down marker rows excluded from the per-key view",
    ("anthropic", "(none)") not in bk)
 _krow = next((r for r in budget._ledger().query(where={"model": "claude-opus-4-8"})
               if r.get("batch_usd") not in (None, "")), None)
-ck("the stamped fp is the key at RECORD time (not a cached stale one)", _krow and _krow["key_fp"] == fp2)
+record_script_check(fails, "the stamped fp is the key at RECORD time (not a cached stale one)", _krow and _krow["key_fp"] == fp2)
 
 print("-- schema: the new knobs are documented --")
 from spendguard import config_schema
 s = {(o["section"], o["key"]): o for o in config_schema.SETTINGS}
-ck("keys.key_profile documented", ("keys", "key_profile") in s
+record_script_check(fails, "keys.key_profile documented", ("keys", "key_profile") in s
    and s[("keys", "key_profile")]["env"] == "SPENDGUARD_KEY_PROFILE")
-ck("advisor.pool_cooldown_s documented", ("advisor", "pool_cooldown_s") in s)
-ck("advisor.executor enum covers codex + pool",
+record_script_check(fails, "advisor.pool_cooldown_s documented", ("advisor", "pool_cooldown_s") in s)
+record_script_check(fails, "advisor.executor enum covers codex + pool",
    "codex" in s[("advisor", "executor")]["kind"] and "pool" in s[("advisor", "executor")]["kind"])
 
 print(f"\n{'[FAIL]' if fails else 'OK'} test_key_profiles: {len(fails)} failure(s)")

@@ -8,35 +8,32 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
     os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="spendguard-emit-")
     os.execv(sys.executable, [sys.executable] + sys.argv)
 
+from _script_checks import record_script_check
 from spendguard import emit
 
 fails = []
-def ck(name, cond):
-    print(("  [OK] " if cond else "  [FAIL] ") + name)
-    if not cond:
-        fails.append(name)
 
 e = emit.envelope({"kind": "batch", "provider": "openai", "cost": 1.5})
-ck("envelope stamps the version", e["v"] == emit.EVENT_V)
-ck("type defaults from the event's kind (no emitter change needed)", e["type"] == "batch")
-ck("id is a unique hex id", isinstance(e["id"], str) and re.fullmatch(r"[0-9a-f]{32}", e["id"]))
-ck("ts is a UTC ISO timestamp", isinstance(e["ts"], str) and e["ts"][:4].isdigit() and "T" in e["ts"])
-ck("payload preserved verbatim", e["provider"] == "openai" and e["cost"] == 1.5 and e["kind"] == "batch")
+record_script_check(fails, "envelope stamps the version", e["v"] == emit.EVENT_V)
+record_script_check(fails, "type defaults from the event's kind (no emitter change needed)", e["type"] == "batch")
+record_script_check(fails, "id is a unique hex id", isinstance(e["id"], str) and re.fullmatch(r"[0-9a-f]{32}", e["id"]))
+record_script_check(fails, "ts is a UTC ISO timestamp", isinstance(e["ts"], str) and e["ts"][:4].isdigit() and "T" in e["ts"])
+record_script_check(fails, "payload preserved verbatim", e["provider"] == "openai" and e["cost"] == 1.5 and e["kind"] == "batch")
 
-ck("empty event → type 'event', still fully enveloped", (lambda x: x["v"] == emit.EVENT_V and x["type"] == "event" and "id" in x and "ts" in x)(emit.envelope({})))
+record_script_check(fails, "empty event → type 'event', still fully enveloped", (lambda x: x["v"] == emit.EVENT_V and x["type"] == "event" and "id" in x and "ts" in x)(emit.envelope({})))
 
 # attribution context rides on EVERY event — the same conv/project the ledger records,
 # so consumers (dashboards) can attach the event to the exact conversation that spent
-ck("envelope carries conv_id (ledger-consistent attribution)", isinstance(e.get("conv_id"), str) and len(e["conv_id"]) > 0)
-ck("envelope carries project (repo attribution)", isinstance(e.get("project"), str) and len(e["project"]) > 0)
-ck("explicit conv_id is respected (not overwritten)", emit.envelope({"conv_id": "given"})["conv_id"] == "given")
-ck("explicit type is respected (not overwritten by kind)", emit.envelope({"type": "savings", "kind": "batch"})["type"] == "savings")
-ck("unique ids across calls", emit.envelope({})["id"] != emit.envelope({})["id"])
+record_script_check(fails, "envelope carries conv_id (ledger-consistent attribution)", isinstance(e.get("conv_id"), str) and len(e["conv_id"]) > 0)
+record_script_check(fails, "envelope carries project (repo attribution)", isinstance(e.get("project"), str) and len(e["project"]) > 0)
+record_script_check(fails, "explicit conv_id is respected (not overwritten)", emit.envelope({"conv_id": "given"})["conv_id"] == "given")
+record_script_check(fails, "explicit type is respected (not overwritten by kind)", emit.envelope({"type": "savings", "kind": "batch"})["type"] == "savings")
+record_script_check(fails, "unique ids across calls", emit.envelope({})["id"] != emit.envelope({})["id"])
 
 # tolerant + never raises (observability must not break enforcement)
-ck("None → safe empty envelope, no raise", (lambda x: x["v"] == emit.EVENT_V and x["type"] == "event")(emit.envelope(None)))
+record_script_check(fails, "None → safe empty envelope, no raise", (lambda x: x["v"] == emit.EVENT_V and x["type"] == "event")(emit.envelope(None)))
 unknown = emit.envelope({"future_field": {"x": 1}, "kind": "realtime"})
-ck("unknown future fields preserved (tolerant reader)", unknown["future_field"] == {"x": 1} and unknown["type"] == "realtime")
+record_script_check(fails, "unknown future fields preserved (tolerant reader)", unknown["future_field"] == {"x": 1} and unknown["type"] == "realtime")
 
 # emit() itself never raises even with a throwing callback
 emit.on_event(lambda ev: (_ for _ in ()).throw(RuntimeError("boom")))
@@ -44,7 +41,7 @@ try:
     emit.emit({"kind": "batch", "cost": 0.1}); raised = False
 except Exception:
     raised = True
-ck("emit() swallows a callback error (never breaks the gate)", raised is False)
+record_script_check(fails, "emit() swallows a callback error (never breaks the gate)", raised is False)
 
 print(("\n[FAIL] " if fails else "\n[OK] ") + f"emit_envelope: {len(fails)} failure(s)")
 sys.exit(1 if fails else 0)

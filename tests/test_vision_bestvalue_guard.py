@@ -16,15 +16,11 @@ os.environ.setdefault("SPENDGUARD_TEST_ISOLATED", "1")
 os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
+from _script_checks import record_script_check
 from spendguard import adapters, best_value, model_catalog
 
 fails = []
 
-
-def ck(name, cond):
-    print(("  [OK] " if cond else "  [FAIL] ") + name)
-    if not cond:
-        fails.append(name)
 
 
 # ── 1. the accessor: True/False from the record's curated `vision` bool, None when absent/no-record (never assumed) ──
@@ -33,10 +29,10 @@ model_catalog.model_record = lambda mid: (
     {"vision": True} if mid == "vmodel" else
     {"vision": False} if mid == "tmodel" else
     {} if mid == "umodel" else None)                      # umodel = a record with no vision field; else = no record
-ck("vision_capable reads True from the record", model_catalog.vision_capable("vmodel") is True)
-ck("vision_capable reads False from the record", model_catalog.vision_capable("tmodel") is False)
-ck("no `vision` field → None (unknown, never assumed)", model_catalog.vision_capable("umodel") is None)
-ck("no record at all → None", model_catalog.vision_capable("absent-xyz") is None)
+record_script_check(fails, "vision_capable reads True from the record", model_catalog.vision_capable("vmodel") is True)
+record_script_check(fails, "vision_capable reads False from the record", model_catalog.vision_capable("tmodel") is False)
+record_script_check(fails, "no `vision` field → None (unknown, never assumed)", model_catalog.vision_capable("umodel") is None)
+record_script_check(fails, "no record at all → None", model_catalog.vision_capable("absent-xyz") is None)
 model_catalog.model_record = _orig_record
 
 # ── 2. the guard in adapters.call — control capability + the best-value pick, capture the dispatched model ──
@@ -68,25 +64,25 @@ IMG = ["data:image/png;base64,AAAA"]
 best_value.select_model_effort = _pick_model("zai:glm-text-x")
 _captured.clear()
 adapters.call(CALLER, "describe this image", images=IMG, reasoning="best-value", intent="vision-guard-test")
-ck("vision call + non-vision candidate → swap BLOCKED, caller's model kept", _captured.get("model") == CALLER)
+record_script_check(fails, "vision call + non-vision candidate → swap BLOCKED, caller's model kept", _captured.get("model") == CALLER)
 
 # B) vision call + a vision-capable candidate → ALLOWED: economical vision routing preserved
 best_value.select_model_effort = _pick_model("openai:gpt-vision-x")
 _captured.clear()
 adapters.call(CALLER, "describe this image", images=IMG, reasoning="best-value", intent="vision-guard-test")
-ck("vision call + vision-capable candidate → swap ALLOWED", _captured.get("model") == "openai:gpt-vision-x")
+record_script_check(fails, "vision call + vision-capable candidate → swap ALLOWED", _captured.get("model") == "openai:gpt-vision-x")
 
 # C) a vision call + an UNKNOWN-capability candidate → BLOCKED (unknown is not a confirmed yes → keep caller's)
 best_value.select_model_effort = _pick_model("mystery:new-model")
 _captured.clear()
 adapters.call(CALLER, "describe this image", images=IMG, reasoning="best-value", intent="vision-guard-test")
-ck("vision call + UNKNOWN candidate → swap BLOCKED (only a confirmed-vision model is swapped to)", _captured.get("model") == CALLER)
+record_script_check(fails, "vision call + UNKNOWN candidate → swap BLOCKED (only a confirmed-vision model is swapped to)", _captured.get("model") == CALLER)
 
 # D) a TEXT call (no images) + the non-vision candidate → ALLOWED: the guard applies to vision only
 best_value.select_model_effort = _pick_model("zai:glm-text-x")
 _captured.clear()
 adapters.call(CALLER, "summarize this text", reasoning="best-value", intent="text-guard-test")
-ck("text call → guard does NOT apply, candidate swap allowed", _captured.get("model") == "zai:glm-text-x")
+record_script_check(fails, "text call → guard does NOT apply, candidate swap allowed", _captured.get("model") == "zai:glm-text-x")
 
 print(("[OK]" if not fails else "[FAIL]") + " vision best-value guard: %d failure(s)" % len(fails))
 sys.exit(1 if fails else 0)

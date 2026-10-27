@@ -12,13 +12,13 @@ wrappers (`_wrap_rt` realtime + `_wrap` batch), sync and async. Offline, mocked,
 import os, sys, tempfile, asyncio
 from unittest import mock
 from functools import partial
-from _script_checks import async_return_value, execute_gate_test_call as run, raise_gate_test_error as boom
 
 if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
     os.environ["SPENDGUARD_TEST_ISOLATED"] = "1"
     os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="spendguard-prop-")
     os.execv(sys.executable, [sys.executable] + sys.argv)
 
+from _script_checks import async_return_value, execute_gate_test_call as run, raise_gate_test_error as boom, record_script_check
 from hypothesis import given, strategies as st, settings, HealthCheck
 from spendguard import gate
 from spendguard.gate import SpendGateRefused
@@ -27,10 +27,6 @@ from spendguard import bulkgate
 S = settings(max_examples=60, deadline=None, suppress_health_check=list(HealthCheck))
 
 fails = []
-def ck(name, cond):
-    print(("  [OK] " if cond else "  [FAIL] ") + name)
-    if not cond:
-        fails.append(name)
 
 # Keep the properties about CONTROL FLOW (passthrough + fail-open), not ledger writes: no-op the recorder by default
 # so Hypothesis stays fast + hermetic. Recording correctness is covered by test_stream_capture.py.
@@ -199,10 +195,10 @@ for name, fn in list(globals().items()):
     if name.startswith("p_"):
         try:
             fn()
-            ck(name, True)
+            record_script_check(fails, name, True)
         except Exception as e:
             print(f"    falsifying/err: {e}")
-            ck(name, False)
+            record_script_check(fails, name, False)
 
 print(("[OK]" if not fails else "[FAIL]") + " gate-properties: %d failure(s)" % len(fails))
 sys.exit(1 if fails else 0)

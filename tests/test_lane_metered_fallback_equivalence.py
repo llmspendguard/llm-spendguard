@@ -16,24 +16,21 @@ sync-only id (gpt-5.6-sol, gemini-3.7-flash) made this go red there while passin
 lane model becomes unpriced or a suffix stops being split, a check here goes red."""
 import sys
 
+from _script_checks import record_script_check
 from spendguard import adapters, lane_catalog, config, vendor_call, pricing
 
 fails = []
-def ck(name, cond):
-    print(("  [OK] " if cond else "  [FAIL] ") + name)
-    if not cond:
-        fails.append(name)
 
 # ── 1. metered_fallback_id: the single equivalence ──────────────────────────────────────────────────────────────
 for t in adapters._GEMINI_REASONING_TIERS:
     mid, tier = adapters.metered_fallback_id("gemini", f"gemini-3.7-flash-{t}")
-    ck(f"gemini agy suffix -{t} → bare id + reasoning (metered API wants bare id)",
+    record_script_check(fails, f"gemini agy suffix -{t} → bare id + reasoning (metered API wants bare id)",
        mid == "gemini-3.7-flash" and tier == t)
 mid, tier = adapters.metered_fallback_id("gemini", "gemini-3.7-flash")
-ck("gemini bare id passes through, no reasoning", mid == "gemini-3.7-flash" and tier is None)
+record_script_check(fails, "gemini bare id passes through, no reasoning", mid == "gemini-3.7-flash" and tier is None)
 for prov, m in [("openai", "gpt-5.6-sol"), ("anthropic", "claude-opus-4-8"), ("zai", "glm-5.3")]:
     mid, tier = adapters.metered_fallback_id(prov, m)
-    ck(f"{prov} lane id IS its metered id (passthrough, no suffix game)", mid == m and tier is None)
+    record_script_check(fails, f"{prov} lane id IS its metered id (passthrough, no suffix game)", mid == m and tier is None)
 
 # ── 2. audit_lane_fallback catches BOTH a good mapping AND a broken (unpriced) one ───────────────────────────────
 _orig_cfg = config._cfg_get
@@ -63,17 +60,17 @@ try:
         by.setdefault(r["lane"], []).append(r)
 
     gem = by.get("gemini", [])
-    ck("gemini suffix use-names ALL map to the bare metered id", bool(gem) and all(r["metered_id"] == "gemini-3.7-flash" for r in gem))
-    ck("gemini fallback id is priced + ok", bool(gem) and all(r["priced"] and r["ok"] for r in gem))
-    ck("gemini metered id genuinely DIFFERS from the suffix use-name (the split did work)",
+    record_script_check(fails, "gemini suffix use-names ALL map to the bare metered id", bool(gem) and all(r["metered_id"] == "gemini-3.7-flash" for r in gem))
+    record_script_check(fails, "gemini fallback id is priced + ok", bool(gem) and all(r["priced"] and r["ok"] for r in gem))
+    record_script_check(fails, "gemini metered id genuinely DIFFERS from the suffix use-name (the split did work)",
        any(r["metered_id"] != r["use_name"] for r in gem))
 
     real = by.get("codex", []) + by.get("claude-code", [])
-    ck("codex + claude-code fallback ids priced + ok", bool(real) and all(r["priced"] and r["ok"] for r in real))
+    record_script_check(fails, "codex + claude-code fallback ids priced + ok", bool(real) and all(r["priced"] and r["ok"] for r in real))
 
     zai = by.get("zai-coding", [])
-    ck("a BOGUS/unpriced lane model → priced=False (the break is detected)", bool(zai) and all(not r["priced"] for r in zai))
-    ck("a BOGUS/unpriced lane model → ok=False (would STRAND a down-lane call — flagged, not shipped)",
+    record_script_check(fails, "a BOGUS/unpriced lane model → priced=False (the break is detected)", bool(zai) and all(not r["priced"] for r in zai))
+    record_script_check(fails, "a BOGUS/unpriced lane model → ok=False (would STRAND a down-lane call — flagged, not shipped)",
        bool(zai) and all(not r["ok"] for r in zai))
 finally:
     config._cfg_get = _orig_cfg

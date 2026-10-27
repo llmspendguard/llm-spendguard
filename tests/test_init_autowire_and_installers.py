@@ -41,6 +41,7 @@ os.environ.setdefault("ANTHROPIC_API_KEY", "sk-ant-test-offline")
 os.environ.pop("SPENDGUARD_ADVISOR_EXECUTOR", None)
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
+from _script_checks import record_script_check
 from spendguard import setup, config, config_schema, tier_config, gate, ledger   # noqa: E402
 from spendguard import lanes as _lanes                                # noqa: E402
 
@@ -67,10 +68,6 @@ def _reset_cfg():
 def main():
     fails = []
 
-    def ck(name, cond):
-        print(("  [OK] " if cond else "  [FAIL] ") + name)
-        if not cond:
-            fails.append(name)
 
     # keep PART 1 output quiet + deterministic — the DECISION (what got written) is what we assert, not the printout
     _lanes.lane_summary_lines = lambda: []
@@ -82,23 +79,23 @@ def main():
     _reset_cfg()
     _lanes.lanes_status = lambda: _status([_row("codex", "openai", "ok")])
     setup._autowire_lanes()
-    ck("ready lane + unset executor -> advisor.executor := 'pool'",
+    record_script_check(fails, "ready lane + unset executor -> advisor.executor := 'pool'",
        config._cfg_get("advisor", "executor", None) == "pool")
-    ck("lane_models NOT auto-seeded (no priced guess that would undercount value)",
+    record_script_check(fails, "lane_models NOT auto-seeded (no priced guess that would undercount value)",
        not (config._cfg_get("advisor", "lane_models", {}) or {}))
 
     # (b) ready lane but executor ALREADY chosen (stored) -> left as-is (never clobbered)
     _reset_cfg()
     tier_config._write_advisor_cfg("executor", "codex")
     setup._autowire_lanes()
-    ck("stored executor 'codex' left untouched",
+    record_script_check(fails, "stored executor 'codex' left untouched",
        config._cfg_get("advisor", "executor", None) == "codex")
 
     # (c) ready lane but env pins the executor -> nothing persisted (env wins at runtime; don't write over it)
     _reset_cfg()
     os.environ["SPENDGUARD_ADVISOR_EXECUTOR"] = "api"
     setup._autowire_lanes()
-    ck("env-pinned executor -> nothing persisted (stored stays unset)",
+    record_script_check(fails, "env-pinned executor -> nothing persisted (stored stays unset)",
        config._cfg_get("advisor", "executor", None) is None)
     os.environ.pop("SPENDGUARD_ADVISOR_EXECUTOR", None)
 
@@ -107,7 +104,7 @@ def main():
     _lanes.lanes_status = lambda: _status([_row("codex", "openai", "missing", cli_present=False,
                                                 activate="log in: codex login")])
     setup._autowire_lanes()
-    ck("no ready lane -> advisor.executor NOT written",
+    record_script_check(fails, "no ready lane -> advisor.executor NOT written",
        config._cfg_get("advisor", "executor", None) is None)
 
     # ── PART 2: integration installers ──
@@ -122,11 +119,11 @@ def main():
 
     seen.clear()
     setup._run_integration_installers(quick=True, do_all=False)
-    ck("plain --quick runs NO installer (config-only, backward-compatible)", seen == [])
+    record_script_check(fails, "plain --quick runs NO installer (config-only, backward-compatible)", seen == [])
 
     seen.clear()
     setup._run_integration_installers(quick=True, do_all=True)
-    ck("--all --quick runs all five installers once",
+    record_script_check(fails, "--all --quick runs all five installers once",
        sorted(seen) == ["hook", "mcp", "receipt", "rule", "skills"])
 
     # plain interactive: a single GATEWAY question gates the whole flow. Stub _prompt_yn to force the answer.
@@ -134,11 +131,11 @@ def main():
     seen.clear()
     setup._prompt_yn = lambda *a, **k: False               # gateway declined
     setup._run_integration_installers(quick=False, do_all=False)
-    ck("interactive gateway DECLINED -> no installer runs", seen == [])
+    record_script_check(fails, "interactive gateway DECLINED -> no installer runs", seen == [])
     seen.clear()
     setup._prompt_yn = lambda *a, **k: True                # gateway + every per-step accepted
     setup._run_integration_installers(quick=False, do_all=False)
-    ck("interactive gateway ACCEPTED -> all five installers run",
+    record_script_check(fails, "interactive gateway ACCEPTED -> all five installers run",
        sorted(seen) == ["hook", "mcp", "receipt", "rule", "skills"])
     setup._prompt_yn = _real_prompt
 
@@ -150,37 +147,37 @@ def main():
         setup._run_integration_installers(quick=True, do_all=True)
     except gate.SpendGateRefused:
         raised = True
-    ck("a SpendGateRefused from an installer PROPAGATES (never downgraded to 'skipped')", raised)
+    record_script_check(fails, "a SpendGateRefused from an installer PROPAGATES (never downgraded to 'skipped')", raised)
 
     # ── PART 3: helpers ──
     print("\n-- PART 3: _prompt_yn + _reraise_if_governance_stop --")
-    ck("_prompt_yn(assume=True) returns default True", setup._prompt_yn("x", default=True, assume=True) is True)
-    ck("_prompt_yn(assume=True, default=False) returns False", setup._prompt_yn("x", default=False, assume=True) is False)
+    record_script_check(fails, "_prompt_yn(assume=True) returns default True", setup._prompt_yn("x", default=True, assume=True) is True)
+    record_script_check(fails, "_prompt_yn(assume=True, default=False) returns False", setup._prompt_yn("x", default=False, assume=True) is False)
 
     import builtins
     _orig = builtins.input
     builtins.input = lambda *a, **k: (_ for _ in ()).throw(EOFError())
     try:
-        ck("_prompt_yn EOF returns the eof arg (gateway: False on a piped/CI init)",
+        record_script_check(fails, "_prompt_yn EOF returns the eof arg (gateway: False on a piped/CI init)",
            setup._prompt_yn("x", default=True, eof=False) is False)
-        ck("_prompt_yn EOF returns default when eof unset", setup._prompt_yn("x", default=True) is True)
+        record_script_check(fails, "_prompt_yn EOF returns default when eof unset", setup._prompt_yn("x", default=True) is True)
     finally:
         builtins.input = _orig
 
-    ck("_reraise_if_governance_stop passes an ordinary exception through (no raise)",
+    record_script_check(fails, "_reraise_if_governance_stop passes an ordinary exception through (no raise)",
        setup._reraise_if_governance_stop(ValueError("ordinary")) is None)
     reraised = False
     try:
         setup._reraise_if_governance_stop(gate.SpendGateRefused("x"))
     except gate.SpendGateRefused:
         reraised = True
-    ck("_reraise_if_governance_stop re-raises SpendGateRefused", reraised)
+    record_script_check(fails, "_reraise_if_governance_stop re-raises SpendGateRefused", reraised)
     locked = False
     try:
         setup._reraise_if_governance_stop(ledger.LockedError("x"))
     except ledger.LockedError:
         locked = True
-    ck("_reraise_if_governance_stop re-raises ledger.LockedError", locked)
+    record_script_check(fails, "_reraise_if_governance_stop re-raises ledger.LockedError", locked)
 
     # ── PART 4: key pre-flight (item 3) — data-driven over ALL secret keys, each with a get-a-key link ──
     print("\n-- PART 4: _preflight_keys covers EVERY declared secret key + a link for each; excludes the selector --")
@@ -190,13 +187,13 @@ def main():
     with contextlib.redirect_stdout(buf):
         resolved, missing = setup._preflight_keys()
     out = buf.getvalue()
-    ck("_preflight_keys returns counts covering EVERY declared secret key (data-driven, not a hand-picked pair)",
+    record_script_check(fails, "_preflight_keys returns counts covering EVERY declared secret key (data-driven, not a hand-picked pair)",
        resolved + missing == len(secret_keys) and len(secret_keys) >= 8)
-    ck("openai + anthropic (our fake keys) resolve", resolved >= 2)
-    ck("the non-secret key_profile SELECTOR is excluded (not a credential)", "SPENDGUARD_KEY_PROFILE" not in out)
-    ck("EVERY declared secret key has a get-a-key link (a new key without one fails here)",
+    record_script_check(fails, "openai + anthropic (our fake keys) resolve", resolved >= 2)
+    record_script_check(fails, "the non-secret key_profile SELECTOR is excluded (not a credential)", "SPENDGUARD_KEY_PROFILE" not in out)
+    record_script_check(fails, "EVERY declared secret key has a get-a-key link (a new key without one fails here)",
        all(env in config_schema.KEY_HELP_URLS for env in secret_keys))
-    ck("a missing key prints its get-a-key URL", "get one: http" in out)
+    record_script_check(fails, "a missing key prints its get-a-key URL", "get one: http" in out)
 
     # ── PART 5: the closing setup card (item 4) — reflects executor + ready lanes, offers the $0 proof ──
     print("\n-- PART 5: _setup_summary_card reflects the executor + ready lanes and offers the $0 proof --")
@@ -206,16 +203,16 @@ def main():
                                   {"executor": "pool", "lanes": [_row("codex", "openai", "ok")]},
                                   ["gate", "MCP"])
     ctext = card.getvalue()
-    ck("card shows the effective executor (pool)", "advisor.executor = pool" in ctext)
-    ck("card lists the ready lane + what was wired", "codex" in ctext and "gate" in ctext and "MCP" in ctext)
-    ck("card offers the $0 end-to-end proof (lanes --probe)", "lanes --probe" in ctext)
+    record_script_check(fails, "card shows the effective executor (pool)", "advisor.executor = pool" in ctext)
+    record_script_check(fails, "card lists the ready lane + what was wired", "codex" in ctext and "gate" in ctext and "MCP" in ctext)
+    record_script_check(fails, "card offers the $0 end-to-end proof (lanes --probe)", "lanes --probe" in ctext)
     ok_none = True
     try:
         with contextlib.redirect_stdout(io.StringIO()):
             setup._setup_summary_card(None, None, None)   # nothing ready / nothing wired — must not crash
     except Exception:
         ok_none = False
-    ck("card handles None/empty inputs without crashing", ok_none)
+    record_script_check(fails, "card handles None/empty inputs without crashing", ok_none)
 
     print(f"\n{'[FAIL]' if fails else 'OK'} test_init_autowire_and_installers: {len(fails)} failure(s)")
     return 1 if fails else 0

@@ -19,6 +19,8 @@ os.environ["ANTHROPIC_API_KEY"] = "sk-ant-test-FAKE"
 os.environ["OPENAI_API_KEY"] = "sk-test-FAKE"
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
+from _script_checks import record_script_check  # noqa: E402
+
 from spendguard import lane_queue, callio   # noqa: E402
 
 ANTHRO = "claude-haiku-4-5"
@@ -27,11 +29,6 @@ OPENAI = "gpt-5.5"
 
 def main():
     fails = []
-
-    def ck(name, cond, extra=""):
-        print(("  [OK] " if cond else "  [FAIL] ") + name + (("  — " + str(extra)) if extra and not cond else ""))
-        if not cond:
-            fails.append(name)
 
     seen = {"msg": [], "chat": []}
 
@@ -50,18 +47,18 @@ def main():
         # An Anthropic-model batch and an OpenAI-model batch, both in queued_batch state (real enqueue + real mark_batched)
         rid_a = lane_queue.enqueue("test:dispatch", "task A")
         rid_o = lane_queue.enqueue("test:dispatch", "task B")
-        ck("enqueue returned row ids", bool(rid_a) and bool(rid_o), (rid_a, rid_o))
+        record_script_check(fails, "enqueue returned row ids", bool(rid_a) and bool(rid_o), str((rid_a, rid_o)))
         lane_queue.lease(10)                                                  # pending → leased (as the drain does before offload)
         ma = lane_queue.mark_batched([rid_a], "msgbatch_anthro", ANTHRO)       # handle carries the Anthropic model
         mo = lane_queue.mark_batched([rid_o], "batch_openai", OPENAI)          # handle carries the OpenAI model
-        ck("both rows marked queued_batch", ma == 1 and mo == 1, (ma, mo))
+        record_script_check(fails, "both rows marked queued_batch", ma == 1 and mo == 1, str((ma, mo)))
 
         lane_queue.collect_batched()                                          # model defaults to None → per-batch handle model used
 
-        ck("Anthropic-model batch → collect_message_batch called", seen["msg"] == [("msgbatch_anthro", ANTHRO)], seen["msg"])
-        ck("OpenAI-model batch → collect_chat_tasks called", seen["chat"] == [("batch_openai", OPENAI)], seen["chat"])
-        ck("Anthropic batch NOT sent to the OpenAI twin", all(b != "msgbatch_anthro" for b, _ in seen["chat"]))
-        ck("OpenAI batch NOT sent to the Anthropic twin", all(b != "batch_openai" for b, _ in seen["msg"]))
+        record_script_check(fails, "Anthropic-model batch → collect_message_batch called", seen["msg"] == [("msgbatch_anthro", ANTHRO)], str(seen["msg"]))
+        record_script_check(fails, "OpenAI-model batch → collect_chat_tasks called", seen["chat"] == [("batch_openai", OPENAI)], str(seen["chat"]))
+        record_script_check(fails, "Anthropic batch NOT sent to the OpenAI twin", all(b != "msgbatch_anthro" for b, _ in seen["chat"]))
+        record_script_check(fails, "OpenAI batch NOT sent to the Anthropic twin", all(b != "batch_openai" for b, _ in seen["msg"]))
     finally:
         callio.collect_message_batch, callio.collect_chat_tasks = _orig
 

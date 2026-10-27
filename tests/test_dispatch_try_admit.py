@@ -12,33 +12,30 @@ descriptions still contend), which is enough to prove the slot accounting. Zero 
 import os
 import sys
 
+from _script_checks import record_script_check  # noqa: E402
+
 from spendguard import dispatch
 
 fails = []
-def ck(name, cond):
-    print(("  [OK] " if cond else "  [FAIL] ") + name)
-    if not cond:
-        fails.append(name)
-
 POOL = "test-try-admit-guard"
 
 # 1. at limit=2, two admit and the third sheds
 a = dispatch.try_admit(POOL, limit=2)
 b = dispatch.try_admit(POOL, limit=2)
 c = dispatch.try_admit(POOL, limit=2)
-ck("limit=2 → first two admit", bool(a) and bool(b))
-ck("limit=2 → third SHEDS (None), no block/wait", c is None)
+record_script_check(fails, "limit=2 → first two admit", bool(a) and bool(b))
+record_script_check(fails, "limit=2 → third SHEDS (None), no block/wait", c is None)
 
 # 2. releasing a handle frees a slot for the next caller
 a.release()
 d = dispatch.try_admit(POOL, limit=2)
-ck("release frees a slot → next caller admits", bool(d))
+record_script_check(fails, "release frees a slot → next caller admits", bool(d))
 b.release()
 d.release()
 
 # 3. fully released → admits again
 e = dispatch.try_admit(POOL, limit=2)
-ck("fully released → admits again", bool(e))
+record_script_check(fails, "fully released → admits again", bool(e))
 if e:
     e.release()
 
@@ -46,10 +43,10 @@ if e:
 os.environ["SPENDGUARD_DISPATCH_XP_OFF"] = "1"
 try:
     handles = [dispatch.try_admit(POOL, limit=1) for _ in range(5)]     # limit=1 but gating off → all admit
-    ck("XP_OFF → every call admits (never sheds)", all(handles))
+    record_script_check(fails, "XP_OFF → every call admits (never sheds)", all(handles))
     for h in handles:
         h.release()                                                    # no-op; must not raise
-    ck("no-op handle .release() is safe", True)
+    record_script_check(fails, "no-op handle .release() is safe", True)
 finally:
     os.environ.pop("SPENDGUARD_DISPATCH_XP_OFF", None)
 

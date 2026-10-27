@@ -18,16 +18,13 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
     os.execv(sys.executable, [sys.executable] + sys.argv)
 
 import types
+from _script_checks import record_script_check
 from spendguard import gate as spend_gate
 from spendguard import http_capture, pricing
 
 fails = []
 
 
-def ck(name, cond):
-    print(("  [OK] " if cond else "  [FAIL] ") + name)
-    if not cond:
-        fails.append(name)
 
 
 recorded, logged = [], []
@@ -41,18 +38,18 @@ resp = types.SimpleNamespace(
     output=[types.SimpleNamespace(type="web_search_call"), types.SimpleNamespace(type="message"),
             types.SimpleNamespace(type="web_search_call")],
     usage=types.SimpleNamespace(server_tool_use=None))
-ck("counts Responses web_search_call items (2)", spend_gate._tool_fee_count(resp) == 2)
+record_script_check(fails, "counts Responses web_search_call items (2)", spend_gate._tool_fee_count(resp) == 2)
 spend_gate._record_tool_fees("gpt-5.5", {}, resp)
-ck("fee recorded as its own row (2 × $0.01)", recorded[-1] == ("gpt-5.5", 0, 0, 0.02, None))
+record_script_check(fails, "fee recorded as its own row (2 × $0.01)", recorded[-1] == ("gpt-5.5", 0, 0, 0.02, None))
 
 anth = types.SimpleNamespace(output=None,
                              usage=types.SimpleNamespace(server_tool_use=types.SimpleNamespace(web_search_requests=3)))
-ck("counts Anthropic server_tool_use.web_search_requests (3)", spend_gate._tool_fee_count(anth) == 3)
+record_script_check(fails, "counts Anthropic server_tool_use.web_search_requests (3)", spend_gate._tool_fee_count(anth) == 3)
 spend_gate._record_tool_fees("claude-sonnet-4-6", {}, anth)
-ck("unpriced tool fee → $0 row (never silent, never guessed)", recorded[-1] == ("claude-sonnet-4-6", 0, 0, 0.0, None))
+record_script_check(fails, "unpriced tool fee → $0 row (never silent, never guessed)", recorded[-1] == ("claude-sonnet-4-6", 0, 0, 0.0, None))
 n0 = len(recorded)
 spend_gate._record_tool_fees("gpt-5.5", {}, types.SimpleNamespace(output=[], usage=None))
-ck("no tool calls → no fee row", len(recorded) == n0)
+record_script_check(fails, "no tool calls → no fee row", len(recorded) == n0)
 
 # ── raw-HTTP capture: known usage shape → ledger; junk → unmetered event; SDK traffic suppressed ──
 import httpx
@@ -70,36 +67,36 @@ def handler(request):
     return httpx.Response(200, content=b"event: stream\n\n")   # unparseable → unmetered
 
 
-ck("http_capture.install() wires httpx + requests", http_capture.install() is True)
-ck("httpx.Client.send is patched", getattr(httpx.Client.send, "_spend_gated", False))
+record_script_check(fails, "http_capture.install() wires httpx + requests", http_capture.install() is True)
+record_script_check(fails, "httpx.Client.send is patched", getattr(httpx.Client.send, "_spend_gated", False))
 import requests as _rq
-ck("requests.Session.send is patched", getattr(_rq.Session.send, "_spend_gated", False))
+record_script_check(fails, "requests.Session.send is patched", getattr(_rq.Session.send, "_spend_gated", False))
 
 client = httpx.Client(transport=httpx.MockTransport(handler))
 client.get("https://api.openai.com/v1/chat/completions")
-ck("raw OpenAI-shaped response recorded (120/30, provider=openai)",
+record_script_check(fails, "raw OpenAI-shaped response recorded (120/30, provider=openai)",
    recorded[-1] == ("gpt-5.5", 120, 30, None, "openai"))
 client.get("https://api.anthropic.com/v1/messages")
-ck("raw Anthropic-shaped response recorded (50/9, provider=anthropic)",
+record_script_check(fails, "raw Anthropic-shaped response recorded (50/9, provider=anthropic)",
    recorded[-1] == ("claude-sonnet-4-6", 50, 9, None, "anthropic"))
 
 n0, l0 = len(recorded), len(logged)
 client.get("https://api.openai.com/v1/some/other/endpoint")
-ck("unparseable provider response → raw_http_unmetered event, no fake tokens",
+record_script_check(fails, "unparseable provider response → raw_http_unmetered event, no fake tokens",
    len(recorded) == n0 and len(logged) == l0 + 1 and logged[-1]["kind"] == "raw_http_unmetered")
 
 n0 = len(recorded) + len(logged)
 client.get("https://example.com/v1/chat/completions")
-ck("non-provider hosts are never touched", len(recorded) + len(logged) == n0)
+record_script_check(fails, "non-provider hosts are never touched", len(recorded) + len(logged) == n0)
 
 tok = http_capture.in_sdk_call.set(True)
 client.get("https://api.openai.com/v1/chat/completions")
 http_capture.in_sdk_call.reset(tok)
-ck("SDK-originated traffic is SUPPRESSED (no double count)", len(recorded) + len(logged) == n0)
+record_script_check(fails, "SDK-originated traffic is SUPPRESSED (no double count)", len(recorded) + len(logged) == n0)
 
 os.environ["SPENDGUARD_HTTP_CAPTURE"] = "off"
 client.get("https://api.openai.com/v1/chat/completions")
-ck("knob: SPENDGUARD_HTTP_CAPTURE=off disables the layer", len(recorded) + len(logged) == n0)
+record_script_check(fails, "knob: SPENDGUARD_HTTP_CAPTURE=off disables the layer", len(recorded) + len(logged) == n0)
 del os.environ["SPENDGUARD_HTTP_CAPTURE"]
 
 # ── the gate's SDK wrappers actually set the suppression flag around the real call ──
@@ -114,7 +111,7 @@ import openai
 oc = openai.OpenAI(api_key="test-key-not-real")
 os.environ["GATE_RT_BUDGET"] = "1000"
 oc.chat.completions.create(model="gpt-5.5", messages=[{"role": "user", "content": "hi"}], max_tokens=10)
-ck("inside a gated SDK call, in_sdk_call is TRUE (raw layer stands down)", seen_flag == [True])
+record_script_check(fails, "inside a gated SDK call, in_sdk_call is TRUE (raw layer stands down)", seen_flag == [True])
 spend_gate._record_rt = orig_probe
 
 print(("[OK]" if not fails else "[FAIL]") + " http capture + tool fees: %d failure(s)" % len(fails))

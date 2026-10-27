@@ -10,7 +10,7 @@ import sys
 import tempfile
 import pathlib
 from concurrent.futures import ThreadPoolExecutor
-from _script_checks import collect_daemon_concurrent_turns, collect_daemon_dead_pipe_waiters
+from _script_checks import collect_daemon_concurrent_turns, collect_daemon_dead_pipe_waiters, record_script_check
 
 os.environ.setdefault("SPENDGUARD_HOME", tempfile.mkdtemp(prefix="sg-kacp-"))
 os.environ.setdefault("SPENDGUARD_TEST_ISOLATED", "1")
@@ -35,10 +35,6 @@ def new_daemon(boot_log=None):
 fails = []
 
 
-def ck(name, cond):
-    print(("  [OK] " if cond else "  [FAIL] ") + name)
-    if not cond:
-        fails.append(name)
 
 
 @patch.dict(os.environ)
@@ -47,7 +43,7 @@ def test_agent_message():
     daemon = new_daemon()
     try:
         r = daemon.run_warm("hello")
-        ck("basic warm reply, reasoning chunk excluded", r == {"text": "reply:hello", "error": None})
+        record_script_check(fails, "basic warm reply, reasoning chunk excluded", r == {"text": "reply:hello", "error": None})
     finally:
         daemon.shutdown()
 
@@ -56,7 +52,7 @@ def test_agent_message():
 def test_concurrent_turns_are_demultiplexed():
     os.environ.pop(config.CLI_TEST_OFFLINE_ENVIRONMENT_KEY, None)
     results = collect_daemon_concurrent_turns(new_daemon, ("first", "second"), timeout=10)
-    ck("concurrent turns demuxed to their own text",
+    record_script_check(fails, "concurrent turns demuxed to their own text",
        sorted(x["text"] for x in results) == ["reply:first", "reply:second"])
 
 
@@ -69,8 +65,8 @@ def test_n_prompts_one_cold_start():
     try:
         texts = [daemon.run_warm(f"p{i}")["text"] for i in range(4)]
         boots = boot_log.read_text().strip().splitlines() if boot_log.exists() else []
-        ck("all 4 prompts answered", texts == [f"reply:p{i}" for i in range(4)])
-        ck("4 prompts served by exactly ONE cold-start (not 4)", len(boots) == 1)
+        record_script_check(fails, "all 4 prompts answered", texts == [f"reply:p{i}" for i in range(4)])
+        record_script_check(fails, "4 prompts served by exactly ONE cold-start (not 4)", len(boots) == 1)
     finally:
         daemon.shutdown()
 
@@ -86,9 +82,9 @@ def test_wedged_turn_fails_only_itself_others_survive():
             ok1 = pool.submit(daemon.run_warm, "alpha")
             ok2 = pool.submit(daemon.run_warm, "beta")
             w, r1, r2 = wedged.result(timeout=10), ok1.result(timeout=10), ok2.result(timeout=10)
-        ck("the wedged turn fails to its own timeout error (no text)", w["text"] is None and w["error"])
-        ck("the healthy concurrent turns still complete", {r1["text"], r2["text"]} == {"reply:alpha", "reply:beta"})
-        ck("the warm server survived the wedged turn", daemon.running())
+        record_script_check(fails, "the wedged turn fails to its own timeout error (no text)", w["text"] is None and w["error"])
+        record_script_check(fails, "the healthy concurrent turns still complete", {r1["text"], r2["text"]} == {"reply:alpha", "reply:beta"})
+        record_script_check(fails, "the warm server survived the wedged turn", daemon.running())
     finally:
         daemon.shutdown()
 
@@ -99,7 +95,7 @@ def test_kimi_refusal_is_tool_error():
     daemon = new_daemon()
     try:
         r = daemon.run_warm("refuse")
-        ck("an ACP refusal stopReason is a hard tool_error, not content",
+        record_script_check(fails, "an ACP refusal stopReason is a hard tool_error, not content",
            r["text"] is None and r["error"] and r.get("tool_error") is True)
     finally:
         daemon.shutdown()
@@ -111,7 +107,7 @@ def test_server_initiated_request_is_declined_not_hung():
     daemon = new_daemon()
     try:
         r = daemon.run_warm("permreq", timeout=6)
-        ck("a server→client request is declined so the turn completes (never hangs)", r["text"] == "reply:permreq")
+        record_script_check(fails, "a server→client request is declined so the turn completes (never hangs)", r["text"] == "reply:permreq")
     finally:
         daemon.shutdown()
 
@@ -121,7 +117,7 @@ def test_dead_pipe_wakes_every_waiter():
     os.environ.pop(config.CLI_TEST_OFFLINE_ENVIRONMENT_KEY, None)
     awakened, dead = collect_daemon_dead_pipe_waiters(
         new_daemon, range(10_000, 10_002), process_timeout=5, event_timeout=3)
-    ck("every pending waiter is woken on a dead pipe", awakened and dead)
+    record_script_check(fails, "every pending waiter is woken on a dead pipe", awakened and dead)
 
 
 if __name__ == "__main__":

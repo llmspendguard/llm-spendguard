@@ -13,19 +13,15 @@ os.environ.setdefault("SPENDGUARD_TEST_ISOLATED", "1")
 os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
+from _script_checks import record_script_check  # noqa: E402
+
 from spendguard import adapters
 import spendguard.vendor_call as vc
 
 fails = []
 
 
-def ck(name, cond):
-    print(("  [OK] " if cond else "  [FAIL] ") + name)
-    if not cond:
-        fails.append(name)
-
-
-ck("deadline_for is a PUBLIC adapters attribute (no vendor_call import needed by a consumer)",
+record_script_check(fails, "deadline_for is a PUBLIC adapters attribute (no vendor_call import needed by a consumer)",
    callable(getattr(adapters, "deadline_for", None)))
 
 # the public door delegates to the internal with the DERIVED (vendor, model, class sig, in_chars)
@@ -41,26 +37,26 @@ def _spy(vendor, model, sig=None, default_s=None, in_chars=None):
 vc.time_budget = _spy
 sec, basis = adapters.deadline_for("openai:gpt-5.5", intent="warden:gold", in_chars=4000)
 vc.time_budget = _orig
-ck("derives the vendor from a 'provider:model' spec", seen.get("vendor") == "openai")
-ck("strips the provider prefix for the model id", seen.get("model") == "gpt-5.5")
-ck("derives the class sig from model+intent (== vendor_call.class_sig)", seen.get("sig") == vc.class_sig("gpt-5.5", "warden:gold"))
-ck("passes the input size (chars) through", seen.get("in_chars") == 4000)
-ck("returns the internal's (seconds, basis) unchanged", (sec, basis) == (123.0, "measured:class(n=9)"))
+record_script_check(fails, "derives the vendor from a 'provider:model' spec", seen.get("vendor") == "openai")
+record_script_check(fails, "strips the provider prefix for the model id", seen.get("model") == "gpt-5.5")
+record_script_check(fails, "derives the class sig from model+intent (== vendor_call.class_sig)", seen.get("sig") == vc.class_sig("gpt-5.5", "warden:gold"))
+record_script_check(fails, "passes the input size (chars) through", seen.get("in_chars") == 4000)
+record_script_check(fails, "returns the internal's (seconds, basis) unchanged", (sec, basis) == (123.0, "measured:class(n=9)"))
 
 # real integration (no monkeypatch): no measurement → a NON-measured basis, never an invented number
 su, bu = adapters.deadline_for("gpt-5.5", intent="never-seen-intent-xyz")
-ck("no measurement → an explicit non-measured basis (unknown / lane-floor / reasoning-floor), never a measured number",
+record_script_check(fails, "no measurement → an explicit non-measured basis (unknown / lane-floor / reasoning-floor), never a measured number",
    bu in ("unknown", "lane-floor", "reasoning-floor"))   # reasoning-floor (#2): a labeled seed so a reasoning call is
    #                                                        not cut mid-thought before it is measured — not a guess
-ck("no measurement, no default → seconds is None or a real lane floor, not a guess", su is None or su >= 30.0)
+record_script_check(fails, "no measurement, no default → seconds is None or a real lane floor, not a guess", su is None or su >= 30.0)
 
 # a caller default is honored (the 'answer it yourself' path when there is no measurement)
 sd, bd = adapters.deadline_for("gpt-5.5", intent="x", default_s=77)
-ck("a caller default_s is honored (>= the default)", sd is not None and sd >= 77)
+record_script_check(fails, "a caller default_s is honored (>= the default)", sd is not None and sd >= 77)
 
 # a bare model id (no prefix) resolves its vendor via provider_for and never raises
 sb, _bb = adapters.deadline_for("claude-sonnet-4-5", intent="x", default_s=50)
-ck("a bare model id sizes without raising", sb is not None and sb >= 50)
+record_script_check(fails, "a bare model id sizes without raising", sb is not None and sb >= 50)
 
 print(("[OK]" if not fails else "[FAIL]") + " public time_budget: %d failure(s)" % len(fails))
 sys.exit(1 if fails else 0)
