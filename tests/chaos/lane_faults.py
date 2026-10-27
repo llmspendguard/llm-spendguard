@@ -18,6 +18,7 @@ os.environ["SPENDGUARD_LANE_QUEUE_POLL_S"] = "0.002"
 from spendguard import adapters, calls, gate, lane_balance, lane_queue, lane_recovery, plan_admission  # noqa: E402
 
 CHAOS_RECOVERY_POLICY = {"SPENDGUARD_AVOID_CLAUDE_LANE": "off"}
+CHAOS_RECOVERY_AUTH_STATUS = {"authed": True}
 
 
 class RecoveringFaultLane:
@@ -83,6 +84,7 @@ def run_lane_chaos_contract():
         # prove default-on Anthropic refusal; scope this fixture to the mocked wave rather than leaking state.
         with patch.dict(os.environ, CHAOS_RECOVERY_POLICY), \
                 patch.object(adapters, "_lane_for", side_effect=lambda p: mapping.get(p)), \
+                patch.object(adapters, "_authoritative_lane_auth_status", return_value=CHAOS_RECOVERY_AUTH_STATUS), \
                 patch.object(plan_admission, "_ready", side_effect=lambda lane: lane == mapping["anthropic"][0]), \
                 patch.object(adapters, "_call_once", side_effect=simulate_gated_metered_send), \
                 patch.object(plan_admission, "_best_ready_alt_lane", return_value=None), \
