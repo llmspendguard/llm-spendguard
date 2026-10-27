@@ -161,14 +161,22 @@ def _run_cold_codex_with_reaper(cmd, timeout, env, cwd):
         def _capture_cold_codex_descendants(root):
             try:
                 while not stop.is_set():
-                    for descendant in root.children(recursive=True):
+                    try:
+                        descendants = list(root.children(recursive=True))
+                    except (psutil.NoSuchProcess, psutil.AccessDenied) as root_error:
+                        if root_error.pid == root.pid and not root.is_running():
+                            logger.debug("cold codex MCP descendant capture: root exited")
+                            return
+                        raise
+                    for descendant in descendants:
                         try:
                             captured[descendant.pid] = descendant.create_time()
-                        except psutil.Error:
-                            continue
+                        except psutil.NoSuchProcess:
+                            if descendant.is_running():
+                                raise
                     stop.wait(CODEX_MCP_SCAN_INTERVAL_S)
             except Exception:
-                logger.warning("cold codex MCP descendant capture stopped", exc_info=True)
+                logger.error("cold codex MCP descendant capture stopped", exc_info=True)
 
         tracker = None
         try:
