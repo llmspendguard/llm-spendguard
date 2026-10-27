@@ -9,6 +9,7 @@ import venv
 
 CLI_READONLY_SOURCE = Path(__file__).resolve().parents[1] / "src"
 CLI_READONLY_ARGUMENTS = ("-B", "-m", "spendguard", "distribute", "--check", "--json")
+CLI_READONLY_IMPORT_ARGUMENTS = ("-B", "-c", "import spendguard; import spendguard.config")
 
 
 def exercise_distribution_cli_state_snapshot(state_exists):
@@ -38,6 +39,10 @@ def exercise_distribution_cli_state_snapshot(state_exists):
         report = json.loads(result.stdout)
         assert report["check"] is True and report["exit_code"] == 1, report
         assert report["summary"]["stragglers"], report
+        assert set(home.rglob("*")) == original_entries, list(home.rglob("*"))
+        imported = subprocess.run([str(python), *CLI_READONLY_IMPORT_ARGUMENTS], env=environment,
+                                  capture_output=True, text=True, check=False)
+        assert imported.returncode == 0, (imported.stdout, imported.stderr)
         assert set(home.rglob("*")) == original_entries, list(home.rglob("*"))
 
 

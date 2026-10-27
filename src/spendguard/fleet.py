@@ -233,6 +233,10 @@ def _fleet_db(read_only=False):
             return snapshot_memory
     if read_only:
         p = ":memory:"
+    else:
+        # Registration can precede every other state writer during gate startup.
+        # Own this parent at the write seam, never during config import or reads.
+        pathlib.Path(p).parent.mkdir(parents=True, exist_ok=True)
     c = sqlite3.connect(p, timeout=5)
     c.execute("PRAGMA journal_mode=WAL")
     c.execute("PRAGMA busy_timeout=5000")
