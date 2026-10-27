@@ -113,6 +113,16 @@ def _receive_frame(connection, deadline=None):
 
 
 def _send_frame(connection, value):
+    # Carry dispatch identity on the wire, rather than relying on thread-local
+    # context surviving a remote broker or its reader threads.
+    if value.get("method") == "run_warm":
+        from . import execution_journal
+        execution_id = execution_journal.current_durable_execution_id()
+        if execution_id is not None:
+            value = {**value, "execution": {
+                "id": execution_id,
+                "root": os.fspath(execution_journal.current_durable_execution_root()
+                                  or execution_journal.durable_execution_store_root())}}
     payload = json.dumps(value, separators=(",", ":")).encode("utf-8")
     if len(payload) > _MAX_FRAME_BYTES:
         raise ValueError("broker frame exceeds configured limit")
@@ -225,6 +235,7 @@ class _CodexDaemonBroker:
                 raise
 
     def _serve_one(self, connection):
+        from . import execution_journal
         with contextlib.closing(connection):
             try:
                 read_timeout = config.codex_daemon_admission_settings()["request_read_timeout_s"]
@@ -238,11 +249,16 @@ class _CodexDaemonBroker:
                 if not isinstance(kwargs, dict):
                     raise ValueError("broker kwargs are not an object")
                 connection.settimeout(None)
-                with _broker_request_ledger_lifetime(connection):
+                execution = request.get("execution") or {}
+                with _broker_request_ledger_lifetime(connection), execution_journal.durable_execution_scope(
+                        execution.get("id"), root=execution.get("root")):
                     result = (self._local.run_warm(**kwargs) if method == "run_warm"
                               else self._local.read_rate_limits(**kwargs))
                 connection.settimeout(read_timeout)
                 _send_frame(connection, {"version": _PROTOCOL_VERSION, "result": result})
+            except execution_journal.DurableExecutionPersistenceError as exc:
+                connection.settimeout(config.codex_daemon_admission_settings()["request_read_timeout_s"])
+                _send_frame(connection, {"version": _PROTOCOL_VERSION, "persistence_error": str(exc)})
             except ValueError as exc:
                 connection.settimeout(config.codex_daemon_admission_settings()["request_read_timeout_s"])
                 _send_frame(connection, {"version": _PROTOCOL_VERSION,
@@ -273,6 +289,9 @@ class _CodexDaemonBroker:
                 with contextlib.closing(connection):
                     _send_frame(connection, {"version": _PROTOCOL_VERSION, "method": method, "kwargs": kwargs})
                     response = _receive_frame(connection)
+                if "persistence_error" in response:
+                    from .execution_journal import DurableExecutionPersistenceError
+                    raise DurableExecutionPersistenceError(response["persistence_error"])
                 if response.get("version") != _PROTOCOL_VERSION:
                     return _BrokerAttachImportFailure(
                         ImportError(f"broker protocol {response.get('version')} is incompatible with client "
@@ -298,11 +317,14 @@ class _CodexDaemonBroker:
                 if time.monotonic() >= deadline:
                     return None
                 time.sleep(min(0.02, max(0.0, deadline - time.monotonic())))
-            except Exception:
+            except Exception as exc:
                 try:
                     connection.close()
                 except Exception:
                     pass
+                from .execution_journal import DurableExecutionPersistenceError
+                if isinstance(exc, DurableExecutionPersistenceError):
+                    raise
                 return None
 
     def broker_run_warm(self, prompt, model=None, thread=None, reasoning=None, sandbox="read-only", cwd=None,

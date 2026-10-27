@@ -119,12 +119,20 @@ def finish_delegate_job(job_id, *, state, result_payload=None, terminal_reason=N
         raise KeyError(job_id)
     if row["execution_id"]:
         from .execution_journal import terminalize_durable_execution
-        terminalize_durable_execution(row["execution_id"], DELEGATE_JOB_JOURNAL_STATES[state])
+        terminal = terminalize_durable_execution(row["execution_id"], DELEGATE_JOB_JOURNAL_STATES[state])
+        winner_state = next(job_state for job_state, journal_state in DELEGATE_JOB_JOURNAL_STATES.items()
+                            if journal_state == terminal["state"])
+        if winner_state != state:
+            payload = None
+            terminal_reason = None
+            error = None
+        state = winner_state
     with _open_delegate_jobs_connection() as connection:
         connection.execute(
             "UPDATE delegate_jobs SET state=?,updated_ts=?,result_payload=?,terminal_reason=?,error=? "
-            "WHERE job_id=? AND state=?",
-            (state, _delegate_job_timestamp(), payload, terminal_reason, error, job_id, DELEGATE_JOB_RUNNING_STATE))
+            "WHERE job_id=? AND (state=? OR (state=? AND ?!=?))",
+            (state, _delegate_job_timestamp(), payload, terminal_reason, error, job_id, DELEGATE_JOB_RUNNING_STATE,
+             DELEGATE_JOB_LOST_STATE, state, DELEGATE_JOB_LOST_STATE))
 
 
 def recover_delegate_job_execution(job_id):
@@ -145,7 +153,7 @@ def recover_delegate_job_execution(job_id):
                            and owner.status() != psutil.STATUS_ZOMBIE)
         except psutil.NoSuchProcess:
             owner_alive = False
-    if (row["state"] == DELEGATE_JOB_RUNNING_STATE
+    if (row["state"] in (DELEGATE_JOB_RUNNING_STATE, DELEGATE_JOB_LOST_STATE)
             and terminal_state
             and (not owner_alive or terminal_state in (DELEGATE_JOB_LOST_STATE, DELEGATE_JOB_KILLED_STATE))):
         finish_delegate_job(job_id, state=terminal_state, result_payload=recovered.get("result"),

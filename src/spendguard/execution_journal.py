@@ -13,6 +13,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import tempfile
 import time
 import uuid
 
@@ -29,6 +30,10 @@ EXECUTION_OBSERVER_STDERR_FILENAME = "observer.stderr"
 EXECUTION_OBSERVER_START_BOUND_DEFAULT_S = 10
 EXECUTION_PARTIAL_EVENT_ARCHIVE_SUFFIX = ".interrupted"
 _durable_dispatch_context = contextvars.ContextVar("spendguard_durable_dispatch", default=None)
+_durable_dispatch_root_context = contextvars.ContextVar("spendguard_durable_dispatch_root", default=None)
+EXECUTION_INFERENTIAL_AUTHORITY = "inferential"
+EXECUTION_CAPTURED_AUTHORITY = "captured_result_or_exit"
+EXECUTION_EVENT_LOCK_SUFFIX = ".lock"
 
 
 class DurableExecutionPersistenceError(RuntimeError):
@@ -82,19 +87,26 @@ def current_durable_execution_id():
     return _durable_dispatch_context.get()
 
 
+def current_durable_execution_root():
+    return _durable_dispatch_root_context.get()
+
+
 @contextlib.contextmanager
-def durable_execution_scope(execution_id):
+def durable_execution_scope(execution_id, *, root=None):
     token = _durable_dispatch_context.set(execution_id)
+    root_token = _durable_dispatch_root_context.set(root)
     try:
         yield execution_id
     finally:
         _durable_dispatch_context.reset(token)
+        _durable_dispatch_root_context.reset(root_token)
 
 
 def _durable_execution_directory(execution_id, root=None):
     if Path(execution_id).name != execution_id:
         raise ValueError("execution id must be a basename")
-    return (Path(root) if root is not None else durable_execution_store_root()) / execution_id
+    selected_root = root if root is not None else current_durable_execution_root()
+    return (Path(selected_root) if selected_root is not None else durable_execution_store_root()) / execution_id
 
 
 @contextlib.contextmanager
@@ -119,11 +131,40 @@ def _write_durable_execution_state(directory, state):
         os.close(descriptor)
 
 
+@contextlib.contextmanager
+def _locked_durable_execution_events(path):
+    with path.with_name(path.name + EXECUTION_EVENT_LOCK_SUFFIX).open("a") as event_lock:
+        fcntl.flock(event_lock, fcntl.LOCK_EX)
+        with path.open("a+", encoding="utf-8") as stream:
+            yield stream
+
+
+def _replace_durable_execution_events(path, rows):
+    replacement_path = None
+    try:
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent,
+                                         prefix=path.name, delete=False) as replacement:
+            replacement_path = Path(replacement.name)
+            replacement.write("".join(json.dumps(row) + "\n" for row in rows))
+            replacement.flush()
+            os.fsync(replacement.fileno())
+        os.replace(replacement_path, path)
+        descriptor = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+    finally:
+        if replacement_path is not None:
+            replacement_path.unlink(missing_ok=True)
+
+
 def _append_durable_execution_event(directory, state, phase):
     event = {**state.get("metadata", {}), "execution_id": state["execution_id"], "phase": phase, "event": phase,
              "pid": state["owner_pid"], "state": state["state"],
              "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(),
              "exit_code": state.get("exit_code"), "result_path": str(directory / EXECUTION_PAYLOAD_FILENAMES["result"]),
+             "terminal_authority": state.get("terminal_authority"),
              "stdout_path": str(directory / EXECUTION_PAYLOAD_FILENAMES["stdout"]),
              "stderr_path": str(directory / EXECUTION_PAYLOAD_FILENAMES["stderr"])}
     paths = [directory / EXECUTION_EVENTS_FILENAME]
@@ -131,11 +172,19 @@ def _append_durable_execution_event(directory, state, phase):
         paths.append(Path(state["metadata"]["ledger_path"]))
     for path in paths:
         path.parent.mkdir(parents=True, exist_ok=True)
-        with path.open("a+", encoding="utf-8") as stream:
-            fcntl.flock(stream, fcntl.LOCK_EX)
+        with _locked_durable_execution_events(path) as stream:
             existing = _read_durable_execution_event_lines(stream, path)
-            if any(row.get("execution_id") == state["execution_id"] and
-                   row.get("phase", row.get("event")) == phase for row in existing):
+            matching = [index for index, row in enumerate(existing)
+                        if row.get("execution_id") == state["execution_id"] and
+                        row.get("phase", row.get("event")) == phase]
+            if matching:
+                prior = existing[matching[0]]
+                if not (phase == "end" and
+                        prior.get("terminal_authority") != EXECUTION_CAPTURED_AUTHORITY and
+                        state.get("terminal_authority") == EXECUTION_CAPTURED_AUTHORITY):
+                    continue
+                existing[matching[0]] = event
+                _replace_durable_execution_events(path, existing)
                 continue
             if not existing and path != directory / EXECUTION_EVENTS_FILENAME:
                 stream.write(json.dumps({"event": "coverage_start", "ts": event["ts"]}) + "\n")
@@ -249,11 +298,13 @@ def _persist_locked_execution_payload(directory, state, *, result=None, stdout=N
                 os.fsync(stream.fileno())
     if exit_code is not None:
         state["exit_code"] = exit_code
+    if result is not None:
+        state["captured_result"] = True
 
 
-def append_durable_execution_evidence(execution_id, *, stdout=None, stderr=None):
+def append_durable_execution_evidence(execution_id, *, stdout=None, stderr=None, root=None):
     try:
-        with _locked_durable_execution(execution_id) as directory:
+        with _locked_durable_execution(execution_id, root) as directory:
             for key, payload in (("stdout", stdout), ("stderr", stderr)):
                 if payload is not None:
                     with (directory / EXECUTION_PAYLOAD_FILENAMES[key]).open("ab") as stream:
@@ -271,17 +322,24 @@ def terminalize_durable_execution(execution_id, state, *, root=None, **payload):
         raise ValueError(f"invalid execution terminal state: {state}")
     with _locked_durable_execution(execution_id, root) as directory:
         record = json.loads((directory / EXECUTION_STATE_FILENAME).read_text())
-        if record["state"] in EXECUTION_TERMINAL_STATES:
-            _append_durable_execution_event(directory, record, "end")
-            return record
+        captured_exit = payload.get("exit_code", record.get("exit_code"))
+        authoritative_completion = (state != "lost" and
+                                    (captured_exit is not None or payload.get("result") is not None
+                                     or record.get("captured_result", False)))
+        supersedes_loss = (record["state"] == "lost" and authoritative_completion and
+                           record.get("terminal_authority") != EXECUTION_CAPTURED_AUTHORITY)
         # Consult the authoritative end before accepting any replacement evidence.
         event_path = directory / EXECUTION_EVENTS_FILENAME
-        with event_path.open("a+", encoding="utf-8") as events_stream:
+        with _locked_durable_execution_events(event_path) as events_stream:
             events = _read_durable_execution_event_lines(events_stream, event_path)
         terminal = next((event for event in events if event["phase"] == "end"), None)
-        if terminal is not None:
+        if terminal is None and record["state"] in EXECUTION_TERMINAL_STATES and not supersedes_loss:
+            _append_durable_execution_event(directory, record, "end")
+            return record
+        if terminal is not None and not (terminal["state"] == "lost" and authoritative_completion):
             record["state"] = terminal["state"]
             record["exit_code"] = terminal.get("exit_code")
+            record["terminal_authority"] = terminal.get("terminal_authority", EXECUTION_INFERENTIAL_AUTHORITY)
         else:
             _persist_locked_execution_payload(directory, record, **payload)
             for filename in EXECUTION_PAYLOAD_FILENAMES.values():
@@ -290,6 +348,8 @@ def terminalize_durable_execution(execution_id, state, *, root=None, **payload):
             record["state"] = ("killed" if state in {"failure", "lost"}
                                and record.get("exit_code") is not None
                                and record["exit_code"] < 0 else state)
+            record["terminal_authority"] = (EXECUTION_CAPTURED_AUTHORITY if authoritative_completion
+                                             else EXECUTION_INFERENTIAL_AUTHORITY)
         _append_durable_execution_event(directory, record, "end")
         _write_durable_execution_state(directory, record)
         return record
@@ -328,9 +388,9 @@ def _durable_execution_has_live_process(record):
 
 
 @_protect_durable_execution_io
-def reference_durable_execution_stderr(execution_id, archive_path):
+def reference_durable_execution_stderr(execution_id, archive_path, *, root=None):
     """Reference the complete shared daemon archive without implying exclusive attribution."""
-    with _locked_durable_execution(execution_id) as directory:
+    with _locked_durable_execution(execution_id, root) as directory:
         record = json.loads((directory / EXECUTION_STATE_FILENAME).read_text())
         references = record.setdefault("shared_daemon_stderr_paths", [])
         absolute_path = os.fspath(Path(archive_path).resolve())
@@ -346,6 +406,9 @@ def recover_durable_execution(execution_id, *, root=None):
         record = json.loads((directory / EXECUTION_STATE_FILENAME).read_text())
     if record["state"] == "running" and not _durable_execution_has_live_process(record):
         record = terminalize_durable_execution(execution_id, "lost", root=root)
+    elif record["state"] in EXECUTION_TERMINAL_STATES:
+        # Repair an interrupted event-to-state projection from the authoritative end.
+        record = terminalize_durable_execution(execution_id, record["state"], root=root)
     for key, filename in EXECUTION_PAYLOAD_FILENAMES.items():
         record[key] = (directory / filename).read_text(encoding="utf-8", errors="surrogateescape")
     if not record["result"] and record["envelope"]:

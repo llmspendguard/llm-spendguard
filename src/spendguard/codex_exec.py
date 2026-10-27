@@ -637,12 +637,14 @@ def _run_prompt_in_cwd(prompt, system=None, model=None, timeout=TIMEOUT_S, reaso
                                        reasoning=reasoning, cwd=cwd)
     # The broker is the sole admission point for read-only/meta work. Failure must never start an uncounted cold process.
     if _daemon_enabled():
-        from . import codex_daemon
+        from . import codex_daemon, execution_journal
         _full = (f"{system.strip()}\n\n{prompt}" if system else prompt)
         _t0 = time.time()
         try:
             _r = codex_daemon.run_warm(_full, model=model, reasoning=reasoning, sandbox=sandbox, cwd=cwd,
                                        timeout=timeout, recycle_on_timeout=recycle_on_timeout)
+        except execution_journal.DurableExecutionPersistenceError:
+            raise
         except Exception as _e:
             _r = {"error": f"codex daemon raised: {_e}"}
         if _r.get("text") and not _r.get("error"):

@@ -253,7 +253,9 @@ class _WarmStdioJsonRpcDaemon:
             self._warm_evidence_read_size()
             with self._state_lock:
                 warm_capture = self._warm_evidence_scopes.setdefault(
-                    warm_execution_id, {"users": 0, "error": None})
+                    warm_execution_id, {"users": 0, "error": None,
+                                        "root": execution_journal.current_durable_execution_root()
+                                        or execution_journal.durable_execution_store_root()})
                 warm_capture["users"] += 1
             if self._proc is not None:
                 self._reference_warm_stderr_archive(self._proc, (warm_execution_id,))
@@ -272,13 +274,15 @@ class _WarmStdioJsonRpcDaemon:
     def _capture_warm_transport_bytes(self, *, stdout=None, stderr=None, exit_code=None):
         from . import execution_journal
         with self._state_lock:
-            warm_capture_ids = tuple(self._warm_evidence_scopes)
-        for warm_capture_id in warm_capture_ids:
+            warm_capture_targets = tuple((capture_id, capture["root"])
+                                         for capture_id, capture in self._warm_evidence_scopes.items())
+        for warm_capture_id, warm_capture_root in warm_capture_targets:
             try:
                 execution_journal.append_durable_execution_evidence(
-                    warm_capture_id, stdout=stdout, stderr=stderr)
+                    warm_capture_id, stdout=stdout, stderr=stderr, root=warm_capture_root)
                 if exit_code is not None:
-                    execution_journal.persist_durable_execution_payload(warm_capture_id, exit_code=exit_code)
+                    execution_journal.persist_durable_execution_payload(
+                        warm_capture_id, exit_code=exit_code, root=warm_capture_root)
             except execution_journal.DurableExecutionPersistenceError as warm_capture_error:
                 with self._state_lock:
                     warm_failed_scope = self._warm_evidence_scopes.get(warm_capture_id)
@@ -305,7 +309,10 @@ class _WarmStdioJsonRpcDaemon:
         for warm_archive_execution in execution_ids:
             if warm_archive_execution is None:
                 continue
-            execution_journal.reference_durable_execution_stderr(warm_archive_execution, warm_archive_path)
+            with self._state_lock:
+                warm_archive_root = self._warm_evidence_scopes.get(warm_archive_execution, {}).get("root")
+            execution_journal.reference_durable_execution_stderr(
+                warm_archive_execution, warm_archive_path, root=warm_archive_root)
 
     # ── id + idle-timer primitives ────────────────────────────────────────────────────────────────────────────
     def _next_id(self):

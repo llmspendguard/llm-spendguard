@@ -17,6 +17,7 @@ lane is the coding PLAN: a different endpoint (api/anthropic) drawing on the fla
 
 Setup (docs.z.ai/devpack/tool/claude): keys.env ZAI_CODING_API_KEY, else the account's ZAI_API_KEY is used.
 """
+import http.client
 import json
 import random
 import time
@@ -141,7 +142,14 @@ def run_prompt(prompt, system=None, model=None, timeout=TIMEOUT_S, reasoning=Non
             raise execution_journal.DurableExecutionPersistenceError("HTTP evidence chunk bytes must be positive")
         zai_response_chunks = []
         while True:
-            zai_response_chunk = response.read(zai_chunk_size)
+            try:
+                zai_response_chunk = response.read(zai_chunk_size)
+            except http.client.IncompleteRead as zai_incomplete_response:
+                # read() can consume bytes before raising instead of returning a chunk.
+                # Archive those bytes through the same seam before exposing the transport failure.
+                execution_journal.append_durable_execution_evidence(
+                    zai_durable_dispatch_id, **{evidence_stream: zai_incomplete_response.partial})
+                raise
             if not zai_response_chunk:
                 return b"".join(zai_response_chunks)
             execution_journal.append_durable_execution_evidence(
