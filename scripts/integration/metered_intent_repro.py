@@ -59,8 +59,10 @@ def _new_rows(after_rowid):
     separate count of ANY untagged '(none)' rows that appeared — the exact failure signature."""
     con = sqlite3.connect(config.db_path())
     try:
-        mine = con.execute("SELECT rowid,intent,executor,caller,kind,COALESCE(cost,0) FROM calls "
-                           "WHERE rowid>? AND intent=? ORDER BY rowid", (after_rowid, INTENT)).fetchall()
+        from spendguard import ledger_read
+        mine = [row.values for row in ledger_read.read_ledger_sql(ledger_read.LedgerSQLReadRequest(
+            "SELECT rowid,intent,executor,caller,kind,cost FROM calls "
+            "WHERE rowid>? AND intent=? ORDER BY rowid", (after_rowid, INTENT)))]
         none_ct = con.execute("SELECT COUNT(*) FROM calls WHERE rowid>? AND (intent IS NULL OR intent='') "
                               "AND kind='realtime'", (after_rowid,)).fetchone()[0]
         return mine, none_ct

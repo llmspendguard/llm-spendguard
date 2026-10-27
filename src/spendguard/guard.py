@@ -27,9 +27,9 @@ CERTAIN = ("cache", "block", "cascade", "realized", "prompt_cache")   # vs count
 # refuses it, loudly, rather than silently inflating the tally. (The dominant "advisor/routing" saving IS this axis.)
 _RESERVED_SOURCES = ("plan",)
 SAVED_SINCE_SOURCE_SQL = "SELECT source,COALESCE(SUM(amount),0) AS amount FROM savings {where} GROUP BY source"
-DECISIONS_SUMMARY_TOTAL_SQL = "SELECT COUNT(*) AS decisions,COALESCE(SUM(saved_usd),0) AS saved_usd FROM decisions {where}"
+DECISIONS_SUMMARY_TOTAL_SQL = "SELECT COUNT(*) AS decisions,CASE WHEN COUNT(saved_usd)=COUNT(*) THEN COALESCE(SUM(saved_usd),0) END AS saved_usd FROM decisions {where}"
 DECISIONS_SUMMARY_INTENT_SQL = """SELECT COALESCE(intent,'(none)') AS intent,COUNT(*) AS decisions,
-COALESCE(SUM(saved_usd),0) AS saved_usd FROM decisions {where}
+CASE WHEN COUNT(saved_usd)=COUNT(*) THEN COALESCE(SUM(saved_usd),0) END AS saved_usd FROM decisions {where}
 GROUP BY COALESCE(intent,'(none)') ORDER BY saved_usd DESC LIMIT ?"""
 
 
@@ -199,7 +199,9 @@ def record_decision(intent, requested_model, chosen_model, counterfactual_usd, a
                        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                        (now.isoformat(timespec="seconds"), now.strftime("%Y-%m-%d"), proj, intent, basis,
                         requested_model, requested_effort, chosen_model, chosen_effort,
-                        float(counterfactual_usd or 0), float(actual_usd or 0), float(saved_usd or 0), why, cls,
+                        float(counterfactual_usd) if counterfactual_usd is not None else None,
+                        float(actual_usd) if actual_usd is not None else None,
+                        float(saved_usd) if saved_usd is not None else None, why, cls,
                         call_id))
             db.commit()
     except Exception:
@@ -233,15 +235,15 @@ def decisions_summary(since=None, intent_limit=None):
         rows = decisions_since(since)
         by_intent, total = {}, 0.0
         for d in rows:
-            total += float(d.get("saved_usd") or 0)
+            total = _decision_nullable_sum((total, d.get("saved_usd")))
             k = d.get("intent") or "(none)"
             b = by_intent.setdefault(k, {"intent": k, "decisions": 0, "saved_usd": 0.0})
             b["decisions"] += 1
-            b["saved_usd"] += float(d.get("saved_usd") or 0)
+            b["saved_usd"] = _decision_nullable_sum((b["saved_usd"], d.get("saved_usd")))
         for b in by_intent.values():
-            b["saved_usd"] = round(b["saved_usd"], 4)
-        return {"decisions": len(rows), "saved_usd": round(total, 4),
-                "by_intent": sorted(by_intent.values(), key=lambda x: x["saved_usd"], reverse=True)}
+            b["saved_usd"] = _decision_nullable_round(b["saved_usd"], 4)
+        return {"decisions": len(rows), "saved_usd": _decision_nullable_round(total, 4),
+                "by_intent": sorted(by_intent.values(), key=lambda x: (x["saved_usd"] is not None, x["saved_usd"] or 0), reverse=True)}
     from .ledger_read import LedgerSQLReadRequest, ledger_read_table_exists, read_ledger_sql
     if not Path(config.db_path()).exists() or not ledger_read_table_exists("decisions"):
         return {"decisions": 0, "saved_usd": 0.0, "by_intent": []}
@@ -252,9 +254,18 @@ def decisions_summary(since=None, intent_limit=None):
     ranked = read_ledger_sql(LedgerSQLReadRequest(
         DECISIONS_SUMMARY_INTENT_SQL.format(where=where), parameters=parameters + (int(intent_limit),),
         row_cap=int(intent_limit)))
-    return {"decisions": int(total["decisions"]), "saved_usd": round(float(total["saved_usd"]), 4),
+    return {"decisions": int(total["decisions"]), "saved_usd": _decision_nullable_round(total["saved_usd"], 4),
             "by_intent": [{"intent": row["intent"], "decisions": int(row["decisions"]),
-                           "saved_usd": round(float(row["saved_usd"]), 4)} for row in ranked]}
+                           "saved_usd": _decision_nullable_round(row["saved_usd"], 4)} for row in ranked]}
+
+
+def _decision_nullable_sum(values):
+    values = tuple(values)
+    return sum(values) if all(value is not None for value in values) else None
+
+
+def _decision_nullable_round(value, places):
+    return round(float(value), places) if value is not None else None
 
 
 def _decision_reason_class(d):
@@ -282,21 +293,21 @@ def decision_rollup(since=None):
         row = groups.setdefault(key, {**dict(zip(fields, key[:4])), "reason_class": cls, "n": 0,
                                       "billed_usd": 0.0, "counterfactual_usd": 0.0, "savings_usd": 0.0})
         row["n"] += 1
-        row["billed_usd"] += float(d.get("actual_usd") or 0.0)
-        row["counterfactual_usd"] += float(d.get("counterfactual_usd") or 0.0)
-        row["savings_usd"] += float(d.get("saved_usd") or 0.0)
+        for field, source in (("billed_usd", "actual_usd"), ("counterfactual_usd", "counterfactual_usd"),
+                              ("savings_usd", "saved_usd")):
+            row[field] = _decision_nullable_sum((row[field], d.get(source)))
     ordered = sorted(groups.values(), key=lambda r: (-r["n"], str(tuple(r.get(f) for f in fields)),
                                                      r["reason_class"]))
     if len(ordered) > 24:
         kept, remainder = ordered[:23], ordered[23:]
         rollup = {**{f: None for f in fields}, "reason_class": "other", "n": sum(r["n"] for r in remainder),
-                  "billed_usd": sum(r["billed_usd"] for r in remainder),
-                  "counterfactual_usd": sum(r["counterfactual_usd"] for r in remainder),
-                  "savings_usd": sum(r["savings_usd"] for r in remainder)}
+                  "billed_usd": _decision_nullable_sum(r["billed_usd"] for r in remainder),
+                  "counterfactual_usd": _decision_nullable_sum(r["counterfactual_usd"] for r in remainder),
+                  "savings_usd": _decision_nullable_sum(r["savings_usd"] for r in remainder)}
         ordered = kept + [rollup]
     for row in ordered:
         for field in ("billed_usd", "counterfactual_usd", "savings_usd"):
-            row[field] = round(row[field], 6)
+            row[field] = _decision_nullable_round(row[field], 6)
     return {"n": sum(r["n"] for r in groups.values()), "by_route": ordered}
 
 
@@ -344,22 +355,22 @@ def shed_summary(since=None):
         if cls is None:
             continue
         n += 1
-        cf = float(d.get("counterfactual_usd") or 0.0)
-        served_free = float(d.get("actual_usd") or 0.0) <= 0.0
+        cf = d.get("counterfactual_usd")
+        served_free = d.get("actual_usd") is not None and float(d["actual_usd"]) <= 0.0
         free_n += 1 if served_free else 0
         paid_n += 0 if served_free else 1
         if cls == "overage" and served_free:
-            avoided += cf
+            avoided = _decision_nullable_sum((avoided, cf))
         elif cls in ("quota", "proactive"):
-            preserved += cf
+            preserved = _decision_nullable_sum((preserved, cf))
         key = (_lane_of(d.get("requested_model")), _lane_of(d.get("chosen_model")), cls)
         b = by_route.setdefault(key, {"from_lane": key[0], "to_lane": key[1], "class": cls,
                                       "n": 0, "served_free_n": 0, "counterfactual_usd": 0.0})
         b["n"] += 1
         b["served_free_n"] += 1 if served_free else 0
-        b["counterfactual_usd"] += cf
+        b["counterfactual_usd"] = _decision_nullable_sum((b["counterfactual_usd"], cf))
     for b in by_route.values():
-        b["counterfactual_usd"] = round(b["counterfactual_usd"], 6)
-    return {"n_sheds": n, "avoided_overage_usd": round(avoided, 6), "quota_preserved_usd": round(preserved, 6),
+        b["counterfactual_usd"] = _decision_nullable_round(b["counterfactual_usd"], 6)
+    return {"n_sheds": n, "avoided_overage_usd": _decision_nullable_round(avoided, 6), "quota_preserved_usd": _decision_nullable_round(preserved, 6),
             "served_free_n": free_n, "paid_n": paid_n,
-            "by_route": sorted(by_route.values(), key=lambda x: x["counterfactual_usd"], reverse=True)}
+            "by_route": sorted(by_route.values(), key=lambda x: (x["counterfactual_usd"] is not None, x["counterfactual_usd"] or 0), reverse=True)}

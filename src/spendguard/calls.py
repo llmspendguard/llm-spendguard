@@ -295,8 +295,14 @@ def flow_agg(since_rowid: int = 0, chain: Optional[str] = None):
         row = ledger_read.read_call_flow(since_rowid, chain)
         if not row or not row[0]:
             return None
-        return {"n": int(row[0]), "in_tok": int(row[1] or 0), "out_tok": int(row[2] or 0),
+        return {"n": int(row[0]), "in_tok": None if row[1] is None else int(row[1]),
+                "out_tok": None if row[2] is None else int(row[2]),
+                "token_usage_complete": row[1] is not None and row[2] is not None,
                 "cost": float(row[3] or 0.0), "caller": row[4]}
+    except ledger_read.LedgerSettlementIncomplete as incomplete_flow:
+        return {"n": None, "in_tok": None, "out_tok": None, "cost": None, "caller": None,
+                "incomplete_count": incomplete_flow.incomplete_count,
+                "input_cost_floor": incomplete_flow.input_cost_floor}
     except Exception:
         return None
 
@@ -381,6 +387,8 @@ def _ensure_call_observation_schema(c):
     #                      down" an operator restores by re-logging that lane in. NULL on a $0-lane hit or a direct call.
     for _col, _decl in (("quality_conf", "REAL"), ("executor", "TEXT"), ("project", "TEXT"),
                         ("effort", "TEXT"), ("suspect", "TEXT"),
+        ("settlement_complete", "INTEGER"), ("input_cost_floor", "REAL"),
+        ("token_usage_complete", "INTEGER"),
                         ("outcome", "TEXT"), ("http_status", "INTEGER"), ("provider_error", "TEXT"),
                         ("retry_after", "REAL"), ("attempts", "INTEGER"), ("disposition", "TEXT"),
                         ("disposition_reason", "TEXT"),
@@ -393,10 +401,14 @@ def _ensure_call_observation_schema(c):
                         ("request_max_tokens", "INTEGER"), ("request_decomposition_json", "TEXT")):
         if _col not in _have:
             c.execute(f"ALTER TABLE calls ADD COLUMN {_col} {_decl}")
+    # Completeness is orthogonal to success/failure. NULL denotes unverifiable legacy
+    # provenance; never infer historical completeness from a zero token count.
     c.execute("CREATE INDEX IF NOT EXISTS idx_calls_executor ON calls(executor)")  # per-lane rollups
     c.execute("CREATE INDEX IF NOT EXISTS idx_calls_outcome ON calls(outcome)")    # reliability / error-class rollups
     c.execute("CREATE INDEX IF NOT EXISTS idx_calls_retry_of ON calls(retry_of)")  # reconstruct one call's retry chain
     c.execute("CREATE INDEX IF NOT EXISTS idx_calls_fell_from ON calls(fell_from)")  # per-lane fallback-spend rollups
+    c.execute("CREATE INDEX IF NOT EXISTS idx_calls_incomplete_settlement ON calls(settlement_complete) "
+              "WHERE settlement_complete=0")
     c.execute("CREATE INDEX IF NOT EXISTS idx_calls_class_session ON calls(call_class, origin_session)")
     ensure_ordered_index_coverage(c, "calls", ("kind", "ts"))
     ensure_ordered_index_coverage(c, "calls", ("kind", "provider", "model", "intent"))
@@ -450,7 +462,8 @@ def _resolve_attribution(model, cost, intent, chain, project, call_class=None, o
     if resolved_class not in _CALL_CLASSES:
         raise ValueError(f"call_class must be one of {sorted(_CALL_CLASSES)}; got {resolved_class!r}")
     resolved_session = origin_session or ctx.get("origin_session") or _ORIGIN_SESSION
-    return (intent, chain, ((project or "").strip().lower() or None), resolved_class,
+    from .budget import normalize_ledger_project_id
+    return (intent, chain, (normalize_ledger_project_id(project) or None), resolved_class,
             resolved_session)   # lowercased project_primary for clean joins
 
 
@@ -464,6 +477,39 @@ _SUSPECT_CEILING_FACTOR = 1.5
 # ceiling is well under 1M — so a per-call out_tok above this is definitionally an aggregate/backfill/recording bug (the
 # measured 1M-68M gpt-5-nano rows). Deliberately generous so it never false-flags a real call, only catches gross bugs.
 _UNIVERSAL_OUT_TOK_SANITY = 1_000_000
+
+
+def _call_settlement_values(provider, model, kind, cost, in_tok, out_tok,
+                            cache_read_tok=None, cache_write_tok=None, input_cost_floor=None):
+    """Resolve independent monetary and token completeness for every call-table writer.
+
+    A non-None cost is an authoritative total, including a genuine zero; an input-only
+    floor belongs in input_cost_floor and must never be supplied as cost.
+    Legacy rows are deliberately not migrated: a historical zero has lost its provenance.
+    Prices come exclusively from pricing; an unpriceable floor stays unknown, never zero.
+    """
+    token_usage_complete = in_tok is not None and out_tok is not None
+    # `cost` is a total, never an input-only floor. Monetary evidence is independent
+    # of token telemetry for EVERY writer (API, subscription, batch and backfill).
+    settlement_complete = cost is not None
+    if not settlement_complete and input_cost_floor is None and in_tok is not None:
+        try:
+            from . import pricing
+            if kind == "subscription":
+                input_cost_floor = 0.0
+            else:
+                input_cost_floor = pricing.input_cost_lower_bound(
+                    model, in_tok, batch=kind == "batch", provider=provider,
+                    cache_read_tok=cache_read_tok, cache_write_tok=cache_write_tok)
+        except (KeyError, TypeError, ValueError) as floor_error:
+            config.warn_once(f"[spendguard] incomplete settlement: input floor unavailable for {model}: {floor_error}")
+    if not settlement_complete:
+        config.warn_once("[spendguard] incomplete call settlement: total cost unreported; "
+                         "known input floor retained, total remains unknown")
+    return (int(in_tok) if in_tok is not None else None,
+            int(out_tok) if out_tok is not None else None,
+            float(cost) if settlement_complete else None,
+            int(settlement_complete), input_cost_floor, int(token_usage_complete))
 
 
 def _out_tok_sanity_ceiling(model):
@@ -493,7 +539,7 @@ def record_call(provider, model, kind, cost, in_tok=0, out_tok=0, latency=None,
            fell_from=None, fell_reason=None, call_id=None, call_class=None, origin_session=None,
            requested_model=None, served_model=None, resolved_lane=None, redirect_reason=None,
            cache_read_tok=None, cache_write_tok=None, routing_snapshot=None, request_schema=None,
-           request_max_tokens=None, request_decomposition=None):
+           request_max_tokens=None, request_decomposition=None, input_cost_floor=None):
     """Record one call — its full OUTCOME, success OR failure. Returns call_id. Never raises.
 
     Cache observations remain NULL when unmeasured or when a write tier is unknown.
@@ -574,6 +620,8 @@ def record_call(provider, model, kind, cost, in_tok=0, out_tok=0, latency=None,
         # trustworthy per-call fact. The bound is ceiling x _SUSPECT_CEILING_FACTOR: a clean call is <= the ceiling, so
         # the factor only absorbs curation/token-count slop and never false-flags a legit at-ceiling output.
         suspect = None
+        settlement_values = _call_settlement_values(provider, model, kind, cost, in_tok, out_tok,
+                                                    cache_read_tok, cache_write_tok, input_cost_floor)
         try:
             _ceil, _basis = _out_tok_sanity_ceiling(model)   # NEVER None — output_ceiling → context_window → universal
             if _ceil and int(out_tok or 0) > int(_ceil) * _SUSPECT_CEILING_FACTOR:
@@ -598,10 +646,11 @@ def record_call(provider, model, kind, cost, in_tok=0, out_tok=0, latency=None,
                 "cost,latency,prompt_hash,prompt_snip,output_snip,finish,executor,project,effort,suspect,"
                 "quality,quality_src,quality_conf,outcome,http_status,provider_error,retry_after,attempts,disposition,disposition_reason,retry_of,fell_from,fell_reason,"
                 "call_class,origin_session,requested_model,served_model,resolved_lane,redirect_reason,cache_read_tok,cache_write_tok,"
-                "routing_snapshot_json,request_schema_json,request_max_tokens,request_decomposition_json) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "routing_snapshot_json,request_schema_json,request_max_tokens,request_decomposition_json,"
+                "settlement_complete,input_cost_floor,token_usage_complete) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (cid, ts, chain, intent, who or ctx.get("who") or caller(), provider, model, kind,
-                 int(in_tok or 0), int(out_tok or 0), float(cost or 0), latency, ph, psnip, osnip, finish,
+                 *settlement_values[:3], latency, ph, psnip, osnip, finish,
                  executor, proj, (effort or None), suspect,
                  ("bad" if _truncation_quality else None), ("truncation" if _truncation_quality else None),
                  (1.0 if _truncation_quality else None),
@@ -619,7 +668,7 @@ def record_call(provider, model, kind, cost, in_tok=0, out_tok=0, latency=None,
                  routing_audit.encode_audit_json(routing_snapshot),
                  routing_audit.encode_audit_json(request_schema),
                  (int(request_max_tokens) if request_max_tokens is not None else None),
-                 routing_audit.encode_audit_json(request_decomposition)))
+                 routing_audit.encode_audit_json(request_decomposition), *settlement_values[3:]))
             routing_audit.insert_linked_decision(
                 audit_connection,
                 call_id=cid,
@@ -630,9 +679,9 @@ def record_call(provider, model, kind, cost, in_tok=0, out_tok=0, latency=None,
                 requested_effort=effort,
                 chosen_model=served_model,
                 chosen_effort=effort,
-                counterfactual_usd=float(cost or 0),
-                actual_usd=float(cost or 0),
-                saved_usd=0.0,
+                counterfactual_usd=settlement_values[2],
+                actual_usd=settlement_values[2],
+                saved_usd=0.0 if settlement_values[3] else None,
                 why=redirect_reason or routing_audit.DIRECT_ROUTING_REASON,
                 reason_class=(routing_snapshot or {}).get(
                     "reason_class", routing_audit.DIRECT_ROUTING_REASON_CLASS),
@@ -698,14 +747,16 @@ def insert(provider, model, kind, cost, in_tok=0, out_tok=0, ts=None, intent=Non
         model, cost, intent, chain, project, call_class, origin_session)
     cid = _uuid()
     ts = ts or datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
+    settlement_values = _call_settlement_values(provider, model, kind, cost, in_tok, out_tok)
     with _lock:
         _calls_db().execute(
             "INSERT INTO calls (id,ts,chain,intent,caller,provider,model,kind,in_tok,out_tok,"
-            "cost,quality,quality_src,quality_conf,effort,project,call_class,origin_session) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "cost,quality,quality_src,quality_conf,effort,project,call_class,origin_session,"
+            "settlement_complete,input_cost_floor,token_usage_complete) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (cid, ts, chain, intent, who, provider, model, kind,
-             int(in_tok or 0), int(out_tok or 0), float(cost or 0), quality, quality_src, quality_conf,
-             (effort or None), proj, call_class, origin_session))
+             *settlement_values[:3], quality, quality_src, quality_conf,
+             (effort or None), proj, call_class, origin_session, *settlement_values[3:]))
         _calls_db().commit()
     return cid
 
@@ -719,8 +770,10 @@ def reconcile_calls_batch_estimate(provider, model, intent, in_tok, out_tok, cos
             "ORDER BY rowid DESC LIMIT 1", (provider, model, intent)).fetchone()
         if not row:
             return False
-        con.execute("UPDATE calls SET in_tok=?, out_tok=?, cost=? WHERE id=?",
-                    (int(in_tok or 0), int(out_tok or 0), float(cost or 0), row[0]))
+        settlement_values = _call_settlement_values(provider, model, "batch", cost, in_tok, out_tok)
+        con.execute("UPDATE calls SET in_tok=?, out_tok=?, cost=?, settlement_complete=?, input_cost_floor=?, "
+                    "token_usage_complete=? WHERE id=?",
+                    (*settlement_values, row[0]))
         con.commit()
     return True
 
@@ -739,8 +792,8 @@ def _link_used(chain, current_prompt):
 def intent_spend(intent, window_s=86400):
     """The ACTUAL metered $ recorded for `intent` in the last `window_s` seconds — what guardrail D's per-intent
     running cap (enforced at the call door, gate._rt_precheck_usd) sums to decide whether the next call would cross the
-    ceiling. Rolling window; ts is ISO-8601 UTC so a lexical `>=` is chronological. Returns 0.0 on empty / error (a
-    cap can only ADD safety, never break a call because the ledger hiccuped). This is the path-independent twin of
+    ceiling. Rolling window; ts is ISO-8601 UTC so a lexical `>=` is chronological. Returns 0.0 on empty;
+    errors and incomplete settlements refuse rather than disable the cap. This is the path-independent twin of
     bulk_delegate's in-fan budget_usd: every metered call reaches the door, however it was issued."""
     if not intent:
         return 0.0
@@ -752,7 +805,7 @@ def intent_spend(intent, window_s=86400):
         return float(ledger_read.read_call_intent_cost(intent, cut) or 0.0)
     except Exception:
         config.rollback_ledger_conn("calls")
-        return 0.0
+        raise  # an unknown settlement must not disable the running monetary cap
 
 
 def cost_summary(intent=None):
@@ -779,7 +832,7 @@ def mean_out_by_executor_model(intent, call_class=None, origin_session=None):
         rows = ledger_read.read_call_output_means(intent, call_class, origin_session)
         for row in rows:
             ex, model, avg_out, n = row.values
-            out[(ex or "?", model or "?")] = {"mean_out": float(avg_out or 0.0), "n": int(n)}
+            out[(ex or "?", model or "?")] = {"mean_out": None if avg_out is None else float(avg_out), "n": int(n)}
     except Exception:
         pass
     return out
@@ -836,7 +889,8 @@ def metered_realtime_by_intent(since):
         for row in rows:
             intent, model, n, usd, in_tok, avg_in = row.values
             out.append({"intent": intent, "model": model, "calls": int(n), "usd": float(usd or 0.0),
-                        "in_tok": int(in_tok or 0), "avg_in": int(avg_in or 0)})
+                        "in_tok": None if in_tok is None else int(in_tok),
+                        "avg_in": None if avg_in is None else int(avg_in)})
     except Exception:
         config.rollback_ledger_conn("calls")
     return out

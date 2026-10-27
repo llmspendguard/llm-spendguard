@@ -103,11 +103,16 @@ except (AttributeError, ValueError, ImportError):   # register_at_fork is POSIX-
     pass
 
 
+def normalize_ledger_project_id(project):
+    """Use the stored project identifier's orthographic convention for reads and writes."""
+    return str(project).strip().lower() if project is not None else ""
+
+
 def _attribute(ev, project):
     """Stamp org/team/project on a spend_event from the charge's project tag via the prior repo→org map — a
     cheap cached dict lookup, NOT an LLM (agentic refinement is the later attribute/reconcile pass, never the
     hot path). Keeps the same attribution the charges ledger carried, in the typed columns."""
-    proj = (project or "").strip().lower()
+    proj = normalize_ledger_project_id(project)
     if not proj:
         proj = UNATTRIBUTED_PROJECT
     try:
@@ -146,7 +151,8 @@ def _record_spend_event(provider, model, kind, cost, *, conv_id="", basis="", in
         if posting_metadata is not None:
             for posting_field in ("recorded_at", "tz", "local_datetime"):
                 ev[posting_field] = posting_metadata[posting_field]
-        ev["in_tok"], ev["out_tok"] = int(in_tok or 0), int(out_tok or 0)
+        ev["in_tok"] = None if in_tok is None else int(in_tok)
+        ev["out_tok"] = None if out_tok is None else int(out_tok)
         # Cache/reasoning token axes — set ONLY when nonzero so the gate's hot path (which passes none) is byte-for-byte
         # unchanged. Claude Code re-reads the whole context every turn, so cache_read dominates; storing it per-turn as
         # its OWN column is what the context-trajectory + compaction signal reads (context = in + cache_read + cache_write).
@@ -175,7 +181,8 @@ def _record_spend_event(provider, model, kind, cost, *, conv_id="", basis="", in
         # without an admin key. The dead-letter file is the honest record of exactly what the ledger dropped.
         retry_path, retry_error = None, None
         payload = {"provider": provider, "model": model, "kind": kind, "cost": str(cost),
-                   "in_tok": int(in_tok or 0), "out_tok": int(out_tok or 0), "occurred_at": occurred_at,
+                   "in_tok": None if in_tok is None else int(in_tok),
+                   "out_tok": None if out_tok is None else int(out_tok), "occurred_at": occurred_at,
                    "intent": intent, "project": project, "source": source,
                    "error": repr(e), "capture_gap": True}
         import json as _json
@@ -274,7 +281,7 @@ def is_reading_history():
 
 
 def record_charge(provider, model, kind, cost, project=None, conv_id=None, basis=None,
-           intent=None, actor=None):
+           intent=None, actor=None, in_tok=None, out_tok=None):
     """Write one charge. `basis` says WHAT KIND of number it is (estimate · billed · assumed · reconstructed) —
     known for certain by the writer, unknowable by the reader, and the thing that makes a displayed figure
     honest. Blank on legacy rows, which read as 'unlabelled' rather than being silently called billed.
@@ -312,7 +319,7 @@ def record_charge(provider, model, kind, cost, project=None, conv_id=None, basis
     now = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
     _record_spend_event(provider, model, kind, float(cost), conv_id=conv or "", basis=basis or "",
                         intent=(intent or "")[:120], actor=(actor or "")[:120], key_fp=fp, chain=chain,
-                        project=proj or "", occurred_at=now, source="gate")
+                        project=proj or "", occurred_at=now, source="gate", in_tok=in_tok, out_tok=out_tok)
 
 
 def reconcile_money_batch_estimate(provider, model, intent, in_tok, out_tok, cost):
@@ -325,7 +332,8 @@ def reconcile_money_batch_estimate(provider, model, intent, in_tok, out_tok, cos
             (provider, model, intent or "")).fetchone()
         if not row:
             return False
-        led.update(row[0], {"batch_usd": str(cost), "in_tok": int(in_tok or 0), "out_tok": int(out_tok or 0),
+        led.update(row[0], {"batch_usd": str(cost), "in_tok": None if in_tok is None else int(in_tok),
+                            "out_tok": None if out_tok is None else int(out_tok),
                             "cost_basis": "billed", "status": "reconciled"},
                    actor="batch_collect", reason="provider-measured usage collected", pass_="collect")
     return True
@@ -688,6 +696,37 @@ def charge_to_event(provider, model, kind, cost, conv_id="", basis="", intent=""
     return ev
 
 
+def require_complete_metered_settlements(since=None, project=None, *, time_budget=None, connection=None):
+    """Refuse monetary totals while a recorded call's complete settlement is unknown.
+
+    This leaves authoritative invoice events untouched. Calls without recoverable
+    completeness metadata cannot be guessed; an absent ledger has no recorded gap.
+    """
+    if not pathlib.Path(config.db_path()).exists():
+        return
+    from .ledger_read import (read_incomplete_call_settlements, LedgerSettlementIncomplete,
+                              _read_incomplete_settlement_totals)
+    if connection is not None:
+        coverage = _read_incomplete_settlement_totals(connection, since, project)
+    else:
+        coverage_options = {} if time_budget is None else {"time_budget": time_budget}
+        coverage = read_incomplete_call_settlements(since=since, project=project, **coverage_options)
+    if coverage["n"]:
+        raise LedgerSettlementIncomplete(coverage["n"], coverage["input_cost_floor"])
+
+
+def _require_budget_settlement_within_deadline(started, deadline_s, since=None, project=None):
+    from .ledger_read import LedgerReadTimeout, LedgerQueryDeadline, DEFAULT_LEDGER_READ_TIME_BUDGET_S
+    remaining = (deadline_s - (time.monotonic() - started) if deadline_s is not None
+                 else DEFAULT_LEDGER_READ_TIME_BUDGET_S)
+    if remaining <= 0:
+        raise LedgerQueryDeadline(deadline_s)
+    try:
+        require_complete_metered_settlements(since, project, time_budget=remaining)
+    except LedgerReadTimeout as coverage_timeout:
+        raise LedgerQueryDeadline(deadline_s) from coverage_timeout
+
+
 def spent_since(day, project=None, conv=None, *, deadline_s=config.LEDGER_QUERY_DEADLINE_S, read_only=False):
     """Gate-recorded workload $ since `day` — the LLM cap's number, now read from spend_events via the single
     `_COUNTABLE` filter (batch+realtime, excluding meta / reconciliation / voided-impossible / reconstructed).
@@ -699,9 +738,10 @@ def spent_since(day, project=None, conv=None, *, deadline_s=config.LEDGER_QUERY_
     Repointed onto spend_events (the money-of-record). This is LLM-only by construction: GPU/remote spend has
     its OWN cap (resources.compute_exceeded) and is no longer lumped into the LLM total as the old
     countable_charges view did (charges carried no remote rows, so the live number is unchanged)."""
+    spend_started = time.monotonic()
     where = {}
     if project is not None:
-        where["project_primary"] = str(project).strip().lower()
+        where["project_primary"] = normalize_ledger_project_id(project)
     if conv is not None:
         where["conv_id"] = str(conv)
     if conv is not None or read_only:
@@ -723,6 +763,12 @@ def spent_since(day, project=None, conv=None, *, deadline_s=config.LEDGER_QUERY_
             raise LedgerQueryDeadline(conversation_budget)
         try:
             with _ledger_read_connection(time_budget=conversation_budget) as conversation_connection:
+                # Coverage and aggregate must observe one snapshot, even when a
+                # separate WAL writer commits an incomplete settlement mid-read.
+                # The bounded reader rolls back on exit, including failures.
+                conversation_connection.execute("BEGIN")
+                require_complete_metered_settlements(since=day, project=project,
+                                                     connection=conversation_connection)
                 conversation_reader = object.__new__(SpendLedger)
                 conversation_reader._conn = conversation_connection
                 conversation_reader._cols = set(SPEND_EVENT_READ_COLUMNS)
@@ -730,7 +776,9 @@ def spent_since(day, project=None, conv=None, *, deadline_s=config.LEDGER_QUERY_
                     since=day, where=where, deadline_s=None))
         except LedgerReadTimeout as conversation_timeout:
             raise LedgerQueryDeadline(conversation_budget) from conversation_timeout
-    return float(_ledger().spent_dec(since=day, where=where or None, deadline_s=deadline_s))
+    spend_total = float(_ledger().spent_dec(since=day, where=where or None, deadline_s=deadline_s))
+    _require_budget_settlement_within_deadline(spend_started, deadline_s, day, project)
+    return spend_total
 
 
 def input_cache_split(since=None, project=None, conv=None):
@@ -765,7 +813,10 @@ def spent_by_job(job, since=None, *, deadline_s=config.LEDGER_QUERY_DEADLINE_S):
     voided / reconstructed). $0, read-only; 0.0 for an empty job. `since` optionally bounds it to an accounting day on."""
     if not job:
         return 0.0
-    return float(_ledger().spent_dec(since=since, where={"chain": str(job)}, deadline_s=deadline_s))
+    job_spend_started = time.monotonic()
+    job_spend_total = float(_ledger().spent_dec(since=since, where={"chain": str(job)}, deadline_s=deadline_s))
+    _require_budget_settlement_within_deadline(job_spend_started, deadline_s, since)
+    return job_spend_total
 
 
 def spent_all_time(*, deadline_s=config.LEDGER_QUERY_DEADLINE_S):
@@ -774,7 +825,10 @@ def spent_all_time(*, deadline_s=config.LEDGER_QUERY_DEADLINE_S):
     on a ledger-freshness token (SpendLedger.running_llm_total_dec), so opening many flow contexts no longer
     re-sums the whole 356k-row ledger each time. Same number as the old spent_since('1970-01-01') idiom — which
     forced a full SCAN of spend_events on every context enter — without the scan."""
-    return float(_ledger().running_llm_total_dec(deadline_s=deadline_s))
+    all_spend_started = time.monotonic()
+    all_spend_total = float(_ledger().running_llm_total_dec(deadline_s=deadline_s))
+    _require_budget_settlement_within_deadline(all_spend_started, deadline_s)
+    return all_spend_total
 
 
 def suspect_batches(since):
@@ -905,8 +959,13 @@ def reprice_unpriced(model=None, apply=False, actor="reprice"):
         prov, mdl = row.get("provider") or "?", row.get("model") or "?"
         kind = (row.get("cost_type") or "realtime").lower()
         col = _KIND_TO_USD.get(kind)
-        in_t, out_t = int(row.get("in_tok") or 0), int(row.get("out_tok") or 0)
+        in_t = None if row.get("in_tok") is None else int(row["in_tok"])
+        out_t = None if row.get("out_tok") is None else int(row["out_tok"])
         ent = {"id": eid, "provider": prov, "model": mdl, "in_tok": in_t, "out_tok": out_t, "cost": None}
+        if in_t is None or out_t is None:
+            ent.update(method="skip", reason="unknown token usage; value unknown")
+            plan.append(ent)
+            continue
         if not col:
             ent.update(method="skip", reason=f"no money column for kind {kind!r}")
             plan.append(ent)

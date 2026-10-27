@@ -29,6 +29,7 @@ _cc_residency_logger = logging.getLogger(__name__)
 
 LEDGER_EVENTS_TABLE = "spend_events"
 LEDGER_CALLS_TABLE = "calls"
+SETTLEMENT_GUARDED_EVIDENCE_TABLES = (LEDGER_CALLS_TABLE, "decisions")
 LEDGER_INSIGHTS_TABLE = "insights"
 DEFAULT_LEDGER_READ_ROW_CAP = config.LEDGER_READ_ROW_CAP
 LEDGER_READ_OVERFLOW_PROBE_ROW_COUNT = 1
@@ -81,7 +82,8 @@ CASE WHEN COUNT(out_tok)=COUNT(*) THEN SUM(out_tok) END AS o,
 WHERE ts>=? AND kind IN ('realtime','batch')
 AND cost IS NOT NULL AND suspect IS NULL GROUP BY model,date(ts),kind{cache_completeness_group}"""
 RECEIPT_LANE_ACTIVITY_SQL = """SELECT executor,COUNT(*) AS n,
-COALESCE(SUM(in_tok),0) AS in_tok,COALESCE(SUM(out_tok),0) AS out_tok
+CASE WHEN COUNT(in_tok)=COUNT(*) THEN COALESCE(SUM(in_tok),0) END AS in_tok,
+CASE WHEN COUNT(out_tok)=COUNT(*) THEN COALESCE(SUM(out_tok),0) END AS out_tok
 FROM calls WHERE kind='subscription' AND ts>=? GROUP BY executor ORDER BY n DESC"""
 RECEIPT_TRUNCATION_GROUPS_SQL = """SELECT model,COUNT(*) AS n,
 COALESCE(SUM(cost),0) AS cost FROM calls WHERE finish IN ('max_tokens','length')
@@ -102,15 +104,15 @@ COALESCE(SUM(CASE WHEN source='claude-code-overflow' THEN CAST(realtime_usd AS R
 FROM spend_events WHERE conv_id=?"""
 CALL_INTENTS_SQL = "SELECT intent,COUNT(*) AS c FROM calls WHERE intent IS NOT NULL AND intent!='' GROUP BY intent HAVING c>=? ORDER BY c DESC"
 CALL_MAX_ROWID_SQL = "SELECT COALESCE(MAX(rowid),0) AS maximum FROM calls"
-CALL_FLOW_COLUMNS = ("COUNT(*) AS n", "COALESCE(SUM(in_tok),0) AS in_tok", "COALESCE(SUM(out_tok),0) AS out_tok", "COALESCE(SUM(cost),0.0) AS cost", "MAX(caller) AS caller")
+CALL_FLOW_COLUMNS = ("COUNT(*) AS n", "CASE WHEN COUNT(in_tok)=COUNT(*) THEN COALESCE(SUM(in_tok),0) END AS in_tok", "CASE WHEN COUNT(out_tok)=COUNT(*) THEN COALESCE(SUM(out_tok),0) END AS out_tok", "COALESCE(SUM(cost),0.0) AS cost", "MAX(caller) AS caller")
 CALL_COST_COLUMNS = ("COALESCE(intent,'(none)') AS intent", "COALESCE(model,'?') AS model", "COUNT(*) AS n", "COALESCE(SUM(cost),0) AS cost", "SUM(CASE WHEN quality='good' THEN 1 ELSE 0 END) AS good", "SUM(CASE WHEN quality='bad' THEN 1 ELSE 0 END) AS bad")
 CALL_EXECUTOR_EXPRESSION = "COALESCE(NULLIF(NULLIF(executor,''),'api'), provider)"
 CALL_MODEL_EXPRESSION = "COALESCE(model,'?')"
 CALL_OUTCOME_EXPRESSION = "COALESCE(outcome,'')"
-CALL_METERED_COLUMNS = ("COALESCE(intent,'(none)') AS intent", "COALESCE(model,'?') AS model", "COUNT(*) AS n", "COALESCE(SUM(cost),0) AS cost", "COALESCE(SUM(in_tok),0) AS in_tok", "COALESCE(AVG(in_tok),0) AS avg_in")
+CALL_METERED_COLUMNS = ("COALESCE(intent,'(none)') AS intent", "COALESCE(model,'?') AS model", "COUNT(*) AS n", "COALESCE(SUM(cost),0) AS cost", "CASE WHEN COUNT(in_tok)=COUNT(*) THEN COALESCE(SUM(in_tok),0) END AS in_tok", "CASE WHEN COUNT(in_tok)=COUNT(*) THEN COALESCE(AVG(in_tok),0) END AS avg_in")
 LANE_SUBSCRIPTION_READ_COLUMNS = ("executor", "ts", "provider", "model", "in_tok", "out_tok", "project")
 CALL_KNOWN_INTENT_COLUMN = ("DISTINCT intent",)
-LANE_TOKEN_METRIC_COLUMNS = ("COUNT(*) AS n", "SUM(COALESCE(in_tok,0)+COALESCE(out_tok,0)) AS total", "SUM(COALESCE(in_tok,0)) AS input", "SUM(COALESCE(out_tok,0)) AS output")
+LANE_TOKEN_METRIC_COLUMNS = ("COUNT(*) AS n", "CASE WHEN COUNT(in_tok+out_tok)=COUNT(*) THEN SUM(in_tok+out_tok) END AS total", "CASE WHEN COUNT(in_tok)=COUNT(*) THEN SUM(in_tok) END AS input", "CASE WHEN COUNT(out_tok)=COUNT(*) THEN SUM(out_tok) END AS output")
 PROMPT_LINT_READ_COLUMNS = ("intent", "model", "in_tok", "out_tok", "cost", "finish", "prompt_snip", "kind")
 LEDGER_ROUTING_METERED_SQL = "cost > 0 AND COALESCE(NULLIF(executor,''),'') IN ('','api')"
 LEDGER_ROUTING_EXECUTOR_SQL = "COALESCE(NULLIF(executor,''),'unknown')"
@@ -132,7 +134,7 @@ READ_LANE_RECENT_COUNTS_COLUMNS = ("executor", "COUNT(*) AS n")
 READ_INTENT_MODEL_USAGE_COLUMNS = ("model", "COUNT(*) AS n")
 READ_BAKEOFF_MEASUREMENTS_COLUMNS = ("model", "quality", "ts")
 READ_LANE_FALLBACK_COSTS_COLUMNS = ("fell_from", "COUNT(*) AS n", "COALESCE(SUM(cost),0) AS cost")
-READ_LANE_CUMULATIVE_TOKENS_COLUMNS = ("executor", "SUM(COALESCE(in_tok,0)+COALESCE(out_tok,0)) AS tokens")
+READ_LANE_CUMULATIVE_TOKENS_COLUMNS = ("executor", "CASE WHEN COUNT(in_tok+out_tok)=COUNT(*) THEN SUM(in_tok+out_tok) END AS tokens")
 READ_DELEGATE_OVERAGE_EVIDENCE_COLUMNS = ("SUM(CAST(est_chat_usd AS REAL)) AS value",)
 READ_REALIZED_ADOPTIONS_COLUMNS = ("intent", "MIN(ts) AS adopted_ts")
 READ_REALIZED_CALL_RATES_COLUMNS = ("AVG(CASE WHEN ts < ? THEN cost END) AS before_rate", "SUM(ts < ?) AS before_n",
@@ -140,6 +142,9 @@ READ_REALIZED_CALL_RATES_COLUMNS = ("AVG(CASE WHEN ts < ? THEN cost END) AS befo
 READ_RECORDING_GAP_CELLS_COLUMNS = ("intent", "provider", "model", "date(ts) AS day", "SUM(cost) AS calls_billed")
 READ_CALIBRATION_SUMMARY_COLUMNS = ("intent", "model", "kind", "COUNT(*) AS n", "SUM(cost) AS cost")
 RECORDED_CALL_TOTAL_SQL = "SELECT COALESCE(SUM(cost),0) AS recorded_call_total FROM calls"
+INCOMPLETE_CALL_SCHEMA_COLUMNS = ("settlement_complete", "input_cost_floor")
+INCOMPLETE_CALL_TOTALS_SQL = """SELECT COUNT(*) AS n,
+SUM(input_cost_floor) AS input_cost_floor FROM calls WHERE settlement_complete=0"""
 
 
 @dataclass
@@ -226,6 +231,17 @@ def read_cc_residency_totals(conv_id=None, path=None):
 
 class LedgerReadError(RuntimeError):
     """A ledger consumer could not obtain a complete answer."""
+
+
+class LedgerSettlementIncomplete(LedgerReadError):
+    """Recorded input spend exists but the complete settlement is unknown."""
+
+    def __init__(self, incomplete_count, input_cost_floor):
+        self.incomplete_count = incomplete_count
+        self.input_cost_floor = input_cost_floor
+        super().__init__(
+            f"Calls ledger has {incomplete_count} incomplete settlements; "
+            f"known input-cost floor {input_cost_floor!r}; total spend and output tokens are unknown")
 
 
 class LedgerReadTooLarge(LedgerReadError):
@@ -342,6 +358,10 @@ class LedgerReadOpenError(LedgerReadSchemaError):
     """The ledger could not be opened before any consumer query ran."""
 
 
+class LedgerReadTableAbsent(LedgerReadSchemaError):
+    """A required table is absent in the same snapshot as the consumer read."""
+
+
 @dataclass(frozen=True)
 class LedgerReadRow(Mapping):
     """Immutable named values; SQLite cursor/Row objects never escape."""
@@ -380,6 +400,7 @@ class LedgerSQLReadRequest:
     row_cap: int = field(default_factory=_default_ledger_read_row_cap)
     time_budget: float = DEFAULT_LEDGER_READ_TIME_BUDGET_S
     discard_overflow_probe: bool = False
+    required_tables: tuple[str, ...] = ()
 
 
 @contextmanager
@@ -489,6 +510,36 @@ def _ledger_bounded_read_handle(path, time_budget, *, bulk_chunked=False):
             connection.close()
 
 
+def _read_incomplete_settlement_totals(connection, since=None, project=None):
+    """Read explicit completeness metadata, retaining unknown historical state.
+
+    This is the one raw calls read: it reports the gap rather than consuming an
+    incomplete settlement as monetary or token evidence. Old schemas have no
+    recoverable completeness information and are never backfilled here.
+    """
+    available = {column[1] for column in connection.execute("PRAGMA table_info(calls)")}
+    if not all(column in available for column in INCOMPLETE_CALL_SCHEMA_COLUMNS):
+        return {"n": 0, "input_cost_floor": None}
+    incomplete_sql = INCOMPLETE_CALL_TOTALS_SQL
+    incomplete_parameters = []
+    if since is not None:
+        incomplete_sql += " AND ts>=?"
+        incomplete_parameters.append(since)
+    if project is not None:
+        from .budget import normalize_ledger_project_id
+        incomplete_sql += " AND project=?"
+        incomplete_parameters.append(normalize_ledger_project_id(project))
+    incomplete_row = connection.execute(incomplete_sql, tuple(incomplete_parameters)).fetchone()
+    return {"n": int(incomplete_row[0]), "input_cost_floor": incomplete_row[1]}
+
+
+def read_incomplete_call_settlements(since=None, project=None, path=None, *,
+                                    time_budget=DEFAULT_LEDGER_READ_TIME_BUDGET_S):
+    """Expose selected settlement gaps and their known input-cost floor to receipts."""
+    with _ledger_read_connection(path, time_budget=time_budget) as incomplete_connection:
+        return _read_incomplete_settlement_totals(incomplete_connection, since, project)
+
+
 def read_ledger_sql(request: LedgerSQLReadRequest, path=None) -> tuple[LedgerReadRow, ...]:
     """Execute one complete bounded projected report, or raise without returning rows."""
     if request.row_cap <= 0:
@@ -500,7 +551,56 @@ def read_ledger_sql(request: LedgerSQLReadRequest, path=None) -> tuple[LedgerRea
     if "*" in "".join(request.sql.upper().split()).replace(LEDGER_READ_COUNT_EXPRESSION, ""):
         raise ValueError("Ledger reads require explicit column projections")
     with _ledger_read_connection(path, request.time_budget) as connection:
-        cursor = connection.execute(request.sql, request.parameters)
+        # Completeness and consumer evidence must share one SQLite snapshot;
+        # a concurrent writer cannot insert an incomplete row between them.
+        connection.execute("BEGIN")
+        for required_table in request.required_tables:
+            if connection.execute(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?",
+                    (required_table,)).fetchone()[0] == 0:
+                raise LedgerReadTableAbsent(f"Ledger read table absent: {required_table}")
+        incomplete_totals = _read_incomplete_settlement_totals(connection)
+        # Normalize explicit telemetry gaps once, before ANY consumer's SQL.
+        # A TEMP view shadows only this disposable reader's calls table; it
+        # neither migrates nor changes the monetary settlement axis. Legacy
+        # schemas without the flag keep their existing NULL markers.
+        telemetry_columns = [column[1] for column in connection.execute("PRAGMA main.table_info(calls)")]
+        if "token_usage_complete" in telemetry_columns and "out_tok" in telemetry_columns:
+            telemetry_projection = ["rowid AS rowid"]
+            for telemetry_column in telemetry_columns:
+                telemetry_identifier = '"' + telemetry_column.replace('"', '""') + '"'
+                telemetry_projection.append(
+                    f"CASE WHEN token_usage_complete=0 THEN NULL ELSE {telemetry_identifier} END AS {telemetry_identifier}"
+                    if telemetry_column == "out_tok" else telemetry_identifier)
+            connection.execute("CREATE TEMP VIEW calls AS SELECT " + ",".join(telemetry_projection) + " FROM main.calls")
+        refused_incomplete_calls = False
+
+        def authorize_complete_call_evidence(action, table, column, database, trigger):
+            """Let SQLite resolve resources; never guess SQL meaning from text.
+
+            Refuse even predicates such as cost>0 that would hide unknown costs
+            before aggregation. Scope is deliberately ledger-wide: arbitrary
+            SQL predicates cannot establish a safe subset without interpreting
+            or rewriting the consumer's SQL contract.
+            """
+            nonlocal refused_incomplete_calls
+            if (action == sqlite3.SQLITE_READ and table in SETTLEMENT_GUARDED_EVIDENCE_TABLES
+                    and incomplete_totals["n"]):
+                refused_incomplete_calls = True
+                return sqlite3.SQLITE_DENY
+            return sqlite3.SQLITE_OK
+
+        connection.set_authorizer(authorize_complete_call_evidence)
+        try:
+            cursor = connection.execute(request.sql, request.parameters)
+        except sqlite3.Error as incomplete_read_failure:
+            if refused_incomplete_calls:
+                raise LedgerSettlementIncomplete(
+                    incomplete_totals["n"], incomplete_totals["input_cost_floor"]
+                ) from incomplete_read_failure
+            raise
+        finally:
+            connection.set_authorizer(None)
         columns = tuple(item[0] for item in cursor.description)
         rows = cursor.fetchmany(request.row_cap + LEDGER_READ_OVERFLOW_PROBE_ROW_COUNT)
         if request.discard_overflow_probe and len(rows) > request.row_cap:

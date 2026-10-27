@@ -54,14 +54,15 @@ def diagnose(intent_like=None, min_usd=0.01):
     # not a cost cause). errors are surfaced so an "error in the prompt or other" cause is visible, per the ask.
     # suspect rows (part 3a — impossible per-call out_tok) are EXCLUDED from every counted number here (billed_usd,
     # billed_n, err_n, trunc_n); only suspect_n reports how many were set aside. This is what the module docstring claims.
-    calls_rows = cur.execute(f"""
+    from spendguard import ledger_read
+    calls_rows = ledger_read.read_ledger_sql(ledger_read.LedgerSQLReadRequest(f"""
         SELECT intent, model, date(ts) day,
           SUM(CASE WHEN cost>0 AND suspect IS NULL THEN cost ELSE 0 END) billed_usd,
           SUM(CASE WHEN cost>0 AND suspect IS NULL THEN 1 ELSE 0 END) billed_n,
           SUM(CASE WHEN (cost IS NULL OR cost=0) AND suspect IS NULL THEN 1 ELSE 0 END) err_n,
           SUM(CASE WHEN finish='length' AND suspect IS NULL THEN 1 ELSE 0 END) trunc_n,
           SUM(CASE WHEN suspect IS NOT NULL THEN 1 ELSE 0 END) suspect_n
-        FROM calls {where} GROUP BY intent, model, date(ts)""", args).fetchall()
+        FROM calls {where} GROUP BY intent, model, date(ts)""", tuple(args)))
     tally = {"RECORDING_GAP": [0.0, 0], "ERRORS_ONLY": [0.0, 0], "OK": [0.0, 0], "UNRECONCILED_ESTIMATE": [0.0, 0]}
     findings = []
     for r in calls_rows:

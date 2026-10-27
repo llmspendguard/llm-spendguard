@@ -58,7 +58,7 @@ def _cum_tokens_by_executor():
     from . import ledger_read
     try:
         rows = ledger_read.read_lane_cumulative_tokens()
-        return {row[0]: int(row[1] or 0) for row in rows}
+        return {row[0]: int(row[1]) if row[1] is not None else None for row in rows}
     except Exception:
         return {}
 
@@ -398,7 +398,7 @@ def _tokens_per_prompt(lane):
     try:
         row = ledger_read.read_lane_token_metrics(lane)
         n, t = row["n"], row["total"]
-        return (int(t or 0) / int(n)) if n else None
+        return (int(t) / int(n)) if n and t is not None else None
     except Exception:
         return None
 
@@ -456,6 +456,8 @@ def _used_split(lane):
     try:
         row = ledger_read.read_lane_token_metrics(lane)
         i, o = row["input"], row["output"]
+        if row["n"] and (i is None or o is None):
+            return None, None
         i, o = int(i or 0), int(o or 0)
         tot = i + o
         return (i / tot, o / tot) if tot else (0.5, 0.5)
@@ -531,9 +533,11 @@ def format_economics(headroom_rows=None):
         if b["waste_at_reset"] is not None:
             in_f, out_f = _used_split(e["lane"])
             used = b["used_abs"] or 0.0
-            saved, model = _metered_floor_cost(used * in_f, used * out_f)
+            saved, model = (_metered_floor_cost(used * in_f, used * out_f)
+                            if in_f is not None and out_f is not None else (None, None))
             save_txt = (f" · used {_fmt_tok(used)} tok would cost ~${saved:.2f} metered ({model.split(':')[0]}) — "
-                        f"plan covered it" if saved else "")
+                        f"plan covered it" if saved else
+                        " · unknown usage/value" if in_f is None or out_f is None else "")
             lines.append(f"     ${b['waste_at_reset']:.2f} of fee AT RISK if the rest expires unused{save_txt}")
     idle = [ln for ln in (config._cfg_get("advisor", "delegate_lanes", None) or []) if ln not in known_lanes]
     if idle:

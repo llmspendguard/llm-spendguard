@@ -407,7 +407,8 @@ def pair(now=None):
             if rows:
                 con.execute("UPDATE cost_predictions SET actual_in=?, actual_out=?, actual_usd=?, "
                             "actual_calls=?, paired_ts=? WHERE job_id=?",
-                            (sum(r[0] or 0 for r in rows), sum(r[1] or 0 for r in rows),
+                            (sum(r[0] for r in rows) if all(r[0] is not None for r in rows) else None,
+                             sum(r[1] for r in rows) if all(r[1] is not None for r in rows) else None,
                              round(sum(r[2] or 0 for r in rows), 6), len(rows), stamp, job_id))
                 paired += 1
             else:

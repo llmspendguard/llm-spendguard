@@ -17,6 +17,7 @@ CONVERSATION_FAULT_WORKERS = 4
 CONVERSATION_FAULT_DEADLINE_S = 0.02
 CONVERSATION_FAULT_BOUND_S = 1.0
 CONVERSATION_FAULT_STEP_S = 0.001
+CONVERSATION_COVERAGE_DELAY_MULTIPLIER = 2
 CONVERSATION_FAULT_FAST_S = 5.0
 CONVERSATION_LOCK_EARLY_BUSY_TIMEOUT_S = 0.0
 CONVERSATION_NON_BUSY_OPEN_CODES = (sqlite3.SQLITE_LOCKED, sqlite3.SQLITE_CANTOPEN)
@@ -77,6 +78,24 @@ def test_conversation_spend_deadline_cold_read_never_initializes_writer():
     with patch.object(ledger.SpendLedger, "__init__", side_effect=AssertionError("write initialization")):
         assert budget.spent_since(CONVERSATION_FAULT_DAY, conv=CONVERSATION_FAULT_ID,
                                   deadline_s=CONVERSATION_FAULT_FAST_S) == CONVERSATION_FAULT_ROWS
+
+
+def test_conversation_settlement_coverage_shares_spend_deadline():
+    seed_conversation_consumer_fault_rows()
+
+    def delay_conversation_settlement_coverage(*args, **kwargs):
+        time.sleep(CONVERSATION_FAULT_DEADLINE_S * CONVERSATION_COVERAGE_DELAY_MULTIPLIER)
+        return {"n": 0, "input_cost_floor": None}
+
+    with patch.object(ledger_read, "_read_incomplete_settlement_totals",
+                      side_effect=delay_conversation_settlement_coverage):
+        try:
+            budget.spent_since(CONVERSATION_FAULT_DAY, conv=CONVERSATION_FAULT_ID,
+                               deadline_s=CONVERSATION_FAULT_DEADLINE_S)
+        except ledger_read.LedgerQueryDeadline:
+            pass
+        else:
+            raise AssertionError("settlement coverage must consume the same spend deadline")
 
 
 def exercise_conversation_exclusive_lock_refusal(*, early_busy, deadline_s):

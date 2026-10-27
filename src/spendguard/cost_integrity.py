@@ -21,9 +21,11 @@ def _max_token_cost(model, in_tok, out_tok, batch):
     call can cost more, so a recorded cost above this is a provable token UNDER-RECORDING — not a judgement. None
     when the model is unpriced (the bound is unknowable). Decomposed via the public cost fns (input-only + output-
     only) so it tracks their real rates for realtime vs batch without re-deriving the per-model price table."""
+    if in_tok is None or out_tok is None:
+        return None
     fn = pricing.batch_cost if batch else pricing.realtime_cost
-    in_only = fn(model, int(in_tok or 0), 0)
-    out_only = fn(model, 0, int(out_tok or 0))
+    in_only = fn(model, int(in_tok), 0)
+    out_only = fn(model, 0, int(out_tok))
     if in_only is None or out_only is None:
         return None
     return float(in_only) * float(pricing.CACHE_WRITE_1H_MULTIPLIER) + float(out_only)

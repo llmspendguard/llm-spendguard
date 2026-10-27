@@ -54,11 +54,12 @@ FILLER = "def handle(rec):\n    x = rec.get('a')\n    return {'k': x, 'n': len(s
 def classes(limit, pct=50):
     """Real call-classes from history: (caller, n, p50_in, p50_out). Stratified by caller, which is the
     closest thing to 'kind of work' the ledger records."""
-    c = sqlite3.connect(config.db_path())
-    rows = c.execute("SELECT caller, in_tok, out_tok FROM calls WHERE in_tok > 0 AND out_tok > 0 "
-                     "AND caller IS NOT NULL").fetchall()
+    from spendguard import ledger_read
+    rows = ledger_read.read_ledger_sql(ledger_read.LedgerSQLReadRequest(
+        "SELECT caller, in_tok, out_tok FROM calls WHERE in_tok > 0 AND out_tok > 0 "
+        "AND caller IS NOT NULL"))
     by = {}
-    for caller, i, o in rows:
+    for caller, i, o in (row.values for row in rows):
         by.setdefault(caller.split(":")[0], []).append((i, o))
     out = []
     q = max(0.0, min(1.0, pct / 100.0))

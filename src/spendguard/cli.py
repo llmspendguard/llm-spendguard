@@ -1326,15 +1326,19 @@ def _dispatch(argv=None):
             print("  by source: " + "   ".join(f"{k} ${v:.2f}" for k, v in sorted(_by.items(), key=lambda kv: -kv[1])))
         print(f"  decisions booked: {ds.get('decisions', 0)}  (best-value / advisor swaps, each priced vs its counterfactual)")
         for row in (ds.get("by_intent") or [])[:8]:
-            print(f"    {str(row.get('intent', '?'))[:44]:44} {row.get('decisions', 0):>5} dec  ${row.get('saved_usd', 0):.2f}")
+            saved_value = (f"${row['saved_usd']:.2f}" if row.get("saved_usd") is not None else "unknown usage/value")
+            print(f"    {str(row.get('intent', '?'))[:44]:44} {row.get('decisions', 0):>5} dec  {saved_value}")
         if shed.get("n_sheds"):
             print(f"\n  SHED — substitutable work routed OFF a capped/overage/shed lane ({shed['n_sheds']} sheds, "
                   f"{shed.get('served_free_n', 0)} served free · {shed.get('paid_n', 0)} paid):")
-            print(f"    avoided overage  ${shed.get('avoided_overage_usd', 0):.4f}  (REAL money — a plan on paid overage would have billed)")
-            print(f"    quota preserved  ${shed.get('quota_preserved_usd', 0):.4f}  (est-value moved to another free lane — NOT real money, separate axis)")
+            avoided_value = (f"${shed['avoided_overage_usd']:.4f}" if shed.get("avoided_overage_usd") is not None else "unknown usage/value")
+            preserved_value = (f"${shed['quota_preserved_usd']:.4f}" if shed.get("quota_preserved_usd") is not None else "unknown usage/value")
+            print(f"    avoided overage  {avoided_value}  (REAL money — a plan on paid overage would have billed)")
+            print(f"    quota preserved  {preserved_value}  (est-value moved to another free lane — NOT real money, separate axis)")
             for r in (shed.get("by_route") or [])[:6]:
+                route_value = (f"${r['counterfactual_usd']:.4f}" if r["counterfactual_usd"] is not None else "unknown usage/value")
                 print(f"    {str(r['from_lane'])[:14]:14} → {str(r['to_lane'])[:14]:14} {r['class']:9} "
-                      f"{r['n']:>4} sheds  ${r['counterfactual_usd']:.4f}")
+                      f"{r['n']:>4} sheds  {route_value}")
         return 0
     if cmd == "tokens":                               # per-provider token factors: `tokens show` / `tokens calibrate` ($0)
         from . import provider_tokens

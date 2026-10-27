@@ -72,5 +72,14 @@ urllib.request.urlopen = uf3
 r3 = zai_exec.run_prompt("hi", model="glm-5.3")      # no reasoning → no thinking → no strip-retry either
 ck("a 500 is not retried (1 attempt)", bool(r3.get("error")) and calls3["n"] == 1)
 
+class _ZaiMissingUsageResponse(_OkResp):
+    def read(self):
+        return json.dumps({"content": []}).encode()
+
+
+urllib.request.urlopen = lambda *a, **k: _ZaiMissingUsageResponse()
+unknown_result = zai_exec.run_prompt("hi", model="glm-5.3")
+ck("absent provider usage stays unknown", unknown_result["in_tok"] is None and unknown_result["out_tok"] is None)
+
 print(f"\n{'[FAIL]' if _fails else 'OK'} test_zai_backoff: {len(_fails)} failure(s)")
 sys.exit(1 if _fails else 0)

@@ -140,7 +140,7 @@ def counts():
                              "ORDER BY COUNT(*) DESC").fetchall()
 
 
-def record_io_sample(intent, provider, model, batch, custom_id, prompt, output, in_tok=0, out_tok=0, source="batch_io",
+def record_io_sample(intent, provider, model, batch, custom_id, prompt, output, in_tok=None, out_tok=None, source="batch_io",
            system=None, req_schema=None, req_max_tokens=0, cap_chars=None, finish_reason=None, effort=None):
     """Insert one sample (idempotent on batch+custom_id). Returns id or None if duplicate.
 
@@ -168,7 +168,7 @@ def record_io_sample(intent, provider, model, batch, custom_id, prompt, output, 
                 "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (cid, ts, intent, provider, model, batch, str(custom_id),
                  (prompt or "")[:cap], (output or "")[:cap],
-                 int(in_tok or 0), int(out_tok or 0), source,
+                 None if in_tok is None else int(in_tok), None if out_tok is None else int(out_tok), source,
                  system or "",
                  req_schema if isinstance(req_schema, str) else json.dumps(req_schema) if req_schema else "",
                  int(req_max_tokens or 0), _trunc,
@@ -395,7 +395,7 @@ def fetch_openai(client, batch_id, intent, model, cap, sample_n):
             msg = ((body.get("choices") or [{}])[0].get("message") or {}).get("content")
             if cid and msg is not None:
                 want[cid] = {"output": msg if isinstance(msg, str) else json.dumps(msg),
-                             "out_tok": (body.get("usage") or {}).get("completion_tokens", 0),
+                             "out_tok": (body.get("usage") or {}).get("completion_tokens"),
                              "finish_reason": (body.get("choices") or [{}])[0].get("finish_reason")}
             if len(want) >= sample_n:
                 break                                   # ← early stop: don't pull the rest of the file
@@ -453,7 +453,7 @@ def fetch_anthropic(client, batch_id, intent, model, cap, sample_n, jsonl_inputs
         if getattr(r, "type", None) != "succeeded":
             continue
         txt = "".join(blk.text for blk in r.message.content if getattr(blk, "type", None) == "text")
-        out_tok = getattr(getattr(r.message, "usage", None), "output_tokens", 0)
+        out_tok = getattr(getattr(r.message, "usage", None), "output_tokens", None)
         try:                                              # batch-LINE truncation: anthropic stop_reason states the fact
             from . import bulkgate
             if not (intent or "").startswith("spendguard:"):
@@ -653,7 +653,7 @@ def guarded_collect(batch_ids, intent, model, client=None, record_io=False):
                 text = msg if isinstance(msg, str) else (json.dumps(msg) if msg is not None else None)
                 if record_io and text is not None:
                     record_io_sample(intent, "openai", model, bid, cid, "", text,
-                           in_tok=usage.get("prompt_tokens", 0), out_tok=usage.get("completion_tokens", 0))
+                                 in_tok=usage.get("prompt_tokens"), out_tok=usage.get("completion_tokens"))
                 yield (cid, text, usage)
 
 
@@ -698,16 +698,20 @@ def collect_chat_tasks(batch_ids, intent, model, require_ready=True, record_io=F
         else:
             out["results"][cid] = text
             out["collected"] += 1
+        if text is not None and not isinstance(usage, dict):
+            measured["in_tok"] = measured["out_tok"] = None
         if isinstance(usage, dict) and not usage.get("error"):
-            measured["in_tok"] += int(usage.get("prompt_tokens", 0) or 0)
-            measured["out_tok"] += int(usage.get("completion_tokens", 0) or 0)
+            measured["in_tok"] = _sum_reported_token_count(measured["in_tok"], usage.get("prompt_tokens"))
+            measured["out_tok"] = _sum_reported_token_count(measured["out_tok"], usage.get("completion_tokens"))
             measured["cache_read"] += int((usage.get("prompt_tokens_details") or {}).get("cached_tokens", 0) or 0)
     if ready:
+        measured["token_usage_complete"] = measured["in_tok"] is not None and measured["out_tok"] is not None
         out["usage"] = measured
     if len(ready) == 1:                              # one aggregate maps unambiguously to one provisional booking
         from . import budget, calls, pricing
         try:
-            actual = pricing.batch_cost(model, measured["in_tok"], measured["out_tok"], measured["cache_read"])
+            actual = (None if not measured["token_usage_complete"] else
+                      pricing.batch_cost(model, measured["in_tok"], measured["out_tok"], measured["cache_read"]))
         except (KeyError, TypeError, ValueError):
             actual = None                       # unpriced actual: keep the estimate; never invent a dollar value
         if actual is not None:
@@ -716,6 +720,11 @@ def collect_chat_tasks(batch_ids, intent, model, require_ready=True, record_io=F
             calls.reconcile_calls_batch_estimate("openai", pricing.normalize(model), intent,
                                                  measured["in_tok"], measured["out_tok"], actual)
     return out
+
+
+def _sum_reported_token_count(accumulated, reported):
+    """Combine telemetry without treating a missing measurement as a measured zero."""
+    return None if accumulated is None or reported is None else accumulated + int(reported)
 
 
 def collect_message_batch(batch_ids, intent, model, require_ready=True, record_io=False):
@@ -776,26 +785,31 @@ def collect_message_batch(batch_ids, intent, model, require_ready=True, record_i
             # `in_tok = input_tokens + cache_read`), so batch and realtime record input CONSISTENTLY and pricing._cost
             # (which derives fresh = total - cached) stays correct. Recording input_tokens alone under-reports by the hit.
             cache_read = int(getattr(usage, "cache_read_input_tokens", 0) or 0)
-            in_tok = int(getattr(usage, "input_tokens", 0) or 0) + cache_read
-            out_tok = int(getattr(usage, "output_tokens", 0) or 0)
-            out["usage"]["in_tok"] += in_tok
-            out["usage"]["out_tok"] += out_tok
+            fresh_input = getattr(usage, "input_tokens", None)
+            in_tok = None if fresh_input is None else int(fresh_input) + cache_read
+            out_tok = getattr(usage, "output_tokens", None)
+            out["usage"]["in_tok"] = _sum_reported_token_count(out["usage"]["in_tok"], in_tok)
+            out["usage"]["out_tok"] = _sum_reported_token_count(out["usage"]["out_tok"], out_tok)
             out["usage"]["cache_read"] += cache_read
             out["usage"]["cache_creation"] += int(getattr(usage, "cache_creation_input_tokens", 0) or 0)
-            batch_in_tok += in_tok
-            batch_out_tok += out_tok
+            batch_in_tok = _sum_reported_token_count(batch_in_tok, in_tok)
+            batch_out_tok = _sum_reported_token_count(batch_out_tok, out_tok)
             batch_cache_read += cache_read
             if record_io:                            # REAL both axes (fetch_anthropic records out_tok only)
                 record_io_sample(intent, "anthropic", model, bid, cid, "", text, in_tok=in_tok, out_tok=out_tok)
             out["results"][cid] = text
             out["collected"] += 1
         from . import budget, calls, pricing
+        if batch_in_tok is None or batch_out_tok is None:
+            config.warn_once("[spendguard] batch usage/value unknown: missing token telemetry; monetary estimate retained")
+            continue
         actual = pricing.batch_cost(model, batch_in_tok, batch_out_tok, batch_cache_read, provider="anthropic")
         normalized_model = pricing.normalize(model)
         budget.reconcile_money_batch_estimate("anthropic", normalized_model, intent,
                                               batch_in_tok, batch_out_tok, actual)
         calls.reconcile_calls_batch_estimate("anthropic", normalized_model, intent,
                                              batch_in_tok, batch_out_tok, actual)
+    out["usage"]["token_usage_complete"] = out["usage"]["in_tok"] is not None and out["usage"]["out_tok"] is not None
     return out
 
 

@@ -330,7 +330,7 @@ def reprobe_rejected(lane):
                 try:
                     from . import calls as _calls_rec
                     _calls_rec.record_call(provider=provider, model=m, kind="subscription", cost=0.0,
-                                           in_tok=int(r.get("in_tok") or 0), out_tok=int(r.get("out_tok") or 0),
+                                           in_tok=int(r.get("in_tok") or 0), out_tok=r.get("out_tok"),
                                            latency=r.get("latency"), intent="spendguard:lane-reprobe",
                                            executor=lane, outcome="ok")
                 except Exception:

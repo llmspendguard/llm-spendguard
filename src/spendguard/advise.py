@@ -86,7 +86,8 @@ def evidence(as_of=None, intent=None, by_effort=False):
                            dict(provider=prov, model=model, effort=eff, jobs=0, cost=0.0, outtok=0, good=0.0, labeled=0.0))
         a["jobs"] += 1
         a["cost"] += cost or 0
-        a["outtok"] += outtok or 0
+        a["outtok"] = (a["outtok"] + outtok
+                       if a["outtok"] is not None and outtok is not None else None)
         if qual:
             # A STORED CONFIDENCE OF 0.0 IS A JUDGEMENT, NOT A MISSING ONE. `qconf or DEFAULT` promoted the
             # labeller's explicit "I have no confidence in this" to the same weight as a normal label, which
@@ -126,24 +127,31 @@ def ranked(intent=None, as_of=None, by_effort=False):
     _model_outtok = {}                                 # per provider:model total out_tok — to apportion a model's ledger
     for _a in agg.values():                            # $ across its effort arms (spend_events has no effort column)
         _mid = f"{_a['provider']}:{_a['model']}"
-        _model_outtok[_mid] = _model_outtok.get(_mid, 0) + (_a["outtok"] or 0)
+        previous = _model_outtok.get(_mid, 0)
+        _model_outtok[_mid] = (previous + _a["outtok"]
+                               if previous is not None and _a["outtok"] is not None else None)
     models = []
     for key, a in agg.items():
         mid = f"{a['provider']}:{a['model']}"
         model_billed = _billed.get(mid, 0.0)           # real billed $ for this (intent,) model from the LEDGER
+        valuation_complete = a["outtok"] is not None
         if by_effort and _model_outtok.get(mid):       # split the per-model billed across effort arms by out_tok share
-            cost = model_billed * (a["outtok"] or 0) / _model_outtok[mid]
+            cost = model_billed * a["outtok"] / _model_outtok[mid]
         else:
             cost = model_billed
-        _lane_true = float(a["outtok"] or 0) * _lane_eff.get(a["provider"], 0.0)   # true cost when it rode a $0 lane
-        if _lane_true > cost:
+            if by_effort and _model_outtok.get(mid) is None:
+                valuation_complete = False
+        lane_rate = _lane_eff.get(a["provider"], 0.0)
+        _lane_true = float(a["outtok"]) * lane_rate if a["outtok"] is not None else None
+        if _lane_true is not None and _lane_true > cost:
             cost = _lane_true                          # price the lane arm at its TRUE marginal cost, never a flat $0
-        permout = (cost / a["outtok"] * 1e6) if a["outtok"] else None
+        permout = (cost / a["outtok"] * 1e6) if a["outtok"] and valuation_complete else None
         good_rate = (a["good"] / a["labeled"]) if a["labeled"] else None
-        per_good = (cost / a["good"]) if a["good"] else None
+        per_good = (cost / a["good"]) if a["good"] and valuation_complete else None
         row = dict(id=f"{a['provider']}:{a['model']}", model=a["model"], provider=a["provider"], jobs=a["jobs"],
                    cost=round(cost, 6), out_tok=a["outtok"],
                    per_m_out=permout, good_rate=good_rate, per_good=per_good,
+                   valuation_complete=valuation_complete,
                    labeled=round(a["labeled"], 3))     # confidence-weighted # of quality labels — the EVIDENCE STRENGTH
         if by_effort:                                  # behind good_rate/per_good, so a selector can refuse a thin arm
             row["effort"] = a.get("effort")
@@ -199,6 +207,8 @@ def advise(intent=None, plan=None, as_of=None):
               f"{('$%.2f' % m['per_m_out']) if m['per_m_out'] is not None else '—':>10}"
               f"{('%.0f%%' % (100*m['good_rate'])) if m['good_rate'] is not None else '—':>7}"
               f"{('$%.4f' % m['per_good']) if m['per_good'] is not None else '—':>10}")
+        if not m["valuation_complete"]:
+            print("  unknown usage/value — token-dependent valuation is unavailable")
     best = r["pick"] or rows[0]["id"]
     if r["pick"]:
         print(f"\n→ considering history, prefer: {best}  (lowest {metric})")

@@ -14,6 +14,10 @@ from _script_checks import record_script_check  # noqa: E402
 
 from spendguard import config, consumer_audit  # noqa: E402
 
+# Fake venv probes must inspect their own installed package, not inherit the
+# suite's source-tree override (which also makes a missing package appear present).
+os.environ.pop("PYTHONPATH", None)
+
 FIXTURE_DEPLOYED_SHA = "fixture-deployed-sha"
 FIXTURE_MAXIMUM_DEPTH = 2
 FIXTURE_REPOSITORY_DISCOVERY_DEPTH = 1

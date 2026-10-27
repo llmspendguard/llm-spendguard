@@ -413,8 +413,9 @@ def build_rollup_rows(raw, ref, flt):
             # TOKENS — the server's day_rollups already stores + serves in_tokens/out_tokens/cached_in_tokens (its
             # unit-economics view was starved because this push omitted them). NOT part of the uid (see _row_uid), so
             # adding them never shifts the cross-check id; a re-push UPSERTS the tokens onto the same row.
-            "in_tokens": int(r.get("in_tok", 0)), "out_tokens": int(r.get("out_tok", 0)),
-            "cached_in_tokens": int(r.get("cache_read_tok", 0)),
+                          "in_tokens": None if r.get("in_tok") is None else int(r["in_tok"]),
+                          "out_tokens": None if r.get("out_tok") is None else int(r["out_tok"]),
+                          "cached_in_tokens": None if r.get("cache_read_tok") is None else int(r["cache_read_tok"]),
             "member_ref": "" if proj == "unattributed" else ref,   # reconciled gap has no known contributor
             "project": proj,
         }

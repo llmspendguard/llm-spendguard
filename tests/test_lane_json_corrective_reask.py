@@ -22,7 +22,8 @@ def exercise_json_lane_reask(reask_limit, corrected_reply):
 
     def capture_json_lane_invocation(prompt, **kwargs):
         invocations.append((prompt, kwargs))
-        return {"text": "not JSON" if len(invocations) == 1 else corrected_reply}
+        return {"text": "not JSON" if len(invocations) == 1 else corrected_reply,
+                "in_tok": 0, "out_tok": 0}
 
     def isolated_json_recovery_setting(key, default):
         return {"lane_json_reask": reask_limit, "attempts": 1,

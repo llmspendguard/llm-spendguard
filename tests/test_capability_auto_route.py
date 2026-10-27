@@ -37,7 +37,7 @@ def _lane_called(model, schema):
 
     def run_prompt(prompt, system=None, model=None, timeout=None, **_kw):
         state["called"] = True
-        return {"text": '{"issues": []}', "error": None}
+        return {"text": '{"issues": []}', "error": None, "in_tok": 0, "out_tok": 0}
 
     fake = types.SimpleNamespace(TIMEOUT_S=60, run_prompt=run_prompt)
     _real_lane_for, _real_key = adapters._lane_for, adapters.config.api_key

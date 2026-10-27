@@ -35,6 +35,7 @@ TODAY, WEEK, MONTH = receipt._windows()
 ck("_money: None → em-dash", receipt._money(None) == "—")
 ck("_money: thousands", receipt._money(1234.5) == "$1,234.50")
 ck("_tok: compact M/K", receipt._tok(1_200_000) == "1.2M" and receipt._tok(12_300) == "12.3K" and receipt._tok(0) == "0")
+ck("_tok: missing usage is distinct from measured zero", receipt._tok(None) == "unknown")
 ck("_pct: actual under estimate → negative", receipt._pct(2.10, 1.87).strip() == "(−11%)")
 ck("_pct: missing estimate → blank", receipt._pct(None, 1.0) == "" and receipt._pct(0, 1.0) == "")
 
@@ -86,6 +87,12 @@ ck("render_tally: API today shown", f"today {receipt._money(t['actual']['today']
 ck("render_tally: cache read and write are explicit named axes", "cache split" in out and "read 400" in out and "write 300" in out)
 
 # ── render_flow: est → actual variance + the tally underneath ────────────────
+incomplete_receipt_fixture = {"n": 1, "in_tok": 1, "out_tok": None, "actual": 0,
+                              "incomplete_count": 1, "input_cost_floor": None}
+incomplete_receipt_text = receipt.render_flow(incomplete_receipt_fixture, "flow", {})
+ck("render_flow: incomplete usage never renders a complete zero-cost settlement",
+   "out unknown" in incomplete_receipt_text and "INCOMPLETE" in incomplete_receipt_text
+   and "total cost unknown" in incomplete_receipt_text and "actual $0.00" not in incomplete_receipt_text)
 flow = {"intent": "loinc-typing", "n": 42, "in_tok": 1_200_000, "out_tok": 300_000, "est": 2.10, "actual": 1.87}
 rf = receipt.render_flow(flow, "flow", t)
 ck("render_flow: what + calls + tokens", "loinc-typing" in rf and "42 calls" in rf and "in 1.2M / out 300.0K" in rf)
@@ -135,6 +142,14 @@ ck("emit_flow: level flow → emits a receipt with the intent", "spendguard ▸ 
 mark = calls._max_rowid()
 start_usd = budget.spent_since("1970-01-01")    # snapshot consistently, as calls.context does → idle delta is 0
 ck("emit_flow: nothing happened since marker → silent", _emit_capture("idle", "none", (mark, start_usd), "flow") == "")
+incomplete_emit_original_aggregate = calls.flow_agg
+calls.flow_agg = lambda *args, **kwargs: {"n": None, "cost": None, "incomplete_count": 1,
+                                        "input_cost_floor": None}
+try:
+    incomplete_emit_capture = _emit_capture("partial", "none", (mark, start_usd), "flow")
+    ck("emit_flow: incomplete-only evidence is never suppressed", "INCOMPLETE" in incomplete_emit_capture)
+finally:
+    calls.flow_agg = incomplete_emit_original_aggregate
 
 # never-raises: a broken budget must not blow up the caller's flow
 _orig = budget.spent_since

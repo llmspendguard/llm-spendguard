@@ -967,7 +967,8 @@ class SpendLedger:
             w += " AND " + filt
         from .ledger_read import LedgerReadRequest, read_ledger_rows
         projections = tuple(gcols) + tuple(f"dec_sum({c}) AS {c}" for c in allcols)
-        projections += tuple(f"COALESCE(SUM({c}),0) AS {c}" for c in icols) + ("COUNT(*) AS n",)
+        projections += tuple(f"CASE WHEN COUNT({c}) = COUNT(*) THEN SUM({c}) ELSE NULL END AS {c}"
+                             for c in icols) + ("COUNT(*) AS n",)
         out = {}
         base = len(gcols)
         for row in read_ledger_rows(LedgerReadRequest(columns=projections, where_sql="1=1" + w,
@@ -976,7 +977,8 @@ class SpendLedger:
             total = sum((to_dec(row[base + i]) for i in range(len(allcols))), Decimal(0))
             rec = {"usd": str(total), "n": row[-1]}
             for j, ic in enumerate(icols):
-                rec[ic] = int(row[base + len(allcols) + j] or 0)
+                token_total = row[base + len(allcols) + j]
+                rec[ic] = None if token_total is None else int(token_total)
             out[key] = rec
         return out
 

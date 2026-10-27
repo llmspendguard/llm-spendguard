@@ -34,8 +34,10 @@ def main(argv=None):
     db = config.db_path()
     con = sqlite3.connect(db if a.apply else f"file:{db}?mode=ro", uri=not a.apply)
     con.row_factory = sqlite3.Row
-    rows = con.execute("SELECT id, in_tok, out_tok, cost FROM calls WHERE model=? AND provider=?",
-                       (a.model, a.from_provider)).fetchall()
+    from spendguard import ledger_read
+    rows = ledger_read.read_ledger_sql(ledger_read.LedgerSQLReadRequest(
+        "SELECT id, in_tok, out_tok, cost FROM calls WHERE model=? AND provider=?",
+        (a.model, a.from_provider)))
     if not rows:
         print(f"no rows for model={a.model} provider={a.from_provider} — nothing to do.")
         return 0

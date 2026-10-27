@@ -92,5 +92,15 @@ record_script_check(fails, "dry-run counts but writes nothing new",
    O.ingest({"spans": [one]}, dry_run=True)["ingested"] == 1
    and len([r for r in budget._ledger().query() if r.get("source") == "otel"]) == 3)
 
+unknown_span = {"attributes": {"gen_ai.system": c0["provider"], "gen_ai.request.model": c0["model"],
+                               "gen_ai.usage.input_tokens": c0["in_tok"]}}
+unknown_charge = O.span_to_charge(unknown_span)
+record_script_check(fails, "missing output usage remains unknown", unknown_charge["out_tok"] is None)
+record_script_check(fails, "missing output cannot manufacture a token price",
+                    O._cost_for(unknown_charge) == (None, budget.BASIS_UNPRICED))
+unknown_charge["cost"] = c1["cost"]
+record_script_check(fails, "authoritative cost survives unknown usage",
+                    O._cost_for(unknown_charge) == (c1["cost"], budget.BASIS_RECONSTRUCTED))
+
 print(("\n[OK] " if not fails else "\n[FAIL] ") + f"otel_ingest: {len(fails)} failure(s)")
 sys.exit(1 if fails else 0)

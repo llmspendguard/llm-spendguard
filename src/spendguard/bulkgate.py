@@ -463,11 +463,11 @@ def note_response(sig, model, out_tok, max_tokens=None, finish_reason=None, n_it
     ceiling and silently degrades the batch cost estimate to the ceiling (the batch false-refusal bug). A normal
     single call passes n_items=1 (unchanged); a batch recorder passes its shard's request count."""
     n = max(1, int(n_items or 1))
-    per_item = int(int(out_tok or 0) / n)
+    per_item = None if out_tok is None else int(int(out_tok) / n)
     trunc = is_truncated(finish_reason, per_item, max_tokens)
     visible = per_item if visible_tokens is None else int(visible_tokens)
     starved = ((finish_reason or "").lower() in ("length", "max_tokens")
-               and visible < REASONING_VISIBLE_MINIMUM and bool(max_tokens)
+               and visible is not None and visible < REASONING_VISIBLE_MINIMUM and bool(max_tokens)
                and (reasoning_tokens is None or
                     (reasoning_tokens >= int(max_tokens) * REASONING_BUDGET_SHARE
                      and reasoning_tokens > visible * REASONING_VISIBLE_RATIO)))
@@ -849,7 +849,9 @@ def check_runaway(sig, model, out_tok, norm=None):
     guessed absolute that would false-accuse. `norm` may pass a PRE-call maxtokens(sig, model=…) dict so the runaway
     can't inflate its OWN baseline (the call is recorded just before this check). Returns (tripped, detail). Never raises."""
     try:
-        ot = int(out_tok or 0)
+        if out_tok is None:
+            return False, None
+        ot = int(out_tok)
         if ot <= 0 or not sig:
             return False, None
         factor = _runaway_factor()

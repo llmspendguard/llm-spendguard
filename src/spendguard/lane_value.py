@@ -52,6 +52,8 @@ def _subscription_rows(since: str, valued: set):
     from . import ledger_read
     try:
         return [row.values for row in ledger_read.read_lane_subscription_calls(since, valued)]
+    except ledger_read.LedgerSettlementIncomplete:
+        raise
     except Exception:
         return []
 
@@ -62,6 +64,7 @@ def stamp_from_ledger(window_days: int = _WINDOW_DAYS) -> dict:
     Returns {executor: month_value_usd}, with None when a lane has current-month activity containing an unpriceable
     call. This store is deliberately separate from the miners' transcript-value cache. Best-effort; never raises.
     """
+    from . import ledger_read
     out = {}
     try:
         from . import receipt
@@ -76,7 +79,8 @@ def stamp_from_ledger(window_days: int = _WINDOW_DAYS) -> dict:
             try:
                 # price through the CATALOG (base + the lane's provider, reasoning-suffix aware) — not a raw
                 # realtime_cost that leans on the global suffix-strip and can hit the gemini/vertex ambiguity.
-                val = lane_catalog.use_name_cost(model, int(in_tok or 0), int(out_tok or 0), lane=ex)
+                val = (None if in_tok is None or out_tok is None else
+                       lane_catalog.use_name_cost(model, int(in_tok), int(out_tok), lane=ex))
             except Exception:
                 val = None
             rec = by_lane.setdefault(ex, {"by_day": {}, "activity_by_day": {}, "unpriced_by_day": {}})
@@ -97,6 +101,8 @@ def stamp_from_ledger(window_days: int = _WINDOW_DAYS) -> dict:
         p.parent.mkdir(parents=True, exist_ok=True)
         config.update_json(p, lambda d: d.update({"routed_lane_value": by_lane}), reason="lane-value")
         return out                                        # SUCCESS (out may be {} = no valued lanes / no rows)
+    except ledger_read.LedgerSettlementIncomplete:
+        raise
     except Exception:
         return None                                       # ERROR — a distinct signal so refresh_lane_value_if_stale
         #                                                   does NOT reset the freshness timer on a failed stamp
@@ -155,22 +161,23 @@ def day_totals(member_ref, window_days: int = _WINDOW_DAYS):
             skipped_no_day += 1                           # can't attribute to a day → COUNT it, never drop silently
             continue
         try:
-            val = lane_catalog.use_name_cost(model, int(in_tok or 0), int(out_tok or 0), lane=ex) or 0.0
+            val = (None if in_tok is None or out_tok is None else
+                   lane_catalog.use_name_cost(model, int(in_tok), int(out_tok), lane=ex))
         except Exception:
-            val = 0.0                                     # unpriced model → $0 VALUE, but the CALL is still real WORK
-        # keep the row even at $0 (matches stamp_from_ledger): the call counts toward work-done; a $0-only project is
-        # dropped by the server's `having sum(spend_micros) > 0`, so it adds no noise and loses no real spend.
+            val = None
         key = (project or "", day, prov or "?", model or "?", ex)
         e = agg.setdefault(key, {"value": 0.0, "calls": 0, "in_tok": 0, "out_tok": 0})
-        e["value"] += val
+        e["value"] = None if e["value"] is None or val is None else e["value"] + val
         e["calls"] += 1
-        e["in_tok"] += int(in_tok or 0)
-        e["out_tok"] += int(out_tok or 0)
+        for field, count in (("in_tok", in_tok), ("out_tok", out_tok)):
+            e[field] = None if e[field] is None or count is None else e[field] + int(count)
     if skipped_no_day:
         config.warn_once(f"[lane_value] {skipped_no_day} lane subscription row(s) had no timestamp — excluded from the "
                          f"push (their plan value is a lower bound by that much until the rows carry a day).")
     return [{"day": day, "provider": prov, "model": model, "kind": "workload", "channel": _channel_for(ex),
-             "billed": False, "spend_micros": round(e["value"] * 1_000_000), "calls": e["calls"],
+             "billed": False, "spend_micros": None if e["value"] is None else round(e["value"] * 1_000_000),
+             "calls": e["calls"], "value_complete": e["value"] is not None,
+             "token_usage_complete": e["in_tok"] is not None and e["out_tok"] is not None,
              "in_tokens": e["in_tok"], "out_tokens": e["out_tok"], "member_ref": member_ref, "project": project}
             for (project, day, prov, model, ex), e in agg.items()]
 
@@ -196,6 +203,10 @@ def sync(dry=False):
         r["uid"] = saas._row_uid(r)
     if dry:
         return {"day_totals": rows}
+    if any(not row["value_complete"] or not row["token_usage_complete"] for row in rows):
+        # The server wire contract accepts measured integer amounts only. Preserve the
+        # unknown locally and explicitly refuse this push rather than encode it as zero.
+        return {"skipped": "unknown usage/value in lane ledger; server push requires complete telemetry"}
     if not rows:
         return {"skipped": "no ledger-valued lane value for this connection"}
     channels = sorted({r["channel"] for r in rows})      # replace per (channel, billed=False) so re-syncs don't stack
@@ -238,7 +249,7 @@ def main(argv=None) -> int:
         if ln not in stamped:
             print(f"  {ln:<16} —        (no subscription calls in the last {_WINDOW_DAYS}d)")
         elif v is None:
-            print(f"  {ln:<16} unknown  (in-window activity includes an unpriceable model)")
+            print(f"  {ln:<16} unknown usage/value  (in-window activity includes incomplete telemetry or an unpriceable model)")
         else:
             print(f"  {ln:<16} ${v:,.2f}  (routed ledger value; window {_WINDOW_DAYS}d)")
     print("  ⚠ USAGE VALUE (tokens × API pricing), NOT $ billed — a flat-fee plan served these. Shown on the")

@@ -132,7 +132,9 @@ def insert_linked_decision(connection, *, call_id, project, intent, basis, reque
         (
             recorded_at.isoformat(timespec="seconds"), recorded_at.strftime("%Y-%m-%d"), project,
             intent, basis, requested_model, requested_effort, chosen_model, chosen_effort,
-            float(counterfactual_usd or 0), float(actual_usd or 0), float(saved_usd or 0), why,
+            (float(counterfactual_usd) if counterfactual_usd is not None else None),
+            (float(actual_usd) if actual_usd is not None else None),
+            (float(saved_usd) if saved_usd is not None else None), why,
             reason_class, call_id,
         ),
     )
@@ -154,6 +156,7 @@ def reconstruct(call_id):
     call_columns = (
         "id", "ts", "intent", "caller", "provider", "model", "kind", "cost", "latency",
         "effort", "executor", "project", "outcome", "disposition", "provider_error",
+        "settlement_complete", "input_cost_floor",
         "requested_model", "served_model", "resolved_lane", "redirect_reason",
         ROUTING_SNAPSHOT_COLUMN, REQUEST_SCHEMA_COLUMN, REQUEST_MAX_TOKENS_COLUMN,
         REQUEST_DECOMPOSITION_COLUMN,
@@ -204,7 +207,11 @@ def reconstruct(call_id):
             "decisions": decisions,
             "redirect_reason": call["redirect_reason"],
         }),
-        "cost_latency": _reconstruction_item({"cost": call["cost"], "latency": call["latency"]}),
+        "cost_latency": _reconstruction_item({
+            "cost": call["cost"], "latency": call["latency"],
+            "settlement_complete": call["settlement_complete"],
+            "input_cost_floor": call["input_cost_floor"],
+        }),
         "attribution": _reconstruction_item({
             "intent": call["intent"], "project": call["project"], "caller": call["caller"],
         }),

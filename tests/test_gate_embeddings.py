@@ -106,9 +106,10 @@ ck("the embeddings window resolves, so the rail is LIVE (not silently disabled b
 
 _orig_br = spend_gate._budget_record
 _cap = []
-def _capture_br(cost, model, provider, kind, quarantine=False, basis=None):
-    _cap.append({"kind": kind, "cost": cost, "quarantine": quarantine})
-    return _orig_br(cost, model, provider, kind, quarantine=quarantine, basis=basis)
+def _capture_br(cost, model, provider, kind, quarantine=False, basis=None, in_tok=None, out_tok=None):
+    _cap.append({"kind": kind, "cost": cost, "quarantine": quarantine, "in_tok": in_tok, "out_tok": out_tok})
+    return _orig_br(cost, model, provider, kind, quarantine=quarantine, basis=basis,
+                    in_tok=in_tok, out_tok=out_tok)
 spend_gate._budget_record = _capture_br
 
 def _resp(inp):                                      # a real embeddings response: usage.prompt_tokens = the batch SUM
@@ -130,6 +131,8 @@ ck("precondition: the rail would fire on the SUM alone (proving per-item logic i
 
 rtA = _decide(BATCH)
 ck("a batched embeddings call is accounted as ONE realtime row", len(rtA) == 1)
+ck("embeddings telemetry carries measured input and known zero output",
+   bool(rtA) and rtA[0]["in_tok"] == SUM_A and rtA[0]["out_tok"] == 0)
 ck("…and is NOT quarantined (the fixed bug — a 1000-string batch is legitimate)",
    bool(rtA) and rtA[0]["quarantine"] is False)
 ck("…and its cost is the real batch SUM at the table price (billing preserved end-to-end)",

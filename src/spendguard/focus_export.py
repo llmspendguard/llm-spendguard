@@ -93,7 +93,8 @@ def focus_row(ev):
         "ChargeCategory": charge_cat,
         "ChargeClass": "Correction" if is_correction else None,
         "ChargeFrequency": "Recurring" if kind == "subscription" else "Usage-Based",
-        "PricingQuantity": (ev.get("in_tok") or 0) + (ev.get("out_tok") or 0), "PricingUnit": "tokens",
+        "PricingQuantity": (None if ev.get("in_tok") is None or ev.get("out_tok") is None
+                            else ev["in_tok"] + ev["out_tok"]), "PricingUnit": "tokens",
         "ConsumedQuantity": ev.get("num_calls") or 1, "ConsumedUnit": "requests",
         "BillingCurrency": ev.get("currency") or "USD",
         "ListCost": list_cost, "ContractedCost": None, "BilledCost": billed, "EffectiveCost": effective,

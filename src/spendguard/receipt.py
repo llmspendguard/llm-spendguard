@@ -54,6 +54,8 @@ def _money(x: Optional[float]) -> str:
 
 
 def _tok(n: Optional[int]) -> str:
+    if n is None:
+        return "unknown"
     if not n:
         return "0"
     n = int(n)
@@ -671,6 +673,15 @@ def tally(project=None, conv=None) -> dict:
                "month": budget.spent_since(month, project=project, conv=conv, read_only=True)}
     except Exception as error:
         gaps.append(f"CAPTURE GAP: ledger read unavailable: {error!r}")
+    try:
+        from . import ledger_read
+        pending_settlements = ledger_read.read_incomplete_call_settlements(month, project=project)
+        if pending_settlements["n"]:
+            gaps.append(f"INCOMPLETE SETTLEMENT: {pending_settlements['n']} calls have unreported output usage; "
+                        f"known input-cost floor {_money(pending_settlements['input_cost_floor'])}; "
+                        "total cost remains unknown (excluded from settled totals)")
+    except Exception as error:
+        gaps.append(f"CAPTURE GAP: settlement completeness unavailable: {error!r}")
     remote = _remote_tally()                       # billed GPU/remote compute (None until resources.sync stamps it)
     external = _external_tally()                    # billed MCP/tool + external-API cost (None when there's none)
     sub, sub_assumed = _plan_usd()                 # flat monthly subscription fee — a REAL cost (out the door)
@@ -1122,7 +1133,9 @@ def _two_axis_table(t: dict) -> list:
     by_lane = _routed_lane_value()
     # Routed calls are only the work spendguard dispatched, not the host lane's full ledger value.
     # The est-value source family total owns this display, including the explicit other bucket.
-    by_lane.update({source: windows["month"] for source, windows in _est_by_source().items()})
+    for source, windows in _est_by_source().items():
+        if source not in by_lane or by_lane[source] is not None:
+            by_lane[source] = windows["month"]
     lanes_ev = sorted(by_lane.items(), key=lambda x: (x[1] is None, -(x[1] or 0), x[0]))
     if lanes_ev:
         out.append("Plan value by lane (mo): " + " · ".join(
@@ -1205,13 +1218,19 @@ def render_flow(flow: dict, lvl: str, t: Optional[dict] = None) -> str:
     intent = flow.get("intent") or "(flow)"
     n = flow.get("n") or 0
     head = f"{_PREFIX}{intent} · {n} call{'' if n == 1 else 's'}"
-    if flow.get("in_tok") is not None or flow.get("out_tok") is not None:
+    if n or flow.get("in_tok") is not None or flow.get("out_tok") is not None:
         head += f" · in {_tok(flow.get('in_tok'))} / out {_tok(flow.get('out_tok'))}"
     est, act = flow.get("est"), flow.get("actual")
+    incomplete_count = flow.get("incomplete_count") or 0
+    if incomplete_count:
+        act = None
     if est is not None:
         head += f" · est {_money(est)} → actual {_money(act)}{_pct(est, act)}"
     else:
         head += f" · actual {_money(act)}"
+    if incomplete_count:
+        head += (f" · INCOMPLETE: {incomplete_count} calls; known input-cost floor "
+                 f"{_money(flow.get('input_cost_floor'))}; total cost unknown")
     # `t if t is not None`, NOT `t or tally()`: emit_flow passes a PROJECT-SCOPED tally; when that scope is legitimately
     # empty ({}), `t or tally()` discarded it and showed the UNSCOPED all-project totals instead. None = "no tally passed".
     parts = [head] + [_INDENT + ln for ln in _tally_lines(t if t is not None else tally())]
@@ -1308,7 +1327,7 @@ def emit_flow(intent, chain, start, contract=None) -> None:
             pass
         n = (agg or {}).get("n") or 0
         # if the flow did nothing measurable, stay quiet (don't spam empty receipts)
-        if not n and not actual:
+        if not n and not actual and not (agg or {}).get("incomplete_count"):
             return
         if contract and contract.get("n") and not contract.get("failed"):
             _emit_contract_line(intent, contract)     # clean runs say so: "397/397 parsed" is the evidence
@@ -1319,6 +1338,8 @@ def emit_flow(intent, chain, start, contract=None) -> None:
                 # fall back to the estimated cost when actual could not be measured at all (None), never when it is 0.
                 "actual": actual if actual is not None else (agg or {}).get("cost"),
                 "est": (agg or {}).get("est"),
+                "incomplete_count": (agg or {}).get("incomplete_count"),
+                "input_cost_floor": (agg or {}).get("input_cost_floor"),
                 "caller": (agg or {}).get("caller")}
         proj = None                                  # scope the tally to THIS flow's repo (the relevant scope)
         try:
