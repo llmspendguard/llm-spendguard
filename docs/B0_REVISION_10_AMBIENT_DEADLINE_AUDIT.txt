@@ -1,0 +1,83 @@
+B0 revision 10: ambient request deadline admission audit
+
+Deadline rule and lock order
+  src/spendguard/ledger_read.py:324 effective_ledger_admission_deadline takes
+  min(explicit absolute expiry, ambient scope.deadline_at), inheriting the
+  ambient expiry when no argument exists. It checks abandonment/expiry and
+  takes no locks. Existing acquisition ordering is preserved.
+  ledger_read.py:339 nested ledger_request_scope keeps the earlier scope;
+  :368 bind_ledger_query_deadline starts method budgets before setup and checks
+  completion, preventing a successful result after the effective expiry.
+
+Admission/wait inventory (all paths below are relative to src/spendguard)
+  ledger.py:352 own_spend_ledger_read_scope computes min(method deadline_s,
+  scope expiry) before pool admission; deadline-less get/history/audit reads
+  inherit the scope. Admission TimeoutError becomes LedgerQueryDeadline.
+  ledger_read.py:451 _ledger_bounded_read_handle uses min(read time_budget,
+  scope expiry) for admission, setup and SQL progress/completion checks.
+  config.py:1649 managed_ledger_read_connection uses the shared helper for
+  registry/condition-lock admission and each capacity-loop iteration. Condition
+  waits use min(remaining effective budget, configured idle interval).
+  config.py:1470 open_ledger_connection bounds generation-lock admission by
+  min(explicit deadline_at, scope); SQLite connect timeout is min(timeout,
+  remaining effective budget). Deadline-bearing callers skip GC reclamation
+  waits, rather than joining unbounded reclamation while a request is live.
+  config.py:1697 pooled_ledger_conn checks the ambient scope even for a reused
+  handle; registry admission is deadline-bound; capacity waits use min(configured
+  pool admission interval, scope expiry). New-handle registry publication also
+  uses the bounded lock and closes the unpublished handle on refusal.
+  config.py:1624 idle recycling uses bounded registry admission and nonblocking
+  connection-step acquisition; it never waits for an active connection owner.
+  config.py:1550 schema admission and :1577 journal-mode admission use
+  deadline_ledger_writer_lock, hence the ambient expiry when no method arg exists.
+  ledger_writer.py:126 Python writer-side locks take min(optional absolute
+  deadline, scope expiry). :344 admit_live_ledger_writer bounds registry and
+  owner admission; registry lookup releases before owner admission waits.
+  ledger_writer.py:371 run_ledger_write uses remaining ambient time for startup
+  readiness, queue put and Future result waits, checking again before return.
+  Method-specific budgets reach this path through the earlier nested scope.
+  ledger_writer.py:302 cross-process writer flock polls nonblocking acquisition
+  and sleeps for a fraction of remaining ambient time, checking before retries.
+  ledger_deadletter.py:21 deadletter drain/spool flock uses the same remaining
+  ambient bound; drain also traverses the bounded writer admission path.
+  xp_rate_window.py:110 reserve uses min(deadline_s, scope expiry) for its
+  reservation expiry, nested writer scope and every retry/rate-window sleep.
+  ledger_wal_maintenance.py:48 checkpoint uses min(deadline_s or configured
+  read budget, scope expiry), bounded connection admission and zero SQLite busy
+  waiting. Ambient deadline errors propagate. :85 cadence admission is nonblocking.
+  ledger_request_cursor.py:42 admit_managed_cursor_step_lock first tries a
+  nonblocking acquisition; contention uses min(retained operation expiry, ambient
+  expiry). This covers parser setup and subsequent cursor-step contention while
+  preserving parser-proven writes after read-scope cancellation.
+
+Scope and limitations
+  Mandatory teardown/accounting locks remain untimed: connection live/pending
+  count publication/rollback, lease decrement/notification, cursor registration
+  release, and shutdown cleanup must complete to preserve resource ownership.
+  They are not new capacity admission or deliberate contention retries.
+  ledger_writer.py:516 close_ledger_writers is referenced by tests and atexit;
+  worker idle-queue waits and expiry-sweeper cadence are background lifecycle
+  waits, not request admission. Maintenance-only raw SQLite opens do not acquire
+  pool capacity. Filesystem I/O, OS scheduling and mandatory teardown do not have
+  hard realtime guarantees; this audit closes admission deadline propagation,
+  not arbitrary blocking kernel I/O or process scheduling.
+
+Reproduction and validation
+  tests/test_ledger_pool_admission_deadline.py:21
+  test_ambient_scope_refuses_deadlineless_read_pool_admission exercises get,
+  history and verify_audit_chain against a one-slot pool retained by another
+  thread. :28 test_ambient_scope_refuses_direct_read_pool_admission exercises
+  the sibling direct pool API. Both require typed refusal before holder release,
+  use derived scheduling tolerance, and watchdog-bound the holder and join.
+  tests/test_ledger_ambient_wait_bounds.py adds generation admission, legacy
+  pool capacity, schema-lock, cursor-step and checkpoint contention checks,
+  including explicit-shorter-than-scope and scope-shorter-than-explicit cases.
+  Both named pool tests were observed RED before the root fixes (late return /
+  DID NOT RAISE), then GREEN. test_rate_window_sleep_inherits_ambient_request_expiry
+  was also RED (roughly 400ms wait), then GREEN after the rate-wait fix. The WAL
+  contention test exposed a swallowed deadline and went RED to GREEN. Other
+  ambient-wait tests were added after the root fixes; no pre-fix RED is claimed.
+  The focused tests and the complete final offline run are green.
+  Final full offline suite: 718 passed in 99.17s. Ruff check . and git diff
+  --check clean. New helper/test definition naming checked with symgrep.
+  No metered calls, commits or pushes performed for this revision.

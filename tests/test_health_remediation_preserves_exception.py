@@ -1,5 +1,6 @@
 """Offline guards for exception diagnostics without changing health outcomes."""
 import copy
+import contextlib
 import logging
 import traceback
 import unittest
@@ -61,6 +62,7 @@ class HealthExceptionDiagnosticGuard(unittest.TestCase):
         database = Mock()
         database.execute.return_value.fetchone.return_value = None
         with patch.object(reliability, "_remediation_db", return_value=database), \
+             patch.object(reliability.config, "ledger_op", side_effect=lambda *args: contextlib.nullcontext(database)), \
              patch.object(adapters, "call", side_effect=_raise_health_diagnostic_origin), \
              patch.object(gate, "is_deliberate_stop", return_value=False):
             with self.assertLogs(level=logging.ERROR) as captured:
@@ -74,6 +76,7 @@ class HealthExceptionDiagnosticGuard(unittest.TestCase):
         database = Mock()
         database.execute.return_value.fetchone.return_value = None
         with patch.object(reliability, "_remediation_db", return_value=database), \
+             patch.object(reliability.config, "ledger_op", side_effect=lambda *args: contextlib.nullcontext(database)), \
              patch.object(adapters, "call", side_effect=_raise_health_diagnostic_origin), \
              patch.object(gate, "is_deliberate_stop", return_value=True):
             try:
@@ -91,6 +94,7 @@ class HealthExceptionDiagnosticGuard(unittest.TestCase):
         database.execute.return_value.fetchone.return_value = None
         expected = {"issue": "resource issue", "fix": "resource fix", "command": "resource command"}
         with patch.object(reliability, "_remediation_db", return_value=database), \
+             patch.object(reliability.config, "ledger_op", side_effect=lambda *args: contextlib.nullcontext(database)), \
              patch.object(adapters, "call", return_value={}), \
              patch.object(adapters, "structured_reply", return_value=expected):
             result = reliability._classify_remediation("lane", "test-lane", HEALTH_RESOURCE_REASON, model="test-model")
@@ -102,6 +106,7 @@ class HealthExceptionDiagnosticGuard(unittest.TestCase):
         with patch.object(reliability, "sweep", return_value=copy.deepcopy(HEALTH_TEST_SWEEP)), \
              patch.object(reliability, "_persist_health"), \
              patch.object(reliability, "_remediation_db", return_value=database), \
+             patch.object(reliability.config, "ledger_op", side_effect=lambda *args: contextlib.nullcontext(database)), \
              patch.object(reliability.config, "advisor_model", return_value="test-model"), \
              patch.object(adapters, "call", side_effect=_raise_health_diagnostic_origin), \
              patch.object(gate, "is_deliberate_stop", return_value=False):

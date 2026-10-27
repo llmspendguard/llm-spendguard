@@ -27,6 +27,7 @@ Queue write guard, deliberate-stop, lock, and programming errors propagate rathe
 sqlite operational failures degrade loudly where the caller can retry. Knobs are named constants + advisor.* config.
 """
 import datetime
+import contextlib
 import json
 import logging
 import os
@@ -128,15 +129,17 @@ def _ensure_queue_schema(c):
     # SERVICE CLASS ('realtime' | 'batch'), an absolute SLA DEADLINE, and PARKING state (defer_until = NOT leasable
     # until this ts, for capacity backpressure; parks = how many times deferred for saturation, bounded by MAX_PARKS,
     # distinct from failure `attempts`). SQLite has no ADD COLUMN IF NOT EXISTS; the repo pattern (bulkgate) is to
-    # ATTEMPT the ALTER and swallow OperationalError. This is RACE-SAFE across the concurrent pooled connections — a
-    # check-then-ALTER (PRAGMA table_info, then conditional ADD) is TOCTOU: under a concurrent fan two connections both
-    # pass the check, the second ALTER raises "duplicate column name: sla_class", and that crashed the enqueue path
-    # (observed in the 429 storm replay). Attempt-and-swallow cannot race: the column exists either way.
+    # inspect metadata before ALTER so already-migrated scoped connections stay cheap. Keep the OperationalError
+    # catch: concurrent connections can both observe a missing column before one adds it, and the second ALTER
+    # then raises "duplicate column name". The metadata fast path must preserve that race-safe migration behavior.
+    queue_existing_columns = {row[1] for row in c.execute("PRAGMA table_info(lane_queue)")}
     for _col, _decl in (("sla_class", "TEXT DEFAULT 'batch'"), ("deadline_ts", "TEXT"),
                         ("defer_until", "TEXT"), ("parks", "INTEGER DEFAULT 0"),
                         ("fingerprint", "TEXT"), ("batch_handle", "TEXT"), ("batch_model", "TEXT"),
                         ("result_payload", "TEXT"), ("result_gap", "TEXT"), ("terminal_reason", "TEXT"),
                         ("result_migrated", "INTEGER DEFAULT 0")):
+        if _col in queue_existing_columns:
+            continue
         try:
             c.execute(f"ALTER TABLE lane_queue ADD COLUMN {_col} {_decl}")
         except sqlite3.OperationalError:
@@ -151,6 +154,10 @@ def _ensure_queue_schema(c):
     # in-flight?" and settle coalesces same-fingerprint pending rows. A point lookup on fingerprint, so one commit of
     # a 6k backfill stays cheap even against a deep table.
     c.execute("CREATE INDEX IF NOT EXISTS lane_queue_fingerprint ON lane_queue(fingerprint)")
+    # The migration predicate must stay indexed: scoped readers ensure this schema on every open.
+    # Retain the predicate rather than a process/file marker so late legacy rows are still repaired.
+    from .schema_indexes import ensure_ordered_index_coverage
+    ensure_ordered_index_coverage(c, "lane_queue", ("result_migrated",))
     for rid, payload in c.execute("SELECT id,result FROM lane_queue WHERE result_migrated=0").fetchall():
         parsed = _decode_queue_audit(rid, payload)
         c.execute("UPDATE lane_queue SET batch_handle=?,batch_model=?,result_payload=?,"
@@ -233,13 +240,29 @@ def _queue_conn():
 def _reset_queue_conn():
     """Drop this thread's pooled queue connection (self-heal after an error); see config.reset_ledger_conn."""
     config.reset_ledger_conn(_QUEUE_KEY)
+    from .ledger_writer import exclusive_ledger_writer_connection
+    with exclusive_ledger_writer_connection(config.lane_queue_db_path()) as connection:
+        schema_keys = getattr(connection, "_ledger_writer_schema_keys", None)
+        if schema_keys is not None:
+            schema_keys.discard(_QUEUE_KEY)
 
 
+@contextlib.contextmanager
 def _queue_op():
-    """One queue op on the pooled connection — commit on success, rollback + drop the connection on error, re-raise
-    (so each call site's own except still runs, e.g. _enqueue_leased's deliberate-stop propagation). See
-    config.ledger_op. Use as `with _queue_op() as c:`."""
-    return config.ledger_op(_QUEUE_KEY, _ensure_queue_schema, path=config.lane_queue_db_path())
+    """Reserve the queue database owner for one committed, rollback-safe operation."""
+    from .ledger_writer import exclusive_ledger_writer_connection
+    from .ledger_read import ledger_request_scope
+    queue_path = config.lane_queue_db_path()
+    try:
+        with ledger_request_scope(deadline_s=config.LEDGER_WRITE_TIMEOUT_S), exclusive_ledger_writer_connection(queue_path):
+            with config.ledger_op(_QUEUE_KEY, _ensure_queue_schema, path=queue_path) as connection:
+                yield connection
+    except BaseException:
+        # A caller may also hold a legacy read lease. Discard that thread's
+        # cached handle after a failed operation, while retaining the rolled-back
+        # owner for the next serialized mutation.
+        config.reset_ledger_conn(_QUEUE_KEY)
+        raise
 
 
 def _queue_db():
@@ -287,10 +310,12 @@ def migrate_from_ledger():
                 c.executemany("INSERT INTO lane_queue (%s) VALUES (%s)" % (",".join(use), ",".join("?" * len(use))),
                               [[row[i] for i in idx] for row in live])
                 moved = len(live)
-        with contextlib.closing(config.open_ledger_connection(ledger, timeout=QUEUE_MIGRATION_TIMEOUT_S)) as lc:
-            lc.execute(f"PRAGMA busy_timeout={QUEUE_MIGRATION_TIMEOUT_S * 1000}")
-            lc.execute("DROP TABLE IF EXISTS lane_queue")        # reclaim ~2.7GB of pages → snapshots/backups shrink
-            lc.commit()
+        from .ledger_writer import run_ledger_write, current_ledger_writer_connection
+
+        def drop_migrated_ledger_queue_table():
+            current_ledger_writer_connection(ledger).execute("DROP TABLE IF EXISTS lane_queue")
+
+        run_ledger_write(drop_migrated_ledger_queue_table, path=ledger)
         return {"moved": moved, "dropped": True,
                 "note": "copied %d live row(s) to lane_queue.db; dropped lane_queue from the ledger" % moved}
     except Exception as e:
@@ -302,7 +327,8 @@ def optimize_queue_db():
     end of a foreground drain — NOT per op: optimize can run ANALYZE, so on a per-op connection it would ADD cost, the
     opposite of the tuning goal. $0, best-effort, never raises."""
     try:
-        _queue_conn().execute("PRAGMA optimize")
+        with _queue_op() as connection:
+            connection.execute("PRAGMA optimize")
     except Exception:
         pass
 
@@ -968,10 +994,16 @@ def submit(intent, tasks, *, priority=PRIORITY_INTERACTIVE, sla_class="realtime"
                 "durable": durable, "will_process": bool(ids), "status_handles": ids,
                 "status_query": "spendguard dispatch --id <id>"}
     # SYNC FAST-PATH — own the rows from the start (no daemon race), run inline via the bulletproof engine, settle.
-    ids = _enqueue_leased(intent, tasks, system=system, reasoning=reasoning, priority=priority,
-                          sla_class=sla_class, deadline_ts=_dl)
     from . import lane_balance
+    from .ledger_read import ledger_request_scope
+    from .ledger_writer import require_ledger_writer_request_live
+    import time
     _run_dl = float(deadline_s if deadline_s is not None else (sla_s if sla_s else LEASE_S_DEFAULT))
+    with ledger_request_scope(deadline_s=_run_dl) as submit_admission_scope:
+        ids = _enqueue_leased(intent, tasks, system=system, reasoning=reasoning, priority=priority,
+                              sla_class=sla_class, deadline_ts=_dl)
+        require_ledger_writer_request_live()
+        _run_dl = submit_admission_scope.deadline_at - time.monotonic()
     bulk_kwargs.pop("record_route", None)               # these rows ARE the queue — force record_route=False so each
     results = lane_balance.bulk_delegate(tasks, intent, system=system, reasoning=reasoning,  # per-task adapters.call
                                          deadline_s=_run_dl, record_route=False, **bulk_kwargs)  # doesn't open a 2nd row
@@ -1023,9 +1055,19 @@ def hold_free_recovery(intent, task, invoke, *, deadline_s, poll_s):
     admission of another attempt, never cancels an attempt already running.
     """
     import time
-    rid = record_open(intent, task, sla_s=deadline_s)
-    end = time.monotonic() + deadline_s
+    from .ledger_read import ledger_request_scope
+    from .ledger_writer import require_ledger_writer_request_live
     from . import vendor_call
+    if deadline_s <= 0:
+        # No attempt is admitted, but its durable terminal bookkeeping still
+        # uses the queue operation's independently configured storage budget.
+        rid = record_open(intent, task, sla_s=deadline_s)
+        end = time.monotonic() + deadline_s
+    else:
+        with ledger_request_scope(deadline_s=deadline_s) as hold_admission_scope:
+            rid = record_open(intent, task, sla_s=deadline_s)
+            require_ledger_writer_request_live()
+            end = hold_admission_scope.deadline_at
     result = {"error": "free lane recovery deadline exhausted", "outcome": vendor_call.DEADLINE_EXCEEDED}
     polls = 0
     started = time.monotonic()

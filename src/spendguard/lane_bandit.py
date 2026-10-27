@@ -21,6 +21,7 @@ import datetime
 import random
 
 from . import config
+from .ledger_writer import best_effort_ledger_function
 
 _rng = random.Random()          # module-level so tests can seed it deterministically
 DECAY_DEFAULT = 0.95            # exponential forgetting per trial — recent results weigh more (relearn)
@@ -37,14 +38,17 @@ def _bcfg(name, default):
 
 
 def _bandit_db():
-    c = config.open_ledger_connection(config.db_path(), timeout=15, tune=False)
+    return config.fresh_ledger_conn(_ensure_lane_bandit_schema)
+
+
+def _ensure_lane_bandit_schema(c):
     c.execute("""CREATE TABLE IF NOT EXISTS lane_bandit(
         intent TEXT, lane TEXT, use_name TEXT,
         trials REAL DEFAULT 0, wins REAL DEFAULT 0, last_ts TEXT,
         PRIMARY KEY (intent, lane, use_name))""")
-    return c
 
 
+@best_effort_ledger_function
 def record_trial(intent, lane, use_name, won, ts=None):
     """One trial outcome for (intent, arm). `won` ∈ [0,1] (1 = this arm won the bake-off / was kept; 0 = lost or
     failed; 0.5 = tie). Exponential-forgetting update — trials←trials·γ+1, wins←wins·γ+won — so the win-RATE
@@ -55,7 +59,7 @@ def record_trial(intent, lane, use_name, won, ts=None):
         g = _bcfg("bandit_decay", DECAY_DEFAULT)
         w = max(0.0, min(1.0, float(won)))
         ts = ts or datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
-        with contextlib.closing(_bandit_db()) as c:
+        with config.ledger_op("lane_bandit", _ensure_lane_bandit_schema) as c:
             row = c.execute("SELECT trials, wins FROM lane_bandit WHERE intent=? AND lane=? AND use_name=?",
                             (intent, lane, use_name)).fetchone()
             t0, w0 = (row or (0.0, 0.0))
@@ -63,7 +67,7 @@ def record_trial(intent, lane, use_name, won, ts=None):
                       "VALUES(?,?,?,?,?,?)", (intent, lane, use_name, t0 * g + 1.0, w0 * g + w, ts))
             c.commit()
     except Exception:
-        pass
+        raise
 
 
 def arm_stats(intent):

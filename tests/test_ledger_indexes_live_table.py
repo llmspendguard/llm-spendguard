@@ -47,7 +47,8 @@ record_script_check(fails, "precutover squatters present before _ensure_schema",
 c.close()
 
 # Now let the real schema-ensure run against the SAME file. It must index the LIVE table regardless.
-led = SpendLedger(db_path=db)
+from spendguard import config
+led = SpendLedger(db_path=db, owned_connection=config.open_ledger_connection(db))
 covered = cols_indexed_on(led._conn, "spend_events")
 missing = [ix for ix in _INDEXES if ix not in covered]
 record_script_check(fails, "spend_events indexed on EVERY declared column despite the name-squatters", not missing)

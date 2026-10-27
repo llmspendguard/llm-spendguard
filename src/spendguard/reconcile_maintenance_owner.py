@@ -3,7 +3,7 @@
 Request cursors retain their abandonment machinery. This owner never borrows a
 request connection: its native cursors live only until the offline context exits.
 """
-from contextlib import contextmanager
+from contextlib import contextmanager, ExitStack
 from functools import partialmethod
 import math
 import os
@@ -62,10 +62,20 @@ class _ReconcileMaintenanceCursor(sqlite3.Cursor):
 
 
 class ReconcileMaintenanceConnection:
-    """A separately admitted handle, never a flag on a shared managed handle."""
+    """An exclusive wrapper over the reserved writer, with its own cursor lifetime."""
 
     def __init__(self, connection, deadline, budget):
         self._native_reconcile_connection = connection
+        self._reconcile_saved_progress = getattr(connection, "_ledger_progress", (None, 0))
+        parser = getattr(connection, "_ledger_statement_parser_facts", None)
+        self._reconcile_saved_authorizer = (parser.authorizer_router if parser is not None
+                                            else getattr(connection, "_ledger_authorizer", None))
+        self._reconcile_saved_row_factory = connection.row_factory
+        cursor = sqlite3.Connection.execute(connection, "PRAGMA busy_timeout")
+        try:
+            self._reconcile_saved_busy_timeout = cursor.fetchone()[0]
+        finally:
+            cursor.close()
         self._reconcile_deadline = deadline
         self._reconcile_budget = budget
         self._reconcile_progress_failure = None
@@ -198,14 +208,20 @@ class ReconcileMaintenanceConnection:
                 self.rollback()
         finally:
             self._reconcile_closed = True
-            self._native_reconcile_connection.close()
+            connection = self._native_reconcile_connection
+            connection.row_factory = self._reconcile_saved_row_factory
+            sqlite3.Connection.set_progress_handler(connection, *self._reconcile_saved_progress)
+            sqlite3.Connection.set_authorizer(connection, self._reconcile_saved_authorizer)
+            cursor = sqlite3.Connection.execute(connection,
+                f"PRAGMA busy_timeout={self._reconcile_saved_busy_timeout}")
+            cursor.close()
 
     close = close_reconcile_maintenance_owner
 
 
 @contextmanager
 def owned_reconcile_maintenance_connection(path=None, time_budget=None):
-    """Own all native cursors until rollback-before-close, including BaseException.
+    """Own native cursors until rollback and writer restoration, including BaseException.
 
     The configurable default bounds the complete offline correction transaction.
     The caller initializes schema, begins IMMEDIATE, and commits
@@ -221,23 +237,24 @@ def owned_reconcile_maintenance_connection(path=None, time_budget=None):
     if not math.isfinite(budget) or budget <= 0:
         raise ValueError("Offline reconciliation budget must be positive and finite")
     deadline = time.monotonic() + budget
-    try:
-        connection = config.open_ledger_connection(path, tune=False, deadline_at=deadline)
-    except TimeoutError as failure:
-        raise ReconcileMaintenanceDeadline(budget) from failure
-    owner = ReconcileMaintenanceConnection(connection, deadline, budget)
-    try:
-        # Admission's memory-budget PRAGMAs used managed cursors. This exclusive
-        # offline handle owns all later work; its whole-lifetime deadline and
-        # cursor boundary replace request parser facts and abandonment routing.
-        sqlite3.Connection.set_authorizer(connection, None)
-        sqlite3.Connection.set_progress_handler(
-            connection, owner.poll_reconcile_maintenance_deadline,
-            config.LEDGER_QUERY_PROGRESS_VM_INSTRUCTIONS)
-        config.tune_ledger_connection(owner)
-        owner.require_reconcile_maintenance_live()
-        yield owner
-        if not owner._reconcile_complete:
+    from .ledger_writer import exclusive_ledger_writer_connection
+    with ExitStack() as reservation_stack:
+        try:
+            with ledger_read.ledger_request_scope(deadline_s=deadline - time.monotonic()):
+                connection = reservation_stack.enter_context(exclusive_ledger_writer_connection(path))
+        except ledger_read.LedgerReadError as error:
+            raise ReconcileMaintenanceDeadline(budget) from error
+        owner = ReconcileMaintenanceConnection(connection, deadline, budget)
+        try:
+            # The admission reservation excludes every worker callback. Native
+            # cursors enforce this wrapper's deadline instead of request routing.
+            sqlite3.Connection.set_authorizer(connection, None)
+            sqlite3.Connection.set_progress_handler(
+                connection, owner.poll_reconcile_maintenance_deadline,
+                config.LEDGER_QUERY_PROGRESS_VM_INSTRUCTIONS)
             owner.require_reconcile_maintenance_live()
-    finally:
-        owner.close()
+            yield owner
+            if not owner._reconcile_complete:
+                owner.require_reconcile_maintenance_live()
+        finally:
+            owner.close()

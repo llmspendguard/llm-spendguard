@@ -16,8 +16,10 @@ import json, threading, datetime
 import logging
 import traceback
 from . import config
+from .ledger_fork_locks import new_fork_reset_ledger_state
+from .ledger_writer import best_effort_ledger_function, serialize_ledger_function
 
-_lock = threading.RLock()
+_lock = new_fork_reset_ledger_state(globals(), "_lock", threading.RLock)
 _callio_logger = logging.getLogger(__name__)
 # Chars kept per prompt / per output. 800 is enough for the caged JUDGE to rate an answer, and that is what
 # this cap was sized for. It is NOT enough to REPLAY a call: a prompt cut at 800 chars is a different task, so
@@ -128,18 +130,19 @@ def _uid():
 
 
 def count_rows(intent, model):
-    with _lock:
-        return _callio_db().execute("SELECT COUNT(*) FROM call_io WHERE intent IS ? AND model=?",
+    with config.ledger_op('callio', _ensure_callio_schema) as ledger_read_handle:
+        return ledger_read_handle.execute("SELECT COUNT(*) FROM call_io WHERE intent IS ? AND model=?",
                              (intent, model)).fetchone()[0]
 
 
 def counts():
-    with _lock:
-        return _callio_db().execute("SELECT COALESCE(intent,'(none)'), model, COUNT(*), "
+    with config.ledger_op('callio', _ensure_callio_schema) as ledger_read_handle:
+        return ledger_read_handle.execute("SELECT COALESCE(intent,'(none)'), model, COUNT(*), "
                              "SUM(quality IS NOT NULL) FROM call_io GROUP BY intent, model "
                              "ORDER BY COUNT(*) DESC").fetchall()
 
 
+@serialize_ledger_function
 def record_io_sample(intent, provider, model, batch, custom_id, prompt, output, in_tok=0, out_tok=0, source="batch_io",
            system=None, req_schema=None, req_max_tokens=0, cap_chars=None, finish_reason=None, effort=None):
     """Insert one sample (idempotent on batch+custom_id). Returns id or None if duplicate.
@@ -270,10 +273,11 @@ def unjudged(limit=None):
     # loop that has run out of room — the worst possible moment to hand back the whole table.
     if limit is not None:
         q += f" LIMIT {int(limit)}"
-    with _lock:
-        return _callio_db().execute(q).fetchall()
+    with config.ledger_op('callio', _ensure_callio_schema) as ledger_read_handle:
+        return ledger_read_handle.execute(q).fetchall()
 
 
+@best_effort_ledger_function
 def set_quality(io_id, ok, src="judge", conf=None):
     """Label a sampled call's quality after the fact — the call_io twin of calls.feedback, and now with the
     same three guarantees it had and this did not:
@@ -294,13 +298,13 @@ def set_quality(io_id, ok, src="judge", conf=None):
                           ("good" if ok else "bad", src, c, io_id))
             _callio_db().commit()
     except Exception:
-        config.rollback_ledger_conn("callio")   # clear a dangling txn from the failed write on the reused pooled conn
+        raise
 
 
 def good_rates():
     """Per (intent, model): (n_sampled, n_judged, weighted good rate). The empirical quality signal."""
-    with _lock:
-        rows = _callio_db().execute(
+    with config.ledger_op('callio', _ensure_callio_schema) as ledger_read_handle:
+        rows = ledger_read_handle.execute(
             "SELECT COALESCE(intent,'(none)'), model, COUNT(*), "
             "SUM(quality IS NOT NULL), "
             "SUM(CASE WHEN quality='good' THEN COALESCE(quality_conf,0.9) ELSE 0 END), "
@@ -323,6 +327,12 @@ def link_conversations(tdir=None, turns=10):
     call→conversation join is the batch id. Re-links (overwrites) so old one-line snippets upgrade. Returns rows."""
     from . import conv
     ctxs = conv.batch_contexts(tdir, turns=turns)
+    return _apply_callio_conversation_links(ctxs)
+
+
+@serialize_ledger_function
+def _apply_callio_conversation_links(ctxs):
+    """Apply prepared conversation contexts without running discovery on the writer."""
     n = 0
     with _lock:
         db = _callio_db()
@@ -336,8 +346,8 @@ def link_conversations(tdir=None, turns=10):
 
 def linked_sample(limit=5):
     """A few recovered calls WITH their conversation context — proves the depth layer (prompt + output + why)."""
-    with _lock:
-        return _callio_db().execute(
+    with config.ledger_op('callio', _ensure_callio_schema) as ledger_read_handle:
+        return ledger_read_handle.execute(
             "SELECT intent, model, conv_id, substr(prompt,1,80), substr(output,1,80), substr(context,1,90) "
             "FROM call_io WHERE conv_id<>'' ORDER BY ts DESC LIMIT ?", (limit,)).fetchall()
 
@@ -345,8 +355,8 @@ def linked_sample(limit=5):
 # ─────────────────────────── provider retrieval (free) ───────────────────────────
 def _runs_with_intent():
     from . import learn
-    with learn._lock:
-        rows = learn._insights_db().execute(
+    with learn.config.ledger_op('learn', learn._ensure_insights_schema) as ledger_read_handle:
+        rows = ledger_read_handle.execute(
             "SELECT id, label, attrs FROM graph_nodes WHERE type='run' ORDER BY ts DESC").fetchall()
     out = []
     for rid, label, attrs in rows:
@@ -804,8 +814,8 @@ def status_rows(intents=None):
     sample), LIVE (source='live_io'), and JUDGED. Optionally kept to intents whose name CONTAINS any of `intents`
     (substring, mechanical — same filter shape as the matrices). $0, read-only: the corpus-fill view to consult
     BEFORE estimating a sweep, so you can see which intents have enough replay bodies yet."""
-    with _lock:
-        rows = _callio_db().execute(
+    with config.ledger_op('callio', _ensure_callio_schema) as ledger_read_handle:
+        rows = ledger_read_handle.execute(
             "SELECT COALESCE(intent,'(none)'), model, COUNT(*), "
             "SUM(CASE WHEN COALESCE(truncated,0)=0 AND shape_complete=1 THEN 1 ELSE 0 END), "
             "SUM(CASE WHEN source='live_io' THEN 1 ELSE 0 END), "

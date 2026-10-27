@@ -1343,6 +1343,9 @@ def _statusline_cache_path():
 def _write_statusline_cache(line):
     """Persist the rendered tally line for the FAST status line (spendguard/statusline.py) to read with no import.
     The per-turn --stop-hook writes it, so a status line that repaints many times between turns is a cheap file read."""
+    from .ledger_writer import ledger_bulk_scope_matches
+    if ledger_bulk_scope_matches(config.db_path()):
+        return
     try:
         _statusline_cache_path().write_text(line)
     except Exception:
@@ -1354,6 +1357,11 @@ def _cached_tally_line():
     the cached line is returned. So even the heavy `spendguard receipt --statusline` path does the tally work (ledger
     read + lane-value refresh) at most once per window. The FAST path (the standalone statusline.py the installer
     writes) skips this whole process — it reads the cache directly with no spendguard import."""
+    from .ledger_writer import ledger_bulk_scope_matches
+    if ledger_bulk_scope_matches(config.db_path()):
+        # Show live pending state only to its scope; never reuse or publish a
+        # cross-scope rendered tally while its inputs are uncommitted.
+        return render_line(tally())
     cache = _statusline_cache_path()
     try:
         if (time.time() - cache.stat().st_mtime) < float(_STATUSLINE_CACHE_S):
@@ -1375,9 +1383,11 @@ def _compaction_hint():
     compaction ratio (a ledger query via claudecode). Account-level, not per-session. The --stop-hook calls this every
     turn, so it SELF-CACHES for an hour (k barely moves). Best-effort → safe defaults; never raises."""
     from . import config
+    from .ledger_writer import ledger_bulk_scope_matches
+    pending_compaction_scope = ledger_bulk_scope_matches(config.db_path())
     hp = config.HOME / "compaction_hint.json"
     try:
-        if (time.time() - hp.stat().st_mtime) < 3600:
+        if not pending_compaction_scope and (time.time() - hp.stat().st_mtime) < 3600:
             return json.loads(hp.read_text())
     except Exception:
         pass
@@ -1396,6 +1406,8 @@ def _compaction_hint():
     except Exception:
         k = None
     hint = {"threshold_tokens": thr, "k": k}
+    if pending_compaction_scope:
+        return hint
     try:                                                  # through update_json (atomic + `~` backup + refuses to
         config.update_json(hp, lambda _d: hint, reason="compaction-hint cache", keep_backups=0)
     except Exception:

@@ -54,7 +54,8 @@ def test_ledger_local_timestamp_fresh_aware_clock():
                         assert LOCAL_TIMESTAMP_CLOCK_ORIGINAL_DATETIME.fromisoformat(
                             stored["local_datetime"]).astimezone(datetime.timezone.utc) == instant
             finally:
-                timestamp_ledger._conn.close()
+                if timestamp_ledger._conn is not None:
+                    timestamp_ledger._conn.close()
     finally:
         if previous_timezone is None:
             os.environ.pop("TZ", None)

@@ -28,16 +28,16 @@ _TERSE = ("\n\nOutput ONLY the minimal result (e.g. the JSON / the codes) with N
 
 def _base_model(intent):
     """The reference model with the most usable (prompt+output) samples — the baseline to compare against."""
-    with callio._lock:
-        r = callio._callio_db().execute(
+    with callio.config.ledger_op('callio', callio._ensure_callio_schema) as ledger_read_handle:
+        r = ledger_read_handle.execute(
             "SELECT model, COUNT(*) FROM call_io WHERE COALESCE(intent,'(none)')=? AND prompt!='' "
             "AND output!='' GROUP BY model ORDER BY 2 DESC LIMIT 1", (intent,)).fetchone()
     return r[0] if r else None
 
 
 def _samples(intent, base_model, k):
-    with callio._lock:
-        rows = callio._callio_db().execute(
+    with callio.config.ledger_op('callio', callio._ensure_callio_schema) as ledger_read_handle:
+        rows = ledger_read_handle.execute(
             "SELECT prompt, output, model FROM call_io WHERE COALESCE(intent,'(none)')=? AND model=? "
             "AND prompt!='' AND output!='' LIMIT ?", (intent, base_model, k)).fetchall()
     return rows

@@ -252,8 +252,9 @@ def test_wal_checkpoint_fault_deadline_leak_mutation_is_detected(tmp_path, monke
                 deadline_guard(guard_path, deadline_leak)
 
 
-def test_wal_request_lifetime_does_not_age_next_read_deadline(tmp_path):
-    from spendguard.ledger_read import ledger_request_scope
+def test_wal_expired_request_refuses_read_and_next_request_recovers(tmp_path):
+    import pytest
+    from spendguard.ledger_read import ledger_request_scope, LedgerQueryDeadline
 
     ledger_path = tmp_path / pathlib.Path(__file__).stem
     writer = _seed_wal_maintenance_fixture(ledger_path)
@@ -261,6 +262,9 @@ def test_wal_request_lifetime_does_not_age_next_read_deadline(tmp_path):
     try:
         with ledger_request_scope(deadline_s=WAL_GUARD_REQUEST_DEADLINE_S):
             time.sleep(WAL_GUARD_REQUEST_DEADLINE_S + config.LEDGER_REQUEST_DISCONNECT_POLL_S)
+            with pytest.raises(LedgerQueryDeadline):
+                reader.execute("SELECT COUNT(*) FROM wal_guard").fetchone()
+        with ledger_request_scope(deadline_s=WAL_GUARD_EXPIRY_WAIT_S):
             assert reader.execute("SELECT COUNT(*) FROM wal_guard").fetchone()[0] == WAL_GUARD_ROWS
     finally:
         reader.close()

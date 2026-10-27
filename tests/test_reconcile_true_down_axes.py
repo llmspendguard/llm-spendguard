@@ -2,6 +2,8 @@
 import os
 import sys
 import tempfile
+import sqlite3
+from contextlib import closing
 from decimal import Decimal
 
 if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
@@ -46,45 +48,49 @@ for true_down_axes_kind in TRUE_DOWN_AXES_NONBATCH_KINDS:
         timestamp_suffix=TRUE_DOWN_AXES_TIMESTAMP_SUFFIX, source=TRUE_DOWN_AXES_SOURCE,
         dedup_fields=("provider", "kind"))
 
-true_down_axes_ledger = budget._ledger()
-true_down_axes_originals = {
-    row["id"]: dict(row) for row in true_down_axes_ledger._conn.execute("SELECT * FROM spend_events")}
-true_down_axes_rows = [(TRUE_DOWN_AXES_PROVIDER, TRUE_DOWN_AXES_MODEL, float(TRUE_DOWN_AXES_BILLED),
-    TRUE_DOWN_AXES_UNUSED_TOKENS, TRUE_DOWN_AXES_UNUSED_TOKENS,
-    TRUE_DOWN_AXES_DAY, TRUE_DOWN_AXES_SOURCE)]
-true_down_axes_truth = {TRUE_DOWN_AXES_PROVIDER: true_down_axes_rows,
-    TRUE_DOWN_AXES_FAILED_PROVIDER: []}
-# First settle both providers, then inject a sibling fetch failure. Prior failed
-# corrections must clear back to estimates, while the readable sibling rebuilds.
-ledger_sync.true_down(TRUE_DOWN_AXES_SINCE, true_down_axes_truth)
-true_down_axes_truth[TRUE_DOWN_AXES_FAILED_PROVIDER] = None
-true_down_axes_partial = ledger_sync.true_down(TRUE_DOWN_AXES_SINCE, true_down_axes_truth)
-true_down_axes_corrections = [dict(row) for row in true_down_axes_ledger._conn.execute(
-    "SELECT * FROM spend_events WHERE conv_id=?", (budget._TRUE_DOWN_CONV,))]
-assert true_down_axes_corrections, "successful provider correction suppressed by nonbatch NULL amounts"
-assert all(row["provider"] == TRUE_DOWN_AXES_PROVIDER for row in true_down_axes_corrections)
-assert all(row["model"] == TRUE_DOWN_AXES_MODEL for row in true_down_axes_corrections)
-assert all(row["invoice_id"] == ":".join((TRUE_DOWN_AXES_PROVIDER, TRUE_DOWN_AXES_DAY[:7]))
-    for row in true_down_axes_corrections)
-assert sum(Decimal(row["batch_usd"]) for row in true_down_axes_corrections) == (
-    TRUE_DOWN_AXES_BILLED - TRUE_DOWN_AXES_ESTIMATE)
-assert true_down_axes_partial["skipped"] == [TRUE_DOWN_AXES_FAILED_PROVIDER]
-assert not true_down_axes_partial["estimate_unpriced_incomplete"]
-assert true_down_axes_originals == {
-    row["id"]: dict(row) for row in true_down_axes_ledger._conn.execute(
-        "SELECT * FROM spend_events WHERE conv_id IS NOT ?", (budget._TRUE_DOWN_CONV,))}
+from spendguard import config
 
-report.openai_by_day = lambda: ({}, 0)
-reconcile_anthropic.cost_by_day = lambda since=None: ({TRUE_DOWN_AXES_DAY: TRUE_DOWN_AXES_BILLED}, {})
-backfill._openai_rows = lambda: []
-backfill._anthropic_rows = lambda: true_down_axes_rows
-conv.batch_project_map = lambda: {}
-saas.saas_connection = lambda: {"owns_account": True, "project": TRUE_DOWN_AXES_PROJECT}
-ledger_sync.audit_completeness = lambda: {"complete": True}
-true_down_axes_summary = ledger_sync.reconcile_into_ledger(TRUE_DOWN_AXES_SINCE)
-assert TRUE_DOWN_AXES_SUMMARY_KEYS <= true_down_axes_summary.keys()
-assert true_down_axes_summary["complete"]
-assert true_down_axes_summary["provider_total"] == TRUE_DOWN_AXES_BILLED
-assert true_down_axes_summary["gate_attributed"] == TRUE_DOWN_AXES_BILLED
-assert not true_down_axes_summary["gap_rows"]
-print("OK reconcile_true_down_axes: mixed axes preserve batch corrections, failed sibling isolation and summary contract")
+with closing(config.open_ledger_connection()) as true_down_axes_connection:
+    true_down_axes_connection.row_factory = sqlite3.Row
+    true_down_axes_ledger = budget._ledger()
+    true_down_axes_originals = {
+        row["id"]: dict(row) for row in true_down_axes_connection.execute("SELECT * FROM spend_events")}
+    true_down_axes_rows = [(TRUE_DOWN_AXES_PROVIDER, TRUE_DOWN_AXES_MODEL, float(TRUE_DOWN_AXES_BILLED),
+        TRUE_DOWN_AXES_UNUSED_TOKENS, TRUE_DOWN_AXES_UNUSED_TOKENS,
+        TRUE_DOWN_AXES_DAY, TRUE_DOWN_AXES_SOURCE)]
+    true_down_axes_truth = {TRUE_DOWN_AXES_PROVIDER: true_down_axes_rows,
+        TRUE_DOWN_AXES_FAILED_PROVIDER: []}
+    # First settle both providers, then inject a sibling fetch failure. Prior failed
+    # corrections must clear back to estimates, while the readable sibling rebuilds.
+    ledger_sync.true_down(TRUE_DOWN_AXES_SINCE, true_down_axes_truth)
+    true_down_axes_truth[TRUE_DOWN_AXES_FAILED_PROVIDER] = None
+    true_down_axes_partial = ledger_sync.true_down(TRUE_DOWN_AXES_SINCE, true_down_axes_truth)
+    true_down_axes_corrections = [dict(row) for row in true_down_axes_connection.execute(
+        "SELECT * FROM spend_events WHERE conv_id=?", (budget._TRUE_DOWN_CONV,))]
+    assert true_down_axes_corrections, "successful provider correction suppressed by nonbatch NULL amounts"
+    assert all(row["provider"] == TRUE_DOWN_AXES_PROVIDER for row in true_down_axes_corrections)
+    assert all(row["model"] == TRUE_DOWN_AXES_MODEL for row in true_down_axes_corrections)
+    assert all(row["invoice_id"] == ":".join((TRUE_DOWN_AXES_PROVIDER, TRUE_DOWN_AXES_DAY[:7]))
+        for row in true_down_axes_corrections)
+    assert sum(Decimal(row["batch_usd"]) for row in true_down_axes_corrections) == (
+        TRUE_DOWN_AXES_BILLED - TRUE_DOWN_AXES_ESTIMATE)
+    assert true_down_axes_partial["skipped"] == [TRUE_DOWN_AXES_FAILED_PROVIDER]
+    assert not true_down_axes_partial["estimate_unpriced_incomplete"]
+    assert true_down_axes_originals == {
+        row["id"]: dict(row) for row in true_down_axes_connection.execute(
+            "SELECT * FROM spend_events WHERE conv_id IS NOT ?", (budget._TRUE_DOWN_CONV,))}
+
+    report.openai_by_day = lambda: ({}, 0)
+    reconcile_anthropic.cost_by_day = lambda since=None: ({TRUE_DOWN_AXES_DAY: TRUE_DOWN_AXES_BILLED}, {})
+    backfill._openai_rows = lambda: []
+    backfill._anthropic_rows = lambda: true_down_axes_rows
+    conv.batch_project_map = lambda: {}
+    saas.saas_connection = lambda: {"owns_account": True, "project": TRUE_DOWN_AXES_PROJECT}
+    ledger_sync.audit_completeness = lambda: {"complete": True}
+    true_down_axes_summary = ledger_sync.reconcile_into_ledger(TRUE_DOWN_AXES_SINCE)
+    assert TRUE_DOWN_AXES_SUMMARY_KEYS <= true_down_axes_summary.keys()
+    assert true_down_axes_summary["complete"]
+    assert true_down_axes_summary["provider_total"] == TRUE_DOWN_AXES_BILLED
+    assert true_down_axes_summary["gate_attributed"] == TRUE_DOWN_AXES_BILLED
+    assert not true_down_axes_summary["gap_rows"]
+    print("OK reconcile_true_down_axes: mixed axes preserve batch corrections, failed sibling isolation and summary contract")

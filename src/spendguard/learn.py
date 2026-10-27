@@ -7,8 +7,10 @@ conversation/decision/script nodes + edges come in Layer 2 (mining).
 """
 import datetime, threading, json
 from . import config
+from .ledger_fork_locks import new_fork_reset_ledger_state
+from .ledger_writer import serialize_ledger_function
 
-_lock = threading.RLock()
+_lock = new_fork_reset_ledger_state(globals(), "_lock", threading.RLock)
 
 
 def _ensure_insights_schema(c):
@@ -63,6 +65,10 @@ def _ensure_insights_schema(c):
     c.execute("CREATE INDEX IF NOT EXISTS idx_ins_intent ON insights(intent)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_gn_type ON graph_nodes(type)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_seg_source ON seg_attribution(source)")
+    c.execute("CREATE TABLE IF NOT EXISTS user_ask_class "
+              "(hash TEXT PRIMARY KEY, is_ask INT, model TEXT, ts TEXT)")
+    c.execute("CREATE TABLE IF NOT EXISTS evidence_class "
+              "(hash TEXT PRIMARY KEY, spend_evidence INT, kind TEXT, cost_lesson INT, model TEXT, ts TEXT)")
     c.commit()
 
 
@@ -85,6 +91,7 @@ _CTX = ("task_class", "regime", "output_shape", "scale", "condition", "action", 
         "quality_basis", "n_observations", "scope")
 
 
+@serialize_ledger_function
 def add_insight(intent, lesson, evidence=None, source="manual", confidence=0.5, ctx=None,
                 status="candidate", scope="private"):
     """Record a learning. `ctx` carries the applicability (task_class/regime/output_shape/scale) and the
@@ -121,8 +128,8 @@ def insights(intent=None, min_conf=0.0, include_refuted=False, scope=None):
         where.append("(status IS NULL OR status != 'refuted')")
     if scope:
         where.append("scope = ?"); args.append(scope)
-    with _lock:
-        return _insights_db().execute(
+    with config.ledger_op('learn', _ensure_insights_schema) as ledger_read_handle:
+        return ledger_read_handle.execute(
             f"SELECT intent, lesson, source, confidence, evidence FROM insights "
             f"WHERE {' AND '.join(where)} ORDER BY {_STATUS_RANK} DESC, confidence DESC", args).fetchall()
 
@@ -134,8 +141,8 @@ def insights_full(intent=None, include_refuted=False):
     if intent:
         where.append("intent = ?"); args.append(intent)
     w = ("WHERE " + " AND ".join(where)) if where else ""
-    with _lock:
-        cur = _insights_db().execute(
+    with config.ledger_op('learn', _ensure_insights_schema) as ledger_read_handle:
+        cur = ledger_read_handle.execute(
             f"SELECT id,intent,lesson,evidence,source,confidence,status,support,contradiction,"
             f"last_validated,version,scope,{','.join(_CTX)} FROM insights {w} "
             f"ORDER BY {_STATUS_RANK} DESC, confidence DESC", args)
@@ -143,6 +150,7 @@ def insights_full(intent=None, include_refuted=False):
         return [dict(zip(cols, row)) for row in cur.fetchall()]
 
 
+@serialize_ledger_function
 def update_insight(iid, **fields):
     """Update lifecycle/confidence fields (used by the validate pass)."""
     if not fields:
@@ -164,6 +172,7 @@ def update_insight(iid, **fields):
 
 
 # ── temporal learning graph ──
+@serialize_ledger_function
 def add_node(type, label, attrs=None, ts=None, id=None):
     nid = id or _uid()
     with _lock:
@@ -173,6 +182,7 @@ def add_node(type, label, attrs=None, ts=None, id=None):
     return nid
 
 
+@serialize_ledger_function
 def add_edge(src, dst, rel, ts=None, attrs=None):
     with _lock:
         _insights_db().execute("INSERT INTO graph_edges VALUES (?,?,?,?,?)",
@@ -181,7 +191,8 @@ def add_edge(src, dst, rel, ts=None, attrs=None):
 
 
 def graph_stats():
-    with _lock:
-        nodes = _insights_db().execute("SELECT type, COUNT(*) FROM graph_nodes GROUP BY type ORDER BY 2 DESC").fetchall()
-        edges = _insights_db().execute("SELECT rel, COUNT(*) FROM graph_edges GROUP BY rel ORDER BY 2 DESC").fetchall()
+    with config.ledger_op('learn', _ensure_insights_schema) as ledger_read_handle:
+        nodes = ledger_read_handle.execute("SELECT type, COUNT(*) FROM graph_nodes GROUP BY type ORDER BY 2 DESC").fetchall()
+    with config.ledger_op('learn', _ensure_insights_schema) as ledger_read_handle:
+        edges = ledger_read_handle.execute("SELECT rel, COUNT(*) FROM graph_edges GROUP BY rel ORDER BY 2 DESC").fetchall()
     return nodes, edges

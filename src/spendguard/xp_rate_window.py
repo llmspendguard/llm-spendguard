@@ -95,29 +95,56 @@ def _try_reserve(c, key, limits, est, now):
     return (True, 0.0)
 
 
+def _commit_rate_window_reservation(key, limits, est_tokens, clock):
+    """Execute only the local atomic attempt on the ledger writer."""
+    with config.ledger_op(_XP_RATE_KEY, _ensure_xp_rate_schema) as connection:
+        from .ledger_writer import require_ledger_writer_request_live
+        require_ledger_writer_request_live()
+        connection.execute("BEGIN IMMEDIATE")
+        result = _try_reserve(connection, key, limits, est_tokens, clock())
+        require_ledger_writer_request_live()
+        connection.commit()
+        return result
+
+
 def reserve(key, limits, est_tokens=0, deadline_s=30.0, clock=time.time, sleep=time.sleep):
     """Reserve one admission for `key` under the multi-window `limits`, waiting (bounded by deadline_s) until the
     shared window has room. Returns seconds waited. Raises RateDeadline if the aggregate rate stays saturated past the
     deadline. A shared-store infrastructure failure raises RateDeadline with the complete reason. `clock`/`sleep` are injectable for tests."""
     if _xp_rate_off() or not limits:
         return 0.0
+    from .ledger_read import effective_ledger_admission_deadline, LedgerReadError
+    try:
+        reservation_expiry = effective_ledger_admission_deadline(time.monotonic() + float(deadline_s))
+    except LedgerReadError as error:
+        raise RateDeadline(f"'{key}' shared rate reservation deadline exhausted") from error
     t0 = clock()
+
+    def remaining_rate_window_budget():
+        try:
+            effective_ledger_admission_deadline(reservation_expiry)
+        except LedgerReadError as error:
+            raise RateDeadline(f"'{key}' shared rate reservation deadline exhausted") from error
+        return min(float(deadline_s) - (clock() - t0), reservation_expiry - time.monotonic())
+
     while True:
-        remaining = float(deadline_s) - (clock() - t0)
+        remaining = remaining_rate_window_budget()
         if remaining <= 0:
             raise RateDeadline("'%s' shared rate window saturated — deadline %.0fs exhausted" % (key, float(deadline_s)))
         try:
-            with config.ledger_op(_XP_RATE_KEY, _ensure_xp_rate_schema) as c:
-                c.execute("BEGIN IMMEDIATE")             # cross-process write lock: check+insert is one atomic step
-                now = clock()                            # B: capture AFTER the lock — the window is checked at commit time
-                ok, wait = _try_reserve(c, key, limits, est_tokens, now)
-                c.commit()
+            from .ledger_writer import run_ledger_write
+            from .ledger_read import ledger_request_scope
+            with ledger_request_scope(deadline_s=remaining):
+                ok, wait = run_ledger_write(
+                    lambda: _commit_rate_window_reservation(key, limits, est_tokens, clock))
+        except LedgerReadError as error:
+            raise RateDeadline(f"'{key}' shared rate reservation deadline exhausted") from error
         except sqlite3.OperationalError:                 # C: transient lock/busy — RETRY within the deadline, do NOT
-            sleep(min(_MIN_WAIT_S, max(0.0, remaining)))  #    silently admit (a momentary contention must not bypass the rate)
+            sleep(min(_MIN_WAIT_S, max(0.0, remaining_rate_window_budget())))
             continue
         except sqlite3.Error as error:
             raise RateDeadline(f"xp_rate_window.reserve: '{key}' shared rate store failed "
                                f"({type(error).__name__}: {error})") from error
         if ok:
             return clock() - t0
-        sleep(min(wait + 0.001, remaining))
+        sleep(min(wait + 0.001, max(0.0, remaining_rate_window_budget())))

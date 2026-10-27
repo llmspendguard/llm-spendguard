@@ -86,7 +86,8 @@ def _newest(where=None):
     if where:
         w = " WHERE " + " AND ".join(f"{k}=?" for k in where)
         args = list(where.values())
-    r = _led._conn.execute(f"SELECT id FROM spend_events{w} ORDER BY rowid DESC LIMIT 1", args).fetchone()
+    with _config.ledger_op("attribution_fixture_reads", lambda connection: None) as connection:
+        r = connection.execute(f"SELECT id FROM spend_events{w} ORDER BY rowid DESC LIMIT 1", args).fetchone()
     return _led.get(r[0]) if r else None
 
 
@@ -112,8 +113,9 @@ check("a charge with no declared intent records an empty one, not the previous f
 
 
 print("\n  history can be repaired, and the repair is journalled:")
-_led._conn.execute("UPDATE spend_events SET provider='openai' WHERE model='kimi-k3'")   # seed a mislabelled vendor
-_led._conn.commit()
+from spendguard.ledger_writer import run_ledger_write, current_ledger_writer_connection
+run_ledger_write(lambda: current_ledger_writer_connection().execute(
+    "UPDATE spend_events SET provider='openai' WHERE model='kimi-k3'"))
 
 
 def _provider_of(model):
@@ -149,8 +151,8 @@ print("\n  the key fingerprint belongs to the vendor on the row:")
 budget.record_charge(provider="moonshot", model="kimi-k3", kind="realtime", cost=2.0)
 _eid = _newest(where={"model": "kimi-k3"})["id"]           # the spend_events id of the row we stamp
 _openai_fp = "aaaaaaaa:bbbb"
-_led._conn.execute("UPDATE spend_events SET key_fp=? WHERE id=?", (_openai_fp, _eid))
-_led._conn.commit()
+run_ledger_write(lambda: current_ledger_writer_connection().execute(
+    "UPDATE spend_events SET key_fp=? WHERE id=?", (_openai_fp, _eid)))
 
 import spendguard.config as _c2                                             # noqa: E402
 _real_fp = _c2.key_fingerprint

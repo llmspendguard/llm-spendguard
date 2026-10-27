@@ -108,7 +108,9 @@ retention_plan = plan_details(
 record_script_check(failures, "content TTL purge subselect is an index SEARCH", plan_searches_with(retention_plan, retention_index))
 
 ledger_directory = tempfile.mkdtemp(prefix="spendguard-ledger-plan-")
-ledger = SpendLedger(db_path=os.path.join(ledger_directory, "spend.db"))
+from spendguard import config
+ledger = SpendLedger(db_path=os.path.join(ledger_directory, "spend.db"),
+                     owned_connection=config.open_ledger_connection(os.path.join(ledger_directory, "spend.db")))
 ledger._conn.executemany(
     "INSERT INTO spend_events(id,occurred_at,source,cost_type,cost_basis,provider,model,intent) "
     "VALUES(?,?,?,?,?,?,?,?)",

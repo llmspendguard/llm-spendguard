@@ -63,7 +63,7 @@ with patch.object(ledger.datetime, "datetime", PostingLocalConversionForbidden):
             assert str(posting_guard_error) == "interrupted posting"
         else:
             raise AssertionError("fault did not escape")
-    assert len(list(budget._ledger()._conn.execute("SELECT * FROM spend_events WHERE provider=?", (POSTING_GUARD_ID,)))) == POSTING_GUARD_FAULT_AT
+    assert len(budget._ledger().query(where={"provider": POSTING_GUARD_ID})) == POSTING_GUARD_FAULT_AT
 
 # Capture each independent snapshot outside the clock fault, then prohibit per-row conversions.
 posting_guard_snapshots = {
@@ -94,7 +94,7 @@ with patch.object(ledger.datetime, "datetime", PostingLocalConversionForbidden):
     with ThreadPoolExecutor(max_workers=len(POSTING_GUARD_OPERATIONS)) as posting_guard_pool:
         assert set(posting_guard_pool.map(write_posting_snapshot_operation, POSTING_GUARD_OPERATIONS)) == set(
             POSTING_GUARD_OPERATIONS)
-posting_guard_rows = list(budget._ledger()._conn.execute("SELECT * FROM spend_events WHERE provider=?", (POSTING_GUARD_ID,)))
+posting_guard_rows = budget._ledger().query(where={"provider": POSTING_GUARD_ID})
 assert len(posting_guard_rows) == (len(POSTING_GUARD_ROWS) * len(POSTING_GUARD_OPERATIONS)
                                  + POSTING_GUARD_FAULT_AT)
 assert len({row["id"] for row in posting_guard_rows}) == len(posting_guard_rows)
@@ -123,9 +123,8 @@ with patch.object(ledger, "ledger_posting_metadata", return_value=posting_guard_
         posting_guard_summary = ledger_sync.true_down(POSTING_GUARD_DAY, posting_guard_billed)
 posting_capture.assert_called_once_with()
 assert not posting_guard_summary["read_gaps"]
-posting_guard_corrections = list(budget._ledger()._conn.execute(
-    "SELECT * FROM spend_events WHERE provider=? AND conv_id=?",
-    (posting_guard_integration_provider, budget._TRUE_DOWN_CONV)))
+posting_guard_corrections = budget._ledger().query(where={
+    "provider": posting_guard_integration_provider, "conv_id": budget._TRUE_DOWN_CONV})
 assert len(posting_guard_corrections) == len(POSTING_GUARD_ROWS)
 assert len({event["id"] for event in posting_guard_corrections}) == len(POSTING_GUARD_ROWS)
 for posting_guard_event in posting_guard_corrections:
@@ -153,10 +152,12 @@ with patch.object(ledger.datetime, "datetime", PostingLocalConversionForbidden):
             assert str(posting_guard_error) == "eager source-local conversion"
         else:
             raise AssertionError("missing local field did not request its default")
-posting_guard_none_row = budget._ledger()._conn.execute(
-    "SELECT recorded_at,tz,local_datetime FROM spend_events WHERE id=?", (posting_guard_none_id,)).fetchone()
-assert tuple(posting_guard_none_row) == (None, None, None)
-assert budget._ledger()._conn.execute(
-    "SELECT COUNT(*) FROM spend_audit WHERE pass=?", ("ingest",)).fetchone()[0] == budget._ledger().count_events()
+posting_guard_none_row = budget._ledger().get(posting_guard_none_id)
+assert tuple(posting_guard_none_row[column] for column in ("recorded_at", "tz", "local_datetime")) == (None, None, None)
+from spendguard import config as posting_guard_config
+with posting_guard_config.ledger_op("posting_audit_guard", lambda connection: None) as posting_guard_connection:
+    posting_guard_audit_count = posting_guard_connection.execute(
+        "SELECT COUNT(*) FROM spend_audit WHERE pass=?", ("ingest",)).fetchone()[0]
+assert posting_guard_audit_count == budget._ledger().count_events()
 assert budget._ledger().verify_audit_chain(detail=True)["ok"]
 print("OK posting defaults: complete concurrent rows, immutable snapshots, midstep interruption, exact audit")

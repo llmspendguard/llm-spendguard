@@ -1278,6 +1278,12 @@ def serve_http(host="127.0.0.1", port=4913):
     in-board /mcp. Threaded so concurrent clients are independent; each request is self-contained (no session state).
     Carries the SAME deploy self-heal as serve_stdio: after a response is flushed (between requests, nothing in
     flight), if a newer green commit was deployed the process exits so the supervisor respawns it on the latest code."""
+    from .mcp_fd_lifecycle import (mcp_descriptor_policy, raise_mcp_descriptor_soft_limit,
+                                   enforce_mcp_descriptor_headroom, MCPDescriptorPressureError,
+                                   service_mcp_spend_deadletters)
+    target, fraction, poll_interval = mcp_descriptor_policy()
+    raise_mcp_descriptor_soft_limit(target)
+    service_mcp_spend_deadletters()
     handler_class = build_mcp_http_handler()
     from http.server import ThreadingHTTPServer
     from . import fleet
@@ -1286,7 +1292,16 @@ def serve_http(host="127.0.0.1", port=4913):
                             supervision_mode=fleet.SUPERVISION_LAUNCHD,
                             supervision_ref=MCP_HTTP_LAUNCHD_LABEL)
     _prewarm_codex_daemon()
-    ThreadingHTTPServer((host, port), handler_class).serve_forever()
+    class DescriptorGuardedMCPHTTPServer(ThreadingHTTPServer):
+        def service_actions(self):
+            enforce_mcp_descriptor_headroom(fraction)
+            service_mcp_spend_deadletters()
+
+    with DescriptorGuardedMCPHTTPServer((host, port), handler_class) as server:
+        try:
+            server.serve_forever(poll_interval=poll_interval)
+        except MCPDescriptorPressureError:
+            logging.getLogger(__name__).exception("Stopping MCP HTTP daemon for supervised descriptor recovery")
 
 
 def cmd(argv=None):

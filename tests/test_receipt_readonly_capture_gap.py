@@ -1,5 +1,6 @@
 """Receipt reads a readonly ledger without tuning it and names every unavailable capture axis."""
 import datetime
+import contextlib
 import os
 import sqlite3
 import stat
@@ -19,12 +20,14 @@ os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
 from spendguard import budget, config, receipt  # noqa: E402
+from spendguard.ledger_writer import close_ledger_writers
 
 budget.record_charge("openai", "fixture-model", "realtime", FIXTURE_COST)
-budget._LEDGER_TL.led._conn.execute(f"DROP TABLE {SCHEMA_TABLE_REMOVED_FOR_MIGRATION}")
-budget._LEDGER_TL.led._conn.commit()
-budget._LEDGER_TL.led._conn.close()
+with contextlib.closing(config.open_ledger_connection(config.db_path())) as fixture_connection:
+    fixture_connection.execute(f"DROP TABLE {SCHEMA_TABLE_REMOVED_FOR_MIGRATION}")
+    fixture_connection.commit()
 budget._LEDGER_TL.led = None
+close_ledger_writers()
 ledger_path = config.db_path()
 os.chmod(ledger_path, READONLY_FILE_MODE)
 try:

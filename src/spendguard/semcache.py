@@ -14,16 +14,19 @@ threshold=0.0 → exact-only (default, zero risk). >0 → also semantic. Returns
 """
 import sqlite3, struct, hashlib, threading, datetime
 from . import config
+from .ledger_fork_locks import new_fork_reset_ledger_state
+from .ledger_writer import best_effort_ledger_function
 from .schema_indexes import ensure_ordered_index_coverage, table_index_coverages
 
-_lock = threading.RLock()
+_lock = new_fork_reset_ledger_state(globals(), "_lock", threading.RLock)
 _stats = {"exact": 0, "semantic": 0, "miss": 0, "saved": 0.0}
 _SEMCACHE_UNIQUE_REPAIR_SAVEPOINT = "semcache_unique_key_repair"
+_SEMCACHE_UNIQUE_KEY_COLUMNS = ("model", "prompt_hash")
 
 
 def _ensure_semcache_schema(c):
     """Create the semcache table + its UNIQUE (model, prompt_hash) index (migrating a legacy dup-carrying db).
-    Idempotent; run once per pooled connection by config.pooled_ledger_conn."""
+    Operation-scoped connections check metadata before attempting the one-time repair."""
     c.execute("""CREATE TABLE IF NOT EXISTS semcache(
         id TEXT PRIMARY KEY, ts TEXT, model TEXT, prompt_hash TEXT, prompt TEXT,
         output TEXT, emb BLOB)""")
@@ -32,13 +35,22 @@ def _ensure_semcache_schema(c):
     # impossible: without a UNIQUE constraint, any other writer can still create a second row for the same key, and
     # get()'s `LIMIT 1` with no ORDER BY would serve an arbitrary one, so a re-cached prompt could keep returning the
     # OLD output indefinitely. A discipline in one function is not an invariant.
+    # Partial indexes do not enforce the key for the whole cache. Inspect physical
+    # table coverage rather than trusting a globally named index (which can be squatted).
+    whole_unique_indexes = {
+        row[1] for row in c.execute("PRAGMA index_list(semcache)").fetchall()
+        if row[2] and not row[4]
+    }
+    if any(columns == _SEMCACHE_UNIQUE_KEY_COLUMNS and unique and name in whole_unique_indexes
+           for columns, unique, name in table_index_coverages(c, "semcache")):
+        return
     _repair_semcache_unique_key(c)
     c.commit()
 
 
 def _repair_semcache_unique_key(connection):
     """Make ``(model, prompt_hash)`` unique, keeping one deterministic cache entry per key."""
-    key_columns = ("model", "prompt_hash")
+    key_columns = _SEMCACHE_UNIQUE_KEY_COLUMNS
     connection.execute(f"SAVEPOINT {_SEMCACHE_UNIQUE_REPAIR_SAVEPOINT}")
     try:
         duplicate_keys = connection.execute(
@@ -141,8 +153,8 @@ def get_cached(prompt, model, threshold=0.0):
     any→agnostic). NOTE: the semantic tier only matches entries cached WITH an embedding (a prior threshold>0
     call); an exact-only entry carries none and is invisible to semantic matching — by design, to keep exact free."""
     h = _hash(prompt)
-    with _lock:
-        row = _semcache_db().execute("SELECT output FROM semcache WHERE model IN (?, ?) AND prompt_hash=? LIMIT 1",
+    with config.ledger_op('semcache', _ensure_semcache_schema) as ledger_read_handle:
+        row = ledger_read_handle.execute("SELECT output FROM semcache WHERE model IN (?, ?) AND prompt_hash=? LIMIT 1",
                             (model, _SCOPE_ANY, h)).fetchone()
     if row:
         _stats["exact"] += 1
@@ -150,8 +162,8 @@ def get_cached(prompt, model, threshold=0.0):
     if threshold and threshold > 0:
         qv = _embed(prompt)
         if qv:
-            with _lock:
-                rows = _semcache_db().execute("SELECT output, emb FROM semcache WHERE model IN (?, ?) AND emb IS NOT NULL",
+            with config.ledger_op('semcache', _ensure_semcache_schema) as ledger_read_handle:
+                rows = ledger_read_handle.execute("SELECT output, emb FROM semcache WHERE model IN (?, ?) AND emb IS NOT NULL",
                                      (model, _SCOPE_ANY)).fetchall()
             best, bout = threshold, None
             for out, emb in rows:
@@ -168,8 +180,14 @@ def get_cached(prompt, model, threshold=0.0):
 
 
 def put(prompt, model, output, store_embedding=False):
-    import uuid
     emb = _pack(_embed(prompt) or []) if store_embedding else None
+    return _persist_semcache_entry(prompt, model, output, emb)
+
+
+@best_effort_ledger_function
+def _persist_semcache_entry(prompt, model, output, emb):
+    """Persist an already prepared cache entry; embedding stays outside the writer."""
+    import uuid
     with _lock:
         # ATOMIC UPSERT on the (model, prompt_hash) UNIQUE index. The old DELETE-then-INSERT had a window where a
         # concurrent CROSS-PROCESS writer could INSERT between our DELETE and INSERT and then hit the unique index
@@ -200,8 +218,8 @@ def cached_call(fn, prompt, model, threshold=0.0, est_cost=0.0):
 
 
 def stats():
-    with _lock:
-        n = _semcache_db().execute("SELECT COUNT(*), COUNT(emb) FROM semcache").fetchone()
+    with config.ledger_op('semcache', _ensure_semcache_schema) as ledger_read_handle:
+        n = ledger_read_handle.execute("SELECT COUNT(*), COUNT(emb) FROM semcache").fetchone()
     return {**_stats, "cached_entries": n[0], "with_embedding": n[1]}
 
 
@@ -265,8 +283,8 @@ def dedup_jsonl(input_path, out_path, model=_SCOPE_ANY, map_path=None):
                 within_dup += 1
                 dup_map.setdefault(h, []).append(cid)
                 continue
-            with _lock:
-                row = _semcache_db().execute("SELECT 1 FROM semcache WHERE model IN (?,?) AND prompt_hash=? LIMIT 1",
+            with config.ledger_op('semcache', _ensure_semcache_schema) as ledger_read_handle:
+                row = ledger_read_handle.execute("SELECT 1 FROM semcache WHERE model IN (?,?) AND prompt_hash=? LIMIT 1",
                                     (model, _SCOPE_ANY, h)).fetchone()
             if row:
                 cache_hit += 1

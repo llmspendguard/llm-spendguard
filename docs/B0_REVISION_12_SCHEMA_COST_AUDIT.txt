@@ -1,0 +1,55 @@
+B0 revision 12: scoped connection schema cost audit
+
+Scope: schema initialization reached through fresh/per-operation SQLite connections. Metadata checks remain per
+operation so schema removal on an existing file is repaired; no process-global/path-only completion cache is used.
+CREATE TABLE/INDEX IF NOT EXISTS is a SQLite schema-catalog guard, not a repeated table rebuild.
+
+Connection dispatch: config.py:1552 ensure_ledger_schema serializes required initialization; config.py:1699
+pooled_ledger_conn reuses an active operation/writer only, and config.py:1813 ledger_op closes outermost scopes.
+No connection lifetime was extended by this repair.
+
+Scoped ledger initializers (paths under src/spendguard/):
+- semcache.py:27 _ensure_semcache_schema: full unique-key repair is guarded by existing whole-table UNIQUE
+  index coverage; only a genuinely missing equivalent index enters repair. Partial indexes do not count.
+- ledger.py:489 _initialize_spend_schema: table_info guards additive ALTER; ordered index coverage guards builds.
+- routing_audit.py:94 ensure_decisions_call_fk_schema: table_info guards ALTER; foreign_key_list guards table
+  reconstruction; ordered index coverage guards index builds.
+- calls.py:328 _ensure_call_observation_schema: table_info guards ALTER; ordered-index and FK metadata guard builds.
+- learn.py:16 _ensure_insights_schema: table_info guards insights and seg_attribution ALTER; remaining DDL is
+  IF NOT EXISTS. There is no unconditional UPDATE/backfill in this initializer.
+- callio.py:78 _ensure_callio_schema: table_info guards ALTER AND the truncated/shape_complete UPDATE backfills.
+- lane_queue.py:116 _ensure_queue_schema: fixed metadata guard skips repeated failed ALTERs while preserving
+  the concurrent-migration exception handling; result_migrated lookup now has verified ordered index coverage,
+  so completed legacy-result migration is an indexed empty search. Late legacy rows still migrate.
+- bulkgate.py:52 _ensure_gate_schema: fixed table_info guard skips repeated failed ALTERs; remaining DDL guarded.
+- bulkgate.py:341 _ensure_gate_response_schema: table_info guards ALTER; remaining DDL IF NOT EXISTS.
+- batch_tracker.py:55 _ensure_batch_schema: table_info guards ALTER; remaining DDL IF NOT EXISTS.
+- provider_tokens.py:98 _ensure_provider_factor_schema: table_info guards ALTER; CREATE TABLE IF NOT EXISTS.
+- guard.py:41 _ensure_savings_schema: CREATE TABLE/INDEX IF NOT EXISTS only.
+- guard.py:169 _ensure_decisions_schema: table_info guards ALTER; routing_audit metadata guards FK migration.
+- budget.py:33 _ensure_budget_auxiliary_read_schema: no-op (writers own initialization).
+- best_value.py:49 _ensure_best_value_schema: CREATE TABLE IF NOT EXISTS only.
+- calibrate.py:69 _ensure_calibration_schema: CREATE TABLE/INDEX IF NOT EXISTS only.
+- intent_model_prior.py:52 _ensure_intent_prior_schema: CREATE TABLE IF NOT EXISTS only.
+- lane_bandit.py:44 _ensure_lane_bandit_schema: CREATE TABLE IF NOT EXISTS only.
+- effort_titration.py:74 _ensure_effort_progress_schema: CREATE TABLE IF NOT EXISTS only.
+- xp_rate_window.py:39 _ensure_xp_rate_schema: CREATE TABLE/INDEX IF NOT EXISTS only.
+- content_retention.py:83 _ensure_content_retention_schema: CREATE TABLE IF NOT EXISTS and metadata-guarded
+  timestamp index. Its explicit retention maintenance (:62) uses indexed, LIMIT-bounded DELETE, not migration.
+- delegate_jobs.py:46 _ensure_delegate_jobs_schema: CREATE TABLE/INDEX IF NOT EXISTS only; per-op opener at :58.
+
+Related initialization through scoped readers:
+- models.py:63 _initialize_model_facts: serialized writer CREATE TABLE IF NOT EXISTS; learn schema as above.
+- reliability.py:219 _remediation_db: writer CREATE TABLE IF NOT EXISTS; budget auxiliary read schema is no-op.
+- reliability.py:336 _health_db: writer table_info guards ALTER; budget auxiliary read schema is no-op.
+- measurement.py:19 _measurements_db: dedicated per-operation CREATE TABLE/INDEX IF NOT EXISTS only.
+- schema_indexes.py:49 ensure_ordered_index_coverage / :74 ensure_ordered_indexes_coverage: bounded schema
+  metadata (table_info, index_list, index_info) precedes any CREATE INDEX. Partial indexes excluded as coverage.
+
+Outside scoped-ledger refactor: fleet.py:191 _fleet_db already used a dedicated per-operation registry connection.
+Its :209 table_info guards ALTER; :220 INSERT OR IGNORE ... SELECT consumers is preexisting fleet registration
+maintenance, not a migration introduced or newly repeated by ledger connection scoping.
+
+Deterministic evidence: test_scoped_queue_gate_schema_cost.py counts attempted ALTERs across populated repeated
+ensures (red: 55 queue ALTER attempts; green: zero), asserts queue migration uses an index via EXPLAIN QUERY PLAN,
+and proves a subsequently inserted legacy result is still migrated. No timing assertions or metered calls.

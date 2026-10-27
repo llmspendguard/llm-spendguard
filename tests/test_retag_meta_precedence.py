@@ -2,6 +2,8 @@
 import os
 import sys
 import tempfile
+import sqlite3
+from contextlib import closing
 
 if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
     isolated_home = tempfile.mkdtemp(prefix="spendguard-retag-meta-precedence-")
@@ -36,42 +38,46 @@ for model, kind in (
     budget._record_spend_event(
         TEST_PROVIDER, model, kind, TEST_COST, project="", source="reconstructed")
 
-active_ledger = budget._ledger()
-active_ledger._conn.execute(
-    "UPDATE spend_events SET venv=? WHERE model=?", (CONSUMER_VENV, META_MODEL))
-active_ledger._conn.execute(
-    "UPDATE spend_events SET venv=? WHERE model=?", (CONSUMER_VENV, CONSUMER_MODEL))
-active_ledger._conn.execute(
-    "UPDATE spend_events SET venv=? WHERE model=?", (SHARED_VENV, SHARED_MODEL))
-active_ledger._conn.commit()
+from spendguard import config
 
-tag.retag_deterministic()
-projects_by_model = {
-    row["model"]: row["project_primary"]
-    for row in active_ledger._conn.execute(
-        "SELECT model, project_primary FROM spend_events WHERE provider=?", (TEST_PROVIDER,))
-}
+with closing(config.open_ledger_connection()) as retag_fixture_connection:
+    retag_fixture_connection.row_factory = sqlite3.Row
+    active_ledger = budget._ledger()
+    retag_fixture_connection.execute(
+        "UPDATE spend_events SET venv=? WHERE model=?", (CONSUMER_VENV, META_MODEL))
+    retag_fixture_connection.execute(
+        "UPDATE spend_events SET venv=? WHERE model=?", (CONSUMER_VENV, CONSUMER_MODEL))
+    retag_fixture_connection.execute(
+        "UPDATE spend_events SET venv=? WHERE model=?", (SHARED_VENV, SHARED_MODEL))
+    retag_fixture_connection.commit()
 
-failures = 0
-failures += check_retag_meta_precedence_condition(
-    "A meta row keeps llm-spendguard precedence over its consumer venv",
-    projects_by_model[META_MODEL] == "llm-spendguard")
-failures += check_retag_meta_precedence_condition(
-    "B consumer gate row resolves from its medical-app venv",
-    projects_by_model[CONSUMER_MODEL] == "medical-app")
-failures += check_retag_meta_precedence_condition(
-    "C ambiguous venv falls through to the coarse repo fallback (not mechanically stamped)",
-    projects_by_model[SHARED_MODEL] == budget._project())
-failures += check_retag_meta_precedence_condition(
-    "C ambiguous venv is not stranded at the unresolved sentinel",
-    projects_by_model[SHARED_MODEL] != budget.UNATTRIBUTED_PROJECT)
-failures += check_retag_meta_precedence_condition(
-    "D row without a venv reaches the coarse repo fallback",
-    projects_by_model[NO_VENV_MODEL] == budget._project())
-failures += check_retag_meta_precedence_condition(
-    "D row is not stranded at the unresolved sentinel",
-    projects_by_model[NO_VENV_MODEL] != budget.UNATTRIBUTED_PROJECT)
+    tag.retag_deterministic()
+    projects_by_model = {
+        row["model"]: row["project_primary"]
+        for row in retag_fixture_connection.execute(
+            "SELECT model, project_primary FROM spend_events WHERE provider=?", (TEST_PROVIDER,))
+    }
 
-print(("[OK]" if not failures else "[FAIL]")
-      + " deterministic retag meta precedence: %d failure(s)" % failures)
-sys.exit(1 if failures else 0)
+    failures = 0
+    failures += check_retag_meta_precedence_condition(
+        "A meta row keeps llm-spendguard precedence over its consumer venv",
+        projects_by_model[META_MODEL] == "llm-spendguard")
+    failures += check_retag_meta_precedence_condition(
+        "B consumer gate row resolves from its medical-app venv",
+        projects_by_model[CONSUMER_MODEL] == "medical-app")
+    failures += check_retag_meta_precedence_condition(
+        "C ambiguous venv falls through to the coarse repo fallback (not mechanically stamped)",
+        projects_by_model[SHARED_MODEL] == budget._project())
+    failures += check_retag_meta_precedence_condition(
+        "C ambiguous venv is not stranded at the unresolved sentinel",
+        projects_by_model[SHARED_MODEL] != budget.UNATTRIBUTED_PROJECT)
+    failures += check_retag_meta_precedence_condition(
+        "D row without a venv reaches the coarse repo fallback",
+        projects_by_model[NO_VENV_MODEL] == budget._project())
+    failures += check_retag_meta_precedence_condition(
+        "D row is not stranded at the unresolved sentinel",
+        projects_by_model[NO_VENV_MODEL] != budget.UNATTRIBUTED_PROJECT)
+
+    print(("[OK]" if not failures else "[FAIL]")
+          + " deterministic retag meta precedence: %d failure(s)" % failures)
+    sys.exit(1 if failures else 0)

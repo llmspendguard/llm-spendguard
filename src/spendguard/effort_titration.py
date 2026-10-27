@@ -28,6 +28,7 @@ import json
 import sys
 
 from . import adapters, advisor, bakeoff, budget, calls, config, gate, models, pricing
+from .ledger_writer import serialize_ledger_function
 from .submit import _count_tokens
 
 _LADDER = ("minimal", "low", "medium", "high")   # default tiers to A/B; the send-side heal drops any an endpoint rejects
@@ -67,13 +68,14 @@ _VERDICT_SCHEMA = {"type": "object", "additionalProperties": False,
 
 # ── incremental checkpoint (chunk-never-single-shot: persist per-effort progress so a re-run RESUMES EXACTLY) ──
 def _ckpt_db():
-    db = budget._ledger_db()
-    with budget._lock:
-        db.execute("CREATE TABLE IF NOT EXISTS effort_titration(intent TEXT, model TEXT, effort TEXT, "
-                   "n INTEGER, sum_score REAL, usable INTEGER, failed TEXT, cost REAL, consumed INTEGER, "
-                   "updated TEXT, PRIMARY KEY(intent, model, effort))")
-        db.commit()
-    return db
+    return config.pooled_ledger_conn('_ckpt_db', _ensure_effort_progress_schema)
+
+
+def _ensure_effort_progress_schema(db):
+    db.execute("CREATE TABLE IF NOT EXISTS effort_titration(intent TEXT, model TEXT, effort TEXT, "
+               "n INTEGER, sum_score REAL, usable INTEGER, failed TEXT, cost REAL, consumed INTEGER, "
+               "updated TEXT, PRIMARY KEY(intent, model, effort))")
+    db.commit()
 
 
 def _new_acc():
@@ -85,24 +87,25 @@ def _new_acc():
 def _load_progress(intent, model, efforts):
     """Seed the per-effort accumulators (incl. the resume cursor `consumed` and the failed-index list) from the
     checkpoint, so a re-run continues EXACTLY rather than re-paying. A fresh (intent, model, effort) loads zero."""
-    db = _ckpt_db()
-    acc = {}
-    with budget._lock:
-        for e in efforts:
-            r = db.execute("SELECT n,sum_score,usable,failed,cost,consumed FROM effort_titration "
-                           "WHERE intent=? AND model=? AND effort=?", (intent, model, e)).fetchone()
-            if not r:
-                acc[e] = _new_acc()
-                continue
-            try:
-                failed = json.loads(r[3]) if r[3] else []
-            except Exception:
-                failed = []
-            acc[e] = {"n": r[0] or 0, "sum_score": r[1] or 0.0, "usable": r[2] or 0, "failed": failed,
-                      "cost": r[4] or 0.0, "consumed": r[5] or 0}
+    with config.ledger_op('_ckpt_db', _ensure_effort_progress_schema) as db:
+        acc = {}
+        with budget._lock:
+            for e in efforts:
+                r = db.execute("SELECT n,sum_score,usable,failed,cost,consumed FROM effort_titration "
+                               "WHERE intent=? AND model=? AND effort=?", (intent, model, e)).fetchone()
+                if not r:
+                    acc[e] = _new_acc()
+                    continue
+                try:
+                    failed = json.loads(r[3]) if r[3] else []
+                except Exception:
+                    failed = []
+                acc[e] = {"n": r[0] or 0, "sum_score": r[1] or 0.0, "usable": r[2] or 0, "failed": failed,
+                          "cost": r[4] or 0.0, "consumed": r[5] or 0}
     return acc
 
 
+@serialize_ledger_function
 def _save_one(intent, model, effort, a):
     """Persist ONE effort's accumulator — called after EVERY measured prompt, so a mid-chunk crash loses nothing
     already measured and a failed prompt stays recorded by identity (the durable checkpoint the resume reads)."""

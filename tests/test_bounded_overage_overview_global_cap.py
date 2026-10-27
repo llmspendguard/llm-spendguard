@@ -64,7 +64,7 @@ def deny_global_cap_socket(*args, **kwargs):
 
 
 def seed_global_cap_ledger(path):
-    writer = SpendLedger(path)
+    writer = SpendLedger(path, owned_connection=config.open_ledger_connection(path))
     event_rows = ((f"{GLOBAL_CAP_EVENT_ID_PREFIX}-{index}", GLOBAL_CAP_EVENT_SOURCE, GLOBAL_CAP_DAY,
                    GLOBAL_CAP_DAY, GLOBAL_CAP_EST_VALUE, str(index % GLOBAL_CAP_CONVERSATION_COUNT))
                   for index in range(GLOBAL_CAP_LEDGER_ROW_COUNT))

@@ -25,7 +25,10 @@ import itertools
 import math
 import time
 import logging
-from types import MappingProxyType
+import copy
+import functools
+import inspect
+from types import MappingProxyType, MethodType
 from .schema_indexes import ensure_ordered_indexes_coverage
 from decimal import Decimal, InvalidOperation, getcontext
 from . import config
@@ -318,6 +321,92 @@ class _DecSum:
 _LIVE_SEQ = itertools.count()
 
 
+def serialize_spend_ledger_mutation(method):
+    """Execute a mutation on an isolated facade borrowing the writer's handle."""
+    @functools.wraps(method)
+    def invoke_spend_ledger_mutation(self, *args, **kwargs):
+        from .ledger_writer import (run_ledger_write, current_ledger_writer_connection,
+                                    isolate_nested_ledger_write, ledger_connection_commit_deferred)
+        if self._explicit_owned_connection:
+            if ledger_connection_commit_deferred(self._conn):
+                with isolate_nested_ledger_write(self._conn):
+                    return method(self, *args, **kwargs)
+            return method(self, *args, **kwargs)
+        def apply_spend_ledger_mutation():
+            facade = copy.copy(self)
+            for attribute, value in self.__dict__.items():
+                if getattr(value, "__self__", None) is self:
+                    setattr(facade, attribute, MethodType(value.__func__, facade))
+            facade._conn = current_ledger_writer_connection(self.db_path)
+            from .ledger_writer import ledger_connection_commit_deferred
+            facade._defer = self._defer or ledger_connection_commit_deferred(facade._conn)
+            facade._conn.row_factory = sqlite3.Row
+            if not getattr(facade._conn, "_spend_decimal_aggregate_registered", False):
+                facade._conn.create_aggregate("dec_sum", 1, _DecSum)
+                facade._conn._spend_decimal_aggregate_registered = True
+            return method(facade, *args, **kwargs)
+        return run_ledger_write(apply_spend_ledger_mutation, self.db_path)
+    return invoke_spend_ledger_mutation
+
+
+def own_spend_ledger_read_scope(method):
+    """Lease one read handle; a caller's deadline covers admission and query alike.
+
+    Resolve the absolute expiry before acquiring capacity, then give the method
+    only the unused duration. Pool/setup timeouts retain the aggregate API's typed
+    refusal instead of returning an incomplete or silently late result.
+    """
+    from .ledger_read import bind_ledger_query_deadline
+    deadline_parameter = inspect.signature(method).parameters.get("deadline_s")
+    @bind_ledger_query_deadline
+    @functools.wraps(method)
+    def invoke_scoped_spend_ledger_read(self, *args, **kwargs):
+        from .ledger_read import LedgerQueryDeadline, effective_ledger_admission_deadline
+        deadline_s = (kwargs.get("deadline_s", deadline_parameter.default)
+                      if deadline_parameter is not None else None)
+        expires = None
+        if deadline_s is not None:
+            if not math.isfinite(deadline_s) or deadline_s <= 0:
+                raise LedgerQueryDeadline(deadline_s)
+            expires = time.monotonic() + deadline_s
+        expires = effective_ledger_admission_deadline(expires)
+        if self._conn is not None:
+            return method(self, *args, **kwargs)
+        from .ledger_writer import ledger_bulk_scope_matches, reserved_ledger_bulk_read_connection
+        if ledger_bulk_scope_matches(self.db_path):
+            def read_reserved_bulk_transaction():
+                facade = copy.copy(self)
+                facade._conn = reserved_ledger_bulk_read_connection(self.db_path)
+                try:
+                    return method(facade, *args, **kwargs)
+                finally:
+                    self._total_memo = facade._total_memo
+            return read_reserved_bulk_transaction()
+        try:
+            with config.managed_ledger_read_connection(self.db_path, deadline_at=expires) as connection:
+                facade = copy.copy(self)
+                facade._conn = connection
+                connection.row_factory = sqlite3.Row
+                connection.create_aggregate("dec_sum", 1, _DecSum)
+                if expires is not None:
+                    remaining = expires - time.monotonic()
+                    if remaining <= 0:
+                        raise LedgerQueryDeadline(deadline_s)
+                    if deadline_parameter is not None:
+                        kwargs["deadline_s"] = remaining
+                try:
+                    return method(facade, *args, **kwargs)
+                finally:
+                    self._total_memo = facade._total_memo
+                    if facade._conn is not None and facade._conn is not connection:
+                        facade._conn.close()
+        except TimeoutError as admission_error:
+            if expires is None:
+                raise
+            raise LedgerQueryDeadline(deadline_s) from admission_error
+    return invoke_scoped_spend_ledger_read
+
+
 def live_dedup_key(ts_iso):
     """A per-call UNIQUE dedup key for a live charge. `charges` had no dedup — every call was its own row —
     but `spend_events` dedups on id, so two identical calls (same provider/model/cost/second) would MERGE
@@ -331,16 +420,18 @@ class SpendLedger:
 
     def __init__(self, db_path=None, *, owned_connection=None):
         self.db_path = db_path or config.db_path()
-        self._conn = (owned_connection if owned_connection is not None else
-                      config.open_ledger_connection(self.db_path, timeout=config.LEDGER_WRITE_TIMEOUT_S))
-        self._conn.row_factory = sqlite3.Row
-        self._conn.create_aggregate("dec_sum", 1, _DecSum)   # exact decimal SUM for the TEXT money columns
+        self._explicit_owned_connection = owned_connection is not None
+        self._conn = owned_connection
+        if self._conn is not None:
+            self._conn.row_factory = sqlite3.Row
+            self._conn.create_aggregate("dec_sum", 1, _DecSum)
         self._defer = False                              # bulk(): defer per-row commits (still audits every row)
         self._total_memo = None                          # (freshness_token, decimal-str) for running_llm_total_dec — see below
         try:
             self._cols = self._ensure_schema()
         except BaseException:
-            self._conn.close()
+            if self._conn is not None:
+                self._conn.close()
             raise
 
     @contextlib.contextmanager
@@ -348,10 +439,29 @@ class SpendLedger:
         """Defer per-row commits for a bulk load (e.g. a one-time migration), committing once on exit — every row is
         still inserted + audited, only the fsync is batched. Use ONLY for trusted bulk ingest, not concurrent writers.
         An explicitly owned maintenance handle can supply its final commit boundary as commit_callback."""
+        if not self._explicit_owned_connection:
+            from .ledger_writer import ledger_writer_bulk_transaction
+            with ledger_writer_bulk_transaction(self.db_path):
+                self._defer = True
+                try:
+                    yield self
+                finally:
+                    self._defer = False
+            return
+        previous_bulk_defer = self._defer
+        bulk_native_connection = getattr(self._conn, "_native_reconcile_connection", self._conn)
+        previous_connection_defer = getattr(bulk_native_connection, "_ledger_bulk_commit_deferred", False)
         self._defer = True
+        self._conn._ledger_bulk_commit_deferred = True
+        bulk_native_connection._ledger_bulk_commit_deferred = True
         try:
-            yield self
-            (commit_callback or self._conn.commit)()
+            from .ledger_writer import bind_reserved_ledger_bulk_reads
+            with bind_reserved_ledger_bulk_reads(self.db_path, self._conn):
+                yield self
+            if not previous_connection_defer:
+                self._conn._ledger_bulk_commit_deferred = False
+                bulk_native_connection._ledger_bulk_commit_deferred = False
+                (commit_callback or self._conn.commit)()
         except BaseException:
             # ROLL BACK WHAT THE FAILED LOAD WROTE. Per-row commits are deferred here, so an exception left
             # the partial rows sitting in an OPEN transaction — uncommitted, but flushed by the next commit
@@ -361,11 +471,16 @@ class SpendLedger:
             self._conn.rollback()
             raise
         finally:
-            self._defer = False
+            self._defer = previous_bulk_defer
+            self._conn._ledger_bulk_commit_deferred = previous_connection_defer
+            bulk_native_connection._ledger_bulk_commit_deferred = previous_connection_defer
 
+    @serialize_spend_ledger_mutation
     def flush(self):
-        self._conn.commit()
+        if not self._defer:
+            self._conn.commit()
 
+    @serialize_spend_ledger_mutation
     def _ensure_schema(self):
         return config.ensure_ledger_schema(
             self._conn,
@@ -399,7 +514,8 @@ class SpendLedger:
             ),),
         )
         self._conn.execute("CREATE INDEX IF NOT EXISTS idx_audit_event ON spend_audit(event_id)")
-        self._conn.commit()
+        if not self._defer:
+            self._conn.commit()
         return tuple(have)
 
     @staticmethod
@@ -438,6 +554,7 @@ class SpendLedger:
                            [rec[c] for c in cols])
 
     # ── C: create (a draft event; logged to the audit chain) ──
+    @serialize_spend_ledger_mutation
     def record_event(self, ev, venv=None):
         """Record a spend event and return its evidence ID.
 
@@ -524,6 +641,7 @@ class SpendLedger:
         return ev["id"]
 
     # ── U: update an OPEN row (refuses if locked; logs every field) ──
+    @serialize_spend_ledger_mutation
     def update(self, eid, changes, actor="?", reason="", pass_="update"):
         row = self._conn.execute("SELECT * FROM spend_events WHERE id=?", (eid,)).fetchone()
         if not row:
@@ -572,6 +690,7 @@ class SpendLedger:
         return self.update(eid, changes, actor=actor, reason=reason, pass_="attribute")
 
     # ── period close (lock) ──
+    @serialize_spend_ledger_mutation
     def lock_period(self, period, reason="", actor="?"):
         """Close a period: everything in/before `period` becomes immutable. Returns the count locked."""
         self._conn.execute("INSERT OR REPLACE INTO ledger_locks (period,locked_at,reason,actor) VALUES (?,?,?,?)",
@@ -628,6 +747,7 @@ class SpendLedger:
         self._conn.commit()
         return new_id
 
+    @serialize_spend_ledger_mutation
     def audit(self, event_id, actor, pass_, field, old, new, reason):
         """Append one row to the hash-chained audit log — the ONLY supported way in from outside.
 
@@ -638,6 +758,7 @@ class SpendLedger:
         self._audit(event_id, actor, pass_, field, old, new, reason)
         self._conn.commit()
 
+    @serialize_spend_ledger_mutation
     def reverse(self, eid, actor="?", reason=""):
         """Post a reversing entry (negates the original) into the open period. The original stays untouched.
 
@@ -659,6 +780,7 @@ class SpendLedger:
                 f"adjustments first, or post an explicit reversal of the net.")
         return self._clone_for_correction(eid, "reverses_id", actor, reason, negate=True)
 
+    @serialize_spend_ledger_mutation
     def adjust(self, eid, changes, actor="?", reason=""):
         """Post a DELTA so the original and this entry SUM to the corrected figure. Linked via adjusts_id.
 
@@ -673,10 +795,12 @@ class SpendLedger:
                                           overrides=changes, delta=True)
 
     # ── R: read ──
+    @own_spend_ledger_read_scope
     def get(self, eid):
         r = self._conn.execute("SELECT * FROM spend_events WHERE id=?", (eid,)).fetchone()
         return self._row(r) if r else None
 
+    @own_spend_ledger_read_scope
     def history(self, eid):
         """The full change timeline for an event (from spend_audit)."""
         return [{k: r[k] for k in r.keys()}
@@ -802,6 +926,7 @@ class SpendLedger:
             raise
         self._conn = replacement
 
+    @own_spend_ledger_read_scope
     def spent_dec(self, since=None, until=None, where=None, *,
                   deadline_s=config.LEDGER_QUERY_DEADLINE_S, **filters):
         """EXACT Decimal total of COUNTABLE **LLM** spend — batch + realtime ONLY (the LLM cap's number and the
@@ -822,6 +947,14 @@ class SpendLedger:
         if deadline_s is None:
             return self._cat_dec(LLM_USD_COLS, self._COUNTABLE, since=since, until=until, where=where, **filters)
         from .ledger_read import LedgerQueryDeadline
+        from .ledger_writer import ledger_connection_commit_deferred, require_ledger_writer_request_live
+        if ledger_connection_commit_deferred(self._conn):
+            # Never interrupt or dispose the reserved transaction to enforce a
+            # read timeout. A late complete read fails the enclosing bulk scope.
+            require_ledger_writer_request_live()
+            result = self._cat_dec(LLM_USD_COLS, self._COUNTABLE, since=since, until=until, where=where, **filters)
+            require_ledger_writer_request_live()
+            return result
         if not math.isfinite(deadline_s) or deadline_s <= 0 or self._conn.in_transaction:
             # SQLite interruption can roll back a pending transaction. Refuse the read
             # before installing a handler rather than endangering forensic writes.
@@ -848,6 +981,12 @@ class SpendLedger:
                 expired = True
                 raise LedgerQueryDeadline(deadline_s) from error
             raise
+        except LedgerQueryDeadline:
+            # Managed cursors can enforce the shared request expiry before this
+            # aggregate's progress callback runs. Its direct handle still needs
+            # the same disposal and recovery as a locally observed interruption.
+            expired = True
+            raise
         finally:
             connection.set_progress_handler(None, config.LEDGER_QUERY_PROGRESS_VM_INSTRUCTIONS)
             if expired:
@@ -870,9 +1009,17 @@ class SpendLedger:
             sharing this cross-process ledger); it does not move for our own writes.
         Their union catches every mutation from any writer, so it is safe to trust for cache invalidation. Both are
         pure reads (an attribute + a pragma) — no table scan."""
+        if not self._explicit_owned_connection:
+            from .ledger_writer import run_ledger_write, current_ledger_writer_connection
+            def read_spend_total_generation():
+                owner = current_ledger_writer_connection(self.db_path)
+                return (owner, owner.total_changes,
+                        owner.execute("PRAGMA data_version").fetchone()[0])
+            return run_ledger_write(read_spend_total_generation, self.db_path)
         dv = self._conn.execute("PRAGMA data_version").fetchone()[0]
         return (self._conn.total_changes, dv)
 
+    @own_spend_ledger_read_scope
     def running_llm_total_dec(self, *, deadline_s=config.LEDGER_QUERY_DEADLINE_S):
         """The whole-ledger countable LLM total (identical to spent_dec() with no window), MEMOIZED on
         _freshness_token so a REPEAT read is O(1) instead of re-summing the table. This is the flow-receipt
@@ -882,11 +1029,20 @@ class SpendLedger:
         The NUMBER is byte-identical to spent_dec(); only the re-summation is removed. Caps/reports keep their own
         live (un-memoized) spent_dec path — this accessor is a display baseline, never a spend gate."""
         from .ledger_read import LedgerQueryDeadline
+        from .ledger_writer import ledger_connection_commit_deferred
         expires = None
         if deadline_s is not None:
-            if not math.isfinite(deadline_s) or deadline_s <= 0 or self._conn.in_transaction:
+            if (not math.isfinite(deadline_s) or deadline_s <= 0
+                    or (self._conn.in_transaction and not ledger_connection_commit_deferred(self._conn))):
                 raise LedgerQueryDeadline(deadline_s)
             expires = time.monotonic() + deadline_s
+        if ledger_connection_commit_deferred(self._conn) or self._conn.in_transaction:
+            # SQLite's total_changes/data_version do not change on ROLLBACK.
+            # Pending values therefore must neither use nor populate a memo
+            # shared with readers after this transaction (or savepoint) exits.
+            self._total_memo = None
+            remaining = None if expires is None else expires - time.monotonic()
+            return self.spent_dec(deadline_s=remaining)
         tok = self._freshness_token()
         remaining = None if expires is None else expires - time.monotonic()
         if remaining is not None and remaining <= 0:
@@ -1044,6 +1200,7 @@ class SpendLedger:
         return read_ledger_count(LedgerReadRequest(where_sql="1=1" + w,
             parameters=tuple(args)), path=self.db_path)
 
+    @serialize_spend_ledger_mutation
     def bulk_retag_project(self, new_project, filt="", args=(), where=None, actor="tag", reason=""):
         """Bulk-set project_primary → `new_project` on rows matching `where`/`filt` — the DETERMINISTIC re-tag
         pass (agentic attribution goes through attribute()). Records ONE audit summary row for the batch rather
@@ -1058,6 +1215,7 @@ class SpendLedger:
         self._conn.commit()
         return n
 
+    @serialize_spend_ledger_mutation
     def delete(self, where=None, filt="", actor="?", reason="", since=None):
         """HARD-DELETE matching UNLOCKED rows, auditing each — for the MIRROR/TRANSIENT rows that charges also
         DELETEd and rebuilt idempotently (reconciliation markers, true-down corrections, a remote box's backfill).
@@ -1104,6 +1262,7 @@ class SpendLedger:
                                   include_void=include_void, **filters))
 
     # ── integrity: the AUDIT LOG is hash-chained (not the live row) ──
+    @own_spend_ledger_read_scope
     def verify_audit_chain(self, detail=False):
         """Recompute the spend_audit hash chain. (ok, first_bad_id|None), or the full report when detail=True.
 

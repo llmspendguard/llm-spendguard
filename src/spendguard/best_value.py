@@ -30,6 +30,7 @@ import hashlib
 import json
 
 from . import advisor, calls, config, gate, models
+from .ledger_writer import best_effort_ledger_function
 
 _INFER_OUT = 80          # the intent classifier returns one tiny JSON label ({"intent": "<known-label>"|null}); a small,
 #                          named output cap (not a call-site magic number) — and adapters.call self-heals a truncation anyway
@@ -65,11 +66,12 @@ def _quality_target_key(quality_target):
 def _recall_bestvalue_verdict(intent, quality_target, evidence_fp):
     """Return a durable verdict for the exact evidence key, or None. Cache failures never escape."""
     try:
-        row = _bestvalue_verdict_db().execute(
-            "SELECT verdict_json FROM bestvalue_verdict "
-            "WHERE intent=? AND quality_target=? AND evidence_fp=?",
-            (intent, _quality_target_key(quality_target), evidence_fp),
-        ).fetchone()
+        with config.ledger_op(_VERDICT_CACHE_POOL_KEY, _ensure_bestvalue_verdict_schema) as ledger_read_handle:
+            row = ledger_read_handle.execute(
+                "SELECT verdict_json FROM bestvalue_verdict "
+                "WHERE intent=? AND quality_target=? AND evidence_fp=?",
+                (intent, _quality_target_key(quality_target), evidence_fp),
+            ).fetchone()
         if row and row[0]:
             verdict = json.loads(row[0])
             if (isinstance(verdict, dict) and isinstance(verdict.get("considered"), dict)
@@ -83,6 +85,7 @@ def _recall_bestvalue_verdict(intent, quality_target, evidence_fp):
     return None
 
 
+@best_effort_ledger_function
 def _store_bestvalue_verdict(intent, quality_target, evidence_fp, verdict):
     """Mirror a returned advisor verdict durably. Cache failures never escape."""
     try:

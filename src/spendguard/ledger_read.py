@@ -12,6 +12,8 @@ import traceback
 import threading
 import math
 import datetime
+import functools
+import inspect
 
 from . import config
 from .ledger_deadline_polling import LedgerDeadlinePolling
@@ -171,6 +173,15 @@ class _LedgerReadProcessMetrics:
 _LEDGER_READ_PROCESS_METRICS = _LedgerReadProcessMetrics()
 
 
+def _reset_ledger_read_metrics_in_child():
+    global _LEDGER_READ_PROCESS_METRICS
+    _LEDGER_READ_PROCESS_METRICS = _LedgerReadProcessMetrics()
+
+
+if hasattr(config.os, "register_at_fork"):
+    config.os.register_at_fork(after_in_child=_reset_ledger_read_metrics_in_child)
+
+
 @contextmanager
 def _ledger_read_observation():
     """Account for one issued read, including setup, failure and cleanup time."""
@@ -310,6 +321,36 @@ def current_ledger_request_scope():
     return _LEDGER_ACTIVE_REQUEST_SCOPE.get()
 
 
+def effective_ledger_admission_deadline(deadline_at=None):
+    """Intersect an absolute operation expiry with the ambient request budget.
+
+    This reads context only and takes no locks, so admission keeps its lock order.
+    """
+    scope = current_ledger_request_scope()
+    if scope is not None:
+        scope.require_ledger_request_live()
+        deadline_at = scope.deadline_at if deadline_at is None else min(deadline_at, scope.deadline_at)
+        if time.monotonic() >= deadline_at:
+            raise LedgerQueryDeadline(scope.deadline_s)
+    return deadline_at
+
+
+@contextmanager
+def ledger_evidence_persistence_scope():
+    """Give mandatory charge recovery its own bounded, uncancelled lifetime.
+
+    Only recovery writes may detach from a caller's expired/abandoned request.
+    Optional waits and replay drains must continue to inherit that request.
+    """
+    persistence_scope = LedgerRequestReadScope(config.LEDGER_EVIDENCE_PERSISTENCE_BUDGET_S)
+    persistence_token = _LEDGER_ACTIVE_REQUEST_SCOPE.set(persistence_scope)
+    try:
+        yield persistence_scope
+    finally:
+        persistence_scope.cancel_ledger_request()
+        _LEDGER_ACTIVE_REQUEST_SCOPE.reset(persistence_token)
+
+
 @contextmanager
 def ledger_request_scope(*, deadline_s=None):
     """Bind request reads to one absolute deadline and cancellation owner.
@@ -320,8 +361,14 @@ def ledger_request_scope(*, deadline_s=None):
     existing_scope = _LEDGER_ACTIVE_REQUEST_SCOPE.get()
     if existing_scope is not None:
         existing_scope.require_ledger_request_live()
-        yield existing_scope
-        return
+        if deadline_s is None:
+            yield existing_scope
+            return
+        if not math.isfinite(deadline_s) or deadline_s <= 0:
+            raise LedgerQueryDeadline(deadline_s)
+        if time.monotonic() + deadline_s >= existing_scope.deadline_at:
+            yield existing_scope
+            return
     scope_budget = config.LEDGER_QUERY_DEADLINE_S if deadline_s is None else deadline_s
     if scope_budget is None:
         scope_budget = config.LEDGER_READ_TIME_BUDGET_S
@@ -332,6 +379,33 @@ def ledger_request_scope(*, deadline_s=None):
     finally:
         request_scope.cancel_ledger_request()
         _LEDGER_ACTIVE_REQUEST_SCOPE.reset(request_token)
+
+
+def bind_ledger_query_deadline(function):
+    """Start the caller's budget before setup and preserve tighter nested budgets."""
+    query_signature = inspect.signature(function)
+    query_has_deadline = "deadline_s" in query_signature.parameters
+    query_deadline_default = query_signature.parameters["deadline_s"].default if query_has_deadline else None
+
+    @functools.wraps(function)
+    def invoke_deadline_bound_ledger_query(*args, **kwargs):
+        query_arguments = query_signature.bind(*args, **kwargs)
+        query_duration = query_arguments.arguments.get("deadline_s", query_deadline_default)
+        if query_duration is None and current_ledger_request_scope() is None:
+            return function(*args, **kwargs)
+        with ledger_request_scope(deadline_s=query_duration) as query_scope:
+            query_remaining = query_scope.deadline_at - time.monotonic()
+            if query_remaining <= 0:
+                raise LedgerQueryDeadline(query_duration)
+            if query_has_deadline and query_duration is not None:
+                query_arguments.arguments["deadline_s"] = query_remaining
+            query_result = function(*query_arguments.args, **query_arguments.kwargs)
+            query_scope.require_ledger_request_live()
+            if time.monotonic() >= query_scope.deadline_at:
+                raise LedgerQueryDeadline(query_duration)
+            return query_result
+
+    return invoke_deadline_bound_ledger_query
 
 
 class LedgerReadSchemaError(LedgerReadError):
@@ -396,7 +470,7 @@ def _ledger_bounded_read_handle(path, time_budget, *, bulk_chunked=False):
     if DEFAULT_LEDGER_READ_PROGRESS_VM_INSTRUCTIONS <= 0:
         raise LedgerReadError("Ledger read progress instruction interval must be positive")
     started = time.monotonic()
-    deadline_at = started + time_budget
+    deadline_at = effective_ledger_admission_deadline(started + time_budget)
     request_scope = _LEDGER_ACTIVE_REQUEST_SCOPE.get()
     if bulk_chunked and request_scope is not None:
         raise LedgerReadError("Offline chunked reads cannot borrow a request scope")
@@ -407,9 +481,10 @@ def _ledger_bounded_read_handle(path, time_budget, *, bulk_chunked=False):
         remaining = deadline_at - time.monotonic()
         if remaining <= 0:
             raise LedgerReadTimeout(time_budget)
-        connection = config.open_ledger_connection(ledger_path.as_uri() + "?mode=ro", uri=True,
-            timeout=min(config.LEDGER_CONNECT_TIMEOUT_S, remaining), tune=False,
+        read_owner = config.managed_ledger_read_connection(ledger_path.as_uri() + "?mode=ro", uri=True,
+            timeout=min(config.LEDGER_CONNECT_TIMEOUT_S, remaining),
             deadline_at=deadline_at)
+        connection = read_owner.__enter__()
     except TimeoutError as exc:
         raise LedgerReadTimeout(time_budget) from exc
     except (sqlite3.Error, OSError) as exc:
@@ -486,11 +561,13 @@ def _ledger_bounded_read_handle(path, time_budget, *, bulk_chunked=False):
             connection.set_progress_handler(None, LEDGER_READ_DISABLE_PROGRESS_VM_INSTRUCTIONS)
             connection.rollback()
         finally:
-            connection.close()
+            read_owner.__exit__(None, None, None)
 
 
 def read_ledger_sql(request: LedgerSQLReadRequest, path=None) -> tuple[LedgerReadRow, ...]:
     """Execute one complete bounded projected report, or raise without returning rows."""
+    from .ledger_writer import reserved_ledger_bulk_read_connection
+    resolved_path = path or config.db_path()
     if request.row_cap <= 0:
         raise ValueError("Ledger read row cap must be positive")
     # SQL lexical validation is parsing, not a semantic/meaning classification.
@@ -499,7 +576,20 @@ def read_ledger_sql(request: LedgerSQLReadRequest, path=None) -> tuple[LedgerRea
         raise ValueError("Ledger read requests require SELECT")
     if "*" in "".join(request.sql.upper().split()).replace(LEDGER_READ_COUNT_EXPRESSION, ""):
         raise ValueError("Ledger reads require explicit column projections")
-    with _ledger_read_connection(path, request.time_budget) as connection:
+    from contextlib import nullcontext
+    from .ledger_writer import require_ledger_writer_request_live
+    reserved = reserved_ledger_bulk_read_connection(resolved_path)
+    native_reserved = getattr(reserved, "_native_reconcile_connection", reserved)
+    maintenance_live = getattr(reserved, "require_reconcile_maintenance_live", None)
+    if maintenance_live is not None:
+        maintenance_live()
+    with (
+        ledger_request_scope(deadline_s=request.time_budget) if reserved is not None else nullcontext(),
+        (nullcontext(native_reserved) if reserved is not None
+         else _ledger_read_connection(path, request.time_budget)) as connection,
+    ):
+        if reserved is not None:
+            require_ledger_writer_request_live()
         cursor = connection.execute(request.sql, request.parameters)
         columns = tuple(item[0] for item in cursor.description)
         rows = cursor.fetchmany(request.row_cap + LEDGER_READ_OVERFLOW_PROBE_ROW_COUNT)
@@ -507,7 +597,13 @@ def read_ledger_sql(request: LedgerSQLReadRequest, path=None) -> tuple[LedgerRea
             rows = rows[:-LEDGER_READ_OVERFLOW_PROBE_ROW_COUNT]
         if len(rows) > request.row_cap:
             raise LedgerReadTooLarge(request.row_cap, len(rows))
-        return tuple(LedgerReadRow(columns, tuple(row)) for row in rows)
+        result = tuple(LedgerReadRow(columns, tuple(row)) for row in rows)
+        cursor.close()
+        if reserved is not None:
+            require_ledger_writer_request_live()
+    if maintenance_live is not None:
+        maintenance_live()
+    return result
 
 
 def read_recorded_call_total(path=None, *, time_budget=DEFAULT_LEDGER_READ_TIME_BUDGET_S):

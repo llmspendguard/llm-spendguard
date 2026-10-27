@@ -12,6 +12,7 @@ import math
 from pathlib import Path
 
 from . import budget, config
+from .ledger_writer import best_effort_ledger_function
 
 # per-source confidence → coefficient of variation (lower confidence ⇒ wider spread). certain ⟂ counterfactual.
 # best-value = the auto-selector chose a cheaper (model, effort) that held the intent's MEASURED quality bar; it is a
@@ -34,15 +35,17 @@ GROUP BY COALESCE(intent,'(none)') ORDER BY saved_usd DESC LIMIT ?"""
 
 
 def _savings_db():
-    db = budget._ledger_db()                      # reuse the gate's SQLite file/connection
-    with budget._lock:
-        db.execute("CREATE TABLE IF NOT EXISTS savings "
-                   "(ts TEXT, day TEXT, project TEXT, source TEXT, amount REAL, cv REAL)")
-        db.execute("CREATE INDEX IF NOT EXISTS idx_savings_day ON savings(day)")
-        db.commit()
-    return db
+    return config.pooled_ledger_conn('_savings_db', _ensure_guard_savings_schema)
 
 
+def _ensure_guard_savings_schema(db):
+    db.execute("CREATE TABLE IF NOT EXISTS savings "
+               "(ts TEXT, day TEXT, project TEXT, source TEXT, amount REAL, cv REAL)")
+    db.execute("CREATE INDEX IF NOT EXISTS idx_savings_day ON savings(day)")
+    db.commit()
+
+
+@best_effort_ledger_function
 def record_saving(source, amount, confidence=None, project=None):
     """Record one guarded-spend event (amount = $ that did NOT get spent because spendguard intervened).
     Never raises — guarding must not break the call path."""
@@ -68,12 +71,7 @@ def record_saving(source, amount, confidence=None, project=None):
     except Exception as e:
         # Never RAISES (guarding must not break the call path) — but never SILENT either: a swallowed DB write
         # loses a real saving with no trace, the same failure the budget dead-letter closes for spend.
-        try:
-            from . import config
-            config.warn_once(f"[spendguard] record_saving({source}) write failed ({type(e).__name__}) — this "
-                             f"saving was not recorded")
-        except Exception:
-            pass
+        raise
 
 
 def _lognormal_cumulants(mu, cv):
@@ -165,22 +163,24 @@ _DECISION_REASON_CLASSES = frozenset({"paid-overage-admission", "proactive-shed"
 
 
 def _decisions_db():
-    db = budget._ledger_db()                       # same SQLite file as charges + savings
-    with budget._lock:
-        from . import routing_audit
-        routing_audit.ensure_decisions_call_fk_schema(db, commit=False)
-        # forward-only additive column: `why` = the SPECIFIC routing reason ("bandit → codex (gpt-5.6-sol)", "tier-3
-        # base fallback", "lane-miss → metered", "best-value") so "why did X run instead of the model requested" is a
-        # queryable fact, not only the coarse `basis` (advisor/best-value, which keys the savings tally).
-        _have = {r[1] for r in db.execute("PRAGMA table_info(decisions)").fetchall()}
-        if "why" not in _have:
-            db.execute("ALTER TABLE decisions ADD COLUMN why TEXT")
-        if "reason_class" not in _have:
-            db.execute("ALTER TABLE decisions ADD COLUMN reason_class TEXT")
-        db.commit()
-    return db
+    return config.pooled_ledger_conn('_decisions_db', _ensure_guard_decisions_schema)
 
 
+def _ensure_guard_decisions_schema(db):
+    from . import routing_audit
+    routing_audit.ensure_decisions_call_fk_schema(db, commit=False)
+    # forward-only additive column: `why` = the SPECIFIC routing reason ("bandit → codex (gpt-5.6-sol)", "tier-3
+    # base fallback", "lane-miss → metered", "best-value") so "why did X run instead of the model requested" is a
+    # queryable fact, not only the coarse `basis` (advisor/best-value, which keys the savings tally).
+    _have = {r[1] for r in db.execute("PRAGMA table_info(decisions)").fetchall()}
+    if "why" not in _have:
+        db.execute("ALTER TABLE decisions ADD COLUMN why TEXT")
+    if "reason_class" not in _have:
+        db.execute("ALTER TABLE decisions ADD COLUMN reason_class TEXT")
+    db.commit()
+
+
+@best_effort_ledger_function
 def record_decision(intent, requested_model, chosen_model, counterfactual_usd, actual_usd, saved_usd,
                     requested_effort=None, chosen_effort=None, basis="advisor", project=None, why=None,
                     reason_class=None, call_id=None):
@@ -203,11 +203,7 @@ def record_decision(intent, requested_model, chosen_model, counterfactual_usd, a
                         call_id))
             db.commit()
     except Exception:
-        try:
-            from . import config
-            config.warn_once("[spendguard] record_decision write failed — a decision row was not recorded")
-        except Exception:
-            pass
+        raise
 
 
 def decisions_since(since=None):

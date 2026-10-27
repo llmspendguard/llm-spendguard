@@ -29,6 +29,8 @@ import threading
 import time
 
 from . import config
+from .ledger_fork_locks import new_fork_reset_ledger_state
+from .ledger_writer import best_effort_ledger_function, serialize_ledger_function
 
 # OpenAI Batch completion window (grounded from the docs, 2026-09-27: processed within 24h). Used as the DEFAULT expiry
 # when a caller gives none, so a batch that never resolves is failed-over instead of hanging forever. A named constant
@@ -47,7 +49,7 @@ _OFFLOAD_KEY_FIELD = "sg_offload_key"
 # re-offer of the SAME rows must submit FRESH — never re-adopt a dead batch (which would strand its rows).
 _DEAD_FOR_ADOPT = _TERMINAL_BAD + ("cancelling",)
 
-_lock = threading.RLock()
+_lock = new_fork_reset_ledger_state(globals(), "_lock", threading.RLock)
 
 
 def _ensure_batch_jobs_schema(c):
@@ -76,6 +78,7 @@ def _jobs_db():
     return config.pooled_ledger_conn("batch_jobs", _ensure_batch_jobs_schema)
 
 
+@best_effort_ledger_function
 def register_batch(batch_id, provider, model, intent, n_rows, *, expires_at=None, attempts=1, task_ids=None):
     """Record a submitted batch job (status 'open') — the DURABLE record of the PAID handle, written by the SUBMITTER
     right AFTER submit_chat_tasks returns a batch_id + lane_queue.mark_batched points the rows. REPLAY-SAFE: INSERT OR
@@ -177,8 +180,8 @@ def _pending_lookup(offload_key):
     error so the drain retries rather than blind-submitting.)"""
     from . import provider_tokens as _pt
     try:
-        with _lock:
-            row = _jobs_db().execute(
+        with config.ledger_op('batch_jobs', _ensure_batch_jobs_schema) as ledger_read_handle:
+            row = ledger_read_handle.execute(
                 "SELECT offload_key, provider, model, intent, n_rows, batch_id, created_ts FROM offload_pending "
                 "WHERE offload_key=?", (offload_key,)).fetchone()
     except Exception as e:
@@ -192,6 +195,7 @@ def _pending_lookup(offload_key):
                batch_id=row[5], created_ts=row[6])
 
 
+@serialize_ledger_function
 def _pending_note(offload_key, provider, model, intent, n_rows):
     """Durably note an offload is ABOUT to submit (batch_id NULL = 'submitting'), BEFORE the paid create. REPLACES any
     stale record for the key and stamps a FRESH created_ts (the floor the orphan scan bounds itself to). Returns
@@ -214,6 +218,7 @@ def _pending_note(offload_key, provider, model, intent, n_rows):
         raise                                          # fail closed — no durable record ⇒ exactly-once not guaranteed
 
 
+@best_effort_ledger_function
 def _pending_confirm(offload_key, batch_id):
     """Record the batch_id the provider returned (pending → confirmed). After this a crash-retry adopts by local lookup,
     no provider scan. Best-effort: a stop/lock propagates; any other error is logged, NOT fatal — the batch_id is also on
@@ -233,6 +238,7 @@ def _pending_confirm(offload_key, batch_id):
               "queue rows + orphan scan" % (batch_id, type(e).__name__), file=sys.stderr, flush=True)
 
 
+@best_effort_ledger_function
 def _pending_clear(offload_key):
     """Remove a pending record (its batch is dead/expired, so a legitimate re-offer submits fresh). Best-effort."""
     from . import provider_tokens as _pt
@@ -244,6 +250,8 @@ def _pending_clear(offload_key):
         if _pt._stop_or_locked(e):
             raise
         config.rollback_ledger_conn("batch_jobs")
+
+        config.warn_once("[spendguard] pending offload cleanup failed (%s) — cleanup deferred" % type(e).__name__)
 
 
 def _recover_orphan_message_batch(row_ids, created_floor, client=None):
@@ -465,8 +473,8 @@ def submit_offload(intent, rows, batch_model, *, cap_dollars=None, expires_at=No
 
 def _open_jobs(limit):
     try:
-        with _lock:
-            rows = _jobs_db().execute(
+        with config.ledger_op('batch_jobs', _ensure_batch_jobs_schema) as ledger_read_handle:
+            rows = ledger_read_handle.execute(
                 "SELECT batch_id,intent,attempts,expires_at,status FROM batch_jobs "
                 "WHERE status IN ('open','failing') ORDER BY submitted_ts LIMIT ?", (int(limit),)).fetchall()
         return [{"batch_id": r[0], "intent": r[1], "attempts": r[2], "expires_at": r[3], "status": r[4]}
@@ -479,6 +487,7 @@ def _open_jobs(limit):
         return []
 
 
+@best_effort_ledger_function
 def _set_status(batch_id, status, last_error=None):
     try:
         with _lock:
@@ -490,6 +499,8 @@ def _set_status(batch_id, status, last_error=None):
         if gate.is_deliberate_stop(e):
             raise
         config.rollback_ledger_conn("batch_jobs")
+
+        config.warn_once("[spendguard] batch status write failed (%s) — status unchanged" % type(e).__name__)
 
 
 def _fail_over(bid, rows, why, attempts):
@@ -597,8 +608,8 @@ def assert_batch_terminal_manifest(batch_id):
     import json
     from . import lane_queue
     from .work_integrity import WorkIntegrityProof
-    with _lock:
-        row = _jobs_db().execute("SELECT task_ids FROM batch_jobs WHERE batch_id=?", (batch_id,)).fetchone()
+    with config.ledger_op('batch_jobs', _ensure_batch_jobs_schema) as ledger_read_handle:
+        row = ledger_read_handle.execute("SELECT task_ids FROM batch_jobs WHERE batch_id=?", (batch_id,)).fetchone()
     if row is None or row[0] is None:
         WorkIntegrityProof("batch-manifest-missing").assert_work_partition([batch_id], [[]])
     try:
@@ -618,8 +629,8 @@ def status():
     """{open, failing, settled, failed, total} counts of tracked batch jobs — observability for the CLI / receipt. $0.
     Returns {} on a non-stop DB error (a stop/lock propagates)."""
     try:
-        with _lock:
-            rows = _jobs_db().execute("SELECT status, COUNT(*) FROM batch_jobs GROUP BY status").fetchall()
+        with config.ledger_op('batch_jobs', _ensure_batch_jobs_schema) as ledger_read_handle:
+            rows = ledger_read_handle.execute("SELECT status, COUNT(*) FROM batch_jobs GROUP BY status").fetchall()
         out = {"open": 0, "failing": 0, "settled": 0, "failed": 0}
         for st, n in rows:
             out[st] = int(n)

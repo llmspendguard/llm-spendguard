@@ -13,11 +13,12 @@ REQUEST_LEDGER_READER_MODULES = (
 REQUEST_LEDGER_OFFLINE_CONNECTION_FUNCTIONS = {("budget", "snapshot")}
 REQUEST_LEDGER_REQUIRED_EDGES = {
     "ledger_read": {
-        "_ledger_bounded_read_handle": ("open_ledger_connection", "set_progress_handler", "rollback", "close"),
+        "_ledger_bounded_read_handle": ("managed_ledger_read_connection", "set_progress_handler", "rollback", "__exit__"),
         "ledger_request_scope": ("cancel_ledger_request",),
     },
     "config": {
         "open_ledger_connection": ("connect",),
+        "managed_ledger_read_connection": ("open_ledger_connection", "closing", "notify"),
         "_dispatch_home_aligned_cursor_operation": ("dispatch_managed_request_cursor_step",),
         "_dispatch_home_aligned_cursor_shortcut": ("_dispatch_home_aligned_cursor_operation",),
         "set_authorizer": ("replace_managed_user_authorizer",),

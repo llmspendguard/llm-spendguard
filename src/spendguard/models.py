@@ -12,6 +12,7 @@ an intent) which then surface in `profile()` and CLI. Per-model best-practices a
 """
 import json
 import re
+from .ledger_writer import serialize_ledger_function
 
 # ordered family rules — first match wins; later stored facts override fields
 _RULES = [
@@ -55,12 +56,18 @@ _RULES = [
 def _db():
     # reuse the learn db connection (shared sqlite); a tiny model_facts table
     from . import learn
+    _initialize_model_facts()
+    return learn
+
+
+@serialize_ledger_function
+def _initialize_model_facts():
+    from . import learn
     with learn._lock:
         learn._insights_db().execute("""CREATE TABLE IF NOT EXISTS model_facts(
             model TEXT, key TEXT, value TEXT, confidence REAL, source TEXT, verified INTEGER, ts TEXT,
             PRIMARY KEY (model, key))""")
         learn._insights_db().commit()
-    return learn
 
 
 def _family(model):
@@ -70,6 +77,7 @@ def _family(model):
     return dict(provider="?", reasoning=None, tokens_param="max_tokens", cache="?", cache_min=1024, note="")
 
 
+@serialize_ledger_function
 def add_fact(model, key, value, confidence=0.9, source="manual", verified=True):
     """Store a per-model learning (overrides the family default for `key`). e.g. add_fact('gpt-5-nano',
     'reasoning','minimal', source='experiment') or ('gpt-5-nano','quality:phase23','3% match vs gpt-5.5')."""
@@ -87,6 +95,7 @@ def add_fact(model, key, value, confidence=0.9, source="manual", verified=True):
         L._insights_db().commit()
 
 
+@serialize_ledger_function
 def clear_fact(model, key):
     """Delete a per-model learning — for a fact recorded WRONG (e.g. an auto-heal that learned an implausible
     max_output from a NON-budget 400) that must stop overriding the family/table value. Returns rows removed; after
@@ -100,9 +109,10 @@ def clear_fact(model, key):
 
 def facts(model):
     L = _db()
-    with L._lock:
+    from . import config
+    with config.ledger_op("learn", L._ensure_insights_schema) as model_facts_reader:
         return {k: (_decode_fact(v), c, src, bool(ver)) for k, v, c, src, ver in
-                L._insights_db().execute("SELECT key,value,confidence,source,verified FROM model_facts WHERE model=?",
+                model_facts_reader.execute("SELECT key,value,confidence,source,verified FROM model_facts WHERE model=?",
                                 (model,)).fetchall()}
 
 
@@ -272,8 +282,8 @@ def ineffective(model, intent):
     for key in (f"ineffective:{intent}", "ineffective:*"):
         if key in f:
             v, c, _src, _ver = f[key]
-            with L._lock:
-                r = L._insights_db().execute("SELECT ts FROM model_facts WHERE model=? AND key=?", (model, key)).fetchone()
+            with L.config.ledger_op('learn', L._ensure_insights_schema) as ledger_read_handle:
+                r = ledger_read_handle.execute("SELECT ts FROM model_facts WHERE model=? AND key=?", (model, key)).fetchone()
             return (v, c, r[0] if r else None)
     return None
 
@@ -530,8 +540,8 @@ def cmd(argv=None):
     for pat, d in _RULES:
         print(f"  {pat:<28} reasoning={d['reasoning']}  tokens={d['tokens_param']}  cache={d['cache']}(min {d['cache_min']})")
     L = _db()
-    with L._lock:
-        rows = L._insights_db().execute("SELECT DISTINCT model FROM model_facts").fetchall()
+    with L.config.ledger_op('learn', L._ensure_insights_schema) as ledger_read_handle:
+        rows = ledger_read_handle.execute("SELECT DISTINCT model FROM model_facts").fetchall()
     if rows:
         print("models with stored learnings: " + ", ".join(r[0] for r in rows))
     print("  `spendguard models show <model>` for the full profile.")

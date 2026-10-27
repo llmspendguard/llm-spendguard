@@ -78,8 +78,9 @@ def backfill(intent_map=None, providers=("openai", "anthropic")):
         rows += _openai_rows()
     if "anthropic" in providers:
         rows += _anthropic_rows()
-    with learn._lock:  # idempotent: skip batches already ingested (run-node id == batch id)
-        have = {r[0] for r in learn._insights_db().execute("SELECT id FROM graph_nodes WHERE type='run'").fetchall()}
+    # Idempotent: skip batches already ingested (run-node id == batch id).
+    with learn.config.ledger_op('learn', learn._ensure_insights_schema) as ledger_read_handle:
+        have = {r[0] for r in ledger_read_handle.execute("SELECT id FROM graph_nodes WHERE type='run'").fetchall()}
     total = 0.0
     added = 0
     for provider, model, cost, it, ot, ts, bid in rows:

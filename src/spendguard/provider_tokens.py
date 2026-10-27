@@ -31,6 +31,8 @@ FAIL-OPEN: token estimation must never break a call. tiktoken absent → a per-p
 import json
 import statistics
 import threading
+from . import config
+from .ledger_writer import serialize_ledger_function
 
 # The last-resort char→token ratio, used ONLY when tiktoken is entirely absent AND no measured ratio exists for
 # the provider. Documented, not silent: ~4 chars/token is the classic English-prose rule of thumb this replaces.
@@ -90,19 +92,19 @@ def _encoder_for(provider, model):
 
 
 def _factors_db():
-    from . import budget
-    db = budget._ledger_db()                 # same SQLite file as charges/savings/decisions
-    with budget._lock:
-        db.execute("CREATE TABLE IF NOT EXISTS token_factors "
-                   "(provider TEXT PRIMARY KEY, factor REAL, confidence REAL, why TEXT, char_ratio REAL, "
-                   "n INTEGER, stats TEXT, ts TEXT)")
-        cols = [r[1] for r in db.execute("PRAGMA table_info(token_factors)")]
-        for c, decl in (("confidence", "REAL"), ("why", "TEXT"), ("char_ratio", "REAL"),
-                        ("n", "INTEGER"), ("stats", "TEXT")):    # migrate a table created before these columns
-            if c not in cols:
-                db.execute(f"ALTER TABLE token_factors ADD COLUMN {c} {decl}")
-        db.commit()
-    return db
+    return config.pooled_ledger_conn('_factors_db', _ensure_provider_factor_schema)
+
+
+def _ensure_provider_factor_schema(db):
+    db.execute("CREATE TABLE IF NOT EXISTS token_factors "
+               "(provider TEXT PRIMARY KEY, factor REAL, confidence REAL, why TEXT, char_ratio REAL, "
+               "n INTEGER, stats TEXT, ts TEXT)")
+    cols = [r[1] for r in db.execute("PRAGMA table_info(token_factors)")]
+    for c, decl in (("confidence", "REAL"), ("why", "TEXT"), ("char_ratio", "REAL"),
+                    ("n", "INTEGER"), ("stats", "TEXT")):    # migrate a table created before these columns
+        if c not in cols:
+            db.execute(f"ALTER TABLE token_factors ADD COLUMN {c} {decl}")
+    db.commit()
 
 
 def _stop_or_locked(e):
@@ -126,9 +128,9 @@ def _load_factors():
     loaded = {}
     try:
         from . import budget
-        db = _factors_db()
-        with budget._lock:
-            rows = db.execute("SELECT provider,factor,confidence,why,char_ratio,n,stats,ts FROM token_factors").fetchall()
+        with config.ledger_op('_factors_db', _ensure_provider_factor_schema) as db:
+            with budget._lock:
+                rows = db.execute("SELECT provider,factor,confidence,why,char_ratio,n,stats,ts FROM token_factors").fetchall()
         for prov, fac, conf, why, cr, n, stats, ts in rows:
             loaded[prov] = {"factor": float(fac or 1.0), "confidence": (float(conf) if conf is not None else None),
                             "why": why, "char_ratio": float(cr or CHARS_PER_TOKEN_DEFAULT),
@@ -317,11 +319,11 @@ def calibrate(store=True, model=None):
     if enc is None:
         return {"ok": False, "note": "tiktoken unavailable — cannot compute an o200k base to calibrate against; "
                                      "estimates use the measured char ratio only."}
-    from . import callio, budget
+    from . import callio
     rows = []
     try:
-        with callio._lock:
-            rows = callio._callio_db().execute(
+        with callio.config.ledger_op('callio', callio._ensure_callio_schema) as ledger_read_handle:
+            rows = ledger_read_handle.execute(
                 "SELECT provider, COALESCE(system,''), COALESCE(prompt,''), in_tok "
                 "FROM call_io WHERE COALESCE(truncated,0)=0 AND in_tok>0 "
                 "AND (req_schema IS NULL OR req_schema='' OR req_schema='\"\"')").fetchall()
@@ -379,15 +381,7 @@ def calibrate(store=True, model=None):
         if st is None:
             ignored.append(prov)
             continue
-        db = _factors_db()
-        with budget._lock:
-            db.execute("INSERT INTO token_factors (provider,factor,confidence,why,char_ratio,n,stats,ts) "
-                       "VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(provider) DO UPDATE SET factor=excluded.factor, "
-                       "confidence=excluded.confidence, why=excluded.why, char_ratio=excluded.char_ratio, "
-                       "n=excluded.n, stats=excluded.stats, ts=excluded.ts",
-                       (prov, ch["factor"], ch["confidence"], ch["why"], st["char_ratio_median"], st["n"],
-                        json.dumps(st), ts))
-            db.commit()
+        _persist_provider_factor_choice(prov, ch, st, ts)
         stored[prov] = {**ch, "n": st["n"]}
     reload_factors()                          # after the commit, so the next load sees the new rows
     note = ("factors CHOSEN agentically from the statistics (one meta call) and stored; count_text applies them at "
@@ -395,6 +389,20 @@ def calibrate(store=True, model=None):
     if ignored:
         note += " Ignored %d model-named provider(s) with no measured basis: %s." % (len(ignored), ", ".join(ignored))
     return {**base_report, "chosen": stored, "ignored": ignored, "meta_cost": round(cost, 6), "note": note}
+
+
+@serialize_ledger_function
+def _persist_provider_factor_choice(provider, choice, statistics_row, timestamp):
+    from . import budget
+    db = _factors_db()
+    with budget._lock:
+        db.execute("INSERT INTO token_factors (provider,factor,confidence,why,char_ratio,n,stats,ts) "
+                   "VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(provider) DO UPDATE SET factor=excluded.factor, "
+                   "confidence=excluded.confidence, why=excluded.why, char_ratio=excluded.char_ratio, "
+                   "n=excluded.n, stats=excluded.stats, ts=excluded.ts",
+                   (provider, choice["factor"], choice["confidence"], choice["why"],
+                    statistics_row["char_ratio_median"], statistics_row["n"], json.dumps(statistics_row), timestamp))
+        db.commit()
 
 
 def cmd(argv=None):

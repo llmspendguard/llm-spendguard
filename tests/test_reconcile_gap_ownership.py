@@ -3,6 +3,7 @@ import os
 import sys
 import tempfile
 import json
+import sqlite3
 from pathlib import Path
 
 if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
@@ -10,7 +11,7 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
     os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="spendguard-gap-ownership-")
     os.execv(sys.executable, [sys.executable] + sys.argv)
 
-from spendguard import budget, ledger_sync, pricing
+from spendguard import budget, ledger_sync, pricing, config
 from spendguard.reconcile_gap_ownership import (
     migrate_reconcile_gap_provider_ownership, RECONCILE_GAP_UNKNOWN_REASON,
 )
@@ -36,7 +37,8 @@ GAP_OWNER_EXCLUDED_DAY = "2026-05-31"
 for gap_owner_day in GAP_OWNER_DAYS:
     budget.record_reconciled(gap_owner_day, GAP_OWNER_PROVIDER, GAP_OWNER_LEGACY_AMOUNT,
                              project=GAP_OWNER_PROJECT)
-gap_owner_connection = budget._ledger()._conn
+gap_owner_connection = config.open_ledger_connection()
+gap_owner_connection.row_factory = sqlite3.Row
 gap_owner_connection.execute("UPDATE spend_events SET provider=?", (GAP_OWNER_LEGACY,))
 gap_owner_connection.execute("UPDATE spend_events SET invoice_id=NULL,model=? WHERE day=?",
                              (GAP_OWNER_MODEL, GAP_OWNER_DAYS[1]))

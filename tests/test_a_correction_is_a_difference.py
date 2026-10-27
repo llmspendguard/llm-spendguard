@@ -47,7 +47,8 @@ def check(label, cond, extra=""):
 
 
 from decimal import Decimal                                                  # noqa: E402
-L = SpendLedger()
+from spendguard import config
+L = SpendLedger(owned_connection=config.open_ledger_connection())
 # money is EXACT Decimal now (TEXT columns summed with dec_sum), not integer micros
 total = lambda c: Decimal(L._conn.execute(f"SELECT dec_sum({c}) FROM spend_events").fetchone()[0])
 

@@ -10,6 +10,7 @@ import math
 import threading
 import time
 import weakref
+from contextlib import contextmanager
 from collections import OrderedDict
 
 from spendguard import config, ledger_read
@@ -35,6 +36,24 @@ MANAGED_READ_CLEANUP_COMPLETE = "released"
 MANAGED_READ_CLEANUP_DEFERRED = "deferred_connection_busy"
 MANAGED_STATEMENT_FACT_CACHE_CAPACITY = 128
 _MANAGED_TRANSACTION_CONTROL_ACTIONS = frozenset((sqlite3.SQLITE_TRANSACTION, sqlite3.SQLITE_SAVEPOINT))
+
+
+@contextmanager
+def admit_managed_cursor_step_lock(step_lock, *, retained_deadline=None):
+    """Bound contention without cancelling uncontended parser-proven writes.
+
+    Read cancellation is checked after SQLite supplies statement facts. Existing
+    write ownership must survive transport cancellation when no wait is needed.
+    """
+    if step_lock.acquire(blocking=False):
+        try:
+            yield
+        finally:
+            step_lock.release()
+    else:
+        from .ledger_writer import deadline_ledger_writer_lock
+        with deadline_ledger_writer_lock(step_lock, deadline_at=retained_deadline):
+            yield
 
 
 class ManagedStatementParserFactsCoordinator:
@@ -109,6 +128,15 @@ class ManagedReadExpiryCoordinator:
 _DEFAULT_MANAGED_READ_EXPIRY_COORDINATOR = ManagedReadExpiryCoordinator()
 
 
+def _reset_managed_read_expiry_in_child():
+    global _DEFAULT_MANAGED_READ_EXPIRY_COORDINATOR
+    _DEFAULT_MANAGED_READ_EXPIRY_COORDINATOR = ManagedReadExpiryCoordinator()
+
+
+if hasattr(config.os, "register_at_fork"):
+    config.os.register_at_fork(after_in_child=_reset_managed_read_expiry_in_child)
+
+
 def _sweep_managed_read_deadlines(coordinator):
     """One process worker releases idle snapshots without queuing behind writers."""
     while True:
@@ -145,14 +173,16 @@ def _register_managed_read_expiry(state, coordinator):
 class ManagedRequestCursorState:
     """Own one cursor's stepping lock, parser facts and request registration."""
 
-    def __init__(self, cursor, expiry_coordinator=_DEFAULT_MANAGED_READ_EXPIRY_COORDINATOR):
+    def __init__(self, cursor, expiry_coordinator=None):
+        if expiry_coordinator is None:
+            expiry_coordinator = _DEFAULT_MANAGED_READ_EXPIRY_COORDINATOR
         self.expiry_coordinator = expiry_coordinator
         self._managed_cursor_ref = weakref.ref(cursor)
         connection = cursor.connection
         if not hasattr(connection, "_ledger_request_step_lock"):
             connection._ledger_request_step_lock = threading.RLock()
         self.step_lock = connection._ledger_request_step_lock
-        with self.step_lock:
+        with admit_managed_cursor_step_lock(self.step_lock):
             if not hasattr(connection, "_ledger_statement_parser_facts"):
                 connection._ledger_statement_parser_facts = ManagedStatementParserFactsCoordinator(connection)
             self.statement_parser_facts = connection._ledger_statement_parser_facts
@@ -213,7 +243,8 @@ class ManagedRequestCursorState:
         connection = cursor.connection
         if getattr(connection, "_ledger_owned_read_deadline", False):
             return operation(cursor, *args, **kwargs)
-        with self.step_lock:
+        retained_deadline = None if self.scope is None else self.scope.deadline_at
+        with admit_managed_cursor_step_lock(self.step_lock, retained_deadline=retained_deadline):
             scope = self.scope or ledger_read.current_ledger_request_scope()
             preparing = operation in (sqlite3.Cursor.execute, sqlite3.Cursor.executemany,
                                       sqlite3.Cursor.executescript)
@@ -249,6 +280,11 @@ class ManagedRequestCursorState:
                     connection._ledger_transaction_has_writes = False
                 elif not hasattr(connection, "_ledger_transaction_has_writes"):
                     connection._ledger_transaction_has_writes = True
+            ambient_scope = ledger_read.current_ledger_request_scope()
+            if ambient_scope is not None:
+                self.operation_deadline_at = min(self.operation_deadline_at, ambient_scope.deadline_at)
+            if scope is not None:
+                self.operation_deadline_at = min(self.operation_deadline_at, scope.deadline_at)
             self.abort_error = None
             if self.read_deadline_expired:
                 raise ledger_read.LedgerQueryDeadline(self.deadline_duration_s)

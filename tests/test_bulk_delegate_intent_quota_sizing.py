@@ -1,6 +1,7 @@
 """Bulk quota admission reads the job's SQLite measurements and refuses before transport."""
 import inspect
 import sqlite3
+from contextlib import nullcontext
 from functools import partial
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -53,7 +54,7 @@ def bulk_intent_quota_forbid_transport(*args, **kwargs):
 
 
 with (
-    patch.object(calls, "_calls_db", return_value=bulk_intent_quota_source),
+    patch.object(calls.config, "ledger_op", side_effect=lambda *args, **kwargs: nullcontext(bulk_intent_quota_source)),
     patch.object(lane_balance, "_bulk_arms", return_value=[(BULK_INTENT_QUOTA_LANE, BULK_INTENT_QUOTA_MODEL)]),
     patch.object(lane_economics, "prompt_lane_reserved", return_value=False),
     patch.object(lane_catalog, "lane_provider", return_value=BULK_INTENT_QUOTA_PROVIDER),

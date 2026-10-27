@@ -38,8 +38,8 @@ def _common_prefix(strs):
 
 def _intent_prefixes():
     out = []
-    with callio._lock:
-        combos = callio._callio_db().execute(
+    with callio.config.ledger_op('callio', callio._ensure_callio_schema) as ledger_read_handle:
+        combos = ledger_read_handle.execute(
             # GROUPED BY PROVIDER TOO. call_io HAS a provider column and this ignored it, so two vendors
             # serving the same model id had their prompts pooled into one prefix analysis — and a "shared
             # prefix" computed across two different systems' prompts is not a cache candidate for either.
@@ -47,8 +47,8 @@ def _intent_prefixes():
             "SELECT COALESCE(intent,'(none)'), COALESCE(provider,''), model, COUNT(*) FROM call_io "
             "WHERE prompt!='' GROUP BY intent, provider, model HAVING COUNT(*) >= 3").fetchall()
     for intent, provider, model, n in combos:
-        with callio._lock:
-            prompts = [r[0] for r in callio._callio_db().execute(
+        with callio.config.ledger_op('callio', callio._ensure_callio_schema) as ledger_read_handle:
+            prompts = [r[0] for r in ledger_read_handle.execute(
                 "SELECT prompt FROM call_io WHERE COALESCE(intent,'(none)')=? AND COALESCE(provider,'')=? "
                 "AND model=? AND prompt!='' LIMIT 30", (intent, provider, model)).fetchall()]
         if len(prompts) < 3:

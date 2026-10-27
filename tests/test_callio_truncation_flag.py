@@ -30,32 +30,33 @@ LONG = "y" * 400                         # > cap → will be cut → truncated
 callio.record_io_sample("t_full", "openai", "m", "b1", "c1", FULL, "out", source="test")
 callio.record_io_sample("t_cut", "openai", "m", "b2", "c2", LONG, "out", source="test")
 
-con = callio._callio_db()
-tf = con.execute("SELECT truncated FROM call_io WHERE intent='t_full'").fetchone()[0]
-tc = con.execute("SELECT truncated, LENGTH(prompt) FROM call_io WHERE intent='t_cut'").fetchone()
-record_script_check(_fails, "a full body is flagged truncated=0", tf == 0)
-record_script_check(_fails, "a CUT body is flagged truncated=1 (and stored at the cap)", tc[0] == 1 and tc[1] == 100)
+import contextlib
+with contextlib.closing(callio.config.fresh_ledger_conn(callio._ensure_callio_schema)) as con:
+    tf = con.execute("SELECT truncated FROM call_io WHERE intent='t_full'").fetchone()[0]
+    tc = con.execute("SELECT truncated, LENGTH(prompt) FROM call_io WHERE intent='t_cut'").fetchone()
+    record_script_check(_fails, "a full body is flagged truncated=0", tf == 0)
+    record_script_check(_fails, "a CUT body is flagged truncated=1 (and stored at the cap)", tc[0] == 1 and tc[1] == 100)
 
-print("-- the replay source returns FULL bodies, EXCLUDES truncated ones --")
-record_script_check(_fails, "full body IS returned for replay", FULL in bakeoff._sample_prompts("t_full", 10))
-record_script_check(_fails, "cut body is EXCLUDED from replay (no silent partial task)", bakeoff._sample_prompts("t_cut", 10) == [])
+    print("-- the replay source returns FULL bodies, EXCLUDES truncated ones --")
+    record_script_check(_fails, "full body IS returned for replay", FULL in bakeoff._sample_prompts("t_full", 10))
+    record_script_check(_fails, "cut body is EXCLUDED from replay (no silent partial task)", bakeoff._sample_prompts("t_cut", 10) == [])
 
-print("-- a bigger-cap re-fetch recovers the full body + clears the flag (grow-only) --")
-callio.snip_chars = lambda: 1000
-callio.record_io_sample("t_cut", "openai", "m", "b2", "c2", LONG, "out", source="test")   # same key → grows in place
-rec = con.execute("SELECT truncated, LENGTH(prompt) FROM call_io WHERE intent='t_cut'").fetchone()
-record_script_check(_fails, "re-fetch at a larger cap CLEARS truncated + stores the full body", rec[0] == 0 and rec[1] == 400)
-record_script_check(_fails, "the recovered body is replayable again", LONG in bakeoff._sample_prompts("t_cut", 10))
+    print("-- a bigger-cap re-fetch recovers the full body + clears the flag (grow-only) --")
+    callio.snip_chars = lambda: 1000
+    callio.record_io_sample("t_cut", "openai", "m", "b2", "c2", LONG, "out", source="test")   # same key → grows in place
+    rec = con.execute("SELECT truncated, LENGTH(prompt) FROM call_io WHERE intent='t_cut'").fetchone()
+    record_script_check(_fails, "re-fetch at a larger cap CLEARS truncated + stores the full body", rec[0] == 0 and rec[1] == 400)
+    record_script_check(_fails, "the recovered body is replayable again", LONG in bakeoff._sample_prompts("t_cut", 10))
 
-print("-- an OUTPUT-only cut keeps a FULL prompt replayable (the output regenerates; the prompt is intact) --")
-callio.snip_chars = lambda: 100
-callio.record_io_sample("t_outcut", "openai", "m", "b3", "c3", "p" * 50, "o" * 400, source="test")  # prompt full, output cut
-oc = con.execute("SELECT truncated FROM call_io WHERE intent='t_outcut'").fetchone()[0]
-record_script_check(_fails, "full prompt + cut output → truncated=0 (prompt is not conflated with output)", oc == 0)
-record_script_check(_fails, "an output-cut row is still returned for replay", ("p" * 50) in bakeoff._sample_prompts("t_outcut", 10))
+    print("-- an OUTPUT-only cut keeps a FULL prompt replayable (the output regenerates; the prompt is intact) --")
+    callio.snip_chars = lambda: 100
+    callio.record_io_sample("t_outcut", "openai", "m", "b3", "c3", "p" * 50, "o" * 400, source="test")  # prompt full, output cut
+    oc = con.execute("SELECT truncated FROM call_io WHERE intent='t_outcut'").fetchone()[0]
+    record_script_check(_fails, "full prompt + cut output → truncated=0 (prompt is not conflated with output)", oc == 0)
+    record_script_check(_fails, "an output-cut row is still returned for replay", ("p" * 50) in bakeoff._sample_prompts("t_outcut", 10))
 
-print("-- the code DEFAULT cap is documented as judge-sized, not replay-sized (enforcement, not prose) --")
-record_script_check(_fails, "_IO_SNIP_DEFAULT exists (the default the replay guard protects against)", isinstance(callio._IO_SNIP_DEFAULT, int))
+    print("-- the code DEFAULT cap is documented as judge-sized, not replay-sized (enforcement, not prose) --")
+    record_script_check(_fails, "_IO_SNIP_DEFAULT exists (the default the replay guard protects against)", isinstance(callio._IO_SNIP_DEFAULT, int))
 
-print(("[OK]" if not _fails else "[FAIL]") + " callio truncation flag: %d failure(s)" % len(_fails))
-sys.exit(1 if _fails else 0)
+    print(("[OK]" if not _fails else "[FAIL]") + " callio truncation flag: %d failure(s)" % len(_fails))
+    sys.exit(1 if _fails else 0)

@@ -10,7 +10,7 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
     os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="spendguard-attribution-venv-")
     os.execv(sys.executable, [sys.executable] + sys.argv)
 
-from spendguard import budget, ledger
+from spendguard import budget, ledger, config
 
 
 def check_attribution_venv_capture_condition(name, condition):
@@ -36,13 +36,15 @@ migration_connection = sqlite3.connect(migration_path)
 migration_connection.executescript(legacy_ddl)
 migration_connection.commit()
 migration_connection.close()
-migrated_ledger = ledger.SpendLedger(db_path=migration_path)
+migrated_ledger = ledger.SpendLedger(db_path=migration_path, owned_connection=config.open_ledger_connection(migration_path))
 migrated_columns = {row[1] for row in migrated_ledger._conn.execute("PRAGMA table_info(spend_events)")}
 failures += check_attribution_venv_capture_condition(
     "existing ledger gains the additive venv column on open", "venv" in migrated_columns)
 
 budget.record_charge(TEST_PROVIDER, TEST_MODEL, "realtime", TEST_COST, project="")
 active_ledger = budget._ledger()
+active_ledger._restore_spend_aggregate_connection()
+active_ledger._explicit_owned_connection = True
 gate_row = active_ledger._conn.execute(
     "SELECT venv, project_primary FROM spend_events WHERE source=? AND model=? ORDER BY rowid DESC LIMIT 1",
     ("gate", TEST_MODEL),
