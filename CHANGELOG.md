@@ -4,6 +4,25 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 
 ## [Unreleased]
 
+## [0.16.1] — 2026-10-27
+
+### Fixed
+- **Interrupted SDK-patch recovery leaves no stale submodules.** When the gate's post-import surface patch is
+  interrupted (e.g. KeyboardInterrupt) mid-import, the aborted import previously left the package's already-loaded
+  submodules cached in `sys.modules` while the top-level package was removed; the registered retry then re-imported
+  the parent without re-executing or rebinding those submodules, so `openai.lib` (and any other submodule) was left
+  unbound. Modern `openai` (>=3.3x) dereferences `openai.lib` on the first line of `chat.completions.create()`,
+  which surfaced the latent gap as an `AttributeError` in the lazy-SDK enforcement test. Recovery now removes the
+  package and every `<package>.`-prefixed submodule before re-raising, so the retry re-imports cleanly. No `openai`
+  version pin — the fix works against the current `openai` on Python 3.11 and 3.12. (#231)
+- **Offline reconcile reads no longer trip on managed-request dispatch.** The reconcile offline-correction suite was
+  intermittently failing CI with `offline correction used managed request dispatch`: a home-aligned ledger
+  connection's setup PRAGMAs, and its owned bounded-deadline reads, routed through the managed-request cursor path
+  while an owned reconcile-maintenance connection held the class-wide guard that forbids exactly that. Connection
+  setup on a `_CountedLedgerConnection` now validates home alignment and runs its PRAGMAs on a raw base cursor, and
+  owned-deadline reads execute natively at the home-aligned cursor layer — so no step of a bounded reconcile read
+  counts as a managed request. Plain and reconcile-maintenance connections are unchanged. (#233)
+
 ## [0.16.0] — 2026-10-24
 
 ### Added
