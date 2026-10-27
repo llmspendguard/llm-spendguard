@@ -626,9 +626,44 @@ def _tool_run_jobs(args):
 def _tool_delegate(args):
     """Offload a SELF-CONTAINED subtask through the same two-hop engine as the delegate CLI."""
     from . import delegate_router
-    return delegate_router.delegate_task(
-        args.get("task"), files=args.get("files"), intent=args.get("intent"),
-        provider=args.get("provider", "auto"), execute=bool(args.get("execute", False)), cwd=args.get("cwd"))
+    task = args.get("task")
+    files = args.get("files")
+    provider = args.get("provider", "auto")
+    execute = bool(args.get("execute", False))
+    if not execute:
+        return delegate_router.delegate_task(
+            task, files=files, intent=args.get("intent"), provider=provider, execute=False, cwd=args.get("cwd"))
+    classification = delegate_router.classify_task(task, files=files, provider=provider)
+    if classification.get("kind") != "agentic":
+        return delegate_router.delegate_task(
+            task, files=files, intent=args.get("intent"), provider=provider, execute=True, cwd=args.get("cwd"))
+    import os
+    cwd = args.get("cwd")
+    if cwd is None or not os.path.isabs(os.path.expanduser(os.fspath(cwd))):
+        return delegate_router.delegate_task(
+            task, files=files, intent=args.get("intent"), provider=provider, execute=True, cwd=cwd)
+    from . import delegate_jobs
+    fingerprint = delegate_router.delegate_route_fingerprint(task, files=files, provider=provider)
+    job_id = delegate_jobs.find_inflight_delegate_job(fingerprint, cwd)
+    if job_id is None:
+        started = delegate_router.start_delegate_job(
+            task, files=files, intent=args.get("intent"), provider=provider, cwd=cwd)
+        if started.get("state") != "running":
+            return started
+        job_id = started["job_id"]
+    return delegate_router.wait_for_delegate_job_handoff(job_id)
+
+
+def _tool_delegate_status(args):
+    """Read durable status for an agentic delegate job."""
+    from . import delegate_jobs
+    return delegate_jobs.read_delegate_job(args.get("job_id"))
+
+
+def _tool_delegate_result(args):
+    """Collect the complete durable result for an agentic delegate job."""
+    from . import delegate_jobs
+    return delegate_jobs.read_delegate_job_result(args.get("job_id"))
 
 
 _TOOLS = {
@@ -649,7 +684,9 @@ _TOOLS = {
         "calling agent's own turns. Dry-run is default; execute=true needs a trusted cwd. For a one-shot "
         "classification/gate/doctrine verdict use the one-shot router or spendguard ask with an intent. Codex is ~5s "
         "warm; >75s is cold codex exec only. Get model ids from advisor.lane_models/lanes --catalog, not guesses; "
-        "see README.md's routing cheat-sheet.",
+        "see README.md's routing cheat-sheet. Agentic execute returns inline only if it finishes within the handoff "
+        "window; otherwise it returns a job_id. Collect with spendguard_delegate_result; the detached run and its "
+        "durable result survive a dropped request.",
         {"type": "object", "properties": {
             "task": {"type": "string", "description": "the complete self-contained task"},
             "files": {"type": "array", "items": {"type": "string"},
@@ -660,6 +697,16 @@ _TOOLS = {
             "execute": {"type": "boolean", "description": "run hop 2; default false (dry-run)"}},
          "required": ["task"], "additionalProperties": False},
         _tool_delegate),
+    "spendguard_delegate_status": (
+        "Read the durable state and metadata of a detached agentic delegate job by job_id. $0, read-only.",
+        {"type": "object", "properties": {"job_id": {"type": "string"}},
+         "required": ["job_id"], "additionalProperties": False},
+        _tool_delegate_status),
+    "spendguard_delegate_result": (
+        "Collect the complete persisted result of a detached agentic delegate job by job_id. $0, read-only.",
+        {"type": "object", "properties": {"job_id": {"type": "string"}},
+         "required": ["job_id"], "additionalProperties": False},
+        _tool_delegate_result),
     "spendguard_version": (
         "Which spendguard COMMIT this MCP server is running, the green pointer it should be on, and whether it is "
         "STALE (a newer gate-green commit was deployed). $0 — a git-SHA compare. If stale, the server hands off to "
