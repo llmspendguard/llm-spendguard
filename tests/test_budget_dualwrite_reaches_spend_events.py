@@ -82,7 +82,7 @@ ck("audit hash-chain intact after all writes", ok)
 # (migrate read charges; charges no longer exists). Induce a write failure and read the line the user sees.
 import io, contextlib
 
-def _boom(self, ev):
+def _boom(self, ev, venv=None):
     raise RuntimeError("induced write failure — spend_events unreachable")
 
 _orig_record = L.SpendLedger.record_event
