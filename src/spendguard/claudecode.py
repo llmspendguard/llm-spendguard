@@ -12,7 +12,7 @@ INCREMENTAL + idempotent (this is the "track what's analyzed, update only the ne
     totals, so the server upsert (keyed by row uid) stays correct as sessions grow.
 Cost ≈ pricing.realtime_cost(model, input+cache_create+cache_read, output, cached=cache_read). Project = cwd name.
 """
-import os, json, glob, pathlib, datetime
+import os, json, glob, pathlib, datetime, hashlib
 
 from . import config, conv, pricing
 
@@ -915,13 +915,19 @@ def compaction_candidates(min_context=None, min_turns=None, min_day=None):
 _RESIDENCY_SOURCES = ("instructions", "tool_result", "conversation")
 _SYSTEM_REMINDER_MARK = "<system-reminder>"   # the FIXED injected wrapper — format detection, never a meaning judgement
 RESIDENCY_TRANSCRIPT_INDEX_STATE = "residency_transcript_index"
-RESIDENCY_TRANSCRIPT_INDEX_VERSION = 1
+RESIDENCY_TRANSCRIPT_INDEX_VERSION = 2
 
 
 def _residency_transcript_file_signature(path):
     """Invalidate on append, rewrite, replacement and restored-mtime edits alike."""
     stat = os.stat(path)
     return [stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns]
+
+
+def _residency_membership_checksum(signature, sessions):
+    """Bind persisted membership to its file signature, detecting damaged cache data."""
+    payload = json.dumps([signature, sessions], sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(payload.encode()).hexdigest()
 
 
 def _residency_indexed_records(conv_id):
@@ -946,6 +952,11 @@ def _residency_indexed_records(conv_id):
         previous = prior_files.get(path)
         valid = (isinstance(previous, dict) and previous.get("signature") == signature
                  and isinstance(previous.get("sessions"), list))
+        if valid:
+            try:
+                valid = previous.get("checksum") == _residency_membership_checksum(signature, previous["sessions"])
+            except (TypeError, ValueError, RecursionError):
+                valid = False
         rows = None
         if not valid or conv_id in previous["sessions"]:
             # Fail visibly on an unreadable or concurrently changing file rather
@@ -967,6 +978,7 @@ def _residency_indexed_records(conv_id):
                     structured_sessions.setdefault(json.dumps(session, sort_keys=True), session)
             fresh_files[path] = {"signature": signature,
                                  "sessions": list(sessions.values()) + list(structured_sessions.values())}
+            fresh_files[path]["checksum"] = _residency_membership_checksum(signature, fresh_files[path]["sessions"])
         if rows is not None:
             matching_records.extend(record for record in rows if record.get("sessionId") == conv_id)
     fresh = {"version": RESIDENCY_TRANSCRIPT_INDEX_VERSION, "root": root, "files": fresh_files}

@@ -189,5 +189,28 @@ def test_residency_scan_never_swallows_memory_failure(tmp_path):
     assert strict_lines == expected_lines == len(transcript.read_text().splitlines())
 
 
+def test_residency_inflight_tail_completion_restores_membership(tmp_path):
+    transcript_root = tmp_path / "transcripts"
+    transcript = transcript_root / "inflight.jsonl"
+    unrelated = {"sessionId": "inflight-other-session"}
+    completed = {"sessionId": INDEX_WORK_SESSION, "message": {"id": "inflight-completed"}}
+    residency_index_write_records(transcript, [unrelated])
+    completed_line = json.dumps(completed) + "\n"
+    # Pause a real writer midway through its final JSON object, then build the
+    # index while that target session is still absent from all complete records.
+    split_at = completed_line.index(":")
+    with transcript.open("a") as writer:
+        writer.write(completed_line[:split_at])
+        writer.flush()
+        with patch.object(claudecode, "_projects_dir", return_value=str(transcript_root)):
+            assert claudecode._conv_transcript_records(INDEX_WORK_SESSION) == []
+            writer.write(completed_line[split_at:])
+            writer.flush()
+            expected = residency_index_legacy_records(INDEX_WORK_SESSION)
+            assert expected == [completed]
+            assert claudecode._conv_transcript_records(INDEX_WORK_SESSION) == expected
+            assert claudecode._conv_transcript_records(INDEX_WORK_SESSION) == expected
+
+
 if __name__ == "__main__":
     raise SystemExit(run_pytest_style(globals()))
