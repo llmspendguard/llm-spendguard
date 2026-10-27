@@ -43,7 +43,7 @@ def exercise_strict_schema_route(model, schema, no_metered_fallback):
 
     def run_fake_strict_schema_lane(prompt, system=None, model=None, timeout=None, **kwargs):
         observed["lane_calls"] += 1
-        return {"text": VALID_LANE_REPLY, "error": None}
+        return {"text": VALID_LANE_REPLY, "error": None, "in_tok": 0, "out_tok": 0}
 
     def reject_strict_schema_metered_key_lookup(name):
         observed["metered_calls"] += 1

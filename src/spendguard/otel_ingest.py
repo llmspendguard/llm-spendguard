@@ -116,11 +116,13 @@ def span_to_charge(span):
     if provider is None and operation is None:
         return None                                      # not a GenAI span
     cost = _first(attrs, _COST_KEYS)
+    traced_input_tokens = _first(attrs, _IN_TOK_KEYS)
+    traced_output_tokens = _first(attrs, _OUT_TOK_KEYS)
     return {
         "provider": (provider or "otel").split(".")[-1],  # 'gcp.vertex_ai' → 'vertex_ai'; a bare provider is unchanged
         "model": _first(attrs, _MODEL_KEYS) or "?",
-        "in_tok": int(_first(attrs, _IN_TOK_KEYS) or 0),
-        "out_tok": int(_first(attrs, _OUT_TOK_KEYS) or 0),
+        "in_tok": int(traced_input_tokens) if traced_input_tokens is not None else None,
+        "out_tok": int(traced_output_tokens) if traced_output_tokens is not None else None,
         "cache_tok": int(_first(attrs, _CACHE_TOK_KEYS) or 0),
         "cost": (float(cost) if cost is not None else None),
         "operation": operation or "chat",
@@ -134,6 +136,8 @@ def _cost_for(ch):
     the tokens; an unpriceable model → (None, unpriced) so tokens are kept and the $ is honestly UNKNOWN, not $0."""
     if ch["cost"] is not None:
         return ch["cost"], budget.BASIS_RECONSTRUCTED
+    if ch["in_tok"] is None or ch["out_tok"] is None:
+        return None, budget.BASIS_UNPRICED
     try:
         from . import pricing
         return pricing.realtime_cost(ch["model"], ch["in_tok"], ch["out_tok"], ch["cache_tok"]), budget.BASIS_RECONSTRUCTED

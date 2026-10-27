@@ -102,7 +102,7 @@ def lint(intent=None, since=None, min_calls=MIN_CALLS, judge_batchable=False):
     by_intent = {}
     for row in rows:
         it, model, in_tok, out_tok, cost, finish, snip, kind = row.values
-        by_intent.setdefault(it, []).append((model or "", in_tok or 0, out_tok or 0, cost or 0.0, finish or "", snip or "", kind or ""))
+        by_intent.setdefault(it, []).append((model or "", in_tok, out_tok, cost or 0.0, finish or "", snip or "", kind or ""))
 
     findings = []
     _batch_cands = []          # (intent, model, rows, med_in, metered) → judged for packability after the loop (agentic)
@@ -111,6 +111,11 @@ def lint(intent=None, since=None, min_calls=MIN_CALLS, judge_batchable=False):
         if n < min_calls:
             continue
         total_cost = sum(r[3] for r in rs)
+        incomplete_usage = sum(r[1] is None or r[2] is None for r in rs)
+        if incomplete_usage:
+            findings.append({"intent": it, "kind": "unknown_usage", "est_usd": None,
+                             "detail": f"{incomplete_usage}/{n} calls have unknown usage/value",
+                             "next": "recover missing token telemetry before valuing this usage"})
         models = {}
         for r in rs:
             models[r[0]] = models.get(r[0], 0) + 1
@@ -134,7 +139,7 @@ def lint(intent=None, since=None, min_calls=MIN_CALLS, judge_batchable=False):
                 })
 
         # ── context spread: wildly varying input sizes → likely context stuffing on the big ones ──
-        ins = sorted(r[1] for r in rs if r[1] > 0)
+        ins = [] if any(r[1] is None for r in rs) else sorted(r[1] for r in rs if r[1] > 0)
         if len(ins) >= min_calls:
             p50, p95 = _pctl(ins, 0.50), _pctl(ins, 0.95)
             if p50 and p95 >= SPREAD_RATIO * p50 and (p95 - p50) >= SPREAD_MIN_TOK:
@@ -149,7 +154,7 @@ def lint(intent=None, since=None, min_calls=MIN_CALLS, judge_batchable=False):
                 })
 
         # ── truncation: finish=length observed → max_tokens is BELOW what the task needs ──
-        outs = sorted(r[2] for r in rs if r[2] > 0)
+        outs = [] if any(r[2] is None for r in rs) else sorted(r[2] for r in rs if r[2] > 0)
         truncs = sum(1 for r in rs if r[4] == "length")
         if truncs and outs:
             p99 = _pctl(outs, 0.99)
@@ -180,7 +185,7 @@ def lint(intent=None, since=None, min_calls=MIN_CALLS, judge_batchable=False):
         #    is a real batching opportunity (packable job items vs latency-sensitive interactive turns) is a MEANING
         #    judgement decided agentically after the loop — never by these thresholds, and only under judge_batchable.
         if judge_batchable:
-            rt = [r for r in rs if r[6] == "realtime" and r[1] > 0]    # realtime kind, has an input token count
+            rt = [r for r in rs if r[6] == "realtime" and r[1] is not None and r[1] > 0]
             if len(rt) >= UNDERBATCH_MIN_CALLS:
                 med_in = sorted(r[1] for r in rt)[len(rt) // 2]
                 metered = sum(r[3] for r in rt)                        # real $ paid ($0 rows were lane-served)
@@ -204,6 +209,9 @@ def lint(intent=None, since=None, min_calls=MIN_CALLS, judge_batchable=False):
         save, n_unpriced = 0.0, 0
         for r in rt:
             if r[3] > 0:                                             # only a metered call has a batch saving
+                if r[2] is None:
+                    n_unpriced += 1
+                    continue
                 try:
                     save += max(0.0, r[3] - pricing.batch_cost(r[0] or dominant, r[1], r[2]))
                 except gate.deliberate_stop_types():                # a bad-bound / refusal must HALT, never be swallowed

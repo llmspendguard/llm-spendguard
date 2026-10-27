@@ -21,7 +21,9 @@ def build_signals(since=None):
         # month. Every derived $/call was that month's spend divided by all-time calls — too low, by however
         # much history the store had accumulated, and getting worse the longer the tool ran.
         rows = db.execute("SELECT COALESCE(NULLIF(intent,''),''), model, batch, COUNT(*), "
-                          "SUM(quality IS NOT NULL), SUM(quality='good'), SUM(COALESCE(in_tok,0)), SUM(COALESCE(out_tok,0)) "
+                          "SUM(quality IS NOT NULL), SUM(quality='good'), "
+                          "CASE WHEN COUNT(in_tok)=COUNT(*) THEN SUM(in_tok) END, "
+                          "CASE WHEN COUNT(out_tok)=COUNT(*) THEN SUM(out_tok) END "
                           "FROM call_io WHERE COALESCE(ts,'') >= ? GROUP BY intent, model, batch",
                           (since,)).fetchall()
     bmap = conv.batch_project_map()           # AGENTIC: batch → its subconversation's classified project
@@ -32,7 +34,9 @@ def build_signals(since=None):
         a = agg.setdefault(key, dict(project=proj, intent=intent, model=model, calls=0, cost=0.0,
                                      judged=0, good=0, tin=0, tout=0, batches=set()))
         a["calls"] += n; a["judged"] += (judged or 0); a["good"] += (good or 0)
-        a["tin"] += (itok or 0); a["tout"] += (otok or 0); a["batches"].add(batch)
+        a["tin"] = None if a["tin"] is None or itok is None else a["tin"] + itok
+        a["tout"] = None if a["tout"] is None or otok is None else a["tout"] + otok
+        a["batches"].add(batch)
     # cost is per BATCH (full billed), counted once per (intent,model) group that owns the batch. EXCLUDE cancelled
     # batches: cancellation_rows() surfaces their spend separately, so counting them in the live aggregate too would
     # DOUBLE-count cancelled $ (it appears in call_io AND as a cancelled-waste row). Compute once, reuse below.
@@ -45,7 +49,7 @@ def build_signals(since=None):
             return f"low good-rate ({gr:.0%}) — review the prompt/model for this intent before scaling"
         if "opus" in (a["model"] or "").lower() and a["cost"] > 20:
             return "opus-heavy spend — A/B a cheaper model (spendguard experiment) on a fixed sample"
-        if a["tin"] > 0 and a["calls"] and (a["tin"] / a["calls"]) < 40:   # only when we actually have token data
+        if a["tin"] is not None and a["tin"] > 0 and a["calls"] and (a["tin"] / a["calls"]) < 40:
             return "tiny prompts — pack more per request (under-batching wastes flagship calls)"
         return ""
 
@@ -59,6 +63,7 @@ def build_signals(since=None):
             judged=a["judged"], good_rate=gr,
             waste_micros=round(a["cost"] * (1 - gr) * 1_000_000) if gr is not None else 0,
             tokens_in=a["tin"], tokens_out=a["tout"],
+            token_usage_complete=a["tin"] is not None and a["tout"] is not None,
             context=(a["intent"] or "(none)")[:120], recommendation=recommend(a, gr),
         ))
     out += cancellation_rows(cancelled)       # cancelled-but-billed = loss; the ONLY place cancelled $ is counted
@@ -108,7 +113,8 @@ def cancellation_rows(cancelled=None):
     day = datetime.date.today().isoformat()
     return [dict(project=proj, intent="cancelled-batches", model="(various)", day=day,
                  calls=a["n"], cost_micros=round(a["cost"] * 1_000_000), judged=0, good_rate=0.0,
-                 waste_micros=round(a["cost"] * 1_000_000), tokens_in=0, tokens_out=0,
+                 waste_micros=round(a["cost"] * 1_000_000), tokens_in=None, tokens_out=None,
+                 token_usage_complete=False,
                  context="cancelled mid-run (partial work billed)",
                  recommendation=f"{a['n']} batches cancelled but still billed ${a['cost']:.0f} — completed requests bill; let jobs finish or estimate first, never cancel as cost control")
             for proj, a in by_proj.items()]

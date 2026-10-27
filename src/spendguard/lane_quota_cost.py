@@ -1,7 +1,7 @@
 """Measured lane token cost and fail-closed plan-quota admission."""
 import os
 
-from . import calls, config, lane_economics, lane_registry, lanes
+from . import config, lane_economics, lane_registry, lanes, ledger_read
 
 MIN_SAMPLES_FOR_MEASURED = 5
 MAX_PLAN_FRACTION_DEFAULT = 0.05
@@ -39,25 +39,34 @@ def avoid_anthropic_lane_enabled():
 
 def measured_lane_token_cost(intent=None):
     """Ledger-derived average tokens/call, preferring an adequately sampled intent slice."""
-    with calls.config.ledger_op('calls', calls._ensure_call_observation_schema) as con:
-        lane_expr = "COALESCE(NULLIF(resolved_lane,''),NULLIF(executor,''))"
-        params = (intent,) if intent else ()
-        suffix = " AND intent=?" if intent else ""
-        query = (f"SELECT {lane_expr}, COUNT(*), AVG(COALESCE(in_tok,0)+COALESCE(out_tok,0)) "
-                 f"FROM calls WHERE {lane_expr} IS NOT NULL{suffix} GROUP BY {lane_expr}")
-        intent_rows = {str(lane): (int(count), float(avg or 0.0))
-                       for lane, count, avg in con.execute(query, params).fetchall()}
-        global_rows = con.execute(
-            f"SELECT {lane_expr}, COUNT(*), AVG(COALESCE(in_tok,0)+COALESCE(out_tok,0)) "
-            f"FROM calls WHERE {lane_expr} IS NOT NULL GROUP BY {lane_expr}").fetchall()
+    lane_expr = "COALESCE(NULLIF(resolved_lane,''),NULLIF(executor,''))"
+    params = (intent,) if intent else ()
+    suffix = " AND intent=?" if intent else ""
+    average_sql = "CASE WHEN COUNT(in_tok)=COUNT(*) AND COUNT(out_tok)=COUNT(*) THEN AVG(in_tok+out_tok) END"
+    query = (f"SELECT {lane_expr}, COUNT(*), {average_sql} "
+             f"FROM calls WHERE {lane_expr} IS NOT NULL{suffix} GROUP BY {lane_expr}")
+    try:
+        intent_rows = {str(lane): (int(count), float(avg) if avg is not None else None)
+                       for lane, count, avg in (row.values for row in ledger_read.read_ledger_sql(
+                           ledger_read.LedgerSQLReadRequest(
+                               query, params, required_tables=(ledger_read.LEDGER_CALLS_TABLE,))))}
+        global_rows = ledger_read.read_ledger_sql(ledger_read.LedgerSQLReadRequest(
+            f"SELECT {lane_expr}, COUNT(*), {average_sql} "
+            f"FROM calls WHERE {lane_expr} IS NOT NULL GROUP BY {lane_expr}",
+            required_tables=(ledger_read.LEDGER_CALLS_TABLE,)))
+    except (ledger_read.LedgerReadOpenError, ledger_read.LedgerReadTableAbsent):
+        # A fresh installation has no measurements; quota admission already
+        # represents that as unmeasured. Incomplete settlements still raise.
+        return {}
     out = {}
-    for lane, count, avg in global_rows:
+    for lane, count, avg in (row.values for row in global_rows):
         lane = str(lane)
-        chosen_count, chosen_avg = intent_rows.get(lane, (int(count), float(avg or 0.0)))
+        chosen_count, chosen_avg = intent_rows.get(lane, (int(count), float(avg) if avg is not None else None))
         if chosen_count < MIN_SAMPLES_FOR_MEASURED:
-            chosen_count, chosen_avg = int(count), float(avg or 0.0)
+            chosen_count, chosen_avg = int(count), float(avg) if avg is not None else None
         out[lane] = {"tokens_per_call": chosen_avg, "samples": chosen_count,
-                     "basis": "measured" if chosen_count >= MIN_SAMPLES_FOR_MEASURED else "unmeasured"}
+                     "basis": ("unknown" if chosen_avg is None else
+                               "measured" if chosen_count >= MIN_SAMPLES_FOR_MEASURED else "unmeasured")}
     return out
 
 

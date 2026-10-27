@@ -97,7 +97,7 @@ class Result:
                  "latency", "error", "prompt_sha", "run_id", "ts", "purpose", "payload",
                  "http_status", "provider_error", "attempts", "text_head")
 
-    def __init__(self, kind, vendor, model, text=None, stop_reason=None, in_tok=0, out_tok=0, cost=None,
+    def __init__(self, kind, vendor, model, text=None, stop_reason=None, in_tok=None, out_tok=None, cost=None,
                  latency=0.0, error=None, prompt_sha="", purpose="", payload=None,
                  http_status=None, provider_error=None, attempts=1, text_head=None):
         if kind not in KINDS:
@@ -459,7 +459,7 @@ def call(vendor, model, prompt, *, deadline_s, purpose="", system=None, max_toke
             billed += float(r.get("cost") or 0.0)
             kind, stop = _classify(r)
             last = Result(kind, vendor, model, text=r.get("text"), stop_reason=stop,
-                          in_tok=r.get("in_tok") or 0, out_tok=r.get("out_tok") or 0,
+                          in_tok=r.get("in_tok"), out_tok=r.get("out_tok"),
                           cost=(billed if billed else r.get("cost")),
                           latency=time.time() - started, error=r.get("error"), prompt_sha=sha, purpose=purpose,
                           http_status=r.get("status_code"), provider_error=r.get("provider_error"),

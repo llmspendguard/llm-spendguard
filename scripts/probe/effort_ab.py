@@ -71,12 +71,8 @@ def samples(k, lo=2000, hi=14000):
 
 
 def ledger_total():
-    import sqlite3
-    try:
-        c = sqlite3.connect(config.db_path())
-        return float(c.execute("SELECT COALESCE(SUM(cost),0) FROM calls").fetchone()[0] or 0)
-    except Exception:
-        return -1.0
+    from spendguard import ledger_read
+    return ledger_read.read_recorded_call_total()
 
 
 def main():

@@ -215,7 +215,7 @@ def _measure_one(model, effort, prompt, idx, intent, judge_model, acc, requireme
     else:
         acc["failed"].append(idx)
     calls.insert(adapters.provider_for(model), model.split(":", 1)[-1], "realtime", cost,
-                 in_tok=int(r.get("in_tok") or 0), out_tok=int(r.get("out_tok") or 0), intent=intent,
+                 in_tok=r.get("in_tok"), out_tok=r.get("out_tok"), intent=intent,
                  quality=q, quality_conf=(_JUDGE_CONF if q else None), who="effort-titration", effort=effort)
 
 

@@ -1,13 +1,12 @@
 """Bulk quota admission reads the job's SQLite measurements and refuses before transport."""
 import inspect
 import sqlite3
-from contextlib import nullcontext
 from functools import partial
 from types import SimpleNamespace
 from unittest.mock import patch
 
 import spendguard
-from spendguard import adapters, calls, dispatch, lane_balance, lane_catalog, lane_economics, lane_quota_cost
+from spendguard import adapters, dispatch, lane_balance, lane_catalog, lane_economics, lane_quota_cost, ledger_read
 
 spendguard.require()
 
@@ -22,6 +21,15 @@ BULK_INTENT_QUOTA_OUTPUT_BUDGET = 1024
 BULK_INTENT_QUOTA_PROMPT = "offline bulk quota fixture"
 BULK_INTENT_QUOTA_REFUSAL = "injected admission refusal before provider dispatch"
 bulk_intent_quota_observed = []
+with patch.object(ledger_read, "read_ledger_sql", side_effect=ledger_read.LedgerReadOpenError("absent ledger")):
+    assert lane_quota_cost.measured_lane_token_cost() == {}
+with patch.object(ledger_read, "read_ledger_sql", side_effect=ledger_read.LedgerSettlementIncomplete(1, None)):
+    try:
+        lane_quota_cost.measured_lane_token_cost()
+    except ledger_read.LedgerSettlementIncomplete:
+        pass
+    else:
+        raise AssertionError("incomplete settlements were downgraded to absent measurements")
 bulk_intent_quota_source = sqlite3.connect(":memory:", check_same_thread=False)
 bulk_intent_quota_source.execute(
     "CREATE TABLE calls (intent TEXT, resolved_lane TEXT, executor TEXT, in_tok INTEGER, out_tok INTEGER)")
@@ -53,8 +61,14 @@ def bulk_intent_quota_forbid_transport(*args, **kwargs):
     raise AssertionError("provider dispatch reached after injected admission refusal")
 
 
+def bulk_intent_quota_read_fixture(request, path=None):
+    cursor = bulk_intent_quota_source.execute(request.sql, request.parameters)
+    columns = tuple(item[0] for item in cursor.description)
+    return tuple(ledger_read.LedgerReadRow(columns, tuple(row)) for row in cursor.fetchall())
+
+
 with (
-    patch.object(calls.config, "ledger_op", side_effect=lambda *args, **kwargs: nullcontext(bulk_intent_quota_source)),
+    patch.object(ledger_read, "read_ledger_sql", side_effect=bulk_intent_quota_read_fixture),
     patch.object(lane_balance, "_bulk_arms", return_value=[(BULK_INTENT_QUOTA_LANE, BULK_INTENT_QUOTA_MODEL)]),
     patch.object(lane_economics, "prompt_lane_reserved", return_value=False),
     patch.object(lane_catalog, "lane_provider", return_value=BULK_INTENT_QUOTA_PROVIDER),

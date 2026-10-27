@@ -178,5 +178,8 @@ def run_prompt(prompt, system=None, model=None, timeout=TIMEOUT_S, reasoning=Non
             return _errdict(e2)
     text = "".join(b.get("text", "") for b in (d.get("content") or []) if b.get("type") == "text")
     u = d.get("usage") or {}
-    return {"text": text, "in_tok": int(u.get("input_tokens") or 0),
-            "out_tok": int(u.get("output_tokens") or 0), "latency": time.time() - t0, "error": None}
+    observed_input_tokens = u.get("input_tokens")
+    observed_output_tokens = u.get("output_tokens")
+    return {"text": text, "in_tok": int(observed_input_tokens) if observed_input_tokens is not None else None,
+            "out_tok": int(observed_output_tokens) if observed_output_tokens is not None else None,
+            "latency": time.time() - t0, "error": None}

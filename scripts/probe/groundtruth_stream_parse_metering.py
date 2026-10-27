@@ -45,13 +45,10 @@ def _max_rowid():
 
 
 def _stream_metering_evidence_rows(rowid):
-    con = sqlite3.connect(config.db_path())
-    try:
-        return con.execute("SELECT rowid, model, kind, COALESCE(in_tok,0), COALESCE(out_tok,0), "
-                           "COALESCE(cost,0), executor FROM calls WHERE rowid>? ORDER BY rowid",
-                           (rowid,)).fetchall()
-    finally:
-        con.close()
+    from spendguard import ledger_read
+    return [row.values for row in ledger_read.read_ledger_sql(ledger_read.LedgerSQLReadRequest(
+        "SELECT rowid, model, kind, in_tok, out_tok, cost, executor "
+        "FROM calls WHERE rowid>? ORDER BY rowid", (rowid,)))]
 
 
 def main(argv=None):

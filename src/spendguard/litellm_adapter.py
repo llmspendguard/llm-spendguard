@@ -16,6 +16,10 @@ import sys
 # Providers LiteLLM routes through the OpenAI SDK (which the gate already patches) → skip, or we'd count them twice.
 _SDK_GATED = {"openai", "azure", "azure_ai", "azure_text"}
 
+# Fixed LiteLLM operation discriminators, not an inference from model names or text.
+_LITELLM_NO_COMPLETION_KINDS = {"embedding", "aembedding", "rerank", "arerank"}
+_LITELLM_EMBEDDING_RESPONSE_KIND = "list"
+
 
 def litellm_adapter_is_wired() -> bool:
     """True only when the imported LiteLLM module will call spendguard after a successful request."""
@@ -23,15 +27,22 @@ def litellm_adapter_is_wired() -> bool:
     return lm is not None and record_litellm in (getattr(lm, "success_callback", None) or [])
 
 
-def _usage(response_obj):
-    """(prompt_tokens, completion_tokens) from a LiteLLM ModelResponse (pydantic-like) or a dict. Best-effort → (0,0)."""
+def _usage(response_obj, call_type=None):
+    """Parse observed usage and structural no-completion kinds; absent generation usage stays unknown."""
     u = getattr(response_obj, "usage", None)
     if u is None and isinstance(response_obj, dict):
         u = response_obj.get("usage")
+    response_kind = response_obj.get("object") if isinstance(response_obj, dict) else getattr(response_obj, "object", None)
+    operation_kind = getattr(call_type, "value", call_type)
+    no_completion = (operation_kind in _LITELLM_NO_COMPLETION_KINDS or
+                     response_kind == _LITELLM_EMBEDDING_RESPONSE_KIND)
     if u is None:
-        return 0, 0
+        return None, 0 if no_completion else None
     get = (u.get if isinstance(u, dict) else (lambda k: getattr(u, k, None)))
-    return int(get("prompt_tokens") or 0), int(get("completion_tokens") or 0)
+    completion_count = get("completion_tokens")
+    prompt_count = get("prompt_tokens")
+    return (int(prompt_count) if prompt_count is not None else None,
+            0 if no_completion else int(completion_count) if completion_count is not None else None)
 
 
 def record_litellm(kwargs, response_obj, start_time=None, end_time=None):
@@ -43,9 +54,8 @@ def record_litellm(kwargs, response_obj, start_time=None, end_time=None):
         if prov in _SDK_GATED:
             return                                  # already captured by the OpenAI-SDK gate → no double count
         model = (kwargs or {}).get("model") or getattr(response_obj, "model", "") or ""
-        in_tok, out_tok = _usage(response_obj)
-        if not (in_tok or out_tok):
-            return                                  # nothing to record (e.g. an embeddings/stream event w/o usage here)
+        in_tok, out_tok = _usage(response_obj, (kwargs or {}).get("call_type"))
+        usage = response_obj.get("usage") if isinstance(response_obj, dict) else getattr(response_obj, "usage", None)
         # Prefer LiteLLM's OWN computed cost — it maintains an accurate cross-provider price table, so Bedrock/Vertex/
         # Cohere/… are priced even when our prices.json doesn't carry them. Falls back to our pricing (cost=None) for
         # models LiteLLM didn't cost. Label the ledger with LiteLLM's provider so the row reconciles to the right place.
@@ -54,6 +64,8 @@ def record_litellm(kwargs, response_obj, start_time=None, end_time=None):
             cost = float(cost) if cost is not None else None
         except (TypeError, ValueError):
             cost = None
+        if usage is None and cost is None:
+            return                                  # neither usage nor monetary evidence
         gate._record_rt(model, {"model": model}, in_tok, out_tok, cost=cost, provider=prov or None)
     except Exception as e:
         print(f"[spend_gate] WARN litellm capture failed ({e}); call unaffected", file=sys.stderr)

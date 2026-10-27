@@ -18,7 +18,8 @@ def _toks(result):
     um = getattr(result, "usage_metadata", None)
     if um is None:
         return None
-    return int(getattr(um, "prompt_token_count", None) or 0), int(getattr(um, "candidates_token_count", None) or 0)
+    candidate_count = getattr(um, "candidates_token_count", None)
+    return int(getattr(um, "prompt_token_count", None) or 0), int(candidate_count) if candidate_count is not None else None
 
 
 def _embed_toks(result):
@@ -45,7 +46,7 @@ def _capture_vertex_result(kw, result, toks_fn=_toks):
         from . import gate
         model = (kw or {}).get("model") or getattr(result, "model_version", "") or ""
         u = toks_fn(result)
-        if u and (u[0] or u[1]):
+        if u is not None:
             gate._record_rt(model, {"model": model}, u[0], u[1], provider="google")
     except Exception as e:
         print(f"[spend_gate] WARN vertex capture failed ({e}); call unaffected", file=sys.stderr)

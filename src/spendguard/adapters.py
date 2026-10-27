@@ -750,12 +750,15 @@ def _book_substitution(r):
         from . import pricing, guard, calls as _cbk
         actual = float(cost or 0.0)
         try:
-            base = float(pricing.realtime_cost(requested, int(r.get("in_tok") or 0), int(r.get("out_tok") or 0)) or 0.0)
+            base = (None if r.get("in_tok") is None or r.get("out_tok") is None
+                    or r.get("token_usage_complete") == 0 else
+                    pricing.realtime_cost(requested, int(r["in_tok"]), int(r["out_tok"])))
         except Exception:
-            base = 0.0                                   # unpriced baseline → no counterfactual $ to credit
+            base = None                                  # unpriced/unknown baseline is not a measured zero
         # saved_usd counts ONLY a metered→cheaper-metered swap — the same amount that goes to the savings ledger,
         # so Σ decisions.saved_usd == the savings tally. A $0 plan swap's avoided $ is est-value, not a saving here.
-        saved = (base - actual) if (actual > 0 and base > actual) else 0.0
+        saved = (None if actual > 0 and base is None else
+                 (base - actual) if actual > 0 and base > actual else 0.0)
         _basis = "best-value" if r.get("best_value") else "advisor"
         chosen = f"{r.get('provider')}:{r.get('model')}" if r.get("provider") else r.get("model")
         guard.record_decision(intent=(_cbk.current() or {}).get("intent"),
@@ -764,7 +767,7 @@ def _book_substitution(r):
                               counterfactual_usd=base, actual_usd=actual, saved_usd=saved, basis=_basis,
                               why=r.get("substitution"), reason_class=r.get("decision_reason_class"),
                               call_id=r.get("call_id"))
-        if saved > 0:                                    # metered → cheaper metered: a real counterfactual saving
+        if saved is not None and saved > 0:               # metered → cheaper metered: a real counterfactual saving
             guard.record_saving(_basis, saved)
     except Exception:
         pass
@@ -1465,7 +1468,7 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
                     _rcr.record_call(_routed_result.get("provider") or provider_for(model),
                                      _routed_result.get("model") or model, "realtime",
                                      float(_routed_result.get("cost") or 0.0), in_tok=_routed_result.get("in_tok") or 0,
-                                     out_tok=_routed_result.get("out_tok") or 0, latency=_routed_result.get("latency"),
+                                     out_tok=_routed_result.get("out_tok"), latency=_routed_result.get("latency"),
                                      finish=_routed_result.get("finish_reason"), executor=_routed_result.get("executor"),
                                      effort=_routed_result.get("chosen_effort"), outcome=_oc_r,
                                      http_status=_routed_result.get("status_code"),
@@ -1650,7 +1653,7 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
             _cap_intent = (_cap_ctx.current() or {}).get("intent") or sig
             callio.capture_live(_cap_intent, r.get("provider") or "",
                                 r.get("model") or model, prompt, r.get("text"),
-                                in_tok=r.get("in_tok") or 0, out_tok=r.get("out_tok") or 0,
+                                in_tok=r.get("in_tok"), out_tok=r.get("out_tok"),
                                 system=system, req_schema=schema, req_max_tokens=max_tokens,
                                 finish_reason=r.get("finish_reason"), effort=r.get("chosen_effort"))
         # FORENSIC — record EVERY FAILED outcome on the ledger. The success path already records (gate._record_rt /
@@ -1666,7 +1669,7 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
                 _oc, _ = _vc._classify(r)
                 _rc.record_call(r.get("provider") or provider_for(model), r.get("model") or model, "realtime",
                                 float(r.get("cost") or 0.0), in_tok=r.get("in_tok") or 0,
-                                out_tok=r.get("out_tok") or 0, latency=r.get("latency"),
+                                out_tok=r.get("out_tok"), latency=r.get("latency"),
                                 finish=r.get("finish_reason"), executor=r.get("executor"),
                                 effort=r.get("chosen_effort"), outcome=_oc, http_status=r.get("status_code"),
                                 provider_error=r.get("provider_error"), retry_after=r.get("retry_after"),
@@ -2787,7 +2790,7 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
             try:
                 from . import calls, vendor_call as _vc
                 calls.record_call(prov, raw, "subscription", 0.0,
-                             in_tok=s.get("in_tok", 0), out_tok=s.get("out_tok", 0), latency=s.get("latency"),
+                             in_tok=s.get("in_tok", 0), out_tok=s.get("out_tok"), latency=s.get("latency"),
                              finish=s.get("finish_reason"),
                              executor=lane_name, effort=_applied_eff,   # the plan that served it + the effort it APPLIED
                              outcome=_vc.OK, disposition="served")  # forensic parity: a lane SUCCESS carries its outcome,
@@ -2917,7 +2920,7 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
             _lane_note_ok(lane_name, prompt)
             _recovery.recovery_event("served", executor=lane_name)
             _recovery_calls.record_call(prov, raw, "subscription", 0.0,
-                                        in_tok=_held.get("in_tok", 0), out_tok=_held.get("out_tok", 0),
+                                        in_tok=_held.get("in_tok", 0), out_tok=_held.get("out_tok"),
                                         executor=lane_name, outcome="ok", disposition="served")
             return {**base, **_held, "cost": 0.0, "executor": lane_name, "lane_recovery": _recovery.events}
         if no_metered_fallback:
@@ -3177,7 +3180,8 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
             # cache WRITE are their own counts. Total read-side input = fresh + cache_read (the write is priced apart).
             _cache_read = int(getattr(m.usage, "cache_read_input_tokens", 0) or 0)
             _cache_write = int(getattr(m.usage, "cache_creation_input_tokens", 0) or 0)
-            in_tok, out_tok = int(m.usage.input_tokens) + _cache_read, int(m.usage.output_tokens)
+            in_tok = int(m.usage.input_tokens) + _cache_read
+            out_tok = getattr(m.usage, "output_tokens", None)
             # THE FIELD WAS DECLARED AND NEVER SET. `base` has carried "finish_reason": None since this
             # function was written, and the comment above says callers use it to tell a complete answer from
             # a truncated one — but no provider branch ever assigned it, so it was None on every reply and
@@ -3498,7 +3502,7 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
                     raise _last
             text = r.choices[0].message.content
             _effort_sent = okw.get("reasoning_effort")   # okw is final here (post heal/drop) — the effort truly sent
-            in_tok, out_tok = r.usage.prompt_tokens, r.usage.completion_tokens
+            in_tok, out_tok = r.usage.prompt_tokens, getattr(r.usage, "completion_tokens", None)
             try:                                              # OpenAI auto-caches identical prefixes ≥1024 tok; unlike
                 _ptd = getattr(r.usage, "prompt_tokens_details", None)   # Anthropic, prompt_tokens ALREADY INCLUDES the
                 _cache_read = int(getattr(_ptd, "cached_tokens", 0) or 0) if _ptd else 0   # cached read (no add), and there
@@ -3926,13 +3930,13 @@ def _call_guarded(model, prompt, max_tokens=None, sig=None, retries=2, **kw):
                 # genuine tiny output it would drag the learned recommend DOWN and the class would re-fire low forever;
                 # censoring it lets the successful heal's large out_tok become the recommend the next call starts from.
                 _fr = "length" if r.get("empty_answer") else r.get("finish_reason")
-                bulkgate.note_response(_sig_key, model, r.get("out_tok") or 0, max_tokens=budget,
+                bulkgate.note_response(_sig_key, model, r.get("out_tok"), max_tokens=budget,
                                        finish_reason=_fr)   # per-model key (see _sig_key above)
                 # GUARDRAIL E — PER-CALL RUNAWAY BREAKER. out_tok many times the class's MEASURED p99 (norm read
                 # PRE-call as _mx0, so the runaway can't inflate its own baseline) is a runaway the loose reasoning
                 # ceiling never truncates — record it so it is VISIBLE (never aborted: a cut reasoning call still bills
                 # for nothing; guardrail D's budget_usd cap bounds the $). No-op without a trustworthy norm.
-                bulkgate.check_runaway(_sig_key, model, r.get("out_tok") or 0, norm=_mx0)
+                bulkgate.check_runaway(_sig_key, model, r.get("out_tok"), norm=_mx0)
             except Exception:
                 pass                                          # telemetry must not break the call
         if not trunc:

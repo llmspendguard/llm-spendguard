@@ -82,9 +82,13 @@ def _usage_from_json(body):
     if not isinstance(u, dict):
         return None
     if "prompt_tokens" in u:
-        return model, int(u.get("prompt_tokens") or 0), int(u.get("completion_tokens") or 0)
+        completion_count = u.get("completion_tokens")
+        if body.get("object") == "list":  # fixed embeddings response discriminator: no completion is generated
+            completion_count = 0
+        return model, int(u.get("prompt_tokens") or 0), int(completion_count) if completion_count is not None else None
     if "input_tokens" in u or "output_tokens" in u:
-        return model, int(u.get("input_tokens") or 0), int(u.get("output_tokens") or 0)
+        response_output_count = u.get("output_tokens")
+        return model, int(u.get("input_tokens") or 0), int(response_output_count) if response_output_count is not None else None
     return None
 
 

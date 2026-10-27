@@ -753,6 +753,29 @@ def batch_cost(model: str, in_tok: int, out_tok: int = 0, cached_in_tok: int = 0
                  cache_creation_tok=cache_creation_tok)
 
 
+def input_cost_lower_bound(model, in_tok, *, batch=False, provider=None,
+                           cache_read_tok=None, cache_write_tok=None):
+    """A provable input-charge floor, preserving unknown cache composition.
+
+    Missing read metadata permits every input token to be discounted. Compare
+    both endpoints using this module's actual pricing; absent discount prices
+    cannot establish a nonzero floor. Unknown writes add no guaranteed charge.
+    """
+    if in_tok is None:
+        return None
+    floor_cost_function = batch_cost if batch else realtime_cost
+    if cache_read_tok is not None:
+        return floor_cost_function(model, in_tok, 0, cache_read_tok, provider=provider,
+                                   cache_creation_tok=cache_write_tok or 0)
+    floor_price_card = price(model, provider)
+    floor_cache_price_field = "batch_cached_in" if batch else "cached_in"
+    if floor_price_card.get(floor_cache_price_field) is None:
+        return None
+    return min(floor_cost_function(model, in_tok, 0, cached_count, provider=provider,
+                                   cache_creation_tok=cache_write_tok or 0)
+               for cached_count in (0, in_tok))
+
+
 def realtime_cost(model: str, in_tok: int, out_tok: int = 0, cached_in_tok: int = 0, provider: str = None,
                   cache_creation_tok: int = 0) -> float:
     """Actual/forecast cost ($) of `in_tok`+`out_tok` for a real-time call. `provider` pins the vendor when the

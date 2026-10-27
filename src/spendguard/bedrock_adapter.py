@@ -25,10 +25,12 @@ def _toks(operation_name, response):
     in response HEADERS (so we never read/consume the body StreamingBody the caller needs). Best-effort → (0,0)."""
     if operation_name == "Converse":
         u = (response or {}).get("usage") or {}
-        return int(u.get("inputTokens") or 0), int(u.get("outputTokens") or 0)
+        output_count = u.get("outputTokens")
+        return int(u.get("inputTokens") or 0), int(output_count) if output_count is not None else None
     hdr = (((response or {}).get("ResponseMetadata") or {}).get("HTTPHeaders") or {})
+    output_header_count = hdr.get("x-amzn-bedrock-output-token-count")
     return (int(hdr.get("x-amzn-bedrock-input-token-count") or 0),
-            int(hdr.get("x-amzn-bedrock-output-token-count") or 0))
+            int(output_header_count) if output_header_count is not None else None)
 
 
 def _wrap(orig):
@@ -53,8 +55,7 @@ def _wrap(orig):
             from . import gate
             model = (api_params or {}).get("modelId") or ""
             in_tok, out_tok = _toks(operation_name, resp)
-            if in_tok or out_tok:
-                gate._record_rt(model, {"model": model}, in_tok, out_tok, provider="bedrock")
+            gate._record_rt(model, {"model": model}, in_tok, out_tok, provider="bedrock")
         except Exception as e:
             print(f"[spend_gate] WARN bedrock capture failed ({e}); call unaffected", file=sys.stderr)
         return resp

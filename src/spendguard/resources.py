@@ -616,8 +616,10 @@ def reconstruct_remote_llm(run=False, max_sessions=None, model_org_hints=None, f
         sc = conv.resolve({"conv_id": sid}) or {}   # UNIFIED resolver — the box's session → its segment determination
         for rn in runs:
             ev = str(rn.get("evidence") or rn.get("basis") or "")
-            in_tok, out_tok = int(rn.get("in_tokens") or 0), int(rn.get("out_tokens") or 0)
-            if (in_tok + out_tok) <= 0 or not rn.get("executed") or int(rn.get("confidence") or 0) < 50:
+            in_tok = None if rn.get("in_tokens") is None else int(rn["in_tokens"])
+            out_tok = None if rn.get("out_tokens") is None else int(rn["out_tokens"])
+            token_usage_complete = in_tok is not None and out_tok is not None
+            if (token_usage_complete and (in_tok + out_tok) <= 0) or not rn.get("executed") or int(rn.get("confidence") or 0) < 50:
                 continue
             if str(rn.get("kind") or "realtime").lower() == "batch":
                 continue                                       # STEP 2: LLM classified it batch → counted in the ledger
@@ -625,23 +627,28 @@ def reconstruct_remote_llm(run=False, max_sessions=None, model_org_hints=None, f
                 continue                                       # batch-id backstop on the classification
             ms = str(rn.get("model") or "").lower()
             try:                                               # I PRICE the extracted tokens — cost basis = pricing.py (realtime rates)
-                usd = round(pricing.realtime_cost(_norm_model(ms), in_tok, out_tok), 4)
+                usd = round(pricing.realtime_cost(_norm_model(ms), in_tok, out_tok), 4) if token_usage_complete else None
             except Exception:
-                usd = 0.0
-            if usd <= 0:
+                usd = None
+            if usd is not None and usd <= 0:
                 continue
             org = sc.get("org") or ""
             exp = next((o for k, o in (model_org_hints or {}).items() if k.lower() in ms), None)
             consistent = (not exp) or (not org) or (str(exp).lower() == str(org).lower())   # forensic: model corroborates session org?
             rows.append({"sid": sid, "project": sc.get("project") or "", "org": org, "team": sc.get("team") or "",
                          "member_ref": saas.identity_for_org(org), "model": rn.get("model"),
-                         "in_tokens": in_tok, "out_tokens": out_tok, "usd": usd, "evidence": ev[:120],
+                         "in_tokens": in_tok, "out_tokens": out_tok, "usd": usd,
+                         "token_usage_complete": token_usage_complete, "valuation_complete": usd is not None, "evidence": ev[:120],
                          "confidence": rn.get("confidence"), "org_consistent": consistent})
     by_org = {}
     for r_ in rows:
         k = r_["org"] or "(untagged)"
-        by_org[k] = round(by_org.get(k, 0.0) + r_["usd"], 2)
-    return {"sessions": len(sessions), "rows": rows, "by_org": by_org, "total": round(sum(r_["usd"] for r_ in rows), 2)}
+        by_org[k] = (round(by_org.get(k, 0.0) + r_["usd"], 2)
+                     if by_org.get(k, 0.0) is not None and r_["usd"] is not None else None)
+    valuation_complete = all(r_["usd"] is not None for r_ in rows)
+    return {"sessions": len(sessions), "rows": rows, "by_org": by_org,
+            "valuation_complete": valuation_complete,
+            "total": round(sum(r_["usd"] for r_ in rows), 2) if valuation_complete else None}
 
 
 # ── Two-stage AGENTIC realtime reconstruction from FULL conversations ──────────────────────────────────

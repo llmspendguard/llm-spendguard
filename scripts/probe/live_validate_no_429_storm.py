@@ -92,16 +92,23 @@ def _door_ledger(rowid_before):
     landed after `rowid_before`. (None, None, None) on a read failure — surfaced honestly, never a false zero."""
     if rowid_before is None:
         return None, None, None
+    from spendguard import ledger_read
+    con = None
     try:
         con = sqlite3.connect(_ledger_db())
         where, args = "rowid > ? AND intent = ?", (rowid_before, INTENT)
         rows = con.execute("SELECT COUNT(*) FROM calls WHERE " + where, args).fetchone()[0]
         n429 = con.execute("SELECT COUNT(*) FROM calls WHERE " + where + " AND http_status=429", args).fetchone()[0]
-        cost = con.execute("SELECT COALESCE(SUM(cost),0) FROM calls WHERE " + where, args).fetchone()[0]
-        con.close()
+        cost = ledger_read.read_ledger_sql(ledger_read.LedgerSQLReadRequest(
+            "SELECT COALESCE(SUM(cost),0) FROM calls WHERE " + where, args), _ledger_db())[0][0]
         return rows, n429, float(cost or 0.0)
+    except ledger_read.LedgerSettlementIncomplete:
+        raise
     except Exception:
         return None, None, None
+    finally:
+        if con is not None:
+            con.close()
 
 
 def _per_call_estimate(model):

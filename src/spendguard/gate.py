@@ -618,14 +618,21 @@ def _budget_check(cost, model, provider, kind):
     """Cross-process daily/monthly cap (only when budget.backend=sqlite). Hard stop — but ASK first
     when interactive (same as the per-batch cap); GATE_ALLOW=1 skips the prompt for big intentional runs."""
     from . import config
-    if config.budget_backend() != "sqlite" or _allow():
+    if _allow():
         return
     from . import budget
     if budget.is_reading_history():
         # Re-reading an already-billed batch is not spending, so a cap must not fire on it. Without this the
         # gate refused every call for the rest of the day over $359.63 of charges that never happened.
         return
-    ex = budget.exceeded(cost, kind="llm")          # the gate governs LLM calls; checks the LLM sub-cap + total ceiling
+    from .ledger_read import LedgerSettlementIncomplete
+    try:
+        budget.require_complete_metered_settlements()
+        if config.budget_backend() != "sqlite":
+            return
+        ex = budget.exceeded(cost, kind="llm")  # daily/monthly cap and process-cap coverage share this door
+    except LedgerSettlementIncomplete as partial_settlement:
+        raise SpendGateRefused(str(partial_settlement)) from partial_settlement
     if not ex:
         return
     w, capv, proj = ex
@@ -652,7 +659,7 @@ def _budget_check(cost, model, provider, kind):
                            f"Raise caps.{w.replace('-', '.')}, or set GATE_ALLOW=1.{hint}")
 
 
-def _budget_record(cost, model, provider, kind, quarantine=False, basis=None):
+def _budget_record(cost, model, provider, kind, quarantine=False, basis=None, in_tok=None, out_tok=None):
     """`quarantine` marks a row the gate PROVED impossible (input > the model's context window). It is still
     written — deleting the forensic record of a bad estimate is how you lose the ability to explain the bug —
     but it is tagged so every total excludes it and the receipt can show it as what it is."""
@@ -660,7 +667,7 @@ def _budget_record(cost, model, provider, kind, quarantine=False, basis=None):
     if config.budget_backend() == "sqlite":
         from . import budget
         budget.record_charge(provider, model, kind, cost, basis=basis,
-                      conv_id=(budget.QUARANTINE_CONV if quarantine else None))
+                      conv_id=(budget.QUARANTINE_CONV if quarantine else None), in_tok=in_tok, out_tok=out_tok)
 
 
 def _meta_intent():
@@ -972,9 +979,12 @@ def _intent_door_gate(intent, est, provider, model):
     cap = config.intent_cap(intent)
     if cap is None or _allow():
         return
+    from .ledger_read import LedgerSettlementIncomplete
     try:
         from . import calls
         spent = calls.intent_spend(intent, config.intent_cap_window_s())
+    except LedgerSettlementIncomplete as partial_settlement:
+        raise SpendGateRefused(str(partial_settlement)) from partial_settlement
     except Exception:
         return                                            # ledger hiccup → do not break the call
     authorization_note = ""
@@ -1012,7 +1022,7 @@ def _rt_flush():
         with open(RT_LOG, "a") as f:
             for (day, prov, mdl), v in items:
                 calls, cost = v[0], v[1]
-                in_tok, out_tok, cached = (v[2], v[3], v[4]) if len(v) >= 5 else (0, 0, 0)
+                in_tok, out_tok, cached = (v[2], v[3], v[4]) if len(v) >= 5 else (None, None, None)
                 f.write(json.dumps({"day": day, "provider": prov, "model": mdl, "calls": calls,
                                     "cost": round(cost, 6), "in_tok": in_tok, "out_tok": out_tok,
                                     "cached_in_tok": cached}) + "\n")
@@ -1028,7 +1038,7 @@ def _rt_flush():
                     _rt_agg[k] = list(v)
                 else:
                     for i in range(min(len(cur), len(v))):
-                        cur[i] += v[i]
+                        cur[i] = None if cur[i] is None or v[i] is None else cur[i] + v[i]
         _gate_warn_once(f"[spendguard] realtime spend log could not be written ({type(e).__name__}: "
                    f"{str(e)[:60]}) — {len(items)} aggregated row(s) HELD for the next flush, not dropped.")
 
@@ -1049,7 +1059,10 @@ def _rt_record(provider, model, cost, in_tok=0, out_tok=0, cached=0, basis=None,
         _rt_spent += cost
         k = (_now_day(), provider, pricing.normalize(model) if model else "?")
         a = _rt_agg.get(k, [0, 0.0, 0, 0, 0])
-        a[0] += 1; a[1] += cost; a[2] += int(in_tok or 0); a[3] += int(out_tok or 0); a[4] += int(cached or 0)
+        a[0] += 1; a[1] += cost
+        for telemetry_index, token_observation in enumerate((in_tok, out_tok, cached), start=2):
+            a[telemetry_index] = (None if a[telemetry_index] is None or token_observation is None
+                                  else a[telemetry_index] + int(token_observation))
         _rt_agg[k] = a
         _rt_since_flush += 1
         flush = _rt_since_flush >= 200
@@ -1057,7 +1070,7 @@ def _rt_record(provider, model, cost, in_tok=0, out_tok=0, cached=0, basis=None,
         _rt_flush()
     _m = pricing.normalize(model) if model else "?"
     _budget_record(cost, _m, provider, "realtime", quarantine=bool(_bad),   # cross-process ledger (sqlite)
-                   basis=basis or budget_basis_estimate())
+                   basis=basis or budget_basis_estimate(), in_tok=in_tok, out_tok=out_tok)
     _ev = {"kind": "realtime", "provider": provider, "model": _m, "cost": cost, "decision": "recorded",
            "in_tok": in_tok, "out_tok": out_tok, "cached_in_tok": cached}
     try:                       # the call's PURPOSE rides on the event (intent/chain)
@@ -1210,7 +1223,7 @@ def _rt_reasoning_report(result):
 
 def _act_oai_chat(result):
     u = getattr(_usage_bearer(result), "usage", None)
-    return None if not u else (getattr(u, "prompt_tokens", 0) or 0, getattr(u, "completion_tokens", 0) or 0)
+    return None if not u else (getattr(u, "prompt_tokens", 0) or 0, getattr(u, "completion_tokens", None))
 
 
 def _est_oai_resp(kw):
@@ -1233,7 +1246,7 @@ def _est_oai_resp(kw):
 
 def _act_oai_resp(result):
     u = getattr(_usage_bearer(result), "usage", None)   # Responses usage = input_tokens / output_tokens (not prompt/completion)
-    return None if not u else (getattr(u, "input_tokens", 0) or 0, getattr(u, "output_tokens", 0) or 0)
+    return None if not u else (getattr(u, "input_tokens", 0) or 0, getattr(u, "output_tokens", None))
 
 
 def _est_oai_legacy(kw):
@@ -1315,7 +1328,7 @@ def _est_anth_msg(kw):
 
 def _act_anth_msg(result):
     u = getattr(_usage_bearer(result), "usage", None)
-    return None if not u else (getattr(u, "input_tokens", 0) or 0, getattr(u, "output_tokens", 0) or 0)
+    return None if not u else (getattr(u, "input_tokens", 0) or 0, getattr(u, "output_tokens", None))
 
 
 def _cached_in(result):
@@ -1396,9 +1409,35 @@ def _record_rt(model, kw, in_tok, out_tok, cached=0, latency=None, output=None, 
     The nullable cache_*_tok observations are separate from estimator defaults: only measured usage with a
     known write tier can support exact integrity reconstruction. Absent evidence stays a coverage gap."""
     prov = provider or _provider_of(model)
+    _calls.check_output(output)      # output contracts are independent of monetary/token completeness
     # Normalize NEW split observations only; preserve raw legacy semantics on unmeasured rows. Anthropic
     # reports fresh input, OpenAI reports input inclusive of reads; writes are separate for both.
-    call_input = in_tok + cache_read_tok if prov == "anthropic" and cache_read_tok is not None else in_tok
+    call_input = (in_tok + cache_read_tok
+                  if in_tok is not None and prov == "anthropic" and cache_read_tok is not None else in_tok)
+    if (in_tok is None or out_tok is None) and cost is None:
+        # Provider usage is partial: the input charge is a floor, never a settlement.
+        in_for_floor = (in_tok + cached) if in_tok is not None and prov == "anthropic" else in_tok
+        input_floor = None
+        try:
+            input_floor = pricing.input_cost_lower_bound(
+                model, in_for_floor, provider=prov, cache_read_tok=cache_read_tok,
+                cache_write_tok=cache_creation)
+        except Exception as exc:
+            _gate_warn_once(f"[spend_gate] incomplete output usage for {model}; input floor unavailable: {exc}")
+        _calls.record_call(prov, model, "realtime", None, in_tok=call_input, out_tok=out_tok,
+                           latency=latency, finish=finish, executor="api",
+                           cache_read_tok=cache_read_tok, cache_write_tok=cache_write_tok,
+                           input_cost_floor=input_floor)
+        if input_floor is not None:
+            if _meta_intent():
+                from . import budget
+                budget.record_meta(prov, model, input_floor)
+            else:
+                _rt_record(prov, model, input_floor, in_tok=in_tok, out_tok=out_tok, cached=cached,
+                           basis=basis, per_item_max=per_item_max)
+        _gate_warn_once(f"[spend_gate] INCOMPLETE settlement for {model}: token count unreported; "
+                        "only the known input floor is booked; total spend remains unknown")
+        return
     if cost is None:
         # normalize to OpenAI token semantics (input INCLUDES cached) before pricing: Anthropic's input_tokens
         # EXCLUDES cache_read, so add it back or _cost double-subtracts and under-bills ~2x.
@@ -1461,7 +1500,6 @@ def _record_rt(model, kw, in_tok, out_tok, cached=0, latency=None, output=None, 
                           prompt=_prompt_text(kw), output=output, finish=finish, effort=_effort, executor="api",
                           cache_read_tok=cache_read_tok, cache_write_tok=cache_write_tok)
         return
-    _calls.check_output(output)      # realtime output CONTRACT (no-op unless the flow declared one)
     _rt_record(prov, model, cost, in_tok=in_tok, out_tok=out_tok, cached=cached, basis=basis, per_item_max=per_item_max)
     try:                                              # max_tokens TRUNCATION detection (a fact) + per-sig telemetry
         from . import bulkgate
@@ -1610,13 +1648,13 @@ def _pull_usage(chunk, acc):
             for src, dst in (("prompt_tokens", "in"), ("input_tokens", "in"),
                              ("completion_tokens", "out"), ("output_tokens", "out")):
                 v = getattr(u, src, None)
-                if v:
+                if v is not None:
                     acc[dst] = int(v)
             for dattr in ("prompt_tokens_details", "input_tokens_details"):
                 d = getattr(u, dattr, None)
-                if d is not None and getattr(d, "cached_tokens", None):
+                if d is not None and getattr(d, "cached_tokens", None) is not None:
                     acc["cached"] = int(d.cached_tokens)
-            if getattr(u, "cache_read_input_tokens", None):
+            if getattr(u, "cache_read_input_tokens", None) is not None:
                 acc["cached"] = int(u.cache_read_input_tokens)
             if getattr(u, "cache_creation_input_tokens", None):
                 acc["cache_creation"] = int(u.cache_creation_input_tokens)
@@ -1625,9 +1663,9 @@ def _pull_usage(chunk, acc):
         if mu is not None:
             if getattr(mu, "input_tokens", None):
                 acc["in"] = int(mu.input_tokens)
-            if getattr(mu, "output_tokens", None):
+            if getattr(mu, "output_tokens", None) is not None:
                 acc["out"] = int(mu.output_tokens)
-            if getattr(mu, "cache_read_input_tokens", None):     # Anthropic reports cache tokens on message.usage
+            if getattr(mu, "cache_read_input_tokens", None) is not None:  # Anthropic message.usage
                 acc["cached"] = int(mu.cache_read_input_tokens)
             if getattr(mu, "cache_creation_input_tokens", None):
                 acc["cache_creation"] = int(mu.cache_creation_input_tokens)
@@ -1636,8 +1674,11 @@ def _pull_usage(chunk, acc):
         if ru is not None:
             if getattr(ru, "input_tokens", None):
                 acc["in"] = int(ru.input_tokens)
-            if getattr(ru, "output_tokens", None):
+            if getattr(ru, "output_tokens", None) is not None:
                 acc["out"] = int(ru.output_tokens)
+            details = getattr(ru, "input_tokens_details", None)
+            if details is not None and getattr(details, "cached_tokens", None) is not None:
+                acc["cached"] = int(details.cached_tokens)
         ch = getattr(chunk, "choices", None)                 # OpenAI finish_reason
         if ch and getattr(ch[0], "finish_reason", None):
             acc["finish"] = ch[0].finish_reason
@@ -1657,10 +1698,11 @@ def _observe_stream(stream, model, kw, est_fn, t0, is_async):
 
     def _done():
         try:
-            if acc.get("in") or acc.get("out"):
-                _record_rt(model, kw, acc.get("in", 0), acc.get("out", 0), acc.get("cached", 0),
+            if "in" in acc or "out" in acc:
+                _record_rt(model, kw, acc.get("in", 0), acc.get("out"), acc.get("cached", 0),
                            time.time() - t0, finish=acc.get("finish"), basis=budget_basis_billed(),
-                           cache_creation=acc.get("cache_creation", 0), reasoning_tokens=acc.get("reasoning_tokens"))
+                           cache_creation=acc.get("cache_creation", 0), reasoning_tokens=acc.get("reasoning_tokens"),
+                           cache_read_tok=acc.get("cached"))
             else:                                            # usage not emitted (e.g. include_usage off) → estimate
                 in_tok, out_tok = _stream_out_estimate(model, kw, est_fn)
                 _record_rt(model, kw, in_tok, out_tok, 0, time.time() - t0, basis=budget_basis_estimate())
@@ -2339,7 +2381,7 @@ def _act_transcription(kw, result):
     model = kw.get("model") or ""
     u = getattr(result, "usage", None)               # gpt-4o-transcribe bills TOKENS and reports usage
     if u is not None and getattr(u, "input_tokens", None) is not None:
-        _record_rt(model, kw, getattr(u, "input_tokens", 0) or 0, getattr(u, "output_tokens", 0) or 0,
+        _record_rt(model, kw, getattr(u, "input_tokens", 0) or 0, getattr(u, "output_tokens", None),
                    provider="openai")
         return
     dur = getattr(result, "duration", None)          # whisper verbose_json reports seconds

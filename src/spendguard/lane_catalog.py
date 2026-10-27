@@ -103,13 +103,15 @@ def use_names(lane):
 
 def use_name_cost(use_name, in_tok, out_tok, lane):
     """API-equivalent $ for a lane use-name at the given token counts — priced at the BASE model's rate for the lane's
-    PROVIDER (reasoning changes token COUNT, never the $/token rate). None if the base is unpriced/ambiguous (honest;
-    an unpriced lane model reads as $0 est-value, not an invented rate)."""
+    PROVIDER (reasoning changes token COUNT, never the $/token rate). None if usage is unknown or the base is
+    unpriced/ambiguous; neither missing telemetry nor an unpriced model implies zero value."""
+    if in_tok is None or out_tok is None:
+        return None
     from . import pricing
     base, _lv = parse_use_name(use_name, lane)
     prov = lane_provider(lane)
     try:
-        return pricing.realtime_cost(base, int(in_tok or 0), int(out_tok or 0), provider=prov)
+        return pricing.realtime_cost(base, int(in_tok), int(out_tok), provider=prov)
     except Exception:
         return None
 
