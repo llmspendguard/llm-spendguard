@@ -293,11 +293,14 @@ class _CodexDaemon(_WarmStdioJsonRpcDaemon):
         if sandbox not in ("read-only", "workspace-write"):
             return {"text": None, "thread": thread, "error": f"unsupported codex sandbox {sandbox!r}"}
         self._cancel_idle_shutdown()
+        evidence_execution_id = self._enter_warm_evidence_scope()
         try:
             for attempt in (1, 2):
                 p = self.ensure_running()
                 if p is None:
                     return {"text": None, "thread": None, "error": "codex app-server would not start"}
+                if evidence_execution_id:
+                    self._reference_warm_stderr_archive(p, (evidence_execution_id,))
                 eff_timeout = timeout if (timeout and timeout > 0) else CALL_TIMEOUT_S   # caller's deadline wins; the
                 #   fallback reads the MODULE global so a monkeypatch of codex_daemon.CALL_TIMEOUT_S takes effect
                 deadline = time.monotonic() + eff_timeout
@@ -401,7 +404,10 @@ class _CodexDaemon(_WarmStdioJsonRpcDaemon):
                         "turn": turn_waiter.get("turn_id"), "process_pid": getattr(p, "pid", None),
                         "error": None if text else "empty codex reply"}
         finally:
-            self._schedule_idle_shutdown()
+            try:
+                self._leave_warm_evidence_scope(evidence_execution_id)
+            finally:
+                self._schedule_idle_shutdown()
 
 
 # ── ONE host-broker facade per process.  Its owner proxies into the existing private-stdio daemon; clients attach

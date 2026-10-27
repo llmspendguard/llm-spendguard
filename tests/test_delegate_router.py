@@ -15,6 +15,7 @@ os.environ.setdefault("OPENAI_API_KEY", "sk-test-not-used")
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
 from spendguard import codex_exec, config, delegate_router, gate, guard, lane_balance, lanes, pricing, reliability  # noqa: E402
+from spendguard.execution_journal import DurableExecutionPersistenceError  # noqa: E402
 
 
 _failed = []
@@ -236,10 +237,15 @@ try:
     try:
         delegate_router.codex_agentic_events_path = lambda: demand_path / "cannot-be-a-directory"
         config.warn_once = demand_executor_raises
-        observed_failure = delegate_router._route_agentic(
-            "codex", "fixture", "test-strong", None, os.path.dirname(__file__))
-        check("observation and warning failure cannot change execution result",
-              observed_failure["text"] == "agentic result")
+        calls_before_persistence_failure = len(codex_calls)
+        try:
+            delegate_router._route_agentic("codex", "fixture", "test-strong", None, os.path.dirname(__file__))
+        except DurableExecutionPersistenceError:
+            persistence_failed_closed = True
+        else:
+            persistence_failed_closed = False
+        check("durability failure surfaces before dispatch instead of silently losing evidence",
+              persistence_failed_closed and len(codex_calls) == calls_before_persistence_failure)
     finally:
         delegate_router.codex_agentic_events_path = original_demand_path
         config.warn_once = original_demand_warning

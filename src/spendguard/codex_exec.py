@@ -33,6 +33,8 @@ import tempfile
 import time
 import logging
 import threading
+import contextlib
+from .execution_journal import _protect_durable_execution_io
 
 CODEX_MCP_SCAN_INTERVAL_S = 0.05
 CODEX_MCP_EXIT_WAIT_S = 1.0
@@ -130,6 +132,7 @@ def _reap_captured_codex_stdio(captured, policy):
     return reaped
 
 
+@_protect_durable_execution_io
 def _run_cold_codex_with_reaper(cmd, timeout, env, cwd):
     """Observe only this Popen's descendants; cleanup cannot alter the run result.
 
@@ -137,6 +140,8 @@ def _run_cold_codex_with_reaper(cmd, timeout, env, cwd):
     deliberately left alone. There is no global signature-based sweep.
     """
     import psutil
+    from . import execution_journal
+    dispatch_id = execution_journal.current_durable_execution_id()
     captured = {}
     stop = threading.Event()
     logger = logging.getLogger(__name__)
@@ -145,8 +150,14 @@ def _run_cold_codex_with_reaper(cmd, timeout, env, cwd):
     except Exception:
         logger.warning("cold codex MCP cleanup: config unavailable; cleanup disabled", exc_info=True)
         policy = ([], set())
-    with subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-                          env=env, stdin=subprocess.DEVNULL, cwd=cwd) as child:
+    with contextlib.ExitStack() as evidence_streams:
+        paths = execution_journal.durable_execution_payload_paths(dispatch_id) if dispatch_id else None
+        stdout_target = evidence_streams.enter_context(paths["stdout"].open("ab")) if paths else subprocess.PIPE
+        stderr_target = evidence_streams.enter_context(paths["stderr"].open("ab")) if paths else subprocess.PIPE
+        child = evidence_streams.enter_context(subprocess.Popen(cmd, stdout=stdout_target, stderr=stderr_target, text=True,
+                          env=env, stdin=subprocess.DEVNULL, cwd=cwd))
+        if dispatch_id:
+            execution_journal.bind_durable_execution_child(dispatch_id, child.pid)
         def _capture_cold_codex_descendants(root):
             try:
                 while not stop.is_set():
@@ -170,11 +181,20 @@ def _run_cold_codex_with_reaper(cmd, timeout, env, cwd):
             logger.warning("cold codex MCP capture unavailable", exc_info=True)
         try:
             stdout, stderr = child.communicate(timeout=timeout)
+            if paths:
+                for evidence in (stdout_target, stderr_target):
+                    evidence.flush()
+                    os.fsync(evidence.fileno())
+                execution_journal.persist_durable_execution_payload(dispatch_id, exit_code=child.returncode)
+                stdout = paths["stdout"].read_text(encoding="utf-8")
+                stderr = paths["stderr"].read_text(encoding="utf-8")
             return subprocess.CompletedProcess(cmd, child.returncode, stdout, stderr)
         except subprocess.TimeoutExpired:
             child.kill()
             # Don't drain inherited pipes before cleanup: an orphan may hold stderr open.
             child.wait()
+            if dispatch_id:
+                execution_journal.persist_durable_execution_payload(dispatch_id, exit_code=child.returncode)
             raise
         finally:
             try:
@@ -648,10 +668,24 @@ def _run_agentic_codex_exec(prompt, system=None, model=None, timeout=TIMEOUT_S, 
         return {"error": "codex CLI unavailable for delegated workspace execution"}
     from . import config
     environment = config.lane_exec_env(executable)
+    from . import execution_journal
+    dispatch_id = execution_journal.current_durable_execution_id()
+    if dispatch_id is None:
+        dispatch_id = execution_journal.begin_durable_execution({"provider": "codex", "cwd": os.fspath(cwd)})
+        with execution_journal.durable_execution_scope(dispatch_id):
+            try:
+                result = _run_agentic_codex_exec(prompt, system=system, model=model, timeout=timeout,
+                                                reasoning=reasoning, cwd=cwd)
+                execution_journal.terminalize_durable_execution(
+                    dispatch_id, "failure" if result.get("error") else "success", envelope=result)
+                return result
+            except BaseException:
+                execution_journal.terminalize_durable_execution(dispatch_id, "failure")
+                raise
     complete_prompt = f"{system.strip()}\n\n{prompt}" if system else prompt
     started_at = time.time()
     with tempfile.TemporaryDirectory(prefix=CODEX_EXEC_WORK_DIRECTORY_PREFIX) as output_directory:
-        output_path = os.path.join(output_directory, CODEX_DELEGATE_OUTPUT_FILENAME)
+        output_path = os.fspath(execution_journal.durable_execution_payload_paths(dispatch_id)["result"])
         # codex-cli >=0.160: `--approve-for-me` runs in (and implies) the workspace-write sandbox and REJECTS a
         # co-passed `--sandbox` ("cannot be used with '--approve-for-me'"). Older codex accepted the explicit flag
         # redundantly; the approval flag alone is the version-robust spelling of "agentic workspace-write + auto-review".
@@ -678,9 +712,12 @@ def _run_agentic_codex_exec(prompt, system=None, model=None, timeout=TIMEOUT_S, 
         try:
             with open(output_path, encoding="utf-8") as output_stream:
                 answer = output_stream.read()
+                os.fsync(output_stream.fileno())
         except OSError as error:
             return {"error": f"codex delegated execution produced no final-message file: {error}",
                     "execution_started": True}
+        if not answer:
+            return {"error": "codex delegated execution produced an empty final message", "execution_started": True}
         input_tokens, output_tokens = _usage_from_events(completed.stdout)
         return {"text": answer, "in_tok": input_tokens, "out_tok": output_tokens,
                 "execution_started": True, "transport": "codex-exec-mcp",

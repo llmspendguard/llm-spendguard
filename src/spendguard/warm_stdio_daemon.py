@@ -48,6 +48,9 @@ from . import config
 # A FIXED, non-external bootstrap directory for the server process. Each call carries its own explicit task cwd where
 # the protocol supports it; keeping the daemon SPAWN here means its startup directory can never be steered by content.
 _SAFE_CWD = tempfile.gettempdir()
+WARM_EVIDENCE_CHUNK_DEFAULT_BYTES = 65536
+WARM_STDERR_ARCHIVE_DIRECTORY_DEFAULT = "warm-transport-stderr"
+WARM_STDERR_ARCHIVE_PREFIX = "warm-stderr-"
 _WARM_REAP_TIMEOUT_S = 5
 _WARM_GROUP_POLL_INTERVAL_S = 0.05
 _WARM_GROUP_PROBE_SIGNAL = 0
@@ -241,6 +244,68 @@ class _WarmStdioJsonRpcDaemon:
         self._ids = itertools.count(1)          # itertools.count.__next__ is atomic under the GIL
         self._keep_warm = False
         self._environment_overrides = {}
+        self._warm_evidence_scopes = {}
+
+    def _enter_warm_evidence_scope(self):
+        from . import execution_journal
+        warm_execution_id = execution_journal.current_durable_execution_id()
+        if warm_execution_id:
+            self._warm_evidence_read_size()
+            with self._state_lock:
+                warm_capture = self._warm_evidence_scopes.setdefault(
+                    warm_execution_id, {"users": 0, "error": None})
+                warm_capture["users"] += 1
+            if self._proc is not None:
+                self._reference_warm_stderr_archive(self._proc, (warm_execution_id,))
+        return warm_execution_id
+
+    def _leave_warm_evidence_scope(self, warm_execution_id):
+        if warm_execution_id:
+            with self._state_lock:
+                warm_capture = self._warm_evidence_scopes[warm_execution_id]
+                warm_capture["users"] -= 1
+                if not warm_capture["users"]:
+                    del self._warm_evidence_scopes[warm_execution_id]
+            if warm_capture["error"] is not None:
+                raise warm_capture["error"]
+
+    def _capture_warm_transport_bytes(self, *, stdout=None, stderr=None, exit_code=None):
+        from . import execution_journal
+        with self._state_lock:
+            warm_capture_ids = tuple(self._warm_evidence_scopes)
+        for warm_capture_id in warm_capture_ids:
+            try:
+                execution_journal.append_durable_execution_evidence(
+                    warm_capture_id, stdout=stdout, stderr=stderr)
+                if exit_code is not None:
+                    execution_journal.persist_durable_execution_payload(warm_capture_id, exit_code=exit_code)
+            except execution_journal.DurableExecutionPersistenceError as warm_capture_error:
+                with self._state_lock:
+                    warm_failed_scope = self._warm_evidence_scopes.get(warm_capture_id)
+                    if warm_failed_scope is not None:
+                        warm_failed_scope["error"] = warm_capture_error
+                self._fail_all_waiters()
+
+    @staticmethod
+    def _warm_evidence_read_size():
+        warm_read_size = int(os.getenv("SPENDGUARD_WARM_EVIDENCE_CHUNK_BYTES") or config._cfg_get(
+            "delegate", "warm_evidence_chunk_bytes", WARM_EVIDENCE_CHUNK_DEFAULT_BYTES))
+        if warm_read_size <= 0:
+            raise ValueError("warm evidence chunk bytes must be positive")
+        return warm_read_size
+
+    def _reference_warm_stderr_archive(self, process, execution_ids=None):
+        from . import execution_journal
+        warm_archive_path = getattr(process, "_spendguard_stderr_archive", getattr(process, "name", None))
+        if not isinstance(warm_archive_path, (str, os.PathLike)):
+            return
+        if execution_ids is None:
+            with self._state_lock:
+                execution_ids = tuple(self._warm_evidence_scopes)
+        for warm_archive_execution in execution_ids:
+            if warm_archive_execution is None:
+                continue
+            execution_journal.reference_durable_execution_stderr(warm_archive_execution, warm_archive_path)
 
     # ── id + idle-timer primitives ────────────────────────────────────────────────────────────────────────────
     def _next_id(self):
@@ -354,8 +419,6 @@ class _WarmStdioJsonRpcDaemon:
         buf = b""
         try:
             while True:
-                if p.poll() is not None:
-                    break
                 try:
                     r, _, _ = select.select([p.stdout], [], [], 0.5)
                 except (OSError, ValueError):
@@ -363,13 +426,14 @@ class _WarmStdioJsonRpcDaemon:
                 if not r:
                     continue
                 try:
-                    chunk = os.read(p.stdout.fileno(), 65536)
+                    chunk = os.read(p.stdout.fileno(), self._warm_evidence_read_size())
                 except (BlockingIOError, InterruptedError):
                     continue
                 except (OSError, ValueError):
                     break
                 if chunk == b"":                           # EOF — server closed the pipe
                     break
+                self._capture_warm_transport_bytes(stdout=chunk)
                 buf += chunk
                 while b"\n" in buf:
                     raw, buf = buf.split(b"\n", 1)
@@ -400,6 +464,7 @@ class _WarmStdioJsonRpcDaemon:
                         self._on_response(w, msg)          # subclass hook (e.g. codex turn correlation)
                         w["event"].set()
         finally:
+            self._capture_warm_transport_bytes(exit_code=p.poll())
             self._fail_all_waiters()
 
     # ── process lifecycle ─────────────────────────────────────────────────────────────────────────────────────
@@ -491,14 +556,22 @@ class _WarmStdioJsonRpcDaemon:
                              "is unavailable, falling back to the metered API" % (self._LANE_LABEL, exe))
             return None
         cmd = [exe] + list(cmd[1:])
-        try:
-            p = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+        from . import execution_journal
+        warm_archive_directory = execution_journal.durable_execution_store_root() / str(config._cfg_get(
+            "delegate", "warm_stderr_archive_directory", WARM_STDERR_ARCHIVE_DIRECTORY_DEFAULT))
+        warm_archive_directory.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(prefix=WARM_STDERR_ARCHIVE_PREFIX, dir=warm_archive_directory,
+                                         delete=False) as warm_stderr_archive:
+            self._reference_warm_stderr_archive(warm_stderr_archive)
+            try:
+                p = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=warm_stderr_archive,
                                  bufsize=0, cwd=_SAFE_CWD,
                                  start_new_session=hasattr(os, "killpg") and hasattr(os, "getpgid"),
                                  env={**config.lane_exec_env(launcher), **self._environment_overrides,
                                       **_warm_owner_marker_env(self._LANE_LABEL)})   # owner identity last: authoritative
-        except Exception:
-            return None
+            except Exception:
+                return None
+        p._spendguard_stderr_archive = warm_stderr_archive.name
         if hasattr(os, "killpg") and hasattr(os, "getpgid"):
             p._spendguard_process_group = p.pid
         try:

@@ -236,6 +236,10 @@ def run_prompt(prompt, system=None, model=None, timeout=TIMEOUT_S, reasoning=Non
     to the prompt (kimi -p has no separate system slot). `model` is mapped to the matching plan alias and forwarded
     to `-m` (an unknown id → the CLI default; a bad alias makes kimi exit non-zero → the caller falls back to the
     metered API). Tokens are ESTIMATED (len//4) — the CLI emits no usage — for the est-value axis only; $0 billed."""
+    from . import execution_journal
+    kimi_exec_durable_dispatch_id = execution_journal.current_durable_execution_id()
+    kimi_exec_delegate_process_runner = (execution_journal.run_durable_delegate_subprocess
+                               if kimi_exec_durable_dispatch_id else subprocess.run)
     exe = _bin()
     if not exe:
         return {"error": "kimi CLI not found"}
@@ -251,7 +255,12 @@ def run_prompt(prompt, system=None, model=None, timeout=TIMEOUT_S, reasoning=Non
         try:
             _r = kimi_daemon.run_warm(full, model=model, reasoning=reasoning, timeout=timeout)
         except Exception as _e:                            # an exception must NEVER bypass the cold/API fallback below
+            if kimi_exec_durable_dispatch_id:
+                raise
             _r = {"error": f"kimi daemon raised: {str(_e)[:150]}"}
+        if kimi_exec_durable_dispatch_id:
+            execution_journal.append_durable_execution_evidence(
+                kimi_exec_durable_dispatch_id, stdout=json.dumps(_r) + "\n")
         if _r.get("text") and not _r.get("error"):
             _txt = _r["text"]
             return {"text": _txt, "in_tok": len(full) // 4, "out_tok": len(_txt) // 4,   # est: the ACP stream has no usage
@@ -276,11 +285,15 @@ def run_prompt(prompt, system=None, model=None, timeout=TIMEOUT_S, reasoning=Non
         #                                                        meta prompt needs no repo, and a throwaway dir keeps an
         #                                                        agentic step from ever touching the caller's working tree
         try:
-            r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, env=env, cwd=tmpdir,
+            r = kimi_exec_delegate_process_runner(cmd, capture_output=True, text=True, timeout=timeout, env=env, cwd=tmpdir,
                                stdin=subprocess.DEVNULL)
         except subprocess.TimeoutExpired:
+            if kimi_exec_durable_dispatch_id:
+                raise
             return {"error": f"kimi lane timeout ({timeout}s)"}
         except Exception as e:
+            if kimi_exec_durable_dispatch_id:
+                raise
             return {"error": str(e)[:200]}
         if r.returncode != 0:
             return {"error": (r.stderr or r.stdout or "kimi exited non-zero").strip()[:200]}

@@ -273,6 +273,10 @@ def run_prompt(prompt, system=None, model=None, timeout=TIMEOUT_S, reasoning=Non
     """→ {text, in_tok, out_tok, latency, error} from one headless plan-billed Antigravity run. `system` is
     prepended to the prompt (print mode has no separate system slot). `model` IS forwarded to `agy --model` when
     given (an agy id like gemini-3.7-flash-high); an id agy does not serve exits non-zero → API fallback."""
+    from . import execution_journal
+    antigravity_exec_durable_dispatch_id = execution_journal.current_durable_execution_id()
+    antigravity_exec_delegate_process_runner = (execution_journal.run_durable_delegate_subprocess
+                               if antigravity_exec_durable_dispatch_id else subprocess.run)
     exe = _bin()
     if not exe:
         return {"error": "agy (Antigravity CLI) not found"}
@@ -288,11 +292,15 @@ def run_prompt(prompt, system=None, model=None, timeout=TIMEOUT_S, reasoning=Non
     try:
         neutral_cwd = tempfile.mkdtemp(prefix=ANTIGRAVITY_WORK_DIRECTORY_PREFIX)
         try:
-            r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, env=env,
+            r = antigravity_exec_delegate_process_runner(cmd, capture_output=True, text=True, timeout=timeout, env=env,
                                stdin=subprocess.DEVNULL, cwd=neutral_cwd)
         except subprocess.TimeoutExpired:
+            if antigravity_exec_durable_dispatch_id:
+                raise
             return {"error": f"gemini lane timeout ({timeout}s)"}
         except Exception as e:
+            if antigravity_exec_durable_dispatch_id:
+                raise
             return {"error": str(e)[:200]}
     finally:
         if neutral_cwd:

@@ -6,6 +6,7 @@ and lifecycle: delegate jobs are completed by their own executor threads, not
 leased to lane workers.
 """
 import datetime
+import contextlib
 import json
 import os
 import sqlite3
@@ -19,7 +20,11 @@ DELEGATE_JOBS_DATABASE_FILENAME = "delegate_jobs.db"
 DELEGATE_JOB_RUNNING_STATE = "running"
 DELEGATE_JOB_DONE_STATE = "done"
 DELEGATE_JOB_FAILED_STATE = "failed"
-DELEGATE_JOB_TERMINAL_STATES = (DELEGATE_JOB_DONE_STATE, DELEGATE_JOB_FAILED_STATE)
+DELEGATE_JOB_LOST_STATE = "lost"
+DELEGATE_JOB_KILLED_STATE = "killed"
+DELEGATE_JOB_TERMINAL_STATES = (DELEGATE_JOB_DONE_STATE, DELEGATE_JOB_FAILED_STATE,
+                                DELEGATE_JOB_LOST_STATE, DELEGATE_JOB_KILLED_STATE)
+DELEGATE_JOB_JOURNAL_STATES = {"done": "success", "failed": "failure", "lost": "lost", "killed": "killed"}
 DELEGATE_JOB_RESTART_REASON = "server-restart-unknown"
 DELEGATE_JOB_STORE_UNREADABLE_REASON = "store-unreadable"
 DELEGATE_JOB_DEFAULT_RETENTION_S = 604800
@@ -53,37 +58,54 @@ def _ensure_delegate_jobs_schema(connection):
                        "ON delegate_jobs(task_fingerprint,cwd,state,created_ts)")
     connection.execute("CREATE INDEX IF NOT EXISTS delegate_jobs_retention "
                        "ON delegate_jobs(state,updated_ts)")
+    columns = {row[1] for row in connection.execute("PRAGMA table_info(delegate_jobs)")}
+    if "execution_id" not in columns:
+        connection.execute("ALTER TABLE delegate_jobs ADD COLUMN execution_id TEXT")
 
 
+@contextlib.contextmanager
 def _open_delegate_jobs_connection():
-    path = delegate_jobs_database_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    connection = sqlite3.connect(path, timeout=config.LEDGER_CONNECT_TIMEOUT_S)
-    connection.execute("PRAGMA journal_mode=WAL")
-    _ensure_delegate_jobs_schema(connection)
-    return connection
+    try:
+        path = delegate_jobs_database_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with contextlib.closing(config.fresh_ledger_conn(_ensure_delegate_jobs_schema, path)) as connection:
+            with connection:
+                yield connection
+    except (sqlite3.Error, OSError) as error:
+        from .execution_journal import DurableExecutionPersistenceError
+        raise DurableExecutionPersistenceError("delegate job lifecycle persistence failed") from error
 
 
 def _open_delegate_jobs_readonly_connection():
     uri = delegate_jobs_database_path().expanduser().resolve().as_uri() + "?mode=ro"
-    return sqlite3.connect(uri, uri=True)
+    return config.managed_ledger_read_connection(uri, uri=True)
 
 
 def _delegate_job_timestamp():
     return datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
 
 
-def create_delegate_job(*, kind, task_fingerprint, cwd, provider, intent, dirty_before):
+def create_delegate_job(*, kind, task_fingerprint, cwd, provider, intent, dirty_before, owner_pid=None,
+                        model=None):
     """Insert one running delegate job and immediately return its UUID4 hex id."""
     prune_delegate_jobs()
     job_id = uuid.uuid4().hex
+    from .execution_journal import begin_durable_execution
+    from .delegate_router import codex_agentic_events_path, CODEX_AGENTIC_EVENTS_SCHEMA_VERSION
+    metadata = {"job_id": job_id, "jobs_database_path": os.fspath(delegate_jobs_database_path()),
+                "kind": kind, "cwd": os.fspath(cwd), "provider": provider,
+                "plan": provider, "model": model, "ledger_path": os.fspath(codex_agentic_events_path()),
+                "schema_version": CODEX_AGENTIC_EVENTS_SCHEMA_VERSION}
+    if owner_pid is not None:
+        metadata["owner_pid"] = owner_pid
+    execution_id = begin_durable_execution(metadata=metadata)
     now = _delegate_job_timestamp()
     with _open_delegate_jobs_connection() as connection:
         connection.execute(
             "INSERT INTO delegate_jobs(job_id,created_ts,updated_ts,state,kind,task_fingerprint,cwd,provider,"
-            "intent,dirty_before) VALUES(?,?,?,?,?,?,?,?,?,?)",
+            "intent,dirty_before,execution_id) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
             (job_id, now, now, DELEGATE_JOB_RUNNING_STATE, kind, task_fingerprint, os.fspath(cwd), provider,
-             intent, json.dumps(sorted(dirty_before))))
+             intent, json.dumps(sorted(dirty_before)), execution_id))
     return job_id
 
 
@@ -92,10 +114,44 @@ def finish_delegate_job(job_id, *, state, result_payload=None, terminal_reason=N
     if state not in DELEGATE_JOB_TERMINAL_STATES:
         raise ValueError(f"delegate job terminal state required, got {state!r}")
     payload = json.dumps(result_payload) if result_payload is not None else None
+    row = _delegate_job_row(job_id)
+    if row is None:
+        raise KeyError(job_id)
+    if row["execution_id"]:
+        from .execution_journal import terminalize_durable_execution
+        terminalize_durable_execution(row["execution_id"], DELEGATE_JOB_JOURNAL_STATES[state])
     with _open_delegate_jobs_connection() as connection:
         connection.execute(
-            "UPDATE delegate_jobs SET state=?,updated_ts=?,result_payload=?,terminal_reason=?,error=? WHERE job_id=?",
-            (state, _delegate_job_timestamp(), payload, terminal_reason, error, job_id))
+            "UPDATE delegate_jobs SET state=?,updated_ts=?,result_payload=?,terminal_reason=?,error=? "
+            "WHERE job_id=? AND state=?",
+            (state, _delegate_job_timestamp(), payload, terminal_reason, error, job_id, DELEGATE_JOB_RUNNING_STATE))
+
+
+def recover_delegate_job_execution(job_id):
+    """Recover complete captured transport evidence and reconcile a dead executor."""
+    from .execution_journal import recover_durable_execution
+    row = _delegate_job_row(job_id)
+    if row is None:
+        return {"error": "not-found", "job_id": job_id}
+    recovered = recover_durable_execution(row["execution_id"]) if row["execution_id"] else {}
+    reverse_states = {value: key for key, value in DELEGATE_JOB_JOURNAL_STATES.items()}
+    terminal_state = reverse_states.get(recovered.get("state"))
+    owner_alive = True
+    if recovered.get("owner_pid"):
+        import psutil
+        try:
+            owner = psutil.Process(recovered["owner_pid"])
+            owner_alive = (owner.create_time() == recovered.get("owner_birth")
+                           and owner.status() != psutil.STATUS_ZOMBIE)
+        except psutil.NoSuchProcess:
+            owner_alive = False
+    if (row["state"] == DELEGATE_JOB_RUNNING_STATE
+            and terminal_state
+            and (not owner_alive or terminal_state in (DELEGATE_JOB_LOST_STATE, DELEGATE_JOB_KILLED_STATE))):
+        finish_delegate_job(job_id, state=terminal_state, result_payload=recovered.get("result"),
+                            terminal_reason=recovered.get("terminal_reason"))
+        row = _delegate_job_row(job_id)
+    return {**recovered, "job_id": job_id, "state": row["state"]}
 
 
 def _delegate_job_row(job_id):
@@ -130,6 +186,9 @@ def read_delegate_job(job_id):
                 "terminal_reason": DELEGATE_JOB_STORE_UNREADABLE_REASON}
     if row is None:
         return {"error": "not-found", "job_id": job_id}
+    if row["state"] == DELEGATE_JOB_RUNNING_STATE and row["execution_id"]:
+        recover_delegate_job_execution(job_id)
+        row = _delegate_job_row(job_id)
     result = dict(row)
     result.pop("result_payload", None)
     result["dirty_before"] = json.loads(result["dirty_before"])
@@ -151,6 +210,9 @@ def read_delegate_job_result(job_id):
                 "terminal_reason": DELEGATE_JOB_STORE_UNREADABLE_REASON}
     if row is None:
         return {"error": "not-found", "job_id": job_id}
+    if row["state"] == DELEGATE_JOB_RUNNING_STATE and row["execution_id"]:
+        recover_delegate_job_execution(job_id)
+        row = _delegate_job_row(job_id)
     if row["state"] == DELEGATE_JOB_RUNNING_STATE:
         if _delegate_running_is_stale(row["updated_ts"]):
             return {"status": DELEGATE_JOB_FAILED_STATE, "job_id": job_id,
@@ -189,7 +251,8 @@ def prune_delegate_jobs(retention_s=DELEGATE_JOBS_RETENTION_S):
     cutoff = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(seconds=float(retention_s))
     try:
         with _open_delegate_jobs_connection() as connection:
-            connection.execute("DELETE FROM delegate_jobs WHERE state IN (?,?) AND updated_ts<?",
+            placeholders = ",".join("?" for _ in DELEGATE_JOB_TERMINAL_STATES)
+            connection.execute(f"DELETE FROM delegate_jobs WHERE state IN ({placeholders}) AND updated_ts<?",
                                (*DELEGATE_JOB_TERMINAL_STATES, cutoff.isoformat(timespec="seconds")))
     except sqlite3.OperationalError:
         return

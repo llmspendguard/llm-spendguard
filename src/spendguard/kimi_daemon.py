@@ -123,6 +123,7 @@ class _KimiAcpDaemon(_WarmStdioJsonRpcDaemon):
         import os
         import time
 
+        kimi_warm_execution_id = self._enter_warm_evidence_scope()
         prompt = (prompt or "")
         self._cancel_idle_shutdown()
         try:
@@ -130,6 +131,8 @@ class _KimiAcpDaemon(_WarmStdioJsonRpcDaemon):
                 p = self.ensure_running()
                 if p is None:
                     return {"text": None, "error": "kimi acp server would not start"}
+                if kimi_warm_execution_id:
+                    self._reference_warm_stderr_archive(p, (kimi_warm_execution_id,))
                 eff_timeout = timeout if (timeout and timeout > 0) else self.CALL_TIMEOUT_S
                 deadline = time.monotonic() + eff_timeout
 
@@ -204,6 +207,7 @@ class _KimiAcpDaemon(_WarmStdioJsonRpcDaemon):
                 return {"text": text or None, "error": None if text else "empty kimi reply"}
         finally:
             self._schedule_idle_shutdown()
+            self._leave_warm_evidence_scope(kimi_warm_execution_id)
 
 
 # ── ONE per-process daemon instance; the module API is the singleton's BOUND METHODS (assignment, not a second

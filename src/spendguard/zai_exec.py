@@ -27,6 +27,7 @@ import urllib.request
 # A burst 429 is transient: retry the SAME request with exponential backoff + jitter and it clears, instead of a
 # hard lane miss spilling every over-cap call to the metered API. Operational tunables (like the timeouts), named
 # here — never a magic literal at the call site.
+ZAI_DURABLE_RESPONSE_CHUNK_DEFAULT_BYTES = 65536
 _ZAI_MAX_429_RETRIES = 3
 _ZAI_BACKOFF_BASE_S = 0.6
 _ZAI_BACKOFF_JITTER_S = 0.4
@@ -107,6 +108,8 @@ def run_prompt(prompt, system=None, model=None, timeout=TIMEOUT_S, reasoning=Non
     if the enriched call fails, it retries ONCE WITHOUT thinking (thinking is the one optional enrichment here) —
     so a lane whose endpoint/model does not accept the param never breaks, it degrades to a plain completion. The
     text extraction keeps only text blocks, so any returned `thinking` blocks are naturally ignored."""
+    from . import execution_journal
+    zai_durable_dispatch_id = execution_journal.current_durable_execution_id()
     key = _key()
     if not key:
         return {"error": f"no z.ai key ({KEY_ENV} or ZAI_API_KEY) — add it to keys.env"}
@@ -129,6 +132,22 @@ def run_prompt(prompt, system=None, model=None, timeout=TIMEOUT_S, reasoning=Non
     if _tb:
         body["thinking"] = {"type": "enabled", "budget_tokens": _tb}
 
+    def read_zai_delegated_http_payload(response, evidence_stream):
+        if not zai_durable_dispatch_id:
+            return response.read()
+        zai_chunk_size = int(config._cfg_get(
+            "delegate", "http_evidence_chunk_bytes", ZAI_DURABLE_RESPONSE_CHUNK_DEFAULT_BYTES))
+        if zai_chunk_size <= 0:
+            raise execution_journal.DurableExecutionPersistenceError("HTTP evidence chunk bytes must be positive")
+        zai_response_chunks = []
+        while True:
+            zai_response_chunk = response.read(zai_chunk_size)
+            if not zai_response_chunk:
+                return b"".join(zai_response_chunks)
+            execution_journal.append_durable_execution_evidence(
+                zai_durable_dispatch_id, **{evidence_stream: zai_response_chunk})
+            zai_response_chunks.append(zai_response_chunk)
+
     def _post(b):
         req = urllib.request.Request(
             _base_url().rstrip("/") + "/v1/messages", data=json.dumps(b).encode("utf-8"),
@@ -137,7 +156,8 @@ def run_prompt(prompt, system=None, model=None, timeout=TIMEOUT_S, reasoning=Non
         # (the prior `resp = urlopen(...); resp.read()`) leaked a connection per call, so a burst of concurrent
         # lane calls exhausted fds and hung. urllib gives no pooling, so an unclosed handle is a hard leak.
         with urllib.request.urlopen(req, context=config.ssl_context(), timeout=timeout) as resp:
-            return json.loads(resp.read())
+            zai_raw_response = read_zai_delegated_http_payload(resp, "stdout")
+            return json.loads(zai_raw_response)
 
     def _post_ratelimited(b):
         """POST with exponential backoff + jitter on HTTP 429 (the plan's dynamic burst/concurrency cap). Retries
@@ -148,15 +168,24 @@ def run_prompt(prompt, system=None, model=None, timeout=TIMEOUT_S, reasoning=Non
             try:
                 return _post(b)
             except urllib.error.HTTPError as he:
+                if zai_durable_dispatch_id:
+                    zai_http_error_payload = read_zai_delegated_http_payload(he, "stderr")
+                    he.spendguard_durable_error_body = zai_http_error_payload
                 if he.code == 429 and attempt < _ZAI_MAX_429_RETRIES:
                     time.sleep(_ZAI_BACKOFF_BASE_S * (2 ** attempt) + random.uniform(0, _ZAI_BACKOFF_JITTER_S))
                     continue
                 raise
 
     def _errdict(exc):
+        if isinstance(exc, execution_journal.DurableExecutionPersistenceError):
+            raise exc
         detail = ""
         try:
-            detail = exc.read().decode("utf-8", "ignore")[:200]    # HTTPError carries the provider's 4xx body
+            zai_saved_error = getattr(exc, "spendguard_durable_error_body", None)
+            zai_raw_error = (zai_saved_error if zai_saved_error is not None else exc.read())
+            detail = zai_raw_error.decode("utf-8", "surrogateescape")[:200]    # HTTPError carries the provider's 4xx body
+        except execution_journal.DurableExecutionPersistenceError:
+            raise
         except Exception:
             pass
         return {"error": (f"{type(exc).__name__}: {str(exc)[:100]}" + (f" — {detail}" if detail else "")),
@@ -166,6 +195,8 @@ def run_prompt(prompt, system=None, model=None, timeout=TIMEOUT_S, reasoning=Non
     try:
         d = _post_ratelimited(body)
     except Exception as e:
+        if isinstance(e, execution_journal.DurableExecutionPersistenceError):
+            raise
         # FAIL-SAFE: the enriched request failed. thinking is the one OPTIONAL enrichment, so retry ONCE without it
         # (no error-prose classification — an anthropic-shape 4xx names the reason only in free text, and reading
         # prose to DECIDE is a meaning-judgement we don't make on a hot lane path). If the plain retry also fails,

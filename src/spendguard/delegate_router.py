@@ -10,8 +10,6 @@ import json
 import os
 import threading
 import time
-import uuid
-from datetime import datetime, timezone
 from pathlib import Path
 
 from . import config, guard, lane_balance, lane_registry, pricing, provider_tokens, release as _release
@@ -116,29 +114,29 @@ def codex_agentic_events_path():
     return path if path.is_absolute() else config.HOME / path
 
 
-def _append_codex_agentic_event(event, execution_id, *, plan, model, cwd):
-    """Best-effort durable observations only: logging must never change execution or its exception."""
+def _invoke_recoverable_delegate(executor, *, plan, model, cwd):
+    """Persist every route before its caller interprets the returned envelope."""
+    from . import execution_journal
+    execution_id = execution_journal.current_durable_execution_id()
+    if execution_id is None:
+        execution_id = execution_journal.begin_durable_execution(metadata={
+            "plan": plan, "model": model, "cwd": os.fspath(cwd) if cwd else None,
+            "ledger_path": os.fspath(codex_agentic_events_path()),
+            "schema_version": CODEX_AGENTIC_EVENTS_SCHEMA_VERSION})
     try:
-        import fcntl
-        timestamp = datetime.now(timezone.utc).isoformat()
-        record = {"schema_version": CODEX_AGENTIC_EVENTS_SCHEMA_VERSION, "event": event,
-                  "execution_id": execution_id, "ts": timestamp, "plan": plan, "model": model,
-                  "cwd": os.fspath(cwd), "pid": os.getpid()}
-        path = codex_agentic_events_path()
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with path.open("a", encoding="utf-8") as stream:
-            fcntl.flock(stream.fileno(), fcntl.LOCK_EX)
-            if os.fstat(stream.fileno()).st_size == 0:
-                stream.write(json.dumps({"schema_version": CODEX_AGENTIC_EVENTS_SCHEMA_VERSION,
-                                         "event": "coverage_start", "ts": timestamp}) + "\n")
-            stream.write(json.dumps(record) + "\n")
-            stream.flush()
-            os.fsync(stream.fileno())
-    except Exception as exc:
-        try:
-            config.warn_once(f"[spendguard] agentic Codex demand observation unavailable: {exc}")
-        except Exception:
-            pass
+        with execution_journal.durable_execution_scope(execution_id):
+            execution = executor()
+            # Raw transport files are independent of this complete, structured envelope.
+            execution_journal.persist_durable_execution_payload(
+                execution_id, envelope=json.dumps(execution, ensure_ascii=False))
+        failed = not isinstance(execution, dict) or bool(execution.get("error"))
+        execution_journal.terminalize_durable_execution(execution_id, "failure" if failed else "success")
+    except BaseException:
+        execution_journal.terminalize_durable_execution(execution_id, "failure")
+        raise
+    if isinstance(execution, dict):
+        execution = {**execution, "execution_id": execution_id}
+    return execution
 
 _CLASSIFY_SCHEMA = {
     "type": "object", "additionalProperties": False,
@@ -457,14 +455,8 @@ def _route_agentic(plan, prompt, model, timeout, cwd):
         kwargs["recycle_on_timeout"] = config.codex_daemon_admission_settings()["recycle_on_timeout"]
         kwargs["delegate_context"] = True
         prompt = prompt + _WORKTREE_AUTHOR_CONSTRAINTS    # bake the sandbox/git/hook contract into what codex actually receives
-    if spec["exec"] != "codex_exec":
-        return module.run_prompt(prompt, **kwargs)
-    execution_id = str(uuid.uuid4())
-    _append_codex_agentic_event("start", execution_id, plan=plan, model=model, cwd=cwd)
-    try:
-        return module.run_prompt(prompt, **kwargs)
-    finally:
-        _append_codex_agentic_event("end", execution_id, plan=plan, model=model, cwd=cwd)
+    return _invoke_recoverable_delegate(lambda: module.run_prompt(prompt, **kwargs),
+                                        plan=plan, model=model, cwd=cwd)
 
 
 def _assemble_delegate_execution_result(execution, *, result, classification, estimate, intent, changed_files):
@@ -529,9 +521,11 @@ def _assemble_delegate_execution_result(execution, *, result, classification, es
 def _run_delegate_job_to_completion(job_id, plan, prompt, model, timeout, cwd, dirty_before, *,
                                     result, classification, estimate, intent):
     """Run and durably settle a detached delegate using only executor-owned state."""
-    from . import delegate_jobs
+    from . import delegate_jobs, execution_journal
     try:
-        execution = _route_agentic(plan, prompt, model, timeout, cwd)
+        execution_id = delegate_jobs.read_delegate_job(job_id)["execution_id"]
+        with execution_journal.durable_execution_scope(execution_id):
+            execution = _route_agentic(plan, prompt, model, timeout, cwd)
         completed = _assemble_delegate_execution_result(
             execution, result=result, classification=classification, estimate=estimate, intent=intent,
             changed_files=_worktree_changed_files(cwd, dirty_before))
@@ -540,6 +534,8 @@ def _run_delegate_job_to_completion(job_id, plan, prompt, model, timeout, cwd, d
             job_id, state=terminal_state, result_payload=completed,
             terminal_reason=None if terminal_state == "done" else completed.get("reason"),
             error=None if terminal_state == "done" else completed.get("why"))
+    except execution_journal.DurableExecutionPersistenceError:
+        raise
     except Exception as exc:
         reason = "delegate-executor-timeout" if isinstance(exc, TimeoutError) else "delegate-executor-exception"
         failed_result = {**result, "status": "error", "reason": reason, "why": str(exc)}
@@ -560,7 +556,7 @@ def start_delegate_job(task, files=None, intent=None, provider="auto", cwd=None,
     fingerprint = delegate_route_fingerprint(task, files=files, provider=provider)
     job_id = delegate_jobs.create_delegate_job(
         kind=classification["kind"], task_fingerprint=fingerprint, cwd=cwd,
-        provider=estimate["plan"], intent=intent, dirty_before=dirty_before)
+        provider=estimate["plan"], intent=intent, dirty_before=dirty_before, model=estimate["model"])
     worker = threading.Thread(
         target=_run_delegate_job_to_completion,
         args=(job_id, estimate["plan"], task + _whole_file_evidence(files), estimate["model"], timeout, cwd,
@@ -631,7 +627,9 @@ def delegate_task(task, files=None, intent=None, provider="auto", execute=False,
     prompt = task + _whole_file_evidence(files)
     changed_files = None
     if classification["kind"] == "oneshot":
-        execution = lane_balance.delegate(prompt, lanes=[estimate["plan"]], intent=intent)
+        execution = _invoke_recoverable_delegate(
+            lambda: lane_balance.delegate(prompt, lanes=[estimate["plan"]], intent=intent),
+            plan=estimate["plan"], model=estimate["model"], cwd=cwd)
     else:
         _dirty_before = _worktree_state(cwd)[1]            # pre-existing dirt, so changed_files is ONLY the agent's edits
         execution = _route_agentic(estimate["plan"], prompt, estimate["model"], timeout, cwd)
@@ -669,7 +667,12 @@ def delegate_cli(argv=None):
     lookup = parser.add_mutually_exclusive_group()
     lookup.add_argument("--collect", metavar="JOB_ID", help="print the durable terminal result for a delegate job")
     lookup.add_argument("--status", metavar="JOB_ID", help="print durable delegate job status")
+    lookup.add_argument("--recover", metavar="EXECUTION_ID", help="recover complete raw result, stderr and exit code")
     args = parser.parse_args(argv)
+    if args.recover:
+        from .execution_journal import recover_durable_execution
+        print(json.dumps(recover_durable_execution(args.recover), indent=2, sort_keys=True))
+        return 0
     if args.collect or args.status:
         from . import delegate_jobs
         result = (delegate_jobs.read_delegate_job_result(args.collect) if args.collect
@@ -677,7 +680,7 @@ def delegate_cli(argv=None):
         print(json.dumps(result, indent=2, sort_keys=True))
         return 2 if result.get("error") else 0
     if not args.task:
-        parser.error("task is required unless --collect or --status is supplied")
+        parser.error("task is required unless --collect, --status or --recover is supplied")
     release_warning = _delegate_release_state_warning()
     if release_warning:
         print(release_warning)

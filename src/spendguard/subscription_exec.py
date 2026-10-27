@@ -189,6 +189,10 @@ def run_prompt(prompt, system=None, model=None, timeout=TIMEOUT_S, reasoning=Non
     """→ {text, in_tok, out_tok, latency, error} from one headless plan-billed completion. `model` = the
     API model id the caller would have used — mapped to the matching plan tier so subscription execution
     never upgrades a haiku-class meta prompt to the default (top) tier."""
+    from . import execution_journal
+    subscription_exec_durable_dispatch_id = execution_journal.current_durable_execution_id()
+    subscription_exec_delegate_process_runner = (execution_journal.run_durable_delegate_subprocess
+                               if subscription_exec_durable_dispatch_id else subprocess.run)
     exe = _bin()
     if not exe:
         return {"error": "claude CLI not found"}
@@ -208,11 +212,15 @@ def run_prompt(prompt, system=None, model=None, timeout=TIMEOUT_S, reasoning=Non
     try:
         neutral_cwd = tempfile.mkdtemp(prefix=SUBSCRIPTION_WORK_DIRECTORY_PREFIX)
         try:
-            r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, env=env,
+            r = subscription_exec_delegate_process_runner(cmd, capture_output=True, text=True, timeout=timeout, env=env,
                                stdin=subprocess.DEVNULL, cwd=neutral_cwd)
         except subprocess.TimeoutExpired:
+            if subscription_exec_durable_dispatch_id:
+                raise
             return {"error": f"subscription executor timeout ({timeout}s)"}
         except Exception as e:
+            if subscription_exec_durable_dispatch_id:
+                raise
             return {"error": str(e)[:200]}
     finally:
         if neutral_cwd:
