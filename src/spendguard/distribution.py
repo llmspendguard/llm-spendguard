@@ -130,8 +130,11 @@ def attest_distribution_host(target, settings):
         result = subprocess.run([sys.executable, "-m", "spendguard", "doctor"],
                                 env=distribution_clean_environment(), capture_output=True, text=True,
                                 timeout=settings["probe_timeout_s"], check=False)
+        healthy = bool(result.returncode == 0 and probe.get("confirmed") and probe.get("gate_enforcing"))
+        reason = ("host gate proof unconfirmed" if not probe.get("confirmed") else
+                  "host gate not enforcing" if not probe.get("gate_enforcing") else None)
         return distribution_surface_row("host", "host", distribution_interpreter_on_target(probe, target),
-                                        result.returncode == 0, probe=probe, doctor_exit_code=result.returncode,
+                                        healthy, reason=reason, probe=probe, doctor_exit_code=result.returncode,
                                         doctor_output=result.stdout + result.stderr)
     except (OSError, subprocess.SubprocessError) as exc:
         return distribution_surface_row("host", "host", reason=f"doctor unproven: {exc}", probe=probe)
