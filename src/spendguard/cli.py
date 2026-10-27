@@ -144,8 +144,9 @@ _GROUPS = [
         ("verify", "self-check every money path: model ids · failover map · keys · economics (--probe = live)"),
         ("keys-audit", "scan repo .env files for a provider key that would SHADOW the keys.env SSOT (the stale-shadow 401 doctor can't see)"),
         ("consumer-audit", "prove every workspace LLM consumer is gated and on the deployed sha; safely arm fixable venvs"),
+        ("distribute", "converge every local surface and attest the deployed release; --check verifies without mutation"),
         ("deploy", "run the full gate, then promote committed HEAD → green pointer (running MCP servers roll onto latest+best)"),
-        ("release", "what THIS process serves vs the green pointer — are the MCP servers on the latest? (--json)"),
+        ("release", "show release status, then converge and attest the fleet (--check verifies only; --json)"),
         ("fleet", "tracked consumers and deployments (--restart, --json, or deregister <python_executable>)"),
         ("pricing", "print the canonical price table"),
         ("audit", "fail CI if any code hardcodes a disagreeing price"),
@@ -477,7 +478,9 @@ def _dispatch(argv=None):
             "\n\noptions: --no-gate --allow-dirty --no-restart --no-refresh --skip-consumer-verify "
             "--no-auto-arm --dry-run" if cmd == "deploy"
             else "\n\noptions: --json --roots ROOT [ROOT ...] --dry-run --no-auto-arm"
-            if cmd == "consumer-audit" else ""
+            if cmd == "consumer-audit"
+            else "\n\noptions: --check --json --roots ROOT [ROOT ...] --dry-run" if cmd == "distribute"
+            else "\n\noptions: --check --json --dry-run" if cmd == "release" else ""
         )
         print(f"usage: spendguard {cmd} [args]\n\n{descriptions.get(cmd, 'spendguard command')}{option_hint}")
         return 0
@@ -628,6 +631,9 @@ def _dispatch(argv=None):
     if cmd == "consumer-audit":
         from .consumer_audit import consumer_audit_command
         return consumer_audit_command(rest)
+    if cmd == "distribute":
+        from .distribution import distribute_command
+        return distribute_command(rest)
     if cmd == "deploy":
         # Promote the current HEAD to the GREEN POINTER so already-running MCP servers roll onto the latest code —
         # but ONLY when it is COMMITTED and the full gate passes, so "green" (blue/green) == "green" (suite + ruff
@@ -765,6 +771,12 @@ def _dispatch(argv=None):
             return _deploy_failed_verdict(
                 "one or more host installations remain escaped or registered deployments remain stale or unreachable"
             )
+        from .distribution import render_distribution_table
+        _distribution = _rel.converge_deployed_release(dry_run="--dry-run" in r)
+        print(render_distribution_table(_distribution))
+        if _distribution["exit_code"]:
+            print("🔴 DEPLOY INCOMPLETE — pointer promoted; distribution has named stragglers", file=sys.stderr)
+            return _distribution["exit_code"]
         return _deploy_succeeded_verdict(rec)
     if cmd == "fleet":                                # the running spendguard consumers + which are STALE vs green
         import json as _json
@@ -831,13 +843,14 @@ def _dispatch(argv=None):
         if summ["stale"]:
             print("  → `spendguard fleet --restart` restarts the launchd-managed stale ones; others need a manual restart.")
         return 0
-    if cmd == "release":                              # read-only: what THIS process serves vs the green pointer
+    if cmd == "release":                              # release completion ends with fleet convergence/attestation
         import json as _json
         from . import release as _rel
         st = _rel.release_status()
+        attestation = _rel.converge_deployed_release(check="--check" in rest, dry_run="--dry-run" in rest)
         if "--json" in rest:
-            print(_json.dumps(st, indent=2, default=str))
-            return 0
+            print(_json.dumps({**st, "distribution": attestation}, indent=2, default=str))
+            return attestation["exit_code"]
         s, g = st.get("served") or {}, st.get("green") or {}
         print(f"served : {s.get('describe') or s.get('short') or '(unknown — not a git checkout)'}"
               + ("  [dirty: serving uncommitted edits]" if st.get("served_dirty") else ""))
@@ -845,7 +858,9 @@ def _dispatch(argv=None):
         print(f"status : {'🔴 STALE' if st.get('stale') else ('🟢 up to date' if g else '⚪ no pointer yet')}")
         print(f"         {st.get('note')}")
         print(f"pointer: {st.get('pointer_path')}")
-        return 0
+        from .distribution import render_distribution_table
+        print(render_distribution_table(attestation))
+        return attestation["exit_code"]
     if cmd == "bakeoff":                              # measure cost×quality for a slate on a sample (fills untried models)
         from . import bakeoff
         return bakeoff.main(rest)

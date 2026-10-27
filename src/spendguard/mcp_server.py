@@ -579,8 +579,13 @@ def _tool_version(args):
     """Which spendguard COMMIT this server process is running, the green pointer it should be on, and whether it
     is STALE — the $0 signal behind 'always serve the latest with the best'. A git-SHA compare + a small file
     read; a stale server hands off to a fresh process on its next request (auto-respawn)."""
+    import os
+    from importlib import metadata
+    import spendguard
     from . import release
-    return release.release_status()
+    return {**release.release_status(), "pid": os.getpid(),
+            "imported_version": spendguard.__version__,
+            "metadata_version": metadata.version("llm-spendguard")}
 
 
 def _tool_route_cost(args):

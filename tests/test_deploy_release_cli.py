@@ -8,6 +8,7 @@ Hermetic: isolated home; release.{_tracked_dirty,promote_release,release_status}
 suite never runs; stdout/stderr captured. No network, no ledger, no git writes."""
 import contextlib
 import io
+import json
 import os
 import pathlib
 import sys
@@ -25,6 +26,21 @@ from spendguard import cli, release, config, fleet   # noqa: E402
 config.HOME = pathlib.Path(os.environ["SPENDGUARD_HOME"])
 fleet.verify_and_refresh_registered_interpreters = lambda apply=True: {
     "N_total": 0, "N_updated": 0, "N_verified_fresh": 0, "failed": [], "complete": True}
+
+distribution_invocations = []
+distribution_fixture_exit_code = 0
+
+
+def record_fixture_release_distribution(**options):
+    """No real daemon, install or interpreter discovery may escape the CLI fixture."""
+    distribution_invocations.append(options)
+    stragglers = ["fixture-daemon"] if distribution_fixture_exit_code else []
+    return {"surfaces": [], "summary": {"converged": 0, "total": len(stragglers),
+                                           "stragglers": stragglers},
+            "dry_run": options.get("dry_run", False), "exit_code": distribution_fixture_exit_code}
+
+
+release.converge_deployed_release = record_fixture_release_distribution
 
 fails = []
 DIRTY_TREE_MESSAGE = (
@@ -74,6 +90,18 @@ record_script_check(fails, "deploy --no-gate on a clean tree exits 0", rc == 0)
 record_script_check(fails, "... promotes exactly once, through release.promote_release", promotion_recorder.count == 1)
 record_script_check(fails, "... and records that the gate was skipped (--no-gate), not faked as green", "no-gate" in (promotion_recorder.gate or ""))
 record_script_check(fails, "... reporting the promoted commit", PROMOTED_COMMIT_MESSAGE in out.splitlines())
+record_script_check(fails, "deploy ends with force distribution attestation",
+                    distribution_invocations == [{"dry_run": False}])
+
+print("\n-- distribution attestation is the final fail-closed deployment bar --")
+distribution_fixture_exit_code = 1
+rc, out = _run(["deploy", "--no-gate", "--skip-consumer-verify", "--no-restart", "--no-refresh"])
+record_script_check(fails, "deploy propagates a named distribution straggler",
+                    rc == distribution_fixture_exit_code and "fixture-daemon" in out)
+distribution_fixture_exit_code = 0
+rc, out = _run(["deploy", "--no-gate", "--skip-consumer-verify", "--no-restart", "--no-refresh", "--dry-run"])
+record_script_check(fails, "deploy passes dry-run through to final distribution proof",
+                    rc == 0 and distribution_invocations[-1] == {"dry_run": True})
 
 print("\n-- deploy consumer verification fails closed after promotion --")
 from spendguard import consumer_audit as _consumer_audit  # noqa: E402
@@ -164,6 +192,17 @@ release.release_status = lambda: {"served": {"short": "aaaaaaa", "describe": "v0
 rc, out = _run(["release"])
 record_script_check(fails, "release exits 0", rc == 0)
 record_script_check(fails, "release shows served, green, and a STALE status", "aaaaaaa" in out and "bbbbbbb" in out and "STALE" in out)
+record_script_check(fails, "release defaults to force distribution",
+                    distribution_invocations[-1] == {"check": False, "dry_run": False})
+distribution_fixture_exit_code = 1
+rc, out = _run(["release", "--json", "--check", "--dry-run"])
+release_json = json.loads(out)
+record_script_check(fails, "release --check propagates nonzero final attestation in JSON",
+                    rc == distribution_fixture_exit_code
+                    and release_json["distribution"]["summary"]["stragglers"] == ["fixture-daemon"])
+record_script_check(fails, "release --check --dry-run preserve verify-only options",
+                    distribution_invocations[-1] == {"check": True, "dry_run": True})
+distribution_fixture_exit_code = 0
 
 print("\n-- deploy --help prints usage WITHOUT acquiring the lock or running the gate --")
 # Regression (2026-10-10): `deploy --help` fell through the manual arg handling, took the single-instance lock, and

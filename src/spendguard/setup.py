@@ -390,35 +390,116 @@ def _probe(interp):
     return (ver, has, enf)
 
 
+_DISTRIBUTION_SCAN_DIRECTORY_BUDGET_DEFAULT = 65536
+
+
+def discover_distribution_interpreters(roots=None, settings=None, extra=None):
+    """Union configured on-disk venvs, host installs and registrations without collapsing venv symlinks.
+
+    Filesystem structure defines interpreter identity here; no judgement about source meaning or
+    LLM use removes a consumer. Resource or discovery failures are explicit attestation gaps.
+    """
+    import sys
+    from pathlib import Path
+    from . import consumer_audit, fleet
+
+    resolved_settings = config.consumer_audit_settings() if settings is None else settings
+    exemptions = tuple(Path(value).expanduser().absolute()
+                       for value in resolved_settings.get("consumer_audit_exempt", ()))
+    candidates, gaps = {}, []
+
+    def retain_distribution_interpreter(python, venv=None, kind="framework-python"):
+        executable = Path(python).expanduser().absolute()
+        venv_path = Path(venv).expanduser().absolute() if venv else None
+        if venv_path is None and (executable.parent.parent /
+                                 consumer_audit.CONSUMER_AUDIT_VENV_CONFIGURATION_NAME).is_file():
+            venv_path = executable.parent.parent
+        if venv_path is not None:
+            executable_paths = (*consumer_audit.CONSUMER_AUDIT_POSIX_EXECUTABLE_PATHS,
+                                consumer_audit.CONSUMER_AUDIT_WINDOWS_EXECUTABLE_PATH)
+            executable = next((venv_path.joinpath(*parts) for parts in executable_paths
+                               if venv_path.joinpath(*parts).is_file()), executable)
+            kind = "venv"
+        if consumer_audit._consumer_path_is_exempt(None, venv_path or executable, exemptions):
+            return
+        if not executable.is_file():
+            gaps.append({"surface": str(venv_path or executable), "reason": "interpreter missing"})
+            return
+        identity = str(executable)
+        candidates.setdefault(identity, {"python": identity,
+                                         "venv": str(venv_path) if venv_path else None, "kind": kind})
+
+    retain_distribution_interpreter(sys.executable,
+                                    sys.prefix if sys.prefix != sys.base_prefix else None)
+    for discovery_name, discover in (("registered interpreters", fleet.registered_interpreters),
+                                    ("host installations", fleet.discover_host_spendguard_installations)):
+        try:
+            for row in discover():
+                retain_distribution_interpreter(row["python_executable"], row.get("venv_root"),
+                                                "venv" if row.get("venv_root") else "framework-python")
+        except Exception as exc:
+            gaps.append({"surface": discovery_name, "reason": f"discovery failed: {exc}"})
+    scan_roots = list(resolved_settings.get("workspace_roots", ()) if roots is None else roots)
+    scan_roots.extend(resolved_settings.get("workspace_extra_venv_dirs", ()))
+    for value in extra or ():
+        candidate = Path(value).expanduser().absolute()
+        if candidate.is_file():
+            retain_distribution_interpreter(candidate)
+        else:
+            scan_roots.append(candidate)
+    directory_budget = int(resolved_settings.get(
+        "distribution_scan_directory_budget", config._cfg_get(
+            "distribute", "scan_directory_budget", _DISTRIBUTION_SCAN_DIRECTORY_BUDGET_DEFAULT)))
+    for root in sorted({Path(value).expanduser().absolute() for value in scan_roots}):
+        if consumer_audit._consumer_path_is_exempt(None, root, exemptions):
+            continue
+        if not root.is_dir():
+            gaps.append({"surface": str(root), "reason": "discovery root missing"})
+            continue
+        visited_directories = 0
+
+        def record_distribution_walk_failure(error, scan_root=root):
+            gaps.append({"surface": str(error.filename or scan_root), "reason": f"enumeration failed: {error}"})
+
+        for directory, names, files in os.walk(root, onerror=record_distribution_walk_failure):
+            current = Path(directory)
+            visited_directories += 1
+            if visited_directories > directory_budget:
+                gaps.append({"surface": str(root), "reason": "enumeration directory budget exhausted"})
+                break
+            names[:] = sorted(name for name in names if not consumer_audit._consumer_path_is_exempt(
+                None, current / name, exemptions))
+            if consumer_audit.CONSUMER_AUDIT_VENV_CONFIGURATION_NAME in files:
+                executable_paths = (*consumer_audit.CONSUMER_AUDIT_POSIX_EXECUTABLE_PATHS,
+                                    consumer_audit.CONSUMER_AUDIT_WINDOWS_EXECUTABLE_PATH)
+                executable = next((current.joinpath(*parts) for parts in executable_paths
+                                   if current.joinpath(*parts).is_file()), None)
+                if executable is None:
+                    gaps.append({"surface": str(current), "reason": "venv interpreter missing"})
+                else:
+                    retain_distribution_interpreter(executable, current, "venv")
+    return {"interpreters": sorted(candidates.values(), key=lambda row: row["python"]), "gaps": gaps}
+
+
 def coverage(extra=None):
     """Show, across EVERY python on this machine (you use 3.11/3.14/…), which can make LLM calls and which
      are actually GATED. The gate is per-interpreter, so this is how you confirm nothing is silently ungated.
      `spendguard gate-coverage [interp_or_venv ...]` (distinct from `coverage`, which reports per-VENV realtime capture)."""
-    import glob, sys as _sys
-    from pathlib import Path
-    cands = [_sys.executable, "/usr/bin/python3"]
-    cands += sorted(glob.glob("/opt/homebrew/bin/python3.*") + glob.glob("/usr/local/bin/python3.*"))
-    # discover venvs SHALLOWLY under common project roots — never a recursive $HOME walk (iCloud/dataless trap)
-    roots = [Path.cwd(), Path.cwd().parent, Path.home() / "Documents", Path.home() / "Documents" / "claude"]
-    for root in roots:
-        for pat in ("*/.venv/bin/python", ".venv/bin/python", "*/*/.venv/bin/python"):
-            cands += glob.glob(str(root / pat))
-    for e in (extra or []):                                       # a passed venv dir → its python
-        p = os.path.join(e, "bin", "python")
-        cands.append(p if os.path.exists(p) else e)
-    seen, rows = set(), []
-    for c in cands:
-        rc = os.path.realpath(c) if os.path.exists(c) else c
-        if rc in seen:
-            continue
-        seen.add(rc)
+    discovery = discover_distribution_interpreters(extra=extra)
+    rows = []
+    failed_probes = []
+    for interpreter in discovery["interpreters"]:
+        c = interpreter["python"]
         ver, has, enf = _probe(c)
         if ver is None:
+            failed_probes.append(c)
             continue
         rows.append((c, ver, has, enf))
     print("spendguard coverage — the gate is PER-INTERPRETER; each python/venv must be gated on its own.\n")
     print(f"  {'interpreter':<52}{'ver':<9}{'LLM SDKs':<10}{'GATED'}")
-    gap = []
+    gap = list(failed_probes)
+    for discovery_gap in discovery["gaps"]:
+        print(f"  discovery gap: {discovery_gap['surface']}: {discovery_gap['reason']}")
     for c, ver, has, enf in rows:
         mark = ("🟢 yes" if enf else "🔴 NO") if has else "— n/a"
         print(f"  {c[:51]:<52}{ver:<9}{('yes' if has else 'no'):<10}{mark}")
@@ -435,7 +516,7 @@ def coverage(extra=None):
         print("  (or rely on `import spendguard; spendguard.require()` at the top of the script — fail-closed in ANY interpreter.)")
     else:
         print("  ✓ every interpreter that has the LLM SDKs is gated.")
-    return 2 if gap else 0
+    return 2 if gap or discovery["gaps"] else 0
 
 
 def cmd_coverage(argv=None):

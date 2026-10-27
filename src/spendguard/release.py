@@ -184,3 +184,9 @@ def release_status():
         note = "version unknown (not a git checkout) — staleness cannot be established; the server keeps running"
     return {"served": s, "green": g, "stale": stale,
             "served_dirty": bool((s or {}).get("dirty")), "pointer_path": str(pointer_path()), "note": note}
+
+
+def converge_deployed_release(*, check=False, roots=None, dry_run=False, settings=None):
+    """Release completion/scheduler entry: return the full fail-closed fleet attestation."""
+    from .distribution import distribute_fleet
+    return distribute_fleet(check=check, roots=roots, dry_run=dry_run, settings=settings)
