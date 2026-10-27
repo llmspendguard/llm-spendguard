@@ -9,6 +9,7 @@ from spendguard import codex_daemon
 
 
 FAKE = pathlib.Path(__file__).with_name("fake_codex_app_server.py").resolve()
+FIXTURE_RATE_LIMIT_USED_PERCENT = 12
 
 
 def new_daemon():
@@ -70,10 +71,24 @@ def test_dead_pipe_wakes_every_waiter():
     assert dead
 
 
+@patch.dict(os.environ)
+def test_rate_limits_use_correlated_app_server_channel():
+    os.environ.pop(config.CLI_TEST_OFFLINE_ENVIRONMENT_KEY, None)
+    daemon = new_daemon()
+    try:
+        result = daemon.read_worker_rate_limits(timeout=codex_daemon.RATE_LIMITS_READ_TIMEOUT_S)
+        assert result["error"] is None, result
+        assert (result["rate_limits"]["rateLimits"]["primary"]["usedPercent"]
+                == FIXTURE_RATE_LIMIT_USED_PERCENT), result
+    finally:
+        daemon.shutdown()
+
+
 if __name__ == "__main__":
     tests = [test_agent_message, test_concurrent_turns_are_demultiplexed,
              test_real_notifications_racing_before_turn_response_are_replayed,
-             test_codex_failed_turn_is_error, test_dead_pipe_wakes_every_waiter]
+             test_codex_failed_turn_is_error, test_dead_pipe_wakes_every_waiter,
+             test_rate_limits_use_correlated_app_server_channel]
     for test in tests:
         test()
         print(f"PASS {test.__name__}")

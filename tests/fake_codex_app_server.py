@@ -9,6 +9,9 @@ import time
 write_lock = threading.Lock()
 next_thread = 0
 next_turn = 0
+RATE_LIMITS_METHOD = "account/rateLimits/read"
+RATE_LIMIT_USED_PERCENT = 12
+RATE_LIMIT_RESET_TIMESTAMP = 4070908800
 
 
 def send(message):
@@ -66,5 +69,9 @@ for line in sys.stdin:
               "result": {"turn": {"id": turn_id, "status": "inProgress", "items": []}}})
         if prompt != "race":
             threading.Thread(target=finish_turn, args=(params["threadId"], turn_id, prompt), daemon=True).start()
+    elif method == RATE_LIMITS_METHOD:
+        send({"jsonrpc": "2.0", "id": message["id"], "result": {"rateLimits": {
+            "primary": {"usedPercent": RATE_LIMIT_USED_PERCENT, "resetsAt": RATE_LIMIT_RESET_TIMESTAMP},
+            "secondary": None}}})
     elif method == "fake/exit":
         os._exit(0)

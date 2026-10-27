@@ -32,6 +32,7 @@ STARTUP_TIMEOUT_S = int(config._cfg_get("advisor", "lane_handshake_timeout_s", 2
 #    config-gated (was 60): a down codex lane blocked 60s/retry → churn + metered fallback; 25s fails fast.
 CALL_TIMEOUT_S = 180              # one warm turn, including setup + streamed completion (the fallback when none given)
 IDLE_TIMEOUT_S = 600              # reclaim the persistent subprocess after ten minutes with no completed/new call
+RATE_LIMITS_READ_TIMEOUT_S = float(config._cfg_get("advisor", "codex_headroom_read_timeout_s", 10))
 _POOL_SLOT_KEY = "codex-daemon-workers"
 _CODEX_AUTH_HTTP_STATUSES = (401, 403)
 _CODEX_AUTH_ERROR_CODES = ("unauthorized", "authenticationError", "authentication_error")
@@ -237,6 +238,38 @@ class _CodexDaemon(_WarmStdioJsonRpcDaemon):
             return False
         self._write_rpc(p, {"jsonrpc": "2.0", "method": "initialized", "params": {}})   # OSError → base _spawn fails it
         return True
+
+    def read_worker_rate_limits(self, timeout=None):
+        """Read plan limits through this daemon's existing correlated JSON-RPC channel."""
+        from . import codex_exec
+        effective_timeout = timeout if timeout and timeout > 0 else RATE_LIMITS_READ_TIMEOUT_S
+        self._cancel_idle_shutdown()
+        try:
+            process = self.ensure_running()
+            if process is None:
+                return {"rate_limits": None, "error": "codex warm app-server unavailable"}
+            request_id = self._next_id()
+            waiter = self._register_waiter(request_id)
+            try:
+                try:
+                    self._write_rpc(process, {"jsonrpc": "2.0", "id": request_id,
+                                              "method": codex_exec.CODEX_APP_SERVER_RATE_LIMITS_METHOD,
+                                              "params": None})
+                except (BrokenPipeError, OSError):
+                    return {"rate_limits": None, "error": "codex warm rate-limits transport failed"}
+                if not waiter["event"].wait(effective_timeout):
+                    return {"rate_limits": None, "error": "codex warm rate-limits request timed out"}
+                message = waiter["msg"]
+            finally:
+                self._drop_waiter(request_id)
+            if not isinstance(message, dict) or message.get("__dead__") or message.get("error"):
+                return {"rate_limits": None, "error": "codex warm rate-limits response unavailable"}
+            payload = message.get("result")
+            if not isinstance(payload, dict):
+                return {"rate_limits": None, "error": "codex warm rate-limits response malformed"}
+            return {"rate_limits": payload, "error": None}
+        finally:
+            self._schedule_idle_shutdown()
 
     def run_warm(self, prompt, model=None, thread=None, reasoning=None, sandbox="read-only", cwd=None,
                  timeout=None, recycle_on_timeout=None):
@@ -628,6 +661,33 @@ class _CodexDaemonPool:
             result = {key: value for key, value in result.items() if key not in ("auth_error", "timed_out")}
         return result
 
+    def read_pool_rate_limits(self, timeout=None):
+        """Lease one warm worker for a bounded control-surface read."""
+        from .dispatch import DispatchTimeout
+        effective_timeout = timeout if timeout and timeout > 0 else RATE_LIMITS_READ_TIMEOUT_S
+        deadline = time.monotonic() + effective_timeout
+        try:
+            self._slots.acquire(effective_timeout)
+        except DispatchTimeout as exc:
+            return {"rate_limits": None, "error": str(exc)}
+        worker = None
+        try:
+            with self._pool_lock:
+                available = self._pool_lock.wait_for(lambda: bool(self._idle_workers),
+                                                     timeout=max(0, deadline - time.monotonic()))
+                if not available:
+                    return {"rate_limits": None, "error": "codex pool rate-limits checkout timed out"}
+                worker = self._idle_workers.pop(0)
+            return worker.read_worker_rate_limits(timeout=max(0, deadline - time.monotonic()))
+        except Exception as exc:
+            return {"rate_limits": None, "error": str(exc)}
+        finally:
+            if worker is not None:
+                with self._pool_lock:
+                    self._idle_workers.append(worker)
+                    self._pool_lock.notify_all()
+            self._slots.release()
+
     def pool_running(self):
         return any(worker.running() for worker in self._workers)
 
@@ -639,6 +699,7 @@ class _CodexDaemonPool:
 
     ensure_running = pool_ensure_running
     run_warm = pool_run_warm
+    read_rate_limits = read_pool_rate_limits
     running = pool_running
     shutdown = pool_shutdown
 
@@ -648,6 +709,7 @@ from .codex_daemon_broker import _CodexDaemonBroker
 _LOCAL_DAEMON = _CodexDaemonPool(_CodexDaemon)
 _DAEMON = _CodexDaemonBroker(_LOCAL_DAEMON)
 run_warm = _DAEMON.broker_run_warm      # existing lane/callers' API (codex_exec.run_prompt → codex_daemon.run_warm)
+read_rate_limits = _DAEMON.broker_read_rate_limits
 ensure_running = _DAEMON.broker_ensure_running
 running = _DAEMON.broker_running
 shutdown = _DAEMON.broker_shutdown

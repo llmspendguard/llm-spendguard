@@ -230,15 +230,17 @@ class _CodexDaemonBroker:
                 read_timeout = config.codex_daemon_admission_settings()["request_read_timeout_s"]
                 request = _receive_frame(connection, time.monotonic() + read_timeout)
                 connection.settimeout(read_timeout)
-                if request.get("version") != _PROTOCOL_VERSION or request.get("method") != "run_warm":
+                method = request.get("method")
+                if request.get("version") != _PROTOCOL_VERSION or method not in ("run_warm", "read_rate_limits"):
                     _send_frame(connection, {"version": _PROTOCOL_VERSION, "protocol_error": True})
                     return
                 kwargs = request.get("kwargs")
                 if not isinstance(kwargs, dict):
-                    raise ValueError("run_warm kwargs are not an object")
+                    raise ValueError("broker kwargs are not an object")
                 connection.settimeout(None)
                 with _broker_request_ledger_lifetime(connection):
-                    result = self._local.run_warm(**kwargs)
+                    result = (self._local.run_warm(**kwargs) if method == "run_warm"
+                              else self._local.read_rate_limits(**kwargs))
                 connection.settimeout(read_timeout)
                 _send_frame(connection, {"version": _PROTOCOL_VERSION, "result": result})
             except ValueError as exc:
@@ -257,7 +259,7 @@ class _CodexDaemonBroker:
             finally:
                 self._handler_slots.release()
 
-    def _call_owner(self, kwargs):
+    def _call_owner(self, kwargs, method="run_warm"):
         deadline = time.monotonic() + _CONNECT_TIMEOUT_S
         while True:
             try:
@@ -269,7 +271,7 @@ class _CodexDaemonBroker:
                                        else float(self._local.CALL_TIMEOUT_S)) + _RESPONSE_GRACE_S
                                       + getattr(self._local, "STARTUP_TIMEOUT_S", 0))
                 with contextlib.closing(connection):
-                    _send_frame(connection, {"version": _PROTOCOL_VERSION, "method": "run_warm", "kwargs": kwargs})
+                    _send_frame(connection, {"version": _PROTOCOL_VERSION, "method": method, "kwargs": kwargs})
                     response = _receive_frame(connection)
                 if response.get("version") != _PROTOCOL_VERSION:
                     return _BrokerAttachImportFailure(
@@ -320,6 +322,22 @@ class _CodexDaemonBroker:
         if isinstance(result, _BrokerAttachImportFailure):
             return _stale_consumer_attach_error(result.error)
         return result if result is not None else {"error": "codex broker unreachable; uncounted local fallback refused"}
+
+    def broker_read_rate_limits(self, timeout=None):
+        kwargs = {"timeout": timeout}
+        if self._become_owner_if_available():
+            return self._local.read_rate_limits(**kwargs)
+        result = self._call_owner(kwargs, method="read_rate_limits")
+        if isinstance(result, _BrokerAttachImportFailure):
+            return {"rate_limits": None, "error": str(result.error)}
+        if result is None:
+            from .codex_broker_owner import ensure_codex_broker_owner_running
+            ensure_codex_broker_owner_running()
+            result = self._call_owner(kwargs, method="read_rate_limits")
+        if isinstance(result, _BrokerAttachImportFailure):
+            return {"rate_limits": None, "error": str(result.error)}
+        return result if result is not None else {
+            "rate_limits": None, "error": "codex warm-pool broker unavailable"}
 
     def broker_ensure_running(self):
         if self._become_owner_if_available():
