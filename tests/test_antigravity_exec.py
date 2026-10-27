@@ -16,16 +16,12 @@ import json
 import types
 import shutil     # patch shutil.which directly — the shared config.resolve_cli() uses it (antigravity_exec
 #                  delegates the PATH lookup to config.resolve_cli, exactly like codex_exec)
+from _script_checks import record_script_check  # noqa: E402
+
 from spendguard import config  # noqa: E402
 from spendguard import antigravity_exec as ax
 
 fails = []
-def ck(name, cond):
-    print(("  [OK] " if cond else "  [FAIL] ") + name)
-    if not cond:
-        fails.append(name)
-
-
 GEMINI_KEY = "GEMINI" + "_API_KEY"
 GOOGLE_KEY = "GOOGLE" + "_API_KEY"
 seen = {}
@@ -48,35 +44,35 @@ with patch.dict(os.environ):
 
     print("-- happy path: agy -p … --output-format json; text from `response`, usage by field name --")
     r = ax.run_prompt("judge this…", system="You are the advisor.", model="gemini:gemini-3.7-flash-medium")
-    ck("cmd is `agy -p <prompt> --output-format json --disable-slash-commands`",
+    record_script_check(fails, "cmd is `agy -p <prompt> --output-format json --disable-slash-commands`",
        seen["cmd"][0].endswith("agy") and seen["cmd"][1] == "-p" and "--output-format" in seen["cmd"]
        and "json" in seen["cmd"] and "--disable-slash-commands" in seen["cmd"])
-    ck("system is PREPENDED into the prompt arg (print mode has no separate system slot)",
+    record_script_check(fails, "system is PREPENDED into the prompt arg (print mode has no separate system slot)",
        seen["cmd"][2].startswith("You are the advisor.") and "judge this…" in seen["cmd"][2])
-    ck("requested model forwarded to --model, provider prefix stripped",
+    record_script_check(fails, "requested model forwarded to --model, provider prefix stripped",
        "--model" in seen["cmd"] and seen["cmd"][seen["cmd"].index("--model") + 1] == "gemini-3.7-flash-medium")
-    ck("GEMINI_API_KEY and GOOGLE_API_KEY are STRIPPED from the child (plan login only)",
+    record_script_check(fails, "GEMINI_API_KEY and GOOGLE_API_KEY are STRIPPED from the child (plan login only)",
        GEMINI_KEY not in seen["env"] and GOOGLE_KEY not in seen["env"] and "PATH" in seen["env"])
-    ck("text is the result `response`, stripped; error None", r["text"] == "OK" and r["error"] is None)
-    ck("usage extracted by field name", r["in_tok"] == 850 and r["out_tok"] == 40)
+    record_script_check(fails, "text is the result `response`, stripped; error None", r["text"] == "OK" and r["error"] is None)
+    record_script_check(fails, "usage extracted by field name", r["in_tok"] == 850 and r["out_tok"] == 40)
 
     print("-- degrade paths: every mismatch is an {error}, never an exception, never a wrong answer --")
     ax.subprocess.run = lambda cmd, **kw: types.SimpleNamespace(
         returncode=0, stdout=json.dumps(dict(RESULT, status="ERROR", response="", error="quota exhausted")), stderr="")
-    ck("status != SUCCESS → error (carries agy's error message)", "quota exhausted" in (ax.run_prompt("x")["error"] or ""))
+    record_script_check(fails, "status != SUCCESS → error (carries agy's error message)", "quota exhausted" in (ax.run_prompt("x")["error"] or ""))
     ax.subprocess.run = lambda cmd, **kw: types.SimpleNamespace(returncode=2, stdout="", stderr="agy: auth required")
-    ck("non-zero exit → error with stderr", "auth required" in (ax.run_prompt("x")["error"] or ""))
+    record_script_check(fails, "non-zero exit → error with stderr", "auth required" in (ax.run_prompt("x")["error"] or ""))
     ax.subprocess.run = lambda cmd, **kw: types.SimpleNamespace(returncode=0, stdout=json.dumps(dict(RESULT, response="  ")), stderr="")
-    ck("SUCCESS but empty response → error (no silent empty answer)", ax.run_prompt("x")["error"] == "agy produced no response text")
+    record_script_check(fails, "SUCCESS but empty response → error (no silent empty answer)", ax.run_prompt("x")["error"] == "agy produced no response text")
     ax.subprocess.run = lambda cmd, **kw: types.SimpleNamespace(returncode=0, stdout="not json\nnoise", stderr="")
-    ck("unparseable stdout → error (degrades to API)", "no parseable json" in (ax.run_prompt("x")["error"] or ""))
+    record_script_check(fails, "unparseable stdout → error (degrades to API)", "no parseable json" in (ax.run_prompt("x")["error"] or ""))
     ax.subprocess.run = lambda cmd, **kw: types.SimpleNamespace(returncode=0, stdout=json.dumps(dict(RESULT, usage={})), stderr="")
     _r = ax.run_prompt("x")
-    ck("absent usage → 0 tokens, never a guess", _r["in_tok"] == 0 and _r["out_tok"] == 0 and _r["error"] is None)
+    record_script_check(fails, "absent usage → 0 tokens, never a guess", _r["in_tok"] == 0 and _r["out_tok"] == 0 and _r["error"] is None)
 
     shutil.which = lambda name: None
     os.environ["SPENDGUARD_AGY_BIN"] = "/nonexistent/agy"     # a missing pin fails LOUD (see the codex twin test)
-    ck("CLI absent → error (pool skips the lane)", ax.run_prompt("x")["error"] == "agy (Antigravity CLI) not found")
+    record_script_check(fails, "CLI absent → error (pool skips the lane)", ax.run_prompt("x")["error"] == "agy (Antigravity CLI) not found")
     del os.environ["SPENDGUARD_AGY_BIN"]
 
 

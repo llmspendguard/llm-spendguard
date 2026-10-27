@@ -25,28 +25,25 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
     os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="spendguard-measure-")
     os.execv(sys.executable, [sys.executable] + sys.argv)
 
+from _script_checks import record_script_check
 from spendguard import adapters, bakeoff, calls, config   # noqa: E402
 
 fails = []
 
 
-def ck(name, cond):
-    print(("  [OK] " if cond else "  [FAIL] ") + name)
-    if not cond:
-        fails.append(name)
 
 
 print("-- adapters._warn_once_if_substituted: a NAMED model silently swapped is announced LOUD, once per pair --")
 adapters._SUBST_WARN_LEDGER.clear()
 swap = {"substituted_from": "openai:gpt-5-nano", "model": "anthropic:claude-haiku-4-5"}
 m1 = adapters._warn_once_if_substituted(dict(swap))
-ck("a swap of an explicitly-named model is announced (non-empty message)", isinstance(m1, str) and bool(m1))
-ck("no swap → silent", adapters._warn_once_if_substituted({"model": "x"}) is None)
-ck("best-value delegation is exempt (intentional + prints its own notice)",
+record_script_check(fails, "a swap of an explicitly-named model is announced (non-empty message)", isinstance(m1, str) and bool(m1))
+record_script_check(fails, "no swap → silent", adapters._warn_once_if_substituted({"model": "x"}) is None)
+record_script_check(fails, "best-value delegation is exempt (intentional + prints its own notice)",
    adapters._warn_once_if_substituted({"substituted_from": "a", "model": "b", "best_value": True}) is None)
-ck("a self-'swap' (served == requested) is silent",
+record_script_check(fails, "a self-'swap' (served == requested) is silent",
    adapters._warn_once_if_substituted({"substituted_from": "a", "model": "a"}) is None)
-ck("ONCE per pair: the same swap does not re-announce", adapters._warn_once_if_substituted(dict(swap)) is None)
+record_script_check(fails, "ONCE per pair: the same swap does not re-announce", adapters._warn_once_if_substituted(dict(swap)) is None)
 
 print("-- bakeoff PINS the candidate AND the judge (no_substitution=True) so it measures the model it names --")
 seen = []
@@ -73,15 +70,15 @@ res = bakeoff.bakeoff("test:intent", candidates=["openai:gpt-5-nano"], prompts=[
                       run=True, budget_usd=999.0, judge_model="openai:gpt-5-nano")
 cand_calls = [c for c in seen if c["kw"].get("schema") is None]
 judge_calls = [c for c in seen if c["kw"].get("schema") is not None]
-ck("bakeoff ran the candidate and judged it", len(cand_calls) >= 1 and len(judge_calls) >= 1)
-ck("every candidate call is PINNED (no_substitution=True) — the named model is what's measured",
+record_script_check(fails, "bakeoff ran the candidate and judged it", len(cand_calls) >= 1 and len(judge_calls) >= 1)
+record_script_check(fails, "every candidate call is PINNED (no_substitution=True) — the named model is what's measured",
    bool(cand_calls) and all(c["kw"].get("no_substitution") is True for c in cand_calls))
-ck("the judge call is PINNED too — one ruler across candidates",
+record_script_check(fails, "the judge call is PINNED too — one ruler across candidates",
    bool(judge_calls) and all(c["kw"].get("no_substitution") is True for c in judge_calls))
 provenance_row = sqlite3.connect(config.db_path()).execute(
     "SELECT requested_model,served_model,resolved_lane,redirect_reason FROM calls WHERE caller='bakeoff'"
 ).fetchone()
-ck("the durable bakeoff row records the actual substitution provenance",
+record_script_check(fails, "the durable bakeoff row records the actual substitution provenance",
    provenance_row == ("openai:gpt-5-nano", swap["model"],
                       actual_substitution_lane, actual_substitution_reason))
 
@@ -97,7 +94,7 @@ def _capture_judge(model, prompt, **kw):
 adapters.call = _capture_judge
 _long = "Z" * 5000                                        # a real candidate output longer than the old 4000 cut
 bakeoff._judge_one("the task", _long, "openai:gpt-5-nano")
-ck("the judge prompt carries the ENTIRE output (all 5000 chars, not a 4000 truncation)",
+record_script_check(fails, "the judge prompt carries the ENTIRE output (all 5000 chars, not a 4000 truncation)",
    captured.get("prompt", "").count("Z") >= 5000)
 
 print("-- the requirement-aware path PINS its judge + adjudicator too (a ruler must not be swapped) --")
@@ -113,7 +110,7 @@ def _stub_meta(model, prompt, **kw):
 adapters.call = _stub_meta
 requirement_judge._meta_call("openai:gpt-5-nano", "judge this", system="s",
                              schema={"type": "object"}, out=200, sig="test-judge")
-ck("requirement_judge's meta ruler call is PINNED (no_substitution=True)",
+record_script_check(fails, "requirement_judge's meta ruler call is PINNED (no_substitution=True)",
    bool(rj_seen) and all(k.get("no_substitution") is True for k in rj_seen))
 
 print(f"\n{'[FAIL]' if fails else 'OK'} test_named_model_measured_not_swapped: {len(fails)} failure(s)")

@@ -18,13 +18,10 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
 # covers the default-on Anthropic avoidance policy and its authorization behavior.
 os.environ["SPENDGUARD_AVOID_CLAUDE_LANE"] = "off"
 
+from _script_checks import record_script_check
 from spendguard import adapters, subscription_exec, codex_exec, resource_state, config
 
 fails = []
-def ck(name, cond):
-    print(("  [OK] " if cond else "  [FAIL] ") + name)
-    if not cond:
-        fails.append(name)
 
 
 calls_made = {"claude": 0, "codex": 0}
@@ -47,12 +44,12 @@ os.environ["SPENDGUARD_POOL_COOLDOWN_S"] = "3600"
 
 print("-- pool: each provider's prompts ride its OWN plan lane --")
 r = adapters.call("claude-haiku-4-5-20251001", "classify…", sig="test:executor-pool")
-ck("anthropic model → claude-code lane, $0 billed",
+record_script_check(fails, "anthropic model → claude-code lane, $0 billed",
    r.get("executor") == "claude-code" and r["text"] == "CLAUDE LANE" and r["cost"] == 0.0)
 r = adapters.call("openai:gpt-5.5", "classify…", sig="test:executor-pool")
-ck("openai model → codex lane, $0 billed",
+record_script_check(fails, "openai model → codex lane, $0 billed",
    r.get("executor") == "codex" and r["text"] == "CODEX LANE" and r["cost"] == 0.0)
-ck("no cross-lane leakage", calls_made == {"claude": 1, "codex": 1})
+record_script_check(fails, "no cross-lane leakage", calls_made == {"claude": 1, "codex": 1})
 
 print("-- lane failure → cooldown → straight to API until it expires --")
 def codex_down(prompt, system=None, model=None, timeout=None, **_kw):
@@ -62,37 +59,37 @@ codex_exec.run_prompt = codex_down
 with patch.dict(os.environ):
     os.environ.pop(config.CLI_TEST_OFFLINE_ENVIRONMENT_KEY, None)
     r = adapters.call("openai:gpt-5.5", "classify…", sig="test:executor-pool")
-ck("failed lane falls back to the API path (its error, not the lane's; tagged executor='api')",
+record_script_check(fails, "failed lane falls back to the API path (its error, not the lane's; tagged executor='api')",
    r.get("executor") == "api" and r.get("error") and "plan window" not in (r.get("error") or ""))
 n = calls_made["codex"]
 with patch.dict(os.environ):
     os.environ.pop(config.CLI_TEST_OFFLINE_ENVIRONMENT_KEY, None)
     r2 = adapters.call("openai:gpt-5.5", "classify…", sig="test:executor-pool")
-ck("cooling lane still confirms recovery before a paid fallback",
+record_script_check(fails, "cooling lane still confirms recovery before a paid fallback",
    calls_made["codex"] > n and r2.get("executor") == "api"
    and any(e["rung"] == "metered_authorized" for e in r2.get("lane_recovery", [])))
-ck("the OTHER lane is unaffected by the cooldown",
+record_script_check(fails, "the OTHER lane is unaffected by the cooldown",
    adapters.call("claude-haiku-4-5-20251001", "x", sig="test:executor-pool").get("executor") == "claude-code")
 resource_state._reset()
 codex_exec.run_prompt = codex_ok
-ck("after cooldown clears the lane serves again",
+record_script_check(fails, "after cooldown clears the lane serves again",
    adapters.call("openai:gpt-5.5", "x", sig="test:executor-pool").get("executor") == "codex")
 
 print("-- single-lane settings never touch the other provider --")
 os.environ["SPENDGUARD_ADVISOR_EXECUTOR"] = "claude-code"
 n = calls_made["codex"]
 r = adapters.call("openai:gpt-5.5", "x", sig="test:executor-pool")
-ck("executor=claude-code + openai model → API (codex lane never called), tagged executor='api'",
+record_script_check(fails, "executor=claude-code + openai model → API (codex lane never called), tagged executor='api'",
    calls_made["codex"] == n and r.get("executor") == "api")
 os.environ["SPENDGUARD_ADVISOR_EXECUTOR"] = "codex"
 n = calls_made["claude"]
 r = adapters.call("claude-haiku-4-5-20251001", "x", sig="test:executor-pool")
-ck("executor=codex + anthropic model → API (claude lane never called), tagged executor='api'",
+record_script_check(fails, "executor=codex + anthropic model → API (claude lane never called), tagged executor='api'",
    calls_made["claude"] == n and r.get("executor") == "api")
 os.environ["SPENDGUARD_ADVISOR_EXECUTOR"] = "api"
 n = dict(calls_made)
 adapters.call("claude-haiku-4-5-20251001", "x", sig="test:executor-pool"); adapters.call("openai:gpt-5.5", "x", sig="test:executor-pool")
-ck("executor=api touches no lane at all", calls_made == n)
+record_script_check(fails, "executor=api touches no lane at all", calls_made == n)
 
 print("-- subscription rows recorded per lane (billed axis honest at $0) --")
 from spendguard import calls as callstore
@@ -100,7 +97,7 @@ rows = [r for r in (callstore.recent(20) or []) if r.get("kind") == "subscriptio
 if rows is None:
     print("  (calls.recent not available — recording covered by test_subscription_exec)")
 else:
-    ck("subscription rows exist for both providers",
+    record_script_check(fails, "subscription rows exist for both providers",
        {r.get("provider") for r in rows} >= {"anthropic", "openai"})
 
 print(f"\n{'[FAIL]' if fails else 'OK'} test_executor_pool: {len(fails)} failure(s)")

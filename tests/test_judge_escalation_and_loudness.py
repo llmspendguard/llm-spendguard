@@ -18,15 +18,12 @@ os.environ.setdefault("SPENDGUARD_TEST_ISOLATED", "1")
 os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
+from _script_checks import record_script_check
 from spendguard import requirement_judge   # noqa: E402
 
 fails = []
 
 
-def ck(name, cond):
-    print(("  [OK] " if cond else "  [FAIL] ") + name)
-    if not cond:
-        fails.append(name)
 
 
 # ───────────────────── FIX A: escalation on an unresolvable screen ─────────────────────
@@ -58,28 +55,28 @@ try:
     requirement_judge._meta_call, seq = _meta(_CONFIDENT, _ADJ)
     requirement_judge._req_cache.clear()
     v = requirement_judge.judge_requirements("p", "o")
-    ck("a CONFIDENT screen rules on the screen tier (no needless opus call)",
+    record_script_check(fails, "a CONFIDENT screen rules on the screen tier (no needless opus call)",
        v.get("tier") == "screen" and "requirement-adjudicate" not in seq and v.get("good") is True)
 
     # 2. NOT-CONFIDENT parsed screen → escalates (pre-existing behavior, kept)
     requirement_judge._meta_call, seq = _meta(_UNSURE, _ADJ)
     requirement_judge._req_cache.clear()
     v = requirement_judge.judge_requirements("p", "o")
-    ck("a NOT-CONFIDENT screen escalates to the adjudicator (tier=adjudicated)",
+    record_script_check(fails, "a NOT-CONFIDENT screen escalates to the adjudicator (tier=adjudicated)",
        "requirement-adjudicate" in seq and v.get("tier") == "adjudicated" and v.get("good") is False)
 
     # 3. UNPARSEABLE screen (None) → NOW escalates (the fix). Was: silent good=None, opus never asked.
     requirement_judge._meta_call, seq = _meta((None, 0.001), _ADJ)
     requirement_judge._req_cache.clear()
     v = requirement_judge.judge_requirements("p", "o")
-    ck("an UNPARSEABLE screen ESCALATES to opus (the bug: it used to return good=None silently)",
+    record_script_check(fails, "an UNPARSEABLE screen ESCALATES to opus (the bug: it used to return good=None silently)",
        "requirement-adjudicate" in seq and v.get("tier") == "adjudicated" and v.get("good") is False)
 
     # 4. BOTH tiers unparseable → UNLABELED, but tier='unresolved' + a why naming both (never a silent None)
     requirement_judge._meta_call, seq = _meta((None, 0.001), (None, 0.01))
     requirement_judge._req_cache.clear()
     v = requirement_judge.judge_requirements("p", "o")
-    ck("both tiers unavailable → good=None, tier='unresolved', why names the escalation attempt",
+    record_script_check(fails, "both tiers unavailable → good=None, tier='unresolved', why names the escalation attempt",
        v.get("good") is None and v.get("tier") == "unresolved" and "adjudicator unavailable" in (v.get("why") or ""))
 finally:
     requirement_judge._meta_call = _orig_meta
@@ -99,10 +96,10 @@ try:
     _meas.record_reading = lambda **k: "reading-x"
     res = bk.bakeoff("soft-intent", candidates=["openai:gpt-5-nano"],
                      prompts=["write a nuanced, holistic summary"], run=True, budget_usd=999)
-    ck("runs happened (candidate did not error)", sum(a["runs"] for a in res["per_candidate"].values()) > 0)
-    ck("every arm's good_rate is null with labeled=0 (the judge labeled nothing)",
+    record_script_check(fails, "runs happened (candidate did not error)", sum(a["runs"] for a in res["per_candidate"].values()) > 0)
+    record_script_check(fails, "every arm's good_rate is null with labeled=0 (the judge labeled nothing)",
        all(a["labeled"] == 0 and a["good_rate"] is None for a in res["per_candidate"].values()))
-    ck("the result carries a LOUD `warning` (not a silent clean-looking null)",
+    record_script_check(fails, "the result carries a LOUD `warning` (not a silent clean-looking null)",
        bool(res.get("warning")) and "ZERO quality labels" in res["warning"])
 finally:
     (_ad.call, _ad.provider_for, bk._judge_one, bk.calls.insert, _adv.ranked, _meas.record_reading) = _saved

@@ -15,25 +15,21 @@ os.environ.setdefault("SPENDGUARD_TEST_ISOLATED", "1")
 os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
+from _script_checks import record_script_check
 from spendguard import calibrate   # noqa: E402
 
 fails = []
 
 
-def ck(name, cond):
-    print(("  [OK] " if cond else "  [FAIL] ") + name)
-    if not cond:
-        fails.append(name)
-
 
 # no history anywhere (empty ledger) + a caller est_out_max → basis 'cap', output ASSUMED → must be LOUD.
 r = calibrate.predict_cost("zzz-no-history-intent", n=10, model="gpt-5.5", transport="realtime",
                            est_in_tokens=100, est_out_max=10)
-ck("basis is 'cap' (no learned fill / out-per-in for this cell)", r["basis"] == "cap")
-ck("n_obs is 0", r["n_obs"] == 0)
-ck("a warning is returned, not silent", isinstance(r.get("warning"), str) and "ASSUMED" in r["warning"])
-ck("the warning names the assumed est_out_max", "est_out_max=10" in (r.get("warning") or ""))
-ck("the $ is STILL returned (a usable floor, not a raise)", isinstance(r["p50_usd"], (int, float)) and r["p50_usd"] > 0)
+record_script_check(fails, "basis is 'cap' (no learned fill / out-per-in for this cell)", r["basis"] == "cap")
+record_script_check(fails, "n_obs is 0", r["n_obs"] == 0)
+record_script_check(fails, "a warning is returned, not silent", isinstance(r.get("warning"), str) and "ASSUMED" in r["warning"])
+record_script_check(fails, "the warning names the assumed est_out_max", "est_out_max=10" in (r.get("warning") or ""))
+record_script_check(fails, "the $ is STILL returned (a usable floor, not a raise)", isinstance(r["p50_usd"], (int, float)) and r["p50_usd"] > 0)
 
 # the OTHER no-history shape: no est_out_max AND no history → still a LOUD failure (raises), never a silent zero-output quote.
 raised = False
@@ -41,7 +37,7 @@ try:
     calibrate.predict_cost("zzz-no-history-intent", n=10, model="gpt-5.5", transport="realtime", est_in_tokens=100)
 except ValueError:
     raised = True
-ck("no est_out_max + no history → raises (loud), never a silent zero-output quote", raised)
+record_script_check(fails, "no est_out_max + no history → raises (loud), never a silent zero-output quote", raised)
 
 print(f"\n{'[FAIL]' if fails else 'OK'} test_predict_cost_output_basis_warning: {len(fails)} failure(s)")
 sys.exit(1 if fails else 0)

@@ -19,15 +19,12 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
     os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="spendguard-ev-")
     os.execv(sys.executable, [sys.executable] + sys.argv)
 
+from _script_checks import record_script_check  # noqa: E402
+
 from spendguard import conv
 import spendguard.adapters as adapters
 
 fails = []
-def ck(name, cond):
-    print(("  [OK] " if cond else "  [FAIL] ") + name)
-    if not cond:
-        fails.append(name)
-
 # MOCK the LLM (offline): classify from chunk content so we test the WIRING (candidate cut → LLM → parse → record),
 # not a real model. spend_evidence iff a $/token shape is present; cost_lesson iff a decision phrase is present.
 CALLS = {"n": 0, "seen": 0}
@@ -55,28 +52,28 @@ chunks = [
     {"id": "c", "text": "lesson: don't cancel a running batch — completed requests still bill"},  # cost lesson, no $
 ]
 res = conv.classify_evidence(chunks, run=True)
-ck("spend evidence w/o topic keyword caught + classed realtime (NO silent drop)",
+record_script_check(fails, "spend evidence w/o topic keyword caught + classed realtime (NO silent drop)",
    res["a"]["spend_evidence"] is True and res["a"]["kind"] == "realtime")
-ck("cost-free prose skipped DETERMINISTICALLY (never reached the LLM)",
+record_script_check(fails, "cost-free prose skipped DETERMINISTICALLY (never reached the LLM)",
    res["b"] == conv._NONE_EV and CALLS["seen"] == 2)        # only a + c were candidates → only 2 items hit the mock
-ck("cost lesson caught (feeds reconcile-insights) even with no $/token",
+record_script_check(fails, "cost lesson caught (feeds reconcile-insights) even with no $/token",
    res["c"]["cost_lesson"] is True)
 
 # ── 2. RECORDED: a re-run reads the cache, no new LLM call (both consumers read free) ──
 n_before = CALLS["n"]
 res2 = conv.classify_evidence(chunks, run=True)
-ck("re-run reads recorded cache — zero new LLM calls",
+record_script_check(fails, "re-run reads recorded cache — zero new LLM calls",
    CALLS["n"] == n_before and res2["a"]["spend_evidence"] is True and res2["c"]["cost_lesson"] is True)
 
 # ── 3. estimate-first: run=False spends nothing ──
 CALLS["n"] = 0
 out = conv.classify_evidence([{"id": "d", "text": "that run cost $9.00"}], run=False)
-ck("estimate-first: run=False makes ZERO LLM calls", CALLS["n"] == 0)
+record_script_check(fails, "estimate-first: run=False makes ZERO LLM calls", CALLS["n"] == 0)
 
 # ── 4. the candidate cut is broad cost-DOMAIN, not problem-topic (anti-regression) ──
-ck("broad cut: a bare '$5.50' is a candidate", bool(conv._EVIDENCE_CANDIDATE.search("it was $5.50")))
-ck("broad cut: 'cancelled the batch' is a candidate (lesson recall)", bool(conv._EVIDENCE_CANDIDATE.search("cancelled the batch")))
-ck("broad cut: pure prose is NOT a candidate", not conv._EVIDENCE_CANDIDATE.search("let us refactor the parser"))
+record_script_check(fails, "broad cut: a bare '$5.50' is a candidate", bool(conv._EVIDENCE_CANDIDATE.search("it was $5.50")))
+record_script_check(fails, "broad cut: 'cancelled the batch' is a candidate (lesson recall)", bool(conv._EVIDENCE_CANDIDATE.search("cancelled the batch")))
+record_script_check(fails, "broad cut: pure prose is NOT a candidate", not conv._EVIDENCE_CANDIDATE.search("let us refactor the parser"))
 
 # ── 5. EVIDENCE SENT WHOLE: a chunk's spend signal in the TAIL (past the old 600-char head cut) is still seen ──
 #     session_chunks emits up to 14000-char chunks; the old (c["text"])[:600] fed the classifier only the head, so
@@ -84,18 +81,18 @@ ck("broad cut: pure prose is NOT a candidate", not conv._EVIDENCE_CANDIDATE.sear
 LONG_TAIL = ("boarding notes and prose " * 220) + " and finally the sharded runner printed $4,210.50 for 500000 tokens"
 assert len(LONG_TAIL) > 5000
 res5 = conv.classify_evidence([{"id": "tail", "text": LONG_TAIL}], run=True)
-ck("spend evidence in the chunk TAIL (past the old 600 cut) is classified — whole chunk reached the LLM",
+record_script_check(fails, "spend evidence in the chunk TAIL (past the old 600 cut) is classified — whole chunk reached the LLM",
    res5["tail"]["spend_evidence"] is True)
 
 # ── 6. COST RAIL: whole chunks are PACKED by char budget, never cut; no chunk split across batches ──
 packed = conv._pack_by_char_budget(
     [{"id": str(i), "text": "x" * 10000} for i in range(5)], conv._RECALL_BATCH_CHARS, 20)
-ck("every chunk kept WHOLE (no 'text' is shorter than its 10000 chars)",
+record_script_check(fails, "every chunk kept WHOLE (no 'text' is shorter than its 10000 chars)",
    all(len(it["text"]) == 10000 for b in packed for it in b))
-ck("each batch stays within the char budget (packing, not a fixed count of 20)",
+record_script_check(fails, "each batch stays within the char budget (packing, not a fixed count of 20)",
    all(sum(len(it["text"]) for it in b) <= conv._RECALL_BATCH_CHARS or len(b) == 1 for b in packed))
 _oversize = conv._pack_by_char_budget([{"id": "big", "text": "y" * 99999}], conv._RECALL_BATCH_CHARS, 20)
-ck("a single chunk larger than the budget still goes ALONE, un-sliced (never truncated)",
+record_script_check(fails, "a single chunk larger than the budget still goes ALONE, un-sliced (never truncated)",
    len(_oversize) == 1 and len(_oversize[0]) == 1 and len(_oversize[0][0]["text"]) == 99999)
 
 print(("[OK]" if not fails else "[FAIL]") + " classify-evidence: %d failure(s)" % len(fails))

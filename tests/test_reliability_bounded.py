@@ -21,15 +21,11 @@ os.environ.setdefault("SPENDGUARD_TEST_ISOLATED", "1")
 os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
+from _script_checks import record_script_check
 from spendguard import lanes, reliability, adapters, antigravity_exec, model_preflight, gate
 
 fails = []
 
-
-def ck(name, cond):
-    print(("  [OK] " if cond else "  [FAIL] ") + name)
-    if not cond:
-        fails.append(name)
 
 
 # ── lanes.probe(timeout_s=N) bounds each lane's run_prompt ──
@@ -48,11 +44,11 @@ lanes.lanes_status = lambda: {"lanes": [{"lane": "testlane", "enabled": True}]}
 lanes._record_probe = lambda lane, ok: None
 lanes._PROBE_TIER = {}
 res = lanes.probe(timeout_s=7)
-ck("lanes.probe passes the tight timeout to the lane's run_prompt", _fm.seen.get("timeout") == 7)
-ck("lanes.probe reports the lane reachable", res and res[0].get("ok") is True and res[0].get("lane") == "testlane")
+record_script_check(fails, "lanes.probe passes the tight timeout to the lane's run_prompt", _fm.seen.get("timeout") == 7)
+record_script_check(fails, "lanes.probe reports the lane reachable", res and res[0].get("ok") is True and res[0].get("lane") == "testlane")
 
 # ── antigravity_exec declares a SHORT per-lane floor (agy fails fast), well under the global 150s ──
-ck("agy declares a short MIN_TIMEOUT_S floor (fail fast → metered)",
+record_script_check(fails, "agy declares a short MIN_TIMEOUT_S floor (fail fast → metered)",
    getattr(antigravity_exec, "MIN_TIMEOUT_S", 999) <= 60 and antigravity_exec.MIN_TIMEOUT_S < adapters.LANE_MIN_TIMEOUT_S)
 
 # ── reliability.sweep(run=True, timeout_s=N) bounds every metered ping and returns the matrix ──
@@ -73,19 +69,19 @@ def _fake_call(model, prompt, **kw):
 
 adapters.call = _fake_call
 s = reliability.sweep(run=True, timeout_s=9)
-ck("sweep bounds the metered ping with timeout_s", _seen_call.get("timeout_s") == 9)
-ck("sweep forces metered_only=True (the raw key, never a lane)", _seen_call.get("metered_only") is True)
-ck("sweep VERIFIES the raw key (api-served) reachable, with latency", s["metered"]["openai"]["reachable"] is True and "latency" in s["metered"]["openai"])
+record_script_check(fails, "sweep bounds the metered ping with timeout_s", _seen_call.get("timeout_s") == 9)
+record_script_check(fails, "sweep forces metered_only=True (the raw key, never a lane)", _seen_call.get("metered_only") is True)
+record_script_check(fails, "sweep VERIFIES the raw key (api-served) reachable, with latency", s["metered"]["openai"]["reachable"] is True and "latency" in s["metered"]["openai"])
 
 # ── run=False is a $0 estimate (no probe) ──
 _seen_call.clear()
 s0 = reliability.sweep(run=False)
-ck("sweep(run=False) makes no probe call ($0 estimate)", not _seen_call and s0["metered"] == {} and s0["lanes"] == {})
+record_script_check(fails, "sweep(run=False) makes no probe call ($0 estimate)", not _seen_call and s0["metered"] == {} and s0["lanes"] == {})
 
 # ── _metered_target PREFERS a model the config actually uses (kimi-k3), not the cheapest ──
 model_preflight.configured_specs = lambda: ["moonshot:kimi-k3", "openai:gpt-5.5"]
 gate._provider_of = lambda spec: ("moonshot" if "kimi" in spec else "openai")
-ck("_metered_target prefers the configured model for the provider (kimi-k3)", reliability._metered_target("moonshot") == "kimi-k3")
+record_script_check(fails, "_metered_target prefers the configured model for the provider (kimi-k3)", reliability._metered_target("moonshot") == "kimi-k3")
 
 print(("[OK]" if not fails else "[FAIL]") + " reliability bounded: %d failure(s)" % len(fails))
 sys.exit(1 if fails else 0)

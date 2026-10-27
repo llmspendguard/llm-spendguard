@@ -35,6 +35,7 @@ import urllib.request
 from urllib.request import urlopen as bound_urlopen        # the `from … import` binding a urlopen-patch would MISS
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
+from _script_checks import record_script_check
 from spendguard import gate as spend_gate
 from spendguard import http_capture, budget
 from spendguard.serve import _AskHTTPHandler
@@ -42,10 +43,6 @@ from spendguard.serve import _AskHTTPHandler
 fails = []
 
 
-def ck(name, cond):
-    print(("  [OK] " if cond else "  [FAIL] ") + name)
-    if not cond:
-        fails.append(name)
 
 
 # stub the recorder + logger so nothing hits a real ledger (offline, zero spend)
@@ -91,9 +88,9 @@ def post(url, opener=None):
 
 
 # ── the patch is installed on the ONE chokepoint, and NOT on urlopen (double-patch → double-count) ──
-ck("install() wires urllib via OpenerDirector.open",
+record_script_check(fails, "install() wires urllib via OpenerDirector.open",
    http_capture.install() is True and getattr(urllib.request.OpenerDirector.open, "_spend_gated", False))
-ck("urlopen itself is left un-patched (patching both would double-count)",
+record_script_check(fails, "urlopen itself is left un-patched (patching both would double-count)",
    not getattr(urllib.request.urlopen, "_spend_gated", False))
 
 # treat the localhost stub as a provider host so the capture path engages
@@ -102,69 +99,69 @@ http_capture.PROVIDER_HOSTS = dict(http_capture.PROVIDER_HOSTS, **{"127.0.0.1": 
 # ── a billable POST is captured, and the read-once body is re-served intact ──
 n = len(recorded)
 body = post(BASE + "/v1/chat/completions")
-ck("raw urllib POST to a provider host is CAPTURED (100/50, openai)",
+record_script_check(fails, "raw urllib POST to a provider host is CAPTURED (100/50, openai)",
    len(recorded) == n + 1 and recorded[-1] == ("gpt-4o-mini", 100, 50, "openai"))
-ck("caller still receives the FULL body (read-once re-served)", body.get("usage", {}).get("prompt_tokens") == 100)
+record_script_check(fails, "caller still receives the FULL body (read-once re-served)", body.get("usage", {}).get("prompt_tokens") == 100)
 
 # ── coverage: every urllib caller style funnels through OpenerDirector.open ──
 n = len(recorded)
 r = bound_urlopen(urllib.request.Request(BASE + "/v1/embeddings", data=b"{}", method="POST"))
 r.read()
-ck("`from urllib.request import urlopen` caller captured (urlopen-patch would miss this)", len(recorded) == n + 1)
+record_script_check(fails, "`from urllib.request import urlopen` caller captured (urlopen-patch would miss this)", len(recorded) == n + 1)
 
 n = len(recorded)
 post(BASE + "/v1/chat/completions", opener=urllib.request.build_opener())
-ck("build_opener().open() caller captured (urlopen-patch would miss this)", len(recorded) == n + 1)
+record_script_check(fails, "build_opener().open() caller captured (urlopen-patch would miss this)", len(recorded) == n + 1)
 
 # ── a GET (list/reconcile) records nothing AND logs nothing (POST-only, before any log) ──
 n, l = len(recorded), len(logged)
 urllib.request.urlopen(BASE + "/v1/batches").read()
-ck("urllib GET to a provider host records nothing (reconcile/list reads never bill)",
+record_script_check(fails, "urllib GET to a provider host records nothing (reconcile/list reads never bill)",
    len(recorded) == n and len(logged) == l)
 
 # ── a stream (no Content-Length) is NOT drained: logged visible, and the caller still gets its stream ──
 n, l = len(recorded), len(logged)
 r = urllib.request.urlopen(urllib.request.Request(BASE + "/v1/stream", data=b"{}", method="POST"))
 sse = r.read()
-ck("streaming POST is not recorded as usage", len(recorded) == n)
-ck("streaming POST logged VISIBLE (unmetered_unbuffered), not $0-silent",
+record_script_check(fails, "streaming POST is not recorded as usage", len(recorded) == n)
+record_script_check(fails, "streaming POST logged VISIBLE (unmetered_unbuffered), not $0-silent",
    len(logged) == l + 1 and logged[-1].get("decision") == "recorded_unmetered_unbuffered")
-ck("streaming caller still receives its body (capture never drained it)", sse == b"data: {}\n\n")
+record_script_check(fails, "streaming caller still receives its body (capture never drained it)", sse == b"data: {}\n\n")
 
 # ── an oversized body (Content-Length > cap) is NOT drained: logged visible, caller body intact ──
 save_cap = http_capture._MAX_CAPTURE_BYTES
 http_capture._MAX_CAPTURE_BYTES = 5                      # tiny → a normal response now exceeds the cap
 n, l = len(recorded), len(logged)
 big = post(BASE + "/v1/chat/completions")
-ck("oversized (Content-Length > cap) not recorded (no OOM read)", len(recorded) == n)
-ck("oversized logged VISIBLE (unmetered_oversized)",
+record_script_check(fails, "oversized (Content-Length > cap) not recorded (no OOM read)", len(recorded) == n)
+record_script_check(fails, "oversized logged VISIBLE (unmetered_oversized)",
    len(logged) == l + 1 and logged[-1].get("decision") == "recorded_unmetered_oversized")
-ck("oversized: caller body untouched (capture never drained it)", big.get("usage", {}).get("prompt_tokens") == 100)
+record_script_check(fails, "oversized: caller body untouched (capture never drained it)", big.get("usage", {}).get("prompt_tokens") == 100)
 http_capture._MAX_CAPTURE_BYTES = save_cap
 
 # ── suppressions: reading_history (a provider read, not spend), SDK-originated, and the off knob ──
 n = len(recorded)
 with budget.reading_history("test-reconcile-read"):
     urllib.request.urlopen(urllib.request.Request(BASE + "/v1/chat/completions", data=b"{}", method="POST")).read()
-ck("a POST inside reading_history() is NOT recorded (history read, not spend)", len(recorded) == n)
+record_script_check(fails, "a POST inside reading_history() is NOT recorded (history read, not spend)", len(recorded) == n)
 
 http_capture.install()
 http_capture.install()                                  # idempotent — must not wrap twice
 n = len(recorded)
 post(BASE + "/v1/chat/completions")
-ck("install() is idempotent — a POST is captured ONCE, never multiplied", len(recorded) == n + 1)
+record_script_check(fails, "install() is idempotent — a POST is captured ONCE, never multiplied", len(recorded) == n + 1)
 
 tok = http_capture.in_sdk_call.set(True)
 n = len(recorded)
 post(BASE + "/v1/chat/completions")
 http_capture.in_sdk_call.reset(tok)
-ck("SDK-originated traffic suppressed (in_sdk_call) — no double count", len(recorded) == n)
+record_script_check(fails, "SDK-originated traffic suppressed (in_sdk_call) — no double count", len(recorded) == n)
 
 os.environ["SPENDGUARD_HTTP_CAPTURE"] = "off"
 n = len(recorded)
 post(BASE + "/v1/chat/completions")
 del os.environ["SPENDGUARD_HTTP_CAPTURE"]
-ck("knob SPENDGUARD_HTTP_CAPTURE=off disables urllib capture", len(recorded) == n)
+record_script_check(fails, "knob SPENDGUARD_HTTP_CAPTURE=off disables urllib capture", len(recorded) == n)
 
 srv.shutdown()
 print(("[OK]" if not fails else "[FAIL]") + " urllib capture: %d failure(s)" % len(fails))

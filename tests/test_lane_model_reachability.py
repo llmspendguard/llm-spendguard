@@ -22,25 +22,22 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
     os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="spendguard-reach-")
     os.execv(sys.executable, [sys.executable] + sys.argv)
 
+from _script_checks import record_script_check
 from spendguard import adapters, tier_config, route_utility, lane_catalog, lanes   # noqa: E402
 
 fails = []
 
 
-def ck(name, cond):
-    print(("  [OK] " if cond else "  [FAIL] ") + name)
-    if not cond:
-        fails.append(name)
 
 
 print("-- Fix A: the Gemini composer resolves a base id to a SERVED tier suffix, never the bare id agy rejects --")
-ck("a bare base id gets the lane's default tier (medium), not the rejected bare id",
+record_script_check(fails, "a bare base id gets the lane's default tier (medium), not the rejected bare id",
    adapters._compose_gemini_reasoning("gemini-3.8-flash", None) == "gemini-3.8-flash-medium")
-ck("an explicit valid tier wins", adapters._compose_gemini_reasoning("gemini-3.8-flash", "high") == "gemini-3.8-flash-high")
-ck("an explicit tier REPLACES a stale suffix", adapters._compose_gemini_reasoning("gemini-3.8-flash-low", "high") == "gemini-3.8-flash-high")
-ck("an already-suffixed id with no reasoning is kept as-is (servable)",
+record_script_check(fails, "an explicit valid tier wins", adapters._compose_gemini_reasoning("gemini-3.8-flash", "high") == "gemini-3.8-flash-high")
+record_script_check(fails, "an explicit tier REPLACES a stale suffix", adapters._compose_gemini_reasoning("gemini-3.8-flash-low", "high") == "gemini-3.8-flash-high")
+record_script_check(fails, "an already-suffixed id with no reasoning is kept as-is (servable)",
    adapters._compose_gemini_reasoning("gemini-3.8-flash-low", None) == "gemini-3.8-flash-low")
-ck("a reasoning agy cannot spell ('minimal') falls to the default tier, not the bare id",
+record_script_check(fails, "a reasoning agy cannot spell ('minimal') falls to the default tier, not the bare id",
    adapters._compose_gemini_reasoning("gemini-3.8-flash", "minimal") == "gemini-3.8-flash-medium")
 
 print("-- Fix B: reachability_probe reads a CLI-REJECTED declared model as NOT served (would silently meter) --")
@@ -61,13 +58,13 @@ def _stub_call(pinned, prompt, **kw):
 adapters.call = _stub_call
 snap = tier_config.reachability_probe(save=True)
 by = {r["model"]: r for r in snap["rows"]}
-ck("a served declared model reads served=True", by.get("m-good", {}).get("served") is True)
-ck("a CLI-REJECTED declared model reads served=False (the RED that stops it hiding behind green)",
+record_script_check(fails, "a served declared model reads served=True", by.get("m-good", {}).get("served") is True)
+record_script_check(fails, "a CLI-REJECTED declared model reads served=False (the RED that stops it hiding behind green)",
    by.get("m-bad", {}).get("served") is False and bool(by.get("m-bad", {}).get("error")))
 
 print("-- the probe persists a snapshot doctor/tiers read without re-probing --")
 rows, age = tier_config.cached_reachability()
-ck("cached_reachability returns the persisted rows + a non-negative age",
+record_script_check(fails, "cached_reachability returns the persisted rows + a non-negative age",
    rows is not None and age is not None and age >= 0 and any(r["model"] == "m-bad" for r in rows))
 
 print(f"\n{'[FAIL]' if fails else 'OK'} test_lane_model_reachability: {len(fails)} failure(s)")

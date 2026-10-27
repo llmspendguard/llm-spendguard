@@ -19,15 +19,11 @@ pathlib.Path(os.environ["SPENDGUARD_HOME"], "config.json").write_text(json.dumps
     {"advisor": {"bandit_denylist": ["warden:gold*", "warden:card_faithful", "warden:crosscheck"]}}))
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
+from _script_checks import record_script_check  # noqa: E402
+
 from spendguard import lane_balance, calls
 
 fails = []
-
-
-def ck(name, cond):
-    print(("  [OK] " if cond else "  [FAIL] ") + name)
-    if not cond:
-        fails.append(name)
 
 
 # record a real call whose intent the 'warden:gold*' prefix should cover
@@ -35,11 +31,11 @@ calls.insert("openai", "gpt-5.5", "realtime", 0.01, intent="warden:gold_adjudica
 
 cov = lane_balance.bandit_list_coverage()
 d = cov.get("bandit_denylist", {})
-ck("a readable ledger reports read_ok=True", d.get("read_ok") is True)
-ck("the live PREFIX entry 'warden:gold*' is NOT unmatched (it matches warden:gold_adjudicate)", "warden:gold*" not in d.get("unmatched", []))
-ck("the two entries matching NO recorded intent are flagged UNMATCHED",
+record_script_check(fails, "a readable ledger reports read_ok=True", d.get("read_ok") is True)
+record_script_check(fails, "the live PREFIX entry 'warden:gold*' is NOT unmatched (it matches warden:gold_adjudicate)", "warden:gold*" not in d.get("unmatched", []))
+record_script_check(fails, "the two entries matching NO recorded intent are flagged UNMATCHED",
    set(d.get("unmatched", [])) == {"warden:card_faithful", "warden:crosscheck"})
-ck("coverage reports the seen-intent count it judged against", d.get("seen_n", 0) >= 1)
+record_script_check(fails, "coverage reports the seen-intent count it judged against", d.get("seen_n", 0) >= 1)
 
 # a READ FAILURE must NOT false-flag every entry UNMATCHED ('cannot tell' != 'all unmatched')
 import sqlite3 as _sq
@@ -49,13 +45,13 @@ try:
     df = lane_balance.bandit_list_coverage().get("bandit_denylist", {})
 finally:
     _sq.connect = _orig_connect
-ck("a ledger read failure → read_ok=False, unmatched=None (never invents 'all unmatched')",
+record_script_check(fails, "a ledger read failure → read_ok=False, unmatched=None (never invents 'all unmatched')",
    df.get("read_ok") is False and df.get("unmatched") is None)
 
 # once an intent for a formerly-unmatched entry IS recorded, it stops being unmatched (self-healing signal)
 calls.insert("openai", "gpt-5.5", "realtime", 0.01, intent="warden:card_faithful")
 d2 = lane_balance.bandit_list_coverage().get("bandit_denylist", {})
-ck("an unmatched entry becomes matched once a matching intent is recorded",
+record_script_check(fails, "an unmatched entry becomes matched once a matching intent is recorded",
    "warden:card_faithful" not in d2.get("unmatched", []) and d2.get("unmatched", []) == ["warden:crosscheck"])
 
 print(("[OK]" if not fails else "[FAIL]") + " bandit list coverage: %d failure(s)" % len(fails))

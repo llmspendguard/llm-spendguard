@@ -20,14 +20,11 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
 # this test self-re-execs OR the pytest runner pre-isolated it via SPENDGUARD_TEST_ISOLATED (which skips the block).
 os.environ["SPENDGUARD_CC_SESSIONS_DIR"] = os.path.join(os.environ["SPENDGUARD_HOME"], "sessions")
 
+from _script_checks import record_script_check  # noqa: E402
+
 from spendguard import claudecode, budget
 
 fails = []
-def ck(name, cond):
-    print(("  [OK] " if cond else "  [FAIL] ") + name)
-    if not cond:
-        fails.append(name)
-
 # ── fabricate the desktop session store ──
 SESS = os.path.join(os.environ["SPENDGUARD_CC_SESSIONS_DIR"], "x")
 os.makedirs(SESS, exist_ok=True)
@@ -40,11 +37,11 @@ write_sess("local_3.json", "convB", "Title B", 50)
 # convC has NO session record → must fall back to its uuid
 
 titles = claudecode._sidebar_titles()
-ck("convA resolves to the MOST RECENTLY active title", titles.get("convA") == "NEW title A")
-ck("convB resolves to its title", titles.get("convB") == "Title B")
-ck("convC (no record) is absent from the title map", "convC" not in titles)
-ck("_conv_label uses the title when present", claudecode._conv_label("convA", titles) == "NEW title A")
-ck("_conv_label falls back to the uuid when there is no title", claudecode._conv_label("convC", titles).startswith("convC"))
+record_script_check(fails, "convA resolves to the MOST RECENTLY active title", titles.get("convA") == "NEW title A")
+record_script_check(fails, "convB resolves to its title", titles.get("convB") == "Title B")
+record_script_check(fails, "convC (no record) is absent from the title map", "convC" not in titles)
+record_script_check(fails, "_conv_label uses the title when present", claudecode._conv_label("convA", titles) == "NEW title A")
+record_script_check(fails, "_conv_label falls back to the uuid when there is no title", claudecode._conv_label("convC", titles).startswith("convC"))
 
 # ── seed est_chat rows: convA $300, convB $100, convC $50 ──
 def seed(conv, mid, val, cr, ts):
@@ -63,10 +60,10 @@ def render():
     return buf.getvalue()
 
 out = render()
-ck("view labels convA by its title and ranks it first (est $300 > $100 > $50)",
+record_script_check(fails, "view labels convA by its title and ranks it first (est $300 > $100 > $50)",
    "NEW title A" in out and "Title B" in out and out.index("NEW title A") < out.index("Title B"))
-ck("convC (no title) is shown by its uuid", "convC" in out)
-ck("before reconciliation, no reconciled overflow column (only the hint to run it)",
+record_script_check(fails, "convC (no title) is shown by its uuid", "convC" in out)
+record_script_check(fails, "before reconciliation, no reconciled overflow column (only the hint to run it)",
    "SEPARATE column" not in out and "$25.00" not in out)
 
 # ── reconcile an overflow row for convA → the Real overflow column appears, SEPARATE from est-value ──
@@ -74,7 +71,7 @@ budget._record_spend_event("anthropic", "claude-haiku-4-5", "realtime", 25.0,
                            conv_id="convA", occurred_at="2026-08-24T00:00:00+00:00",
                            source="claude-code-overflow", project="claude-code", dedup_key="cc-of:w:convA:m")
 out2 = render()
-ck("once reconciled, Real overflow $ appears as a SEPARATE column (never summed into est-value)",
+record_script_check(fails, "once reconciled, Real overflow $ appears as a SEPARATE column (never summed into est-value)",
    "Real overflow $25.00" in out2 and "300.00 est" in out2)
 
 print(("[OK]" if not fails else "[FAIL]") + " claude-code-conversations-titles: %d failure(s)" % len(fails))

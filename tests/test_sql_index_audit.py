@@ -27,13 +27,9 @@ import sqlite3
 fails = []
 
 
-def ck(name, cond):
-    print(("  [OK] " if cond else "  [FAIL] ") + name)
-    if not cond:
-        fails.append(name)
-
 
 # ── create the full schema exactly as production code does ──
+from _script_checks import record_script_check
 from spendguard import calls, bulkgate, learn, budget, calibrate, guard, config  # noqa: E402
 from spendguard.ledger import SpendLedger  # noqa: E402
 
@@ -89,10 +85,10 @@ REQUIRED = {
 }
 for table, cols in sorted(REQUIRED.items()):
     if table not in tables:
-        ck(f"{table}: table exists", False)
+        record_script_check(fails, f"{table}: table exists", False)
         continue
     missing = cols - indexed_cols(table)
-    ck(f"{table}: indexed on {sorted(cols)}", not missing or print(f"      missing: {missing}"))
+    record_script_check(fails, f"{table}: indexed on {sorted(cols)}", not missing or print(f"      missing: {missing}"))
 
 # ── guard 2: EXPLAIN QUERY PLAN every extractable query in the codebase ──
 WATCHLIST = {"calls", "gate_calls", "spend_events", "call_io", "semcache", "graph_edges"}
@@ -122,8 +118,8 @@ def sql_index_scan_is_registered(query):
 
 
 for migration_query in ALLOWED_EXACT_SCAN_QUERIES:
-    ck("legacy shape migration scan has an exact exemption", sql_index_scan_is_registered(migration_query))
-    ck("shape migration exemption does not cover a hot-path variation",
+    record_script_check(fails, "legacy shape migration scan has an exact exemption", sql_index_scan_is_registered(migration_query))
+    record_script_check(fails, "shape migration exemption does not cover a hot-path variation",
        not sql_index_scan_is_registered(migration_query + " AND intent=1"))
 
 queries = set()
@@ -155,9 +151,9 @@ for q in sorted(queries):
 print(f"  audited {planned} extractable queries ({skipped} skipped as non-literal SQL)")
 for t, q, p in offenders:
     print(f"      UNINDEXED SCAN on {t}: {q}  →  {p}")
-ck("no unindexed scans on growth-prone tables (or the scan is a registered whole-corpus aggregate)",
+record_script_check(fails, "no unindexed scans on growth-prone tables (or the scan is a registered whole-corpus aggregate)",
    not offenders)
-ck("audit actually exercised a meaningful query set", planned >= 40)
+record_script_check(fails, "audit actually exercised a meaningful query set", planned >= 40)
 
 con.close()
 print(("[OK]" if not fails else "[FAIL]") + " sql index audit: %d failure(s)" % len(fails))

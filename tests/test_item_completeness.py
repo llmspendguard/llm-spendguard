@@ -15,27 +15,24 @@ os.environ.setdefault("SPENDGUARD_TEST_ISOLATED", "1")
 os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
+from _script_checks import record_script_check
 from spendguard import output_contract as oc, lane_balance, lane_catalog, lane_bandit, adapters, dispatch, lane_economics
 
 fails = []
 
 
-def ck(name, cond):
-    print(("  [OK] " if cond else "  [FAIL] ") + name)
-    if not cond:
-        fails.append(name)
 
 
 # ── check_envelope: the owned arity primitive (counts ids — FORMAT, not meaning) ──
 EXP = ["a1", "a2", "a3"]
 full = '{"results":[{"id":"a1"},{"id":"a2"},{"id":"a3"}]}'
-ck("a COMPLETE envelope → ok", oc.check_envelope(full, EXP)[0] is True)
+record_script_check(fails, "a COMPLETE envelope → ok", oc.check_envelope(full, EXP)[0] is True)
 ok, d = oc.check_envelope('{"results":[{"id":"a1"},{"id":"a3"}]}', EXP)
-ck("a DROPPED id → not ok, names the missing id", ok is False and d["missing"] == ["a2"] and d["n_got"] == 2)
-ck("a DUPLICATED id → not ok", oc.check_envelope('{"results":[{"id":"a1"},{"id":"a1"},{"id":"a2"},{"id":"a3"}]}', EXP)[1]["dupes"] == ["a1"])
-ck("a HALLUCINATED id → not ok (extra)", oc.check_envelope('{"results":[{"id":"a1"},{"id":"a2"},{"id":"a3"},{"id":"zz"}]}', EXP)[1]["extra"] == ["zz"])
-ck("an UNPARSEABLE envelope → not ok, never a crash", oc.check_envelope("not json at all", EXP)[0] is False)
-ck("a fenced envelope is salvaged then arity-checked", oc.check_envelope("```json\n" + full + "\n```", EXP)[0] is True)
+record_script_check(fails, "a DROPPED id → not ok, names the missing id", ok is False and d["missing"] == ["a2"] and d["n_got"] == 2)
+record_script_check(fails, "a DUPLICATED id → not ok", oc.check_envelope('{"results":[{"id":"a1"},{"id":"a1"},{"id":"a2"},{"id":"a3"}]}', EXP)[1]["dupes"] == ["a1"])
+record_script_check(fails, "a HALLUCINATED id → not ok (extra)", oc.check_envelope('{"results":[{"id":"a1"},{"id":"a2"},{"id":"a3"},{"id":"zz"}]}', EXP)[1]["extra"] == ["zz"])
+record_script_check(fails, "an UNPARSEABLE envelope → not ok, never a crash", oc.check_envelope("not json at all", EXP)[0] is False)
+record_script_check(fails, "a fenced envelope is salvaged then arity-checked", oc.check_envelope("```json\n" + full + "\n```", EXP)[0] is True)
 
 # ── bulk_delegate(expect_ids=…): a dropped-item lane envelope becomes a retried MISS, never a silent $0 success ──
 lane_catalog.arms = lambda flt=None: [("gemini", "g-high")]
@@ -57,13 +54,13 @@ adapters.call = lambda model, prompt, **kw: {"text": _envelope(prompt.split("|")
 tasks = ["a1|a2|a3"]
 
 res = lane_balance.bulk_delegate(tasks, "warden:pack", expect_ids=lambda t: t.split("|"))
-ck("a lane envelope that DROPS an id is NOT a silent success (text cleared, error row)",
+record_script_check(fails, "a lane envelope that DROPS an id is NOT a silent success (text cleared, error row)",
    res[0].get("text") is None and res[0].get("error") and "INCOMPLETE" in res[0]["error"])
-ck("the miss carries the arity detail (which id was missing)", res[0].get("arity_miss", {}).get("missing") == ["a3"])
+record_script_check(fails, "the miss carries the arity detail (which id was missing)", res[0].get("arity_miss", {}).get("missing") == ["a3"])
 
 # WITHOUT expect_ids the same dropped-item envelope is accepted — this IS the hole expect_ids closes
 res2 = lane_balance.bulk_delegate(tasks, "warden:pack")
-ck("without expect_ids the incomplete envelope is accepted (the hole the guard closes)",
+record_script_check(fails, "without expect_ids the incomplete envelope is accepted (the hole the guard closes)",
    res2[0].get("text") is not None and not res2[0].get("error"))
 
 # resume RETRIES the arity miss and, once the lane answers completely, it finishes (never silently 'done')
@@ -71,7 +68,7 @@ ckp = os.path.join(os.environ["SPENDGUARD_HOME"], "arity.jsonl")
 lane_balance.bulk_delegate(tasks, "warden:pack", expect_ids=lambda t: t.split("|"), checkpoint=ckp)   # miss → error line
 adapters.call = lambda model, prompt, **kw: {"text": _envelope(prompt.split("|")), "cost": 0}          # now complete
 r3 = lane_balance.bulk_delegate(tasks, "warden:pack", expect_ids=lambda t: t.split("|"), checkpoint=ckp)
-ck("an arity miss is RETRIED on resume and now completes (never counted 'done')",
+record_script_check(fails, "an arity miss is RETRIED on resume and now completes (never counted 'done')",
    r3[0].get("text") is not None and not r3[0].get("error"))
 
 print(("[OK]" if not fails else "[FAIL]") + " item completeness: %d failure(s)" % len(fails))

@@ -19,15 +19,11 @@ os.environ.setdefault("SPENDGUARD_TEST_ISOLATED", "1")
 os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
+from _script_checks import record_script_check
 from spendguard import adapters, config   # noqa: E402
 
 fails = []
 
-
-def ck(name, cond):
-    print(("  [OK] " if cond else "  [FAIL] ") + name)
-    if not cond:
-        fails.append(name)
 
 
 CHOSEN = "acme:chosen"
@@ -58,20 +54,20 @@ try:
 
     print("-- (a) base_fallback=True + chosen error -> drops to the provider base model, labelled --")
     r = adapters.call(CHOSEN, "p", intent="t", base_fallback=True)
-    ck("chosen lane+metered failed + base_fallback -> returns the BASE model's answer (not an error)",
+    record_script_check(fails, "chosen lane+metered failed + base_fallback -> returns the BASE model's answer (not an error)",
        r.get("text") == "base answer" and not r.get("error"))
-    ck("the base fallback is LABELLED (substituted_from=chosen, base_fallback=True)",
+    record_script_check(fails, "the base fallback is LABELLED (substituted_from=chosen, base_fallback=True)",
        r.get("substituted_from") == CHOSEN and r.get("base_fallback") is True)
 
     print("\n-- (b) a PINNED call (no_substitution) -> base_fallback auto-OFF, the chosen error stands --")
     r2 = adapters.call(CHOSEN, "p", intent="t", no_substitution=True)
-    ck("a pinned/measurement call does NOT base-fallback (the model is the measurement); the error stands",
+    record_script_check(fails, "a pinned/measurement call does NOT base-fallback (the model is the measurement); the error stands",
        r2.get("text") is None and bool(r2.get("error")) and not r2.get("base_fallback"))
 
     print("\n-- (c) no provider_base_model entry -> tier-3 is a no-op even with base_fallback (config-gated) --")
     config._cfg_get = lambda s, k, d=None: ({} if (s == "advisor" and k == "provider_base_model") else _orig_cfg(s, k, d))
     r3 = adapters.call(CHOSEN, "p", intent="t", base_fallback=True)
-    ck("no provider_base_model entry -> tier-3 no-op (chain ends at the metered error)",
+    record_script_check(fails, "no provider_base_model entry -> tier-3 no-op (chain ends at the metered error)",
        r3.get("text") is None and not r3.get("base_fallback"))
 finally:
     adapters._call_guarded, config._cfg_get = _saved

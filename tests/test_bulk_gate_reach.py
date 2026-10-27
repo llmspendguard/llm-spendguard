@@ -15,15 +15,11 @@ os.environ.setdefault("SPENDGUARD_TEST_ISOLATED", "1")
 os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
+from _script_checks import record_script_check  # noqa: E402
+
 from spendguard import lane_balance, lane_catalog, lane_bandit, adapters, dispatch, lane_economics, bulkgate as bg, gate as sg
 
 fails = []
-
-
-def ck(name, cond):
-    print(("  [OK] " if cond else "  [FAIL] ") + name)
-    if not cond:
-        fails.append(name)
 
 
 # a lane world so the tasks WOULD run if allowed
@@ -52,14 +48,14 @@ try:
     _run("warden:ungated", "a.jsonl")
 except bg.GateBlocked as e:
     raised = e
-ck("enforce=block: an UNGATED bulk lane fan is REFUSED (GateBlocked)", raised is not None and "REFUSED" in str(raised))
-ck("...GateBlocked is a DELIBERATE stop (fail-open handlers re-raise it, never swallow)",
+record_script_check(fails, "enforce=block: an UNGATED bulk lane fan is REFUSED (GateBlocked)", raised is not None and "REFUSED" in str(raised))
+record_script_check(fails, "...GateBlocked is a DELIBERATE stop (fail-open handlers re-raise it, never swallow)",
    isinstance(raised, sg.deliberate_stop_types()))
 
 # ── enforce=warn (the roll-out default): logged 'would-block' but ALLOWED to run ──
 os.environ["SPENDGUARD_ENFORCE"] = "warn"
 res = _run("warden:ungated", "b.jsonl")
-ck("enforce=warn: an ungated bulk fan is ALLOWED (would-block logged, not refused)",
+record_script_check(fails, "enforce=warn: an ungated bulk fan is ALLOWED (would-block logged, not refused)",
    len(res) == 30 and all(r.get("text") for r in res))
 
 # ── enforce=block + a FRESH gate_sig (estimate+test+eval passing) → ALLOWED ──
@@ -68,16 +64,16 @@ _orig_gs = bg.gate_status
 bg.gate_status = lambda s, **k: {"fresh": True, "reason": ""} if s == "GATED" else _orig_gs(s, **k)
 res2 = _run("warden:gated", "c.jsonl", gate_sig="GATED")
 bg.gate_status = _orig_gs
-ck("enforce=block: a fan WITH a fresh gate_sig is ALLOWED (the discipline was met)",
+record_script_check(fails, "enforce=block: a fan WITH a fresh gate_sig is ALLOWED (the discipline was met)",
    len(res2) == 30 and all(r.get("text") for r in res2))
 
 # ── force=True overrides the gate (caller owns the risk) ──
 res3 = _run("warden:ungated", "d.jsonl", force=True)
-ck("force=True overrides the bulk gate (caller owns the risk)", len(res3) == 30 and all(r.get("text") for r in res3))
+record_script_check(fails, "force=True overrides the bulk gate (caller owns the risk)", len(res3) == 30 and all(r.get("text") for r in res3))
 
 # ── a SMALL fan (< preview_max) is not bulk → the gate does not apply even under block ──
 res4 = lane_balance.bulk_delegate(["one", "two"], "warden:small")
-ck("a small fan (< preview_max) is not bulk-gated", len(res4) == 2 and all(r.get("text") for r in res4))
+record_script_check(fails, "a small fan (< preview_max) is not bulk-gated", len(res4) == 2 and all(r.get("text") for r in res4))
 del os.environ["SPENDGUARD_ENFORCE"]
 
 print(("[OK]" if not fails else "[FAIL]") + " bulk gate reach: %d failure(s)" % len(fails))

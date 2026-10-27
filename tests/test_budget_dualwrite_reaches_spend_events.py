@@ -16,15 +16,12 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
     os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="spendguard-dualwrite-")
     os.execv(sys.executable, [sys.executable] + sys.argv)
 
+from _script_checks import record_script_check  # noqa: E402
+
 from spendguard import budget, conv
 from spendguard import ledger as L
 
 fails = []
-def ck(name, cond):
-    print(("  [OK] " if cond else "  [FAIL] ") + name)
-    if not cond:
-        fails.append(name)
-
 conv._conversation_prior_index = lambda: {"lmm": ("healiom", "lmm"), "manga2anime": ("ensight", "manga2anime")}
 conv.segments = lambda *a, **k: []
 conv._seg_get_all = lambda: {}
@@ -47,33 +44,33 @@ led = budget._ledger()
 # only meta/markers/quarantine/reconstructed), while the NEW split keeps remote on its own cap. Real charges have
 # NO remote rows (verified on the live ledger), so we compare the LLM path directly and check remote separately.
 spent_dec = Decimal(led.spent_dec(since=DAY))
-ck("LLM cap number: spend_events spent_dec == $3.00 (batch+realtime, meta/reconciled excluded, unpriced $0)",
+record_script_check(fails, "LLM cap number: spend_events spent_dec == $3.00 (batch+realtime, meta/reconciled excluded, unpriced $0)",
    spent_dec == LLM_COUNTABLE)
 
 # charges spent_since scoped to project lmm excludes the manga2anime remote row → equals the LLM countable too
 charges_lmm = budget.spent_since(DAY, project="lmm")
-ck("charges spent_since(lmm) == spend_events spent_dec(lmm) to the cent",
+record_script_check(fails, "charges spent_since(lmm) == spend_events spent_dec(lmm) to the cent",
    round(charges_lmm, 2) == float(LLM_COUNTABLE)
    and round(charges_lmm, 2) == round(float(Decimal(led.spent_dec(since=DAY, where={"project_primary": "lmm"}))), 2))
 
 # roles in the typed ledger
 rows = led.query(since=DAY)
-ck("meta → is_meta=1 (own line, not workload)", any(r["is_meta"] and L.to_dec(r["realtime_usd"]) == Decimal("0.25") for r in rows))
-ck("reconciliation → reconciled=1 (excluded from cap)", any(r["reconciled"] and L.to_dec(r["batch_usd"]) == Decimal("10") for r in rows))
-ck("true-down → a NEGATIVE batch row", any(L.to_dec(r["batch_usd"]) == Decimal("-0.50") for r in rows))
-ck("unpriced → cost_basis='unpriced', tokens carried, no money", any(
+record_script_check(fails, "meta → is_meta=1 (own line, not workload)", any(r["is_meta"] and L.to_dec(r["realtime_usd"]) == Decimal("0.25") for r in rows))
+record_script_check(fails, "reconciliation → reconciled=1 (excluded from cap)", any(r["reconciled"] and L.to_dec(r["batch_usd"]) == Decimal("10") for r in rows))
+record_script_check(fails, "true-down → a NEGATIVE batch row", any(L.to_dec(r["batch_usd"]) == Decimal("-0.50") for r in rows))
+record_script_check(fails, "unpriced → cost_basis='unpriced', tokens carried, no money", any(
     r["cost_basis"] == "unpriced" and r["in_tok"] == 1000 and all(r[c] in (None, "") for c in L.USD_COLS) for r in rows))
 
 # the split: remote is its OWN category, never in the LLM cap
-ck("remote → remote_compute (its own cap), $7.77 in remote_dec, $0 in spent_dec",
+record_script_check(fails, "remote → remote_compute (its own cap), $7.77 in remote_dec, $0 in spent_dec",
    Decimal(led.remote_dec(since=DAY)) == Decimal("7.77"))
 
 # idempotent remote re-sync REPLACES (delete + re-book), never doubles
 budget.ingest_remote("box-1", "manga2anime", [{"provider": "vast", "model": "gpu", "cost": 7.77, "day": DAY}])
-ck("remote re-sync REPLACES (still $7.77, not $15.54)", Decimal(led.remote_dec(since=DAY)) == Decimal("7.77"))
+record_script_check(fails, "remote re-sync REPLACES (still $7.77, not $15.54)", Decimal(led.remote_dec(since=DAY)) == Decimal("7.77"))
 
 ok, _bad = led.verify_audit_chain()
-ck("audit hash-chain intact after all writes", ok)
+record_script_check(fails, "audit hash-chain intact after all writes", ok)
 
 # ── the fail-OPEN miss line must stay HONEST post-cutover ─────────────────────────────────────────────
 # spend_events is the SOLE ledger now, so a write that cannot land means the charge is genuinely GONE. The
@@ -94,11 +91,11 @@ try:
 finally:
     L.SpendLedger.record_event = _orig_record
 _msg = _buf.getvalue()
-ck("a failed write warns LOUDLY, never silent", _msg.strip() != "")
-ck("...names the charge as MISSING from the ledger", "MISSING" in _msg)
-ck("...points at the recovery that still works (provider-truth reconcile)", "spendguard reconcile" in _msg)
-ck("...does NOT claim charges is authoritative (charges is dropped)", "authoritative" not in _msg)
-ck("...does NOT send the reader to `spendguard migrate` (it read charges, now gone)", "migrate" not in _msg)
+record_script_check(fails, "a failed write warns LOUDLY, never silent", _msg.strip() != "")
+record_script_check(fails, "...names the charge as MISSING from the ledger", "MISSING" in _msg)
+record_script_check(fails, "...points at the recovery that still works (provider-truth reconcile)", "spendguard reconcile" in _msg)
+record_script_check(fails, "...does NOT claim charges is authoritative (charges is dropped)", "authoritative" not in _msg)
+record_script_check(fails, "...does NOT send the reader to `spendguard migrate` (it read charges, now gone)", "migrate" not in _msg)
 
 print(("[OK]" if not fails else "[FAIL]") + " budget-dualwrite: %d failure(s)" % len(fails))
 sys.exit(1 if fails else 0)

@@ -13,14 +13,11 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
     os.environ["SPENDGUARD_HOME"] = home
     os.execv(sys.executable, [sys.executable] + sys.argv)
 
+from _script_checks import record_script_check  # noqa: E402
+
 from spendguard import claudecode, config
 
 fails = []
-def ck(name, cond):
-    print(("  [OK] " if cond else "  [FAIL] ") + name)
-    if not cond:
-        fails.append(name)
-
 CSV = os.path.join(os.environ["SPENDGUARD_HOME"], "charges.csv")
 with open(CSV, "w") as f:
     f.write("Card,Reimburse,Source,Invoice ID,Date,Type,Amount\n")
@@ -42,17 +39,17 @@ api = q("SELECT COALESCE(SUM(CAST(realtime_usd AS REAL)),0) FROM spend_events WH
 n, uniq = q("SELECT COUNT(*), COUNT(DISTINCT dedup_key) FROM spend_events WHERE source LIKE 'anthropic-invoice%'")
 billed = q("SELECT COALESCE(SUM(billed),0), COUNT(*) FROM spend_events WHERE source LIKE 'anthropic-invoice%'")
 
-ck("base SUBSCRIPTION = $200 (the first $200/month) → subscription_usd", round(sub, 2) == 200.0)
-ck("REAL Claude Code OVERAGE = $245 (2nd $200 bundle + $45) → realtime_usd on source=anthropic-invoice",
+record_script_check(fails, "base SUBSCRIPTION = $200 (the first $200/month) → subscription_usd", round(sub, 2) == 200.0)
+record_script_check(fails, "REAL Claude Code OVERAGE = $245 (2nd $200 bundle + $45) → realtime_usd on source=anthropic-invoice",
    round(over, 2) == 245.0)
-ck("API credit grant = $50 → separate source=anthropic-invoice-api (never summed into overage)", round(api, 2) == 50.0)
-ck("the summary/subtotal row was skipped (exactly 4 charges booked)", n == 4)
-ck("every invoice row is billed=1", billed[0] == billed[1] == 4)
-ck("idempotency invariant: rows == distinct dedup_key", n == uniq == 4)
+record_script_check(fails, "API credit grant = $50 → separate source=anthropic-invoice-api (never summed into overage)", round(api, 2) == 50.0)
+record_script_check(fails, "the summary/subtotal row was skipped (exactly 4 charges booked)", n == 4)
+record_script_check(fails, "every invoice row is billed=1", billed[0] == billed[1] == 4)
+record_script_check(fails, "idempotency invariant: rows == distinct dedup_key", n == uniq == 4)
 
 claudecode.ingest_invoices(csv_path=CSV)                    # re-run
 n2 = q("SELECT COUNT(*) FROM spend_events WHERE source LIKE 'anthropic-invoice%'")[0]
-ck("re-ingest is idempotent (delete+rebook) — still 4 rows, not 8", n2 == 4)
+record_script_check(fails, "re-ingest is idempotent (delete+rebook) — still 4 rows, not 8", n2 == 4)
 con.close()
 
 print(("[OK]" if not fails else "[FAIL]") + " claude-code-invoice-ingest: %d failure(s)" % len(fails))

@@ -24,14 +24,10 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
 # the default-on Anthropic avoidance policy and its authorization behavior.
 os.environ["SPENDGUARD_AVOID_CLAUDE_LANE"] = "off"
 
+from _script_checks import record_script_check
 from spendguard import route_utility as ru, lane_economics as le, config
 
 fails = []
-def ck(name, cond):
-    print(("  [OK] " if cond else "  [FAIL] ") + name)
-    if not cond:
-        fails.append(name)
-
 NOW = 1_000_000_000.0
 DAY = 86400.0
 
@@ -44,19 +40,19 @@ on_pace   = le._bucket_pace(_bucket(50, 3.5), NOW)   # half elapsed, half left �
 behind    = le._bucket_pace(_bucket(90, 3.5), NOW)   # half elapsed, 90% left (used 10%) → +0.4
 ahead     = le._bucket_pace(_bucket(10, 3.5), NOW)   # half elapsed, 10% left (used 90%) → -0.4
 unknown   = le._bucket_pace({"period_days": None, "reset_ts": None, "remaining_pct": 50}, NOW)
-ck("_bucket_pace ~0 on pace (half window, half left)", abs(on_pace) < 0.02)
-ck("_bucket_pace POSITIVE when behind (under-used → burn it)", behind is not None and behind > 0.3)
-ck("_bucket_pace NEGATIVE when ahead (over-used → shed it)", ahead is not None and ahead < -0.3)
-ck("_bucket_pace None when window not measured (no false signal)", unknown is None)
+record_script_check(fails, "_bucket_pace ~0 on pace (half window, half left)", abs(on_pace) < 0.02)
+record_script_check(fails, "_bucket_pace POSITIVE when behind (under-used → burn it)", behind is not None and behind > 0.3)
+record_script_check(fails, "_bucket_pace NEGATIVE when ahead (over-used → shed it)", ahead is not None and ahead < -0.3)
+record_script_check(fails, "_bucket_pace None when window not measured (no false signal)", unknown is None)
 
 # ── 2. lane_score pace bonus (behind outranks on/ahead) ─────────────────────────────────────────────────────────
 row = {"known": True, "remaining_pct": 80, "remaining_abs": None, "reset_ts": NOW + 3 * DAY}
 s_none   = ru.lane_score(row, now=NOW, pace=None)
 s_behind = ru.lane_score(row, now=NOW, pace=0.4)
 s_ahead  = ru.lane_score(row, now=NOW, pace=-0.9)
-ck("lane_score behind-pace > no-pace (fills the under-used plan)", s_behind > s_none)
-ck("lane_score ahead-pace == baseline (no penalty below 1.0 floor)", abs(s_ahead - s_none) < 1e-9)
-ck("lane_score still >= 1.0 (a plan token always beats metered)", s_ahead >= 1.0)
+record_script_check(fails, "lane_score behind-pace > no-pace (fills the under-used plan)", s_behind > s_none)
+record_script_check(fails, "lane_score ahead-pace == baseline (no penalty below 1.0 floor)", abs(s_ahead - s_none) < 1e-9)
+record_script_check(fails, "lane_score still >= 1.0 (a plan token always beats metered)", s_ahead >= 1.0)
 
 # ── 3. rank_lanes: protect sheds an AHEAD plan, keeps a BEHIND one; unprotected ahead stays available ───────────
 rows = [
@@ -69,20 +65,20 @@ prot = lambda ln: ln == "claude-code"
 ranked = ru.rank_lanes(rows, cooling=lambda ln: False, now=NOW,
                        pace_by={"claude-code": -0.4, "codex": 0.4}, protect=prot)
 by = {r["lane"]: r for r in ranked}
-ck("protected + ahead of pace → shed (available=False)", by["claude-code"]["available"] is False)
-ck("...with an explaining reason (answerable 'why not this lane')", "ahead of pace" in by["claude-code"]["why"])
-ck("unprotected + behind pace → available and boosted", by["codex"]["available"] is True and by["codex"]["score"] > 1.0)
-ck("behind (codex) ranks ahead of shed (claude) in the order", ranked[0]["lane"] == "codex")
+record_script_check(fails, "protected + ahead of pace → shed (available=False)", by["claude-code"]["available"] is False)
+record_script_check(fails, "...with an explaining reason (answerable 'why not this lane')", "ahead of pace" in by["claude-code"]["why"])
+record_script_check(fails, "unprotected + behind pace → available and boosted", by["codex"]["available"] is True and by["codex"]["score"] > 1.0)
+record_script_check(fails, "behind (codex) ranks ahead of shed (claude) in the order", ranked[0]["lane"] == "codex")
 
 # protected but BEHIND must NOT shed (protection preserves the window; it doesn't starve a plan with budget to spend)
 ranked_behind = ru.rank_lanes(rows, cooling=lambda ln: False, now=NOW,
                               pace_by={"claude-code": 0.4, "codex": -0.4}, protect=prot)
 by_b = {r["lane"]: r for r in ranked_behind}
-ck("protected + BEHIND pace → still available (only sheds when ahead)", by_b["claude-code"]["available"] is True)
+record_script_check(fails, "protected + BEHIND pace → still available (only sheds when ahead)", by_b["claude-code"]["available"] is True)
 
 # No config in the isolated home → tiers() has NO opinion (no built-in groups; capability is never code-asserted).
-ck("tiers: no config → {} (ships no built-in groups)", ru.tiers() == {})
-ck("tier_models: undeclared group with no config → []", ru.tier_models("strong") == [])
+record_script_check(fails, "tiers: no config → {} (ships no built-in groups)", ru.tiers() == {})
+record_script_check(fails, "tier_models: undeclared group with no config → []", ru.tier_models("strong") == [])
 
 # ── 3b. _protect_policy reads config subscription.pace agentically-free (policy string, general to any lane) ─────
 _orig_get = config._cfg_get
@@ -95,19 +91,19 @@ def _fake_get(*a, **k):
 config._cfg_get = _fake_get
 try:
     p = ru._protect_policy()
-    ck("_protect_policy: 'protect' → True", p("claude-code") is True)
-    ck("_protect_policy: 'maximize' → False", p("codex") is False)
-    ck("_protect_policy: unlisted lane → False (default maximize)", p("gemini") is False)
+    record_script_check(fails, "_protect_policy: 'protect' → True", p("claude-code") is True)
+    record_script_check(fails, "_protect_policy: 'maximize' → False", p("codex") is False)
+    record_script_check(fails, "_protect_policy: unlisted lane → False (default maximize)", p("gemini") is False)
     # ── 4. tiers() = EXACTLY the user's declared groups (no built-in defaults merged in) ─────────────────────────
     t = ru.tiers()
-    ck("tiers: returns exactly the user's declared groups", t == {"cheap": ["my-cheap-model"], "custom": ["x", "y"]})
-    ck("tier_models returns the list for a declared group", ru.tier_models("custom") == ["x", "y"])
-    ck("tier_models: undeclared group → [] (not a crash)", ru.tier_models("nope") == [])
+    record_script_check(fails, "tiers: returns exactly the user's declared groups", t == {"cheap": ["my-cheap-model"], "custom": ["x", "y"]})
+    record_script_check(fails, "tier_models returns the list for a declared group", ru.tier_models("custom") == ["x", "y"])
+    record_script_check(fails, "tier_models: undeclared group → [] (not a crash)", ru.tier_models("nope") == [])
 finally:
     config._cfg_get = _orig_get
 
 # ── 5. pace_by_lane smoke: empty in → empty out, exercises the time import with no crash ─────────────────────────
-ck("pace_by_lane([]) == {} (no economics rows → no pace, no crash)", le.pace_by_lane([], now=NOW) == {})
+record_script_check(fails, "pace_by_lane([]) == {} (no economics rows → no pace, no crash)", le.pace_by_lane([], now=NOW) == {})
 
 print(("\n[OK] " if not fails else "\n[FAIL] ") + "pace_and_tiers: %d failure(s)" % len(fails))
 sys.exit(1 if fails else 0)

@@ -10,14 +10,9 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
 from spendguard import tag, budget
 from spendguard import ledger as L
 from functools import partial
-from _script_checks import seed_test_spend_event
+from _script_checks import record_script_check, seed_test_spend_event
 
 fails = []
-def ck(name, cond):
-    print(("  [OK] " if cond else "  [FAIL] ") + name)
-    if not cond:
-        fails.append(name)
-
 _insert = partial(seed_test_spend_event, provider="openai", model="gpt-5.5",
                   timestamp_suffix="T00:00:00+00:00", source="test",
                   dedup_fields=("day", "kind", "cost", "project"))
@@ -28,7 +23,7 @@ _insert(day="2026-06-01", kind="batch", cost=2.0, project="")         # → repo
 _insert(day="2026-06-02", kind="batch", cost=3.0, project="already")  # must NOT be overridden
 proj = budget._project()
 changed = tag.retag_deterministic()
-ck("retag_deterministic changed exactly the 2 empty rows", changed == 2)
+record_script_check(fails, "retag_deterministic changed exactly the 2 empty rows", changed == 2)
 
 def _proj_of(kind, cost):
     # costs are distinct in this fixture, so the amount identifies the row (in whichever money column it lands)
@@ -37,35 +32,35 @@ def _proj_of(kind, cost):
         if any(L.to_dec(r.get(c)) == want for c in L.USD_COLS):
             return r["project_primary"]
     return None
-ck("meta row → 'llm-spendguard'", _proj_of("meta", 1.0) == "llm-spendguard")
-ck("empty workload row → the repo project", _proj_of("batch", 2.0) == proj and proj not in ("", None))
-ck("already-tagged row is NOT overridden", _proj_of("batch", 3.0) == "already")
-ck("re-running is a no-op (nothing empty left)", tag.retag_deterministic() == 0)
+record_script_check(fails, "meta row → 'llm-spendguard'", _proj_of("meta", 1.0) == "llm-spendguard")
+record_script_check(fails, "empty workload row → the repo project", _proj_of("batch", 2.0) == proj and proj not in ("", None))
+record_script_check(fails, "already-tagged row is NOT overridden", _proj_of("batch", 3.0) == "already")
+record_script_check(fails, "re-running is a no-op (nothing empty left)", tag.retag_deterministic() == 0)
 
 # ── ambiguous_count: untagged rows remaining (0 after the free pass when everything had context) ──
-ck("ambiguous_count is 0 after the deterministic pass", tag.ambiguous_count() == 0)
+record_script_check(fails, "ambiguous_count is 0 after the deterministic pass", tag.ambiguous_count() == 0)
 _insert(day="2026-06-03", kind="batch", cost=4.0, project="")         # a fresh untagged row
-ck("ambiguous_count counts a fresh untagged row", tag.ambiguous_count() == 1)
+record_script_check(fails, "ambiguous_count counts a fresh untagged row", tag.ambiguous_count() == 1)
 
 # ── move_project: case-insensitive re-tag across the ledger ──
 _insert(day="2026-06-04", kind="batch", cost=5.0, project="Documents")
 _insert(day="2026-06-04", kind="batch", cost=6.0, project="documents")
 moved = tag.move_project("DOCUMENTS", "vision-pipeline")   # case-insensitive match
-ck("move_project re-tags both case variants (case-insensitive)", moved == 2)
+record_script_check(fails, "move_project re-tags both case variants (case-insensitive)", moved == 2)
 n_vp = budget._ledger().count_events(where={"project_primary": "vision-pipeline"})
 n_doc = budget._ledger().count_events(filt="lower(COALESCE(project_primary,''))='documents'")
-ck("after move: both rows are 'vision-pipeline', none left as documents", n_vp == 2 and n_doc == 0)
+record_script_check(fails, "after move: both rows are 'vision-pipeline', none left as documents", n_vp == 2 and n_doc == 0)
 
 # ── estimate_llm_retag: ZERO-SPEND estimate (per the API spend protocol), exact formula ──
 est = tag.estimate_llm_retag()
 exp = round(tag.ambiguous_count() / 25 * 0.0008, 6)   # 6dp: a small batch's estimate must not round to $0.00
-ck("estimate_llm_retag returns {rows, est_usd, model, note}, est = rows/25*0.0008 (6dp, honestly nonzero)",
+record_script_check(fails, "estimate_llm_retag returns {rows, est_usd, model, note}, est = rows/25*0.0008 (6dp, honestly nonzero)",
    est["rows"] == tag.ambiguous_count() and est["est_usd"] == exp and est["model"] == "gpt-5-nano" and "llm-spendguard" in est["note"])
 
 # ── cmd: dispatch + return codes ──
-ck("cmd move → 0", tag.cmd(["move", "a", "b"]) == 0)
-ck("cmd estimate → 0", tag.cmd(["estimate"]) == 0)
-ck("cmd (no args) → usage, returns 1", tag.cmd([]) == 1)
+record_script_check(fails, "cmd move → 0", tag.cmd(["move", "a", "b"]) == 0)
+record_script_check(fails, "cmd estimate → 0", tag.cmd(["estimate"]) == 0)
+record_script_check(fails, "cmd (no args) → usage, returns 1", tag.cmd([]) == 1)
 
 print(("\n[FAIL] " if fails else "\n[OK] ") + f"tag: {len(fails)} failure(s)")
 sys.exit(1 if fails else 0)

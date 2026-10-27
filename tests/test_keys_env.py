@@ -19,13 +19,10 @@ os.environ["PRESET_REAL_KEY"] = "real-wins"
 for k in ("FAKE_PROVIDER_KEY", "EXPORTED_KEY", "BLANK_PLACEHOLDER_KEY", "SPENDGUARD_ENFORCE"):
     os.environ.pop(k, None)
 
+from _script_checks import record_script_check
 from spendguard import config, config_schema, setup, bulkgate
 
 fails = []
-def ck(name, cond):
-    print(("  [OK] " if cond else "  [FAIL] ") + name)
-    if not cond:
-        fails.append(name)
 
 # ── load_key_files: keys.env → os.environ, tolerant, real env wins, blanks skipped ──
 config.KEYS_ENV.write_text(
@@ -36,60 +33,60 @@ config.KEYS_ENV.write_text(
     "PRESET_REAL_KEY=should-be-ignored\n"
 )
 config.load_key_files()
-ck("keys.env value loaded into os.environ", os.environ.get("FAKE_PROVIDER_KEY") == "sk-fromfile")
-ck("tolerant of `export ` prefix + quotes/spaces", os.environ.get("EXPORTED_KEY") == "quoted-val")
-ck("blank placeholder is NOT set (won't clobber)", "BLANK_PLACEHOLDER_KEY" not in os.environ)
-ck("a real env var WINS over keys.env", os.environ.get("PRESET_REAL_KEY") == "real-wins")
+record_script_check(fails, "keys.env value loaded into os.environ", os.environ.get("FAKE_PROVIDER_KEY") == "sk-fromfile")
+record_script_check(fails, "tolerant of `export ` prefix + quotes/spaces", os.environ.get("EXPORTED_KEY") == "quoted-val")
+record_script_check(fails, "blank placeholder is NOT set (won't clobber)", "BLANK_PLACEHOLDER_KEY" not in os.environ)
+record_script_check(fails, "a real env var WINS over keys.env", os.environ.get("PRESET_REAL_KEY") == "real-wins")
 
 # ── scaffold: a placeholder per secret, chmod 600, idempotent ──
 config.KEYS_ENV.unlink()
 p, created = setup._scaffold_keys_env()
-ck("_scaffold_keys_env creates the file", created and p.exists())
+record_script_check(fails, "_scaffold_keys_env creates the file", created and p.exists())
 body = p.read_text()
 for name in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY", "DEEPSEEK_API_KEY",
              "DASHSCOPE_API_KEY", "VAST_API_KEY", "SPENDGUARD_SAAS_KEY", "ZAI_API_KEY"):
-    ck(f"scaffold has a {name}= placeholder", (name + "=") in body)
-ck("scaffold placeholders are BLANK (no leaked values)", "sk-" not in body)
-ck("scaffold is idempotent (won't clobber an existing file)", setup._scaffold_keys_env()[1] is False)
-ck("keys.env is chmod 600", (os.stat(p).st_mode & 0o777) == 0o600)
+    record_script_check(fails, f"scaffold has a {name}= placeholder", (name + "=") in body)
+record_script_check(fails, "scaffold placeholders are BLANK (no leaked values)", "sk-" not in body)
+record_script_check(fails, "scaffold is idempotent (won't clobber an existing file)", setup._scaffold_keys_env()[1] is False)
+record_script_check(fails, "keys.env is chmod 600", (os.stat(p).st_mode & 0o777) == 0o600)
 
 # ── gate.enforce enum in the schema + it drives bulkgate; VAST_API_KEY present ──
 enf = [s for s in config_schema.SETTINGS if s["section"] == "gate" and s["key"] == "enforce"]
-ck("gate.enforce is in the schema", len(enf) == 1)
-ck("gate.enforce enum = off,warn,block", bool(enf) and enf[0]["kind"] == "enum:off,warn,block")
-ck("gate.enforce default = warn", bool(enf) and enf[0]["default"] == "warn")
-ck("VAST_API_KEY is in the schema", any(s["key"] == "VAST_API_KEY" for s in config_schema.SETTINGS))
+record_script_check(fails, "gate.enforce is in the schema", len(enf) == 1)
+record_script_check(fails, "gate.enforce enum = off,warn,block", bool(enf) and enf[0]["kind"] == "enum:off,warn,block")
+record_script_check(fails, "gate.enforce default = warn", bool(enf) and enf[0]["default"] == "warn")
+record_script_check(fails, "VAST_API_KEY is in the schema", any(s["key"] == "VAST_API_KEY" for s in config_schema.SETTINGS))
 
 # ── OpenAI-compatible vendors wired: key in schema (→ keys.env) + model routing. Pricing comes from the
 #    SYNCED breadth layer (absent in this isolated home on purpose), never from a hand-typed stub: the old
 #    assertion here demanded a "(stub) price" for glm-5.2, which is exactly how a fabricated 0.6/2.2 rate
 #    survived while under-pricing the real z.ai 5-series by ~40%. Unpriced MUST be loud, not invented.
 from spendguard import adapters, models, pricing
-ck("ZAI_API_KEY is in the schema", any(s["key"] == "ZAI_API_KEY" for s in config_schema.SETTINGS))
-ck("MOONSHOT_API_KEY is in the schema", any(s["key"] == "MOONSHOT_API_KEY" for s in config_schema.SETTINGS))
-ck("adapters routes a glm- model to the zai provider", adapters.provider_for("glm-5.2") == "zai")
-ck("adapters routes a kimi model to the moonshot provider", adapters.provider_for("kimi-k2.5") == "moonshot")
-ck("zai provider uses ZAI_API_KEY", adapters.PROVIDERS["zai"]["key_env"] == "ZAI_API_KEY")
-ck("moonshot provider uses MOONSHOT_API_KEY", adapters.PROVIDERS["moonshot"]["key_env"] == "MOONSHOT_API_KEY")
+record_script_check(fails, "ZAI_API_KEY is in the schema", any(s["key"] == "ZAI_API_KEY" for s in config_schema.SETTINGS))
+record_script_check(fails, "MOONSHOT_API_KEY is in the schema", any(s["key"] == "MOONSHOT_API_KEY" for s in config_schema.SETTINGS))
+record_script_check(fails, "adapters routes a glm- model to the zai provider", adapters.provider_for("glm-5.2") == "zai")
+record_script_check(fails, "adapters routes a kimi model to the moonshot provider", adapters.provider_for("kimi-k2.5") == "moonshot")
+record_script_check(fails, "zai provider uses ZAI_API_KEY", adapters.PROVIDERS["zai"]["key_env"] == "ZAI_API_KEY")
+record_script_check(fails, "moonshot provider uses MOONSHOT_API_KEY", adapters.PROVIDERS["moonshot"]["key_env"] == "MOONSHOT_API_KEY")
 # glm-5.2 WAS the unpriced example here. It now ships a rate cited to z.ai's own pricing page, so the guard
 # moved to an id that genuinely has no published rate anywhere — the property being protected is "we never
 # invent one", not "this particular model stays unpriced forever".
 try:
     pricing.price("glm-99-imaginary")
-    ck("an id with NO published rate fails loud (never a fabricated stub)", False)
+    record_script_check(fails, "an id with NO published rate fails loud (never a fabricated stub)", False)
 except KeyError:
-    ck("an id with NO published rate fails loud (never a fabricated stub)", True)
+    record_script_check(fails, "an id with NO published rate fails loud (never a fabricated stub)", True)
 _p = pricing.price("glm-5.2")
-ck("glm-5.2 is priced from a CITED source, not a guess", "http" in (_p.get("_source") or ""))
+record_script_check(fails, "glm-5.2 is priced from a CITED source, not a guess", "http" in (_p.get("_source") or ""))
 PRICED_PROFILE_MODEL = "gpt-6-luna"
 with contextlib.redirect_stdout(_priced_profile_output := io.StringIO()):
     models.cmd(["show", PRICED_PROFILE_MODEL])
-ck("models CLI profile carries the catalog rate", "rate" in _priced_profile_output.getvalue()
+record_script_check(fails, "models CLI profile carries the catalog rate", "rate" in _priced_profile_output.getvalue()
    and "input=$" in _priced_profile_output.getvalue() and "output=$" in _priced_profile_output.getvalue())
 
 config.CONFIG_JSON.write_text('{"gate": {"enforce": "block"}}')
 config._cfg._cache = None
-ck("config gate.enforce=block drives bulkgate.mode()", bulkgate.mode() == "block")
+record_script_check(fails, "config gate.enforce=block drives bulkgate.mode()", bulkgate.mode() == "block")
 
 # ── init --quick scaffolds BOTH files, no prompts, offline ──
 config.CONFIG_JSON.unlink()
@@ -97,9 +94,9 @@ config.KEYS_ENV.unlink()
 config._cfg._cache = None
 with contextlib.redirect_stdout(io.StringIO()):
     rc = setup.cmd_init(["--quick", "--local"])
-ck("init --quick returns 0", rc == 0)
-ck("init --quick wrote config.json", config.CONFIG_JSON.exists())
-ck("init --quick scaffolded keys.env", config.KEYS_ENV.exists())
+record_script_check(fails, "init --quick returns 0", rc == 0)
+record_script_check(fails, "init --quick wrote config.json", config.CONFIG_JSON.exists())
+record_script_check(fails, "init --quick scaffolded keys.env", config.KEYS_ENV.exists())
 
 print(("[OK]" if not fails else "[FAIL]") + " keys-env/config-ux: %d failure(s)" % len(fails))
 sys.exit(1 if fails else 0)

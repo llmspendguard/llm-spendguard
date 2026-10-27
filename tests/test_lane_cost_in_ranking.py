@@ -12,15 +12,12 @@ os.environ.setdefault("SPENDGUARD_TEST_ISOLATED", "1")
 os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
+from _script_checks import record_script_check
 from spendguard import advise, route_economics, lane_economics, budget   # noqa: E402
 
 fails = []
 
 
-def ck(name, cond):
-    print(("  [OK] " if cond else "  [FAIL] ") + name)
-    if not cond:
-        fails.append(name)
 
 
 EFF = 15.29e-6
@@ -32,7 +29,7 @@ lane_economics.economics = lambda *a, **k: [{"lane": "claude-code", "provider": 
                                              "binding": {"eff_usd_per_tok": EFF, "remaining_abs": 1_000_000}}]
 try:
     m = route_economics.lane_eff_by_provider()
-    ck("maps the converged lane's provider to its amortized eff", abs(m.get("anthropic", 0) - EFF) < 1e-12)
+    record_script_check(fails, "maps the converged lane's provider to its amortized eff", abs(m.get("anthropic", 0) - EFF) < 1e-12)
 finally:
     lane_economics.economics = _orig_econ
 
@@ -49,9 +46,9 @@ try:
     budget.billed_by_model = lambda intent=None, as_of=None: {}            # lane arm → no ledger row → $0 billed
     route_economics.lane_eff_by_provider = lambda now=None: {"anthropic": EFF}
     arm = advise.ranked(intent="x")["models"][0]
-    ck("a $0-lane arm is priced at its TRUE cost (out_tok x eff = $1.529), never a flat $0 or the corpus fiction",
+    record_script_check(fails, "a $0-lane arm is priced at its TRUE cost (out_tok x eff = $1.529), never a flat $0 or the corpus fiction",
        abs(arm["cost"] - 100_000 * EFF) < 1e-6 and arm["cost"] > 0)
-    ck("per_good uses the true lane cost (not $0)", arm["per_good"] is not None and arm["per_good"] > 0)
+    record_script_check(fails, "per_good uses the true lane cost (not $0)", arm["per_good"] is not None and arm["per_good"] > 0)
 
     # ── (c) a METERED arm (no lane) is priced at its LEDGER billed $, not the corpus fiction ──
     print("\n-- (c) a metered arm (no lane) is priced at its LEDGER billed $ (not the corpus fiction) --")
@@ -60,7 +57,7 @@ try:
     budget.billed_by_model = lambda intent=None, as_of=None: {"openai:gpt-5-nano": 0.05}   # real billed $ from the ledger
     route_economics.lane_eff_by_provider = lambda now=None: {"anthropic": EFF}   # no openai lane → no floor
     arm2 = advise.ranked(intent="x")["models"][0]
-    ck("a metered arm is priced at its ledger billed $ (0.05), not the corpus fiction (999)", abs(arm2["cost"] - 0.05) < 1e-9)
+    record_script_check(fails, "a metered arm is priced at its ledger billed $ (0.05), not the corpus fiction (999)", abs(arm2["cost"] - 0.05) < 1e-9)
 
     # ── (d) no ledger row + no converged lane → $0 (fail-open, never crashes) ──
     print("\n-- (d) no ledger cost + no converged lane -> $0 (fail-open) --")
@@ -69,7 +66,7 @@ try:
     budget.billed_by_model = lambda intent=None, as_of=None: {}
     route_economics.lane_eff_by_provider = lambda now=None: {}
     arm3 = advise.ranked(intent="x")["models"][0]
-    ck("no ledger cost + no converged lane -> $0 (never crashes, never the corpus fiction)", arm3["cost"] == 0.0)
+    record_script_check(fails, "no ledger cost + no converged lane -> $0 (never crashes, never the corpus fiction)", arm3["cost"] == 0.0)
 finally:
     advise.evidence = _orig_ev
     route_economics.lane_eff_by_provider = _orig_lm

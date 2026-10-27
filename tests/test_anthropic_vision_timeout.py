@@ -25,6 +25,8 @@ os.environ.setdefault("ANTHROPIC_API_KEY", "sk-ant-test-offline")
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
 import anthropic                                                    # noqa: E402
+from _script_checks import record_script_check  # noqa: E402
+
 from spendguard import adapters                                     # noqa: E402
 
 # a real, tiny 1x1 PNG data URL — adapters._load_image parses it (reads dims), so the vision path runs for real
@@ -34,11 +36,6 @@ MODEL = "anthropic:claude-opus-4-8"                                 # a real cat
 
 def main():
     fails = []
-
-    def ck(name, cond):
-        print(("  [OK] " if cond else "  [FAIL] ") + name)
-        if not cond:
-            fails.append(name)
 
     init_kwargs = []                                               # local: what each fake Anthropic client was built with
 
@@ -85,16 +82,16 @@ def main():
     print("-- a VISION call with timeout_s: succeeds AND is built WITHOUT the httpx client timeout --")
     init_kwargs.clear()
     rv = adapters.call(MODEL, "Describe the image.", images=[PNG], timeout_s=120)
-    ck("vision call did NOT collapse to error/None (returns text)", not rv.get("error") and bool(rv.get("text")))
-    ck("an Anthropic client was constructed", len(init_kwargs) >= 1)
-    ck("the vision client OMITS `timeout` (the httpx timeout that breaks vision)",
+    record_script_check(fails, "vision call did NOT collapse to error/None (returns text)", not rv.get("error") and bool(rv.get("text")))
+    record_script_check(fails, "an Anthropic client was constructed", len(init_kwargs) >= 1)
+    record_script_check(fails, "the vision client OMITS `timeout` (the httpx timeout that breaks vision)",
        bool(init_kwargs) and "timeout" not in init_kwargs[-1])
 
     print("\n-- a TEXT call with the same timeout_s: unchanged, still passes the httpx client timeout --")
     init_kwargs.clear()
     rt = adapters.call(MODEL, "Say hello.", timeout_s=120)
-    ck("text call succeeds", not rt.get("error") and bool(rt.get("text")))
-    ck("the text client still receives `timeout` (fast-connect cancel preserved for text)",
+    record_script_check(fails, "text call succeeds", not rt.get("error") and bool(rt.get("text")))
+    record_script_check(fails, "the text client still receives `timeout` (fast-connect cancel preserved for text)",
        bool(init_kwargs) and "timeout" in init_kwargs[-1])
 
     print(f"\n{'[FAIL]' if fails else 'OK'} test_anthropic_vision_timeout: {len(fails)} failure(s)")

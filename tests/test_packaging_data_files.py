@@ -12,6 +12,7 @@ disk — so a new runtime data file can't be added without also shipping it. Pur
 """
 import os
 import sys
+from _script_checks import record_script_check
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PKG = os.path.join(REPO, "src", "spendguard")
@@ -27,23 +28,18 @@ def main():
 
     fails = []
 
-    def ck(name, cond, extra=""):
-        print(("  [OK] " if cond else "  [FAIL] ") + name + (("  — " + str(extra)) if extra and not cond else ""))
-        if not cond:
-            fails.append(name)
-
     with open(os.path.join(REPO, "pyproject.toml"), "rb") as fh:
         pp = tomllib.load(fh)
     shipped = set(((pp.get("tool", {}).get("setuptools", {}).get("package-data", {}) or {}).get("spendguard", [])))
     on_disk = sorted(f for f in os.listdir(PKG) if f.endswith(DATA_EXT))
 
-    ck("the package dir actually has data files to ship (sanity)", bool(on_disk), on_disk)
-    ck("model_catalog.json is declared in package-data (the 0.11.3 gap — clamp was inert on pip without it)",
-       "model_catalog.json" in shipped, sorted(shipped))
-    ck("derived token-price artifact is absent from package and disk",
+    record_script_check(fails, "the package dir actually has data files to ship (sanity)", bool(on_disk), str(on_disk) if on_disk else "")
+    record_script_check(fails, "model_catalog.json is declared in package-data (the 0.11.3 gap — clamp was inert on pip without it)",
+       "model_catalog.json" in shipped, str(sorted(shipped)) if sorted(shipped) else "")
+    record_script_check(fails, "derived token-price artifact is absent from package and disk",
        "prices.json" not in shipped and "prices.json" not in on_disk)
     for f in on_disk:
-        ck(f"every runtime data file ships: {f}", f in shipped, f"package-data={sorted(shipped)}")
+        record_script_check(fails, f"every runtime data file ships: {f}", f in shipped, str(f"package-data={sorted(shipped)}") if f"package-data={sorted(shipped)}" else "")
 
     print(f"\n{'[FAIL]' if fails else 'OK'} test_packaging_data_files: {len(fails)} failure(s)")
     return 1 if fails else 0

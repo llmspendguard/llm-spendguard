@@ -10,6 +10,7 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
     os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="spendguard-hot-index-")
     os.execv(sys.executable, [sys.executable] + sys.argv)
 
+from _script_checks import record_script_check
 from spendguard import calls, content_retention, semcache
 from spendguard.ledger import SpendLedger
 from spendguard.schema_indexes import (
@@ -23,10 +24,6 @@ failures = []
 _REPRESENTATIVE_ROWS = 30_000
 
 
-def check(name, condition):
-    print(("  [OK] " if condition else "  [FAIL] ") + name)
-    if not condition:
-        failures.append(name)
 
 
 def plan_details(connection, sql, parameters=()):
@@ -67,7 +64,7 @@ cost_plan = plan_details(
     "GROUP BY model,date(ts),kind",
     ("2026-09-24T00:00:00+00:00",),
 )
-check("cost-integrity range is an index SEARCH", plan_searches_with(cost_plan, cost_index))
+record_script_check(failures, "cost-integrity range is an index SEARCH", plan_searches_with(cost_plan, cost_index))
 
 reconcile_index = next(
     name for columns, unique, name in table_index_coverages(calls_connection, "calls")
@@ -79,7 +76,7 @@ reconcile_plan = plan_details(
     "ORDER BY rowid DESC LIMIT 1",
     ("provider-1", "model-1", "intent-1"),
 )
-check("calls batch reconciliation is an index SEARCH", plan_searches_with(reconcile_plan, reconcile_index))
+record_script_check(failures, "calls batch reconciliation is an index SEARCH", plan_searches_with(reconcile_plan, reconcile_index))
 
 retention_connection = sqlite3.connect(":memory:")
 content_retention._ensure_content_retention_schema(retention_connection)
@@ -108,7 +105,7 @@ retention_plan = plan_details(
     "SELECT rowid FROM call_content WHERE ts < ? LIMIT ?",
     ("2026-10-01T00:00:00+00:00", content_retention.CONTENT_RETENTION_PURGE_BATCH_ROWS),
 )
-check("content TTL purge subselect is an index SEARCH", plan_searches_with(retention_plan, retention_index))
+record_script_check(failures, "content TTL purge subselect is an index SEARCH", plan_searches_with(retention_plan, retention_index))
 
 ledger_directory = tempfile.mkdtemp(prefix="spendguard-ledger-plan-")
 ledger = SpendLedger(db_path=os.path.join(ledger_directory, "spend.db"))
@@ -141,7 +138,7 @@ money_plan = plan_details(
     "AND cost_basis='estimate' AND provider=? AND model=? AND intent IS ? ORDER BY rowid DESC LIMIT 1",
     ("provider", "model", "intent"),
 )
-check("money batch reconciliation is an index SEARCH", plan_searches_with(money_plan, money_index))
+record_script_check(failures, "money batch reconciliation is an index SEARCH", plan_searches_with(money_plan, money_index))
 ledger._conn.close()
 
 squat_connection = sqlite3.connect(":memory:")
@@ -150,7 +147,7 @@ squat_connection.execute("CREATE TABLE live(value TEXT)")
 squatted_name = _available_derived_index_name(squat_connection, "live", ("value",), False)
 squat_connection.execute(f'CREATE INDEX "{squatted_name}" ON decoy(value)')
 live_index = ensure_ordered_index_coverage(squat_connection, "live", ("value",))
-check("same-named decoy cannot suppress live-table coverage", live_index != squatted_name and any(
+record_script_check(failures, "same-named decoy cannot suppress live-table coverage", live_index != squatted_name and any(
     columns == ("value",) for columns, _unique, _name in table_index_coverages(squat_connection, "live")
 ))
 
@@ -168,10 +165,10 @@ semcache_connection.executemany(
 )
 semcache._repair_semcache_unique_key(semcache_connection)
 remaining = semcache_connection.execute("SELECT id,output FROM semcache ORDER BY id").fetchall()
-check("semcache keeps newest duplicate and every non-duplicate", remaining == [
+record_script_check(failures, "semcache keeps newest duplicate and every non-duplicate", remaining == [
     ("new", "new-output"), ("other", "other-output")
 ])
-check("semcache repaired key is UNIQUE", any(
+record_script_check(failures, "semcache repaired key is UNIQUE", any(
     columns == ("model", "prompt_hash") and unique
     for columns, unique, _name in table_index_coverages(semcache_connection, "semcache")
 ))
@@ -190,10 +187,10 @@ ambiguous_connection.executemany(
 )
 semcache._repair_semcache_unique_key(ambiguous_connection)
 tied_remaining = ambiguous_connection.execute("SELECT id,output FROM semcache ORDER BY id").fetchall()
-check("tied semcache recency keeps greatest id and every non-duplicate", tied_remaining == [
+record_script_check(failures, "tied semcache recency keeps greatest id and every non-duplicate", tied_remaining == [
     ("distinct", "distinct-output"), ("second", "second-output")
 ])
-check("tied semcache repair rebuilds the UNIQUE key", any(
+record_script_check(failures, "tied semcache repair rebuilds the UNIQUE key", any(
     columns == ("model", "prompt_hash") and unique
     for columns, unique, _name in table_index_coverages(ambiguous_connection, "semcache")
 ))

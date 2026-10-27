@@ -18,15 +18,11 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
     os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="spendguard-tiercfg-")
     os.execv(sys.executable, [sys.executable] + sys.argv)
 
+from _script_checks import record_script_check
 from spendguard import tier_config, route_utility, config, lane_catalog, lane_balance   # noqa: E402
 
 fails = []
 
-
-def ck(name, cond):
-    print(("  [OK] " if cond else "  [FAIL] ") + name)
-    if not cond:
-        fails.append(name)
 
 
 _orig_cfg_get = config._cfg_get
@@ -48,23 +44,23 @@ def report(tiers, lane_models, priced, serves, base, idle=()):
 
 print("-- UNSET advisor.tiers → configured False (doctor renders 🔴 NOT CONFIGURED) --")
 r = report({}, {}, set(), {}, {}, idle=["codex", "gemini"])
-ck("advisor.tiers unset → configured is False", r["configured"] is False)
-ck("idle lane capacity is surfaced so the fix message can name it", r["idle"] == ["codex", "gemini"])
+record_script_check(fails, "advisor.tiers unset → configured is False", r["configured"] is False)
+record_script_check(fails, "idle lane capacity is surfaced so the fix message can name it", r["idle"] == ["codex", "gemini"])
 
 print("-- DECLARED + PRICED + a lane serves → configured, group green, no hard issue --")
 r = report({"cheap": ["m-cheap"]}, {"codex": "m-cheap"}, {"m-cheap"}, {"cheap": ["codex"]}, {"codex": "m-cheap"})
-ck("declared → configured True", r["configured"] is True)
-ck("the group lists its serving lane, nothing unpriced, and there is no hard issue",
+record_script_check(fails, "declared → configured True", r["configured"] is True)
+record_script_check(fails, "the group lists its serving lane, nothing unpriced, and there is no hard issue",
    r["groups"]["cheap"]["lanes"] == ["codex"] and r["groups"]["cheap"]["unpriced"] == [] and r["issues"] == [])
 
 print("-- an UNPRICED group model is CAUGHT (the declaration-time cost-visibility validation) --")
 r = report({"cheap": ["m-nope"]}, {"codex": "m-nope"}, set(), {"cheap": ["codex"]}, {"codex": "m-nope"})
-ck("the unpriced model is surfaced in groups[g]['unpriced'] and raises a hard issue",
+record_script_check(fails, "the unpriced model is surfaced in groups[g]['unpriced'] and raises a hard issue",
    r["groups"]["cheap"]["unpriced"] == ["m-nope"] and len(r["issues"]) >= 1)
 
 print("-- DECLARED but NO lane serves it → the exact INERT state, made a hard issue (a --tier fan would refuse) --")
 r = report({"cheap": ["m-cheap"]}, {"codex": "m-cheap"}, {"m-cheap"}, {}, {"codex": "m-cheap"})
-ck("a group no lane serves → 0 serving lanes AND a hard issue (not a silent inert pass)",
+record_script_check(fails, "a group no lane serves → 0 serving lanes AND a hard issue (not a silent inert pass)",
    r["groups"]["cheap"]["lanes"] == [] and len(r["issues"]) >= 1)
 
 print(f"\n{'[FAIL]' if fails else 'OK'} test_tier_config_report: {len(fails)} failure(s)")

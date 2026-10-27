@@ -10,14 +10,11 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
     os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="spendguard-otel-")
     os.execv(sys.executable, [sys.executable] + sys.argv)
 
+from _script_checks import record_script_check
 from spendguard import otel_ingest as O
 from spendguard import budget
 
 fails = []
-def ck(name, cond):
-    print(("  [OK] " if cond else "  [FAIL] ") + name)
-    if not cond:
-        fails.append(name)
 
 def attr(k, v, t="stringValue"):
     return {"key": k, "value": {t: v}}
@@ -53,45 +50,45 @@ DOC = {"resourceSpans": [{"scopeSpans": [{"spans": [
 
 print("-- (1) span_to_charge maps both attribute generations + skips non-GenAI --")
 spans = list(O._iter_spans(DOC))
-ck("OTLP walk yields all 4 spans", len(spans) == 4)
+record_script_check(fails, "OTLP walk yields all 4 spans", len(spans) == 4)
 c0 = O.span_to_charge(spans[0])
-ck("current names: provider/model/tokens", c0["provider"] == "openai" and c0["model"] == "gpt-5.5"
+record_script_check(fails, "current names: provider/model/tokens", c0["provider"] == "openai" and c0["model"] == "gpt-5.5"
    and c0["in_tok"] == 1000 and c0["out_tok"] == 500)
 c1 = O.span_to_charge(spans[1])
-ck("older names (gen_ai.system + prompt/completion_tokens) parse too",
+record_script_check(fails, "older names (gen_ai.system + prompt/completion_tokens) parse too",
    c1["provider"] == "anthropic" and c1["in_tok"] == 2000 and c1["out_tok"] == 800 and c1["cost"] == 0.123)
-ck("a non-GenAI span → None (skipped)", O.span_to_charge(spans[3]) is None)
+record_script_check(fails, "a non-GenAI span → None (skipped)", O.span_to_charge(spans[3]) is None)
 
 print("-- (2) cost: priced from tokens, exporter cost honoured, unknown model → UNPRICED --")
 cost0, basis0 = O._cost_for(c0)
-ck("openai gpt-5.5 1000/500 priced from tokens ($0.02, reconstructed)",
+record_script_check(fails, "openai gpt-5.5 1000/500 priced from tokens ($0.02, reconstructed)",
    abs(cost0 - 0.02) < 1e-9 and basis0 == budget.BASIS_RECONSTRUCTED)
 cost1, _ = O._cost_for(c1)
-ck("the exporter's own cost attr is used when present ($0.123)", abs(cost1 - 0.123) < 1e-9)
+record_script_check(fails, "the exporter's own cost attr is used when present ($0.123)", abs(cost1 - 0.123) < 1e-9)
 _, basis2 = O._cost_for(O.span_to_charge(spans[2]))
-ck("an unpriceable model → UNPRICED (tokens kept, $ unknown — never a silent $0)", basis2 == budget.BASIS_UNPRICED)
+record_script_check(fails, "an unpriceable model → UNPRICED (tokens kept, $ unknown — never a silent $0)", basis2 == budget.BASIS_UNPRICED)
 
 print("-- (3) ingest writes spend_events with the right facts, and is IDEMPOTENT on span id --")
 s = O.ingest(DOC, project="traced-svc")
-ck("summary: 3 GenAI ingested, 1 skipped, 1 unpriced", s["ingested"] == 3 and s["skipped"] == 1 and s["unpriced"] == 1)
-ck("summary cost = 0.02 + 0.123 (unpriced adds nothing)", abs(s["cost"] - 0.143) < 1e-9)
+record_script_check(fails, "summary: 3 GenAI ingested, 1 skipped, 1 unpriced", s["ingested"] == 3 and s["skipped"] == 1 and s["unpriced"] == 1)
+record_script_check(fails, "summary cost = 0.02 + 0.123 (unpriced adds nothing)", abs(s["cost"] - 0.143) < 1e-9)
 rows = [r for r in budget._ledger().query() if r.get("source") == "otel"]
-ck("3 otel rows written", len(rows) == 3)
+record_script_check(fails, "3 otel rows written", len(rows) == 3)
 _by_model = {r["model"]: r for r in rows}
-ck("openai row: realtime, tokens, occurred_at from the span, intent from the operation",
+record_script_check(fails, "openai row: realtime, tokens, occurred_at from the span, intent from the operation",
    _by_model["gpt-5.5"]["in_tok"] == 1000 and _by_model["gpt-5.5"]["out_tok"] == 500
    and _by_model["gpt-5.5"]["occurred_at"].startswith("2026-06-15") and _by_model["gpt-5.5"]["intent"] == "otel:chat")
 O.ingest(DOC, project="traced-svc")                      # re-ingest the SAME trace
 rows2 = [r for r in budget._ledger().query() if r.get("source") == "otel"]
-ck("re-ingesting the same trace does NOT double-count (idempotent on span id)", len(rows2) == 3)
+record_script_check(fails, "re-ingesting the same trace does NOT double-count (idempotent on span id)", len(rows2) == 3)
 
 print("-- (4) accepts the other shapes: a bare list, {spans}, a single span, flat-dict attributes --")
 one = {"spanId": "z1", "attributes": {"gen_ai.system": "openai", "gen_ai.request.model": "gpt-5.5",
                                       "gen_ai.usage.input_tokens": 100, "gen_ai.usage.output_tokens": 50}}
-ck("flat-dict attributes parse", O.span_to_charge(one)["in_tok"] == 100)
-ck("a bare list of spans is walked", len(list(O._iter_spans([one, one]))) == 2)
-ck("{'spans': [...]} is walked", len(list(O._iter_spans({"spans": [one]}))) == 1)
-ck("dry-run counts but writes nothing new",
+record_script_check(fails, "flat-dict attributes parse", O.span_to_charge(one)["in_tok"] == 100)
+record_script_check(fails, "a bare list of spans is walked", len(list(O._iter_spans([one, one]))) == 2)
+record_script_check(fails, "{'spans': [...]} is walked", len(list(O._iter_spans({"spans": [one]}))) == 1)
+record_script_check(fails, "dry-run counts but writes nothing new",
    O.ingest({"spans": [one]}, dry_run=True)["ingested"] == 1
    and len([r for r in budget._ledger().query() if r.get("source") == "otel"]) == 3)
 

@@ -22,6 +22,7 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
     os.environ["SPENDGUARD_NO_AUTOINSTALL"] = "1"
     os.execv(sys.executable, [sys.executable] + sys.argv)
 
+from _script_checks import record_script_check
 from spendguard import calls, config, gate
 
 
@@ -30,11 +31,6 @@ PROVIDER_INPUT_TOKENS = 120
 PROVIDER_OUTPUT_TOKENS = 30
 TEST_INTENT = "test-realtime-overlay"
 
-
-def report_check(name, condition, failures):
-    print(("  [OK] " if condition else "  [FAIL] ") + name)
-    if not condition:
-        failures.append(name)
 
 
 money_rows = []
@@ -95,17 +91,15 @@ finally:
 
 failures = []
 warning_text = stderr.getvalue()
-report_check("provider-reported money reached the realtime recorder exactly once", len(money_rows) == 1, failures)
-report_check("gate and test share the same calls module", gate._calls is calls, failures)
-report_check("the isolated process did not disable the calls ledger", not config.is_explicit_true(os.getenv("SPENDGUARD_NO_LEDGER")), failures)
-report_check("the attributed call writer completed without a swallowed exception", not recording_errors, failures)
-report_check("the attributed call writer returned a call id", bool(call_writer_returns and call_writer_returns[0]), failures)
-report_check("the attributed realtime call row was written exactly once", len(call_rows) == 1, failures)
-report_check("actual tokens and metered executor attribution survived the resident-module state",
-             call_rows == [(TEST_INTENT, PROVIDER_INPUT_TOKENS, PROVIDER_OUTPUT_TOKENS, "api")], failures)
-report_check("no real-time accounting failed warning was emitted",
-             "real-time accounting failed" not in warning_text, failures)
-report_check("no NameError escaped into the accounting warning", "NameError" not in warning_text, failures)
+record_script_check(failures, "provider-reported money reached the realtime recorder exactly once", len(money_rows) == 1)
+record_script_check(failures, "gate and test share the same calls module", gate._calls is calls)
+record_script_check(failures, "the isolated process did not disable the calls ledger", not config.is_explicit_true(os.getenv("SPENDGUARD_NO_LEDGER")))
+record_script_check(failures, "the attributed call writer completed without a swallowed exception", not recording_errors)
+record_script_check(failures, "the attributed call writer returned a call id", bool(call_writer_returns and call_writer_returns[0]))
+record_script_check(failures, "the attributed realtime call row was written exactly once", len(call_rows) == 1)
+record_script_check(failures, "actual tokens and metered executor attribution survived the resident-module state", call_rows == [(TEST_INTENT, PROVIDER_INPUT_TOKENS, PROVIDER_OUTPUT_TOKENS, "api")])
+record_script_check(failures, "no real-time accounting failed warning was emitted", "real-time accounting failed" not in warning_text)
+record_script_check(failures, "no NameError escaped into the accounting warning", "NameError" not in warning_text)
 
 print(("[OK]" if not failures else "[FAIL]")
       + f" realtime partial-overlay accounting: {len(failures)} failure(s)")

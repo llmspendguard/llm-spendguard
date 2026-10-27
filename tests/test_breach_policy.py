@@ -15,35 +15,32 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
 for _k in ("SPENDGUARD_ON_BREACH", "GATE_ALLOW", "GATE_DISABLE"):
     os.environ.pop(_k, None)
 
+from _script_checks import record_script_check  # noqa: E402
+
 from spendguard import route_utility as ru
 from spendguard import lanes, gate, budget, config
 from spendguard.gate import SpendGateRefused
 
 fails = []
-def ck(name, cond):
-    print(("  [OK] " if cond else "  [FAIL] ") + name)
-    if not cond:
-        fails.append(name)
-
 LANE_ROW = {"lane": "gemini", "provider": "gemini", "remaining_pct": 50, "reset_ts": None, "known": True}
 
 print("-- (1) breach_policy: refuse by default; env/config sets downgrade; junk → refuse (never loosen) --")
-ck("default policy is refuse (fail-closed)", ru.breach_policy() == "refuse")
+record_script_check(fails, "default policy is refuse (fail-closed)", ru.breach_policy() == "refuse")
 os.environ["SPENDGUARD_ON_BREACH"] = "downgrade"
-ck("env SPENDGUARD_ON_BREACH=downgrade → downgrade", ru.breach_policy() == "downgrade")
+record_script_check(fails, "env SPENDGUARD_ON_BREACH=downgrade → downgrade", ru.breach_policy() == "downgrade")
 os.environ["SPENDGUARD_ON_BREACH"] = "yolo"
-ck("an unrecognised policy resolves to refuse (never silently loosen)", ru.breach_policy() == "refuse")
+record_script_check(fails, "an unrecognised policy resolves to refuse (never silently loosen)", ru.breach_policy() == "refuse")
 os.environ.pop("SPENDGUARD_ON_BREACH", None)
 
 print("-- (2) breach_decision: refuse names no target; downgrade names the cheapest idle $0 lane --")
-ck("refuse → ('refuse', None, …)", ru.breach_decision("refuse")[:2] == ("refuse", None))
+record_script_check(fails, "refuse → ('refuse', None, …)", ru.breach_decision("refuse")[:2] == ("refuse", None))
 _orig_headroom = lanes.lane_headroom
 lanes.lane_headroom = lambda do_fetch=True: [LANE_ROW]      # an idle lane WITH headroom
 act, tgt, why = ru.breach_decision("downgrade")
-ck("downgrade + an available lane → ('downgrade', that lane, why)", act == "downgrade" and tgt == "gemini")
-ck("...the why names the $0 plan route", "gemini" in why and "$0" in why)
+record_script_check(fails, "downgrade + an available lane → ('downgrade', that lane, why)", act == "downgrade" and tgt == "gemini")
+record_script_check(fails, "...the why names the $0 plan route", "gemini" in why and "$0" in why)
 lanes.lane_headroom = lambda do_fetch=True: []             # no idle lane
-ck("downgrade but NO idle lane has headroom → refuse (fail-closed, the safe direction)",
+record_script_check(fails, "downgrade but NO idle lane has headroom → refuse (fail-closed, the safe direction)",
    ru.breach_decision("downgrade")[0] == "refuse")
 lanes.lane_headroom = _orig_headroom
 
@@ -61,15 +58,15 @@ try:
         gate._budget_check(3.0, "gpt-5.5", "openai", "batch")
     except SpendGateRefused as e:
         msg = str(e)
-    ck("budget breach RAISES SpendGateRefused (still fail-closed)", "would be exceeded" in msg)
-    ck("...and the refusal NAMES the downgrade lane (on_breach=downgrade)",
+    record_script_check(fails, "budget breach RAISES SpendGateRefused (still fail-closed)", "would be exceeded" in msg)
+    record_script_check(fails, "...and the refusal NAMES the downgrade lane (on_breach=downgrade)",
        "on_breach=downgrade" in msg and "gemini" in msg)
     # refuse policy → no hint (the default hard-stop, unchanged)
     os.environ["SPENDGUARD_ON_BREACH"] = "refuse"
     try:
         gate._budget_check(3.0, "gpt-5.5", "openai", "batch")
     except SpendGateRefused as e:
-        ck("refuse policy → the refusal carries NO downgrade hint (unchanged fail-closed message)",
+        record_script_check(fails, "refuse policy → the refusal carries NO downgrade hint (unchanged fail-closed message)",
            "on_breach=downgrade" not in str(e))
 finally:
     config.budget_backend, budget.is_reading_history, budget.exceeded = _ob, _bb, _ex

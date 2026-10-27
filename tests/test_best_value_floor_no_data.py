@@ -22,16 +22,12 @@ os.environ.setdefault("SPENDGUARD_TEST_ISOLATED", "1")
 os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
+from _script_checks import record_script_check  # noqa: E402
+
 from spendguard import adapters, best_value   # noqa: E402
 from spendguard.gate import SpendGateRefused   # noqa: E402
 
 fails = []
-
-
-def ck(name, cond):
-    print(("  [OK] " if cond else "  [FAIL] ") + name)
-    if not cond:
-        fails.append(name)
 
 
 PINNED = "acme:pinned"
@@ -57,16 +53,16 @@ try:
     best_value.select_model_effort = _sel_nopick
     seen.clear()
     r = adapters.call(PINNED, "p", intent="cold-intent")            # inherits the default best-value, no reasoning passed
-    ck("(req#2) a pinned call inheriting the default best-value titrates EFFORT ONLY (pin_model=True)",
+    record_script_check(fails, "(req#2) a pinned call inheriting the default best-value titrates EFFORT ONLY (pin_model=True)",
        seen.get("pin_model") is True)
-    ck("(req#1) no data -> keeps the PINNED model and returns a NORMAL result (floor-preserving, not empty)",
+    record_script_check(fails, "(req#1) no data -> keeps the PINNED model and returns a NORMAL result (floor-preserving, not empty)",
        r.get("text") == "served" and r.get("model") == "pinned")
 
     # ── (d): an EXPLICIT best-value (delegated), unpinned -> pin_model=False (cross-model) ──
     print("\n-- (d) an EXPLICIT reasoning='best-value' still delegates the model (pin_model=False) --")
     seen.clear()
     adapters.call(PINNED, "p", intent="cold-intent", reasoning="best-value")
-    ck("(delegated) an EXPLICIT reasoning='best-value' resolves cross-model (pin_model=False)",
+    record_script_check(fails, "(delegated) an EXPLICIT reasoning='best-value' resolves cross-model (pin_model=False)",
        seen.get("pin_model") is False)
 
     # ── (c): a deliberate stop from the advisor PROPAGATES as a typed stop, never swallowed to empty ──
@@ -81,7 +77,7 @@ try:
         adapters.call(PINNED, "p", intent="cold-intent", reasoning="best-value")
     except SpendGateRefused:
         propagated = True                                          # the ONLY catch: the exact type req#3 asserts propagates
-    ck("(req#3) a SpendGateRefused from the advisor PROPAGATES (never swallowed to _pick=None -> an empty result)",
+    record_script_check(fails, "(req#3) a SpendGateRefused from the advisor PROPAGATES (never swallowed to _pick=None -> an empty result)",
        propagated)
 
     # ── (e) req#4 — LANE DOWN: best-value keeps the pinned model, the run errors (lane down + metered failed), and
@@ -94,9 +90,9 @@ try:
         "executor": None, "error": "lane down AND metered fallback failed", "reason": "api_error"}
     seen.clear()
     r_down = adapters.call(PINNED, "p", intent="cold-intent")   # inherits default best-value, pinned, lane down
-    ck("(req#4) lane down -> a TYPED error result (error + reason set), never a bare empty/None",
+    record_script_check(fails, "(req#4) lane down -> a TYPED error result (error + reason set), never a bare empty/None",
        isinstance(r_down, dict) and bool(r_down.get("error")) and r_down.get("text") is None)
-    ck("(req#4) the pinned model was kept even on a lane-down best-value call (pin_model=True)",
+    record_script_check(fails, "(req#4) the pinned model was kept even on a lane-down best-value call (pin_model=True)",
        seen.get("pin_model") is True)
 finally:
     adapters._call_guarded, best_value.select_model_effort = _saved

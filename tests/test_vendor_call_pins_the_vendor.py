@@ -10,14 +10,10 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
     os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="spendguard-vcpin-")
     os.execv(sys.executable, [sys.executable] + sys.argv)
 
+from _script_checks import record_script_check
 from spendguard import vendor_call as vc, adapters
 
 fails = []
-def ck(name, cond):
-    print(("  [OK] " if cond else "  [FAIL] ") + name)
-    if not cond:
-        fails.append(name)
-
 captured = {}
 _orig = adapters.call
 def _cap(model, prompt, **kw):
@@ -28,9 +24,9 @@ def _cap(model, prompt, **kw):
 adapters.call = _cap
 try:
     vc.call("anthropic", "claude-opus-4-8", "hi", deadline_s=30, max_tokens=64, purpose="test:vc-pin")
-    ck("vendor_call.call pins the vendor (no_substitution=True reaches adapters.call)",
+    record_script_check(fails, "vendor_call.call pins the vendor (no_substitution=True reaches adapters.call)",
        captured.get("no_substitution") is True)
-    ck("...and it targeted exactly the NAMED vendor (never a swap)",
+    record_script_check(fails, "...and it targeted exactly the NAMED vendor (never a swap)",
        str(captured.get("model", "")).startswith("anthropic"))
 finally:
     adapters.call = _orig

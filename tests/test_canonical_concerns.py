@@ -20,24 +20,20 @@ os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
+from _script_checks import record_script_check  # noqa: E402
+
 REGISTRY = json.loads((ROOT / "docs" / "CANONICAL_CONCERNS.json").read_text())["concerns"]
 
 fails = []
-def ck(name, cond):
-    print(("  [OK] " if cond else "  [FAIL] ") + name)
-    if not cond:
-        fails.append(name)
-
-
 print("-- the registry is well-formed --")
-ck("registry is non-empty", len(REGISTRY) > 0)
+record_script_check(fails, "registry is non-empty", len(REGISTRY) > 0)
 _required = {"concern", "home", "description", "telltale", "status"}
-ck("every concern has the required fields", all(_required <= set(c) for c in REGISTRY))
+record_script_check(fails, "every concern has the required fields", all(_required <= set(c) for c in REGISTRY))
 _names = [c["concern"] for c in REGISTRY]
-ck("concern names are unique", len(_names) == len(set(_names)))
+record_script_check(fails, "concern names are unique", len(_names) == len(set(_names)))
 _homes = [c["home"] for c in REGISTRY]
-ck("homes are unique — one concern, one home; no two concerns share a home", len(_homes) == len(set(_homes)))
-ck("status is a known value", all(c["status"] in ("enforced", "consolidating") for c in REGISTRY))
+record_script_check(fails, "homes are unique — one concern, one home; no two concerns share a home", len(_homes) == len(set(_homes)))
+record_script_check(fails, "status is a known value", all(c["status"] in ("enforced", "consolidating") for c in REGISTRY))
 
 print("\n-- every registered home EXISTS (a renamed/removed home can never silently point at nothing) --")
 for c in REGISTRY:
@@ -50,7 +46,7 @@ for c in REGISTRY:
         detail = "" if exists else " (module imported, symbol missing)"
     except Exception as e:
         exists, detail = False, f" (import error: {type(e).__name__}: {str(e)[:80]})"
-    ck(f"home exists: {home}{detail}", exists)
+    record_script_check(fails, f"home exists: {home}{detail}", exists)
 
 print(f"\n{'[FAIL]' if fails else 'OK'} test_canonical_concerns: {len(fails)} failure(s)")
 sys.exit(1 if fails else 0)

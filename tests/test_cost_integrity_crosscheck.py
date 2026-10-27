@@ -20,17 +20,13 @@ os.environ.setdefault("SPENDGUARD_TEST_ISOLATED", "1")
 os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
+from _script_checks import record_script_check  # noqa: E402
+
 import spendguard  # noqa: E402
 spendguard.require = lambda: None
 from spendguard import cost_integrity as ci  # noqa: E402
 
 fails = []
-
-
-def ck(name, cond, extra=""):
-    print(("  [OK] " if cond else "  [FAIL] ") + name + (("  — " + extra) if extra and not cond else ""))
-    if not cond:
-        fails.append(name)
 
 
 # opus-4-8 list: $5/M in, $25/M out. realtime ceiling(1000,500) = 0.005*2.0 + 0.0125 = $0.0225.
@@ -48,47 +44,47 @@ found, unpriced = ci.classify_impossible_cost_buckets(rows)
 by = {(f["day"], f["kind"]): f for f in found}
 
 print("-- only PROVABLE over-ceiling buckets are flagged --")
-ck("cost above the realtime ceiling → flagged", ("2026-10-04", "realtime") in by,
+record_script_check(fails, "cost above the realtime ceiling → flagged", ("2026-10-04", "realtime") in by,
    extra=str([(f["day"], f["kind"]) for f in found]))
-ck("that flag's ratio is ~2.2x the ceiling", (by.get(("2026-10-04", "realtime"), {}).get("ratio") or 0) > 2.0)
-ck("cost WITHIN the cache-write ceiling → NOT flagged (no 'suspicious' band)",
+record_script_check(fails, "that flag's ratio is ~2.2x the ceiling", (by.get(("2026-10-04", "realtime"), {}).get("ratio") or 0) > 2.0)
+record_script_check(fails, "cost WITHIN the cache-write ceiling → NOT flagged (no 'suspicious' band)",
    not any(f["day"] == "2026-10-04" and f["kind"] == "realtime" and abs(f["ledger_cost"] - 0.02) < 1e-9 for f in found))
-ck("positive cost on ~zero priceable tokens → flagged (ratio None)",
+record_script_check(fails, "positive cost on ~zero priceable tokens → flagged (ratio None)",
    by.get(("2026-10-01", "realtime"), {}).get("ratio") is None and ("2026-10-01", "realtime") in by)
-ck("BATCH bucket judged at the BATCH ceiling (realtime ceiling would miss $0.02) → flagged",
+record_script_check(fails, "BATCH bucket judged at the BATCH ceiling (realtime ceiling would miss $0.02) → flagged",
    ("2026-10-02", "batch") in by, extra=str([(f["day"], f["kind"]) for f in found]))
-ck("unpriced model is COUNTED, not flagged (cannot bound it)",
+record_script_check(fails, "unpriced model is COUNTED, not flagged (cannot bound it)",
    unpriced == 1 and not any(f["model"] == "totally-made-up-xyz" for f in found))
 
 print("-- worst-first ordering (highest ratio first; ratio-None extremes lead) --")
 ratios = [(f["ratio"] if f["ratio"] is not None else float("inf")) for f in found]
-ck("findings sorted by ratio descending", ratios == sorted(ratios, reverse=True), extra=str(ratios))
+record_script_check(fails, "findings sorted by ratio descending", ratios == sorted(ratios, reverse=True), extra=str(ratios))
 
 print("-- render: read failure is UNKNOWN, never green --")
 with patch.object(ci.ledger_read, "read_cost_integrity_buckets",
                   side_effect=ci.ledger_read.LedgerReadSchemaError("no such table: calls")), \
         patch.object(ci.COST_INTEGRITY_LOGGER, "exception") as unexpected_schema_traceback:
     schema_gap_result = ci.audit_metered_cost_vs_tokens()
-ck("an unmigrated first-run ledger is a named UNKNOWN, not a propagated crash",
+record_script_check(fails, "an unmigrated first-run ledger is a named UNKNOWN, not a propagated crash",
    not schema_gap_result["ok"] and "no such table: calls" in schema_gap_result["error"]
    and not unexpected_schema_traceback.called)
 ci.audit_metered_cost_vs_tokens = lambda since_days=7: {"ok": False, "error": "no such column: suspect",
                                                         "findings": [], "unpriced": 0, "checked": 0}
 lines = ci.cost_integrity_lines()
-ck("read failure → ⚪ UNKNOWN line that says it is NOT clean",
+record_script_check(fails, "read failure → ⚪ UNKNOWN line that says it is NOT clean",
    any(l.startswith("⚪") and "UNKNOWN" in l and "Not the same as clean" in l for l in lines), extra=str(lines))
 
 print("-- render: clean states COVERAGE (checked / unpriced), not a bare green --")
 ci.audit_metered_cost_vs_tokens = lambda since_days=7: {"ok": True, "findings": [], "unpriced": 2, "checked": 10}
 lines = ci.cost_integrity_lines()
-ck("clean 🟢 line names buckets checked AND unpriced",
+record_script_check(fails, "clean 🟢 line names buckets checked AND unpriced",
    any(l.startswith("🟢") and "10 metered" in l and "2 unpriced" in l for l in lines), extra=str(lines))
 
 print("-- render: a provable finding is a loud UNDER-RECORDED line --")
 ci.audit_metered_cost_vs_tokens = lambda since_days=7: {"ok": True, "unpriced": 0, "checked": 3, "findings": [
     {"model": M, "day": "2026-10-04", "kind": "realtime", "n": 40, "ledger_cost": 0.05, "ceiling": 0.0225, "ratio": 2.22}]}
 lines = ci.cost_integrity_lines()
-ck("finding → 🔴 line stating UNDER-RECORDED above the ceiling",
+record_script_check(fails, "finding → 🔴 line stating UNDER-RECORDED above the ceiling",
    any(l.startswith("🔴") and "UNDER-RECORDED" in l and "ceiling" in l for l in lines), extra=str(lines))
 
 print(f"\n{'OK' if not fails else 'FAIL'} test_cost_integrity_crosscheck: {len(fails)} failure(s)")

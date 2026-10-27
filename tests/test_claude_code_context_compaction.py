@@ -17,15 +17,12 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
     os.environ["SPENDGUARD_HOME"] = home
     os.execv(sys.executable, [sys.executable] + sys.argv)
 
+from _script_checks import record_script_check  # noqa: E402
+
 from spendguard import claudecode, budget
 import spendguard.pricing as _pr
 
 fails = []
-def ck(name, cond):
-    print(("  [OK] " if cond else "  [FAIL] ") + name)
-    if not cond:
-        fails.append(name)
-
 # cache-read rate = $1.00 / 1M tok → $1e-6 / tok, so recurring $/turn = cache_read × 1e-6
 _pr.price = lambda m: {"cached_in": 1.0}
 
@@ -52,25 +49,25 @@ seed("drop2", "d2a", 0, 200000, 0, ts("drop2", 1)); seed("drop2", "d2b", 0, 2000
 
 # 1. trajectory
 t = claudecode.context_trajectory("bigconv")
-ck("trajectory current/max = 150,000 context tokens", t["current"] == 150000 and t["max"] == 150000)
-ck("trajectory mean = 150,000", round(t["mean"]) == 150000)
-ck("recurring re-read $/turn = cache_read(140k) × $1e-6 = $0.14", round(t["recurring_read_usd_per_turn"], 4) == 0.14)
+record_script_check(fails, "trajectory current/max = 150,000 context tokens", t["current"] == 150000 and t["max"] == 150000)
+record_script_check(fails, "trajectory mean = 150,000", round(t["mean"]) == 150000)
+record_script_check(fails, "recurring re-read $/turn = cache_read(140k) × $1e-6 = $0.14", round(t["recurring_read_usd_per_turn"], 4) == 0.14)
 
 # 2. measured compaction ratio from the two 10x drops
 k, k_n = claudecode.measured_compaction_ratio()
-ck("measured k ≈ 10 from 2 observed context drops (never assumed)", round(k, 2) == 10.0 and k_n == 2)
+record_script_check(fails, "measured k ≈ 10 from 2 observed context drops (never assumed)", round(k, 2) == 10.0 and k_n == 2)
 
 # 3. candidates: bigconv flagged; smallconv + shortconv are not
 cands, (k2, _n), stats = claudecode.compaction_candidates(min_context=100000, min_turns=5)
 ids = {c["conv_id"] for c in cands}
-ck("bigconv is a compaction candidate (sustained large context)", "bigconv" in ids)
-ck("smallconv (small context) is NOT flagged", "smallconv" not in ids)
-ck("shortconv (large but only 3 turns) is NOT flagged — one/few big turns is not sustained bloat", "shortconv" not in ids)
+record_script_check(fails, "bigconv is a compaction candidate (sustained large context)", "bigconv" in ids)
+record_script_check(fails, "smallconv (small context) is NOT flagged", "smallconv" not in ids)
+record_script_check(fails, "shortconv (large but only 3 turns) is NOT flagged — one/few big turns is not sustained bloat", "shortconv" not in ids)
 big = next(c for c in cands if c["conv_id"] == "bigconv")
-ck("candidate carries recurring $/turn $0.14", round(big["recurring_read_usd_per_turn"], 4) == 0.14)
-ck("savings = recurring × (1 − 1/k) = 0.14 × 0.9 = $0.126/turn (only because k is measured)",
+record_script_check(fails, "candidate carries recurring $/turn $0.14", round(big["recurring_read_usd_per_turn"], 4) == 0.14)
+record_script_check(fails, "savings = recurring × (1 − 1/k) = 0.14 × 0.9 = $0.126/turn (only because k is measured)",
    round(big["saved_usd_per_turn"], 4) == 0.126)
-ck("scan is transparent — examined == flagged + below_threshold + too_few_turns (no silently dropped conversation)",
+record_script_check(fails, "scan is transparent — examined == flagged + below_threshold + too_few_turns (no silently dropped conversation)",
    stats["examined"] == stats["flagged"] + stats["below_threshold"] + stats["too_few_turns"])
 
 print(("[OK]" if not fails else "[FAIL]") + " claude-code-context-compaction: %d failure(s)" % len(fails))

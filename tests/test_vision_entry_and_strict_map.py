@@ -18,16 +18,12 @@ os.environ.setdefault("SPENDGUARD_TEST_ISOLATED", "1")
 os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
+from _script_checks import record_script_check
 from spendguard import adapters
 from spendguard.adapters import strict_map_violation, json_schema_request, SchemaNotStrictExpressible
 
 fails = []
 
-
-def ck(name, cond):
-    print(("  [OK] " if cond else "  [FAIL] ") + name)
-    if not cond:
-        fails.append(name)
 
 
 # schemas
@@ -44,10 +40,10 @@ NESTED_MAP = {"type": "object", "properties": {"results": {"type": "array", "ite
 
 # ── strict_map_violation: STRUCTURAL detection of a dynamic-key map ──
 print("-- strict_map_violation --")
-ck("a dynamic-key map is detected, path named", strict_map_violation(MAP) == "$.labels")
-ck("a list-of-objects schema is clean (None)", strict_map_violation(LIST) is None)
-ck("additionalProperties:false is NOT a map (clean)", strict_map_violation(CLOSED) is None)
-ck("a map nested inside an array item is found", strict_map_violation(NESTED_MAP) == "$.results[].tags")
+record_script_check(fails, "a dynamic-key map is detected, path named", strict_map_violation(MAP) == "$.labels")
+record_script_check(fails, "a list-of-objects schema is clean (None)", strict_map_violation(LIST) is None)
+record_script_check(fails, "additionalProperties:false is NOT a map (clean)", strict_map_violation(CLOSED) is None)
+record_script_check(fails, "a map nested inside an array item is found", strict_map_violation(NESTED_MAP) == "$.results[].tags")
 
 # ── json_schema_request: refuse the map on OpenAI strict; allow it where it does not collapse ──
 print("\n-- json_schema_request (vendor-aware) --")
@@ -56,17 +52,17 @@ try:
     json_schema_request("openai", MAP)
 except SchemaNotStrictExpressible as e:
     raised = e
-ck("openai + map → raises SchemaNotStrictExpressible", raised is not None)
-ck("...the error names the collapsing path and the fix", raised is not None and raised.path == "$.labels" and "ARRAY" in str(raised))
-ck("openai + list schema → no raise (strict-expressible)", isinstance(json_schema_request("openai", LIST), dict))
+record_script_check(fails, "openai + map → raises SchemaNotStrictExpressible", raised is not None)
+record_script_check(fails, "...the error names the collapsing path and the fix", raised is not None and raised.path == "$.labels" and "ARRAY" in str(raised))
+record_script_check(fails, "openai + list schema → no raise (strict-expressible)", isinstance(json_schema_request("openai", LIST), dict))
 # anthropic (forced tool, not strict) and compat (json_object + prompt) do NOT collapse a map → not refused here
-ck("anthropic + map → NOT refused (tool schema allows maps)", isinstance(json_schema_request("anthropic", MAP), dict))
-ck("compat + map → NOT refused (json_object; shape rides the prompt)", isinstance(json_schema_request("compat", MAP), dict))
+record_script_check(fails, "anthropic + map → NOT refused (tool schema allows maps)", isinstance(json_schema_request("anthropic", MAP), dict))
+record_script_check(fails, "compat + map → NOT refused (json_object; shape rides the prompt)", isinstance(json_schema_request("compat", MAP), dict))
 
 # ── the collapse the guard PREVENTS: _openai_strict would empty the map to {}-only ──
 print("\n-- the silent collapse the guard prevents --")
 collapsed = adapters._openai_strict(MAP)["properties"]["labels"]
-ck("_openai_strict turns the map into additionalProperties:false + required:[] (only {} valid)",
+record_script_check(fails, "_openai_strict turns the map into additionalProperties:false + required:[] (only {} valid)",
    collapsed.get("additionalProperties") is False and collapsed.get("required") == [])
 
 # ── adapters.vision: an explicit entry that REFUSES a no-image call and forwards images= ──
@@ -76,7 +72,7 @@ try:
     adapters.vision("openai:gpt-5-nano", "label this", [])
 except ValueError as e:
     raised2 = e
-ck("vision(images=[]) raises (a no-image vision call is a bug, not a text call)", raised2 is not None and "at least one image" in str(raised2))
+record_script_check(fails, "vision(images=[]) raises (a no-image vision call is a bug, not a text call)", raised2 is not None and "at least one image" in str(raised2))
 
 _seen = {}
 _orig = adapters.call
@@ -85,33 +81,33 @@ try:
     r = adapters.vision("openai:gpt-5-nano", "label", ["/tmp/x.png"], schema=LIST, sig="label")
 finally:
     adapters.call = _orig
-ck("vision forwards images= to call (non-empty)", _seen.get("images") == ["/tmp/x.png"])
-ck("vision forwards the schema and sig through", _seen.get("schema") == LIST and _seen.get("sig") == "label")
-ck("vision returns call's result dict", r.get("text") == "ok" and r.get("executor") == "api")
+record_script_check(fails, "vision forwards images= to call (non-empty)", _seen.get("images") == ["/tmp/x.png"])
+record_script_check(fails, "vision forwards the schema and sig through", _seen.get("schema") == LIST and _seen.get("sig") == "label")
+record_script_check(fails, "vision returns call's result dict", r.get("text") == "ok" and r.get("executor") == "api")
 
 # ── the TOTAL-ENUM limit: counted the way the provider counts (every occurrence), refused before any request ──
 print("-- strict enum total --")
 _E = lambda n: {"type": "string", "enum": ["v%d" % j for j in range(n)]}   # noqa: E731
 FOUR_SHARED = {"type": "object", "properties": {"a": _E(256), "b": _E(256), "c": _E(256), "d": _E(256)},
                "required": ["a", "b", "c", "d"]}                                  # the real consumer case: 4 × 256
-ck("four fields sharing a 256-value enum count as 1024, not 256 (each occurrence counts — that is what the 400 said)",
+record_script_check(fails, "four fields sharing a 256-value enum count as 1024, not 256 (each occurrence counts — that is what the 400 said)",
    adapters.strict_enum_total(FOUR_SHARED) == 1024)
 NESTED = {"type": "object", "properties": {"results": {"type": "array", "items": {"type": "object", "properties": {
     "k": _E(10), "opt": {"anyOf": [_E(5), {"type": "null"}]}}, "required": ["k", "opt"]}}}, "required": ["results"]}
-ck("enums nested in items / anyOf are counted", adapters.strict_enum_total(NESTED) == 15)
-ck("a schema with no enum counts 0", adapters.strict_enum_total(LIST) == 0)
+record_script_check(fails, "enums nested in items / anyOf are counted", adapters.strict_enum_total(NESTED) == 15)
+record_script_check(fails, "a schema with no enum counts 0", adapters.strict_enum_total(LIST) == 0)
 _raised = None
 try:
     json_schema_request("openai", FOUR_SHARED)
 except SchemaNotStrictExpressible as e:
     _raised = str(e)
-ck("openai + over-limit enum → raises SchemaNotStrictExpressible naming the count and the limit",
+record_script_check(fails, "openai + over-limit enum → raises SchemaNotStrictExpressible naming the count and the limit",
    _raised is not None and "1024" in _raised and str(adapters.OPENAI_STRICT_MAX_ENUM_VALUES) in _raised)
 AT_LIMIT = {"type": "object", "properties": {"a": _E(250), "b": _E(250), "c": _E(250), "d": _E(250)},
             "required": ["a", "b", "c", "d"]}
-ck("exactly AT the limit is accepted ('at most' is inclusive)",
+record_script_check(fails, "exactly AT the limit is accepted ('at most' is inclusive)",
    "response_format" in json_schema_request("openai", AT_LIMIT))
-ck("the limit is OpenAI's — the anthropic binding of the same schema is not refused",
+record_script_check(fails, "the limit is OpenAI's — the anthropic binding of the same schema is not refused",
    "tools" in json_schema_request("anthropic", FOUR_SHARED))
 
 print(("[OK]" if not fails else "[FAIL]") + " vision entry + strict-map guard: %d failure(s)" % len(fails))

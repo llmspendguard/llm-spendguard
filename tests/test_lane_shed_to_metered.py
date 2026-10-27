@@ -27,15 +27,12 @@ os.environ["SPENDGUARD_DISPATCH_XP_OFF"] = "1"           # in-process semaphores
 os.environ["SPENDGUARD_DISPATCH_LANE_CONCURRENCY"] = "1"  # ONE lane slot → a single held acquire saturates it
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
+from _script_checks import record_script_check
 from spendguard import dispatch, vendor_call, adapters   # noqa: E402
 
 fails = []
 
 
-def ck(name, cond):
-    print(("  [OK] " if cond else "  [FAIL] ") + name)
-    if not cond:
-        fails.append(name)
 
 
 # ── stubs: "anthropic" rides the claude-code $0 lane; "openai" is metered-only. No real model is ever touched ──
@@ -62,15 +59,15 @@ adapters.call = _fake_adapters_call
 print("-- dispatch.acquire(skip_lane) keys on the metered vendor, not the lane --")
 _k_lane = dispatch._GOV._key_and_limit("anthropic", "claude-haiku-4-5", skip_lane=False)[0]
 _k_vend = dispatch._GOV._key_and_limit("anthropic", "claude-haiku-4-5", skip_lane=True)[0]
-ck("skip_lane=False → the lane bucket (lane:claude-code)", _k_lane == "lane:claude-code")
-ck("skip_lane=True → the metered vendor bucket (vendor:anthropic), a DIFFERENT cap", _k_vend == "vendor:anthropic")
+record_script_check(fails, "skip_lane=False → the lane bucket (lane:claude-code)", _k_lane == "lane:claude-code")
+record_script_check(fails, "skip_lane=True → the metered vendor bucket (vendor:anthropic), a DIFFERENT cap", _k_vend == "vendor:anthropic")
 
 # ── 5. the $0 default is intact: an UNSATURATED lane still serves the call on the lane (no needless metered) ───
 print("\n-- an unsaturated $0 lane still serves the call (the shed does not fire when the lane is free) --")
 _calls_seen.clear()
 res = vendor_call.call("anthropic", "claude-haiku-4-5", "hi", deadline_s=5, max_tokens=100, purpose="test:free")
-ck("a free lane serves the call", res.ok)
-ck("...and it did NOT force metered (rode the $0 lane, metered_only=False)",
+record_script_check(fails, "a free lane serves the call", res.ok)
+record_script_check(fails, "...and it did NOT force metered (rode the $0 lane, metered_only=False)",
    len(_calls_seen) == 1 and _calls_seen[0]["metered_only"] is False)
 
 # ── 1. a SATURATED $0 lane SHEDS to the metered twin — the call COMPLETES instead of timing out ───────────────
@@ -82,9 +79,9 @@ try:
                            purpose="test:shed")
 finally:
     dispatch.release("anthropic", "claude-haiku-4-5")
-ck("a saturated $0 lane returns a deliberate deadline after waiting", res.kind == vendor_call.DEADLINE_EXCEEDED)
-ck("...it did not silently bill to escape saturation", not res.ok)
-ck("...no paid attempt bypassed the recovery ladder", len(_calls_seen) == 0)
+record_script_check(fails, "a saturated $0 lane returns a deliberate deadline after waiting", res.kind == vendor_call.DEADLINE_EXCEEDED)
+record_script_check(fails, "...it did not silently bill to escape saturation", not res.ok)
+record_script_check(fails, "...no paid attempt bypassed the recovery ladder", len(_calls_seen) == 0)
 
 # ── 3. no_metered_fallback is the $0-only contract: a saturated lane stays an HONEST failure, no metered charge ─
 print("\n-- no_metered_fallback: a saturated lane is an honest deadline, never a surprise metered charge --")
@@ -95,8 +92,8 @@ try:
                            purpose="test:refuse", no_metered_fallback=True)
 finally:
     dispatch.release("anthropic", "claude-haiku-4-5")
-ck("no_metered_fallback → the saturated lane is DEADLINE_EXCEEDED", res.kind == vendor_call.DEADLINE_EXCEEDED)
-ck("...and NOTHING was billed to the metered API (adapters.call never reached)", len(_calls_seen) == 0)
+record_script_check(fails, "no_metered_fallback → the saturated lane is DEADLINE_EXCEEDED", res.kind == vendor_call.DEADLINE_EXCEEDED)
+record_script_check(fails, "...and NOTHING was billed to the metered API (adapters.call never reached)", len(_calls_seen) == 0)
 
 # ── 2. a saturated METERED vendor has no cheaper twin → it STAYS a deadline (real 429-protection, no shed) ─────
 print("\n-- a saturated METERED vendor stays a deadline (no lane to shed FROM, no cheaper twin to shed TO) --")
@@ -108,8 +105,8 @@ try:
 finally:
     dispatch.release("openai", "gpt-x")
     os.environ.pop("SPENDGUARD_DISPATCH_VENDOR_CONCURRENCY", None)
-ck("a saturated metered vendor STAYS DEADLINE_EXCEEDED (no shed)", res.kind == vendor_call.DEADLINE_EXCEEDED)
-ck("...and it did not fire a phantom metered attempt", len(_calls_seen) == 0)
+record_script_check(fails, "a saturated metered vendor STAYS DEADLINE_EXCEEDED (no shed)", res.kind == vendor_call.DEADLINE_EXCEEDED)
+record_script_check(fails, "...and it did not fire a phantom metered attempt", len(_calls_seen) == 0)
 
 print(f"\n{'[FAIL]' if fails else 'OK'} test_lane_shed_to_metered: {len(fails)} failure(s)")
 sys.exit(1 if fails else 0)

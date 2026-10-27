@@ -21,6 +21,8 @@ os.environ.setdefault("SPENDGUARD_TEST_ISOLATED", "1")
 os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
+from _script_checks import record_script_check  # noqa: E402
+
 import spendguard  # noqa: E402
 from spendguard import config, fleet, gate  # noqa: E402
 
@@ -32,29 +34,23 @@ PINNED_CONSUMER_VERSION = "0.14.0"
 RESOLVED_REPOSITORY_PATH = "/resolved/repo"
 
 
-def ck(name, cond, extra=""):
-    print(("  [OK] " if cond else "  [FAIL] ") + name + (("  — " + extra) if extra and not cond else ""))
-    if not cond:
-        fails.append(name)
-
-
 # ── A. _stale_editable_install(): code != metadata -> STALE; == -> fresh; unreadable -> NOT a skew ───────────────────
 import importlib.metadata as _im  # noqa: E402
 _orig_ver = _im.version
 try:
     _im.version = lambda n: "0.0.1-ancient"
     stale, code, meta = gate._stale_editable_install()
-    ck("code != metadata -> STALE", stale is True and meta == "0.0.1-ancient" and code == spendguard.__version__,
+    record_script_check(fails, "code != metadata -> STALE", stale is True and meta == "0.0.1-ancient" and code == spendguard.__version__,
        extra=f"stale={stale} code={code} meta={meta}")
     _im.version = lambda n: spendguard.__version__
     stale2, _, _ = gate._stale_editable_install()
-    ck("code == metadata -> fresh (not stale)", stale2 is False)
+    record_script_check(fails, "code == metadata -> fresh (not stale)", stale2 is False)
 
     def _raise(n):
         raise _im.PackageNotFoundError(n)
     _im.version = _raise
     stale3, _, meta3 = gate._stale_editable_install()
-    ck("metadata UNREADABLE -> NOT a skew (meta None; never flag on a failed read)", stale3 is False and meta3 is None)
+    record_script_check(fails, "metadata UNREADABLE -> NOT a skew (meta None; never flag on a failed read)", stale3 is False and meta3 is None)
 finally:
     _im.version = _orig_ver
 
@@ -75,20 +71,20 @@ try:
     with contextlib.redirect_stdout(_buf):
         rc = gate._cli("doctor")
     out = _buf.getvalue()
-    ck("doctor EXITS NON-ZERO on a stale editable install", rc == 1, extra=f"rc={rc}")
-    ck("doctor names it STALE EDITABLE INSTALL", "STALE EDITABLE INSTALL" in out)
-    ck("doctor gives the CORRECT remediation — `pip install -e .` WITH deps, NOT --no-deps",
+    record_script_check(fails, "doctor EXITS NON-ZERO on a stale editable install", rc == 1, extra=f"rc={rc}")
+    record_script_check(fails, "doctor names it STALE EDITABLE INSTALL", "STALE EDITABLE INSTALL" in out)
+    record_script_check(fails, "doctor gives the CORRECT remediation — `pip install -e .` WITH deps, NOT --no-deps",
        "pip install -e ." in out and "NOT --no-deps" in out, extra=out)
 
     with contextlib.redirect_stdout(io.StringIO()):
         rc_status = gate._cli("status")
-    ck("status does NOT bind (exit 0) even on a skew — only the diagnostic doctor binds", rc_status == 0,
+    record_script_check(fails, "status does NOT bind (exit 0) even on a skew — only the diagnostic doctor binds", rc_status == 0,
        extra=f"rc_status={rc_status}")
 
     gate._stale_editable_install = lambda: (False, "9.9.9", "9.9.9")   # a FRESH install (code == metadata)
     with contextlib.redirect_stdout(_fresh_doctor_output := io.StringIO()):
         rc_fresh = gate._cli("doctor")
-    ck("doctor on a FRESH install exits 0", rc_fresh == 0,
+    record_script_check(fails, "doctor on a FRESH install exits 0", rc_fresh == 0,
        extra=f"rc_fresh={rc_fresh}; output={_fresh_doctor_output.getvalue()}")
 
     fleet.consumer_install_drift = lambda: [{
@@ -98,8 +94,8 @@ try:
     with contextlib.redirect_stdout(_buf := io.StringIO()):
         rc_pinned = gate._cli("doctor")
     pinned_out = _buf.getvalue()
-    ck("doctor binds a pinned consumer install", rc_pinned == 1)
-    ck("doctor names venv, version skew, and exact editable remediation",
+    record_script_check(fails, "doctor binds a pinned consumer install", rc_pinned == 1)
+    record_script_check(fails, "doctor names venv, version skew, and exact editable remediation",
        PINNED_CONSUMER_VENV in pinned_out and f"install pinned v{PINNED_CONSUMER_VERSION}" in pinned_out
        and f"{PINNED_CONSUMER_VENV}/bin/python -m pip install -e {RESOLVED_REPOSITORY_PATH}" in pinned_out)
 finally:

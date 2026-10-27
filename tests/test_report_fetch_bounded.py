@@ -24,16 +24,12 @@ os.environ.setdefault("SPENDGUARD_TEST_ISOLATED", "1")
 os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
+from _script_checks import record_script_check
 from spendguard import reconcile_openai as ro, report, config      # noqa: E402
 from urllib.parse import urlparse, parse_qs                         # noqa: E402
 
 fails = []
 
-
-def ck(name, cond):
-    print(("  [OK] " if cond else "  [FAIL] ") + name)
-    if not cond:
-        fails.append(name)
 
 
 _UTC = datetime.timezone.utc
@@ -114,8 +110,8 @@ _warns.clear()
 stuck = _Stuck()
 ro.urllib.request.urlopen = stuck
 rows = ro.fetch_batches("k")
-ck("a non-advancing cursor TERMINATES (does not hang)", stuck.calls <= 3 and isinstance(rows, list))
-ck("...and the stuck cursor is surfaced via warn_once", any("did not advance" in w for w in _warns))
+record_script_check(fails, "a non-advancing cursor TERMINATES (does not hang)", stuck.calls <= 3 and isinstance(rows, list))
+record_script_check(fails, "...and the stuck cursor is surfaced via warn_once", any("did not advance" in w for w in _warns))
 
 # ── SINCE BOUND STOPS EARLY (newest-first) ──
 pages = [
@@ -126,15 +122,15 @@ pages = [
 pager = _Pager(pages)
 ro.urllib.request.urlopen = pager
 rows = ro.fetch_batches("k", since="2026-09-01")
-ck("since-bound paging STOPS at the first page whose oldest batch predates the window", pager.calls == 2)
-ck("...and the un-needed older page was never fetched", all(b["id"] not in ("a20", "a10") for b in rows))
+record_script_check(fails, "since-bound paging STOPS at the first page whose oldest batch predates the window", pager.calls == 2)
+record_script_check(fails, "...and the un-needed older page was never fetched", all(b["id"] not in ("a20", "a10") for b in rows))
 
 # ── PAGE CAP TERMINATES even when the cursor keeps advancing ──
 adv = _Advancing()
 ro.urllib.request.urlopen = adv
 _warns.clear()
 rows = ro.fetch_batches("k", max_pages=3)
-ck("an always-advancing has_more stops at the page cap", adv.calls == 3 and any("page cap" in w for w in _warns))
+record_script_check(fails, "an always-advancing has_more stops at the page cap", adv.calls == 3 and any("page cap" in w for w in _warns))
 
 # ── WINDOW SUMS ARE IDENTICAL: bounding avoids work, it does not change the in-window answer ──
 report.load_key = lambda: "k"
@@ -148,10 +144,10 @@ full, _ = report.openai_by_day(since=None)               # unbounded pull → se
 ro.urllib.request.urlopen = _Pager(full_pages)
 bounded, _ = report.openai_by_day(since="2026-09-01")    # bounded pull → stops early
 win = lambda bd: round(sum(v for d, v in bd.items() if d >= "2026-09-01"), 6)
-ck("in-window $ is identical with and without the since bound", win(full) == win(bounded) and win(bounded) == 2.0)
+record_script_check(fails, "in-window $ is identical with and without the since bound", win(full) == win(bounded) and win(bounded) == 2.0)
 
 # ── THE WATCHDOG FIRES within its wall-clock budget, and no-ops when unset ──
-ck("watchdog is a no-op when max_seconds is unset", report._install_watchdog(None)() is None)
+record_script_check(fails, "watchdog is a no-op when max_seconds is unset", report._install_watchdog(None)() is None)
 fired = False
 cancel = report._install_watchdog(0.05)
 try:
@@ -160,7 +156,7 @@ except report._WatchdogFired:
     fired = True
 finally:
     cancel()
-ck("the --max-seconds watchdog raises _WatchdogFired within the budget", fired)
+record_script_check(fails, "the --max-seconds watchdog raises _WatchdogFired within the budget", fired)
 
 print(("[OK]" if not fails else "[FAIL]") + " report fetch bounded: %d failure(s)" % len(fails))
 sys.exit(1 if fails else 0)

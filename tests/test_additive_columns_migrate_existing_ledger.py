@@ -22,19 +22,15 @@ os.environ.setdefault("SPENDGUARD_TEST_ISOLATED", "1")
 os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
+from _script_checks import record_script_check  # noqa: E402
+
 from spendguard import budget, calls, ledger  # noqa: E402
 
 fails = []
 
 
-def ck(name, cond, extra=""):
-    print(("  [OK] " if cond else "  [FAIL] ") + name + (("  — " + extra) if extra and not cond else ""))
-    if not cond:
-        fails.append(name)
-
-
 ADDITIVE = [c for c, _ in ledger._ADDITIVE_COLUMNS]           # the columns the ALTER loop is responsible for
-ck("there are additive columns to guard (incl. chain)", ADDITIVE and "chain" in ADDITIVE, extra=repr(ADDITIVE))
+record_script_check(fails, "there are additive columns to guard (incl. chain)", ADDITIVE and "chain" in ADDITIVE, extra=repr(ADDITIVE))
 
 # Legacy fixture = the REAL current DDL with every additive COLUMN DEFINITION line removed → a v5-era spend_events
 # that predates all of them. Only the `<name> TYPE` definition lines are removed (comment lines create no columns and
@@ -48,21 +44,21 @@ con.executescript(legacy_ddl)
 con.commit()
 pre = {r[1] for r in con.execute("PRAGMA table_info(spend_events)")}
 con.close()
-ck("the legacy fixture starts WITHOUT any additive column (a true pre-additive ledger)",
+record_script_check(fails, "the legacy fixture starts WITHOUT any additive column (a true pre-additive ledger)",
    not (set(ADDITIVE) & pre), extra=f"present: {sorted(set(ADDITIVE) & pre)}")
 
 # Opening through the real code runs _ensure_schema → the additive ALTER loop on the existing table.
 led = ledger.SpendLedger()
 post = {r[1] for r in led._conn.execute("PRAGMA table_info(spend_events)")}
 missing = [c for c in ADDITIVE if c not in post]
-ck("EVERY additive column is ALTER-ADDed to the existing table", not missing, extra=f"still missing: {missing}")
+record_script_check(fails, "EVERY additive column is ALTER-ADDed to the existing table", not missing, extra=f"still missing: {missing}")
 
 # The newest additive column (chain) must be WRITABLE + READABLE end-to-end on the migrated ledger — present-but-unbound
 # would still silently drop writes, so prove the full record_charge → spent_by_job round-trip, not just the PRAGMA.
 with calls.context(chain="legacy-ledger-job"):
     budget.record_charge("openai", "gpt-5-mini", "realtime", 0.07)
 got = budget.spent_by_job("legacy-ledger-job")
-ck("a chain-tagged charge round-trips through the MIGRATED ledger (0.07)", abs(got - 0.07) < 1e-9, extra=f"got={got}")
+record_script_check(fails, "a chain-tagged charge round-trips through the MIGRATED ledger (0.07)", abs(got - 0.07) < 1e-9, extra=f"got={got}")
 
 print(f"\n{'OK' if not fails else 'FAIL'} test_additive_columns_migrate_existing_ledger: {len(fails)} failure(s)")
 sys.exit(1 if fails else 0)

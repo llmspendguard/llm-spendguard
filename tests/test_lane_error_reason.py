@@ -22,6 +22,7 @@ os.environ.setdefault("SPENDGUARD_TEST_ISOLATED", "1")
 os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
+from _script_checks import record_script_check
 from spendguard import (adapters, lane_balance, lane_catalog, lane_bandit, lane_economics,
                         dispatch as _dispatch)
 from spendguard.dispatch import DispatchTimeout
@@ -29,10 +30,6 @@ from spendguard.dispatch import DispatchTimeout
 fails = []
 
 
-def ck(name, cond):
-    print(("  [OK] " if cond else "  [FAIL] ") + name)
-    if not cond:
-        fails.append(name)
 
 
 # ── one good arm, governor open, cooling off — the minimal harness so bulk_delegate runs exactly one task on a lane ──
@@ -73,23 +70,23 @@ def row_for(call_result_or_exc, *, acquire=_acquire_ok, expect_ids=None):
 
 # ── SERVED: a real answer → reason is None (a reason is a MISS signal, never noise on a success) ──
 r = row_for(_SERVED)
-ck("SERVED row (has text) → reason is None", r.get("text") == "ok" and r.get("reason") is None)
+record_script_check(fails, "SERVED row (has text) → reason is None", r.get("text") == "ok" and r.get("reason") is None)
 
 # ── adapters MISS reasons propagate onto the row verbatim (refuse_billed path: text=None + reason + error) ──
 for code in ("empty", "shape_miss", "lane_error", "quota"):
     r = row_for({"text": None, "cost": None, "executor": "codex", "provider": "openai",
                  "model": "gpt-5.6-luna", "reason": code, "error": f"refused: {code}"})
-    ck(f"adapters miss reason '{code}' → row.reason == '{code}'", r.get("reason") == code and r.get("text") is None)
+    record_script_check(fails, f"adapters miss reason '{code}' → row.reason == '{code}'", r.get("reason") == code and r.get("text") is None)
 
 # ── api_error: refuse_billed=False and the METERED fallback failed → adapters gives an error but NO reason ──
 r = row_for({"text": None, "cost": 0.0, "executor": "api", "provider": "openai",
              "model": "gpt-5.6-luna", "error": "HTTP 500 from provider"})
-ck("metered-fallback failure (error, no adapters reason) → row.reason == 'api_error'",
+record_script_check(fails, "metered-fallback failure (error, no adapters reason) → row.reason == 'api_error'",
    r.get("reason") == "api_error" and r.get("text") is None)
 
 # ── call_raised: adapters.call itself raises (it normally returns an error dict) ──
 r = row_for(ValueError("adapters exploded"))
-ck("adapters.call raises → row.reason == 'call_raised'", r.get("reason") == "call_raised" and r.get("text") is None)
+record_script_check(fails, "adapters.call raises → row.reason == 'call_raised'", r.get("reason") == "call_raised" and r.get("text") is None)
 
 # ── dispatch: a NON-deliberate governor error becomes a 'dispatch' row (retryable, not a shape/quota miss) ──
 def _acquire_boom(*a, **k):
@@ -97,11 +94,11 @@ def _acquire_boom(*a, **k):
 
 
 r = row_for(_SERVED, acquire=_acquire_boom)
-ck("non-deliberate governor error → row.reason == 'dispatch'", r.get("reason") == "dispatch" and r.get("text") is None)
+record_script_check(fails, "non-deliberate governor error → row.reason == 'dispatch'", r.get("reason") == "dispatch" and r.get("text") is None)
 
 # ── arity_miss: a shape-perfect but INCOMPLETE envelope (dropped ids) → a MISS with reason 'arity_miss' ──
 r = row_for({**_SERVED, "text": '{"results":[]}'}, expect_ids=lambda t: ["id1", "id2"])
-ck("incomplete envelope (ids dropped) → row.reason == 'arity_miss'",
+record_script_check(fails, "incomplete envelope (ids dropped) → row.reason == 'arity_miss'",
    r.get("reason") == "arity_miss" and r.get("text") is None)
 
 # ── arity_check_error: the completeness check ITSELF broke → fail CLOSED (a MISS, retried; never a swallowed pass) ──
@@ -110,7 +107,7 @@ def _boom_ids(task):
 
 
 r = row_for({**_SERVED, "text": '{"results":[{"id":"id1"}]}'}, expect_ids=_boom_ids)
-ck("completeness check error → row.reason == 'arity_check_error' (fail closed)",
+record_script_check(fails, "completeness check error → row.reason == 'arity_check_error' (fail closed)",
    r.get("reason") == "arity_check_error" and r.get("text") is None)
 
 # ── QUEUE-SLOT TIMEOUT: a saturated slot (DispatchTimeout) is NOT a fan-halt — it becomes THIS task's
@@ -122,7 +119,7 @@ def _acquire_saturated(*a, **k):
 
 
 r = row_for(_SERVED, acquire=_acquire_saturated)
-ck("a DispatchTimeout (queue-slot timeout) → a 'dispatch_saturated' MISS row, the fan is NOT halted",
+record_script_check(fails, "a DispatchTimeout (queue-slot timeout) → a 'dispatch_saturated' MISS row, the fan is NOT halted",
    r.get("reason") == "dispatch_saturated" and r.get("text") is None)
 
 # ── the whole vocabulary is closed: every reason produced above is a known code (no silent contract break) ──
@@ -133,7 +130,7 @@ for res, eids in ((_SERVED, None),
                   (ValueError("boom"), None),
                   ({**_SERVED, "text": '{"results":[]}'}, lambda t: ["id1"])):
     _seen.add(row_for(res, expect_ids=eids).get("reason"))
-ck("every reason emitted is in the closed ALLOWED vocabulary", _seen <= ALLOWED)
+record_script_check(fails, "every reason emitted is in the closed ALLOWED vocabulary", _seen <= ALLOWED)
 
 print(("[OK]" if not fails else "[FAIL]") + " lane error reason: %d failure(s)" % len(fails))
 sys.exit(1 if fails else 0)

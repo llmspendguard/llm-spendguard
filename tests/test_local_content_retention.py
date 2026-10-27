@@ -12,6 +12,7 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
     os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="spendguard-content-retention-")
     os.execv(sys.executable, [sys.executable] + sys.argv)
 
+from _script_checks import record_script_check
 from spendguard import adapters, callio, calls, config, content_retention, saas, truth
 
 
@@ -19,10 +20,6 @@ failures = []
 TEST_MODEL = "openai:gpt-5.5"
 
 
-def check(name, condition):
-    print(("  [OK] " if condition else "  [FAIL] ") + name)
-    if not condition:
-        failures.append(name)
 
 
 legacy_cap = callio.snip_chars()
@@ -51,14 +48,14 @@ connection = content_retention._content_retention_db()
 row = connection.execute(
     f"SELECT call_id,prompt_json,system_json,response_json FROM {content_retention.CONTENT_RETENTION_TABLE}"
 ).fetchone()
-check("default-on governed call writes one content row", row is not None)
-check("content row joins the existing calls metadata row", row and row[0] == result["call_id"] and
+record_script_check(failures, "default-on governed call writes one content row", row is not None)
+record_script_check(failures, "content row joins the existing calls metadata row", row and row[0] == result["call_id"] and
       calls._calls_db().execute("SELECT 1 FROM calls WHERE id=?", (row[0],)).fetchone() == (1,))
-check("prompt round-trips whole beyond the legacy cap", row and json.loads(row[1]) == long_prompt and
+record_script_check(failures, "prompt round-trips whole beyond the legacy cap", row and json.loads(row[1]) == long_prompt and
       len(json.loads(row[1])) == len(long_prompt))
-check("system round-trips whole", row and json.loads(row[2]) == long_system)
+record_script_check(failures, "system round-trips whole", row and json.loads(row[2]) == long_system)
 decoded_response = json.loads(row[3]) if row else {}
-check("response text and structured/tool output round-trip whole", decoded_response.get("text") == long_response and
+record_script_check(failures, "response text and structured/tool output round-trip whole", decoded_response.get("text") == long_response and
       decoded_response.get("tool_calls") == result["tool_calls"])
 
 retention_days = content_retention.content_retention_days()
@@ -72,7 +69,7 @@ content_retention.record_governed_call_content("fresh-call", "fresh-secret", Non
 content_retention._purge_expired_content_rows(connection, now=now)
 remaining = {item[0] for item in connection.execute(
     f"SELECT call_id FROM {content_retention.CONTENT_RETENTION_TABLE}").fetchall()}
-check("TTL purge removes old rows and retains in-window rows", "old-call" not in remaining and "fresh-call" in remaining)
+record_script_check(failures, "TTL purge removes old rows and retains in-window rows", "old-call" not in remaining and "fresh-call" in remaining)
 
 connection.execute(f"CREATE TRIGGER content_retention_purge_failure BEFORE DELETE ON "
                    f"{content_retention.CONTENT_RETENTION_TABLE} BEGIN SELECT RAISE(ABORT,'fixture'); END")
@@ -92,7 +89,7 @@ except sqlite3.DatabaseError:
     purge_failure_propagated = True
 failure_row_still_present = connection.execute(
     f"SELECT 1 FROM {content_retention.CONTENT_RETENTION_TABLE} WHERE id=?", ("failure-row",)).fetchone()
-check("failed purge rolls back without over-delete or propagation through the open seam",
+record_script_check(failures, "failed purge rolls back without over-delete or propagation through the open seam",
       failure_row_still_present == (1,) and not purge_failure_propagated)
 connection.execute("DROP TRIGGER content_retention_purge_failure")
 connection.commit()
@@ -104,7 +101,7 @@ try:
         "failure-call", "never-logged", None, {"text": "never-logged"})
 finally:
     content_retention._content_retention_db = original_content_db
-check("retention write/purge infrastructure failure does not propagate to call path", write_failure_result is None)
+record_script_check(failures, "retention write/purge infrastructure failure does not propagate to call path", write_failure_result is None)
 
 original_cfg_get = config._cfg_get
 
@@ -125,7 +122,7 @@ try:
         f"SELECT COUNT(*) FROM {content_retention.CONTENT_RETENTION_TABLE}").fetchone()[0]
 finally:
     config._cfg_get = original_cfg_get
-check("content_retention.enabled=False opts out while default remains on",
+record_script_check(failures, "content_retention.enabled=False opts out while default remains on",
       opt_out_result is None and before_opt_out == after_opt_out)
 
 secret_markers = (long_prompt, long_system, long_response, "fresh-secret", "failure-secret")
@@ -157,11 +154,11 @@ finally:
     reconcile_module.owner_ok = original_owner_ok
 
 serialized_pushes = json.dumps({"saas": saas_payload, "truth": truth_payload}, sort_keys=True)
-check("real SaaS/truth payload serializers contain zero retained content/table fields",
+record_script_check(failures, "real SaaS/truth payload serializers contain zero retained content/table fields",
       content_retention.CONTENT_RETENTION_TABLE not in serialized_pushes and
       "prompt_json" not in serialized_pushes and "response_json" not in serialized_pushes and
       all(marker not in serialized_pushes for marker in secret_markers))
-check("existing forensic call metadata remains recorded", calls._calls_db().execute(
+record_script_check(failures, "existing forensic call metadata remains recorded", calls._calls_db().execute(
     "SELECT intent,provider,model,executor FROM calls WHERE id=?", (result["call_id"],)).fetchone() ==
       ("retention-fixture", "fixture-provider", TEST_MODEL, "fixture-executor"))
 

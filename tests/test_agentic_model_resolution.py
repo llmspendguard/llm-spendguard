@@ -22,15 +22,11 @@ os.environ.setdefault("SPENDGUARD_TEST_ISOLATED", "1")
 os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
+from _script_checks import record_script_check  # noqa: E402
+
 from spendguard import adapters, vendor_call, catalog, calls, config, models
 
 fails = []
-
-
-def ck(name, cond):
-    print(("  [OK] " if cond else "  [FAIL] ") + name)
-    if not cond:
-        fails.append(name)
 
 
 # ── shared stubs ──
@@ -61,23 +57,23 @@ adapters.call = _fake_resolver
 
 # ── served_substitute: an UNSERVED id resolves agentically, and the judgement is cached ──
 _id, _reason = vendor_call.served_substitute("openai", "gpt-5.6")
-ck("served_substitute maps an unserved id to the agentic pick", _id == "gpt-5.6-sol" and _reason == "closest served 5.6-class model")
-ck("...and records it as a model fact", _FACTS.get("gpt-5.6", {}).get("served_substitute", ("",))[0] == "gpt-5.6-sol")
+record_script_check(fails, "served_substitute maps an unserved id to the agentic pick", _id == "gpt-5.6-sol" and _reason == "closest served 5.6-class model")
+record_script_check(fails, "...and records it as a model fact", _FACTS.get("gpt-5.6", {}).get("served_substitute", ("",))[0] == "gpt-5.6-sol")
 
 _before = len(_agentic_calls)
 _id2, _reason2 = vendor_call.served_substitute("openai", "gpt-5.6")
-ck("a second call hits the CACHE — the agentic resolver is NOT re-invoked", len(_agentic_calls) == _before)
-ck("...and returns the cached id + reason", _id2 == "gpt-5.6-sol" and _reason2 == "closest served 5.6-class model")
+record_script_check(fails, "a second call hits the CACHE — the agentic resolver is NOT re-invoked", len(_agentic_calls) == _before)
+record_script_check(fails, "...and returns the cached id + reason", _id2 == "gpt-5.6-sol" and _reason2 == "closest served 5.6-class model")
 
 # ── an already-SERVED id resolves to itself with NO agentic call ──
 _before = len(_agentic_calls)
 _sid, _sreason = vendor_call.served_substitute("openai", "gpt-5.5")
-ck("a served id → (itself, None), no agentic call", _sid == "gpt-5.5" and _sreason is None and len(_agentic_calls) == _before)
+record_script_check(fails, "a served id → (itself, None), no agentic call", _sid == "gpt-5.5" and _sreason is None and len(_agentic_calls) == _before)
 
 # ── a pick the model INVENTS (not in the served set) is rejected → no substitution ──
 adapters.call = lambda model, prompt, **kw: {"text": '{"id": "gpt-9-imaginary", "reason": "x"}', "error": None}
 _bid, _breason = vendor_call.served_substitute("openai", "gpt-7.0")
-ck("an invented (unserved) pick is NOT accepted → (requested, None)", _bid == "gpt-7.0" and _breason is None)
+record_script_check(fails, "an invented (unserved) pick is NOT accepted → (requested, None)", _bid == "gpt-7.0" and _breason is None)
 
 # ── ECONOMIC BOUND on the substitute (strict + 1.25x cushion): cheapest-that-delivers, flag over-bound / unpriced ──
 from spendguard import pricing
@@ -112,17 +108,17 @@ def _resolver_pick(pick):
 
 adapters.call = _resolver_pick("gpt-5.6-terra")                          # the model picks an OVER-bound id
 _oid, _oreason = vendor_call.served_substitute("openai", "req-over")
-ck("the resolver prompt carries candidate prices + the economic bound", "Economic bound" in _captured.get("prompt", "") and "$0." in _captured.get("prompt", ""))
-ck("an OVER-bound pick still substitutes but is flagged [COST UP] (strict+1.25x = warn, not block)",
+record_script_check(fails, "the resolver prompt carries candidate prices + the economic bound", "Economic bound" in _captured.get("prompt", "") and "$0." in _captured.get("prompt", ""))
+record_script_check(fails, "an OVER-bound pick still substitutes but is flagged [COST UP] (strict+1.25x = warn, not block)",
    _oid == "gpt-5.6-terra" and "COST UP" in (_oreason or ""))
 
 adapters.call = _resolver_pick("gpt-5.6-luna")                           # an IN-bound cheaper id
 _kid, _kreason = vendor_call.served_substitute("openai", "req-ok")
-ck("an in-bound pick carries NO cost-up flag", _kid == "gpt-5.6-luna" and "COST UP" not in (_kreason or ""))
+record_script_check(fails, "an in-bound pick carries NO cost-up flag", _kid == "gpt-5.6-luna" and "COST UP" not in (_kreason or ""))
 
 adapters.call = _resolver_pick("gpt-5.5")                                # an UNPRICED served id
 _uid, _ureason = vendor_call.served_substitute("openai", "req-unpriced")
-ck("an UNPRICED pick is flagged on the reason (spend captured by reconcile)", _uid == "gpt-5.5" and "UNPRICED" in (_ureason or ""))
+record_script_check(fails, "an UNPRICED pick is flagged on the reason (spend captured by reconcile)", _uid == "gpt-5.5" and "UNPRICED" in (_ureason or ""))
 
 # ── call() dispatch: the id is respelled BEFORE dispatch and the swap is recorded on the result ──
 _seen_models = []
@@ -140,18 +136,18 @@ adapters._book_substitution = lambda *a, **k: None
 vendor_call.served_substitute = lambda v, m: ("gpt-5.6-sol", "closest served 5.6-class model") if m == "gpt-5.6" else (m, None)
 
 _r = adapters.call("openai:gpt-5.6", "p", max_tokens=8)
-ck("dispatch used the RESOLVED id (budget/guards/call all see the served id)", _seen_models[-1] == "openai:gpt-5.6-sol")
-ck("the result records resolved_from (transparent, not silent)", _r.get("resolved_from") == "openai:gpt-5.6")
-ck("the result records the resolution reason", _r.get("resolution") == "closest served 5.6-class model")
+record_script_check(fails, "dispatch used the RESOLVED id (budget/guards/call all see the served id)", _seen_models[-1] == "openai:gpt-5.6-sol")
+record_script_check(fails, "the result records resolved_from (transparent, not silent)", _r.get("resolved_from") == "openai:gpt-5.6")
+record_script_check(fails, "the result records the resolution reason", _r.get("resolution") == "closest served 5.6-class model")
 
 _r2 = adapters.call("openai:gpt-5.5", "p", max_tokens=8)
-ck("a SERVED id is untouched — no resolved_from", _seen_models[-1] == "openai:gpt-5.5" and "resolved_from" not in _r2)
+record_script_check(fails, "a SERVED id is untouched — no resolved_from", _seen_models[-1] == "openai:gpt-5.5" and "resolved_from" not in _r2)
 
 # ── recursion guard: while resolving, dispatch must NOT re-resolve ──
 adapters._resolve_guard.on = True
 _r3 = adapters.call("openai:gpt-5.6", "p", max_tokens=8)
 adapters._resolve_guard.on = False
-ck("with _resolve_guard.on, dispatch skips resolution (the resolver's own call cannot recurse)",
+record_script_check(fails, "with _resolve_guard.on, dispatch skips resolution (the resolver's own call cannot recurse)",
    _seen_models[-1] == "openai:gpt-5.6" and "resolved_from" not in _r3)
 
 print(("[OK]" if not fails else "[FAIL]") + " agentic model resolution: %d failure(s)" % len(fails))

@@ -15,15 +15,11 @@ os.environ.setdefault("SPENDGUARD_TEST_ISOLATED", "1")
 os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
+from _script_checks import record_script_check  # noqa: E402
+
 from spendguard import lane_balance, adapters, pricing, crossllm, gate as sg
 
 fails = []
-
-
-def ck(name, cond):
-    print(("  [OK] " if cond else "  [FAIL] ") + name)
-    if not cond:
-        fails.append(name)
 
 
 dispatch = __import__("spendguard.dispatch", fromlist=["x"])
@@ -47,10 +43,10 @@ _calls.clear()
 rows = lane_balance.bulk_delegate(list(VENDORS), "panel", images_for=lambda t: IMG,
                                   model_for=lambda t: t, prompt_for=lambda t: "LABEL THIS IMAGE", force=True)
 models = sorted(c["model"] for c in _calls)
-ck("one call per vendor, each on its OWN model", models == sorted(VENDORS) and len(_calls) == 3)
-ck("every vendor gets the SHARED prompt (prompt_for), not the task id", all(c["prompt"] == "LABEL THIS IMAGE" for c in _calls))
-ck("every vendor gets the images", all(c["images"] == IMG for c in _calls))
-ck("results are per-vendor, in vendor order", [r["model"] for r in rows] == VENDORS)
+record_script_check(fails, "one call per vendor, each on its OWN model", models == sorted(VENDORS) and len(_calls) == 3)
+record_script_check(fails, "every vendor gets the SHARED prompt (prompt_for), not the task id", all(c["prompt"] == "LABEL THIS IMAGE" for c in _calls))
+record_script_check(fails, "every vendor gets the images", all(c["images"] == IMG for c in _calls))
+record_script_check(fails, "results are per-vendor, in vendor order", [r["model"] for r in rows] == VENDORS)
 
 # ── per-vendor KEYING + RESUME: the same prompt on 3 vendors → 3 distinct checkpoint entries (not 1 collision),
 #    and a re-run with that checkpoint re-pays NOBODY ──
@@ -60,16 +56,16 @@ lane_balance.bulk_delegate(list(VENDORS), "panel2", images_for=lambda t: IMG, mo
                            prompt_for=lambda t: "SAME PROMPT", checkpoint=ckpt, chunk_size=3, force=True)
 n_first = len(_calls)
 lines = [ln for ln in open(ckpt).read().splitlines() if ln.strip()]
-ck("3 vendors on ONE shared prompt → 3 distinct checkpoint entries (per-vendor keying, no collision)",
+record_script_check(fails, "3 vendors on ONE shared prompt → 3 distinct checkpoint entries (per-vendor keying, no collision)",
    n_first == 3 and len(lines) == 3)
 _calls.clear()
 lane_balance.bulk_delegate(list(VENDORS), "panel2", images_for=lambda t: IMG, model_for=lambda t: t,
                            prompt_for=lambda t: "SAME PROMPT", checkpoint=ckpt, chunk_size=3, force=True)
-ck("re-run with the checkpoint re-pays NOBODY (all 3 vendors resumed)", len(_calls) == 0)
+record_script_check(fails, "re-run with the checkpoint re-pays NOBODY (all 3 vendors resumed)", len(_calls) == 0)
 
 # ── images_for with NEITHER vision_model nor model_for → every task errors (re-runnable) ──
 r_none = lane_balance.bulk_delegate(["x"], "novm", images_for=lambda t: IMG, force=True)
-ck("images_for without vision_model or model_for → reason=no_vision_model", r_none[0].get("reason") == "no_vision_model")
+record_script_check(fails, "images_for without vision_model or model_for → reason=no_vision_model", r_none[0].get("reason") == "no_vision_model")
 
 # ── crossllm.ask_vision: estimate-first, budget gate, BudgetRefused is a deliberate stop ──
 adapters._load_image = lambda i: {"w": 1, "h": 1, "media_type": "image/png", "b64": "x", "data_uri": str(i)}
@@ -78,12 +74,12 @@ pricing.cost_or_unpriced = lambda *a, **k: 0.01              # 0.01 per vendor �
 
 _calls.clear()
 est = crossllm.ask_vision("label", IMG, VENDORS)
-ck("no budget → estimate only, 0 spend", "estimate_usd" in est and est.get("note") and not _calls)
-ck("estimate sums per-vendor (3 × 0.01 = 0.03)", abs(est["estimate_usd"] - 0.03) < 1e-9 and len(est["per_vendor"]) == 3)
+record_script_check(fails, "no budget → estimate only, 0 spend", "estimate_usd" in est and est.get("note") and not _calls)
+record_script_check(fails, "estimate sums per-vendor (3 × 0.01 = 0.03)", abs(est["estimate_usd"] - 0.03) < 1e-9 and len(est["per_vendor"]) == 3)
 
 _calls.clear()
 panel = crossllm.ask_vision("label", IMG, VENDORS, budget_usd=1.0)
-ck("budget >= est → runs the panel, one paid call per vendor", panel.get("complete") and len(_calls) == 3 and panel["n_ok"] == 3)
+record_script_check(fails, "budget >= est → runs the panel, one paid call per vendor", panel.get("complete") and len(_calls) == 3 and panel["n_ok"] == 3)
 
 _calls.clear()
 refused = None
@@ -91,8 +87,8 @@ try:
     crossllm.ask_vision("label", IMG, VENDORS, budget_usd=0.001)
 except crossllm.BudgetRefused as e:
     refused = e
-ck("est > budget → BudgetRefused BEFORE any spend", refused is not None and not _calls)
-ck("...BudgetRefused is a DELIBERATE stop (a SpendGateRefused)", isinstance(refused, sg.SpendGateRefused))
+record_script_check(fails, "est > budget → BudgetRefused BEFORE any spend", refused is not None and not _calls)
+record_script_check(fails, "...BudgetRefused is a DELIBERATE stop (a SpendGateRefused)", isinstance(refused, sg.SpendGateRefused))
 
 # ── input guards raise (a bug, not a silent no-op) ──
 from functools import partial
@@ -101,8 +97,8 @@ from _script_checks import callable_raises_exception
 _raises = partial(callable_raises_exception, exc=ValueError)
 
 
-ck("no vendors → ValueError", _raises(lambda: crossllm.ask_vision("p", IMG, [])))
-ck("no images → ValueError", _raises(lambda: crossllm.ask_vision("p", [], VENDORS)))
+record_script_check(fails, "no vendors → ValueError", _raises(lambda: crossllm.ask_vision("p", IMG, [])))
+record_script_check(fails, "no images → ValueError", _raises(lambda: crossllm.ask_vision("p", [], VENDORS)))
 
 print(("[OK]" if not fails else "[FAIL]") + " ask vision panel: %d failure(s)" % len(fails))
 sys.exit(1 if fails else 0)

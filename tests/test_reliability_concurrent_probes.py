@@ -14,15 +14,11 @@ os.environ.setdefault("SPENDGUARD_TEST_ISOLATED", "1")
 os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
+from _script_checks import record_script_check
 from spendguard import reliability, lanes   # noqa: E402
 
 fails = []
 
-
-def ck(name, cond):
-    print(("  [OK] " if cond else "  [FAIL] ") + name)
-    if not cond:
-        fails.append(name)
 
 
 N = 4
@@ -43,11 +39,11 @@ t0 = time.time()
 res = reliability.sweep(run=True, timeout_s=5)
 elapsed = time.time() - t0
 
-ck(f"all {N} metered providers were probed", len(res["metered"]) == N)
-ck("each carries the raw-key result shape (reachable/executor/latency)",
+record_script_check(fails, f"all {N} metered providers were probed", len(res["metered"]) == N)
+record_script_check(fails, "each carries the raw-key result shape (reachable/executor/latency)",
    all(set(res["metered"][f"prov{i}"]) >= {"reachable", "executor", "latency", "reason"} for i in range(N)))
-ck("all api-served → reachable (raw key verified)", all(res["metered"][f"prov{i}"]["reachable"] for i in range(N)))
-ck(f"CONCURRENT: {N} x {SLEEP}s probes finished in {elapsed:.2f}s, well under the serial {N * SLEEP:.2f}s",
+record_script_check(fails, "all api-served → reachable (raw key verified)", all(res["metered"][f"prov{i}"]["reachable"] for i in range(N)))
+record_script_check(fails, f"CONCURRENT: {N} x {SLEEP}s probes finished in {elapsed:.2f}s, well under the serial {N * SLEEP:.2f}s",
    elapsed < (N * SLEEP * 0.7))
 
 print(f"\n{'[FAIL]' if fails else 'OK'} test_reliability_concurrent_probes: {len(fails)} failure(s)")

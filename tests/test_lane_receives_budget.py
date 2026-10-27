@@ -16,21 +16,18 @@ os.environ.setdefault("SPENDGUARD_TEST_ISOLATED", "1")
 os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
+from _script_checks import record_script_check
 from spendguard import adapters, zai_exec, codex_exec, subscription_exec, antigravity_exec   # noqa: E402
 
 fails = []
 
 
-def ck(name, cond):
-    print(("  [OK] " if cond else "  [FAIL] ") + name)
-    if not cond:
-        fails.append(name)
 
 
 print("-- every lane's run_prompt accepts max_tokens (the uniform protocol the ladder relies on) --")
 for mod in (zai_exec, codex_exec, subscription_exec, antigravity_exec):
     params = inspect.signature(mod.run_prompt).parameters
-    ck(f"{mod.__name__.split('.')[-1]}.run_prompt accepts max_tokens", "max_tokens" in params)
+    record_script_check(fails, f"{mod.__name__.split('.')[-1]}.run_prompt accepts max_tokens", "max_tokens" in params)
 
 print("\n-- _call_once forwards the guarded budget to the lane's run_prompt --")
 _seen = {}
@@ -48,8 +45,8 @@ class _FakeLane:
 
 adapters._lane_for = lambda prov: ("fakelane", _FakeLane)
 r = adapters._call_once("openai:gpt-5-nano", "hi", max_tokens=12345)
-ck("the lane served the call (not a metered fallback)", r.get("executor") == "fakelane")
-ck("the lane run_prompt received the exact guarded budget (12345), enabling escalation",
+record_script_check(fails, "the lane served the call (not a metered fallback)", r.get("executor") == "fakelane")
+record_script_check(fails, "the lane run_prompt received the exact guarded budget (12345), enabling escalation",
    _seen.get("max_tokens") == 12345)
 
 print(f"\n{'[FAIL]' if fails else 'OK'} test_lane_receives_budget: {len(fails)} failure(s)")

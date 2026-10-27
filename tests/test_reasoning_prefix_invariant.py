@@ -14,25 +14,21 @@ os.environ.setdefault("SPENDGUARD_TEST_ISOLATED", "1")
 os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
+from _script_checks import record_script_check
 from spendguard import models   # noqa: E402
 
 fails = []
 
 
-def ck(name, cond):
-    print(("  [OK] " if cond else "  [FAIL] ") + name)
-    if not cond:
-        fails.append(name)
-
 
 print("-- a reasoning model is recognised whether bare or provider-qualified (the regression) --")
-ck("gpt-5.5 (bare) reasons_by_default", models.reasons_by_default("gpt-5.5") is True)
-ck("openai:gpt-5.5 (provider-qualified) ALSO reasons_by_default — floored, won't truncate",
+record_script_check(fails, "gpt-5.5 (bare) reasons_by_default", models.reasons_by_default("gpt-5.5") is True)
+record_script_check(fails, "openai:gpt-5.5 (provider-qualified) ALSO reasons_by_default — floored, won't truncate",
    models.reasons_by_default("openai:gpt-5.5") is True)
 
 print("\n-- bare and provider-qualified forms AGREE for any model (invariance holds both ways) --")
 for bare, prov in (("gpt-5.5", "openai"), ("claude-opus-4-8", "anthropic")):
-    ck(f"{bare}: bare == {prov}:{bare}",
+    record_script_check(fails, f"{bare}: bare == {prov}:{bare}",
        models.reasons_by_default(bare) == models.reasons_by_default(f"{prov}:{bare}"))
 
 print(f"\n{'[FAIL]' if fails else 'OK'} test_reasoning_prefix_invariant: {len(fails)} failure(s)")

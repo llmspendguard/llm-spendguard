@@ -16,15 +16,11 @@ os.environ.setdefault("SPENDGUARD_TEST_ISOLATED", "1")
 os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
+from _script_checks import record_script_check  # noqa: E402
+
 from spendguard import lane_balance, lanes as _lanes_cli
 
 fails = []
-
-
-def ck(name, cond):
-    print(("  [OK] " if cond else "  [FAIL] ") + name)
-    if not cond:
-        fails.append(name)
 
 
 _captured = {}
@@ -52,21 +48,21 @@ def _run_bulk(extra_argv):
 
 
 # ── the flag forwards its integer to bulk_delegate(hedge_ms=…) ──
-ck("--hedge-ms 8000 → bulk_delegate(hedge_ms=8000)", _run_bulk(["--hedge-ms", "8000"]).get("hedge_ms") == 8000)
+record_script_check(fails, "--hedge-ms 8000 → bulk_delegate(hedge_ms=8000)", _run_bulk(["--hedge-ms", "8000"]).get("hedge_ms") == 8000)
 
 # ── absent → None, so bulk_delegate falls to the config default (off) — behavior unchanged for every existing caller ──
-ck("no --hedge-ms → hedge_ms=None (config default, unchanged behavior)", _run_bulk([]).get("hedge_ms") is None)
+record_script_check(fails, "no --hedge-ms → hedge_ms=None (config default, unchanged behavior)", _run_bulk([]).get("hedge_ms") is None)
 
 # ── an explicit 0 is valid and OFF (a caller pinning it off for this run even if a global config armed it) ──
-ck("--hedge-ms 0 → hedge_ms=0 (explicit off, forwarded)", _run_bulk(["--hedge-ms", "0"]).get("hedge_ms") == 0)
+record_script_check(fails, "--hedge-ms 0 → hedge_ms=0 (explicit off, forwarded)", _run_bulk(["--hedge-ms", "0"]).get("hedge_ms") == 0)
 
 # ── the value is NOT mistaken for the positional intent (opt-value exclusion) ──
 c = _run_bulk(["--hedge-ms", "5000"])
-ck("--hedge-ms value is excluded from the positional intent (fan still dispatched)", c.get("called") is True)
+record_script_check(fails, "--hedge-ms value is excluded from the positional intent (fan still dispatched)", c.get("called") is True)
 
 # ── a malformed value fails LOUD (never silently arms/leaves-off a mis-typed hedge) — bulk_delegate NOT reached ──
-ck("--hedge-ms abc → error, bulk_delegate never called", _run_bulk(["--hedge-ms", "abc"]).get("called") is None)
-ck("--hedge-ms -5 (negative) → error, bulk_delegate never called", _run_bulk(["--hedge-ms", "-5"]).get("called") is None)
+record_script_check(fails, "--hedge-ms abc → error, bulk_delegate never called", _run_bulk(["--hedge-ms", "abc"]).get("called") is None)
+record_script_check(fails, "--hedge-ms -5 (negative) → error, bulk_delegate never called", _run_bulk(["--hedge-ms", "-5"]).get("called") is None)
 
 print(("[OK]" if not fails else "[FAIL]") + " bulk --hedge-ms flag: %d failure(s)" % len(fails))
 sys.exit(1 if fails else 0)

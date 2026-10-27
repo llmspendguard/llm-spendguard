@@ -29,28 +29,25 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
 
 os.environ.pop("GATE_DISABLE", None)                 # the wrappers only run the guard when NOT disabled
 
+from _script_checks import record_script_check  # noqa: E402
+
 from spendguard import gate as G
 from spendguard import bulkgate
 from spendguard.gate import SpendGateRefused
 
 fails = []
-def ck(name, cond):
-    print(("  [OK] " if cond else "  [FAIL] ") + name)
-    if not cond:
-        fails.append(name)
-
 SENTINEL = object()
 
 # ── 1. STRUCTURAL: every deliberate refusal shares the SpendGateRefused base (the concept, not a list) ──
-ck("GateBlocked IS-A SpendGateRefused (shared refusal base, not bare Exception)",
+record_script_check(fails, "GateBlocked IS-A SpendGateRefused (shared refusal base, not bare Exception)",
    issubclass(bulkgate.GateBlocked, SpendGateRefused))
-ck("SpendGateRefused is still a RuntimeError (base MRO preserved for `except RuntimeError` callers)",
+record_script_check(fails, "SpendGateRefused is still a RuntimeError (base MRO preserved for `except RuntimeError` callers)",
    issubclass(SpendGateRefused, RuntimeError))
 
 # ── 2. _guard: a DELIBERATE GateBlocked PROPAGATES (the exact live bug — it must not fail open) ──
 def _blk(kw, a):
     raise bulkgate.GateBlocked("[bulkgate] BLOCKED … needs estimate+test+eval FIRST")
-ck("_guard PROPAGATES bulkgate.GateBlocked (lifecycle block stops the batch, not fail-open)",
+record_script_check(fails, "_guard PROPAGATES bulkgate.GateBlocked (lifecycle block stops the batch, not fail-open)",
    raises_out(lambda: G._guard(_blk, {}, ()), bulkgate.GateBlocked))
 
 # ── 3. _guard: a genuine MALFUNCTION still fails OPEN (a real job is never broken) ──
@@ -58,7 +55,7 @@ def _boom(kw, a):
     raise RuntimeError("database is locked")             # a gate hiccup, NOT a decision
 def _guard_boom_returns():
     G._guard(_boom, {}, ()); return "survived"
-ck("_guard FAILS OPEN on a malfunction (RuntimeError 'database is locked' is swallowed, call proceeds)",
+record_script_check(fails, "_guard FAILS OPEN on a malfunction (RuntimeError 'database is locked' is swallowed, call proceeds)",
    _guard_boom_returns() == "survived" and not raises_out(lambda: G._guard(_boom, {}, ()), Exception))
 
 # ── 4. THE ROGUE: a brand-new refusal type blocks BY CONSTRUCTION — _guard never enumerated it ──
@@ -67,14 +64,14 @@ class _RogueRefusal(SpendGateRefused):
     would fail open and nothing would notice — which is the whole class of bug."""
 def _rogue(kw, a):
     raise _RogueRefusal("a future refusal nobody added to an except-tuple")
-ck("_guard PROPAGATES a NEW SpendGateRefused subclass it was never told about (concept, not enumeration)",
+record_script_check(fails, "_guard PROPAGATES a NEW SpendGateRefused subclass it was never told about (concept, not enumeration)",
    raises_out(lambda: G._guard(_rogue, {}, ()), _RogueRefusal))
 # and the malfunction/refusal line is drawn by TYPE, not by identity: a plain Exception subclass still fails open
 class _NotARefusal(Exception):
     pass
 def _plain(kw, a):
     raise _NotARefusal("looks scary, is a bug")
-ck("_guard FAILS OPEN on a non-refusal Exception subclass (only the refusal CONCEPT propagates)",
+record_script_check(fails, "_guard FAILS OPEN on a non-refusal Exception subclass (only the refusal CONCEPT propagates)",
    not raises_out(lambda: G._guard(_plain, {}, ()), Exception))
 
 # ── 5. THE REAL SDK BOUNDARY (_gate_wrap, sync + async): the path the live batch actually took ──
@@ -91,7 +88,7 @@ for is_async in (False, True):
 
     # a GateBlocked from the gate_fn must propagate THROUGH the wrapper (mirrors warden:describe running anyway)
     w_blk = G._gate_wrap(orig, _blk, is_async)
-    ck(f"[{tag}] _gate_wrap PROPAGATES GateBlocked out of the wrapped SDK call (batch is stopped)",
+    record_script_check(fails, f"[{tag}] _gate_wrap PROPAGATES GateBlocked out of the wrapped SDK call (batch is stopped)",
        raises_out(lambda w_blk=w_blk: run(w_blk), bulkgate.GateBlocked))
 
     # a bug in the gate_fn must fail open: the wrapped call still returns its real result
@@ -102,7 +99,7 @@ for is_async in (False, True):
         got = run(w_bug)
     except Exception as e:
         fails.append(f"[{tag}] _gate_wrap should fail open on a gate bug, but raised {e!r}")
-    ck(f"[{tag}] _gate_wrap FAILS OPEN on a gate_fn bug (call returns its real result, unbroken)",
+    record_script_check(fails, f"[{tag}] _gate_wrap FAILS OPEN on a gate_fn bug (call returns its real result, unbroken)",
        got is SENTINEL)
 
 print(("\n[OK] " if not fails else "\n[FAIL] ") + f"deliberate_refusal_is_never_failopen: {len(fails)} failure(s)")

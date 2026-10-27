@@ -17,15 +17,12 @@ os.environ.setdefault("SPENDGUARD_TEST_ISOLATED", "1")
 os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
+from _script_checks import record_script_check
 from spendguard import measurement, adapters, pricing, bakeoff, callio
 
 fails = []
 
 
-def ck(name, cond):
-    print(("  [OK] " if cond else "  [FAIL] ") + name)
-    if not cond:
-        fails.append(name)
 
 
 RUB = {"system": "judge", "schema": {"type": "object"}}
@@ -40,16 +37,16 @@ def _reading(judge, val, sample=("s1",), cands=("m1",)):
 a = _reading("anthropic:haiku", 0.9)
 b = _reading("anthropic:haiku", 0.7)                              # same instrument, later number
 cmp_ab = measurement.compare(a, b)
-ck("same judge+sample+rubric+candidates → comparable", cmp_ab["comparable"] is True and cmp_ab["drift"] == [])
-ck("comparable → per-candidate delta (0.9 → 0.7 = -0.2)", abs(cmp_ab["delta"]["m1"]["delta"] + 0.2) < 1e-9)
-ck("comparable → a noise caveat (a single rerun isn't significance)", bool(cmp_ab.get("caveat")))
+record_script_check(fails, "same judge+sample+rubric+candidates → comparable", cmp_ab["comparable"] is True and cmp_ab["drift"] == [])
+record_script_check(fails, "comparable → per-candidate delta (0.9 → 0.7 = -0.2)", abs(cmp_ab["delta"]["m1"]["delta"] + 0.2) < 1e-9)
+record_script_check(fails, "comparable → a noise caveat (a single rerun isn't significance)", bool(cmp_ab.get("caveat")))
 c_judge = _reading("anthropic:haiku-5", 0.7)                      # DIFFERENT judge
 cmp_drift = measurement.compare(a, c_judge)
-ck("a different judge → NOT comparable (drift flagged)", cmp_drift["comparable"] is False and cmp_drift["delta"] is None)
-ck("...and the drift CODE names 'judge' (structured, not prose)", "judge" in cmp_drift["drift"])
+record_script_check(fails, "a different judge → NOT comparable (drift flagged)", cmp_drift["comparable"] is False and cmp_drift["delta"] is None)
+record_script_check(fails, "...and the drift CODE names 'judge' (structured, not prose)", "judge" in cmp_drift["drift"])
 c_rub = measurement.record_reading(intent="i", kind="bakeoff", judge_mix=["anthropic:haiku"], sample_ids=["s1"],
                                    rubric={"system": "DIFFERENT", "schema": {}}, candidates=["m1"], values={"m1": {"good_rate": 0.9}})
-ck("a changed rubric → NOT comparable, drift code 'rubric'", "rubric" in measurement.compare(a, c_rub)["drift"])
+record_script_check(fails, "a changed rubric → NOT comparable, drift code 'rubric'", "rubric" in measurement.compare(a, c_rub)["drift"])
 
 # ── rerun: pin the judge, replay the sample, child comparable to the baseline ──
 def _fake_call(model, prompt, **kw):
@@ -69,24 +66,24 @@ JUDGE = "anthropic:claude-haiku-4-5"
 base = bakeoff.bakeoff("rr-intent", candidates=["openai:gpt-5-nano", "gemini:g-flash"], prompts=SAMPLE,
                        judge_model=JUDGE, run=True, budget_usd=10.0)
 bid = base.get("reading_id")
-ck("baseline reading records a PINNED judge", bid and measurement.get_reading(bid)["judge_pinned"] is True)
+record_script_check(fails, "baseline reading records a PINNED judge", bid and measurement.get_reading(bid)["judge_pinned"] is True)
 
 est = measurement.rerun(bid, budget_usd=None)
-ck("rerun without budget → estimate only (0 spend), pinned judge named", "estimate" in est and est.get("pinned_judge") == JUDGE)
+record_script_check(fails, "rerun without budget → estimate only (0 spend), pinned judge named", "estimate" in est and est.get("pinned_judge") == JUDGE)
 
 rr = measurement.rerun(bid, budget_usd=10.0, same_sample=True)
-ck("rerun records a CHILD reading linked to the baseline", rr.get("reading_id") and rr.get("baseline") == bid)
+record_script_check(fails, "rerun records a CHILD reading linked to the baseline", rr.get("reading_id") and rr.get("baseline") == bid)
 child = measurement.get_reading(rr["reading_id"]) if rr.get("reading_id") else {}
-ck("the child's parent_id is the baseline (lineage)", child.get("parent_id") == bid)
-ck("the child pins the SAME judge", child.get("judge_mix") == [JUDGE] and child.get("judge_pinned") is True)
-ck("rerun reproduced the instrument → child is COMPARABLE to the baseline", rr["comparison"]["comparable"] is True)
+record_script_check(fails, "the child's parent_id is the baseline (lineage)", child.get("parent_id") == bid)
+record_script_check(fails, "the child pins the SAME judge", child.get("judge_mix") == [JUDGE] and child.get("judge_pinned") is True)
+record_script_check(fails, "rerun reproduced the instrument → child is COMPARABLE to the baseline", rr["comparison"]["comparable"] is True)
 
 # ── rerun REFUSES when the sample can't be reproduced (never a false comparison across a changed instrument) ──
 orphan = measurement.record_reading(intent="orphan-intent", kind="bakeoff", judge_mix=[JUDGE],
                                     sample_ids=["hash_not_in_corpus"], rubric=RUB, candidates=["m1"],
                                     values={"m1": {"good_rate": 0.5}})
 miss = measurement.rerun(orphan, budget_usd=10.0, same_sample=True)
-ck("rerun with an unreproducible sample → reason='sample_unreproducible' (structured, no false compare)",
+record_script_check(fails, "rerun with an unreproducible sample → reason='sample_unreproducible' (structured, no false compare)",
    miss.get("reason") == "sample_unreproducible")
 
 print(("[OK]" if not fails else "[FAIL]") + " measurement rerun/compare: %d failure(s)" % len(fails))

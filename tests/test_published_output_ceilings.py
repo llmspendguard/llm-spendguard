@@ -15,6 +15,7 @@ os.environ.setdefault("SPENDGUARD_TEST_ISOLATED", "1")
 os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
+from _script_checks import record_script_check
 from spendguard import pricing, adapters, catalog   # noqa: E402
 
 FLOOR = pricing.OUTPUT_FLOOR
@@ -22,29 +23,24 @@ BACKSTOP = adapters.MAX_TOKEN_CEILING
 catalog.model_ceiling = lambda vendor, rid: None       # stub the live-catalog tier OFF (offline)
 
 fails = []
-def ck(name, cond):
-    print(("  [OK] " if cond else "  [FAIL] ") + name)
-    if not cond:
-        fails.append(name)
-
 print("-- (1) GLM resolves to its REAL provider-documented ceiling, not the 32K floor it was poisoned to --")
 for m, expect in [("glm-4.6", 131072), ("glm-5.3", 131072), ("glm-5.2", 131072), ("glm-4.5-air", 98304), ("glm-4.5", 98304)]:
-    ck(f"max_output_tokens({m}) == {expect} (provider-doc-sourced, was floored to {FLOOR})",
+    record_script_check(fails, f"max_output_tokens({m}) == {expect} (provider-doc-sourced, was floored to {FLOOR})",
        pricing.max_output_tokens(m) == expect)
-    ck(f"output_budget(zai:{m}) sends the real ceiling {expect}", adapters.output_budget(f"zai:{m}") == expect)
+    record_script_check(fails, f"output_budget(zai:{m}) sends the real ceiling {expect}", adapters.output_budget(f"zai:{m}") == expect)
 
 print("\n-- (2) the override is IMMUNE to a poison learned fact (it is tier-0, above the learned tier) --")
 _real_learned = pricing.max_output
 try:
     pricing.max_output = lambda rid: 2000              # a poison learned fact for everything
-    ck("output_ceiling(glm-5.3) still resolves to the override 131072, not the poison 2000",
+    record_script_check(fails, "output_ceiling(glm-5.3) still resolves to the override 131072, not the poison 2000",
        pricing.output_ceiling("zai", "glm-5.3", BACKSTOP) == 131072)
 finally:
     pricing.max_output = _real_learned
 
 print("\n-- (3) Kimi has NO override → the SAFE 32K floor (never a guessed/context-poisoned ceiling) --")
 for m in ["kimi-k3", "kimi-k2.6", "kimi-k2.7-code"]:
-    ck(f"{m} has no authoritative output max → stays at the floor",
+    record_script_check(fails, f"{m} has no authoritative output max → stays at the floor",
        pricing.max_output_tokens(m) is None and adapters.output_budget(f"moonshot:{m}") == FLOOR)
 
 print(f"\n{'[FAIL]' if fails else 'OK'} test_published_output_ceilings: {len(fails)} failure(s)")

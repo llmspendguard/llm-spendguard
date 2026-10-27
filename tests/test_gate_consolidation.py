@@ -17,7 +17,7 @@ no network, zero spend."""
 import os
 import sys
 import tempfile
-from _script_checks import execute_gate_test_call as run, raise_gate_test_error as _boom
+from _script_checks import execute_gate_test_call as run, raise_gate_test_error as _boom, record_script_check
 
 os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="spendguard-gateconsol-")
 os.environ.setdefault("SPENDGUARD_TEST_ISOLATED", "1")
@@ -39,10 +39,6 @@ gate._rt_precheck_usd = _noop
 fails = []
 
 
-def ck(name, cond):
-    print(("  [OK] " if cond else "  [FAIL] ") + name)
-    if not cond:
-        fails.append(name)
 
 
 # ───────────────────────────── 1. fire-once ─────────────────────────────
@@ -53,7 +49,7 @@ gate._fire_once = lambda sg: _seen_fire.append(sg)
 try:
     for cls in (gate._StreamProxy, gate._AsyncStreamProxy):
         cls(iter([]), {}, lambda: None)._fire()
-    ck("_StreamProxy._fire AND _AsyncStreamProxy._fire delegate to _fire_once", len(_seen_fire) == 2)
+    record_script_check(fails, "_StreamProxy._fire AND _AsyncStreamProxy._fire delegate to _fire_once", len(_seen_fire) == 2)
 finally:
     gate._fire_once = _saved
 
@@ -62,7 +58,7 @@ _sg = [None, None, lambda: _fired.append(1), False]
 gate._fire_once(_sg)
 gate._fire_once(_sg)
 gate._fire_once(_sg)
-ck("_fire_once fires the done-callback EXACTLY once across repeated calls", _fired == [1])
+record_script_check(fails, "_fire_once fires the done-callback EXACTLY once across repeated calls", _fired == [1])
 
 
 # ─────────────────────────── 2. patch-method ────────────────────────────
@@ -87,8 +83,8 @@ try:
     gate._apply_units("fake_gated_sdk", "FakeClient", "create", lambda kw: ("m", 0.0), lambda kw, r: None, False)
     gate._apply_stream("fake_gated_sdk", "FakeClient", "create", "resp",
                        lambda kw: ("m", 1, 2), lambda kw, r: (1, 2), False)
-    ck("all FOUR _apply* delegate to _patch_method", len(_seen_patch) == 4)
-    ck("only _apply_stream passes optional=True (the others are required)", _seen_patch == [False, False, False, True])
+    record_script_check(fails, "all FOUR _apply* delegate to _patch_method", len(_seen_patch) == 4)
+    record_script_check(fails, "only _apply_stream passes optional=True (the others are required)", _seen_patch == [False, False, False, True])
 finally:
     gate._patch_method = _saved
 
@@ -102,24 +98,24 @@ def _mk(cur):                                  # a trivial gated wrapper builder
 
 FakeClient.create = lambda self, **kw: "R"      # start clean (unwrapped)
 gate._patch_method("fake_gated_sdk", "FakeClient", "create", _mk)
-ck("a fresh method gets wrapped (marker set)", getattr(FakeClient.create, "_spend_gated", False))
+record_script_check(fails, "a fresh method gets wrapped (marker set)", getattr(FakeClient.create, "_spend_gated", False))
 _w1 = FakeClient.create
 gate._patch_method("fake_gated_sdk", "FakeClient", "create", _mk)
-ck("an already-gated method is NOT re-wrapped (idempotent)", FakeClient.create is _w1)
+record_script_check(fails, "an already-gated method is NOT re-wrapped (idempotent)", FakeClient.create is _w1)
 
 _raised = False
 try:
     gate._patch_method("fake_gated_sdk", "FakeClient", "nope_missing", _mk)              # required + absent
 except AttributeError:
     _raised = True
-ck("a REQUIRED but absent method raises (the surface must exist)", _raised)
+record_script_check(fails, "a REQUIRED but absent method raises (the surface must exist)", _raised)
 
 _ok = True
 try:
     gate._patch_method("fake_gated_sdk", "FakeClient", "nope_missing", _mk, optional=True)  # optional + absent
 except Exception:
     _ok = False
-ck("an OPTIONAL absent method is skipped, not an error (older SDKs)", _ok)
+record_script_check(fails, "an OPTIONAL absent method is skipped, not an error (older SDKs)", _ok)
 
 
 # ──────────────────────────── 3. wrap-gated ─────────────────────────────
@@ -139,7 +135,7 @@ try:
     gate._gate_wrap(_o, lambda kw, a: None, False)
     gate._wrap_rt(_o, lambda kw: ("m", 1, 2), lambda kw, r: (1, 2), False)
     gate._wrap_rt_units(_o, lambda kw: ("m", 0.0), lambda kw, r: None, False)
-    ck("all THREE wrapper builders delegate to _wrap_gated", len(_seen_wrap) == 3)
+    record_script_check(fails, "all THREE wrapper builders delegate to _wrap_gated", len(_seen_wrap) == 3)
 finally:
     gate._wrap_gated = _saved
 
@@ -164,8 +160,8 @@ def _build(name, is_async):
 for name in ("gate", "rt", "units"):
     for is_async in (False, True):
         w = _build(name, is_async)
-        ck(f"{name}[async={is_async}]: sets the _spend_gated marker", getattr(w, "_spend_gated", False))
-        ck(f"{name}[async={is_async}]: passthrough returns the EXACT underlying result",
+        record_script_check(fails, f"{name}[async={is_async}]: sets the _spend_gated marker", getattr(w, "_spend_gated", False))
+        record_script_check(fails, f"{name}[async={is_async}]: passthrough returns the EXACT underlying result",
            run(w, is_async, model="m") is sentinel)
 
 
@@ -185,7 +181,7 @@ for name, w in [
         w(None, model="m")
     except SpendGateRefused:
         raised = True
-    ck(f"{name}: a DELIBERATE refusal in the pre-hook propagates (never swallowed)", raised)
+    record_script_check(fails, f"{name}: a DELIBERATE refusal in the pre-hook propagates (never swallowed)", raised)
 gate._rt_precheck = _noop
 
 gate._rt_precheck = _boom                        # an unintended pre-hook BUG (not an enforcement decision)
@@ -194,7 +190,7 @@ for name, w in [
     ("rt", gate._wrap_rt(_sync, lambda kw: ("m", 1, 2), lambda kw, r: (1, 2), False)),
     ("units", gate._wrap_rt_units(_sync, _boom, lambda kw, r: None, False)),
 ]:
-    ck(f"{name}: a non-refusal pre-hook bug fails OPEN (call still returns the result)",
+    record_script_check(fails, f"{name}: a non-refusal pre-hook bug fails OPEN (call still returns the result)",
        w(None, model="m") is sentinel)
 gate._rt_precheck = _noop
 

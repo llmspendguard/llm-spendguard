@@ -12,24 +12,20 @@ them halt correctly. Pins three things so they can't silently rot:
 Hermetic: the catalog/pricing/sub-checks are monkeypatched — no network, no isolated home, no re-exec, zero spend."""
 import sys
 
+from _script_checks import record_script_check
 from spendguard import model_preflight as mp, verify, gate, vendor_call, pricing
 from spendguard.gate import SpendGateRefused
 from spendguard.crossllm import BudgetRefused
 from spendguard.dispatch import DispatchTimeout
 
 fails = []
-def ck(name, cond):
-    print(("  [OK] " if cond else "  [FAIL] ") + name)
-    if not cond:
-        fails.append(name)
-
 # ── 1. the one deliberate-stop CONCEPT (the containment fix) ─────────────────────────────────────────────────────
-ck("BudgetRefused SUBCLASSES SpendGateRefused (closes the enumeration hole)", issubclass(BudgetRefused, SpendGateRefused))
+record_script_check(fails, "BudgetRefused SUBCLASSES SpendGateRefused (closes the enumeration hole)", issubclass(BudgetRefused, SpendGateRefused))
 stop_types = gate.deliberate_stop_types()
-ck("deliberate_stop_types() includes SpendGateRefused", SpendGateRefused in stop_types)
-ck("deliberate_stop_types() includes DispatchTimeout (the non-refusal deliberate stop)", DispatchTimeout in stop_types)
-ck("a BudgetRefused instance is caught by the concept (via subclassing)", isinstance(BudgetRefused(1.0, 0.5, {}), stop_types))
-ck("a plain ValueError is NOT a deliberate stop", not isinstance(ValueError("x"), stop_types))
+record_script_check(fails, "deliberate_stop_types() includes SpendGateRefused", SpendGateRefused in stop_types)
+record_script_check(fails, "deliberate_stop_types() includes DispatchTimeout (the non-refusal deliberate stop)", DispatchTimeout in stop_types)
+record_script_check(fails, "a BudgetRefused instance is caught by the concept (via subclassing)", isinstance(BudgetRefused(1.0, 0.5, {}), stop_types))
+record_script_check(fails, "a plain ValueError is NOT a deliberate stop", not isinstance(ValueError("x"), stop_types))
 
 # ── 2. preflight EXPLICIT STATES (hermetic: fake the catalog + pricing) ──────────────────────────────────────────
 _served = {"gemini:gemini-real": "served", "gemini:gemini-stale": "stale",
@@ -48,14 +44,14 @@ try:
     specs = ["gemini:gemini-real", "gemini:gemini-stale", "openai:gpt-unpriced", "openai:gpt-uncheck", "", ":orphan"]
     rows = mp.preflight_models(specs)
     by = {r["spec"]: r for r in rows}
-    ck("EVERY spec produced a row — len(out) == len(specs), no silent drop", len(rows) == len(specs))
-    ck("served + priced → usable", by["gemini:gemini-real"]["usable"] is True)
-    ck("STALE → NOT usable as-written, but the correction is named",
+    record_script_check(fails, "EVERY spec produced a row — len(out) == len(specs), no silent drop", len(rows) == len(specs))
+    record_script_check(fails, "served + priced → usable", by["gemini:gemini-real"]["usable"] is True)
+    record_script_check(fails, "STALE → NOT usable as-written, but the correction is named",
        by["gemini:gemini-stale"]["usable"] is False and by["gemini:gemini-stale"]["corrected"] == "gemini-fixed")
-    ck("served but UNPRICED → NOT usable", by["openai:gpt-unpriced"]["usable"] is False)
-    ck("UNCHECKED + priced → usable (a can't-know is not a no)", by["openai:gpt-uncheck"]["usable"] is True)
-    ck("empty spec → surfaced 'empty' row, not usable", by[""]["served"] == "empty" and by[""]["usable"] is False)
-    ck("no provider → surfaced 'unknown-provider' row", by[":orphan"]["served"] == "unknown-provider")
+    record_script_check(fails, "served but UNPRICED → NOT usable", by["openai:gpt-unpriced"]["usable"] is False)
+    record_script_check(fails, "UNCHECKED + priced → usable (a can't-know is not a no)", by["openai:gpt-uncheck"]["usable"] is True)
+    record_script_check(fails, "empty spec → surfaced 'empty' row, not usable", by[""]["served"] == "empty" and by[""]["usable"] is False)
+    record_script_check(fails, "no provider → surfaced 'unknown-provider' row", by[":orphan"]["served"] == "unknown-provider")
 finally:
     vendor_call.served_check, vendor_call.closest_served, pricing.realtime_cost = _orig
 
@@ -78,13 +74,13 @@ def _install(preflight_ok, fallback_ok, key_ok):
     verify._key_present = lambda prov: (key_ok, "OPENAI_API_KEY")
 try:
     _install(True, True, True)
-    ck("verify PASS when every structural check passes", verify.verify_system(probe=False)["ok"] is True)
+    record_script_check(fails, "verify PASS when every structural check passes", verify.verify_system(probe=False)["ok"] is True)
     _install(False, True, True)
-    ck("verify FAILS when a model id is not usable", verify.verify_system(probe=False)["ok"] is False)
+    record_script_check(fails, "verify FAILS when a model id is not usable", verify.verify_system(probe=False)["ok"] is False)
     _install(True, False, True)
-    ck("verify FAILS when a lane's failover map is broken", verify.verify_system(probe=False)["ok"] is False)
+    record_script_check(fails, "verify FAILS when a lane's failover map is broken", verify.verify_system(probe=False)["ok"] is False)
     _install(True, True, False)
-    ck("verify FAILS when a provider key is missing (fallback would strand)", verify.verify_system(probe=False)["ok"] is False)
+    record_script_check(fails, "verify FAILS when a provider key is missing (fallback would strand)", verify.verify_system(probe=False)["ok"] is False)
 finally:
     mpmod.preflight_models = _savers["pf"]; mpmod.configured_specs = _savers["cs"]
     lc.audit_lane_fallback = _savers["fb"]; lc.lanes = _savers["lanes"]; lc.lane_provider = _savers["prov"]
@@ -105,11 +101,11 @@ def _fake_cfg(section, key, default=None):
 _cfg._cfg_get = _fake_cfg
 try:
     specs = mp.configured_specs()                              # MUST NOT raise on the nested dict
-    ck("configured_specs flattens a nested {cheap,strong} lane_models dict (no unhashable crash)",
+    record_script_check(fails, "configured_specs flattens a nested {cheap,strong} lane_models dict (no unhashable crash)",
        "m-cc-cheap" in specs and "m-cc-strong" in specs)
-    ck("configured_specs still accepts a BARE lane-model id", "m-zai" in specs)
-    ck("configured_specs dedupes across sources (a repeated id appears once)", specs.count("m-cc-cheap") == 1)
-    ck("configured_specs still gathers advisor.model + tier ids", "m-top" in specs and "m-tier" in specs)
+    record_script_check(fails, "configured_specs still accepts a BARE lane-model id", "m-zai" in specs)
+    record_script_check(fails, "configured_specs dedupes across sources (a repeated id appears once)", specs.count("m-cc-cheap") == 1)
+    record_script_check(fails, "configured_specs still gathers advisor.model + tier ids", "m-top" in specs and "m-tier" in specs)
 finally:
     _cfg._cfg_get = _orig_cfg
 

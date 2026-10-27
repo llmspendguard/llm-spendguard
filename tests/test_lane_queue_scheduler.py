@@ -15,15 +15,12 @@ os.environ.setdefault("SPENDGUARD_TEST_ISOLATED", "1")
 os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
+from _script_checks import record_script_check
 from spendguard import lane_queue   # noqa: E402
 
 fails = []
 
 
-def ck(name, cond):
-    print(("  [OK] " if cond else "  [FAIL] ") + name)
-    if not cond:
-        fails.append(name)
 
 
 HI = lane_queue.PRIORITY_INTERACTIVE
@@ -42,13 +39,13 @@ for _ in range(4):
         order.append(got[0]["intent"])
 
 print("-- leased order:", order)
-ck("scheduler serves MOST-URGENT first: tight-SLA realtime > loose realtime > high-priority batch > low-priority batch",
+record_script_check(fails, "scheduler serves MOST-URGENT first: tight-SLA realtime > loose realtime > high-priority batch > low-priority batch",
    order == ["rt-tight", "rt-loose", "batch-high", "batch-low"])
-ck("the urgent item (enqueued LAST, id=4) is leased FIRST — proves URGENCY order, not insertion order",
+record_script_check(fails, "the urgent item (enqueued LAST, id=4) is leased FIRST — proves URGENCY order, not insertion order",
    bool(order) and order[0] == "rt-tight")
-ck("a realtime item outranks a same-priority batch item",
+record_script_check(fails, "a realtime item outranks a same-priority batch item",
    order.index("rt-loose") < order.index("batch-high"))
-ck("the tighter SLA deadline outranks the looser one (same priority + class)",
+record_script_check(fails, "the tighter SLA deadline outranks the looser one (same priority + class)",
    order.index("rt-tight") < order.index("rt-loose"))
 
 print(f"\n{'[FAIL]' if fails else 'OK'} test_lane_queue_scheduler: {len(fails)} failure(s)")

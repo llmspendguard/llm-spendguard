@@ -15,15 +15,11 @@ os.environ.setdefault("SPENDGUARD_TEST_ISOLATED", "1")
 os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
+from _script_checks import record_script_check  # noqa: E402
+
 from spendguard import lane_balance, adapters, dispatch
 
 fails = []
-
-
-def ck(name, cond):
-    print(("  [OK] " if cond else "  [FAIL] ") + name)
-    if not cond:
-        fails.append(name)
 
 
 DATA_URL = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAet"   # a tiny, well-under-cap image
@@ -54,34 +50,34 @@ adapters.call = _good_call
 _seen.clear()
 res = lane_balance.bulk_delegate(["a1|a2", "b1|b2|b3"], "vis:label", images_for=lambda t: [DATA_URL],
                                  vision_model=VMODEL, schema=SCHEMA, refuse_billed=True)
-ck("every task ran on the API vision model (no lane)", len(_seen) == 2 and all(c["model"] == VMODEL for c in _seen))
-ck("images= was forwarded to the vision call", all(c.get("images") == [DATA_URL] for c in _seen))
-ck("refuse_billed → no_metered_fallback=True threaded through", all(c.get("no_metered_fallback") is True for c in _seen))
-ck("results carry executor=api and text", all(r.get("lane") == "api" and r.get("text") for r in res))
+record_script_check(fails, "every task ran on the API vision model (no lane)", len(_seen) == 2 and all(c["model"] == VMODEL for c in _seen))
+record_script_check(fails, "images= was forwarded to the vision call", all(c.get("images") == [DATA_URL] for c in _seen))
+record_script_check(fails, "refuse_billed → no_metered_fallback=True threaded through", all(c.get("no_metered_fallback") is True for c in _seen))
+record_script_check(fails, "results carry executor=api and text", all(r.get("lane") == "api" and r.get("text") for r in res))
 
 # ── the fail-loud guards, asserted by STRUCTURED reason code (never substring on free-form text) ──
 r_novm = lane_balance.bulk_delegate(["x"], "vis:novmodel", images_for=lambda t: [DATA_URL])
-ck("images_for without vision_model → reason=no_vision_model", r_novm[0].get("reason") == "no_vision_model" and r_novm[0].get("text") is None)
+record_script_check(fails, "images_for without vision_model → reason=no_vision_model", r_novm[0].get("reason") == "no_vision_model" and r_novm[0].get("text") is None)
 
 r_noimg = lane_balance.bulk_delegate(["x"], "vis:noimg", images_for=lambda t: [], vision_model=VMODEL)
-ck("no image for a task → reason=no_image", r_noimg[0].get("reason") == "no_image" and r_noimg[0].get("text") is None)
+record_script_check(fails, "no image for a task → reason=no_image", r_noimg[0].get("reason") == "no_image" and r_noimg[0].get("text") is None)
 
 r_miss = lane_balance.bulk_delegate(["x"], "vis:missing", images_for=lambda t: ["/no/such/image_xyz.png"], vision_model=VMODEL)
-ck("unreadable image → reason=image_unreadable", r_miss[0].get("reason") == "image_unreadable" and r_miss[0].get("text") is None)
+record_script_check(fails, "unreadable image → reason=image_unreadable", r_miss[0].get("reason") == "image_unreadable" and r_miss[0].get("text") is None)
 
 big = os.path.join(os.environ["SPENDGUARD_HOME"], "big.png")
 with open(big, "wb") as fh:                                   # sparse: getsize reports 33MB without writing 33MB
     fh.seek(33 * 1024 * 1024)
     fh.write(b"\0")
 r_big = lane_balance.bulk_delegate(["x"], "vis:big", images_for=lambda t: [big], vision_model=VMODEL)
-ck("oversized image → reason=image_too_big (bounded before load, no OOM)", r_big[0].get("reason") == "image_too_big" and r_big[0].get("text") is None)
+record_script_check(fails, "oversized image → reason=image_too_big (bounded before load, no OOM)", r_big[0].get("reason") == "image_too_big" and r_big[0].get("text") is None)
 
 # ── arity: a vision envelope that DROPS an id becomes a retried MISS (same contract as the lane path) ──
 adapters.call = lambda model, prompt, **kw: {"text": _envelope(prompt.split("|")[:-1]), "cost": 0.001,
                                              "executor": "api", "model": model.split(":")[1], "provider": model.split(":")[0]}
 r_ar = lane_balance.bulk_delegate(["a1|a2|a3"], "vis:arity", images_for=lambda t: [DATA_URL], vision_model=VMODEL,
                                   schema=SCHEMA, expect_ids=lambda t: t.split("|"))
-ck("a vision envelope dropping an id → retried MISS (arity_miss), not a silent success",
+record_script_check(fails, "a vision envelope dropping an id → retried MISS (arity_miss), not a silent success",
    r_ar[0].get("text") is None and r_ar[0].get("arity_miss", {}).get("missing") == ["a3"])
 
 # ── a queue-slot TIMEOUT (DispatchTimeout) is NOT a fan-halt: each task becomes a 'dispatch_saturated' MISS row
@@ -97,7 +93,7 @@ def _saturated(*a, **k):
 
 dispatch.acquire = _saturated
 r_sat = lane_balance.bulk_delegate(["x", "y"], "vis:sat", images_for=lambda t: [DATA_URL], vision_model=VMODEL)
-ck("a saturated vision fan → every task a 'dispatch_saturated' MISS row (not halted, not crashed)",
+record_script_check(fails, "a saturated vision fan → every task a 'dispatch_saturated' MISS row (not halted, not crashed)",
    len(r_sat) == 2 and all(row.get("text") is None and row.get("reason") == "dispatch_saturated" for row in r_sat))
 dispatch.acquire = lambda *a, **k: 0.0
 

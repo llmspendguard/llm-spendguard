@@ -13,14 +13,11 @@ Hermetic: config + adapters.call + the bandit/cooling state are monkeypatched, s
 the test is robust to real bandit history. Zero spend, no network."""
 import sys
 
+from _script_checks import record_script_check  # noqa: E402
+
 from spendguard import lane_balance, adapters, config, lane_bandit, calls
 
 fails = []
-def ck(name, cond):
-    print(("  [OK] " if cond else "  [FAIL] ") + name)
-    if not cond:
-        fails.append(name)
-
 # claude-code serves OPUS (a strong-tier model) and IS in the pool — the exact thing that must never be picked.
 LANE_MODELS = {"claude-code": "claude-opus-4-8", "codex": "gpt-5.6-sol",
                "gemini": "gemini-3.7-flash-medium", "zai-coding": "glm-5.3"}
@@ -59,27 +56,27 @@ try:
     recorded.clear()
     res = lane_balance.bulk_delegate(["a", "b", "c", "d"], "symgrep-index", tier="cheap", force=True)
     called = [r["model"].split(":", 1)[-1] for r in recorded]
-    ck("tier=cheap actually dispatched (did not fail-close)", len(recorded) > 0)
-    ck("ZERO calls to a STRONG model (never claude-opus-4-8 / gpt-5.6-sol / gemini-3.7-flash)",
+    record_script_check(fails, "tier=cheap actually dispatched (did not fail-close)", len(recorded) > 0)
+    record_script_check(fails, "ZERO calls to a STRONG model (never claude-opus-4-8 / gpt-5.6-sol / gemini-3.7-flash)",
        all(m not in STRONG for m in called))
-    ck("the OPUS (claude-code) model is NEVER called", "claude-opus-4-8" not in called)
-    ck("every task produced a row", len(res) == 4)
-    ck("every tier call PINS the model (no_substitution=True) — bandit can't swap to Opus",
+    record_script_check(fails, "the OPUS (claude-code) model is NEVER called", "claude-opus-4-8" not in called)
+    record_script_check(fails, "every task produced a row", len(res) == 4)
+    record_script_check(fails, "every tier call PINS the model (no_substitution=True) — bandit can't swap to Opus",
        all(r["no_sub"] is True for r in recorded))
 
     # 2. undeclared tier → FAIL CLOSED: zero spend, all-error rows, never widened
     recorded.clear()
     res2 = lane_balance.bulk_delegate(["x", "y"], "symgrep-index", tier="ghost-tier", force=True)
-    ck("undeclared tier → ZERO adapters.call (spends nothing)", len(recorded) == 0)
-    ck("undeclared tier → all rows are errors (undescribed, re-runnable)",
+    record_script_check(fails, "undeclared tier → ZERO adapters.call (spends nothing)", len(recorded) == 0)
+    record_script_check(fails, "undeclared tier → all rows are errors (undescribed, re-runnable)",
        len(res2) == 2 and all(r.get("error") and not r.get("text") for r in res2))
-    ck("undeclared tier → never widened onto a lane", all(r.get("lane") is None for r in res2))
+    record_script_check(fails, "undeclared tier → never widened onto a lane", all(r.get("lane") is None for r in res2))
 
     # 3. NO tier → unchanged path (substitution allowed)
     recorded.clear()
     res3 = lane_balance.bulk_delegate(["p"], "symgrep-index", force=True)
-    ck("no tier → still dispatches", len(recorded) == 1)
-    ck("no tier → model NOT pinned (no_substitution False, unchanged behaviour)", recorded[0]["no_sub"] is False)
+    record_script_check(fails, "no tier → still dispatches", len(recorded) == 1)
+    record_script_check(fails, "no tier → model NOT pinned (no_substitution False, unchanged behaviour)", recorded[0]["no_sub"] is False)
 
     # 4. PER-TIER lane models: a lane declares {cheap, strong}; tier=cheap uses its CHEAP model, tier=strong its strong
     #    — the same plan does cheap work on its cheap model, never the strong one.
@@ -97,14 +94,14 @@ try:
     recorded.clear()
     res4 = lane_balance.bulk_delegate(["a", "b"], "symgrep-index", tier="cheap", force=True)
     called4 = [r["model"].split(":", 1)[-1] for r in recorded]
-    ck("per-tier: tier=cheap uses each lane's CHEAP model (haiku / gpt-5.6-luna), never opus/sol",
+    record_script_check(fails, "per-tier: tier=cheap uses each lane's CHEAP model (haiku / gpt-5.6-luna), never opus/sol",
        bool(called4) and all(m in {"claude-haiku-4-5", "gpt-5.6-luna", "glm-5.3"} for m in called4))
-    ck("per-tier: claude-code served CHEAP via haiku, its opus is NEVER called",
+    record_script_check(fails, "per-tier: claude-code served CHEAP via haiku, its opus is NEVER called",
        "claude-opus-4-8" not in called4 and "gpt-5.6-sol" not in called4)
     recorded.clear()
     res5 = lane_balance.bulk_delegate(["a"], "symgrep-index", tier="strong", force=True)
     called5 = [r["model"].split(":", 1)[-1] for r in recorded]
-    ck("per-tier: tier=strong uses the STRONG model (opus/sol), never the cheap one",
+    record_script_check(fails, "per-tier: tier=strong uses the STRONG model (opus/sol), never the cheap one",
        bool(called5) and all(m in {"claude-opus-4-8", "gpt-5.6-sol"} for m in called5))
 finally:
     (config._cfg_get, adapters.call, lane_bandit.arm_stats, lane_bandit._arm_cooling,
