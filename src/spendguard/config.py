@@ -22,10 +22,8 @@ from spendguard.ledger_fork_locks import new_fork_reset_ledger_state
 
 DEFAULT_SPENDGUARD_HOME = Path.home() / ".spendguard"
 HOME = Path(os.getenv("SPENDGUARD_HOME") or DEFAULT_SPENDGUARD_HOME)
-try:
-    HOME.mkdir(parents=True, exist_ok=True)
-except Exception:
-    pass
+# Resolve paths without creating state during import. Writers create their own
+# parent directories; verify-only CLI startup must also work with no state root.
 
 ISOLATED_TEST_ENVIRONMENT_KEY = "SPENDGUARD_TEST_ISOLATED"
 ISOLATED_TEST_ENABLED_VALUE = "1"

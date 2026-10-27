@@ -484,6 +484,12 @@ def _dispatch(argv=None):
         )
         print(f"usage: spendguard {cmd} [args]\n\n{descriptions.get(cmd, 'spendguard command')}{option_hint}")
         return 0
+    # Verify-only distribution must reach attestation before gate hydration: even
+    # gate installation registers this process in the persistent fleet database.
+    if cmd == "distribute":
+        from .distribution import distribute_command, parse_distribution_cli_arguments
+        if parse_distribution_cli_arguments(rest).check:
+            return distribute_command(rest)
     from . import _load_public_api_and_install_gate
     _load_public_api_and_install_gate()
     # ensure the gate is installed for this process so the advisor's OWN LLM calls (optimize/experiment/

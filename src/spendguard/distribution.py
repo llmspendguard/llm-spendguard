@@ -335,13 +335,18 @@ def render_distribution_table(result):
     return "\n".join(lines)
 
 
-def distribute_command(argv=None):
+def parse_distribution_cli_arguments(argv=None):
+    """Share the command grammar with startup's verify-only dispatch."""
     parser = argparse.ArgumentParser(prog="spendguard distribute")
     parser.add_argument("--check", action="store_true")
     parser.add_argument("--json", action="store_true")
     parser.add_argument("--roots", nargs="+")
     parser.add_argument("--dry-run", action="store_true")
-    args = parser.parse_args(argv)
+    return parser.parse_args(argv)
+
+
+def distribute_command(argv=None):
+    args = parse_distribution_cli_arguments(argv)
     result = distribute_fleet(check=args.check, roots=args.roots, dry_run=args.dry_run)
     print(json.dumps(result, indent=2, sort_keys=True) if args.json else render_distribution_table(result))
     return result["exit_code"]
