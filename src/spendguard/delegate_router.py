@@ -8,6 +8,8 @@ import importlib
 import hashlib
 import json
 import os
+import threading
+import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -21,6 +23,16 @@ DEFAULT_DELEGATE_INTENT = "spendguard:delegate-task"
 # meta default. A caller's explicit `timeout` still wins; this is only the floor when none was supplied, so a wedged
 # codex turn is HARD-killed (the daemon recycled) at a known bound instead of stalling the next delegation forever.
 AGENTIC_DELEGATE_TIMEOUT_S = 1800
+# Fifteen seconds is comfortably above the measured warm-Codex turn (~5s), but remains well below common MCP
+# client ceilings. Operators can tune it without source changes and it is clamped below the executor timeout.
+DELEGATE_HANDOFF_DEFAULT_S = 15
+DELEGATE_HANDOFF_POLL_DEFAULT_S = 0.1
+DELEGATE_HANDOFF_AFTER_S = min(
+    float(config._cfg_get("delegate", "handoff_after_s", DELEGATE_HANDOFF_DEFAULT_S) or DELEGATE_HANDOFF_DEFAULT_S),
+    float(config._cfg_get("delegate", "agentic_timeout_s", AGENTIC_DELEGATE_TIMEOUT_S)
+          or AGENTIC_DELEGATE_TIMEOUT_S))
+DELEGATE_HANDOFF_POLL_S = float(config._cfg_get(
+    "delegate", "handoff_poll_s", DELEGATE_HANDOFF_POLL_DEFAULT_S) or DELEGATE_HANDOFF_POLL_DEFAULT_S)
 CODEX_AGENTIC_EVENTS_FILENAME = "codex-agentic-executions.jsonl"
 CODEX_AGENTIC_EVENTS_SCHEMA_VERSION = 1
 DELEGATE_EXECUTION_INVALID_RESULT = "delegate_execution_invalid_result"
@@ -418,6 +430,124 @@ def _route_agentic(plan, prompt, model, timeout, cwd):
         _append_codex_agentic_event("end", execution_id, plan=plan, model=model, cwd=cwd)
 
 
+def _assemble_delegate_execution_result(execution, *, result, classification, estimate, intent, changed_files):
+    """Validate one execution and assemble the established inline delegate result shape."""
+    if not isinstance(execution, dict):
+        return {**result, "status": "error", "execution": execution,
+                "reason": DELEGATE_EXECUTION_INVALID_RESULT,
+                "why": "executor returned no structured execution result"}
+    execution_error = execution.get("error")
+    execution_text = execution.get("text")
+    if execution_error or not isinstance(execution_text, str) or not execution_text.strip():
+        return {**result, "status": "error", "execution": execution,
+                "reason": DELEGATE_EXECUTION_REFUSED if execution_error else DELEGATE_EXECUTION_NO_RESULT,
+                "why": str(execution_error) if execution_error else "executor produced no final result"}
+    degraded_signal_lines, degraded_tool_payloads = _delegate_degraded_tool_lines(execution_text)
+    if degraded_tool_payloads:
+        return {**result, "status": "error", "execution": execution,
+                "reason": DELEGATE_EXECUTION_DEGRADED_TOOL_ENVELOPE,
+                "why": ("delegated execution reported an unavailable required capability; "
+                        "the task could not be confirmed complete"),
+                "degraded_tools": degraded_tool_payloads}
+    if len(execution_text.splitlines()) > DELEGATE_EXECUTION_RESULT_MAX_LINES:
+        return {**result, "status": "error", "execution": execution,
+                "reason": DELEGATE_EXECUTION_RESULT_TOO_LONG,
+                "why": ("delegated execution exceeded the result line contract; complete evidence remains "
+                        "available in the structured execution result")}
+    executor_spec = lane_registry.lane_spec(estimate["plan"])
+    if (classification["kind"] == "agentic" and executor_spec["exec"] == "codex_exec"
+            and execution.get("execution_started") is not True):
+        return {**result, "status": "error", "execution": execution,
+                "reason": DELEGATE_EXECUTION_NOT_STARTED,
+                "why": "Codex executor supplied no confirmed agent process/thread/turn start"}
+    actual_in = int(execution.get("in_tok") or estimate["input_tokens"])
+    actual_out = int(execution.get("out_tok") or estimate["output_tokens"])
+    spec = lane_registry.lane_spec(estimate["plan"])
+    actual_value = float(pricing.realtime_cost(estimate["model"], actual_in, actual_out,
+                                               provider=spec["provider"]) or 0)
+    ratio = _measured_claude_overage_ratio()
+    avoided = actual_value * ratio if ratio is not None else None
+    actual_api = float(execution.get("cost") or 0)
+    guard.record_decision(intent=intent, requested_model="claude-overage", chosen_model=estimate["model"],
+                          counterfactual_usd=avoided or 0, actual_usd=actual_api,
+                          saved_usd=max(0, (avoided or 0) - actual_api),
+                          basis="delegate", why=classification["why"])
+    guard.record_saving("delegate", max(0, (avoided or 0) - actual_api))
+    est_value_basis = ("lane-measured tokens" if classification["kind"] == "oneshot"
+                       else "token estimate (warm daemon); reconcile plan value via `spendguard codex sync`")
+    receipt = {"plan": estimate["plan"], "model": estimate["model"], "real_api_usd": actual_api,
+               "subscription_usd": DELEGATE_INCREMENTAL_SUBSCRIPTION_USD,
+               "est_value_usd": actual_value, "saved_overage_usd": avoided,
+               "saved_overage_basis": "ledger counterfactual" if ratio is not None else "unavailable",
+               "est_value_basis": est_value_basis}
+    completed_result = {**result, "status": "executed", "execution": execution,
+                        "receipt": receipt, "changed_files": changed_files}
+    if degraded_signal_lines:
+        completed_result["warnings"] = [{"reason": DELEGATE_EXECUTION_DEGRADED_TOOL_ENVELOPE,
+                                          "signals": degraded_signal_lines,
+                                          "degraded_tools": degraded_tool_payloads}]
+    return completed_result
+
+
+def _run_delegate_job_to_completion(job_id, plan, prompt, model, timeout, cwd, dirty_before, *,
+                                    result, classification, estimate, intent):
+    """Run and durably settle a detached delegate using only executor-owned state."""
+    from . import delegate_jobs
+    try:
+        execution = _route_agentic(plan, prompt, model, timeout, cwd)
+        completed = _assemble_delegate_execution_result(
+            execution, result=result, classification=classification, estimate=estimate, intent=intent,
+            changed_files=_worktree_changed_files(cwd, dirty_before))
+        terminal_state = "done" if completed.get("status") == "executed" else "failed"
+        delegate_jobs.finish_delegate_job(
+            job_id, state=terminal_state, result_payload=completed,
+            terminal_reason=None if terminal_state == "done" else completed.get("reason"),
+            error=None if terminal_state == "done" else completed.get("why"))
+    except Exception as exc:
+        reason = "delegate-executor-timeout" if isinstance(exc, TimeoutError) else "delegate-executor-exception"
+        delegate_jobs.finish_delegate_job(job_id, state="failed", terminal_reason=reason, error=str(exc))
+
+
+def start_delegate_job(task, files=None, intent=None, provider="auto", cwd=None, timeout=None):
+    """Prepare and start one daemon delegate job, returning without awaiting execution."""
+    from . import delegate_jobs
+    intent = intent or DEFAULT_DELEGATE_INTENT
+    prepared = delegate_task(task, files=files, intent=intent, provider=provider, execute=False, cwd=cwd)
+    classification = prepared.get("classification") or {}
+    if prepared.get("status") != "estimate" or classification.get("kind") != "agentic":
+        return prepared
+    estimate = prepared["estimate"]
+    dirty_before = _worktree_state(cwd)[1]
+    fingerprint = delegate_route_fingerprint(task, files=files, provider=provider)
+    job_id = delegate_jobs.create_delegate_job(
+        kind=classification["kind"], task_fingerprint=fingerprint, cwd=cwd,
+        provider=estimate["plan"], intent=intent, dirty_before=dirty_before)
+    worker = threading.Thread(
+        target=_run_delegate_job_to_completion,
+        args=(job_id, estimate["plan"], task + _whole_file_evidence(files), estimate["model"], timeout, cwd,
+              dirty_before),
+        kwargs={"result": prepared, "classification": classification, "estimate": estimate, "intent": intent},
+        name=f"spendguard-delegate-{job_id}", daemon=True)
+    worker.start()
+    return {"job_id": job_id, "state": "running"}
+
+
+def wait_for_delegate_job_handoff(job_id):
+    """Wait only through the configured inline window, then return result or a durable handle."""
+    from . import delegate_jobs
+    deadline = time.monotonic() + DELEGATE_HANDOFF_AFTER_S
+    while time.monotonic() < deadline:
+        status = delegate_jobs.read_delegate_job(job_id)
+        if status.get("state") == "done":
+            return delegate_jobs.read_delegate_job_result(job_id)
+        if status.get("state") == "failed":
+            return delegate_jobs.read_delegate_job_result(job_id)
+        time.sleep(min(DELEGATE_HANDOFF_POLL_S, max(0, deadline - time.monotonic())))
+    return {"status": "running", "job_id": job_id,
+            "collect_with": f"spendguard delegate --collect {job_id}",
+            "note": "agentic run exceeds the inline window; it is still running detached — collect by job_id."}
+
+
 def delegate_task(task, files=None, intent=None, provider="auto", execute=False, timeout=None, cwd=None):
     """Classify, estimate, and optionally execute one self-contained AGENTIC workspace-write subtask.
 
@@ -467,65 +597,9 @@ def delegate_task(task, files=None, intent=None, provider="auto", execute=False,
         _dirty_before = _worktree_state(cwd)[1]            # pre-existing dirt, so changed_files is ONLY the agent's edits
         execution = _route_agentic(estimate["plan"], prompt, estimate["model"], timeout, cwd)
         changed_files = _worktree_changed_files(cwd, _dirty_before)   # the authed caller stages THESE → commit → push → PR
-    if not isinstance(execution, dict):
-        return {**result, "status": "error", "execution": execution,
-                "reason": DELEGATE_EXECUTION_INVALID_RESULT,
-                "why": "executor returned no structured execution result"}
-    execution_error = execution.get("error")
-    execution_text = execution.get("text")
-    if execution_error or not isinstance(execution_text, str) or not execution_text.strip():
-        return {**result, "status": "error", "execution": execution,
-                "reason": DELEGATE_EXECUTION_REFUSED if execution_error else DELEGATE_EXECUTION_NO_RESULT,
-                "why": str(execution_error) if execution_error else "executor produced no final result"}
-    degraded_signal_lines, degraded_tool_payloads = _delegate_degraded_tool_lines(execution_text)
-    if degraded_tool_payloads:
-        return {**result, "status": "error", "execution": execution,
-                "reason": DELEGATE_EXECUTION_DEGRADED_TOOL_ENVELOPE,
-                "why": ("delegated execution reported an unavailable required capability; "
-                        "the task could not be confirmed complete"),
-                "degraded_tools": degraded_tool_payloads}
-    if len(execution_text.splitlines()) > DELEGATE_EXECUTION_RESULT_MAX_LINES:
-        return {**result, "status": "error", "execution": execution,
-                "reason": DELEGATE_EXECUTION_RESULT_TOO_LONG,
-                "why": ("delegated execution exceeded the result line contract; complete evidence remains "
-                        "available in the structured execution result")}
-    executor_spec = lane_registry.lane_spec(estimate["plan"])
-    if (classification["kind"] == "agentic" and executor_spec["exec"] == "codex_exec"
-            and execution.get("execution_started") is not True):
-        return {**result, "status": "error", "execution": execution,
-                "reason": DELEGATE_EXECUTION_NOT_STARTED,
-                "why": "Codex executor supplied no confirmed agent process/thread/turn start"}
-    actual_in = int(execution.get("in_tok") or estimate["input_tokens"])
-    actual_out = int(execution.get("out_tok") or estimate["output_tokens"])
-    spec = lane_registry.lane_spec(estimate["plan"])
-    actual_value = float(pricing.realtime_cost(estimate["model"], actual_in, actual_out,
-                                               provider=spec["provider"]) or 0)
-    ratio = _measured_claude_overage_ratio()
-    avoided = actual_value * ratio if ratio is not None else None
-    actual_api = float(execution.get("cost") or 0)
-    guard.record_decision(intent=intent, requested_model="claude-overage", chosen_model=estimate["model"],
-                          counterfactual_usd=avoided or 0, actual_usd=actual_api,
-                          saved_usd=max(0, (avoided or 0) - actual_api),
-                          basis="delegate", why=classification["why"])
-    guard.record_saving("delegate", max(0, (avoided or 0) - actual_api))
-    # est-value basis, labelled HONESTLY (CHANGE 1): a oneshot rides the lane with measured tokens; an agentic codex
-    # turn on the warm daemon returns ESTIMATED tokens (the app-server does not report usage), so its est-value is a
-    # token estimate, not plan truth — the authoritative plan value is reconciled daily by codex.py (`spendguard codex
-    # sync` mines ~/.codex/sessions). Never presented as measured when it is estimated.
-    est_value_basis = ("lane-measured tokens" if classification["kind"] == "oneshot"
-                       else "token estimate (warm daemon); reconcile plan value via `spendguard codex sync`")
-    receipt = {"plan": estimate["plan"], "model": estimate["model"], "real_api_usd": actual_api,
-               "subscription_usd": DELEGATE_INCREMENTAL_SUBSCRIPTION_USD,
-               "est_value_usd": actual_value, "saved_overage_usd": avoided,
-               "saved_overage_basis": "ledger counterfactual" if ratio is not None else "unavailable",
-               "est_value_basis": est_value_basis}
-    completed_result = {**result, "status": "executed", "execution": execution,
-                        "receipt": receipt, "changed_files": changed_files}
-    if degraded_signal_lines:
-        completed_result["warnings"] = [{"reason": DELEGATE_EXECUTION_DEGRADED_TOOL_ENVELOPE,
-                                         "signals": degraded_signal_lines,
-                                         "degraded_tools": degraded_tool_payloads}]
-    return completed_result
+    return _assemble_delegate_execution_result(
+        execution, result=result, classification=classification, estimate=estimate, intent=intent,
+        changed_files=changed_files)
 
 
 def delegate_cli(argv=None):
@@ -543,7 +617,7 @@ def delegate_cli(argv=None):
                 "adapters.call(..., reasoning='best-value', intent=...). Name an intent, not a guessed model id;\n"
                 "see README.md's routing cheat-sheet. Codex is ~5s warm; >75s is cold `codex exec` only."),
         formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("task", help="complete, self-contained task to classify and delegate")
+    parser.add_argument("task", nargs="?", help="complete, self-contained task to classify and delegate")
     parser.add_argument("--files", help="comma-separated supporting files; every file is read in full")
     parser.add_argument("--intent", help="attribution/cost-control intent (default: spendguard:delegate-task)")
     parser.add_argument("--provider", default="auto",
@@ -553,10 +627,32 @@ def delegate_cli(argv=None):
     parser.add_argument("--timeout", type=float, help="optional execution timeout in seconds")
     parser.add_argument("--cwd", default=os.getcwd(),
                         help="trusted target repo for agentic workspace-write tasks (default: current shell cwd)")
+    lookup = parser.add_mutually_exclusive_group()
+    lookup.add_argument("--collect", metavar="JOB_ID", help="print the durable terminal result for a delegate job")
+    lookup.add_argument("--status", metavar="JOB_ID", help="print durable delegate job status")
     args = parser.parse_args(argv)
-    result = delegate_task(args.task, files=[p for p in (args.files or "").split(",") if p], intent=args.intent,
-                           provider=args.provider, execute=args.yes and not args.estimate, timeout=args.timeout,
-                           cwd=args.cwd)
+    if args.collect or args.status:
+        from . import delegate_jobs
+        result = (delegate_jobs.read_delegate_job_result(args.collect) if args.collect
+                  else delegate_jobs.read_delegate_job(args.status))
+        print(json.dumps(result, indent=2, sort_keys=True))
+        return 2 if result.get("error") else 0
+    if not args.task:
+        parser.error("task is required unless --collect or --status is supplied")
+    files = [p for p in (args.files or "").split(",") if p]
+    if args.yes and not args.estimate:
+        classification = classify_task(args.task, files=files, provider=args.provider)
+        if classification.get("kind") == "agentic":
+            started = start_delegate_job(args.task, files=files, intent=args.intent, provider=args.provider,
+                                         cwd=args.cwd, timeout=args.timeout)
+            result = (wait_for_delegate_job_handoff(started["job_id"])
+                      if started.get("state") == "running" else started)
+        else:
+            result = delegate_task(args.task, files=files, intent=args.intent, provider=args.provider,
+                                   execute=True, timeout=args.timeout, cwd=args.cwd)
+    else:
+        result = delegate_task(args.task, files=files, intent=args.intent, provider=args.provider,
+                               execute=False, timeout=args.timeout, cwd=args.cwd)
     classification = result.get("classification") or {}
     estimate = result.get("estimate") or {}
     if result["status"] != "executed":
@@ -584,4 +680,6 @@ def delegate_cli(argv=None):
         detail = (result.get("why") or execution_error or estimate.get("error") or classification.get("error")
                   or "delegation failed without a result")
         print(f"delegate {result['status']}: {reason + ': ' if reason else ''}{detail}")
-    return 0 if result["status"] in ("estimate", "executed") else 2
+    elif result["status"] == "running":
+        print(json.dumps(result, indent=2, sort_keys=True))
+    return 0 if result["status"] in ("estimate", "executed", "running") else 2
