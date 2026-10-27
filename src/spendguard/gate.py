@@ -2500,7 +2500,14 @@ class _GatePackagePostImportLoader:
             else:
                 module = self.loader.load_module(module.__name__)
         # A failed/interrupted callback aborts import and stays registered for a retry.
-        self.finder.finish_package_import(module)
+        try:
+            self.finder.finish_package_import(module)
+        except BaseException:
+            package_module_prefix = f"{self.package}."
+            for imported_module_name in tuple(sys.modules):
+                if imported_module_name == self.package or imported_module_name.startswith(package_module_prefix):
+                    sys.modules.pop(imported_module_name, None)
+            raise
 
     def __getattr__(self, name):
         return getattr(self.loader, name)
