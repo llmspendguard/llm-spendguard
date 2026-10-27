@@ -18,6 +18,7 @@ CLI: `spendguard mine-conv {index,synth} [--transcripts PATH] [--limit N] [--run
 """
 import os, re, json, glob, hashlib, functools, datetime
 from . import config, calls, learn
+from .ledger_writer import best_effort_ledger_function, serialize_ledger_function
 
 _DEFAULT_TDIR = os.path.expanduser("~/.claude/projects")
 _CACHE = os.path.join(str(config.HOME), "conv_index.json")
@@ -90,8 +91,8 @@ def _events_in(path, run_ids):
 
 # ─────────────────────────── index (cached, deterministic) ───────────────────────────
 def _run_ids():
-    with learn._lock:
-        return {r[0] for r in learn._insights_db().execute("SELECT id FROM graph_nodes WHERE type='run'").fetchall()}
+    with learn.config.ledger_op('learn', learn._ensure_insights_schema) as ledger_read_handle:
+        return {r[0] for r in ledger_read_handle.execute("SELECT id FROM graph_nodes WHERE type='run'").fetchall()}
 
 
 def build_conversation_event_index(tdir=None, rebuild=False):
@@ -242,10 +243,7 @@ _ASK_SYS = (
 
 
 def _ask_db():
-    db = learn._insights_db()
-    db.execute("CREATE TABLE IF NOT EXISTS user_ask_class "
-               "(hash TEXT PRIMARY KEY, is_ask INT, model TEXT, ts TEXT)")
-    return db
+    return learn._insights_db()
 
 
 def classify_user_asks(items, run=True):
@@ -261,8 +259,7 @@ def classify_user_asks(items, run=True):
         return res
     hashes = {c["id"]: _chash(c["text"]) for c in items}
     todo = []
-    with learn._lock:
-        db = _ask_db()
+    with learn.config.ledger_op('learn', learn._ensure_insights_schema) as db:
         for c in items:
             r = db.execute("SELECT is_ask FROM user_ask_class WHERE hash=?", (hashes[c["id"]],)).fetchone()
             if r is not None:
@@ -287,18 +284,28 @@ def classify_user_asks(items, run=True):
                 parts = ln.strip().split()
                 if len(parts) >= 2 and parts[0].rstrip(".").isdigit():
                     verdicts[int(parts[0].rstrip("."))] = parts[1].lower().startswith("t")
-            with learn._lock:
-                db = _ask_db()
-                for i, c in enumerate(b):
-                    if i in verdicts:
-                        res[c["id"]] = verdicts[i]
-                        db.execute("INSERT OR REPLACE INTO user_ask_class VALUES (?,?,?,?)",
-                                   (hashes[c["id"]], int(verdicts[i]), model,
-                                    datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")))
-                db.commit()
-        except Exception:
+            for i, item in enumerate(b):
+                if i in verdicts:
+                    res[item["id"]] = verdicts[i]
+            _persist_user_ask_verdicts(b, hashes, verdicts, model)
+        except Exception as ask_error:
+            from . import gate
+            if gate.is_deliberate_stop(ask_error):
+                raise
             continue                                      # stays True
     return res
+
+
+@best_effort_ledger_function
+def _persist_user_ask_verdicts(items, hashes, verdicts, model):
+    with learn._lock:
+        db = _ask_db()
+        for i, item in enumerate(items):
+            if i in verdicts:
+                db.execute("INSERT OR REPLACE INTO user_ask_class VALUES (?,?,?,?)",
+                           (hashes[item["id"]], int(verdicts[i]), model,
+                            datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")))
+        db.commit()
 
 
 def _is_user_ask(obj, txt, verdicts=None):
@@ -382,8 +389,8 @@ def _seg_get_all():
     from . import learn
     out = {}
     try:
-        with learn._lock:
-            for r in learn._insights_db().execute(
+        with learn.config.ledger_op('learn', learn._ensure_insights_schema) as ledger_read_handle:
+            for r in ledger_read_handle.execute(
                     "SELECT seg_id, project, org, team, confidence, source, model FROM seg_attribution"):
                 out[r[0]] = {"project": r[1] or "", "org": r[2] or "", "team": r[3] or "",
                              "confidence": int(r[4] or 0), "source": r[5] or "", "model": r[6] or ""}
@@ -399,6 +406,7 @@ def _seg_get_all():
     return out
 
 
+@serialize_ledger_function
 def _seg_put_cls(seg_id, cls, source="llm", model="", seg=None):
     """Record ONE attribution decision in the base sqlite: conversation id (sid) · subconversation (seg_id+prompt) ·
     the LLM's full DETERMINATION (cls as JSON — what it classified/extracted) · model · ts. So we never re-pay AND
@@ -425,8 +433,8 @@ def seg_record(seg_id):
     """Full recorded row for ONE segment incl. the stored DETERMINATION + model + ts — for audit / re-derive /
     deciding whether to re-run. Returns None if not recorded."""
     from . import learn
-    with learn._lock:
-        r = learn._insights_db().execute(
+    with learn.config.ledger_op('learn', learn._ensure_insights_schema) as ledger_read_handle:
+        r = ledger_read_handle.execute(
             "SELECT seg_id,sid,cwd,prompt,project,org,team,confidence,source,model,ts,determination "
             "FROM seg_attribution WHERE seg_id=?", (seg_id,)).fetchone()
     if not r:
@@ -517,8 +525,8 @@ def session_classification(sid):
     Returns None if the session has no agentic/human classification yet."""
     from . import learn
     rows = []
-    with learn._lock:
-        for r in learn._insights_db().execute(
+    with learn.config.ledger_op('learn', learn._ensure_insights_schema) as ledger_read_handle:
+        for r in ledger_read_handle.execute(
                 "SELECT project,org,team,confidence,ts FROM seg_attribution "
                 "WHERE sid=? AND source IN ('llm','human') AND (project<>'' OR org<>'')", (sid,)):
             rows.append(r)
@@ -731,16 +739,12 @@ def _chash(text):
 
 
 def _evidence_db():
-    db = learn._insights_db()
-    db.execute("CREATE TABLE IF NOT EXISTS evidence_class "
-               "(hash TEXT PRIMARY KEY, spend_evidence INT, kind TEXT, cost_lesson INT, model TEXT, ts TEXT)")
-    return db
+    return learn._insights_db()
 
 
 def _evidence_cached(hashes):
     out = {}
-    with learn._lock:
-        db = _evidence_db()
+    with learn.config.ledger_op('learn', learn._ensure_insights_schema) as db:
         for h in set(hashes):
             r = db.execute("SELECT spend_evidence,kind,cost_lesson FROM evidence_class WHERE hash=?", (h,)).fetchone()
             if r:
@@ -748,6 +752,7 @@ def _evidence_cached(hashes):
     return out
 
 
+@best_effort_ledger_function
 def _evidence_put(h, c, model):
     import datetime
     with learn._lock:
@@ -1111,10 +1116,7 @@ def index_cmd(tdir=None, apply=False, rebuild=False):
         print("  report-only. --apply writes conversation_event nodes + comments_on edges (no spend).")
         return dict(events=len(events), discussed=len(mentioned))
     added = 0
-    with learn._lock:
-        learn._insights_db().execute("DELETE FROM graph_edges WHERE rel='comments_on'")
-        learn._insights_db().execute("DELETE FROM graph_nodes WHERE type='conversation_event'")
-        learn._insights_db().commit()
+    _clear_conversation_graph_events()
     for ev in sorted(events, key=_score, reverse=True)[:200]:   # cap node blast radius
         nid = learn.add_node("conversation_event", ev["text"][:80],
                              attrs={"role": ev.get("role"), "costs": ev.get("costs"), "sigs": ev.get("sigs")},
@@ -1124,6 +1126,14 @@ def index_cmd(tdir=None, apply=False, rebuild=False):
         added += 1
     print(f"  applied: {added} conversation_event nodes (+ comments_on edges to discussed runs).")
     return dict(events=len(events), discussed=len(mentioned), nodes=added)
+
+
+@serialize_ledger_function
+def _clear_conversation_graph_events():
+    with learn._lock:
+        learn._insights_db().execute("DELETE FROM graph_edges WHERE rel='comments_on'")
+        learn._insights_db().execute("DELETE FROM graph_nodes WHERE type='conversation_event'")
+        learn._insights_db().commit()
 
 
 # ─────────────────────────── synth (caged LLM) ───────────────────────────

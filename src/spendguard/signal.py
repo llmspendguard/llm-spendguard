@@ -15,15 +15,15 @@ def build_signals(since=None):
     for _prov, model, cost, _it, _ot, day, bid in (backfill._openai_rows() + backfill._anthropic_rows()):
         if (day or "") >= since:
             bcost[bid] = bcost.get(bid, 0.0) + (cost or 0.0)   # unpriced (None) contributes nothing, never a TypeError
-    db = callio._callio_db()
-    # THE SAME WINDOW ON BOTH SIDES. `since` gated the billing rows above but not this aggregate, so call
-    # counts and quality ratios were computed over the ENTIRE corpus while the costs beside them covered one
-    # month. Every derived $/call was that month's spend divided by all-time calls — too low, by however
-    # much history the store had accumulated, and getting worse the longer the tool ran.
-    rows = db.execute("SELECT COALESCE(NULLIF(intent,''),''), model, batch, COUNT(*), "
-                      "SUM(quality IS NOT NULL), SUM(quality='good'), SUM(COALESCE(in_tok,0)), SUM(COALESCE(out_tok,0)) "
-                      "FROM call_io WHERE COALESCE(ts,'') >= ? GROUP BY intent, model, batch",
-                      (since,)).fetchall()
+    with callio.config.ledger_op('callio', callio._ensure_callio_schema) as db:
+        # THE SAME WINDOW ON BOTH SIDES. `since` gated the billing rows above but not this aggregate, so call
+        # counts and quality ratios were computed over the ENTIRE corpus while the costs beside them covered one
+        # month. Every derived $/call was that month's spend divided by all-time calls — too low, by however
+        # much history the store had accumulated, and getting worse the longer the tool ran.
+        rows = db.execute("SELECT COALESCE(NULLIF(intent,''),''), model, batch, COUNT(*), "
+                          "SUM(quality IS NOT NULL), SUM(quality='good'), SUM(COALESCE(in_tok,0)), SUM(COALESCE(out_tok,0)) "
+                          "FROM call_io WHERE COALESCE(ts,'') >= ? GROUP BY intent, model, batch",
+                          (since,)).fetchall()
     bmap = conv.batch_project_map()           # AGENTIC: batch → its subconversation's classified project
     agg = {}
     for intent, model, batch, n, judged, good, itok, otok in rows:

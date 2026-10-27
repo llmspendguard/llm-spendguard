@@ -39,17 +39,17 @@ def avoid_anthropic_lane_enabled():
 
 def measured_lane_token_cost(intent=None):
     """Ledger-derived average tokens/call, preferring an adequately sampled intent slice."""
-    con = calls._calls_db()
-    lane_expr = "COALESCE(NULLIF(resolved_lane,''),NULLIF(executor,''))"
-    params = (intent,) if intent else ()
-    suffix = " AND intent=?" if intent else ""
-    query = (f"SELECT {lane_expr}, COUNT(*), AVG(COALESCE(in_tok,0)+COALESCE(out_tok,0)) "
-             f"FROM calls WHERE {lane_expr} IS NOT NULL{suffix} GROUP BY {lane_expr}")
-    intent_rows = {str(lane): (int(count), float(avg or 0.0))
-                   for lane, count, avg in con.execute(query, params).fetchall()}
-    global_rows = con.execute(
-        f"SELECT {lane_expr}, COUNT(*), AVG(COALESCE(in_tok,0)+COALESCE(out_tok,0)) "
-        f"FROM calls WHERE {lane_expr} IS NOT NULL GROUP BY {lane_expr}").fetchall()
+    with calls.config.ledger_op('calls', calls._ensure_call_observation_schema) as con:
+        lane_expr = "COALESCE(NULLIF(resolved_lane,''),NULLIF(executor,''))"
+        params = (intent,) if intent else ()
+        suffix = " AND intent=?" if intent else ""
+        query = (f"SELECT {lane_expr}, COUNT(*), AVG(COALESCE(in_tok,0)+COALESCE(out_tok,0)) "
+                 f"FROM calls WHERE {lane_expr} IS NOT NULL{suffix} GROUP BY {lane_expr}")
+        intent_rows = {str(lane): (int(count), float(avg or 0.0))
+                       for lane, count, avg in con.execute(query, params).fetchall()}
+        global_rows = con.execute(
+            f"SELECT {lane_expr}, COUNT(*), AVG(COALESCE(in_tok,0)+COALESCE(out_tok,0)) "
+            f"FROM calls WHERE {lane_expr} IS NOT NULL GROUP BY {lane_expr}").fetchall()
     out = {}
     for lane, count, avg in global_rows:
         lane = str(lane)

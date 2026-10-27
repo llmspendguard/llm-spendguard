@@ -22,6 +22,7 @@ import hashlib
 import json
 
 from . import config, gate, model_catalog, pricing
+from .ledger_writer import best_effort_ledger_function
 
 _PRIOR_OUT = 800         # the whole top-k JSON ({task_type, top:[{id, why}]}) — sized for the FULL output, not a magic cut
 
@@ -45,11 +46,13 @@ _PRIOR_SCHEMA = {
 
 
 def _intent_prior_db():
-    c = config.open_ledger_connection(config.db_path(), timeout=15, tune=False)
+    return config.fresh_ledger_conn(_ensure_intent_prior_schema)
+
+
+def _ensure_intent_prior_schema(c):
     c.execute("""CREATE TABLE IF NOT EXISTS intent_model_prior(
         intent TEXT, catalog_fp TEXT, ranking_json TEXT, ts TEXT,
         PRIMARY KEY (intent, catalog_fp))""")
-    return c
 
 
 def _candidate_lines():
@@ -96,12 +99,13 @@ def _recall_intent_prior(intent, fp):
     return None
 
 
+@best_effort_ledger_function
 def _store_intent_prior(intent, fp, ranking):
     """Persist the ranking so the prior is NEVER re-paid across processes (CLAUDE.md #4). Never raises except to
     propagate a deliberate stop (a ledger lock)."""
     try:
         ts = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
-        with contextlib.closing(_intent_prior_db()) as c:
+        with config.ledger_op("intent_model_prior", _ensure_intent_prior_schema) as c:
             # OR IGNORE, not OR REPLACE: _store only runs on a recall MISS, so a row for this (intent, catalog_fp) exists
             # only under a concurrent-derive race — first writer wins (both derived the same catalog's prior; idempotent).
             # Never overwrites; a changed catalog moves the fingerprint (a new key), which is a fresh INSERT.
@@ -111,6 +115,8 @@ def _store_intent_prior(intent, fp, ranking):
     except Exception as e:
         if gate.is_deliberate_stop(e):
             raise
+
+        config.warn_once("[spendguard] intent prior cache write failed (%s) — continuing uncached" % type(e).__name__)
 
 
 def _as_result(intent, ranking, ids, per_m_out, k, cost=None, from_cache=False):

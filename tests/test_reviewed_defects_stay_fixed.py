@@ -349,10 +349,18 @@ print("\n-- put() enforces the (model, prompt_hash) natural key — a random PK 
 # ATOMIC upsert on the natural key (ON CONFLICT DO UPDATE, race-safe); the earlier DELETE-then-INSERT form also
 # qualifies. The invariant, not the mechanism, is what must stay fixed.
 from spendguard import semcache as _sc                                       # noqa: E402
-_put_src = _i4.getsource(_sc.put)
-check("put() enforces the (model, prompt_hash) natural key (upsert or delete-then-insert), never a bare INSERT",
-      "ON CONFLICT(model, prompt_hash)" in _put_src
-      or "DELETE FROM semcache WHERE model=? AND prompt_hash=?" in _put_src)
+SEMCACHE_UPSERT_GUARD_PROMPT = "reviewed natural key persistence"
+SEMCACHE_UPSERT_GUARD_MODEL = __name__
+SEMCACHE_UPSERT_GUARD_OUTPUTS = ("prior cached response", "replacement cached response")
+for _replacement in SEMCACHE_UPSERT_GUARD_OUTPUTS:
+    _sc.put(SEMCACHE_UPSERT_GUARD_PROMPT, SEMCACHE_UPSERT_GUARD_MODEL, _replacement)
+from spendguard import config as _semcache_guard_config
+with _semcache_guard_config.ledger_op("semcache_upsert_guard", lambda connection: None) as _semcache_guard_connection:
+    _semcache_guard_rows = _semcache_guard_connection.execute(
+        "SELECT output FROM semcache WHERE model=? AND prompt_hash=?",
+        (SEMCACHE_UPSERT_GUARD_MODEL, _sc._hash(SEMCACHE_UPSERT_GUARD_PROMPT))).fetchall()
+check("put() persists exactly one row and replaces its stale output",
+      _semcache_guard_rows == [(SEMCACHE_UPSERT_GUARD_OUTPUTS[-1],)])
 
 print("\n-- a confidence that is null or non-numeric is UNSTATED, not a crash (review) --")
 from spendguard import review as _rev                                        # noqa: E402

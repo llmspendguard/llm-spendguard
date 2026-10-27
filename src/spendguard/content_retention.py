@@ -10,6 +10,7 @@ import logging
 import threading
 
 from . import config
+from .ledger_fork_locks import new_fork_reset_ledger_state
 from .config_schema import SETTINGS
 from .schema_indexes import ensure_ordered_index_coverage
 
@@ -21,7 +22,7 @@ CONTENT_RETENTION_TABLE = "call_content"
 CONTENT_RETENTION_PURGE_BATCH_ROWS = 1000
 CONTENT_RETENTION_PURGE_SAVEPOINT = "content_retention_purge"
 
-_content_retention_lock = threading.RLock()
+_content_retention_lock = new_fork_reset_ledger_state(globals(), "_content_retention_lock", threading.RLock)
 _content_retention_logger = logging.getLogger(__name__)
 
 
@@ -114,8 +115,10 @@ def record_governed_call_content(call_id, prompt, system, response, *, timestamp
         encoded_prompt = _encode_complete_value(prompt)
         encoded_system = _encode_complete_value(system)
         encoded_response = _encode_complete_value(response)
+        # Schema setup may synchronously dispatch to the writer; admit it before
+        # taking the retention lock, following the global writer lock order.
+        connection = _content_retention_db()
         with _content_retention_lock:
-            connection = _content_retention_db()
             connection.execute(
                 f"INSERT INTO {CONTENT_RETENTION_TABLE} "
                 "(id,call_id,ts,prompt_json,system_json,response_json) VALUES (?,?,?,?,?,?)",

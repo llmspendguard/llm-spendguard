@@ -96,12 +96,17 @@ def _run_storm(ceiling, burst, prompt, deadline_s):
         adapters._call_once, adapters._lane_for = _real_once, _real_lane_for
         adapters._resolve_guard.on = False
     client_fail = sum(1 for r in rows if not (r or {}).get("text")) if rows else burst
+    for failed_storm_row in rows:
+        if not (failed_storm_row or {}).get("text"):
+            print(f"  failed storm result: {failed_storm_row!r}")
     return {"max_inflight": prov.max_inflight, "conn_429s": prov.conn_429s, "client_fail": client_fail,
             "elapsed": time.time() - t0, "deadline": deadline_s, "err": err}
 
 
 def _run_explicitly_collected_storm_matrix():
     fails = 0
+    from spendguard.ledger_writer import run_ledger_write
+    run_ledger_write(lambda: None)
     gc.collect()
     cold_start_ledger_connections = config.ledger_connection_count()
     print(f"== connection-storm reliability: {RUNS} cold-start runs (governor default vendor cap="

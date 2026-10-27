@@ -36,7 +36,7 @@ TEST_INTENT = "test-realtime-overlay"
 money_rows = []
 recording_errors = []
 call_writer_returns = []
-calls_ledger = sqlite3.connect(":memory:")
+calls_ledger = sqlite3.connect(":memory:", check_same_thread=False)
 calls._ensure_call_observation_schema(calls_ledger)
 original_rt_record = gate._rt_record
 original_truthy = calls.__dict__.pop("_truthy")

@@ -14,6 +14,11 @@ from _script_checks import record_script_check  # noqa: E402
 
 from spendguard import config, consumer_audit  # noqa: E402
 
+# The fixture's target interpreters must expose only their installed packages.
+# A suite-level source checkout on PYTHONPATH would make the deliberately empty
+# virtualenv import spendguard and turn the missing-package proof into a valid arm.
+os.environ.pop("PYTHONPATH", None)
+
 FIXTURE_DEPLOYED_SHA = "fixture-deployed-sha"
 FIXTURE_MAXIMUM_DEPTH = 2
 FIXTURE_REPOSITORY_DISCOVERY_DEPTH = 1

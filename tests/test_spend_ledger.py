@@ -10,7 +10,9 @@ from spendguard.ledger import SpendLedger, USD_COLS, to_dec, LockedError
 
 
 def _led(tmp_path):
-    return SpendLedger(db_path=str(tmp_path / "ledger.db"))
+    from spendguard import config
+    test_path = str(tmp_path / "ledger.db")
+    return SpendLedger(db_path=test_path, owned_connection=config.open_ledger_connection(test_path))
 
 
 # ── Step 1: schema + record/get ──

@@ -8,6 +8,7 @@
 """
 
 import sys
+from .ledger_writer import serialize_ledger_function
 
 
 _EMPTY_PROJECT = "(project_primary IS NULL OR project_primary='')"   # an untagged row, in spend_events terms
@@ -41,6 +42,7 @@ def backfill_project_from_venv(led):
     return retagged
 
 
+@serialize_ledger_function
 def retag_deterministic():
     """FREE pass: fill still-unresolved tags in order: meta → venv prior → coarse repo.
 
@@ -62,6 +64,7 @@ def retag_deterministic():
     return venv_retagged + int(a or 0) + int(b or 0)
 
 
+@serialize_ledger_function
 def move_project(old, new):
     """Re-assign a project tag across the ledger — fixes cwd-fallback mistags (e.g. video-captioning that ran
     from ~/Documents got tagged 'documents' instead of 'vision-pipeline'). Returns rows changed."""

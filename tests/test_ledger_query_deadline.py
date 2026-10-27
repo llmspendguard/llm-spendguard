@@ -46,6 +46,9 @@ def slow_deadline_guard_decimal_step(self, value):
 
 def seed_deadline_guard_ledger():
     current = budget._ledger()
+    if current._conn is None:
+        current._restore_spend_aggregate_connection()
+        current._explicit_owned_connection = True
     current._conn.executemany(DEADLINE_GUARD_INSERT_SQL, (
         (str(index), DEADLINE_GUARD_DAY, DEADLINE_GUARD_SOURCE,
          DEADLINE_GUARD_AMOUNT, DEADLINE_GUARD_JOB)
@@ -55,7 +58,10 @@ def seed_deadline_guard_ledger():
 
 
 def capture_deadline_guard_rows(current):
-    return tuple(tuple(row) for row in current._conn.execute(DEADLINE_GUARD_SNAPSHOT_SQL))
+    if current._conn is not None:
+        return tuple(tuple(row) for row in current._conn.execute(DEADLINE_GUARD_SNAPSHOT_SQL))
+    with config.managed_ledger_read_connection(current.db_path) as connection:
+        return tuple(tuple(row) for row in connection.execute(DEADLINE_GUARD_SNAPSHOT_SQL))
 
 
 def close_deadline_guard_thread_ledger():
@@ -124,7 +130,8 @@ def test_ledger_query_deadline_concurrent_pool_baseline():
                 pass
             else:
                 raise AssertionError("every concurrent scan must expire")
-            assert budget._ledger()._conn is not expired_connection
+            assert expired_connection is None
+            assert budget._ledger()._conn is None
             # Empty WHERE proves immediate usability without another slow full aggregate.
             assert budget.spent_by_job(DEADLINE_GUARD_EMPTY_JOB) == 0
         finally:
@@ -219,7 +226,7 @@ def test_ledger_query_deadline_replacement_fault_recovers():
             assert recovered_total == DEADLINE_GUARD_ROWS
             assert budget.spent_since(DEADLINE_GUARD_DAY, deadline_s=recovery_deadline_s) == DEADLINE_GUARD_ROWS
             assert capture_deadline_guard_rows(current) == before
-            assert config.ledger_connection_count() == baseline
+            assert config.ledger_connection_count() == baseline - 1
         finally:
             close_deadline_guard_thread_ledger()
 

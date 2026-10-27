@@ -18,6 +18,9 @@ def table_index_coverages(connection, table):
     _quoted_schema_identifier(table)
     coverages = []
     for index_row in connection.execute(f"PRAGMA index_list({table})").fetchall():
+        if index_row[4]:
+            # A predicate-limited index cannot cover a whole-table requirement.
+            continue
         index_name = index_row[1]
         columns = tuple(
             info_row[2]

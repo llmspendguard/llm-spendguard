@@ -156,91 +156,92 @@ assert_complete_reconstruction(
     expected_executor=TEST_LANE,
 )
 
-connection = calls._calls_db()
-call_columns = {row[1] for row in connection.execute("PRAGMA table_info(calls)").fetchall()}
-assert set(routing_audit.PERMANENT_CALL_AUDIT_COLUMNS).issubset(call_columns)
-decision_columns = {row[1] for row in connection.execute("PRAGMA table_info(decisions)").fetchall()}
-assert "call_id" in decision_columns
-foreign_keys = connection.execute("PRAGMA foreign_key_list(decisions)").fetchall()
-assert any(row[2] == "calls" and row[3] == "call_id" and row[4] == "id" for row in foreign_keys)
-assert connection.execute(
-    "SELECT COUNT(*) FROM decisions WHERE call_id IN (?,?,?,?)",
-    (metered_call_id, subscription_call_id, refused_call_id, embedding_call_id),
-).fetchone() == (4,)
+import contextlib
+with contextlib.closing(calls.config.fresh_ledger_conn(calls._ensure_call_observation_schema)) as connection:
+    call_columns = {row[1] for row in connection.execute("PRAGMA table_info(calls)").fetchall()}
+    assert set(routing_audit.PERMANENT_CALL_AUDIT_COLUMNS).issubset(call_columns)
+    decision_columns = {row[1] for row in connection.execute("PRAGMA table_info(decisions)").fetchall()}
+    assert "call_id" in decision_columns
+    foreign_keys = connection.execute("PRAGMA foreign_key_list(decisions)").fetchall()
+    assert any(row[2] == "calls" and row[3] == "call_id" and row[4] == "id" for row in foreign_keys)
+    assert connection.execute(
+        "SELECT COUNT(*) FROM decisions WHERE call_id IN (?,?,?,?)",
+        (metered_call_id, subscription_call_id, refused_call_id, embedding_call_id),
+    ).fetchone() == (4,)
 
-old_timestamp = (
-    datetime.datetime.now(datetime.timezone.utc)
-    - datetime.timedelta(days=content_retention.content_retention_days() + 1)
-).isoformat(timespec="seconds")
-connection.execute(
-    f"UPDATE {content_retention.CONTENT_RETENTION_TABLE} SET ts=? WHERE call_id=?",
-    (old_timestamp, metered_call_id),
-)
-connection.commit()
-content_retention._purge_expired_content_rows(connection)
-expired_reconstruction = routing_audit.reconstruct(metered_call_id)
-assert expired_reconstruction["content_retention"]["status"] == routing_audit.UNAVAILABLE_CONTENT_STATUS
-assert expired_reconstruction["items"]["routing_decision"]["status"] == "available"
-assert expired_reconstruction["items"]["structured_context"]["status"] == "available"
+    old_timestamp = (
+        datetime.datetime.now(datetime.timezone.utc)
+        - datetime.timedelta(days=content_retention.content_retention_days() + 1)
+    ).isoformat(timespec="seconds")
+    connection.execute(
+        f"UPDATE {content_retention.CONTENT_RETENTION_TABLE} SET ts=? WHERE call_id=?",
+        (old_timestamp, metered_call_id),
+    )
+    connection.commit()
+    content_retention._purge_expired_content_rows(connection)
+    expired_reconstruction = routing_audit.reconstruct(metered_call_id)
+    assert expired_reconstruction["content_retention"]["status"] == routing_audit.UNAVAILABLE_CONTENT_STATUS
+    assert expired_reconstruction["items"]["routing_decision"]["status"] == "available"
+    assert expired_reconstruction["items"]["structured_context"]["status"] == "available"
 
-table_names = {
-    row[0] for row in connection.execute(
-        "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
-    ).fetchall()
-}
-body_bearing_tables = set()
-for table_name in table_names:
-    quoted_table_name = '"' + table_name.replace('"', '""') + '"'
-    table_columns = {
-        row[SQLITE_COLUMN_NAME_INDEX]
-        for row in connection.execute(f"PRAGMA table_info({quoted_table_name})").fetchall()
+    table_names = {
+        row[0] for row in connection.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
+        ).fetchall()
     }
-    if BODY_COLUMN_NAMES & table_columns:
-        body_bearing_tables.add(table_name)
-assert body_bearing_tables == {content_retention.CONTENT_RETENTION_TABLE}
+    body_bearing_tables = set()
+    for table_name in table_names:
+        quoted_table_name = '"' + table_name.replace('"', '""') + '"'
+        table_columns = {
+            row[SQLITE_COLUMN_NAME_INDEX]
+            for row in connection.execute(f"PRAGMA table_info({quoted_table_name})").fetchall()
+        }
+        if BODY_COLUMN_NAMES & table_columns:
+            body_bearing_tables.add(table_name)
+    assert body_bearing_tables == {content_retention.CONTENT_RETENTION_TABLE}
 
-encoded_snapshot = connection.execute(
-    "SELECT routing_snapshot_json FROM calls WHERE id=?", (metered_call_id,)
-).fetchone()[0]
-assert json.loads(encoded_snapshot) == TEST_SNAPSHOT
+    encoded_snapshot = connection.execute(
+        "SELECT routing_snapshot_json FROM calls WHERE id=?", (metered_call_id,)
+    ).fetchone()[0]
+    assert json.loads(encoded_snapshot) == TEST_SNAPSHOT
 
-traced_statements = []
-connection.set_trace_callback(traced_statements.append)
-try:
-    traced_call_id = record_fixture_call(
-        kind="realtime", outcome="ok", disposition="served", retain_content=False)
-finally:
-    connection.set_trace_callback(None)
-assert traced_call_id
-blocking_reads = [
-    statement for statement in traced_statements
-    if statement.lstrip().upper().startswith(SQL_READ_PREFIXES)
-]
-assert blocking_reads == [], blocking_reads
+    traced_statements = []
+    connection.set_trace_callback(traced_statements.append)
+    try:
+        traced_call_id = record_fixture_call(
+            kind="realtime", outcome="ok", disposition="served", retain_content=False)
+    finally:
+        connection.set_trace_callback(None)
+    assert traced_call_id
+    blocking_reads = [
+        statement for statement in traced_statements
+        if statement.lstrip().upper().startswith(SQL_READ_PREFIXES)
+    ]
+    assert blocking_reads == [], blocking_reads
 
-migration_connection = sqlite3.connect(IN_MEMORY_DATABASE)
-migration_connection.execute("CREATE TABLE calls (id TEXT PRIMARY KEY)")
-migration_connection.execute(
-    "CREATE TABLE decisions (ts TEXT, day TEXT, project TEXT, intent TEXT, basis TEXT, "
-    "requested_model TEXT, requested_effort TEXT, chosen_model TEXT, chosen_effort TEXT, "
-    "counterfactual_usd REAL, actual_usd REAL, saved_usd REAL)"
-)
-migration_connection.execute(
-    "INSERT INTO decisions VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
-    (LEGACY_TIMESTAMP, LEGACY_DAY, TEST_PROJECT, TEST_INTENT, LEGACY_BASIS, TEST_MODEL,
-     TEST_EFFORT, TEST_MODEL, TEST_EFFORT, 0.0, 0.0, 0.0),
-)
-routing_audit.ensure_decisions_call_fk_schema(migration_connection)
-routing_audit.ensure_decisions_call_fk_schema(migration_connection)
-assert migration_connection.execute("SELECT COUNT(*) FROM decisions").fetchone() == (1,)
-assert migration_connection.execute(
-    "SELECT call_id FROM decisions WHERE basis=?", (LEGACY_BASIS,)
-).fetchone() == (None,)
-migration_foreign_keys = migration_connection.execute("PRAGMA foreign_key_list(decisions)").fetchall()
-assert any(
-    row[2] == "calls" and row[3] == "call_id" and row[4] == "id"
-    for row in migration_foreign_keys
-)
-migration_connection.close()
+    migration_connection = sqlite3.connect(IN_MEMORY_DATABASE)
+    migration_connection.execute("CREATE TABLE calls (id TEXT PRIMARY KEY)")
+    migration_connection.execute(
+        "CREATE TABLE decisions (ts TEXT, day TEXT, project TEXT, intent TEXT, basis TEXT, "
+        "requested_model TEXT, requested_effort TEXT, chosen_model TEXT, chosen_effort TEXT, "
+        "counterfactual_usd REAL, actual_usd REAL, saved_usd REAL)"
+    )
+    migration_connection.execute(
+        "INSERT INTO decisions VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+        (LEGACY_TIMESTAMP, LEGACY_DAY, TEST_PROJECT, TEST_INTENT, LEGACY_BASIS, TEST_MODEL,
+         TEST_EFFORT, TEST_MODEL, TEST_EFFORT, 0.0, 0.0, 0.0),
+    )
+    routing_audit.ensure_decisions_call_fk_schema(migration_connection)
+    routing_audit.ensure_decisions_call_fk_schema(migration_connection)
+    assert migration_connection.execute("SELECT COUNT(*) FROM decisions").fetchone() == (1,)
+    assert migration_connection.execute(
+        "SELECT call_id FROM decisions WHERE basis=?", (LEGACY_BASIS,)
+    ).fetchone() == (None,)
+    migration_foreign_keys = migration_connection.execute("PRAGMA foreign_key_list(decisions)").fetchall()
+    assert any(
+        row[2] == "calls" and row[3] == "call_id" and row[4] == "id"
+        for row in migration_foreign_keys
+    )
+    migration_connection.close()
 
-print("OK test_routing_audit_reconstruction")
+    print("OK test_routing_audit_reconstruction")

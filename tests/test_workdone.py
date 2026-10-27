@@ -220,13 +220,13 @@ finally:
 # ─────────────────────────── _batch_intents exception branch ───────────────────────────
 print("-- _batch_intents: swallows errors, returns empty on bad db access --")
 import spendguard.callio as _callio
-orig_db = _callio._callio_db
-_callio._callio_db = lambda: (_ for _ in ()).throw(RuntimeError("db down"))
+orig_db = _callio.config.ledger_op
+_callio.config.ledger_op = lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("db down"))
 try:
     bi = workdone._batch_intents("2026-06-01")
     check("_batch_intents returns empty mapping on error", len(bi) == 0)
 finally:
-    _callio._callio_db = orig_db
+    _callio.config.ledger_op = orig_db
 
 
 # ─────────────────────────── push_workdone: dry-run payload (REAL fn — run before cmd test monkeypatches it) ───────────────────────────

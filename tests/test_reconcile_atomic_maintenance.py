@@ -9,7 +9,7 @@ from _pytest_fixture_bridge import align_test_startup_home
 
 align_test_startup_home(prefix=__name__)
 
-from spendguard import budget, ledger_request_cursor, ledger_sync, pricing, reconcile_maintenance_owner
+from spendguard import budget, config, ledger_request_cursor, ledger_sync, pricing, reconcile_maintenance_owner
 from spendguard.ledger import LEDGER_RATE_PROVENANCE_GAP
 from _script_checks import seed_test_spend_event
 
@@ -47,9 +47,9 @@ class ReconcileAtomicMaintenanceGuards(unittest.TestCase):
             return ledger_sync.true_down(RECONCILE_ATOMIC_GUARD_DAY, billed_rows=billed)
 
         def capture_reconcile_atomic_guard_rows():
-            ledger = budget._ledger()
-            return tuple(tuple(row) for row in ledger._conn.execute("SELECT * FROM spend_events ORDER BY id")), \
-                tuple(tuple(row) for row in ledger._conn.execute("SELECT * FROM spend_audit ORDER BY rowid"))
+            with config.managed_ledger_read_connection(config.db_path()) as connection:
+                return tuple(tuple(row) for row in connection.execute("SELECT * FROM spend_events ORDER BY id")), \
+                    tuple(tuple(row) for row in connection.execute("SELECT * FROM spend_audit ORDER BY rowid"))
 
         with patch.object(reconcile_maintenance_owner, "owned_reconcile_maintenance_connection",
                           observe_reconcile_atomic_native_owner):
@@ -70,8 +70,9 @@ class ReconcileAtomicMaintenanceGuards(unittest.TestCase):
                                           range(RECONCILE_ATOMIC_GUARD_CALLERS)))
             self.assertTrue(all(result["trued_down"] == RECONCILE_ATOMIC_GUARD_BILLED for result in results))
         ledger = budget._ledger()
-        corrections = ledger._conn.execute("SELECT batch_usd FROM spend_events WHERE conv_id=?",
-                                           (budget._TRUE_DOWN_CONV,)).fetchall()
+        with config.managed_ledger_read_connection(config.db_path()) as connection:
+            corrections = connection.execute("SELECT batch_usd FROM spend_events WHERE conv_id=?",
+                                              (budget._TRUE_DOWN_CONV,)).fetchall()
         self.assertEqual([Decimal(row[0]) for row in corrections], [Decimal(-RECONCILE_ATOMIC_GUARD_BILLED)])
         self.assertTrue(ledger.verify_audit_chain()[0])
         with patch.object(pricing, "price", side_effect=pricing.PriceUnknownError(__name__)), \
@@ -81,8 +82,9 @@ class ReconcileAtomicMaintenanceGuards(unittest.TestCase):
                 evidence_id = ledger.record_event(dict(model=RECONCILE_ATOMIC_GUARD_MODEL,
                     batch_usd=RECONCILE_ATOMIC_GUARD_ESTIMATE, source=__name__))
         self.assertTrue(any(LEDGER_RATE_PROVENANCE_GAP in message for message in gap.output))
-        evidence = ledger._conn.execute(
-            "SELECT batch_usd, rate_in, rate_out FROM spend_events WHERE id=?", (evidence_id,)).fetchone()
+        with config.managed_ledger_read_connection(config.db_path()) as connection:
+            evidence = connection.execute(
+                "SELECT batch_usd, rate_in, rate_out FROM spend_events WHERE id=?", (evidence_id,)).fetchone()
         self.assertEqual(tuple(evidence), (str(RECONCILE_ATOMIC_GUARD_ESTIMATE), None, None))
         self.assertTrue(ledger.verify_audit_chain()[0])
 

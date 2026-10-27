@@ -26,6 +26,15 @@ class LedgerWalMaintenanceCadence:
 _DEFAULT_WAL_MAINTENANCE_CADENCE = LedgerWalMaintenanceCadence()
 
 
+def _reset_ledger_wal_cadence_in_child():
+    global _DEFAULT_WAL_MAINTENANCE_CADENCE
+    _DEFAULT_WAL_MAINTENANCE_CADENCE = LedgerWalMaintenanceCadence()
+
+
+if hasattr(config.os, "register_at_fork"):
+    config.os.register_at_fork(after_in_child=_reset_ledger_wal_cadence_in_child)
+
+
 @dataclass(frozen=True)
 class LedgerWalCheckpointReport:
     """Named outcome and the complete SQLite checkpoint counters."""
@@ -43,12 +52,13 @@ def truncate_ledger_wal_bounded(path=None, *, deadline_s=None):
     filesystem I/O itself remains subject to OS scheduling, as with ledger opens.
     No row contents change; contention is a visible BUSY report, never retried inline.
     """
+    from .ledger_read import effective_ledger_admission_deadline, LedgerReadError
     duration = config.LEDGER_READ_TIME_BUDGET_S if deadline_s is None else deadline_s
     connection = None
     try:
         if not math.isfinite(duration) or duration <= 0:
             raise ValueError("WAL checkpoint deadline must be positive and finite")
-        deadline_at = time.monotonic() + duration
+        deadline_at = effective_ledger_admission_deadline(time.monotonic() + duration)
         connection = config.open_ledger_connection(
             path, timeout=config.LEDGER_WAL_CHECKPOINT_BUSY_TIMEOUT_MS,
             tune=False, deadline_at=deadline_at, isolation_level=None)
@@ -60,6 +70,8 @@ def truncate_ledger_wal_bounded(path=None, *, deadline_s=None):
             raise TimeoutError("WAL checkpoint deadline exceeded")
         report = LedgerWalCheckpointReport(WAL_CHECKPOINT_BUSY if busy else WAL_CHECKPOINT_SUCCESS,
                                           busy, log_frames, checkpointed_frames)
+    except LedgerReadError:
+        raise
     except (Exception, config.LedgerConnectionLimitError) as error:
         report = LedgerWalCheckpointReport(WAL_CHECKPOINT_FAILED, error=f"{type(error).__name__}: {error}")
     finally:
@@ -70,12 +82,16 @@ def truncate_ledger_wal_bounded(path=None, *, deadline_s=None):
     return report
 
 
-def maintain_ledger_wal_if_due(path=None, *, cadence=_DEFAULT_WAL_MAINTENANCE_CADENCE):
+def maintain_ledger_wal_if_due(path=None, *, cadence=None):
     """Run at the configured cadence after pool open or a successful operation.
 
     The process lock is nonblocking so concurrent callers never queue behind
     maintenance. BUSY/failed attempts are logged and retried on a later operation.
     """
+    from .ledger_read import LedgerReadError, effective_ledger_admission_deadline
+    effective_ledger_admission_deadline()
+    if cadence is None:
+        cadence = _DEFAULT_WAL_MAINTENANCE_CADENCE
     if not cadence.lock.acquire(blocking=False):
         return LedgerWalCheckpointReport(WAL_CHECKPOINT_SKIPPED)
     try:
@@ -87,6 +103,8 @@ def maintain_ledger_wal_if_due(path=None, *, cadence=_DEFAULT_WAL_MAINTENANCE_CA
             return LedgerWalCheckpointReport(WAL_CHECKPOINT_SKIPPED)
         cadence.attempts[ledger] = now
         return truncate_ledger_wal_bounded(ledger)
+    except LedgerReadError:
+        raise
     except (Exception, config.LedgerConnectionLimitError) as error:
         report = LedgerWalCheckpointReport(WAL_CHECKPOINT_FAILED, error=f"{type(error).__name__}: {error}")
         _WAL_MAINTENANCE_LOG.warning("Ledger WAL maintenance: %s", report)

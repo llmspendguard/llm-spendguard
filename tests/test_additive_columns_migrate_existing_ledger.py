@@ -48,7 +48,8 @@ record_script_check(fails, "the legacy fixture starts WITHOUT any additive colum
    not (set(ADDITIVE) & pre), extra=f"present: {sorted(set(ADDITIVE) & pre)}")
 
 # Opening through the real code runs _ensure_schema → the additive ALTER loop on the existing table.
-led = ledger.SpendLedger()
+from spendguard import config
+led = ledger.SpendLedger(owned_connection=config.open_ledger_connection())
 post = {r[1] for r in led._conn.execute("PRAGMA table_info(spend_events)")}
 missing = [c for c in ADDITIVE if c not in post]
 record_script_check(fails, "EVERY additive column is ALTER-ADDed to the existing table", not missing, extra=f"still missing: {missing}")

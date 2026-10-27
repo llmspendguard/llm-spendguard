@@ -19,6 +19,7 @@ os.environ.setdefault("SPENDGUARD_HOME", tempfile.mkdtemp())
 import spendguard
 from spendguard import config, ledger_read
 from spendguard.ledger import SpendLedger
+from spendguard.ledger_writer import close_ledger_writers
 from spendguard import calls, cli, mcp_server, receipt
 
 SURFACE_SEED_COUNT = 5
@@ -49,7 +50,7 @@ SURFACE_OVERVIEW_ID_PREFIX = "overview"
 
 
 def seed_surface_conversations(path, conversation_count):
-    writer = SpendLedger(path)
+    writer = SpendLedger(path, owned_connection=config.open_ledger_connection(path))
     for index in range(conversation_count):
         writer.record_event({
             "source": SURFACE_CONVERSATION_SOURCE, "kind": "realtime", "usd": SURFACE_SEED_START,
@@ -58,10 +59,11 @@ def seed_surface_conversations(path, conversation_count):
             "est_chat_usd": SURFACE_ESTIMATED_VALUE,
         })
     writer._conn.close()
+    close_ledger_writers()
 
 
 def seed_surface_overview_raw_rows(path, raw_row_count, conversation_count):
-    writer = SpendLedger(path)
+    writer = SpendLedger(path, owned_connection=config.open_ledger_connection(path))
     writer._conn.executemany(
         "INSERT INTO spend_events(id,source,occurred_at,day,provider,est_chat_usd,conv_id) VALUES (?,?,?,?,?,?,?)",
         ((f"{SURFACE_OVERVIEW_ID_PREFIX}-{index}", SURFACE_CONVERSATION_SOURCE, SURFACE_SEED_DAY, SURFACE_SEED_DAY,
@@ -69,6 +71,7 @@ def seed_surface_overview_raw_rows(path, raw_row_count, conversation_count):
          for index in range(raw_row_count)))
     writer._conn.commit()
     writer._conn.close()
+    close_ledger_writers()
 
 
 def deny_surface_test_socket(*args, **kwargs):
@@ -85,7 +88,7 @@ def run_surface_guards(failures):
     spendguard.require()
     with tempfile.TemporaryDirectory() as surface_directory:
         path = Path(surface_directory) / SURFACE_TEST_DATABASE
-        writer = SpendLedger(path)
+        writer = SpendLedger(path, owned_connection=config.open_ledger_connection(path))
         identities = [writer.record_event({
             "source": SURFACE_SEED_SOURCE, "kind": "realtime", "usd": index + SURFACE_SEED_START,
             "conv_id": str(index), "attr_what": str(index),
@@ -112,6 +115,7 @@ def run_surface_guards(failures):
                              (SURFACE_SEED_DAY, SURFACE_SEED_INTENT, SURFACE_SEED_PROVIDER, SURFACE_SEED_SOURCE, SURFACE_ESTIMATED_VALUE))
         writer._conn.commit()
         writer._conn.close()
+        close_ledger_writers()
         baseline = config.ledger_connection_count()
         request = ledger_read.LedgerReadRequest(
             columns=("id", "day", "source", "realtime_usd"), order_by=("id",))

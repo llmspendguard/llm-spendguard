@@ -236,7 +236,7 @@ def true_down(since=None, billed_rows=None):
         true_down_posting = ledger_posting_metadata()
         # Snapshot before SQLite's writer transaction; backup must never wait on our own uncommitted writes.
         budget.snapshot_once("clear-true-down")
-        with budget._lock, owned_reconcile_maintenance_connection() as correction_connection:
+        with owned_reconcile_maintenance_connection() as correction_connection, budget._lock:
             correction_ledger = SpendLedger(owned_connection=correction_connection)
             with correction_ledger.bulk(commit_callback=correction_connection.commit_reconcile_maintenance_corrections):
                 correction_connection.execute("BEGIN IMMEDIATE")
@@ -706,6 +706,11 @@ def leak_line(since=None):
     except Exception:
         return None
     line = _render_leak_line(c)
+    from .ledger_writer import ledger_bulk_scope_matches
+    if ledger_bulk_scope_matches(config.db_path()):
+        # Coverage can include pending reserved-connection rows; never persist
+        # that observation beyond the transaction which owns it.
+        return line
     try:
         import time
         config.update_json(_leak_cache_path(), lambda _d: {"line": line, "ts": time.time()})

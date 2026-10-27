@@ -41,6 +41,7 @@ import time
 import datetime
 
 from . import pricing
+from .ledger_writer import best_effort_ledger_function, current_ledger_writer_connection, serialize_ledger_function
 
 P_LO, P_HI = 0.50, 0.90       # the two quantiles every learned quantity reports
 SHRINK_K = 8.0                # EB prior strength: a level with n obs gets weight n/(n+K) vs its parent
@@ -60,15 +61,19 @@ def _pair_horizon_s():
 
 def _con():
     from . import config
-    c = config.open_ledger_connection(config.db_path(), timeout=10, tune=False)
+    if current_ledger_writer_connection() is not None:
+        return config.pooled_ledger_conn("cost_predictions", _ensure_cost_predictions_schema)
+    return config.fresh_ledger_conn(_ensure_cost_predictions_schema)
+
+
+def _ensure_cost_predictions_schema(c):
     c.execute("""CREATE TABLE IF NOT EXISTS cost_predictions(
         job_id TEXT PRIMARY KEY, ts TEXT, label TEXT, model TEXT, transport TEXT,
         n_req INTEGER, est_in INTEGER, est_out_max INTEGER, predicted_usd REAL,
         user TEXT, project TEXT,
         actual_in INTEGER, actual_out INTEGER, actual_usd REAL, actual_calls INTEGER,
         paired_ts TEXT)""")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_cp_paired ON cost_predictions(paired_ts)")  # pair() scans unpaired
-    return c
+    c.execute("CREATE INDEX IF NOT EXISTS idx_cp_paired ON cost_predictions(paired_ts)")
 
 
 def _identity():
@@ -354,6 +359,7 @@ def predict_cost(label, n=1, model=None, transport="batch", est_in_tokens=None, 
 
 
 # ────────────────────────── prediction log + pairing to actuals ──────────────────────────
+@best_effort_ledger_function(failure_result=False)
 def record_prediction(job_id, label, model, predicted_usd, est_in=None, est_out_max=None,
                       n=1, transport="batch", user=None, project=None):
     """Log a caller's PREDICTION for a job (per-request est_in/est_out_max, n requests). The gate
@@ -369,12 +375,12 @@ def record_prediction(job_id, label, model, predicted_usd, est_in=None, est_out_
                      label, model, transport, int(n), est_in, est_out_max, predicted_usd,
                      user or du, project or dp))
         con.commit()
-        con.close()
         return True
     except Exception:
-        return False
+        raise
 
 
+@serialize_ledger_function
 def pair(now=None):
     """Join predictions to captured actuals once their window has closed. Exact join first
     (calls.chain == job_id, any age); else label+model calls inside [pred_ts, pred_ts+horizon].
@@ -416,7 +422,8 @@ def pair(now=None):
                 expired += 1
         con.commit()
     finally:
-        con.close()
+        if con is not current_ledger_writer_connection():
+            con.close()
     return {"paired": paired, "expired": expired, "pending": pending}
 
 
@@ -582,13 +589,15 @@ def calibration_summary_lines(max_lines=4):
     try:
         from . import config
         con = config.open_ledger_connection(config.db_path(), timeout=10, tune=False)
-        q = ("SELECT model, COUNT(*), AVG(CAST(out_tok AS REAL)/max_tokens) FROM gate_calls "
-             "WHERE max_tokens > 0 GROUP BY model ORDER BY 2 DESC LIMIT ?")
-        for m, cnt, fill in con.execute(q, (max_lines,)).fetchall():
-            if m and fill is not None:
-                lines.append(f"learned: {m} fills {fill*100:.0f}% of max_tokens on average (n={cnt}) — "
-                             f"`spendguard calibrate predict` uses this, the naive cap-price doesn't")
-        con.close()
+        try:
+            q = ("SELECT model, COUNT(*), AVG(CAST(out_tok AS REAL)/max_tokens) FROM gate_calls "
+                 "WHERE max_tokens > 0 GROUP BY model ORDER BY 2 DESC LIMIT ?")
+            for m, cnt, fill in con.execute(q, (max_lines,)).fetchall():
+                if m and fill is not None:
+                    lines.append(f"learned: {m} fills {fill*100:.0f}% of max_tokens on average (n={cnt}) — "
+                                 f"`spendguard calibrate predict` uses this, the naive cap-price doesn't")
+        finally:
+            con.close()
     except Exception:
         pass
     return lines

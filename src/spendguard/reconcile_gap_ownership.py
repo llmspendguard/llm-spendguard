@@ -4,8 +4,11 @@ Invoice references are evidence, not a second ownership axis. Migration changes
 only provider metadata and its audit trail, under one snapshotted transaction.
 """
 from datetime import datetime
+import copy
+from types import MethodType
 
 from . import budget, pricing
+from .ledger_writer import serialize_ledger_function, current_ledger_writer_connection
 
 RECONCILE_GAP_UNOWNED_VALUES = frozenset((None, "", "?", "unknown", "unattributed", "(reconciled)"))
 RECONCILE_GAP_INVOICE_SEPARATOR = ":"
@@ -43,10 +46,20 @@ def migrate_reconcile_gap_provider_ownership(since=None):
     Streaming scans have no admission cap. Snapshot and audit failures propagate;
     no incomplete migration can be mistaken for a completed ownership decision.
     """
+    return apply_reconcile_gap_provider_ownership(budget._ledger(), since)
+
+
+@serialize_ledger_function
+def apply_reconcile_gap_provider_ownership(source_ledger, since):
+    """Apply the caller's snapshotted ledger facade on the owner connection."""
     result = {"backfilled": 0, "unowned": 0, "gaps": {}}
     with budget._lock:
-        ledger = budget._ledger()
-        connection = ledger._conn
+        ledger = copy.copy(source_ledger)
+        audit_override = source_ledger.__dict__.get("_audit")
+        if getattr(audit_override, "__self__", None) is source_ledger:
+            ledger._audit = MethodType(audit_override.__func__, ledger)
+        connection = current_ledger_writer_connection(ledger.db_path)
+        ledger._conn = connection
         condition = "recon_marker=?"
         parameters = [budget._RECONCILED]
         if since is not None:

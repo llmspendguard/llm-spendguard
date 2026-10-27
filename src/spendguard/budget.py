@@ -7,11 +7,16 @@ real-time volume; very high-volume loops should stay on the in-process cap.
 """
 import contextlib, datetime, hashlib, pathlib, tempfile, threading
 import sys
+import sqlite3
 import time
 from . import config
+from .ledger_fork_locks import new_fork_reset_ledger_state
+from .ledger_writer import serialize_ledger_function
+from .ledger_read import bind_ledger_query_deadline
 
 _conn = None
-_lock = threading.RLock()   # reentrant: record_charge()/spent_since() hold it AND call _ledger_db() which re-acquires
+BUDGET_AUXILIARY_POOL_KEY = "budget_auxiliary_reads"
+_lock = new_fork_reset_ledger_state(globals(), "_lock", threading.RLock)
 _SPEND_EVENT_DEADLETTER_FILENAME = "spend_events_deadletter.jsonl"
 _SPEND_EVENT_EMERGENCY_SPOOL_PREFIX = "spendguard-capture-gap-"
 # Visible attribution fallback for events with no explicit project or captured venv.
@@ -25,20 +30,21 @@ def spend_event_retry_paths():
             f"{_SPEND_EVENT_EMERGENCY_SPOOL_PREFIX}{home_key}.jsonl")
 
 
+def _ensure_budget_auxiliary_read_schema(connection):
+    """Auxiliary tables are initialized by their serialized writer owners."""
+
+
 def _ledger_db():
-    """A WAL SQLite connection to the ledger file, shared across this module and by guard.py's `savings` table.
+    """Borrow the writer owner inside mutations, or acquire a bounded per-thread auxiliary read handle.
     It NO LONGER creates the retired `charges` table: the money-of-record is `spend_events` (owned by
     SpendLedger), every reader/writer here goes through it, and a fresh install has no `charges` to make.
     The one-time `migrate_charges` bridge reads a PRE-EXISTING charges via its own connection; it never needs
     this to create one, and the migration tests build their own charges fixture."""
-    global _conn
-    if _conn is None:
-        with _lock:
-            if _conn is None:
-                c = config.open_ledger_connection(timeout=config.LEDGER_WRITE_TIMEOUT_S)
-                c.commit()
-                _conn = c
-    return _conn
+    from .ledger_writer import current_ledger_writer_connection
+    owner = current_ledger_writer_connection()
+    if owner is not None:
+        return owner
+    return config.pooled_ledger_conn(BUDGET_AUXILIARY_POOL_KEY, _ensure_budget_auxiliary_read_schema)
 
 
 _PROJECT = None
@@ -53,26 +59,17 @@ _LEDGER_TL = threading.local()
 
 
 def _ledger():
-    """A SpendLedger over this database, with a THREAD-LOCAL sqlite connection.
-
-    WHY THREAD-LOCAL, NOT ONE SHARED CONNECTION. A single cached connection DEADLOCKED under the concurrent
-    fan_out panel and hung a run for 8 minutes. sqlite serializes every operation on a connection behind one
-    mutex, and our `dec_sum` custom aggregate calls back into Python — so a thread mid-SUM held the connection
-    mutex and wanted the GIL, while another thread held the GIL and wanted the mutex. The SIGABRT stack proved
-    it: step_callback/take_gil on one thread, vdbeUnbind/pthread_mutex_lock on another. Per-thread connections
-    never share a mutex, so that read-vs-write deadlock is structurally impossible. Writes stay serialized for
-    the hash-chained audit log by `_lock` in the record path; WAL makes each committed write visible to the
-    other threads' connections at once."""
+    """Cache a connection-free facade; reads close scoped handles and mutations borrow the serialized owner."""
     led = getattr(_LEDGER_TL, "led", None)
     if led is None:
         from .ledger import SpendLedger
         led = _LEDGER_TL.led = SpendLedger()
-    if led._conn is None:
-        from .ledger_read import LedgerQueryDeadline
-        try:
-            led._restore_spend_aggregate_connection()
-        except Exception as recovery_error:
-            raise LedgerQueryDeadline(config.LEDGER_QUERY_DEADLINE_S) from recovery_error
+    from .ledger_writer import current_ledger_writer_connection
+    owner_connection = current_ledger_writer_connection()
+    if owner_connection is not None:
+        import copy
+        led = copy.copy(led)
+        led._conn = owner_connection
     return led
 
 
@@ -128,9 +125,9 @@ def _record_spend_event(provider, model, kind, cost, *, conv_id="", basis="", in
     (charge_to_event). Every budget writer records through here; there is no second ledger, and — since the
     cutover — no `charges` fallback behind it, so a dropped write is a dropped charge. The ledger connection
     carries sqlite's own busy_timeout (see SpendLedger, `timeout=`), so an ordinary transient lock blocks briefly
-    and clears rather than failing. Fail-OPEN only as a last resort: warn LOUDLY and let the caller proceed
-    (losing the user's work over a bookkeeping hiccup is worse than a missed row), and even then the miss is
-    recoverable from provider truth via `spendguard reconcile`. `chain` is the caller's JOB/RUN tag — carried onto
+    and clears rather than failing. A failed primary write must durably spool the complete evidence under an
+    independent recovery budget; if both destinations fail, raise rather than silently lose the charge.
+    `chain` is the caller's JOB/RUN tag — carried onto
     the money row so billed $ slices by job, not just intent (two concurrent runs of one intent get distinct chains)."""
     try:
         from .ledger import live_dedup_key
@@ -162,8 +159,7 @@ def _record_spend_event(provider, model, kind, cost, *, conv_id="", basis="", in
         ev["source"] = ev["recorded_by"] = source
         if invoice_id:                                # FOCUS InvoiceId anchor — set only when reconciled to a bill
             ev["invoice_id"] = invoice_id
-        with _lock:
-            (maintenance_ledger if maintenance_ledger is not None else _ledger()).record_event(ev, venv=running_venv)
+        (maintenance_ledger if maintenance_ledger is not None else _ledger()).record_event(ev, venv=running_venv)
     except Exception as e:
         if maintenance_ledger is not None:
             # The offline owner rolls back this entire correction rebuild on every write failure.
@@ -178,11 +174,13 @@ def _record_spend_event(provider, model, kind, cost, *, conv_id="", basis="", in
                    "in_tok": int(in_tok or 0), "out_tok": int(out_tok or 0), "occurred_at": occurred_at,
                    "intent": intent, "project": project, "source": source,
                    "error": repr(e), "capture_gap": True}
-        import json as _json
+        if "ev" in locals():
+            payload["event"] = ev
+            payload["venv"] = running_venv
         for candidate in spend_event_retry_paths():
             try:
-                with open(candidate, "a") as _dl:
-                    _dl.write(_json.dumps(payload) + "\n")
+                from .ledger_deadletter import append_spend_deadletter_event
+                append_spend_deadletter_event(candidate, payload)
                 retry_path = candidate
                 break
             except Exception as spool_error:
@@ -192,6 +190,8 @@ def _record_spend_event(provider, model, kind, cost, *, conv_id="", basis="", in
         _sys.stderr.write(f"[budget] CAPTURE GAP: spend_events write failed for {provider}/{model} ${cost}: "
                           f"{e!r}; {marker}. This charge is MISSING from the ledger; `spendguard reconcile` "
                           f"can re-book provider-truth spend.\n")
+        if retry_path is None:
+            raise RuntimeError("spend capture and durable retry both failed") from retry_error
 
 
 def _project():
@@ -317,6 +317,9 @@ def record_charge(provider, model, kind, cost, project=None, conv_id=None, basis
 
 def reconcile_money_batch_estimate(provider, model, intent, in_tok, out_tok, cost):
     """Auditably revise the newest open gate estimate to the measured batch actual; never delete or clamp rows."""
+    from .ledger_writer import current_ledger_writer_connection, run_ledger_write
+    if current_ledger_writer_connection() is None:
+        return run_ledger_write(lambda: reconcile_money_batch_estimate(provider, model, intent, in_tok, out_tok, cost))
     led = _ledger()
     with _lock:
         row = led._conn.execute(
@@ -413,6 +416,7 @@ def snapshot(reason="", keep=None, force=False, *, compact_source=None, compact_
         return None
 
 
+@serialize_ledger_function
 def reattribute_providers(apply=False, actor="reattribute_providers"):
     """Find (and optionally correct) charges whose `provider` disagrees with the model registry.
 
@@ -688,6 +692,7 @@ def charge_to_event(provider, model, kind, cost, conv_id="", basis="", intent=""
     return ev
 
 
+@bind_ledger_query_deadline
 def spent_since(day, project=None, conv=None, *, deadline_s=config.LEDGER_QUERY_DEADLINE_S, read_only=False):
     """Gate-recorded workload $ since `day` — the LLM cap's number, now read from spend_events via the single
     `_COUNTABLE` filter (batch+realtime, excluding meta / reconciliation / voided-impossible / reconstructed).
@@ -757,6 +762,7 @@ def input_cache_split(since=None, project=None, conv=None):
             "cache_write_share": (write / total if total else 0.0)}
 
 
+@bind_ledger_query_deadline
 def spent_by_job(job, since=None, *, deadline_s=config.LEDGER_QUERY_DEADLINE_S):
     """Gate-recorded billed LLM $ for ONE job/run tag — the rows whose `chain` == `spendguard.context(chain=<job>)`.
     This is the concurrency-SAFE "my spend": the chain is per-run, so a job's total never sweeps in a CONCURRENT run
@@ -768,6 +774,7 @@ def spent_by_job(job, since=None, *, deadline_s=config.LEDGER_QUERY_DEADLINE_S):
     return float(_ledger().spent_dec(since=since, where={"chain": str(job)}, deadline_s=deadline_s))
 
 
+@bind_ledger_query_deadline
 def spent_all_time(*, deadline_s=config.LEDGER_QUERY_DEADLINE_S):
     """Running total of ALL gate-recorded countable LLM billed-$ to date — the flow-receipt BASELINE, read at a
     flow's enter and its exit so the DELTA is what that flow spent (calls.context / receipt.emit_flow). Memoized
@@ -790,6 +797,7 @@ def suspect_batches(since):
     return sorted(out, key=lambda x: -x["cost"])
 
 
+@serialize_ledger_function
 def quarantine_charge(ts=None, reason="", row=None):
     """Void ONE spend_events row as an impossible estimate — status='void', so it drops out of every total
     while staying fully auditable (the amount is untouched; the change is logged through the hash chain by
@@ -823,6 +831,7 @@ def quarantine_charge(ts=None, reason="", row=None):
     return n
 
 
+@serialize_ledger_function
 def unquarantine_charge(row=None, ts=None, reason=""):
     """Reverse quarantine_charge for ONE spend_events row: status 'void'→'posted' so it counts again, and clear
     the '(impossible-estimate)' conv_id label it was tagged with. The change is logged through the hash chain by
@@ -891,6 +900,9 @@ def reprice_unpriced(model=None, apply=False, actor="reprice"):
     SQL. Filter to one `model` (e.g. 'glm-5.2') or sweep every unpriced model."""
     from . import pricing
     from .ledger import _KIND_TO_USD, dec
+    from .ledger_writer import current_ledger_writer_connection, run_ledger_write
+    if current_ledger_writer_connection() is None:
+        return run_ledger_write(lambda: reprice_unpriced(model, apply, actor))
     led = _ledger()
     sql = "SELECT id FROM spend_events WHERE cost_basis=?"
     args = [BASIS_UNPRICED]
@@ -1004,6 +1016,7 @@ def record_reconciled(day, provider, cost, project="unattributed", kind="batch",
                         invoice_id="%s:%s" % (provider, (day or "")[:7]))
 
 
+@serialize_ledger_function
 def clear_reconciled(since=None, model=None, providers=None):
     """Remove prior reconciliation rows so reconcile is idempotent (rebuilds them). Keyed by the marker model
     (default the batch marker; the realtime backfill passes its own)."""
@@ -1079,6 +1092,9 @@ def clear_readable_true_down(since=None, providers=None, *, maintenance_ledger=N
 
     An explicit providers collection scopes the rebuild to readable provider units; None preserves the
     unconditional default above. An empty collection changes nothing, including taking no snapshot."""
+    from .ledger_writer import current_ledger_writer_connection, run_ledger_write
+    if maintenance_ledger is None and current_ledger_writer_connection() is None:
+        return run_ledger_write(lambda: clear_readable_true_down(since, providers))
     true_down_provider_scope = None if providers is None else tuple(dict.fromkeys(providers))
     if true_down_provider_scope == ():
         return
@@ -1337,6 +1353,10 @@ def exceeded(pending=0.0, kind="llm", *, deadline_s=config.LEDGER_QUERY_DEADLINE
             sm = spent_since(_utc().strftime("%Y-%m-01"), deadline_s=expires - time.monotonic())
     except LedgerQueryDeadline:
         return ("ledger-query-deadline", float("inf"), float("inf"))
+    except (OSError, sqlite3.Error) as error:
+        import logging
+        logging.getLogger(__name__).error("Budget enforcement refused: ledger read unavailable: %s", error)
+        return ("ledger-read-unavailable", float("inf"), float("inf"))
     checks = []
     if kind in ("llm", "compute"):
         checks.append((f"{kind}-daily", config.class_cap(kind, "daily"), sd))

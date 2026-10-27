@@ -22,6 +22,8 @@ import sqlite3
 import threading
 import contextlib
 from . import config
+from .ledger_fork_locks import new_fork_reset_ledger_state
+from .ledger_writer import best_effort_ledger_function, serialize_ledger_function
 from .gate import SpendGateRefused   # the common base for DELIBERATE gate refusals (see GateBlocked below).
 # Import direction: gate depends on bulkgate but only LAZILY (inside functions), and bulkgate imports nothing
 # else from gate — so this top-level import is acyclic (gate always finishes loading before bulkgate here).
@@ -32,7 +34,7 @@ BULK_MIN_USD_DEFAULT = 0.25       # $-primary trigger DEFAULT (tunable: gate.bul
                                   # preview_max, so there IS a sample to test+eval) the lifecycle gate engages.
 FRESHNESS_HOURS_DEFAULT = 24      # flags expire — a stale test can't authorize a much-later run on changed data
 
-_lock = threading.RLock()
+_lock = new_fork_reset_ledger_state(globals(), "_lock", threading.RLock)
 
 
 class GateBlocked(SpendGateRefused):
@@ -63,15 +65,19 @@ def _ensure_gate_schema(c):
     # verdict on the sample. eval_bar is REQUIRED non-empty (an eval can't be an empty rubber-stamp);
     # eval_verdict is the pass/fail; eval_score/eval_note carry the judge's graded reasoning; eval_model
     # records WHICH model judged (honesty). Test = "did it parse the shape"; eval = "is it GOOD".
+    gate_existing_columns = {row[1] for row in c.execute("PRAGMA table_info(gate_ledger)")}
     for col, decl in (("contract", "TEXT"), ("contract_hash", "TEXT"), ("data_sig", "TEXT"),
                       ("test_parsed", "INTEGER"), ("test_salvaged", "INTEGER"),
                       ("test_failed", "INTEGER"), ("test_failure", "TEXT"),
                       ("eval_at", "REAL"), ("eval_bar", "TEXT"), ("eval_verdict", "INTEGER"),
                       ("eval_score", "REAL"), ("eval_note", "TEXT"), ("eval_model", "TEXT")):
+        if col in gate_existing_columns:
+            continue
         try:
             c.execute(f"ALTER TABLE gate_ledger ADD COLUMN {col} {decl}")
         except sqlite3.OperationalError:
             pass                                  # already present
+    _ensure_gate_response_schema(c)
     c.commit()
 
 
@@ -147,6 +153,7 @@ def _fresh(ts):
     return bool(ts) and (time.time() - float(ts)) <= freshness_hours() * 3600
 
 
+@serialize_ledger_function
 def record_estimate(sig, model, est_usd, est_count):
     """Record a ZERO-SPEND worst-case estimate for this call-class (sets estimated_at). WORST-CASE incl. any
     escalation path — not the cheap path (the nano-only estimate that hid the $5.61 opus run is the cautionary tale)."""
@@ -172,6 +179,7 @@ def record_estimate(sig, model, est_usd, est_count):
     return now
 
 
+@serialize_ledger_function
 def record_tested(sig, test_n, verified=True, contract=None, result=None, data_sig=None):
     """Record a small-sample test AND what it proved: which output CONTRACT the sample was checked against, on
     which data (`data_sig`), and how the sample actually did (`result` from output_contract.check).
@@ -197,6 +205,7 @@ def record_tested(sig, test_n, verified=True, contract=None, result=None, data_s
     return now
 
 
+@serialize_ledger_function
 def record_eval(sig, bar, verdict, score=None, note=None, model=None):
     """Record the EVAL checkpoint for this call-class: a verdict on the test sample against a STATED bar. A bar is
     REQUIRED — an eval with no criterion is an empty rubber-stamp, so an empty bar is REFUSED rather than recorded as
@@ -227,8 +236,8 @@ def gate_status(sig, contract=None, data_sig=None):
     tested. A test proves something about a shape and a data distribution; carrying it over to a different
     shape or a different corpus is the "tested v1, ran v2" hole the sig already closes for the prompt."""
     from . import output_contract
-    with _lock:
-        r = _gate_db().execute("SELECT model,estimated_at,est_usd,est_count,tested_at,test_n,verified,"
+    with config.ledger_op("bulkgate", _ensure_gate_schema) as db, _lock:
+        r = db.execute("SELECT model,estimated_at,est_usd,est_count,tested_at,test_n,verified,"
                           "contract,contract_hash,data_sig,test_parsed,test_salvaged,test_failed,test_failure,"
                           "eval_at,eval_bar,eval_verdict,eval_score,eval_note "
                           "FROM gate_ledger WHERE sig=?", (sig,)).fetchone()
@@ -326,7 +335,10 @@ def check_bulk(sig, model, count, est_usd, force=False, contract=None, data_sig=
 #    output distribution) — keyed by the SAME call-class sig. The single chokepoint sees both the request's max_tokens
 #    and the response usage, so this protects every repo with zero per-repo work. ──
 def _gate_calls_db():
-    db = _gate_db()
+    return _gate_db()
+
+
+def _ensure_gate_response_schema(db):
     db.execute("CREATE TABLE IF NOT EXISTS gate_calls "
                "(sig TEXT, model TEXT, out_tok INTEGER, max_tokens INTEGER, truncated INTEGER, ts REAL)")
     db.execute("CREATE INDEX IF NOT EXISTS idx_gatecalls_sig ON gate_calls(sig)")
@@ -349,7 +361,6 @@ def _gate_calls_db():
                           ("disposition", "TEXT")):
         if column not in [r[1] for r in db.execute("PRAGMA table_info(gate_calls)")]:
             db.execute(f"ALTER TABLE gate_calls ADD COLUMN {column} {dtype}")
-    return db
 
 
 def is_truncated(finish_reason, out_tok=None, max_tokens=None):
@@ -360,6 +371,7 @@ def is_truncated(finish_reason, out_tok=None, max_tokens=None):
     return bool(out_tok and max_tokens and int(out_tok) >= int(max_tokens))
 
 
+@best_effort_ledger_function
 def note_latency(sig, model, seconds, hit_deadline=False, in_chars=0):
     """Record how LONG one call took, keyed by call-class — the time analogue of note_response's out_tok.
 
@@ -376,7 +388,7 @@ def note_latency(sig, model, seconds, hit_deadline=False, in_chars=0):
                  int(in_chars or 0)))
             _gate_db().commit()
     except Exception:
-        pass
+        raise
 
 
 # Size band for "comparable payload", as a RATIO rather than absolute char counts: latency scales with the
@@ -411,8 +423,8 @@ def latency(sig=None, model=None, near_chars=None):
     q = ("SELECT seconds,hit_deadline,COALESCE(in_chars,0) FROM gate_latency"
          + (" WHERE " + " AND ".join(where) if where else ""))
     try:
-        with _lock:
-            rows = _gate_calls_db().execute(q, args).fetchall()
+        with config.ledger_op("bulkgate", _ensure_gate_schema) as db, _lock:
+            rows = db.execute(q, args).fetchall()
     except Exception:
         return {}
     scope = "all-sizes"
@@ -451,6 +463,7 @@ REASONING_BUDGET_SHARE = 0.5
 REASONING_VISIBLE_RATIO = 8
 
 
+@best_effort_ledger_function
 def note_response(sig, model, out_tok, max_tokens=None, finish_reason=None, n_items=1,
                   reasoning_tokens=None, visible_tokens=None):
     """Record one response's output size + whether it TRUNCATED, keyed by call-class sig. Truncation → loud warning
@@ -479,7 +492,7 @@ def note_response(sig, model, out_tok, max_tokens=None, finish_reason=None, n_it
                                  reasoning_tokens, visible, "reasoning_starved" if starved else None))
             _gate_db().commit()
     except Exception:
-        pass
+        raise
     if starved:
         from .gate import _gate_warn_once
         evidence = "provider did not report reasoning tokens; weaker truncation signal" if reasoning_tokens is None else "reported"
@@ -523,7 +536,7 @@ def _warn_truncated(sig, model, out_tok, max_tokens):
 
 
 _cancel_warned = {}          # model -> count of wall-clock deadline cancels seen this process
-_cancel_lock = threading.Lock()   # the fan calls note_deadline_cancel CONCURRENTLY — the count must not lose a cancel
+_cancel_lock = new_fork_reset_ledger_state(globals(), "_cancel_lock", threading.Lock)
 
 
 def note_deadline_cancel(model, timeout_s=None):
@@ -558,7 +571,7 @@ def deadline_cancels():
 
 
 _unhonored_effort = {}       # "model|requested->chosen" -> count of times an explicit effort pin was NOT honored
-_unhonored_lock = threading.Lock()   # a fan resolves effort CONCURRENTLY — the count must not lose an event
+_unhonored_lock = new_fork_reset_ledger_state(globals(), "_unhonored_lock", threading.Lock)
 
 # A NOT-honored effort pin is a STANDING CONFIG fact, not a transient runtime event like a truncation or a
 # deadline-cancel: it is equally true on call 1 and call 10,000, and — unlike those — it recurs across short-lived
@@ -684,8 +697,9 @@ def maxtokens(sig, current_max=None, model=None):
     UNDER-count the real generation at every sample count, not only when cold. When `model` reasons_by_default, the
     recommend is therefore FLOORED at the reasoning-inclusive REASONING_OUT_ESTIMATE always, so a visible-answer p99
     can never clamp a reasoning reply's budget below what it needs (the gpt-5.5 miss; GUARDRAILS_reasoning_overspend)."""
-    with _lock:
-        rows = _gate_calls_db().execute("SELECT out_tok,truncated FROM gate_calls WHERE sig=? AND out_tok>0", (sig,)).fetchall()
+    # Release the query's slot before model facts borrow the learn subsystem.
+    with config.ledger_op("bulkgate", _ensure_gate_schema) as db, _lock:
+        rows = db.execute("SELECT out_tok,truncated FROM gate_calls WHERE sig=? AND out_tok>0", (sig,)).fetchall()
     # CENSORING: a truncated response was cut AT its cap, so its out_tok measures the CAP, not the work.
     # Including those dragged every percentile down — and the recommendation with it, so the more a class
     # truncated the lower the advice went. A ratchet pointing the wrong way. Percentiles come from COMPLETE
@@ -748,15 +762,16 @@ def model_outputs(model):
     estimated at $282 against $12 of real spend, and a 26-request job warned at ~$99.86. Conservative in the
     right direction for a BOUND, useless as an EXPECTATION, and estimate-first stops being usable when the two
     are confused. Same censoring as maxtokens(): a truncated response measures its cap, not the work."""
-    with _lock:
-        rows = _gate_calls_db().execute(
+    with config.ledger_op("bulkgate", _ensure_gate_schema) as db, _lock:
+        rows = db.execute(
             "SELECT out_tok,truncated FROM gate_calls WHERE model=? AND out_tok>0", (model,)).fetchall()
+        classes = db.execute(
+            "SELECT DISTINCT sig FROM gate_calls WHERE model=? AND out_tok>0", (model,)).fetchall()
     outs = [r[0] for r in rows if not r[1]]
     if not outs:
         return {}
     return {"model": model, "n": len(outs), "p50": _pctl(outs, 0.50), "p90": _pctl(outs, 0.90),
-            "p99": _pctl(outs, 0.99), "n_classes": len({r[0] for r in _gate_calls_db().execute(
-                "SELECT DISTINCT sig FROM gate_calls WHERE model=? AND out_tok>0", (model,)).fetchall()})}
+            "p99": _pctl(outs, 0.99), "n_classes": len({r[0] for r in classes})}
 
 
 def _runaway_factor():
@@ -789,7 +804,7 @@ class _RunawayCounter:
             return dict(self._counts)
 
 
-_RUNAWAYS = _RunawayCounter()
+_RUNAWAYS = new_fork_reset_ledger_state(globals(), "_RUNAWAYS", _RunawayCounter)
 
 
 def note_runaway(sig, model, out_tok, norm_val, basis):
@@ -880,8 +895,8 @@ def truncated_recently(sig, window_sec=None):
     """Did this sig TRUNCATE in the recent window? A truncated sample is NOT a passing test — it must not authorize a
     bulk run, so the max_tokens bug is structurally caught by the SAME gate (test_job flips verified→False on it)."""
     cut = time.time() - (window_sec or rt_window_sec())
-    with _lock:
-        r = _gate_calls_db().execute("SELECT COALESCE(SUM(truncated),0) FROM gate_calls WHERE sig=? AND ts>=?", (sig, cut)).fetchone()
+    with config.ledger_op("bulkgate", _ensure_gate_schema) as db, _lock:
+        r = db.execute("SELECT COALESCE(SUM(truncated),0) FROM gate_calls WHERE sig=? AND ts>=?", (sig, cut)).fetchone()
     return bool(r and r[0])
 
 

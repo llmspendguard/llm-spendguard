@@ -52,12 +52,14 @@ try:
     ck("GET /health → 200 ok", s == 200 and h.get("ok") is True)
 
     s, a = _req(port, "POST", "/ask", {"prompt": "hi", "vendors": PANEL, "deadline_s": 30})
-    ck("POST /ask → 200 with honest partial coverage (3/4, complete False)", s == 200 and a["n_ok"] == 3 and a["complete"] is False)
+    ck("POST /ask → 200 with honest partial coverage (3/4, complete False)", s == 200 and a["n_ok"] == 3 and a["complete"] is False,
+       repr(a))
     moon = [x for x in a["results"] if x["vendor"] == "moonshot"][0]
     ck("a failed vendor is serialized with kind+error, NEVER text (no false success on the wire)",
        "text" not in moon and moon["kind"] == "transport_error")
     oks = [x for x in a["results"] if x["kind"] == "ok"]
-    ck("the OK vendors carry their answer text", all(x.get("text") == '{"ok": 1}' for x in oks) and len(oks) == 3)
+    ck("the OK vendors carry their answer text", all(x.get("text") == '{"ok": 1}' for x in oks) and len(oks) == 3,
+       repr(a))
 
     s, _ = _req(port, "POST", "/ask", {})
     ck("POST /ask without a prompt → 400", s == 400)

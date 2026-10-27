@@ -17,6 +17,7 @@ is caged by caps.meta. CLI: `spendguard mine-history {intents,graph,git} [--repo
 """
 import os, re, json, glob, subprocess
 from . import calls, learn
+from .ledger_writer import serialize_ledger_function
 
 
 # ─────────────────────────── intent reconstruction ───────────────────────────
@@ -123,8 +124,8 @@ def scan_intent_map(repo, content_scan=True, max_bytes=1_000_000):
 
 def reconstruct_intents(repo, apply=False):
     """Match the mined intent map against our run nodes; report coverage; optionally write it on."""
-    with learn._lock:
-        runs = learn._insights_db().execute("SELECT id, attrs FROM graph_nodes WHERE type='run'").fetchall()
+    with learn.config.ledger_op('learn', learn._ensure_insights_schema) as ledger_read_handle:
+        runs = ledger_read_handle.execute("SELECT id, attrs FROM graph_nodes WHERE type='run'").fetchall()
     run_ids = {r[0] for r in runs}
     attrs_by_id = {r[0]: json.loads(r[1] or "{}") for r in runs}
 
@@ -142,8 +143,13 @@ def reconstruct_intents(repo, apply=False):
         print("  report-only. Re-run with --apply to write intents onto calls + run nodes (no spend).")
         return dict(mapped=len(imap), matched=len(matched), intents=len(by_intent))
 
-    # NOTE: learn + calls use SEPARATE sqlite connections to the SAME db file. Writing through both
-    # inside one transaction self-deadlocks ("database is locked"), so commit each phase before the next.
+    updated = _apply_reconstructed_intents(matched, attrs_by_id)
+    print(f"  applied: {updated} call row(s) tagged with reconstructed intents (of {len(matched)} matched).")
+    return dict(mapped=len(imap), matched=len(matched), intents=len(by_intent), applied=updated)
+
+
+@serialize_ledger_function
+def _apply_reconstructed_intents(matched, attrs_by_id):
     with learn._lock:
         for bid, intent in matched.items():
             a = attrs_by_id.get(bid, {})
@@ -163,11 +169,11 @@ def reconstruct_intents(repo, apply=False):
             if cur.rowcount and cur.rowcount > 0:
                 updated += 1
         calls._calls_db().commit()
-    print(f"  applied: {updated} call row(s) tagged with reconstructed intents (of {len(matched)} matched).")
-    return dict(mapped=len(imap), matched=len(matched), intents=len(by_intent), applied=updated)
+    return updated
 
 
 # ─────────────────────────── causal / temporal edges ───────────────────────────
+@serialize_ledger_function
 def enrich_graph():
     """Add `preceded` (per-intent chronological run chain) + `derived_from` (insight → cited runs)."""
     with learn._lock:

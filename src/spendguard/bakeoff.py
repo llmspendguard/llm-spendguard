@@ -64,15 +64,15 @@ def _sample_prompts(intent, n, include_shape=False):
     reason); the table is auto-created, so an empty corpus is a clean [] while a broken db surfaces."""
     # include_shape keeps system/schema/ceiling/effort together for replay consumers.
     # The default text view remains compatible with display and prompt-only callers.
-    con = callio._callio_db()
-    # EXCLUDE truncated rows: a prompt CUT at the capture cap is a different task, so replaying it measures
-    # something other than the work it claims to (the 800-char silent-truncation failure). Only full-fidelity
-    # bodies feed a bakeoff/titration; an intent whose corpus is entirely truncated returns [] → the caller
-    # refuses cleanly ("no sample tasks — re-fetch with a higher callio.snip_chars"), never a partial replay.
-    replay_columns = "prompt, system, req_schema, req_max_tokens, effort" if include_shape else "prompt"
-    rows = con.execute("SELECT DISTINCT " + replay_columns + " FROM call_io "
-                       "WHERE intent IS ? AND prompt IS NOT NULL AND length(prompt) > 0 "
-                       "AND COALESCE(truncated,0) = 0 AND shape_complete = 1 LIMIT ?", (intent, int(n))).fetchall()
+    with callio.config.ledger_op('callio', callio._ensure_callio_schema) as con:
+        # EXCLUDE truncated rows: a prompt CUT at the capture cap is a different task, so replaying it measures
+        # something other than the work it claims to (the 800-char silent-truncation failure). Only full-fidelity
+        # bodies feed a bakeoff/titration; an intent whose corpus is entirely truncated returns [] → the caller
+        # refuses cleanly ("no sample tasks — re-fetch with a higher callio.snip_chars"), never a partial replay.
+        replay_columns = "prompt, system, req_schema, req_max_tokens, effort" if include_shape else "prompt"
+        rows = con.execute("SELECT DISTINCT " + replay_columns + " FROM call_io "
+                           "WHERE intent IS ? AND prompt IS NOT NULL AND length(prompt) > 0 "
+                           "AND COALESCE(truncated,0) = 0 AND shape_complete = 1 LIMIT ?", (intent, int(n))).fetchall()
     if not include_shape:
         return [r[0] for r in rows]
     # Decode the entire stored contract. Invalid schema data refuses sampling via JSONDecodeError;

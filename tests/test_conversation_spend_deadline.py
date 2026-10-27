@@ -35,12 +35,14 @@ def slow_conversation_consumer_decimal_step(self, value):
 
 
 def seed_conversation_consumer_fault_rows():
-    seed = ledger.SpendLedger()
+    seed = ledger.SpendLedger(owned_connection=config.open_ledger_connection())
     seed._conn.executemany(CONVERSATION_FAULT_INSERT, (
         (str(index), CONVERSATION_FAULT_DAY, CONVERSATION_FAULT_ID)
         for index in range(CONVERSATION_FAULT_ROWS)))
     seed._conn.commit()
     seed._conn.close()
+    from spendguard.ledger_writer import close_ledger_writers
+    close_ledger_writers()
 
 
 def test_conversation_spend_deadline_slow_concurrent_recovery():

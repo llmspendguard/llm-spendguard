@@ -1,0 +1,96 @@
+B0 revision 7: complete writer decorator boundary audit
+Scope: every serialize_ledger_function and best_effort_ledger_function application
+in src/spendguard, including parameterized decorators. 52 sites: 23 optional, 29 required.
+Locations point to decorator lines.
+
+OPTIONAL means bookkeeping/cache/telemetry: all use best_effort_ledger_function.
+The outer boundary catches writer startup, admission, deadlines and callback errors,
+warns and returns (False for record_prediction, None otherwise). Deliberate stops
+propagate before warning. Writer rollback remains authoritative for callback errors.
+Required sites retain serialize_ledger_function and propagate persistence failures.
+
+OPTIONAL src/spendguard/batch_tracker.py:80 register_batch
+REQUIRED src/spendguard/batch_tracker.py:197 _pending_note
+OPTIONAL src/spendguard/batch_tracker.py:220 _pending_confirm
+OPTIONAL src/spendguard/batch_tracker.py:240 _pending_clear
+OPTIONAL src/spendguard/batch_tracker.py:489 _set_status
+OPTIONAL src/spendguard/best_value.py:88 _store_bestvalue_verdict
+REQUIRED src/spendguard/budget.py:418 reattribute_providers
+REQUIRED src/spendguard/budget.py:799 quarantine_charge
+REQUIRED src/spendguard/budget.py:833 unquarantine_charge
+REQUIRED src/spendguard/budget.py:1018 clear_reconciled
+REQUIRED src/spendguard/bulkgate.py:152 record_estimate
+REQUIRED src/spendguard/bulkgate.py:178 record_tested
+REQUIRED src/spendguard/bulkgate.py:204 record_eval
+OPTIONAL src/spendguard/bulkgate.py:372 note_latency
+OPTIONAL src/spendguard/bulkgate.py:466 note_response
+OPTIONAL src/spendguard/calibrate.py:362 record_prediction
+REQUIRED src/spendguard/calibrate.py:383 pair
+REQUIRED src/spendguard/callio.py:144 record_io_sample
+OPTIONAL src/spendguard/callio.py:279 set_quality
+REQUIRED src/spendguard/callio.py:332 _apply_callio_conversation_links
+OPTIONAL src/spendguard/conv.py:299 _persist_user_ask_verdicts
+REQUIRED src/spendguard/conv.py:409 _seg_put_cls
+OPTIONAL src/spendguard/conv.py:755 _evidence_put
+REQUIRED src/spendguard/conv.py:1131 _clear_conversation_graph_events
+REQUIRED src/spendguard/effort_titration.py:108 _save_one
+OPTIONAL src/spendguard/guard.py:48 record_saving
+OPTIONAL src/spendguard/guard.py:183 record_decision
+REQUIRED src/spendguard/history.py:151 _apply_reconstructed_intents
+REQUIRED src/spendguard/history.py:176 enrich_graph
+OPTIONAL src/spendguard/intent_model_prior.py:102 _store_intent_prior
+OPTIONAL src/spendguard/lane_bandit.py:51 record_trial
+REQUIRED src/spendguard/learn.py:93 add_insight
+REQUIRED src/spendguard/learn.py:152 update_insight
+REQUIRED src/spendguard/learn.py:174 add_node
+REQUIRED src/spendguard/learn.py:184 add_edge
+REQUIRED src/spendguard/ledger_deadletter.py:53 drain_spend_deadletter_events
+REQUIRED src/spendguard/models.py:63 _initialize_model_facts
+REQUIRED src/spendguard/models.py:80 add_fact
+REQUIRED src/spendguard/models.py:98 clear_fact
+REQUIRED src/spendguard/provider_tokens.py:394 _persist_provider_factor_choice
+REQUIRED src/spendguard/reconcile_gap_ownership.py:52 apply_reconcile_gap_provider_ownership
+OPTIONAL src/spendguard/reliability.py:276 _persist_lane_remediation_verdict
+OPTIONAL src/spendguard/reliability.py:354 note_lane_down
+OPTIONAL src/spendguard/reliability.py:412 note_lane_ok
+OPTIONAL src/spendguard/reliability.py:431 note_lane_auth_down
+OPTIONAL src/spendguard/reliability.py:487 note_lane_model_shift
+OPTIONAL src/spendguard/reliability.py:527 note_lane_model_ok
+REQUIRED src/spendguard/reliability.py:547 _persist_health
+OPTIONAL src/spendguard/reliability.py:649 _prune_superseded_lane_health
+OPTIONAL src/spendguard/semcache.py:176 _persist_semcache_entry
+REQUIRED src/spendguard/tag.py:45 retag_deterministic
+REQUIRED src/spendguard/tag.py:67 move_project
+
+Required-site rationale:
+batch_tracker._pending_note durably authorizes the imminent paid submit.
+budget operations change billed ledger attribution/quarantine/reconciliation.
+bulkgate record_estimate/record_tested/record_eval persist paid-work authorization.
+calibrate.pair is an explicit durable calibration operation.
+callio.record_io_sample records the primary I/O sample; conversation links are an
+explicit reconciliation operation that reports persisted rows.
+conv._seg_put_cls records authoritative segment attribution (including human edits);
+_clear_conversation_graph_events is an explicit graph rebuild mutation.
+effort_titration._save_one preserves paid experiment progress/resumability.
+history, learn, models, tag, provider_tokens, reconcile_gap_ownership and
+reliability._persist_health are explicit durable mutation/calibration/sweep commands.
+ledger_deadletter drain must retain fail-closed replay/delete discipline.
+
+Optional callers checked:
+best_value.select_model_effort keeps its computed recommendation when
+_store_bestvalue_verdict cannot dispatch.
+intent_model_prior.rank_models_for_intent keeps its computed ranking when
+_store_intent_prior cannot dispatch.
+conv.classify_user_asks applies computed verdicts before its optional cache dispatch;
+conv.classify_evidence likewise applies evidence before _evidence_put.
+semcache.cached_call persists only after computing its return result.
+batch tracker confirmation/status, reliability health notes/remediation caches and
+bulk/call quality telemetry are secondary records, not paid-work authorization.
+guard.record_saving and guard.record_decision retain optional dispatch containment;
+their callback errors now reach the common boundary so deliberate stops propagate.
+
+Reproduction: test_cache_writer_optional_boundaries.py failed before changes with
+OSError escaping select_model_effort, then passed with both computed-value paths,
+ordinary dispatch failures and deliberate stops. The expanded optional dispatch
+contract exercises every one of the 23 optional sites plus required-write failures.
+

@@ -1,0 +1,54 @@
+B0 revision 8: pending-state cache lifetime audit
+
+Invariant: a value observed on a deferred/reserved writer may be returned live
+to that scope, but must not become a memo or persisted report after rollback.
+Method: inspect the total/freshness readers, all memo references, reserved-reader
+dispatch, and their report/cache consumers together; no provider/model calls.
+
+1. src/spendguard/ledger.py:1021 running_llm_total_dec is the sole ledger
+   aggregate memo. Deferred OR in_transaction reads clear/bypass _total_memo,
+   compute spent_dec live, and never store pending state. This covers explicit
+   owned handles, external bulk reservations, and worker-inline bulk scopes.
+2. src/spendguard/ledger.py:1001 _freshness_token is not itself cached. Its
+   total_changes/data_version pair remains valid for committed memo generations;
+   it is deliberately not consulted for pending reads because rollback does not
+   advance either SQLite counter. Read-facade memo copies at ledger.py:382,398
+   now propagate None for pending reads, not a pending generation/value.
+3. src/spendguard/budget.py:777 spent_all_time delegates to the same corrected
+   running-total memo and has no additional cached value.
+4. src/spendguard/ledger_sync.py:694 leak_line can observe reserved pending
+   by_day values through _compute (coverage/capture-rate). It now returns live
+   output without writing leak_line.json while the bulk reservation is active.
+   cached_leak_line:591 reads only the prior committed report, with existing TTL.
+5. src/spendguard/receipt.py:1355 _cached_tally_line bypasses its cross-scope
+   rendered cache during bulk, and computes the live tally without refresh/store.
+   _write_statusline_cache:1343 also refuses bulk writes, covering direct CLI
+   publication as well as this helper. The existing committed file survives.
+6. src/spendguard/receipt.py:651 tally computes spend/usage shares locally each
+   invocation; no share memo exists. _receipt_est_records:157 overlays ledger
+   values on loaded miner data using a distinct read-only connection, never
+   mutating/persisting the loaded cache. Miner/remote stamps use supplied source
+   data rather than reading a pending ledger total; no rollback cache coupling.
+7. src/spendguard/ledger.py:927 spent_dec, :1055 remote_dec, :1061 est_value_dec,
+   :1068 subscription_dec, :1236 sum_dec and grouped/report primitives compute
+   each query afresh. ledger_read.py:529 read_ledger_sql can borrow the reserved
+   writer but stores no result cache. Coverage's interpreter-discovery output is
+   filesystem-derived, not a pending ledger aggregate.
+8. src/spendguard/receipt.py:1381 _compaction_hint also caches a ledger-derived
+   ratio (claudecode.measured_compaction_ratio:836 -> reserved report reader).
+   During bulk it now bypasses the hint file and returns live without publishing.
+   Its primary explicit-compaction ratio is JSON-event-derived, not SQLite.
+
+Plain writer callbacks without a bulk binding do not expose pending rows to
+report helpers: read_ledger_sql borrows ONLY reserved_ledger_bulk_read_connection;
+without that binding it opens a distinct read-only connection. Hence report
+publication guards deliberately match ledger_bulk_scope_matches, including both
+worker-inline and explicit-maintenance reservations, even before the first DML.
+
+Regression: tests/test_pending_totals_rollback.py
+test_pending_total_memo_cannot_survive_bulk_rollback: four parameter cases failed
+on the stale running total before the fix; all pass after (regular, explicit,
+worker-inline scopes). spent/sum/running/category readers agree after rollback.
+test_pending_coverage_and_tally_never_persist_after_rollback: failed before the
+report guards, passes after; committed tally file preserved, no coverage file
+written. Both execute under ledger_request_scope's named watchdog duration.

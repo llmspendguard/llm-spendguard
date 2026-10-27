@@ -63,11 +63,11 @@ def _defaults(intent, task):
     denylist = [d["model"] for d in permodel if d["denied"]]
     ins = learn.insights(intent=intent)[:3]
     sample = ""
-    with callio._lock:
-        r = callio._callio_db().execute("SELECT output FROM call_io WHERE COALESCE(intent,'(none)')=? AND output!='' LIMIT 1",
+    with callio.config.ledger_op('callio', callio._ensure_callio_schema) as ledger_read_handle:
+        r = ledger_read_handle.execute("SELECT output FROM call_io WHERE COALESCE(intent,'(none)')=? AND output!='' LIMIT 1",
                                  (intent,)).fetchone()
-        if r:
-            sample = (r[0] or "")[:90]
+    if r:
+        sample = (r[0] or "")[:90]
     hist_cost = sum(d["cost"] for d in permodel)
     qbar = "UNVERIFIED — set a golden set / judge (no quality labels for this intent yet)"
     if rec and rec.get("good") is not None:

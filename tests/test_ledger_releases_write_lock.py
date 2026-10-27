@@ -22,6 +22,11 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
     os.execv(sys.executable, [sys.executable] + sys.argv)
 
 from spendguard import config, budget
+from spendguard.ledger_writer import run_ledger_write, current_ledger_writer_connection
+
+
+def ledger_owner_has_no_transaction():
+    return run_ledger_write(lambda: not current_ledger_writer_connection().in_transaction)
 
 config.budget_backend = lambda: "sqlite"          # the cross-process ledger writes to the on-disk db (not memory)
 
@@ -51,7 +56,7 @@ ck("opening the ledger connection (schema ensure incl.) holds NO write lock", wr
 
 L.spent_dec(since="2026-08-01")
 ck("a READ (spent_dec) leaves the write lock free — WAL readers never block writers", writer_can_acquire())
-ck("...and leaves the connection OUT of any transaction", not L._conn.in_transaction)
+ck("...and leaves the connection OUT of any transaction", ledger_owner_has_no_transaction())
 
 list(L.query(since="2026-08-01"))
 ck("a query() leaves the write lock free", writer_can_acquire())
@@ -61,21 +66,21 @@ with contextlib.redirect_stderr(_buf):
     budget.record_charge("anthropic", "claude-haiku-4-5", "realtime", 0.01, project="lock-test")
 ck("a WRITE commits and RELEASES the lock (lock → write → unlock)", writer_can_acquire())
 ck("...the write actually landed (no fail-open warning)", _buf.getvalue().strip() == "")
-ck("...the ledger connection is left OUT of any transaction", not L._conn.in_transaction)
+ck("...the ledger connection is left OUT of any transaction", ledger_owner_has_no_transaction())
 
 # an UPDATE is multi-statement (mutation + chained audit) — it must still release when done
 _row = next(iter(L.query(since="2026-08-01")), None)
 if _row is not None:
     L.update(_row["id"], {"intent": "lock-test-update"}, actor="lock-test", reason="release check")
 ck("an UPDATE (mutation + audit) releases the lock", writer_can_acquire())
-ck("...and leaves no open transaction behind", not L._conn.in_transaction)
+ck("...and leaves no open transaction behind", ledger_owner_has_no_transaction())
 
 # a bulk() load defers per-row commits, so it MAY hold the lock inside the block — but on exit it commits and
 # must release. (Inside the block the lock being held is correct: that is an active transaction, not idle.)
 with L.bulk():
     budget.record_charge("openai", "gpt-5.5", "realtime", 0.02, project="lock-test")
 ck("a bulk() context RELEASES the lock on exit (commit)", writer_can_acquire())
-ck("...and leaves no open transaction behind", not L._conn.in_transaction)
+ck("...and leaves no open transaction behind", ledger_owner_has_no_transaction())
 
 print(f"\n{'[FAIL]' if fails else 'OK'} test_ledger_releases_write_lock: {fails} failure(s)")
 sys.exit(1 if fails else 0)

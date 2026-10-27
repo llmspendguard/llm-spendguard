@@ -101,16 +101,15 @@ if row:
                   project="absence-guard-2", conv_id="c-absence-2")
     _se2 = budget._ledger().query(where={"project_primary": "absence-guard-2"})
     row2 = _se2[0]["id"] if _se2 else None
-    _led = budget._ledger()
-    _orig_audit = _led._audit
-    _led._audit = lambda *a, **k: (_ for _ in ()).throw(Exception("simulated: no such table: spend_audit"))
+    _orig_audit = SpendLedger._audit
+    SpendLedger._audit = lambda *a, **k: (_ for _ in ()).throw(Exception("simulated: no such table: spend_audit"))
     raised = False
     try:
         budget.quarantine_charge(row=row2, reason="guard: audit failure must not pass silently")
     except Exception:
         raised = True
     finally:
-        _led._audit = _orig_audit
+        SpendLedger._audit = _orig_audit
     check("a failed audit write RAISES rather than mutating silently", raised)
     live = [r for r in budget._ledger().query(where={"project_primary": "absence-guard-2"}) if r["status"] != "void"]
     check("...and the void is ROLLED BACK — no changed ledger with no record of the change", len(live) == 1,

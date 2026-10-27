@@ -1,0 +1,90 @@
+B0 revision 8: nested transaction isolation inventory
+
+Atomic boundary: src/spendguard/ledger_writer.py:48 isolate_nested_ledger_write.
+Every nested run_ledger_write dispatch enters a distinct SAVEPOINT. BEGIN keeps
+the outer transaction authoritative even for its first nested write. Commit is
+deferred for the callback. A raised callback rolls back to/release its savepoint;
+failed cleanup aborts the writer exactly once. An existing owner abort is honored
+without a second rollback. A deliberately swallowed error that calls the existing
+config rollback/reset path aborts the authoritative owner (B0 revision 7 contract).
+
+Explicit inline boundaries (not merely covered through a decorator):
+src/spendguard/ledger_deadletter.py:110 per replay entry; only an actually
+attempted entry consumes a retry. Failed entry has no event/audit rows; siblings
+remain valid. Retry evidence survives and the next drain really replays it.
+src/spendguard/config.py:1564 ensure_ledger_schema, including writer-side schema
+touch during bulk: its schema callback gets its own SAVEPOINT.
+src/spendguard/ledger.py:326 serialize_spend_ledger_mutation covers every ledger
+mutation, including explicit-owned deferred maintenance connections.
+src/spendguard/calls.py:489 serialize_call_observation_mutation now dispatches
+through run_ledger_write even when already on the writer.
+src/spendguard/ledger_writer.py:387 run_ledger_write: common inline dispatch.
+src/spendguard/ledger_deadletter.py:67 refuses nested drain before touching
+spools, because only the outer transaction could otherwise authorize removal.
+src/spendguard/ledger_deadletter.py:140 commits all replay outcomes exactly once
+before :150 publishes spool removals; all paths remain locked through commit.
+On commit/expiry/owner-abort failure, :148 publishes original successful entries
+plus retry increments for genuinely failed attempts, then rethrows at :154.
+
+Writer/decorator entry inventory (line refers to declaration/decorator; every
+nested dispatch is isolated by the common boundary above):
+batch_tracker.py:80 register_batch; :197 _pending_note; :220 _pending_confirm;
+ :240 _pending_clear; :489 _set_status.
+best_value.py:88 _store_bestvalue_verdict.
+budget.py:317 reconcile_money_batch_estimate; :418 reattribute_providers;
+ :799 quarantine_charge; :833 unquarantine_charge; :888 reprice_unpriced;
+ :1018 clear_reconciled; :1079 clear_readable_true_down. Direct owner branches
+ delegate audited mutations to SpendLedger's isolated mutation boundary.
+bulkgate.py:152 record_estimate; :178 record_tested; :204 record_eval;
+ :372 note_latency; :466 note_response.
+calibrate.py:362 record_prediction; :383 pair.
+callio.py:144 record_io_sample; :279 set_quality; :332 _apply_callio_conversation_links.
+calls.py:489 serialize_call_observation_mutation (all decorated recorders).
+conv.py:299 _persist_user_ask_verdicts; :409 _seg_put_cls;
+ :755 _evidence_put; :1131 _clear_conversation_graph_events.
+effort_titration.py:108 _save_one.
+guard.py:48 record_saving; :183 record_decision.
+history.py:151 _apply_reconstructed_intents; :176 enrich_graph.
+intent_model_prior.py:102 _store_intent_prior.
+lane_bandit.py:51 record_trial.
+lane_queue.py:307 drop_migrated_ledger_queue_table dispatch.
+learn.py:93 add_insight; :152 update_insight; :174 add_node; :184 add_edge.
+ledger.py:326 mutation decorator; :1001 freshness dispatch is read-only.
+ledger_deadletter.py:54 drain_spend_deadletter_events (nested drain refused;
+ top-level entries individually isolated).
+migrate_charges.py:148 preserve_precutover_spend_events dispatch.
+models.py:63 _initialize_model_facts; :80 add_fact; :98 clear_fact.
+provider_tokens.py:394 _persist_provider_factor_choice.
+reconcile_gap_ownership.py:52 apply_reconcile_gap_provider_ownership.
+reliability.py:219 _remediation_db; :276 _persist_lane_remediation_verdict;
+ :336 _health_db; :354 note_lane_down; :412 note_lane_ok;
+ :431 note_lane_auth_down; :487 note_lane_model_shift; :527 note_lane_model_ok;
+ :547 _persist_health; :649 _prune_superseded_lane_health. Schema callback
+ direct-owner branches pass through ensure_ledger_schema's isolated boundary.
+semcache.py:176 _persist_semcache_entry.
+tag.py:45 retag_deterministic; :67 move_project.
+xp_rate_window.py:125 _reserve dispatch.
+All paths above are relative to src/spendguard/.
+
+Generic wrapper sites: ledger_writer.py serialize_ledger_function and
+best_effort_ledger_function both run inside the common dispatch. The best-effort
+wrapper catches only after the callback's isolation has unwound. Existing
+recorder-internal catches either precede writes, call rollback/reset (whole-owner
+fail-closed), or suppress ancillary non-SQL bookkeeping after completed writes.
+Caller-driven ledger_writer_bulk_transaction owns final commit/rollback; nested
+bulk failure aborts the whole owner, never partially commits it. Nested exclusive
+maintenance borrows the same outer boundary and never commits independently.
+
+Regression proof: tests/test_nested_writer_savepoint_isolation.py includes
+replay audit insertion failure, caught inline bulk record failure, caught schema
+DDL failure, both rollback-to/release cleanup failures, nested drain refusal,
+and cross-spool commit failure. All seven cases passed. Replay and inline bulk
+record assertions were observed failing before the fix, then passed:
+test_replayed_audit_failure_retains_retry_without_partial_rows;
+test_inline_bulk_record_failure_does_not_ride_sibling_commit.
+Additional boundary proof:
+test_nested_cleanup_failure_aborts_owner_once;
+test_nested_drain_refuses_before_touching_retry_evidence;
+test_cross_spool_commit_failure_preserves_successes_and_attempted_retries.
+Existing expiry preservation (five fresh runs), writer-owned rollback, and
+atomic offline maintenance tests pass.

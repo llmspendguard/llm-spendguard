@@ -150,35 +150,35 @@ def reconstruct(call_id):
     """Return the seven audit items for one physical call, with explicit availability."""
     from . import calls, content_retention
 
-    connection = calls._calls_db()
-    call_columns = (
-        "id", "ts", "intent", "caller", "provider", "model", "kind", "cost", "latency",
-        "effort", "executor", "project", "outcome", "disposition", "provider_error",
-        "requested_model", "served_model", "resolved_lane", "redirect_reason",
-        ROUTING_SNAPSHOT_COLUMN, REQUEST_SCHEMA_COLUMN, REQUEST_MAX_TOKENS_COLUMN,
-        REQUEST_DECOMPOSITION_COLUMN,
-    )
-    row = connection.execute(
-        f"SELECT {','.join(call_columns)} FROM calls WHERE id=?", (call_id,)
-    ).fetchone()
-    if row is None:
-        raise KeyError(call_id)
-    call = dict(zip(call_columns, row))
-    ensure_decisions_call_fk_schema(connection)
-    decision_rows = connection.execute(
-        f"SELECT {','.join(DECISION_COLUMNS)} FROM {DECISIONS_TABLE} WHERE call_id=? ORDER BY ts",
-        (call_id,),
-    ).fetchall()
-    decisions = [dict(zip(DECISION_COLUMNS, decision_row)) for decision_row in decision_rows]
-    content_row = None
-    try:
-        content_row = connection.execute(
-            f"SELECT prompt_json,system_json,response_json FROM {content_retention.CONTENT_RETENTION_TABLE} "
-            "WHERE call_id=? ORDER BY ts DESC LIMIT 1",
-            (call_id,),
+    with calls.config.ledger_op('calls', calls._ensure_call_observation_schema) as connection:
+        call_columns = (
+            "id", "ts", "intent", "caller", "provider", "model", "kind", "cost", "latency",
+            "effort", "executor", "project", "outcome", "disposition", "provider_error",
+            "requested_model", "served_model", "resolved_lane", "redirect_reason",
+            ROUTING_SNAPSHOT_COLUMN, REQUEST_SCHEMA_COLUMN, REQUEST_MAX_TOKENS_COLUMN,
+            REQUEST_DECOMPOSITION_COLUMN,
+        )
+        row = connection.execute(
+            f"SELECT {','.join(call_columns)} FROM calls WHERE id=?", (call_id,)
         ).fetchone()
-    except Exception:
+        if row is None:
+            raise KeyError(call_id)
+        call = dict(zip(call_columns, row))
+        ensure_decisions_call_fk_schema(connection)
+        decision_rows = connection.execute(
+            f"SELECT {','.join(DECISION_COLUMNS)} FROM {DECISIONS_TABLE} WHERE call_id=? ORDER BY ts",
+            (call_id,),
+        ).fetchall()
+        decisions = [dict(zip(DECISION_COLUMNS, decision_row)) for decision_row in decision_rows]
         content_row = None
+        try:
+            content_row = connection.execute(
+                f"SELECT prompt_json,system_json,response_json FROM {content_retention.CONTENT_RETENTION_TABLE} "
+                "WHERE call_id=? ORDER BY ts DESC LIMIT 1",
+                (call_id,),
+            ).fetchone()
+        except Exception:
+            content_row = None
     content_available = content_row is not None
     prompt_value = decode_audit_json(content_row[0]) if content_available else None
     system_value = decode_audit_json(content_row[1]) if content_available else None

@@ -12,6 +12,7 @@ os.environ.setdefault("SPENDGUARD_HOME", tempfile.mkdtemp())
 import spendguard
 from spendguard import config, ledger_read
 from spendguard import reconcile_maintenance_owner as maintenance
+from spendguard.ledger_writer import current_ledger_writer_connection, run_ledger_write
 
 MAINTENANCE_GUARD_DATABASE = "maintenance-deadline.sqlite"
 MAINTENANCE_GUARD_BUDGET_S = 0.03
@@ -37,6 +38,8 @@ def run_reconcile_maintenance_deadline_guards():
     with tempfile.TemporaryDirectory() as directory:
         path = Path(directory) / MAINTENANCE_GUARD_DATABASE
         with maintenance.owned_reconcile_maintenance_connection(path) as owner:
+            native_identity = id(owner._native_reconcile_connection)
+            assert owner._native_reconcile_connection is current_ledger_writer_connection(path)
             assert owner._reconcile_budget == float(os.environ.get(
                 maintenance.RECONCILE_MAINTENANCE_BUDGET_ENV,
                 maintenance.RECONCILE_MAINTENANCE_DEFAULT_TIME_BUDGET_S))
@@ -74,6 +77,9 @@ def run_reconcile_maintenance_deadline_guards():
             pass
         else:
             raise AssertionError("retained offline cursor must close at owner exit")
+        assert run_ledger_write(lambda: id(current_ledger_writer_connection(path)), path) == native_identity
+        assert run_ledger_write(lambda: current_ledger_writer_connection(path).execute(
+            MAINTENANCE_GUARD_SQL).fetchone()[0], path) == 1
 
         for invalid_budget in MAINTENANCE_GUARD_INVALID_BUDGETS:
             try:

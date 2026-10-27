@@ -16,6 +16,8 @@ import logging
 import traceback
 
 from . import adapters, config
+from .ledger_writer import (best_effort_ledger_function, serialize_ledger_function,
+                            run_ledger_write, current_ledger_writer_connection)
 
 _PROBE_IN, _PROBE_OUT = 12, 8          # a one-line probe prompt + a one-word reply
 
@@ -216,6 +218,9 @@ _REMEDIATE_SCHEMA = {"type": "object", "properties": {
 
 def _remediation_db():
     from . import budget
+    if current_ledger_writer_connection() is None:
+        run_ledger_write(_remediation_db)
+        return budget._ledger_db()
     db = budget._ledger_db()
     with budget._lock:
         db.execute("CREATE TABLE IF NOT EXISTS lane_remediation "
@@ -240,8 +245,9 @@ def _classify_remediation(kind, resource, reason, model=None):
     stop propagates."""
     from . import budget, adapters, calls, config, gate
     sig = _remediation_signature(kind, resource, reason)
-    db = _remediation_db()
-    with budget._lock:
+    _remediation_db()
+    with config.ledger_op(budget.BUDGET_AUXILIARY_POOL_KEY,
+                          budget._ensure_budget_auxiliary_read_schema) as db, budget._lock:
         row = db.execute("SELECT issue,fix,command FROM lane_remediation WHERE signature=?", (sig,)).fetchone()
     if row:
         return {"issue": row[0], "fix": row[1], "command": row[2] or "", "cached": True}
@@ -263,13 +269,20 @@ def _classify_remediation(kind, resource, reason, model=None):
     if not isinstance(j, dict) or not j.get("issue"):
         return {"issue": str(reason)[:120], "fix": "inspect the lane's auth/quota/model config", "command": "", "cached": False}
     out = {"issue": str(j.get("issue"))[:200], "fix": str(j.get("fix"))[:200], "command": str(j.get("command") or "")[:200]}
+    _persist_lane_remediation_verdict(sig, kind, resource, out)
+    return {**out, "cached": False}
+
+
+@best_effort_ledger_function
+def _persist_lane_remediation_verdict(sig, kind, resource, out):
     import datetime
+    from . import budget
+    db = _remediation_db()
     with budget._lock:                                    # cache a REAL verdict so the next routine check is $0 for it
         db.execute("INSERT OR REPLACE INTO lane_remediation VALUES (?,?,?,?,?,?,?)",
                    (sig, kind, resource, out["issue"], out["fix"], out["command"],
                     datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")))
         db.commit()
-    return {**out, "cached": False}
 
 
 def remediate(sweep_result, model=None):
@@ -322,6 +335,9 @@ _EVENT_NOTIFY_THROTTLE_S = 1800          # per-lane: notify on a mid-use failure
 
 def _health_db():
     from . import budget
+    if current_ledger_writer_connection() is None:
+        run_ledger_write(_health_db)
+        return budget._ledger_db()
     db = budget._ledger_db()
     with budget._lock:
         db.execute("CREATE TABLE IF NOT EXISTS lane_health "
@@ -335,6 +351,7 @@ def _health_db():
     return db
 
 
+@best_effort_ledger_function
 def note_lane_down(lane, reason):
     """EVENT-driven health: a lane's call AND its metered-API fallback both missed ONE call ('down'). A LONE down is a
     SUSPECTED blip — under load a lane misses a call, COOLS, is SKIPPED for its cooldown, and recovers on the next
@@ -389,9 +406,10 @@ def note_lane_down(lane, reason):
                            (now.isoformat(timespec="seconds"), lane))
                 db.commit()
     except Exception:
-        pass
+        raise
 
 
+@best_effort_ledger_function
 def note_lane_ok(lane):
     """RECOVERY signal: a lane just SERVED a call successfully (adapters._lane_note_ok) → any outage is over. Clear an
     UNRESOLVED event-down row (reachable=1) so the receipt stops surfacing it AND the NEXT down is read as a fresh
@@ -407,9 +425,10 @@ def note_lane_ok(lane):
                        (datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"), lane))
             db.commit()
     except Exception:
-        pass
+        raise
 
 
+@best_effort_ledger_function
 def note_lane_auth_down(lane, cmd="", sustained_only=True):
     """A lane's OWN auth-status command reported LOGGED OUT on the call path (lanes.lane_auth_status). That signal
     RACES the plan CLI's periodic auth.json refresh-rewrite: under concurrent lane load (bulk fan-outs) the file is
@@ -462,9 +481,10 @@ def note_lane_auth_down(lane, cmd="", sustained_only=True):
                            (now.isoformat(timespec="seconds"), lane))
                 db.commit()
     except Exception:
-        pass
+        raise
 
 
+@best_effort_ledger_function
 def note_lane_model_shift(lane, model, diagnosis):
     """A specific (lane, MODEL) that USED TO serve has shifted to a wall of transport errors (lane_servability
     detected it) → record it LOUD + alarm. DISTINCT from note_lane_auth_down (the whole lane logged out) and
@@ -501,9 +521,10 @@ def note_lane_model_shift(lane, model, diagnosis):
                            (now.isoformat(timespec="seconds"), resource))
                 db.commit()
     except Exception:
-        pass
+        raise
 
 
+@best_effort_ledger_function
 def note_lane_model_ok(lane, model):
     """Clear a (lane, MODEL) served-shift alert (note_lane_model_shift) when that model SERVES AGAIN — the recovery
     side of the shift detector, called by lane_servability.reprobe_rejected after a successful recovery probe. A
@@ -520,9 +541,10 @@ def note_lane_model_ok(lane, model):
                        (datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"), f"{lane}:{model}"))
             db.commit()
     except Exception:
-        pass
+        raise
 
 
+@serialize_ledger_function
 def _persist_health(sweep_result, acts=None):
     """Record the last check's reachability (+ any remediation fixes) so the RECEIPT and the notifier can read it
     with NO new sweep — that is what lets a red lane surface in every conversation for $0. One row per resource.
@@ -569,8 +591,9 @@ def health_reds(since_hours=48):
     from . import budget
     cutoff = (datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=since_hours)).isoformat(timespec="seconds")
     try:
-        db = _health_db()
-        with budget._lock:
+        _health_db()
+        with config.ledger_op(budget.BUDGET_AUXILIARY_POOL_KEY,
+                              budget._ensure_budget_auxiliary_read_schema) as db, budget._lock:
             rows = db.execute("SELECT resource,kind,reason,fix,command,source,ts,failure_kind FROM lane_health "
                               "WHERE reachable=0 AND ts>=?",
                               (cutoff,)).fetchall()
@@ -617,6 +640,16 @@ def health_reds(since_hours=48):
                     pass
             out.append({"resource": resource, "kind": kind, "reason": reason, "fix": fix, "command": command,
                         "failure_kind": failure_kind})
+        _prune_superseded_lane_health(recovered, stale, stale_lanes)
+        return out
+    except Exception:
+        return []                                        # a health read must NEVER break the receipt
+
+
+@best_effort_ledger_function
+def _prune_superseded_lane_health(recovered, stale, stale_lanes):
+        from . import budget
+        db = _health_db()
         if recovered:                                    # SELF-HEAL, traced (a DB write, not a silent skip): a recovered
             with budget._lock:                            # event-lane is marked reachable so it clears everywhere at once
                 db.executemany("UPDATE lane_health SET reachable=1 WHERE resource=? AND source='event'",
@@ -632,9 +665,6 @@ def health_reds(since_hours=48):
                 db.executemany("DELETE FROM lane_health WHERE resource=? AND kind='lane' AND source='sweep'",
                                [(r,) for r in stale_lanes])
                 db.commit()
-        return out
-    except Exception:
-        return []                                        # a health read must NEVER break the receipt
 
 
 def metered_key_ok(provider, since_hours=48):
@@ -649,8 +679,9 @@ def metered_key_ok(provider, since_hours=48):
     from . import budget
     cutoff = (datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=since_hours)).isoformat(timespec="seconds")
     try:
-        db = _health_db()
-        with budget._lock:
+        _health_db()
+        with config.ledger_op(budget.BUDGET_AUXILIARY_POOL_KEY,
+                              budget._ensure_budget_auxiliary_read_schema) as db, budget._lock:
             row = db.execute("SELECT reachable FROM lane_health WHERE resource=? AND kind='metered' AND ts>=? "
                              "ORDER BY ts DESC LIMIT 1", (provider, cutoff)).fetchone()
         return bool(row[0]) if row else None

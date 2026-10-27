@@ -52,7 +52,7 @@ held_writer_cases = tuple(sys.argv[3:])
 if writer == "pooled":
     config.pooled_ledger_conn(pool_key, lambda connection: None)
 if writer in held_writer_cases:
-    held_ledger = SpendLedger(cached_path)
+    held_ledger = SpendLedger(cached_path, owned_connection=config.open_ledger_connection(cached_path))
     held_cursor = held_ledger._conn.cursor()
     if writer == "held_shortcut_cursor":
         held_cursor = held_ledger._conn.execute("SELECT * FROM spend_events")
@@ -128,7 +128,7 @@ def test_aligned_home_keeps_fixture_events_isolated(tmp_path):
             {"source": __name__, "cost_basis": "unpriced"})
         assert fixture_ledger.get(fixture_event_id)["source"] == __name__
     finally:
-        fixture_ledger._conn.close()
+        assert fixture_ledger._conn is None
 
 
 def test_stable_home_operations_do_not_resolve_paths(tmp_path, monkeypatch):

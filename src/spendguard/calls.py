@@ -14,9 +14,10 @@ import os, datetime, threading, hashlib, inspect, contextlib, uuid
 from typing import Optional
 
 from . import config
+from .ledger_fork_locks import new_fork_reset_ledger_state
 from .schema_indexes import ensure_ordered_index_coverage
 
-_lock = threading.RLock()
+_lock = new_fork_reset_ledger_state(globals(), "_lock", threading.RLock)
 _local = threading.local()
 _PKG = os.path.dirname(os.path.abspath(__file__))
 _ORIGIN_SESSION = uuid.uuid4().hex[:12]
@@ -486,6 +487,38 @@ def _out_tok_sanity_ceiling(model):
     return _UNIVERSAL_OUT_TOK_SANITY, "universal_bound"
 
 
+def serialize_call_observation_mutation(function=None, *, capture_application_caller=False):
+    """Carry caller-local attribution into the serialized database mutation."""
+    import functools
+    if function is None:
+        return lambda target: serialize_call_observation_mutation(
+            target, capture_application_caller=capture_application_caller)
+    signature = inspect.signature(function)
+    @functools.wraps(function)
+    def invoke_call_observation_mutation(*args, **kwargs):
+        from .ledger_writer import run_ledger_write, current_ledger_writer_connection
+        if current_ledger_writer_connection() is not None:
+            return run_ledger_write(lambda: function(*args, **kwargs))
+        if capture_application_caller:
+            bound = signature.bind_partial(*args, **kwargs)
+            if bound.arguments.get("who") is None:
+                bound.arguments["who"] = current().get("who") or caller()
+                args, kwargs = bound.args, bound.kwargs
+        caller_state = vars(_local).copy()
+        def apply_call_observation_mutation():
+            previous_state = vars(_local).copy()
+            vars(_local).clear()
+            vars(_local).update(caller_state)
+            try:
+                return function(*args, **kwargs)
+            finally:
+                vars(_local).clear()
+                vars(_local).update(previous_state)
+        return run_ledger_write(apply_call_observation_mutation)
+    return invoke_call_observation_mutation
+
+
+@serialize_call_observation_mutation(capture_application_caller=True)
 def record_call(provider, model, kind, cost, in_tok=0, out_tok=0, latency=None,
            prompt=None, output=None, finish=None, intent=None, chain=None, who=None,
            executor=None, project=None, effort=None, *, outcome=None, http_status=None,
@@ -494,7 +527,7 @@ def record_call(provider, model, kind, cost, in_tok=0, out_tok=0, latency=None,
            requested_model=None, served_model=None, resolved_lane=None, redirect_reason=None,
            cache_read_tok=None, cache_write_tok=None, routing_snapshot=None, request_schema=None,
            request_max_tokens=None, request_decomposition=None):
-    """Record one call — its full OUTCOME, success OR failure. Returns call_id. Never raises.
+    """Record one call's full outcome. Persistence failures propagate honestly.
 
     Cache observations remain NULL when unmeasured or when a write tier is unknown.
     Complete split observations use input inclusive of reads, excluding writes; writes identify the five-minute tier.
@@ -644,13 +677,14 @@ def record_call(provider, model, kind, cost, in_tok=0, out_tok=0, latency=None,
         return cid
     except Exception:
         config.rollback_ledger_conn("calls")   # a failed write left a txn open on the REUSED pooled conn holding the
-        return None                            # shared WAL write lock — clear it so it can't stall other writers
+        raise
 
 
 
 _CONF = {"explicit": 1.0, "truncation": 1.0, "judge": 0.95, "used": 0.6, "mined": 0.5}
 
 
+@serialize_call_observation_mutation
 def feedback(call_id: Optional[str], ok: bool = True, source: str = "explicit",
              confidence: Optional[float] = None) -> None:
     """Label a call's quality after the fact (judge verdict, human accept, downstream validation).
@@ -665,8 +699,10 @@ def feedback(call_id: Optional[str], ok: bool = True, source: str = "explicit",
             _calls_db().commit()
     except Exception:
         config.rollback_ledger_conn("calls")   # clear a dangling txn from the failed write on the reused pooled conn
+        raise
 
 
+@serialize_call_observation_mutation
 def finalize_bakeoff_measurement(call_id, provider, requested_model, served_model, cost, in_tok, out_tok, intent,
                                  quality, effort, resolved_lane, redirect_reason=None):
     """Attach a bakeoff verdict to its gate-recorded physical call, inserting only when no recorder produced a row."""
@@ -687,6 +723,7 @@ def finalize_bakeoff_measurement(call_id, provider, requested_model, served_mode
                        served_model=served_model, resolved_lane=resolved_lane, redirect_reason=redirect_reason)
 
 
+@serialize_call_observation_mutation
 def insert(provider, model, kind, cost, in_tok=0, out_tok=0, ts=None, intent=None, chain=None,
            quality=None, quality_src=None, quality_conf=None, who="backfill", effort=None, project=None,
            call_class=None, origin_session=None):
@@ -710,6 +747,7 @@ def insert(provider, model, kind, cost, in_tok=0, out_tok=0, ts=None, intent=Non
     return cid
 
 
+@serialize_call_observation_mutation
 def reconcile_calls_batch_estimate(provider, model, intent, in_tok, out_tok, cost):
     """Revise the newest matching provisional call row to provider-measured batch usage, preserving the row."""
     with _lock:

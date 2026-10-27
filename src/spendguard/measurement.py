@@ -227,11 +227,11 @@ def _recover_sample(intent, sample_ids):
     # callio's OWN connection (the call_io table lives in config.db_path(), where record_io_sample writes) — never a
     # hand-rolled path, so a rerun reads exactly what the corpus stored. A real DB failure PROPAGATES; it is not
     # masked as 'nothing recovered' (which would mis-report a broken corpus as 'sample_unreproducible').
-    con = callio._callio_db()
-    by_id = {}
-    for (p,) in con.execute("SELECT DISTINCT prompt FROM call_io WHERE intent IS ? AND prompt IS NOT NULL "
-                            "AND length(prompt) > 0", (intent,)):
-        by_id[item_id(p)] = p
+    with callio.config.ledger_op('callio', callio._ensure_callio_schema) as con:
+        by_id = {}
+        for (p,) in con.execute("SELECT DISTINCT prompt FROM call_io WHERE intent IS ? AND prompt IS NOT NULL "
+                                "AND length(prompt) > 0", (intent,)):
+            by_id[item_id(p)] = p
     prompts, missing = [], []
     for sid in (sample_ids or []):
         (prompts.append(by_id[sid]) if sid in by_id else missing.append(sid))

@@ -1,0 +1,86 @@
+B0 revision 9: process-owned ledger fork synchronization audit
+
+Scope and method
+The inventory covers the base SQLite ledger connection/admission/schema/read/write
+infrastructure, durable spend retries and their MCP scheduler, and every module
+with a subsystem lock around base-ledger SQL. Source constructor/use searches used
+symgrep across src/spendguard, followed by inspection of owners and child handlers.
+No provider request or paid model call was used. References describe this revision.
+
+Complete process-owned lock inventory
+config.py:986 _scoped_intent_cap_lock: fresh RLock through the construction-time
+  registration in ledger_fork_locks.py:5, child replacement at :14-18. Existing
+  authorization data is preserved; inherited budget restrictions are not relaxed.
+config.py:1280/1281 _LEDGER_ADMISSION.lock/reclamation_lock: new generation at
+  config.py:1878; parent admission counts cannot become child admission slots.
+config.py:1543 _LEDGER_SCHEMA_LOCK: fresh RLock at config.py:1879.
+config.py:1544 _LEDGER_JOURNAL_MODE_LOCK: fresh RLock at config.py:1880.
+config.py:1616 _LEDGER_POOL_REGISTRY_LOCK: fresh RLock at config.py:1882.
+config.py:1617 _LEDGER_READ_POOL_CONDITION: fresh Condition at config.py:1883,
+  bound to the new registry RLock; this condition intentionally shares that lock.
+ledger_writer.py:33 _ledger_writer_registry_lock: fresh RLock at :151,
+  registered child handler :142-155; registry and thread-local owner also cleared.
+ledger_read.py:151 _LEDGER_READ_PROCESS_METRICS._read_attempt_lock: owner recreated
+  at :177-183; the replacement also resets process-local reader counters.
+ledger_request_cursor.py:104 _DEFAULT_MANAGED_READ_EXPIRY_COORDINATOR.condition:
+  owner recreated at :112-118, clearing inherited worker and cursor references.
+ledger_wal_maintenance.py:22 _DEFAULT_WAL_MAINTENANCE_CADENCE.lock: owner recreated
+  at :29-35. maintain_ledger_wal_if_due resolves the current default at call time;
+  no default argument retains the former owner.
+mcp_fd_lifecycle.py:20 _mcp_deadletter_schedule_lock: fresh Lock at :26;
+  handler :24-33 also clears inherited retry worker and scheduling timestamp.
+budget.py:19 _lock; calls.py:20 _lock; callio.py:22 _lock; learn.py:13 _lock;
+semcache.py:21 _lock; batch_tracker.py:52 _lock; content_retention.py:25
+  _content_retention_lock: each uses construction-time registration through
+  ledger_fork_locks.py:5, with fresh RLock replacement at :14-18.
+bulkgate.py:37 _lock, :540 _cancel_lock, :575 _unhonored_lock: same registration,
+  preserving associated existing data while replacing synchronization objects.
+bulkgate.py:795 _RUNAWAYS._lock, owner declared :811: whole owner recreated by
+  the same registration, so runaway counters and synchronization are process-local.
+ledger_deadletter.py: no module-owned threading lock or condition.
+
+Per-instance synchronization and OS lock ownership
+ledger_writer.py:186 admission and :197 ready Event belong to individual writer
+owners. The child handler empties the registry and local owner, so future child
+dispatch constructs new owners, admission locks, queue conditions, Future state
+and ready Events. Old parent owners are not reused by child dispatch.
+config.py:1521 connection stepping RLock and ledger_request_cursor.py:164 fallback
+stepping RLock belong to connections/cursors. Pool registry and thread-local pool
+are discarded in config.py:1881/1887; the default expiry owner is also discarded.
+New child connections and cursors therefore get new locks. This is abandonment,
+not an assertion that application-held inherited connection aliases become safe.
+ledger_read.py:279/280 request cancellation Event/connection Lock belong to a
+request scope, not module-owned process state. New request scopes create fresh
+objects. Explicit reuse of an inherited request scope or application-held cursor,
+connection, custom WAL cadence or custom expiry coordinator is outside this
+module-global audit; those objects must not be shared across processes.
+ledger_deadletter.py:21 locked_spend_deadletter_path creates per-call flock file
+handles. These locks implement intentional cross-process exclusion, not a Python
+dead-thread mutex. A child opening a fresh handle must contend with the parent;
+it must not issue LOCK_UN on an inherited shared open-file description. Writer
+owner reset closes only the child duplicate of its writer flock handle (:147),
+without unlocking the parent's still-live file description.
+
+Scope exclusions
+fleet consumer registration uses a separate fleet database; resource_state uses
+JSON; emit owns webhook dispatch; vendor_call owns run-id state; dispatch, gate,
+provider_tokens, overage, storm routing/coalescing, subscription headroom reports
+and provider daemon locks govern provider/config/runtime state rather than the
+base-ledger synchronization subsystem. They are not claimed fork-safe by this
+audit. Their presence was considered rather than silently excluded by filename.
+
+Structural guard and its exact coverage
+ledger_fork_locks.py couples construction and child registration for converted
+consumer locks and state owners. Existing ordered config reset remains explicit
+to preserve admission-generation accounting and condition-to-lock binding.
+tests/test_ledger_fork_lock_inventory.py discovers actual Lock, RLock and Condition
+globals and immediate attributes on module-defined singleton owners in all 15
+audited modules. It holds the entire inventory in a background thread, forks,
+and asserts each child object has a new identity and can acquire without blocking.
+A watchdog kills a wedged child. Adding an unregistered global or immediate
+singleton lock in those modules fails automatically, without updating a lock list.
+The module scope list is explicit: a new module must be added. Locks hidden deeper
+in containers, foreign-class singleton owners, lazy runtime-created globals,
+Events/Semaphores or application-held per-instance aliases are not auto-discovered.
+This guard closes the reported class within the audited inventory; it is not a
+claim that arbitrary future package state is automatically covered.

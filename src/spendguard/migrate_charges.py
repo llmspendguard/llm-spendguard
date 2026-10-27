@@ -134,31 +134,39 @@ def run_cutover(db_path=None):
     # real pre-cutover backup first), then to_spend_events crashes on the missing `charges`, leaving an EMPTY
     # ledger. This is the "old path made impossible" — the migration is a no-op after its source is gone.
     _probe = config.open_ledger_connection(path, tune=False)
-    _has_charges = bool(_probe.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='charges'").fetchone())
-    _probe.close()
+    try:
+        _has_charges = bool(_probe.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='charges'").fetchone())
+    finally:
+        _probe.close()
     if not _has_charges:
         return {"charges_rows": 0, "migrated": 0, "skipped_zero": 0, "already_cutover": True,
                 "reconciles": True, "note": "charges retired — spend_events is the sole ledger; nothing to migrate"}
 
     # Whole-file snapshot FIRST — the lossless recovery path (holds every prior row, incl. non-charges ones).
     snap = _budget.snapshot_once("cutover") if not db_path else _budget.snapshot(reason="cutover")
-    con = config.open_ledger_connection(path, tune=False)
-    if [r[1] for r in con.execute("PRAGMA table_info(spend_events)")]:
-        # Move any existing table aside so the rebuild is CLEAN — it never dedup-appends onto stale rows. One
-        # fixed name (no provenance guess); the file snapshot above is what guarantees nothing is lost.
-        con.execute("DROP TABLE IF EXISTS spend_events_precutover")    # a prior aborted cutover's backup
-        con.execute("ALTER TABLE spend_events RENAME TO spend_events_precutover")
-        con.commit()
-    con.close()
+    from .ledger_writer import run_ledger_write, current_ledger_writer_connection
+
+    def preserve_precutover_spend_events():
+        con = current_ledger_writer_connection(path)
+        if [r[1] for r in con.execute("PRAGMA table_info(spend_events)")]:
+            # Move any existing table aside so the rebuild is CLEAN — it never dedup-appends onto stale rows. One
+            # fixed name (no provenance guess); the file snapshot above is what guarantees nothing is lost.
+            con.execute("DROP TABLE IF EXISTS spend_events_precutover")    # a prior aborted cutover's backup
+            con.execute("ALTER TABLE spend_events RENAME TO spend_events_precutover")
+            con.commit()
+
+    run_ledger_write(preserve_precutover_spend_events, path=path)
 
     led = _ledger.SpendLedger(db_path=path)                            # constructs the fresh v6 schema
     stats = to_spend_events(led=led, src_path=path)
 
     # PROVE Σ EXACTLY, both sides in Decimal (charges is float text → Decimal per row, summed exactly).
     con = config.open_ledger_connection(path, tune=False)
-    src_dec = sum((Decimal(str(r[0])) for r in con.execute("SELECT cost FROM charges WHERE cost!=0")), Decimal(0))
-    con.close()
+    try:
+        src_dec = sum((Decimal(str(r[0])) for r in con.execute("SELECT cost FROM charges WHERE cost!=0")), Decimal(0))
+    finally:
+        con.close()
     # include_void=True: the proof is "did EVERY charge dollar arrive", and quarantined-impossible rows arrive
     # as status=void. src_dec counts them (cost!=0), so dst must too, or the residual would be a phantom.
     dst_dec = Decimal(led.sum_dec(include_void=True))   # EXACT (not the float sum_usd) — the reconciliation primitive

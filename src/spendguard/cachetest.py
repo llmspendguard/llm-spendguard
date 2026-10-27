@@ -53,8 +53,8 @@ def _model_from_script(path):
 def _system_and_users_from_intent(intent, n):
     from . import callio
     from .cacheaudit import _common_prefix
-    with callio._lock:
-        prompts = [r[0] for r in callio._callio_db().execute(
+    with callio.config.ledger_op('callio', callio._ensure_callio_schema) as ledger_read_handle:
+        prompts = [r[0] for r in ledger_read_handle.execute(
             "SELECT prompt FROM call_io WHERE COALESCE(intent,'(none)')=? AND prompt!='' LIMIT ?",
             (intent, max(n, 8))).fetchall()]
     if len(prompts) < 2:
