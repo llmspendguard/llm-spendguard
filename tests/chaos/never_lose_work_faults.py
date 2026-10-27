@@ -4,11 +4,17 @@ import datetime
 import os
 import pathlib
 import runpy
+import sys
 import tempfile
 from unittest.mock import patch
 
 os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="sg-work-chaos-")
 os.environ["SPENDGUARD_TEST_ISOLATED"] = "1"
+
+# Let tests/-level siblings loaded via runpy import _script_checks.
+_never_lose_work_tests_directory = str(pathlib.Path(__file__).resolve().parents[1])
+if _never_lose_work_tests_directory not in sys.path:
+    sys.path.insert(0, _never_lose_work_tests_directory)
 
 from spendguard import config, lane_balance, lane_queue, models, whole_job  # noqa: E402
 from spendguard.work_integrity import WorkIntegrityProof, WorkIntegrityViolation  # noqa: E402

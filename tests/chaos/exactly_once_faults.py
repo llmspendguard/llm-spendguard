@@ -5,11 +5,17 @@ import json
 import os
 import pathlib
 import runpy
+import sys
 import tempfile
 from unittest.mock import patch
 
 os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="sg-exactly-chaos-")
 os.environ["SPENDGUARD_TEST_ISOLATED"] = "1"
+
+# Let tests/-level siblings loaded via runpy import _script_checks.
+_exactly_once_tests_directory = str(pathlib.Path(__file__).resolve().parents[1])
+if _exactly_once_tests_directory not in sys.path:
+    sys.path.insert(0, _exactly_once_tests_directory)
 
 from spendguard import batch_tracker, callio, lane_queue, models, submit  # noqa: E402
 from spendguard.work_integrity import WorkIntegrityProof, WorkIntegrityViolation  # noqa: E402
