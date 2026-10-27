@@ -103,8 +103,7 @@ def test_ephemeral_stale_consumer_is_observable_without_restart_advice():
         )
 
     with patch.object(fleet.psutil, "Process", lambda _pid: _RoleFixtureProcess()), \
-            patch.object(release, "green_pointer", lambda: {"sha": GREEN_SHA, "short": GREEN_SHA}), \
-            patch.object(fleet, "_launchd_label_for", lambda _pid: None):
+            patch.object(release, "green_pointer", lambda: {"sha": GREEN_SHA, "short": GREEN_SHA}):
         restart_result = fleet.restart_stale()
         warned_pids = {warning["pid"] for warning in restart_result["warn"]}
         transient_pids = {
@@ -125,8 +124,7 @@ def test_default_role_remains_warned_for_unsupervised_stale_consumer():
             (DEFAULT_ROLE_PID, STALE_SHA, FIXTURE_COMMAND, repr(RECORDED_CREATE_TIME)),
         )
     with patch.object(fleet.psutil, "Process", lambda _pid: _RoleFixtureProcess()), \
-            patch.object(release, "green_pointer", lambda: {"sha": GREEN_SHA, "short": GREEN_SHA}), \
-            patch.object(fleet, "_launchd_label_for", lambda _pid: None):
+            patch.object(release, "green_pointer", lambda: {"sha": GREEN_SHA, "short": GREEN_SHA}):
         consumers = {consumer["pid"]: consumer for consumer in fleet.running_consumers()}
         warned_pids = {warning["pid"] for warning in fleet.restart_stale()["warn"]}
     assert consumers[DEFAULT_ROLE_PID][ROLE_COLUMN_NAME] == fleet.CONSUMER_ROLE_DAEMON
@@ -226,8 +224,7 @@ def test_unspecified_registration_is_corrected_by_later_explicit_ephemeral_role(
                 (os.getpid(),),
             ).fetchone()[0]
         with patch.object(fleet.psutil, "Process", lambda _pid: _RoleFixtureProcess()), \
-                patch.object(release, "green_pointer", lambda: {"sha": GREEN_SHA, "short": GREEN_SHA}), \
-                patch.object(fleet, "_launchd_label_for", lambda _pid: None):
+                patch.object(release, "green_pointer", lambda: {"sha": GREEN_SHA, "short": GREEN_SHA}):
             restart_result = fleet.restart_stale()
             warned_pids = {warning["pid"] for warning in restart_result["warn"]}
             transient_pids = {
@@ -303,8 +300,7 @@ def test_concurrent_declared_daemon_is_not_downgraded_by_ephemeral_registration(
                 (os.getpid(),),
             ).fetchone()[0]
         with patch.object(fleet.psutil, "Process", lambda _pid: _RoleFixtureProcess()), \
-                patch.object(release, "green_pointer", lambda: {"sha": GREEN_SHA, "short": GREEN_SHA}), \
-                patch.object(fleet, "_launchd_label_for", lambda _pid: None):
+                patch.object(release, "green_pointer", lambda: {"sha": GREEN_SHA, "short": GREEN_SHA}):
             restart_result = fleet.restart_stale()
         assert stored_role == fleet.CONSUMER_ROLE_DAEMON
         assert os.getpid() in {warning["pid"] for warning in restart_result["warn"]}
@@ -336,8 +332,7 @@ def test_declared_daemon_is_not_downgraded_by_later_ephemeral_registration():
                 f"SELECT {fleet.CONSUMER_ROLE_COLUMN} FROM consumers WHERE pid=?", (os.getpid(),)
             ).fetchone()[0]
         with patch.object(fleet.psutil, "Process", lambda _pid: _RoleFixtureProcess()), \
-                patch.object(release, "green_pointer", lambda: {"sha": GREEN_SHA, "short": GREEN_SHA}), \
-                patch.object(fleet, "_launchd_label_for", lambda _pid: None):
+                patch.object(release, "green_pointer", lambda: {"sha": GREEN_SHA, "short": GREEN_SHA}):
             restart_result = fleet.restart_stale()
         assert stored_role == fleet.CONSUMER_ROLE_DAEMON
         assert os.getpid() in {warning["pid"] for warning in restart_result["warn"]}
@@ -403,8 +398,7 @@ def test_concurrent_ephemeral_insert_is_upgraded_by_declared_daemon():
                 f"SELECT {fleet.CONSUMER_ROLE_COLUMN} FROM consumers WHERE pid=?", (os.getpid(),)
             ).fetchone()[0]
         with patch.object(fleet.psutil, "Process", lambda _pid: _RoleFixtureProcess()), \
-                patch.object(release, "green_pointer", lambda: {"sha": GREEN_SHA, "short": GREEN_SHA}), \
-                patch.object(fleet, "_launchd_label_for", lambda _pid: None):
+                patch.object(release, "green_pointer", lambda: {"sha": GREEN_SHA, "short": GREEN_SHA}):
             restart_result = fleet.restart_stale()
         assert stored_role == fleet.CONSUMER_ROLE_DAEMON
         assert os.getpid() in {warning["pid"] for warning in restart_result["warn"]}
@@ -458,8 +452,7 @@ def test_unspecified_only_registration_is_warned_when_stale():
                 f"SELECT {fleet.CONSUMER_ROLE_COLUMN} FROM consumers WHERE pid=?", (os.getpid(),)
             ).fetchone()[0]
         with patch.object(fleet.psutil, "Process", lambda _pid: _RoleFixtureProcess()), \
-                patch.object(release, "green_pointer", lambda: {"sha": GREEN_SHA, "short": GREEN_SHA}), \
-                patch.object(fleet, "_launchd_label_for", lambda _pid: None):
+                patch.object(release, "green_pointer", lambda: {"sha": GREEN_SHA, "short": GREEN_SHA}):
             restart_result = fleet.restart_stale()
         assert stored_role == fleet.CONSUMER_ROLE_UNSPECIFIED
         assert os.getpid() in {warning["pid"] for warning in restart_result["warn"]}
