@@ -70,8 +70,8 @@ def _row_cost(model, u):
         return 0.0, inp + cc, out, cr
 
 
-def _scan_new_lines(path, from_line):
-    """Yield parsed records from `from_line` onward. Returns (records, total_lines)."""
+def _scan_new_lines(path, from_line, *, strict=False):
+    """Return (records, total_lines); strict readers refuse incomplete file I/O."""
     recs, n = [], 0
     try:
         with open(path, "r", errors="ignore") as f:
@@ -83,10 +83,19 @@ def _scan_new_lines(path, from_line):
                     continue
                 try:
                     recs.append(json.loads(line))
-                except Exception:
+                except json.JSONDecodeError:
                     continue
+                except MemoryError:
+                    raise
+                except Exception:
+                    if strict:
+                        raise
+                    continue
+    except MemoryError:
+        raise
     except Exception:
-        pass
+        if strict:
+            raise
     return recs, n
 
 
@@ -905,26 +914,79 @@ def compaction_candidates(min_context=None, min_turns=None, min_day=None):
 
 _RESIDENCY_SOURCES = ("instructions", "tool_result", "conversation")
 _SYSTEM_REMINDER_MARK = "<system-reminder>"   # the FIXED injected wrapper — format detection, never a meaning judgement
+RESIDENCY_TRANSCRIPT_INDEX_STATE = "residency_transcript_index"
+RESIDENCY_TRANSCRIPT_INDEX_VERSION = 1
+
+
+def _residency_transcript_file_signature(path):
+    """Invalidate on append, rewrite, replacement and restored-mtime edits alike."""
+    stat = os.stat(path)
+    return [stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns]
+
+
+def _residency_indexed_records(conv_id):
+    """Parse only changed files and this session's files after a complete cold index.
+
+    Membership comes from every record's sessionId, never a filename guess: resumed
+    sessions can occur in arbitrary files. Metadata is still checked for EVERY file
+    each call, including newly discovered files; no TTL or history cutoff can hide
+    evidence. The rebuildable cache contains memberships, not transcript excerpts.
+    """
+    root = os.path.abspath(_projects_dir())
+    if not os.path.isdir(root):
+        return []
+    cached = config.load_state(RESIDENCY_TRANSCRIPT_INDEX_STATE, {})
+    if not isinstance(cached, dict) or cached.get("version") != RESIDENCY_TRANSCRIPT_INDEX_VERSION \
+            or cached.get("root") != root or not isinstance(cached.get("files"), dict):
+        cached = {}
+    prior_files = cached.get("files", {})
+    fresh_files, matching_records = {}, []
+    for path in sorted(glob.glob(os.path.join(root, "**", "*.jsonl"), recursive=True)):
+        signature = _residency_transcript_file_signature(path)
+        previous = prior_files.get(path)
+        valid = (isinstance(previous, dict) and previous.get("signature") == signature
+                 and isinstance(previous.get("sessions"), list))
+        rows = None
+        if not valid or conv_id in previous["sessions"]:
+            # Fail visibly on an unreadable or concurrently changing file rather
+            # than permanently caching a partial read as a complete membership.
+            rows, _ = _scan_new_lines(path, 0, strict=True)
+            if _residency_transcript_file_signature(path) != signature:
+                raise OSError(f"transcript changed during residency read: {path}")
+        if valid:
+            fresh_files[path] = previous
+        else:
+            sessions, structured_sessions = {}, {}
+            for record in rows:
+                session = record.get("sessionId")
+                try:
+                    sessions.setdefault(session, session)
+                except TypeError:
+                    # Preserve even non-scalar JSON identifiers without an
+                    # O(records * distinct_sessions) membership-building loop.
+                    structured_sessions.setdefault(json.dumps(session, sort_keys=True), session)
+            fresh_files[path] = {"signature": signature,
+                                 "sessions": list(sessions.values()) + list(structured_sessions.values())}
+        if rows is not None:
+            matching_records.extend(record for record in rows if record.get("sessionId") == conv_id)
+    fresh = {"version": RESIDENCY_TRANSCRIPT_INDEX_VERSION, "root": root, "files": fresh_files}
+    if fresh != cached:
+        config.save_state(RESIDENCY_TRANSCRIPT_INDEX_STATE, fresh)
+    return matching_records
 
 
 def _conv_transcript_records(conv_id):
     """Ordered transcript records for one conversation (sessionId) across resume/branch files, each assistant
-    message.id counted ONCE. [] on a missing/unreadable projects dir (never a wrong partial)."""
-    root = _projects_dir()
-    if not os.path.isdir(root):
-        return []
+    message.id counted ONCE. Missing projects dir yields []; incomplete file reads
+    raise so status renderers can name the gap instead of reporting partial totals."""
     recs, seen = [], set()
-    for path in sorted(glob.glob(os.path.join(root, "**", "*.jsonl"), recursive=True)):
-        rows, _ = _scan_new_lines(path, 0)
-        for r in rows:
-            if r.get("sessionId") != conv_id:
+    for r in _residency_indexed_records(conv_id):
+        mid = (r.get("message") or {}).get("id")
+        if mid is not None:
+            if mid in seen:
                 continue
-            mid = (r.get("message") or {}).get("id")
-            if mid is not None:
-                if mid in seen:
-                    continue
-                seen.add(mid)
-            recs.append(r)
+            seen.add(mid)
+        recs.append(r)
     return recs
 
 
