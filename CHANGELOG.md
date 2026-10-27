@@ -4,6 +4,18 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 
 ## [Unreleased]
 
+## [0.16.2] — 2026-10-27
+
+### Fixed
+- **Codex plan headroom is read through the owned warm-pool channel.** The reader previously launched an app-server
+  proxy and dialed a standalone `$CODEX_HOME/ipc/ipc.sock` that the running system never created, because the warm
+  stdio pool uses a private transport; every `account/rateLimits/read` therefore reported UNKNOWN, and ccwatch's
+  fail-closed digest daemon skipped cycles. Rate-limit reads now use the warm-pool daemon's correlated JSON-RPC
+  channel through its owned `codex-daemon.sock`, and the dead proxy path and constants are removed. All unreadable
+  outcomes — an unavailable daemon, transport failure, configured `advisor.codex_headroom_read_timeout_s` expiry,
+  malformed or empty responses, and missing windows — still return UNKNOWN with a precise named gap, never
+  fabricated headroom or fail-open behavior. (#235)
+
 ## [0.16.1] — 2026-10-27
 
 ### Fixed
