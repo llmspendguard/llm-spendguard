@@ -187,6 +187,8 @@ def _run_cold_codex_with_reaper(cmd, timeout, env, cwd):
                 logger.warning("cold codex MCP cleanup failed", exc_info=True)
 
 TIMEOUT_S = 300               # meta prompts are small; a hung CLI must not stall the daily report
+CODEX_EXEC_SUBCOMMAND = "exec"
+CODEX_SANDBOX_FLAG = "--sandbox"
 CODEX_AGENTIC_APPROVAL_FLAG = "--approve-for-me"
 _USAGE_TTL_S = 300            # the codex rate-limit log is re-read at most this often (shared cache adds reset-boundary)
 _AUTH_RECHECK_BACKOFF_S = 0.75  # a non-zero `codex login status` is confirmed once (transient vs real logout) before False
@@ -204,6 +206,16 @@ def _codex_delegate_read_only_tool_approval_arguments():
                 server=server, tool=tool, mode=CODEX_DELEGATE_READ_ONLY_APPROVAL_MODE)
             arguments.extend((CODEX_CONFIG_OVERRIDE_FLAG, override))
     return arguments
+
+
+def _validate_codex_exec_approval_boundary(command):
+    """Reject the Codex CLI flag pair that the CLI itself defines as mutually exclusive."""
+    if CODEX_AGENTIC_APPROVAL_FLAG in command and CODEX_SANDBOX_FLAG in command:
+        raise ValueError(
+            f"codex {CODEX_EXEC_SUBCOMMAND} cannot combine {CODEX_AGENTIC_APPROVAL_FLAG} "
+            f"with {CODEX_SANDBOX_FLAG}"
+        )
+    return command
 
 
 def _token_unexpired(now=None, margin=None):
@@ -643,15 +655,18 @@ def _run_agentic_codex_exec(prompt, system=None, model=None, timeout=TIMEOUT_S, 
         # codex-cli >=0.160: `--approve-for-me` runs in (and implies) the workspace-write sandbox and REJECTS a
         # co-passed `--sandbox` ("cannot be used with '--approve-for-me'"). Older codex accepted the explicit flag
         # redundantly; the approval flag alone is the version-robust spelling of "agentic workspace-write + auto-review".
-        command = [executable, "exec", "--json", "--output-last-message", output_path,
-                   CODEX_AGENTIC_APPROVAL_FLAG,
-                   "--cd", os.fspath(cwd), "--skip-git-repo-check"]
+        command = [
+            executable, CODEX_EXEC_SUBCOMMAND, "--json", "--output-last-message", output_path,
+            CODEX_AGENTIC_APPROVAL_FLAG,
+            "--cd", os.fspath(cwd), "--skip-git-repo-check",
+        ]
         command.extend(_codex_delegate_read_only_tool_approval_arguments())
         if model:
             command.extend(["--model", model])
         effort = _codex_effort(reasoning)
         if effort:
             command.extend([CODEX_CONFIG_OVERRIDE_FLAG, f'model_reasoning_effort="{effort}"'])
+        _validate_codex_exec_approval_boundary(command)
         try:
             completed = _run_cold_codex_with_reaper(command + [complete_prompt], timeout, environment, cwd)
         except subprocess.TimeoutExpired:
