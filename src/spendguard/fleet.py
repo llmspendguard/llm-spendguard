@@ -68,6 +68,7 @@ FLEET_WHICH_NO_INSTALLATIONS_EXIT_CODE = 1
 _INTERPRETER_REGISTRATION_TABLE = "registered_interpreters"
 CONSUMER_TABLE_NAME = "consumers"
 CONSUMER_ROLE_COLUMN = "role"
+CONSUMER_GATE_ENFORCING_COLUMN = "gate_enforcing"
 CONSUMER_ROLE_UNSPECIFIED = "unspecified"
 CONSUMER_ROLE_DAEMON = "daemon"
 CONSUMER_ROLE_EPHEMERAL = "ephemeral"
@@ -191,6 +192,15 @@ def install_periodic_launchd_fleet_jobs():
     return installed
 
 
+def sqlite_snapshot_source_evidence(path):
+    """Compare file identity and complete contents without treating reads as writes."""
+    if not path.exists():
+        return None
+    identity = path.stat()
+    return ((identity.st_dev, identity.st_ino, identity.st_size,
+             identity.st_mtime_ns, identity.st_ctime_ns), path.read_bytes())
+
+
 def _fleet_db(read_only=False):
     """The fleet registry — a DEDICATED tiny db (NOT the spend.db money ledger, NOT lane_queue.db): one row per live
     consumer process, rewritten on register and pruned on read, so it never grows. WAL + a short busy timeout so many
@@ -201,14 +211,14 @@ def _fleet_db(read_only=False):
         # files. Reconstruct its complete committed snapshot in temporary storage
         # instead; preserve WAL and reject any source change during the copy.
         source_paths = (pathlib.Path(p), pathlib.Path(p + "-wal"))
-        source_snapshot = {path: (path.stat(), path.read_bytes()) if path.exists() else None
+        source_snapshot = {path: sqlite_snapshot_source_evidence(path)
                            for path in source_paths}
         with tempfile.TemporaryDirectory() as registry_snapshot_directory:
             snapshot_path = pathlib.Path(registry_snapshot_directory) / pathlib.Path(p).name
             for source_path, evidence in source_snapshot.items():
                 if evidence is not None:
                     (snapshot_path.parent / source_path.name).write_bytes(evidence[1])
-            if any(((path.stat(), path.read_bytes()) if path.exists() else None) != evidence
+            if any(sqlite_snapshot_source_evidence(path) != evidence
                    for path, evidence in source_snapshot.items()):
                 raise RuntimeError("consumer registry changed during read-only snapshot")
             with closing(sqlite3.connect(str(snapshot_path))) as snapshot_connection:
@@ -242,6 +252,8 @@ def _fleet_db(read_only=False):
             c.execute("ALTER TABLE consumers ADD COLUMN %s TEXT" % name)
     if CONSUMER_ROLE_COLUMN not in columns:
         c.execute("ALTER TABLE consumers ADD COLUMN %s TEXT" % CONSUMER_ROLE_COLUMN)
+    if CONSUMER_GATE_ENFORCING_COLUMN not in columns:
+        c.execute(f"ALTER TABLE consumers ADD COLUMN {CONSUMER_GATE_ENFORCING_COLUMN} INTEGER")
     for supervision_column in (CONSUMER_SUPERVISION_MODE_COLUMN, CONSUMER_SUPERVISION_REF_COLUMN):
         if supervision_column not in columns:
             c.execute("ALTER TABLE consumers ADD COLUMN %s TEXT" % supervision_column)
@@ -440,7 +452,13 @@ def register_consumer(label=None, role=None, supervision_mode=None, supervision_
             return
         resolved_role = CONSUMER_ROLE_UNSPECIFIED if role is None else role
         try:
-            from . import release, _version
+            from . import release, _version, gate
+            # Observe THIS process without require()/install(): those would repair
+            # the state being attested. Legacy registrations have no proof.
+            try:
+                consumer_gate_enforcing = not gate._disabled() and gate._enforcement_armed()
+            except Exception:
+                consumer_gate_enforcing = False
             s = release.served_sha() or {}
             now = _fleet_iso()
             try:
@@ -457,11 +475,13 @@ def register_consumer(label=None, role=None, supervision_mode=None, supervision_
                     c.execute("INSERT OR REPLACE INTO consumers "
                               "(pid,version,served_sha,served_short,dirty,cmdline,launchd_label,registered_ts,"
                               f"venv_root,python_executable,pid_create_time,{CONSUMER_ROLE_COLUMN},"
-                              f"{CONSUMER_SUPERVISION_MODE_COLUMN},{CONSUMER_SUPERVISION_REF_COLUMN}) "
-                              "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                              f"{CONSUMER_SUPERVISION_MODE_COLUMN},{CONSUMER_SUPERVISION_REF_COLUMN},"
+                              f"{CONSUMER_GATE_ENFORCING_COLUMN}) "
+                              "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                               (current_pid, getattr(_version, "__version__", None), s.get("sha"), s.get("short"),
                                1 if s.get("dirty") else 0, _cmdline(), label, now, sys.prefix, sys.executable,
-                               pid_create_time, resolved_role, supervision_mode, supervision_ref))
+                               pid_create_time, resolved_role, supervision_mode, supervision_ref,
+                               int(consumer_gate_enforcing)))
             if _consumer_deregister_hook_pid != current_pid:
                 atexit.register(_deregister_consumer_at_exit, current_pid, pid_create_time)
                 _consumer_deregister_hook_pid = current_pid
@@ -513,15 +533,18 @@ def running_consumers(prune=True):
     inventory_surface = "consumer registry"
     try:
         with closing(_fleet_db(read_only=not prune)) as c:
+            consumer_columns = {column[1] for column in c.execute("PRAGMA table_info(consumers)")}
+            enforcement_expression = (CONSUMER_GATE_ENFORCING_COLUMN
+                                      if CONSUMER_GATE_ENFORCING_COLUMN in consumer_columns else "NULL")
             rows = c.execute(
                 "SELECT pid,version,served_sha,served_short,dirty,cmdline,launchd_label,registered_ts,"
                 f"pid_create_time,{CONSUMER_ROLE_COLUMN},{CONSUMER_SUPERVISION_MODE_COLUMN},"
-                f"{CONSUMER_SUPERVISION_REF_COLUMN},python_executable FROM consumers"
+                f"{CONSUMER_SUPERVISION_REF_COLUMN},python_executable,{enforcement_expression} FROM consumers"
             ).fetchall()
             for inventory_row in rows:
                 inventory_surface = f"consumer row:{inventory_row!r}"
                 (pid, ver, sha, short, dirty, cmd, label, reg, recorded_create_time, role,
-                 supervision_mode, supervision_ref, python_executable) = inventory_row
+                 supervision_mode, supervision_ref, python_executable, recorded_enforcement) = inventory_row
                 inventory_surface = f"consumer pid:{pid}"
                 identity_state = _classify_fleet_pid_identity(pid, recorded_create_time)
                 if identity_state == _FLEET_PID_GONE:
@@ -543,7 +566,8 @@ def running_consumers(prune=True):
                             "role": role or CONSUMER_ROLE_DAEMON, "stale": stale,
                             "supervision_mode": supervision_mode, "supervision_ref": supervision_ref,
                             "supervised": declared_supervised, "classification": classification,
-                            "python_executable": python_executable})
+                            "python_executable": python_executable,
+                            "gate_enforcing": (None if recorded_enforcement is None else recorded_enforcement == 1)})
             if prune and gone:
                 c.executemany("DELETE FROM consumers WHERE pid=? AND pid_create_time IS ?", gone)
                 c.commit()

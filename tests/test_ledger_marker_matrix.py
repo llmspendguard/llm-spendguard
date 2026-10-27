@@ -30,6 +30,8 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
 
 import ast, inspect, pathlib, itertools, datetime
 from collections import Counter
+from types import SimpleNamespace
+from unittest.mock import patch
 from spendguard import budget
 from spendguard import ledger as L
 
@@ -54,6 +56,7 @@ def check(label, cond, extra=""):
 
 
 DAY = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d")
+MATRIX_SEED_TIMESTAMP = datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0)
 # Distinct powers of two → any total decomposes to exactly ONE subset, so the sum itself reveals which rows
 # an aggregator counted. True-down is negative because that is what a correction row really is.
 AMOUNTS = {"plain": 1.0, "quarantined": 2.0, "reconciled": 4.0, "true_down": -8.0, "meta": 16.0}
@@ -108,7 +111,11 @@ def decompose(total):
     return None
 
 
-seed()
+# Make the collision explicit: wall-clock scheduling must not decide whether the
+# ambiguity guard has two eligible rows to reject. Only the seed writer is frozen.
+with patch.object(budget, "datetime", SimpleNamespace(
+        datetime=SimpleNamespace(now=lambda timezone: MATRIX_SEED_TIMESTAMP), timezone=datetime.timezone)):
+    seed()
 
 # aggregator → the rows it SHOULD count, and why it differs from its neighbours.
 MATRIX = {
@@ -204,7 +211,7 @@ for name, (want, why) in sorted(MATRIX.items()):
 print("-- the repair tool cannot tag rows it was not aimed at --")
 # Found by this very test: charges.ts has SECOND granularity, and seeding two rows in one second made a
 # ts-targeted quarantine tag both. Six charges share a second in the real ledger.
-_tsc = Counter(r["ts_utc"] for r in budget._ledger().query())
+_tsc = Counter(r["ts_utc"] for r in budget._ledger().query() if r.get("status") != "void")
 shared_ts = next(((t,) for t, k in _tsc.items() if k > 1), None)
 if shared_ts:
     try:
@@ -216,7 +223,7 @@ if shared_ts:
     check("…and the message lists the candidates and how to disambiguate",
           refused and "--row" in why and "row " in why)
 else:
-    check("(no shared timestamp in this fixture to test ambiguity with)", True)
+    check("the seed supplies an ambiguous non-void timestamp", False)
 
 print("-- UNPRICED: a model with no price is real usage, not free usage --")
 # The reported leak: no price for kimi-k3 → the call recorded at $0, and a $0 in the ledger is a claim that

@@ -7,8 +7,12 @@ import json
 import math
 import os
 from pathlib import Path
+import contextlib
+import shutil
+import stat
 import subprocess
 import sys
+import tempfile
 
 from . import config, consumer_audit, fleet, release, setup
 from .distribution_daemon import attest_distribution_daemons
@@ -74,6 +78,62 @@ def distribution_clean_environment():
     return environment
 
 
+@contextlib.contextmanager
+def distribution_probe_environment():
+    """Observe the real policy through a disposable, complete state snapshot.
+
+    Startup hooks and doctor may register an interpreter or initialize a ledger.
+    Keeping all state, including gate-disable markers, preserves their proof while
+    confining those incidental writes to temporary storage for every probe.
+    """
+    with tempfile.TemporaryDirectory() as probe_state_directory:
+        source = Path(config.HOME)
+        snapshot = Path(probe_state_directory) / source.name
+        if source.exists():
+            shutil.copytree(source, snapshot, ignore=distribution_snapshot_runtime_endpoints)
+        else:
+            snapshot.mkdir()
+        distribution_snapshot_configured_ledgers(snapshot)
+        environment = distribution_clean_environment()
+        environment["SPENDGUARD_HOME"] = str(snapshot)
+        environment["PYTHONDONTWRITEBYTECODE"] = "1"
+        yield environment
+
+
+def distribution_snapshot_runtime_endpoints(directory, names):
+    """Runtime sockets/FIFOs/devices carry no stored policy and cannot be copied."""
+    return [name for name in names
+            if not (stat.S_ISREG((Path(directory) / name).stat().st_mode)
+                    or stat.S_ISDIR((Path(directory) / name).stat().st_mode))]
+
+
+def distribution_snapshot_configured_ledgers(snapshot):
+    """Clone explicit SQLite targets and their complete WAL before observing them."""
+    policy_path = snapshot / config.CONFIG_JSON.name
+    if not policy_path.exists():
+        return
+    policy = json.loads(policy_path.read_text())
+    budget_policy = policy.get("budget", {})
+    for setting in ("db_path", "lane_queue_db_path"):
+        configured_path = budget_policy.get(setting)
+        if not configured_path:
+            continue
+        ledger_source = Path(configured_path).expanduser().resolve()
+        ledger_destination = snapshot / setting / ledger_source.name
+        ledger_destination.parent.mkdir()
+        sources = [ledger_source, Path(str(ledger_source) + "-wal")]
+        evidence = {path: fleet.sqlite_snapshot_source_evidence(path) for path in sources}
+        for path, content in evidence.items():
+            if content is not None:
+                (ledger_destination.parent / path.name).write_bytes(content[1])
+        if any(fleet.sqlite_snapshot_source_evidence(path) != content
+               for path, content in evidence.items()):
+            raise OSError(f"configured ledger changed during distribution snapshot: {ledger_source}")
+        budget_policy[setting] = str(ledger_destination)
+    if config.update_json(policy_path, lambda previous: policy) is None:
+        raise OSError("could not isolate configured distribution ledgers")
+
+
 def prepare_distribution_checkout(target, settings):
     """Use a clean matching tree or a detached worktree at the exact blessed commit."""
     checkout = Path(target["checkout"])
@@ -98,9 +158,10 @@ def prepare_distribution_checkout(target, settings):
 
 def probe_distribution_interpreter(python, settings):
     try:
-        completed = subprocess.run([str(python), "-c", DISTRIBUTION_INTERPRETER_PROBE],
-                                   env=distribution_clean_environment(), capture_output=True, text=True,
-                                   timeout=settings["probe_timeout_s"], check=False)
+        with distribution_probe_environment() as probe_environment:
+            completed = subprocess.run([str(python), "-c", DISTRIBUTION_INTERPRETER_PROBE],
+                                       env=probe_environment, capture_output=True, text=True,
+                                       timeout=settings["probe_timeout_s"], check=False)
         if completed.returncode:
             return {"confirmed": False, "error": completed.stderr or completed.stdout}
         result = json.loads(completed.stdout)
@@ -127,9 +188,10 @@ def distribution_surface_row(surface, kind, on_version=False, healthy=False, fd_
 def attest_distribution_host(target, settings):
     probe = probe_distribution_interpreter(sys.executable, settings)
     try:
-        result = subprocess.run([sys.executable, "-m", "spendguard", "doctor"],
-                                env=distribution_clean_environment(), capture_output=True, text=True,
-                                timeout=settings["probe_timeout_s"], check=False)
+        with distribution_probe_environment() as probe_environment:
+            result = subprocess.run([sys.executable, "-m", "spendguard", "doctor"],
+                                    env=probe_environment, capture_output=True, text=True,
+                                    timeout=settings["probe_timeout_s"], check=False)
         healthy = bool(result.returncode == 0 and probe.get("confirmed") and probe.get("gate_enforcing"))
         reason = ("host gate proof unconfirmed" if not probe.get("confirmed") else
                   "host gate not enforcing" if not probe.get("gate_enforcing") else None)
@@ -141,7 +203,7 @@ def attest_distribution_host(target, settings):
 
 
 def attest_distribution_api_consumers(target, *, check=False, dry_run=False, settings=None):
-    """Require both the frozen process registration and its fresh interpreter proof."""
+    """Require the process's own governance registration plus fresh installation proof."""
     from .distribution_daemon import is_distribution_mcp_consumer
     policy = distribution_policy() if settings is None else settings
     before = fleet.running_consumers(prune=False)
@@ -172,6 +234,7 @@ def attest_distribution_api_consumers(target, *, check=False, dry_run=False, set
         identity = fleet._classify_fleet_pid_identity(candidate.get("pid"), candidate.get("pid_create_time")) if candidate else None
         healthy = bool(candidate.get("identity_verified") and candidate.get("liveness") == fleet._FLEET_PID_VERIFIED_LIVE
                        and identity == fleet._FLEET_PID_VERIFIED_LIVE and candidate.get("dirty") is False
+                       and candidate.get("gate_enforcing") is True
                        and probe.get("confirmed") and probe.get("gate_enforcing") and restart_ok)
         reason = "required API consumer restart was not confirmed" if not restart_ok else None
         rows.append(distribution_surface_row(surface, "api", on_version, healthy, action=action, reason=reason,

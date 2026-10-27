@@ -20,7 +20,7 @@ def exercise_distribution_api_red_green():
     target = {"version": API_FIXTURE_VERSION, "sha": API_FIXTURE_SHA}
     clean = {"pid": API_FIXTURE_PID, "pid_create_time": API_FIXTURE_CREATED,
              "served_sha": API_FIXTURE_SHA, "version": API_FIXTURE_VERSION,
-             "dirty": False, "identity_verified": True, "liveness": fleet._FLEET_PID_VERIFIED_LIVE,
+             "dirty": False, "gate_enforcing": True, "identity_verified": True, "liveness": fleet._FLEET_PID_VERIFIED_LIVE,
              "python_executable": API_FIXTURE_PYTHON, "supervision_ref": API_FIXTURE_OWNER}
     clean_probe = {"confirmed": True, "version": API_FIXTURE_VERSION, "metadata_version": API_FIXTURE_VERSION,
                    "sha": API_FIXTURE_SHA, "dirty": False, "gate_enforcing": True}
