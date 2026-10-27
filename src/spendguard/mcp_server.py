@@ -495,11 +495,15 @@ def _tool_config(_args):
             "knobs": knobs}
 
 
+HEALTH_DEFAULT_RUN = True
+HEALTH_DEFAULT_TIMEOUT_S = 20
+
+
 # name → (description, JSON-Schema for arguments, handler)
 def _tool_health(args):
     from . import reliability
-    run = args.get("run", True)
-    timeout_s = int(args.get("timeout_s") or 20)
+    run = args.get("run", HEALTH_DEFAULT_RUN)
+    timeout_s = int(args.get("timeout_s") or HEALTH_DEFAULT_TIMEOUT_S)
     # DEGRADE, NEVER CRASH. The reachability surface is the thing you CALL to learn what is healthy, so it must not be
     # the thing that breaks: a code/attr error here (e.g. the skewed-install pricing.OUTPUT_FLOOR AttributeError) returns
     # a LABELLED internal-error result, not a raw exception that blanks the whole tool. sweep() is isolated below; the
@@ -529,12 +533,23 @@ def _tool_health(args):
         logging.getLogger(__name__).exception("Health-check remediation or persistence failed")
         health_diagnostic = {"exception": repr(e), "traceback": traceback.format_exc()}
         actions = actions or None                         # best-effort: a remediate/persist hiccup never blanks a good sweep
+    # Same read-only cached ledger verdict as doctor: never turn health into a live billing pull.
+    try:
+        from . import ledger_sync
+        cached_ledger_health = ledger_sync.cached_leak_line()
+        ledger_health = ({"status": "unknown", "line": "leak status UNKNOWN — run `spendguard reconcile`",
+                          "age_s": None} if cached_ledger_health is None else
+                         {"status": "cached", "line": cached_ledger_health[0] or "nothing to compare",
+                          "age_s": cached_ledger_health[1]})
+    except Exception as exc:
+        ledger_health = {"status": "unknown", "line": "leak status UNKNOWN — check could not run",
+                         "age_s": None, "error": repr(exc)}
     return {**({"diagnostic": health_diagnostic} if health_diagnostic is not None else {}),
             "note": ("live reachability + the FIX for each down resource (agentic, cached) — lanes $0, the metered "
                      "pings cost ~a few $0.0001; each probe is bounded by timeout_s so a dead endpoint fails fast. "
                      "The result is also cached so a down lane surfaces in the receipt" if run
                      else "estimate only (run=false) — $0, no probe"),
-            "lanes": res["lanes"], "metered": res["metered"],
+            "lanes": res["lanes"], "metered": res["metered"], "ledger": ledger_health,
             "actions": [{"resource": a["resource"], "kind": a["kind"], "issue": a.get("issue"),
                          "fix": a.get("fix"), "command": a.get("command"),
                          **({"diagnostic": a["diagnostic"]} if "diagnostic" in a else {})} for a in (actions or [])],
@@ -719,11 +734,14 @@ _TOOLS = {
         "so ONE hung endpoint cannot wedge the sweep. Lanes are $0; the metered pings cost ~a few $0.0001; the "
         "remediation is agentic + CACHED (only a NEW failure costs). Returns per-resource {reachable, executor, "
         "cost, latency, reason}, an `actions` list (issue/fix/command per down resource), and a summary. The result "
-        "is cached so a down lane also surfaces in the receipt/notifier. run=false → estimate only ($0).",
+        "is cached so a down lane also surfaces in the receipt/notifier. Includes doctor's cached ledger leak "
+        "status and age (unknown if absent); never pulls live billing. run=false → estimate only ($0).",
         {"type": "object", "properties": {
-            "run": {"type": "boolean", "description": "actually probe (default true); false = $0 estimate only"},
+            "run": {"type": "boolean", "default": HEALTH_DEFAULT_RUN,
+                    "description": "actually probe; false = $0 estimate only"},
             "remediate": {"type": "boolean", "description": "include the agentic FIX for each down resource (default true; cached)"},
-            "timeout_s": {"type": "integer", "description": "per-probe bound in seconds (default 20) — a dead endpoint fails this fast"}},
+            "timeout_s": {"type": "integer", "default": HEALTH_DEFAULT_TIMEOUT_S,
+                          "description": "per-probe bound in seconds — a dead endpoint fails this fast"}},
          "additionalProperties": False},
         _tool_health),
     "spendguard_savings": (

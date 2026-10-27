@@ -82,6 +82,7 @@ _GROUPS = [
         ("run", "`run -- <cmd>` gate ONE command; nothing written to your interpreter"),
         ("sources", "where can this machine spend? providers · agent tools · ungated venvs"),
         ("doctor", "is the gate enforcing HERE? keys, lanes, ledger status"),
+        ("health", "bounded MCP health check of lanes and metered providers (--no-run = no probes; --json)"),
         ("ask", "run ONE prompt across many LLMs — honest per-vendor coverage, $0 lanes"),
         ("comprehend", "fan a CORPUS across the $0 lanes (doc-mining/gap-analysis) — NOT Claude sub-agents; estimate-first"),
         ("delegate", "classify then offload one self-contained task to another subscription plan; dry-run by default"),
@@ -394,6 +395,54 @@ def lane_leak_check_cli(argv):
         if terminal_code in exit_codes:
             return terminal_code
     return tripwire_module.PROBE_FAILED_EXIT
+
+
+def cli_health_command(argv):
+    """Expose the MCP health callable without duplicating probes or health decisions."""
+    import argparse
+    import json
+    from . import mcp_server
+
+    parser = argparse.ArgumentParser(prog="spendguard health")
+    parser.add_argument("--run", action=argparse.BooleanOptionalAction,
+                        default=mcp_server.HEALTH_DEFAULT_RUN,
+                        help="probe endpoints (MCP default); --no-run = estimate only, no probes")
+    parser.add_argument("--timeout_s", type=int, default=mcp_server.HEALTH_DEFAULT_TIMEOUT_S,
+                        help="per-endpoint fail-fast bound in seconds (same default as MCP)")
+    parser.add_argument("--json", action="store_true", help="emit the raw MCP health result")
+    arguments = parser.parse_args(argv)
+    try:
+        result = mcp_server._tool_health({"run": arguments.run, "timeout_s": arguments.timeout_s})
+    except Exception as exc:
+        print(f"spendguard health: health call could not run: {exc!r}", file=sys.stderr)
+        return 1
+    if arguments.json:
+        print(json.dumps(result))
+    else:
+        print(result.get("note", ""))
+        for resource_kind in ("lanes", "metered"):
+            for resource_name, resource_status in result[resource_kind].items():
+                state = "ready" if resource_status.get("reachable") else "unreachable"
+                latency = resource_status.get("latency")
+                elapsed = f"{latency}s" if latency is not None else "unavailable"
+                reason = resource_status.get("reason")
+                detail = f" — {reason}" if reason else ""
+                print(f"  {resource_kind} {resource_name}: {state}  latency={elapsed}{detail}")
+        ledger_status = result.get("ledger", {})
+        ledger_age = ledger_status.get("age_s")
+        ledger_age_detail = f" (as of {ledger_age}s ago)" if ledger_age is not None else ""
+        print(f"ledger: {ledger_status.get('line', 'UNKNOWN — health call did not report ledger status')}{ledger_age_detail}")
+        if ledger_status.get("error"):
+            print(f"  ledger diagnostic: {ledger_status['error']}")
+        for action in result.get("actions", []):
+            print(f"  {action['resource']}: {action.get('issue')} — {action.get('fix')}")
+            if action.get("command"):
+                print(f"    {action['command']}")
+        if result.get("diagnostic"):
+            print(f"diagnostic: {json.dumps(result['diagnostic'])}")
+        if result.get("error"):
+            print(result["error"], file=sys.stderr)
+    return 1 if result.get("error") else 0
 
 
 def main(argv=None):
@@ -1428,6 +1477,8 @@ def _dispatch(argv=None):
     if cmd == "reliability":
         from . import reliability
         return reliability.main(rest)
+    if cmd == "health":
+        return cli_health_command(rest)
     if cmd in ("refresh-prices", "refresh"):
         from . import refresh
         return refresh.main(rest)
