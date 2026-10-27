@@ -26,6 +26,7 @@ import plistlib
 import sqlite3
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 from contextlib import closing
@@ -62,6 +63,7 @@ LANE_LEAK_TRIPWIRE_LAUNCHD_COMMAND_ARGUMENTS = (
     "lane-leak-check", "--hours", str(LANE_LEAK_TRIPWIRE_LAUNCHD_INTERVAL_S / FLEET_SECONDS_PER_HOUR))
 FLEET_LAUNCHD_OPERATION_TIMEOUT_S = 15
 FLEET_TEST_ISOLATION_ENV = "SPENDGUARD_TEST_ISOLATED"
+FLEET_WHICH_NO_INSTALLATIONS_EXIT_CODE = 1
 _INTERPRETER_REGISTRATION_TABLE = "registered_interpreters"
 CONSUMER_TABLE_NAME = "consumers"
 CONSUMER_ROLE_COLUMN = "role"
@@ -188,11 +190,38 @@ def install_periodic_launchd_fleet_jobs():
     return installed
 
 
-def _fleet_db():
+def _fleet_db(read_only=False):
     """The fleet registry — a DEDICATED tiny db (NOT the spend.db money ledger, NOT lane_queue.db): one row per live
     consumer process, rewritten on register and pruned on read, so it never grows. WAL + a short busy timeout so many
     processes registering their OWN pid never contend. Never raises — a registry hiccup must not break a call."""
     p = str(config.HOME / "fleet.db")
+    if read_only and pathlib.Path(p).exists():
+        # Opening even mode=ro on a WAL registry can create persistent -shm/-wal
+        # files. Reconstruct its complete committed snapshot in temporary storage
+        # instead; preserve WAL and reject any source change during the copy.
+        source_paths = (pathlib.Path(p), pathlib.Path(p + "-wal"))
+        source_snapshot = {path: (path.stat(), path.read_bytes()) if path.exists() else None
+                           for path in source_paths}
+        with tempfile.TemporaryDirectory() as registry_snapshot_directory:
+            snapshot_path = pathlib.Path(registry_snapshot_directory) / pathlib.Path(p).name
+            for source_path, evidence in source_snapshot.items():
+                if evidence is not None:
+                    (snapshot_path.parent / source_path.name).write_bytes(evidence[1])
+            if any(((path.stat(), path.read_bytes()) if path.exists() else None) != evidence
+                   for path, evidence in source_snapshot.items()):
+                raise RuntimeError("consumer registry changed during read-only snapshot")
+            with closing(sqlite3.connect(str(snapshot_path))) as snapshot_connection:
+                snapshot_connection.execute("PRAGMA query_only=ON")
+                snapshot_connection.execute("SELECT count(*) FROM sqlite_master").fetchone()
+                snapshot_memory = sqlite3.connect(":memory:")
+                try:
+                    snapshot_connection.backup(snapshot_memory)
+                except Exception:
+                    snapshot_memory.close()
+                    raise
+            return snapshot_memory
+    if read_only:
+        p = ":memory:"
     c = sqlite3.connect(p, timeout=5)
     c.execute("PRAGMA journal_mode=WAL")
     c.execute("PRAGMA busy_timeout=5000")
@@ -276,7 +305,7 @@ def enforcing_interpreter_registration_status():
 
 def registered_interpreters():
     """The persistent authoritative deployment inventory, independent of live process lifetime."""
-    with closing(_fleet_db()) as connection:
+    with closing(_fleet_db(read_only=True)) as connection:
         rows = connection.execute(
             f"SELECT python_executable,venv_root,code_version,metadata_version,catalog_verified,first_seen,last_seen "
             f"FROM {_INTERPRETER_REGISTRATION_TABLE} ORDER BY python_executable").fetchall()
@@ -477,15 +506,19 @@ def running_consumers(prune=True):
     g = release.green_pointer() or {}
     green_sha = g.get("sha")
     out, gone = [], []
+    inventory_surface = "consumer registry"
     try:
-        with closing(_fleet_db()) as c:
+        with closing(_fleet_db(read_only=not prune)) as c:
             rows = c.execute(
                 "SELECT pid,version,served_sha,served_short,dirty,cmdline,launchd_label,registered_ts,"
                 f"pid_create_time,{CONSUMER_ROLE_COLUMN},{CONSUMER_SUPERVISION_MODE_COLUMN},"
                 f"{CONSUMER_SUPERVISION_REF_COLUMN},python_executable FROM consumers"
             ).fetchall()
-            for (pid, ver, sha, short, dirty, cmd, label, reg, recorded_create_time, role,
-                 supervision_mode, supervision_ref, python_executable) in rows:
+            for inventory_row in rows:
+                inventory_surface = f"consumer row:{inventory_row!r}"
+                (pid, ver, sha, short, dirty, cmd, label, reg, recorded_create_time, role,
+                 supervision_mode, supervision_ref, python_executable) = inventory_row
+                inventory_surface = f"consumer pid:{pid}"
                 identity_state = _classify_fleet_pid_identity(pid, recorded_create_time)
                 if identity_state == _FLEET_PID_GONE:
                     gone.append((pid, recorded_create_time))
@@ -510,8 +543,11 @@ def running_consumers(prune=True):
             if prune and gone:
                 c.executemany("DELETE FROM consumers WHERE pid=? AND pid_create_time IS ?", gone)
                 c.commit()
-    except Exception:
-        pass
+    except Exception as exc:
+        if not prune:
+            inventory_error = RuntimeError(f"{inventory_surface} enumeration failed: {exc}")
+            inventory_error.surface = inventory_surface
+            raise inventory_error from exc
     return out
 
 
@@ -831,6 +867,9 @@ def discover_host_spendguard_installations(cli_paths=None, pipx_document=None):
             cli_paths = []
         else:
             result = subprocess.run(["which", "-a", "spendguard"], capture_output=True, text=True, check=False)
+            if result.returncode and (result.returncode != FLEET_WHICH_NO_INSTALLATIONS_EXIT_CODE
+                                      or result.stderr or result.stdout):
+                raise RuntimeError(f"PATH installation inventory failed: {result.stderr or result.stdout}")
             cli_paths = [line for line in result.stdout.splitlines() if line]
     if pipx_document is None:
         if isolated_test:
@@ -838,15 +877,17 @@ def discover_host_spendguard_installations(cli_paths=None, pipx_document=None):
         else:
             try:
                 result = subprocess.run(["pipx", "list", "--json"], capture_output=True, text=True, check=False)
-                pipx_document = json.loads(result.stdout) if result.returncode == 0 else {}
-            except (OSError, ValueError, json.JSONDecodeError):
-                pipx_document = {}
+                if result.returncode:
+                    raise RuntimeError(f"pipx inventory failed: {result.stderr or result.stdout}")
+                pipx_document = json.loads(result.stdout)
+            except (OSError, ValueError, json.JSONDecodeError) as exc:
+                raise RuntimeError(f"pipx inventory unavailable: {exc}") from exc
     candidates = []
     for cli_path in cli_paths:
         try:
             first_line = pathlib.Path(cli_path).read_text().splitlines()[0]
-        except (OSError, UnicodeError, IndexError):
-            continue
+        except (OSError, UnicodeError, IndexError) as exc:
+            raise RuntimeError(f"installation {cli_path} could not be inventoried: {exc}") from exc
         if first_line.startswith("#!"):
             candidates.append({"source": str(pathlib.Path(cli_path).resolve()),
                                "python_executable": first_line[2:].strip().split()[0]})

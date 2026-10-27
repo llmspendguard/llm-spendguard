@@ -247,7 +247,7 @@ def distribute_fleet(*, check=False, roots=None, dry_run=False, settings=None):
             try:
                 rows.extend(proof(target, check=check, dry_run=dry_run, settings=policy))
             except Exception as exc:
-                rows.append(distribution_surface_row(surface, "attestation", reason=str(exc)))
+                rows.append(distribution_surface_row(getattr(exc, "surface", surface), "enumeration", reason=str(exc)))
         try:
             rows.append(attest_distribution_host(target, policy))
         except Exception as exc:

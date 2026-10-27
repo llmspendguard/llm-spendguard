@@ -581,11 +581,13 @@ def _tool_version(args):
     read; a stale server hands off to a fresh process on its next request (auto-respawn)."""
     import os
     from importlib import metadata
+    from pathlib import Path
     import spendguard
-    from . import release
+    from . import config, release
     return {**release.release_status(), "pid": os.getpid(),
             "imported_version": spendguard.__version__,
-            "metadata_version": metadata.version("llm-spendguard")}
+            "metadata_version": metadata.version("llm-spendguard"),
+            "ledger_path": str(Path(config.db_path()).resolve())}
 
 
 def _tool_route_cost(args):

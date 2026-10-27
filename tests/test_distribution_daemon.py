@@ -53,7 +53,7 @@ def exercise_distribution_daemon_red_green():
     consumer = {"pid": DAEMON_FIXTURE_PID, "pid_create_time": DAEMON_FIXTURE_CREATED,
                 "supervision_ref": daemon.MCP_HTTP_LAUNCHD_LABEL}
     clean = {"pid": DAEMON_FIXTURE_PID, "imported_version": DAEMON_FIXTURE_VERSION,
-             "metadata_version": DAEMON_FIXTURE_VERSION,
+             "metadata_version": DAEMON_FIXTURE_VERSION, "ledger_path": DAEMON_FIXTURE_LEDGER_PATH,
              "served": {"sha": DAEMON_FIXTURE_SHA, "dirty": False}}
     state = {"status": copy.deepcopy(clean), "broken_probe": False, "leaked": False}
     policy = {"mcp_endpoint": DAEMON_FIXTURE_ENDPOINT}
@@ -72,8 +72,9 @@ def exercise_distribution_daemon_red_green():
         state.update(status=copy.deepcopy(clean), broken_probe=False, leaked=False)
         return {daemon.fleet.FLEET_RESTART_CONFIRMED_KEY: [{"pid": DAEMON_FIXTURE_PID}]}
 
-    def inspect_distribution_fixture_fds(pid):
+    def inspect_distribution_fixture_fds(pid, ledger_path=None):
         assert pid == DAEMON_FIXTURE_PID
+        assert ledger_path == DAEMON_FIXTURE_LEDGER_PATH
         return {"fd_ok": not state["leaked"], "reason": "fixture leaked ledger fd"}
 
     mutations = (

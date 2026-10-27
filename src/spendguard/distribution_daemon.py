@@ -73,7 +73,12 @@ def prove_distribution_mcp_daemon(consumer, target, settings):
                                   and status.get("served", {}).get("dirty") is False)
         if not row["on_version"]:
             reasons.append("live MCP version/metadata/SHA differs from deployed target")
-        descriptors = mcp_fd_lifecycle.attest_mcp_process_descriptors(pid)
+        # The PID-verified live responder supplies its own resolved ledger identity.
+        # A checker can use another home/configuration, so its default is no evidence.
+        ledger_path = status.get("ledger_path")
+        if not isinstance(ledger_path, str) or not ledger_path or not os.path.isabs(ledger_path):
+            raise ValueError("live MCP daemon ledger path is unavailable or not absolute")
+        descriptors = mcp_fd_lifecycle.attest_mcp_process_descriptors(pid, ledger_path=ledger_path)
         row["fd_ok"] = descriptors["fd_ok"]
         if not row["fd_ok"]:
             reasons.append(descriptors.get("reason") or "daemon descriptor proof failed")

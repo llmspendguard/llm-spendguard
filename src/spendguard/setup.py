@@ -469,6 +469,11 @@ def discover_distribution_interpreters(roots=None, settings=None, extra=None):
                 break
             names[:] = sorted(name for name in names if not consumer_audit._consumer_path_is_exempt(
                 None, current / name, exemptions))
+            for name in names:
+                linked_directory = current / name
+                if linked_directory.is_symlink():
+                    gaps.append({"surface": str(linked_directory),
+                                 "reason": "directory symlink subtree was not enumerated"})
             if consumer_audit.CONSUMER_AUDIT_VENV_CONFIGURATION_NAME in files:
                 executable_paths = (*consumer_audit.CONSUMER_AUDIT_POSIX_EXECUTABLE_PATHS,
                                     consumer_audit.CONSUMER_AUDIT_WINDOWS_EXECUTABLE_PATH)

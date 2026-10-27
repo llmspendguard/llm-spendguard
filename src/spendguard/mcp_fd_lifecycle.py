@@ -126,19 +126,19 @@ def enforce_mcp_descriptor_headroom(fraction):
             f"MCP descriptor pressure persists after pool recycle: open={after} soft={soft}")
 
 
-def attest_mcp_process_descriptors(pid):
+def attest_mcp_process_descriptors(pid, ledger_path=None):
     """Inspect the actual daemon, failing closed on unreadable or leaked ledger handles."""
     try:
         target, fraction, _interval = mcp_descriptor_policy()
         process = psutil.Process(pid)
-        ledger_path = Path(config.db_path()).resolve()
+        ledger_path = Path(config.db_path() if ledger_path is None else ledger_path).resolve()
         ledger_handles = [entry.fd for entry in process.open_files()
                           if Path(entry.path).resolve() == ledger_path]
         descriptor_count = process.num_fds()
         # Request-owned ledger handles must be closed when an idle probe finishes.
         okay = not ledger_handles and descriptor_count < target * fraction
         return {"fd_ok": okay, "descriptor_count": descriptor_count,
-                "ledger_handles": ledger_handles,
+                "ledger_handles": ledger_handles, "ledger_path": str(ledger_path),
                 "reason": None if okay else "ledger handles remain open or descriptor headroom exhausted"}
     except Exception as exc:
         return {"fd_ok": False, "reason": f"descriptor proof unavailable: {type(exc).__name__}: {exc}"}
