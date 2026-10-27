@@ -30,10 +30,7 @@ import threading
 import time
 from contextlib import closing
 
-import psutil
-
 from . import config
-from .warm_stdio_daemon import WARM_OWNER_BOOT_EPSILON_S
 
 _registered_pid = None                               # successful once-per-process register() guard, fork-safe by PID
 _consumer_deregister_hook_pid = None
@@ -76,6 +73,16 @@ CONSUMER_SUPERVISION_MODE_COLUMN = "supervision_mode"
 CONSUMER_SUPERVISION_REF_COLUMN = "supervision_ref"
 FLEET_RESTARTS_ENABLED_DEFAULT = True
 FLEET_RESTARTS_ENABLED_ENV = "SPENDGUARD_FLEET_RESTARTS_ENABLED"
+
+
+def __getattr__(name):
+    """Preserve the patchable psutil seam without requiring psutil at module import time."""
+    if name != "psutil":
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    import psutil
+
+    globals()[name] = psutil
+    return psutil
 FLEET_RESTART_VERIFY_TIMEOUT_S_DEFAULT = 15.0
 FLEET_RESTART_VERIFY_POLL_S_DEFAULT = 0.25
 FLEET_RESTART_FAILURE_KEY = "failed"
@@ -310,6 +317,15 @@ def _cmdline(pid=None):
 def _classify_fleet_pid_identity(pid, recorded_create_time):
     """Classify a registered (pid, create_time) without ever treating uncertainty as death."""
     try:
+        psutil = globals()["psutil"]
+    except KeyError:
+        try:
+            import psutil
+        except ImportError:
+            return _FLEET_PID_UNVERIFIABLE
+    from .warm_stdio_daemon import WARM_OWNER_BOOT_EPSILON_S
+
+    try:
         process = psutil.Process(pid)
     except psutil.NoSuchProcess:
         return _FLEET_PID_GONE
@@ -332,6 +348,11 @@ def _classify_fleet_pid_identity(pid, recorded_create_time):
 def _update_current_consumer_declarations(role, supervision_mode, supervision_ref):
     """Upgrade this process identity's role and explicit supervision descriptor. Never raises."""
     try:
+        try:
+            psutil = globals()["psutil"]
+        except KeyError:
+            import psutil
+
         incoming_precedence = CONSUMER_ROLE_PRECEDENCE[role] if role is not None else None
         lower_precedence_roles = tuple(
             stored_role for stored_role, stored_precedence in CONSUMER_ROLE_PRECEDENCE.items()
@@ -390,6 +411,11 @@ def register_consumer(label=None, role=None, supervision_mode=None, supervision_
             s = release.served_sha() or {}
             now = _fleet_iso()
             try:
+                try:
+                    psutil = globals()["psutil"]
+                except KeyError:
+                    import psutil
+
                 pid_create_time = repr(psutil.Process(current_pid).create_time())
             except Exception:
                 pid_create_time = None
