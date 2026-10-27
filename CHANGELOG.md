@@ -4,6 +4,48 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 
 ## [Unreleased]
 
+## [0.16.4] — 2026-10-27
+
+Supersedes the never-published 0.16.3 (its fixes ship here too). The theme is the ledger-connection
+disaster family (B0–B7) plus a fleet convergence + attestation capstone that proves every surface is
+on-version and GOVERNED, so an ungoverned host or a leaked ledger handle can no longer pass unseen.
+
+### Added
+- **`spendguard distribute` / `distribute --check` — fleet convergence + attestation.** `distribute`
+  force-converges every local surface (each consumer venv + framework python, the running MCP daemon
+  process, API importers, the host) to the deployed SHA/version and PROVES each on-version AND healthy,
+  exiting nonzero on any straggler; `--check` is the verify-only release attestation (same enumeration +
+  proof, no mutation) that exits 0 only when the whole fleet is proven green. The daemon proof is a live
+  JSON-RPC probe bound to the daemon's OWN ledger (fd sanity included); the host and API proofs require
+  the gate is actually enforcing, not merely that `doctor` exited 0. Straggler lists are never truncated.
+- **`spendguard health`** — one bounded command for per-lane + per-provider reachability (shared
+  `_tool_health`), degrading to named-unhealthy rather than crashing.
+
+### Fixed
+- **B0 — serialized ledger connection lifecycle.** A single WAL-safe serialized writer (one owner +
+  cross-process flock), a bounded read pool, fd self-heal, deadletter drain, deadline-bounded admission,
+  and fork-safe lock reset close the connection-leak class that caused weeks of silent breakage.
+- **B1 — two-axis settlement.** Monetary completeness (a known cost never blocks spend) is now independent
+  of token completeness: an unknown output-token count persists as NULL and propagates as unknown, never a
+  false zero.
+- **B2+B3 — durable delegate evidence + exactly-once terminal ledger state.** Every delegate/exec path
+  persists partial output before parsing; a single terminal-write seam with authority-ordering means a
+  captured exit supersedes an inferential watchdog, with no lost output and an honest persist-failure.
+- **B5 — residency index.** `doctor`/`receipt` stop re-scanning the whole transcript corpus; a
+  signature-checksum-bound session-membership index rebuilds on any corruption so the warm result always
+  equals a full cold scan (no silent residency undercount).
+- **B6+B7 — honest process + lane health.** The codex descendant scan no longer logs a traceback for the
+  normal end-of-run root exit; per-lane probe/sweep isolation keeps one failing lane a named row while the
+  others stay healthy, and a deliberate spend-stop still propagates.
+- **Capstone false-green hardening.** Every attestation path that could exit 0 while a real straggler
+  existed was closed, each with a load-bearing test: a directory-symlinked venv is now a named gap; a
+  denied inventory fails closed; the daemon fd proof binds to the daemon's own ledger home; `--check`
+  performs zero filesystem mutation (no import-time state, no gate hydration before the verify-only
+  dispatch); a row-processing error is a named gap; host/API health require the gate to be enforcing (the
+  running process's own recorded enforcement, not a fresh re-probe); and the aggregation decision,
+  enumeration sub-guards, and daemon identity proofs are each individually load-bearing.
+- **model=None no longer crashes `provider_for`** — it resolves to the catalog's cheapest chat model.
+
 ## [0.16.3] — 2026-10-27
 
 ### Fixed
