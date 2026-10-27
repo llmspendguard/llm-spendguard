@@ -25,6 +25,18 @@ jobs:
         # pydantic>=2 pinned (also on the extras): keep the release gate's resolve deterministic — a loose resolve can
         # pull pydantic 1.x and break `import anthropic` (its httpx2.Timeout is a pydantic dataclass).
         run: python -m pip install -e ".[openai,anthropic,dev]" "pydantic>=2"
+      - name: Provision the declared build backend for offline consumers
+        run: |
+          # The install-hook regression (tests/test_install_hook_end_to_end.py) creates a consumer venv with
+          # --system-site-packages, so its `import setuptools` resolves against THIS job's BASE interpreter — not the
+          # editable install above, whose build backend lives in a build-isolated temp env that does not persist.
+          # Python 3.12's bare base ships no setuptools, so provision every declared build requirement here while the
+          # network is live, enabling the genuinely offline --no-build-isolation editable install the test exercises.
+          # Mirrors ci.yml's identical step so the release gate and the sharded PR gate run the same path;
+          # pyproject.toml's build-system.requires stays the single source of truth.
+          mapfile -t declared_build_requirements < <(python -c \
+            "import pathlib, tomllib; print(*tomllib.loads(pathlib.Path('pyproject.toml').read_text())['build-system']['requires'], sep='\n')")
+          python -m pip install "${declared_build_requirements[@]}"
       - name: Warm the tiktoken o200k cache (the offline suite can't download it)
         run: python -c "import tiktoken; tiktoken.get_encoding('o200k_base'); print('o200k cached')"
       - name: Lint
