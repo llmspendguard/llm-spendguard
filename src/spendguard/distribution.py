@@ -247,6 +247,11 @@ def distribution_interpreter_on_target(probe, target):
                 and probe.get("sha") == target["sha"] and probe.get("dirty") is False)
 
 
+def distribution_wheel_interpreter_on_target(probe, target):
+    return bool(probe.get("confirmed") and probe.get("version") == target["version"]
+                and probe.get("metadata_version") == target["version"])
+
+
 def distribution_install_attestation(install, probe, target, *, dev_venv=False):
     """Return install-kind-aware target status and a stable machine reason."""
     from . import manifest
@@ -261,6 +266,8 @@ def distribution_install_attestation(install, probe, target, *, dev_venv=False):
         return False, "wheel_missing"
     if install.get("wheel_version") != target["version"]:
         return False, "wrong_version"
+    if not distribution_wheel_interpreter_on_target(probe, target):
+        return False, "identity_not_green"
     return True, None
 
 

@@ -118,10 +118,11 @@ def test_distribution_consumer_uses_wheel_and_canonical_dev_stays_editable(tmp_p
         return {"install_kind": manifest.MANIFEST_WHEEL_KIND, "wheel_version": WHEEL_FIXTURE_VERSION,
                 "editable_origin": None}
 
-    healthy_probe = {"confirmed": True, "version": WHEEL_FIXTURE_VERSION,
-                     "metadata_version": WHEEL_FIXTURE_VERSION, "sha": WHEEL_FIXTURE_SHA,
-                     "dirty": False, "gate_enforcing": True}
     target = wheel_fixture_target(tmp_path)
+    healthy_wheel_probe = {"confirmed": True, "version": WHEEL_FIXTURE_VERSION,
+                           "metadata_version": WHEEL_FIXTURE_VERSION, "sha": None,
+                           "dirty": True, "gate_enforcing": True}
+    healthy_editable_probe = {**healthy_wheel_probe, "sha": target["sha"], "dirty": False}
     healthy_host = distribution.distribution_surface_row("host", "host", True, True)
     with patch.object(distribution, "resolve_distribution_target", return_value=target), patch.object(
             distribution, "distribution_policy", return_value=WHEEL_FIXTURE_POLICY), patch.object(
@@ -136,12 +137,16 @@ def test_distribution_consumer_uses_wheel_and_canonical_dev_stays_editable(tmp_p
             distribution.fleet, "_refresh_editable_install",
             side_effect=lambda python, checkout, timeout: installs.append(("editable", python, checkout))), patch.object(
             distribution.setup, "install_hook", return_value=0), patch.object(
-            distribution, "probe_distribution_interpreter", return_value=healthy_probe), patch.object(
+            distribution, "probe_distribution_interpreter",
+            side_effect=lambda python, _settings: (
+                healthy_editable_probe if python == dev_python else healthy_wheel_probe)), patch.object(
             distribution, "attest_distribution_api_consumers", return_value=[]), patch.object(
             distribution, "attest_distribution_daemons", return_value=[]), patch.object(
             distribution, "attest_distribution_host", return_value=healthy_host):
         result = distribution.distribute_fleet()
     assert result["exit_code"] == 0, result
+    rows = {row["surface"]: row for row in result["surfaces"]}
+    assert rows[consumer_python]["on_version"] is True
     assert ("wheel", consumer_python, WHEEL_FIXTURE_VERSION) in installs
     assert ("editable", dev_python, str(tmp_path)) in installs
     assert not any(event[0] == "wheel" and event[1] == dev_python for event in installs)
@@ -150,8 +155,8 @@ def test_distribution_consumer_uses_wheel_and_canonical_dev_stays_editable(tmp_p
 def test_distribution_check_reports_install_kind_reasons(tmp_path):
     target = wheel_fixture_target(tmp_path)
     probe = {"confirmed": True, "version": WHEEL_FIXTURE_VERSION,
-             "metadata_version": WHEEL_FIXTURE_VERSION, "sha": "wheel-sha-irrelevant",
-             "dirty": False, "gate_enforcing": True}
+             "metadata_version": WHEEL_FIXTURE_VERSION, "sha": None,
+             "dirty": True, "gate_enforcing": True}
     correct_python = str(tmp_path / "correct" / "bin" / "python")
     wrong_python = str(tmp_path / "wrong" / "bin" / "python")
     editable_python = str(tmp_path / "editable" / "bin" / "python")
