@@ -462,6 +462,11 @@ def distribution_interpreter_on_target(probe, target):
                 and probe.get("sha") == target["sha"] and probe.get("dirty") is False)
 
 
+def distribution_wheel_interpreter_on_target(probe, target):
+    return bool(probe.get("confirmed") and probe.get("version") == target["version"]
+                and probe.get("metadata_version") == target["version"])
+
+
 def distribution_install_attestation(install, probe, target, *, dev_venv=False):
     """Return install-kind-aware target status and a stable machine reason."""
     from . import manifest
@@ -476,38 +481,66 @@ def distribution_install_attestation(install, probe, target, *, dev_venv=False):
         return False, "wheel_missing"
     if install.get("wheel_version") != target["version"]:
         return False, "wrong_version"
+    if not distribution_wheel_interpreter_on_target(probe, target):
+        return False, "identity_not_green"
     return True, None
 
 
-def distribution_dev_venv_status(install, target):
-    """Classify dev only from editable metadata origin and canonical source ownership."""
+def distribution_common_git_directory(working_tree):
+    """Resolve a working tree's shared git directory from directory or gitfile metadata."""
+    git_metadata = working_tree / DISTRIBUTION_GIT_METADATA_NAME
+    try:
+        if git_metadata.is_dir():
+            return git_metadata.resolve(), None
+        if not git_metadata.is_file():
+            return None, "git_metadata_unknown"
+        marker = git_metadata.read_text().strip()
+        if not marker.startswith(DISTRIBUTION_GITDIR_PREFIX):
+            return None, "git_metadata_unknown"
+        git_directory = Path(marker[len(DISTRIBUTION_GITDIR_PREFIX):].strip()).resolve()
+        common_git_directory = (
+            git_directory.parents[1]
+            if git_directory.parent.name == DISTRIBUTION_WORKTREES_DIRECTORY
+            else git_directory
+        )
+        return common_git_directory, None
+    except (OSError, IndexError):
+        return None, "git_metadata_unknown"
+
+
+def distribution_enclosing_working_tree(venv_path):
+    """Find the nearest resolved ancestor carrying git working-tree metadata."""
+    try:
+        resolved_venv_path = Path(venv_path).resolve()
+        for candidate in (resolved_venv_path, *resolved_venv_path.parents):
+            git_metadata = candidate / DISTRIBUTION_GIT_METADATA_NAME
+            if git_metadata.is_dir() or git_metadata.is_file():
+                return candidate, None
+        return None, None
+    except OSError:
+        return None, "venv_working_tree_unknown"
+
+
+def distribution_dev_venv_status(install, target, venv_path):
+    """Classify dev from the venv's own membership in this repository's working trees."""
     from . import manifest
     if install.get("install_kind") != manifest.MANIFEST_EDITABLE_KIND:
         return False, None
-    origin = install.get("editable_origin")
-    if not origin:
-        return None, "editable_origin_unknown"
     canonical_checkout = Path(target.get("checkout", Path(__file__).resolve().parents[2])).resolve()
-    resolved_origin = Path(origin).resolve()
-    if resolved_origin == canonical_checkout:
+    enclosing_working_tree, working_tree_error = distribution_enclosing_working_tree(venv_path)
+    if working_tree_error:
+        return None, working_tree_error
+    if enclosing_working_tree is None:
+        return False, None
+    if enclosing_working_tree == canonical_checkout:
         return True, None
-    target_git = canonical_checkout / DISTRIBUTION_GIT_METADATA_NAME
-    origin_git = resolved_origin / DISTRIBUTION_GIT_METADATA_NAME
-    try:
-        if target_git.is_dir():
-            common_git = target_git.resolve()
-        elif target_git.is_file():
-            marker = target_git.read_text().strip()
-            if not marker.startswith(DISTRIBUTION_GITDIR_PREFIX):
-                return None, "canonical_source_unknown"
-            git_directory = Path(marker[len(DISTRIBUTION_GITDIR_PREFIX):].strip()).resolve()
-            common_git = (git_directory.parents[1] if git_directory.parent.name == DISTRIBUTION_WORKTREES_DIRECTORY
-                          else git_directory)
-        else:
-            return False, None
-        return origin_git.is_dir() and origin_git.resolve() == common_git, None
-    except (OSError, IndexError):
+    canonical_common_git, canonical_git_error = distribution_common_git_directory(canonical_checkout)
+    if canonical_git_error:
         return None, "canonical_source_unknown"
+    venv_common_git, venv_git_error = distribution_common_git_directory(enclosing_working_tree)
+    if venv_git_error:
+        return None, "venv_working_tree_unknown"
+    return venv_common_git == canonical_common_git, None
 
 
 def inspect_distribution_install(python, policy):
@@ -654,7 +687,8 @@ def distribute_fleet(*, check=False, roots=None, dry_run=False, settings=None, v
         for python, item in sorted(interpreters.items()):
             install = item.get("install") or inspect_distribution_install(python, policy)
             managed_venv = item.get("kind") == "venv"
-            dev_status, classification_error = (distribution_dev_venv_status(install, target)
+            dev_status, classification_error = (distribution_dev_venv_status(
+                install, target, item.get("venv") or python)
                                                  if managed_venv else (True, None))
             planned.append((python, item, install, dev_status, classification_error))
 
@@ -669,7 +703,7 @@ def distribute_fleet(*, check=False, roots=None, dry_run=False, settings=None, v
             def install_distribution_wheel_after_live_probe(python, item):
                 probe = probe_distribution_interpreter(python, policy)
                 action = DISTRIBUTION_WHEEL_ALREADY_CONVERGED_ACTION
-                if not distribution_interpreter_on_target(probe, target):
+                if not distribution_wheel_interpreter_on_target(probe, target):
                     setup.refresh_consumer_wheel_package(
                         python, distribution_wheel_cache_path(), target["version"], policy["install_timeout_s"])
                     action = "wheel-installed"

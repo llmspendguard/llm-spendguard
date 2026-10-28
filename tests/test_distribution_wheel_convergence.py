@@ -1,9 +1,16 @@
 """Offline proofs for cached wheels, dev preservation, and kind-aware attestation."""
 from datetime import datetime, timezone
 from pathlib import Path
+import sys
 from types import SimpleNamespace
 from unittest.mock import patch
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+# Startup enforcement can preload the installed package; exercise this worktree's source instead.
+for distribution_wheel_module_name in list(sys.modules):
+    if (distribution_wheel_module_name == "spendguard"
+            or distribution_wheel_module_name.startswith("spendguard.")):
+        del sys.modules[distribution_wheel_module_name]
 from spendguard import distribution, manifest
 
 WHEEL_FIXTURE_VERSION = "8.7.6"
@@ -16,6 +23,59 @@ WHEEL_FIXTURE_POLICY = {"probe_timeout_s": 2.0, "install_timeout_s": 3.0}
 def wheel_fixture_target(root):
     return {"sha": WHEEL_FIXTURE_SHA, "version": WHEEL_FIXTURE_VERSION,
             "green_version": WHEEL_FIXTURE_VERSION, "checkout": str(root)}
+
+
+def editable_fixture_install(checkout):
+    return {"install_kind": manifest.MANIFEST_EDITABLE_KIND, "wheel_version": None,
+            "editable_origin": str(checkout)}
+
+
+def test_distribution_dev_venv_inside_checkout_is_dev(tmp_path):
+    (tmp_path / distribution.DISTRIBUTION_GIT_METADATA_NAME).mkdir()
+    venv = tmp_path / "venv" / "bin" / "python"
+    assert distribution.distribution_dev_venv_status(
+        editable_fixture_install(tmp_path), wheel_fixture_target(tmp_path), venv) == (True, None)
+
+
+def test_distribution_dev_venv_inside_checkout_worktree_is_dev(tmp_path):
+    checkout = tmp_path / "checkout"
+    common_git = checkout / distribution.DISTRIBUTION_GIT_METADATA_NAME
+    common_git.mkdir(parents=True)
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    worktree_git_directory = common_git / distribution.DISTRIBUTION_WORKTREES_DIRECTORY / "fixture"
+    (worktree / distribution.DISTRIBUTION_GIT_METADATA_NAME).write_text(
+        f"{distribution.DISTRIBUTION_GITDIR_PREFIX} {worktree_git_directory}")
+    venv = worktree / "venv" / "bin" / "python"
+    assert distribution.distribution_dev_venv_status(
+        editable_fixture_install(checkout), wheel_fixture_target(checkout), venv) == (True, None)
+
+
+def test_distribution_editable_consumer_outside_working_tree_is_not_dev(tmp_path):
+    checkout = tmp_path / "checkout"
+    (checkout / distribution.DISTRIBUTION_GIT_METADATA_NAME).mkdir(parents=True)
+    consumer_python = tmp_path / "consumer" / "venv" / "bin" / "python"
+    assert distribution.distribution_dev_venv_status(
+        editable_fixture_install(checkout), wheel_fixture_target(checkout), consumer_python) == (False, None)
+
+
+def test_distribution_non_editable_consumer_is_not_dev(tmp_path):
+    install = {"install_kind": manifest.MANIFEST_WHEEL_KIND, "wheel_version": WHEEL_FIXTURE_VERSION,
+               "editable_origin": None}
+    consumer_python = tmp_path / "consumer" / "venv" / "bin" / "python"
+    assert distribution.distribution_dev_venv_status(
+        install, wheel_fixture_target(tmp_path / "checkout"), consumer_python) == (False, None)
+
+
+def test_distribution_unreadable_worktree_metadata_is_unknown(tmp_path):
+    checkout = tmp_path / "checkout"
+    (checkout / distribution.DISTRIBUTION_GIT_METADATA_NAME).mkdir(parents=True)
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    (worktree / distribution.DISTRIBUTION_GIT_METADATA_NAME).write_text("unknown metadata")
+    status, error = distribution.distribution_dev_venv_status(
+        editable_fixture_install(checkout), wheel_fixture_target(checkout), worktree / "venv")
+    assert status is None and error == "venv_working_tree_unknown"
 
 
 def test_distribution_wheel_build_cache_and_version_cross_check(tmp_path):
@@ -44,6 +104,7 @@ def test_distribution_wheel_build_cache_and_version_cross_check(tmp_path):
 
 
 def test_distribution_consumer_uses_wheel_and_canonical_dev_stays_editable(tmp_path):
+    (tmp_path / distribution.DISTRIBUTION_GIT_METADATA_NAME).mkdir()
     dev_python = str(tmp_path / "dev" / "bin" / "python")
     consumer_python = str(tmp_path / "consumer" / "bin" / "python")
     inventory = {"interpreters": [
@@ -59,16 +120,24 @@ def test_distribution_consumer_uses_wheel_and_canonical_dev_stays_editable(tmp_p
         return {"install_kind": manifest.MANIFEST_WHEEL_KIND, "wheel_version": WHEEL_FIXTURE_VERSION,
                 "editable_origin": None}
 
-    healthy_probe = {"confirmed": True, "version": WHEEL_FIXTURE_VERSION,
-                     "metadata_version": WHEEL_FIXTURE_VERSION, "sha": WHEEL_FIXTURE_SHA,
-                     "dirty": False, "gate_enforcing": True}
-    stale_probe = {**healthy_probe, "version": WHEEL_FIXTURE_OLD_VERSION,
-                   "metadata_version": WHEEL_FIXTURE_OLD_VERSION, "sha": WHEEL_FIXTURE_STALE_SHA}
+    target = wheel_fixture_target(tmp_path)
+    healthy_wheel_probe = {"confirmed": True, "version": WHEEL_FIXTURE_VERSION,
+                           "metadata_version": WHEEL_FIXTURE_VERSION, "sha": None,
+                           "dirty": True, "gate_enforcing": True}
+    healthy_editable_probe = {**healthy_wheel_probe, "sha": target["sha"], "dirty": False}
+    stale_wheel_probe = {**healthy_wheel_probe, "version": WHEEL_FIXTURE_OLD_VERSION,
+                         "metadata_version": WHEEL_FIXTURE_OLD_VERSION}
+    stale_editable_probe = {**healthy_editable_probe, "version": WHEEL_FIXTURE_OLD_VERSION,
+                            "metadata_version": WHEEL_FIXTURE_OLD_VERSION,
+                            "sha": WHEEL_FIXTURE_STALE_SHA}
 
     def fixture_probe(python, _policy):
         install_kind = "editable" if python == dev_python else "wheel"
-        return healthy_probe if any(event[0] == install_kind and event[1] == python for event in installs) else stale_probe
-    target = wheel_fixture_target(tmp_path)
+        installed = any(event[0] == install_kind and event[1] == python for event in installs)
+        if python == dev_python:
+            return healthy_editable_probe if installed else stale_editable_probe
+        return healthy_wheel_probe if installed else stale_wheel_probe
+
     healthy_host = distribution.distribution_surface_row("host", "host", True, True)
     with patch.object(distribution, "resolve_distribution_target", return_value=target), patch.object(
             distribution, "distribution_policy", return_value=WHEEL_FIXTURE_POLICY), patch.object(
@@ -89,6 +158,8 @@ def test_distribution_consumer_uses_wheel_and_canonical_dev_stays_editable(tmp_p
             distribution, "attest_distribution_host", return_value=healthy_host):
         result = distribution.distribute_fleet()
     assert result["exit_code"] == 0, result
+    rows = {row["surface"]: row for row in result["surfaces"]}
+    assert rows[consumer_python]["on_version"] is True
     assert ("wheel", consumer_python, WHEEL_FIXTURE_VERSION) in installs
     assert ("editable", dev_python, str(tmp_path)) in installs
     assert not any(event[0] == "wheel" and event[1] == dev_python for event in installs)
@@ -97,8 +168,8 @@ def test_distribution_consumer_uses_wheel_and_canonical_dev_stays_editable(tmp_p
 def test_distribution_check_reports_install_kind_reasons(tmp_path):
     target = wheel_fixture_target(tmp_path)
     probe = {"confirmed": True, "version": WHEEL_FIXTURE_VERSION,
-             "metadata_version": WHEEL_FIXTURE_VERSION, "sha": "wheel-sha-irrelevant",
-             "dirty": False, "gate_enforcing": True}
+             "metadata_version": WHEEL_FIXTURE_VERSION, "sha": None,
+             "dirty": True, "gate_enforcing": True}
     correct_python = str(tmp_path / "correct" / "bin" / "python")
     wrong_python = str(tmp_path / "wrong" / "bin" / "python")
     editable_python = str(tmp_path / "editable" / "bin" / "python")
@@ -144,6 +215,16 @@ def test_distribution_check_reports_install_kind_reasons(tmp_path):
 
 if __name__ == "__main__":
     import tempfile
+    with tempfile.TemporaryDirectory() as temporary_directory:
+        test_distribution_dev_venv_inside_checkout_is_dev(Path(temporary_directory))
+    with tempfile.TemporaryDirectory() as temporary_directory:
+        test_distribution_dev_venv_inside_checkout_worktree_is_dev(Path(temporary_directory))
+    with tempfile.TemporaryDirectory() as temporary_directory:
+        test_distribution_editable_consumer_outside_working_tree_is_not_dev(Path(temporary_directory))
+    with tempfile.TemporaryDirectory() as temporary_directory:
+        test_distribution_non_editable_consumer_is_not_dev(Path(temporary_directory))
+    with tempfile.TemporaryDirectory() as temporary_directory:
+        test_distribution_unreadable_worktree_metadata_is_unknown(Path(temporary_directory))
     with tempfile.TemporaryDirectory() as temporary_directory:
         test_distribution_wheel_build_cache_and_version_cross_check(Path(temporary_directory))
     with tempfile.TemporaryDirectory() as temporary_directory:

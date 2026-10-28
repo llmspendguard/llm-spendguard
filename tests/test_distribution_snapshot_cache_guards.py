@@ -155,14 +155,14 @@ def guard_5_mutating_path_live_probes_before_cached_candidate_install(tmp_path):
     events = []
     target = {"sha": "target-sha", "version": "target-version", "green_version": "target-version",
               "checkout": str(tmp_path)}
-    cached_install = {"install_kind": manifest.MANIFEST_EDITABLE_KIND, "wheel_version": None,
-                      "editable_origin": str(tmp_path)}
+    cached_install = {"install_kind": manifest.MANIFEST_WHEEL_KIND,
+                      "wheel_version": target["version"], "editable_origin": None}
     inventory = {"interpreters": [{"python": python, "venv": str(tmp_path / "venv"), "kind": "venv",
                                      "install": cached_install}], "gaps": []}
     stale_proof = {"confirmed": True, "version": "stale-version", "metadata_version": "stale-version",
-                   "sha": "stale-sha", "dirty": False, "gate_enforcing": True}
+                   "sha": None, "dirty": True, "gate_enforcing": True}
     target_proof = {"confirmed": True, "version": "target-version", "metadata_version": "target-version",
-                    "sha": "target-sha", "dirty": False, "gate_enforcing": True}
+                    "sha": None, "dirty": True, "gate_enforcing": True}
 
     def probe_after_distribution_install(candidate, settings):
         events.append(("probe", candidate))
@@ -176,8 +176,8 @@ def guard_5_mutating_path_live_probes_before_cached_candidate_install(tmp_path):
          patch.object(distribution, "ensure_distribution_wheel"), \
          patch.object(distribution, "probe_distribution_interpreter",
                       side_effect=probe_after_distribution_install), \
-         patch.object(distribution.fleet, "_refresh_editable_install",
-                      side_effect=lambda candidate, checkout, timeout: events.append(("install", candidate))), \
+         patch.object(distribution.setup, "refresh_consumer_wheel_package",
+                      side_effect=lambda candidate, wheel, version, timeout: events.append(("install", candidate))), \
          patch.object(distribution.setup, "install_hook", return_value=0), \
          patch.object(distribution, "inspect_distribution_install", return_value=cached_install), \
          patch.object(distribution, "attest_distribution_api_consumers", return_value=[]), \
@@ -272,6 +272,7 @@ def guard_8_vanished_walked_entry_differs_from_never_present(tmp_path):
 
 def guard_9_nonregular_entry_presence_changes_fingerprint(tmp_path):
     if not hasattr(os, "mkfifo"):
+        print("  [SKIP] os.mkfifo unavailable on this platform")
         return
     home = tmp_path / "state"
     home.mkdir()
