@@ -5,7 +5,7 @@ queries/joins, returns typed dicts, and routes the agentic ATTRIBUTION through o
 queries; the LLM is used ONLY for attribution (meaning), recorded so re-runs read it (repeatable).
 
 Financial-systems design (Xero / QuickBooks-style — flexibility with controls):
-- **Money is integer micro-USD** (`*_micros`, ×1e6) — never float; sums are exact.
+- **Money preserves raw decimal TEXT**, with additive integer nano-USD mirrors; readers still use TEXT.
 - **Time** is UTC-canonical (`ts_utc`) + source-local (`tz`/`local_datetime`); accounting `day`/`period` are derived in
   the reporting tz (`SPENDGUARD_REPORTING_TZ`); transaction date (`occurred_at`) ≠ posting date (`recorded_at`).
 - **Multi-pass enrichment with controls** — a spend event is MUTABLE across passes (ingest → attribute → reconcile)
@@ -32,6 +32,7 @@ from types import MappingProxyType, MethodType
 from .schema_indexes import ensure_ordered_indexes_coverage
 from decimal import Decimal, InvalidOperation, getcontext
 from . import config
+from .money_scale import usd_to_nano_usd, assert_nano_total_matches
 
 getcontext().prec = 34   # ample for exact money arithmetic (28 is the default; money never needs more than this)
 
@@ -81,6 +82,8 @@ CREATE TABLE IF NOT EXISTS spend_events (
   -- NOT integer micros (truncated sub-micro real costs to $0) and NOT binary float (0.1+0.2!=0.3 over
   -- millions of sums). One category column per spend class keeps the five categories apart structurally.
   currency      TEXT DEFAULT 'USD',
+  -- Each money TEXT column has an additive <text_column>_nano INTEGER mirror (including base_usd).
+  -- Mirrors assume currency='USD'; other denominations remain NULL with a named migration gap.
   batch_usd             TEXT,
   realtime_usd          TEXT,
   est_chat_usd          TEXT,
@@ -214,6 +217,7 @@ CREATE TABLE IF NOT EXISTS ledger_locks (
 """
 
 USD_COLS = ("batch_usd", "realtime_usd", "est_chat_usd", "remote_compute_usd", "subscription_usd", "external_usd")
+SPEND_EVENT_NANO_COLUMNS = {column: f"{column}_nano" for column in (*USD_COLS, "base_usd")}
 BILLED_USD_COLS = ("batch_usd", "realtime_usd", "remote_compute_usd", "subscription_usd", "external_usd")
 # THE SIX CATEGORIES STAY APART — a hard rule (never sum est-value into real $). Each cap and report reads
 # the columns for ITS category, never the whole row:
@@ -230,7 +234,7 @@ SUMMABLE_INT_COLS = ("in_tok", "out_tok", "cache_read_tok", "cache_write_tok", "
 # (CREATE TABLE IF NOT EXISTS never adds a column to a table that already exists). Append new columns here.
 # intent/actor are the FORENSIC pair carried from charges: WHAT the money bought · WHAT RAN IT.
 _ADDITIVE_COLUMNS = (("intent", "TEXT"), ("actor", "TEXT"), ("external_usd", "TEXT"), ("chain", "TEXT"),
-                     ("venv", "TEXT"))
+                     ("venv", "TEXT")) + tuple((column, "INTEGER") for column in SPEND_EVENT_NANO_COLUMNS.values())
 _KIND_TO_USD = {"batch": "batch_usd", "realtime": "realtime_usd",
                 "est_chat": "est_chat_usd", "est-chat": "est_chat_usd", "estchat": "est_chat_usd",
                 "remote": "remote_compute_usd", "remote_compute": "remote_compute_usd", "gpu": "remote_compute_usd",
@@ -495,16 +499,31 @@ class SpendLedger:
             lambda c: self._initialize_spend_schema())
 
     def _initialize_spend_schema(self):
+        # SAVEPOINT also encloses DDL and preserves a caller's existing transaction.
+        self._conn.execute("SAVEPOINT spend_event_nano_schema")
+        try:
+            initialized_columns = self._initialize_spend_nano_schema_transaction()
+            self._conn.execute("RELEASE SAVEPOINT spend_event_nano_schema")
+        except BaseException:
+            self._conn.execute("ROLLBACK TO SAVEPOINT spend_event_nano_schema")
+            self._conn.execute("RELEASE SAVEPOINT spend_event_nano_schema")
+            raise
+        return initialized_columns
+
+    def _initialize_spend_nano_schema_transaction(self):
         for ddl in (_DDL_EVENTS, _DDL_AUDIT, _DDL_LOCKS):
             self._conn.execute(ddl)
         # Forward-only additive migration: CREATE TABLE IF NOT EXISTS leaves an existing table's columns as
         # they were, so a column added after v5 must be ALTER-ADDed here or record_event() silently drops it (it
         # only writes columns present in self._cols). Idempotent — skips a column that already exists.
         have = {r[1] for r in self._conn.execute("PRAGMA table_info(spend_events)")}
+        missing_nano_columns = set(SPEND_EVENT_NANO_COLUMNS.values()) - have
         for col, decl in _ADDITIVE_COLUMNS:
             if col not in have:
                 self._conn.execute(f"ALTER TABLE spend_events ADD COLUMN {col} {decl}")
                 have.add(col)
+        if missing_nano_columns:
+            self._backfill_spend_event_nano_columns()
         # Secondary indexes on spend_events. A NAME check is not enough here: the charges→spend_events cutover
         # left a vestigial `spend_events_precutover` table whose indexes still hold the canonical `idx_se_*`
         # NAMES. `CREATE INDEX IF NOT EXISTS idx_se_day …` keys off the index name across the WHOLE schema, so
@@ -526,9 +545,58 @@ class SpendLedger:
             )),
         )
         self._conn.execute("CREATE INDEX IF NOT EXISTS idx_audit_event ON spend_audit(event_id)")
-        if not self._defer:
-            self._conn.commit()
         return tuple(have)
+
+    def _backfill_spend_event_nano_columns(self):
+        """Convert every status without altering raw TEXT; prove before releasing schema savepoint."""
+        conversion_gaps = []
+        denomination_gaps = []
+        money_columns = tuple(SPEND_EVENT_NANO_COLUMNS)
+        nano_columns = tuple(SPEND_EVENT_NANO_COLUMNS.values())
+        selected_columns = ','.join(('id', 'currency', *money_columns))
+        assignments = ','.join(f'{column}=?' for column in nano_columns)
+        for stored_event in self._conn.execute(f"SELECT {selected_columns} FROM spend_events"):
+            converted_amounts = []
+            if stored_event['currency'] != 'USD':
+                denomination_gaps.append(stored_event['id'])
+                converted_amounts = [None] * len(money_columns)
+            else:
+                for money_column in money_columns:
+                    raw_amount = stored_event[money_column]
+                    try:
+                        converted_amounts.append(None if raw_amount is None else usd_to_nano_usd(raw_amount))
+                    except (ValueError, TypeError, OverflowError) as conversion_error:
+                        converted_amounts.append(None)
+                        conversion_gaps.append((stored_event['id'], money_column, str(conversion_error)))
+            self._conn.execute(f"UPDATE spend_events SET {assignments} WHERE id=?",
+                               (*converted_amounts, stored_event['id']))
+        if denomination_gaps:
+            logging.getLogger(__name__).warning("spend_event_nano_non_usd_gap count=%s ids=%s",
+                                                len(denomination_gaps), denomination_gaps)
+        if conversion_gaps:
+            invalid_row_count = len({gap[0] for gap in conversion_gaps})
+            raise ValueError(f"spend_event_nano_invalid_amount_gap count={invalid_row_count} "
+                             f"amount_count={len(conversion_gaps)} rows={conversion_gaps!r}")
+        # USD-only comparisons: named non-USD gaps cannot be interpreted as USD.
+        # Check both all statuses and precisely the exact reader's countable row set.
+        for verification_filter in ("currency='USD'", f"currency='USD' AND {self._COUNTABLE}"):
+            category_nano_total = 0
+            category_text_total = Decimal(0)
+            for money_column, nano_column in SPEND_EVENT_NANO_COLUMNS.items():
+                reference_total = self._conn.execute(
+                    f"SELECT dec_sum({money_column}) FROM spend_events WHERE {verification_filter}").fetchone()[0]
+                # Python integer SUM avoids SQLite aggregate overflow across individually valid rows.
+                nano_total = sum(row[0] for row in self._conn.execute(
+                    f"SELECT {nano_column} FROM spend_events WHERE {verification_filter} AND {nano_column} IS NOT NULL"))
+                reference_total = Decimal(reference_total or '0')
+                assert_nano_total_matches(nano_total, reference_total,
+                                          label=f"spend_events.{money_column} [{verification_filter}]")
+                if money_column in USD_COLS:
+                    category_nano_total += nano_total
+                    category_text_total += reference_total
+            # Representation checksum only: this is never a reported real-dollar spend total.
+            assert_nano_total_matches(category_nano_total, category_text_total,
+                                      label=f"spend_events category representation checksum [{verification_filter}]")
 
     @staticmethod
     def _evidence_id(ev):
@@ -580,11 +648,14 @@ class SpendLedger:
             col = _KIND_TO_USD.get(kind)
             if not col:
                 raise ValueError(f"unknown spend kind {kind!r}; expected batch | realtime | est_chat | remote | subscription | external")
-            ev[col] = dec(usd)
+            ev[col] = usd
         # A caller may set a category column directly (e.g. batch_usd=…). Normalise any to the canonical
         # decimal string so storage is uniform and sums are exact.
-        for c in USD_COLS:
+        for c in SPEND_EVENT_NANO_COLUMNS:
             if c in ev and ev[c] is not None:
+                # Validate before legacy dec() can turn malformed evidence into an absent amount.
+                if ev.get('currency', 'USD') == 'USD':
+                    usd_to_nano_usd(str(ev[c]))
                 ev[c] = dec(ev[c])
         # A sub-micro real cost like $0.00000026 is now NON-zero (Decimal, not truncated micros) — the guard
         # fires only on a genuinely MISSING cost, which is the bug it was written to catch.
@@ -636,6 +707,10 @@ class SpendLedger:
         for jc in _JSON_COLS:
             if jc in ev and not isinstance(ev.get(jc), (str, type(None))):
                 ev[jc] = json.dumps(ev[jc])
+        for text_column, nano_column in SPEND_EVENT_NANO_COLUMNS.items():
+            raw_money = ev.get(text_column)
+            ev[nano_column] = (None if raw_money is None or ev['currency'] != 'USD'
+                               else usd_to_nano_usd(str(raw_money)))
         cols = [c for c in self._cols if c in ev]
         vals = [ev[c] for c in cols]
         # venv arrives as an explicit argument (gate provenance), not an `ev` key, so the raw interpreter path
@@ -666,6 +741,8 @@ class SpendLedger:
         # the one thing this table exists to prevent, so it must never be left half-done.
         try:
             for field, new in changes.items():
+                if field in SPEND_EVENT_NANO_COLUMNS.values():
+                    raise ValueError(f"{field!r} is derived; update its raw TEXT money column")
                 if field in _PROTECTED:
                     raise ValueError(f"{field!r} is immutable (identity/period) — reverse/adjust instead")
                 if field not in self._cols:
@@ -674,7 +751,18 @@ class SpendLedger:
                 nv = json.dumps(new) if field in _JSON_COLS and not isinstance(new, (str, type(None))) else new
                 if nv == old:
                     continue
-                self._conn.execute(f"UPDATE spend_events SET {field}=? WHERE id=?", (nv, eid))
+                if field in SPEND_EVENT_NANO_COLUMNS:
+                    # Preserve the UPDATE seam's raw value while converting its exact decimal spelling.
+                    # Bind non-string caller inputs as TEXT too: SQLite's REAL->TEXT spelling can round.
+                    if nv is not None and not isinstance(nv, str):
+                        nv = str(nv)
+                    nano_value = (None if nv is None or row['currency'] != 'USD'
+                                  else usd_to_nano_usd(str(nv)))
+                    self._conn.execute(
+                        f"UPDATE spend_events SET {field}=?, {SPEND_EVENT_NANO_COLUMNS[field]}=? WHERE id=?",
+                        (nv, nano_value, eid))
+                else:
+                    self._conn.execute(f"UPDATE spend_events SET {field}=? WHERE id=?", (nv, eid))
                 self._audit(eid, actor, pass_, field, old, nv, reason)
                 applied += 1
             if applied:
