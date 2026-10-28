@@ -21,7 +21,7 @@ os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
 from _script_checks import record_script_check
-from spendguard import release   # noqa: E402
+from spendguard import manifest, release   # noqa: E402
 
 fails = []
 
@@ -45,6 +45,13 @@ def _fake_git(*args):
 
 
 release._git_src = _fake_git
+
+
+def _fake_editable_install_kind():
+    return {"install_kind": manifest.MANIFEST_EDITABLE_KIND}
+
+
+manifest.inspect_current_interpreter_install_kind = _fake_editable_install_kind
 
 
 def _reset_served():
