@@ -10,8 +10,10 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
     os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="spendguard-hot-index-")
     os.execv(sys.executable, [sys.executable] + sys.argv)
 
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
+
 from _script_checks import record_script_check
-from spendguard import calls, content_retention, semcache
+from spendguard import calls, content_retention, guard, semcache
 from spendguard.ledger import SpendLedger
 from spendguard.schema_indexes import (
     _available_derived_index_name,
@@ -62,9 +64,22 @@ cost_plan = plan_details(
     "SELECT model,date(ts),kind,COUNT(*) FROM calls WHERE ts>=? "
     "AND kind IN ('realtime','batch') AND cost IS NOT NULL AND suspect IS NULL "
     "GROUP BY model,date(ts),kind",
-    ("2026-09-24T00:00:00+00:00",),
+    ("2026-10-27T00:00:00+00:00",),
 )
 record_script_check(failures, "cost-integrity range is an index SEARCH", plan_searches_with(cost_plan, cost_index))
+
+truncation_index = next(
+    name for columns, unique, name in table_index_coverages(calls_connection, "calls")
+    if columns == ("finish", "ts") and not unique
+)
+truncation_plan = plan_details(
+    calls_connection,
+    "SELECT model,COUNT(*) FROM calls WHERE finish IN ('max_tokens','length') "
+    "AND ts>=? GROUP BY model",
+    ("2026-10-27T00:00:00+00:00",),
+)
+record_script_check(failures, "recent truncation rollup is an index SEARCH",
+                    plan_searches_with(truncation_plan, truncation_index))
 
 reconcile_index = next(
     name for columns, unique, name in table_index_coverages(calls_connection, "calls")
@@ -141,7 +156,69 @@ money_plan = plan_details(
     ("provider", "model", "intent"),
 )
 record_script_check(failures, "money batch reconciliation is an index SEARCH", plan_searches_with(money_plan, money_index))
+
+latest_source_index = next(
+    name for columns, unique, name in table_index_coverages(ledger._conn, "spend_events")
+    if columns == ("source", "occurred_at", "conv_id") and not unique
+)
+latest_source_plan = plan_details(
+    ledger._conn,
+    "SELECT conv_id FROM spend_events WHERE source=? "
+    "ORDER BY occurred_at DESC,conv_id DESC LIMIT 1",
+    ("gate",),
+)
+record_script_check(failures, "latest source conversation is an index SEARCH",
+                    plan_searches_with(latest_source_plan, latest_source_index))
+
+source_conversation_index = next(
+    name for columns, unique, name in table_index_coverages(ledger._conn, "spend_events")
+    if columns == ("source", "conv_id", "occurred_at") and not unique
+)
+source_conversation_plan = plan_details(
+    ledger._conn,
+    "SELECT rowid,model,cache_read_tok FROM spend_events WHERE source=? AND conv_id=? "
+    "ORDER BY occurred_at,rowid",
+    ("gate", "conversation"),
+)
+record_script_check(failures, "source conversation stream is an index SEARCH",
+                    plan_searches_with(source_conversation_plan, source_conversation_index))
 ledger._conn.close()
+
+decisions_connection = sqlite3.connect(":memory:")
+guard._ensure_guard_decisions_schema(decisions_connection)
+decisions_connection.executemany(
+    "INSERT INTO decisions(ts,day,intent,saved_usd) VALUES(?,?,?,?)",
+    (
+        (
+            f"2026-10-{(row_number % 28) + 1:02d}T00:00:00+00:00",
+            f"2026-10-{(row_number % 28) + 1:02d}",
+            f"intent-{row_number % 31}",
+            1.0,
+        )
+        for row_number in range(_REPRESENTATIVE_ROWS)
+    ),
+)
+decisions_connection.execute("ANALYZE")
+decisions_day_time_index = next(
+    name for columns, unique, name in table_index_coverages(decisions_connection, "decisions")
+    if columns == ("day", "ts") and not unique
+)
+decisions_detail_plan = plan_details(
+    decisions_connection,
+    "SELECT ts,intent,saved_usd FROM decisions WHERE day>=? ORDER BY ts DESC",
+    ("2026-10-27",),
+)
+record_script_check(failures, "recent decision detail is an index SEARCH",
+                    any("SEARCH decisions USING INDEX" in detail for detail in decisions_detail_plan))
+decisions_summary_plan = plan_details(
+    decisions_connection,
+    guard.DECISIONS_SUMMARY_INTENT_SINCE_SQL,
+    ("2026-10-27", "2026-10-28", 20),
+)
+record_script_check(failures, "recent decision summary is an index SEARCH",
+                    any("SEARCH decisions USING" in detail for detail in decisions_summary_plan)
+                    and not any(detail.startswith("SCAN decisions") for detail in decisions_summary_plan))
+decisions_connection.close()
 
 squat_connection = sqlite3.connect(":memory:")
 squat_connection.execute("CREATE TABLE decoy(value TEXT)")
