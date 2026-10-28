@@ -29,7 +29,6 @@ import subprocess
 import sys
 import tempfile
 import threading
-import time
 from contextlib import closing
 
 from . import config
@@ -88,10 +87,9 @@ def __getattr__(name):
 
     globals()[name] = psutil
     return psutil
-FLEET_RESTART_VERIFY_TIMEOUT_S_DEFAULT = 15.0
-FLEET_RESTART_VERIFY_POLL_S_DEFAULT = 0.25
 FLEET_RESTART_FAILURE_KEY = "failed"
 FLEET_RESTART_CONFIRMED_KEY = "confirmed"
+FLEET_RESTART_REQUESTED_KEY = "restart-requested"
 CONSUMER_ROLE_PRECEDENCE = {
     CONSUMER_ROLE_UNSPECIFIED: 0,
     CONSUMER_ROLE_EPHEMERAL: 1,
@@ -638,22 +636,6 @@ def launchd_consumer_label_loaded(label):
     return result.returncode == 0
 
 
-def verify_launchd_consumer_green_return(*, label, green_sha,
-                                          timeout_s=FLEET_RESTART_VERIFY_TIMEOUT_S_DEFAULT,
-                                          poll_s=FLEET_RESTART_VERIFY_POLL_S_DEFAULT):
-    """Boundedly verify a declared launchd consumer has re-registered alive on the promoted SHA."""
-    deadline = time.monotonic() + timeout_s
-    while time.monotonic() < deadline:
-        for consumer in running_consumers():
-            if (consumer.get("supervision_mode") == SUPERVISION_LAUNCHD
-                    and consumer.get("supervision_ref") == label
-                    and consumer.get("identity_verified")
-                    and consumer.get("served_sha") == green_sha):
-                return True
-        time.sleep(poll_s)
-    return False
-
-
 def restart_stale(apply=False, consumer_id=None, all_supervised=False):
     """Bring the fleet onto the green commit. For each STALE live consumer, resolve its launchd label; a
     launchd-MANAGED one is kickstarted (`launchctl kickstart -k` → it respawns onto the latest code). An unsupervised
@@ -662,7 +644,7 @@ def restart_stale(apply=False, consumer_id=None, all_supervised=False):
     (default) is a DRY RUN: it reports what it WOULD do without touching anything. Returns
     {restarted:[...], warn:[...], transient:[...], dry_run:bool}. $0, never raises — a restart hiccup is reported,
     not thrown."""
-    restarted, confirmed, failed, warn, transient = [], [], [], [], []
+    restarted, requested, confirmed, failed, warn, transient = [], [], [], [], [], []
     green_sha = None
     try:
         from . import release
@@ -718,13 +700,10 @@ def restart_stale(apply=False, consumer_id=None, all_supervised=False):
         if not action.get("ok"):
             failed.append({"pid": c["pid"], "launchd_label": label,
                            "why": "kickstart failed", "detail": action.get("detail")})
-        elif verify_launchd_consumer_green_return(label=label, green_sha=green_sha):
-            confirmed.append({"pid": c["pid"], "launchd_label": label, "served_sha": green_sha})
         else:
-            failed.append({"pid": c["pid"], "launchd_label": label,
-                           "why": "FAILED restart — consumer did not return on promoted green SHA",
-                           "target_sha": green_sha})
+            requested.append({"pid": c["pid"], "launchd_label": label, "target_sha": green_sha})
     return {"restarted": restarted, FLEET_RESTART_CONFIRMED_KEY: confirmed,
+            FLEET_RESTART_REQUESTED_KEY: requested,
             FLEET_RESTART_FAILURE_KEY: failed, "warn": warn,
             FLEET_RESTART_TRANSIENT_KEY: transient, "dry_run": not apply, "disabled": apply and not enabled}
 

@@ -3,11 +3,17 @@ from __future__ import annotations
 
 import argparse
 from datetime import datetime, timezone
+import importlib.metadata
+import importlib.util
+import inspect
 import json
 import os
 from pathlib import Path
 import shutil
 import subprocess
+import textwrap
+import urllib.parse
+from functools import lru_cache
 
 from . import config, fleet, setup
 
@@ -24,40 +30,67 @@ MANIFEST_DAEMON_CONSUMER_ROLE = fleet.CONSUMER_ROLE_DAEMON
 MANIFEST_DAEMON_SURFACE_KIND = "mcp"
 MANIFEST_RUNNING_CONSUMER_SURFACE_KIND = "consumer"
 MANIFEST_UNREPRESENTABLE_CONSUMER_REASON = "missing_executable_and_supervision_identity"
-MANIFEST_INTERPRETER_PROBE = r'''import importlib.metadata,importlib.util,json,pathlib,sys,urllib.parse
-name,package=sys.argv[1:3]
-dist=importlib.metadata.distribution(name)
-direct=dist.read_text('direct_url.json')
-kind=None
-reason=None
-editable_origin=None
-if direct:
- try:
-  data=json.loads(direct)
-  if data.get('dir_info',{}).get('editable') is True:
-   kind='editable'
-   parsed=urllib.parse.urlparse(data.get('url',''))
-   if parsed.scheme=='file': editable_origin=str(pathlib.Path(urllib.parse.unquote(parsed.path)).resolve())
-  elif data.get('url'):
-   parsed=urllib.parse.urlparse(data['url'])
-   if parsed.scheme=='file' or parsed.path.lower().endswith('.whl') or data.get('archive_info') is not None: kind='wheel'
- except (TypeError,ValueError,json.JSONDecodeError): reason='invalid direct_url.json'
-metadata_root=pathlib.Path(getattr(dist,'_path','')).resolve()
-site_root=metadata_root.parent
-normalized=name.lower().replace('-','_').replace('.','_')
-if kind is None and metadata_root:
- markers=tuple(site_root.glob('__editable__.'+normalized+'*.pth'))+tuple(site_root.glob('__editable___'+normalized+'*finder.py'))+tuple(site_root.glob(normalized+'*.egg-link'))
- if markers: kind='editable'
-if kind is None and metadata_root:
- spec=importlib.util.find_spec(package)
- origin=pathlib.Path(spec.origin).resolve() if spec and spec.origin else None
- if origin:
-  if origin.is_relative_to(site_root): kind='wheel'
-  else: kind='editable'
-if kind is None: reason=reason or 'distribution metadata and import origin did not resolve install kind'
-print(json.dumps({'install_kind':kind or 'unknown','wheel_version':dist.version if kind=='wheel' else None,
- 'editable_origin':editable_origin,**({'verification_error':reason} if reason else {})}))
-'''
+
+
+def determine_distribution_install_kind(distribution_name: str, import_package_name: str) -> dict:
+    """Classify one installed distribution from metadata and import origin.
+
+    This function is the install-kind SSOT: the current process calls it directly and the
+    cross-interpreter probe executes this exact function source in the target interpreter.
+    """
+    dist = importlib.metadata.distribution(distribution_name)
+    direct = dist.read_text("direct_url.json")
+    kind = None
+    reason = None
+    editable_origin = None
+    if direct:
+        try:
+            data = json.loads(direct)
+            if data.get("dir_info", {}).get("editable") is True:
+                kind = MANIFEST_EDITABLE_KIND
+                parsed = urllib.parse.urlparse(data.get("url", ""))
+                if parsed.scheme == "file":
+                    editable_origin = str(Path(urllib.parse.unquote(parsed.path)).resolve())
+            elif data.get("url"):
+                parsed = urllib.parse.urlparse(data["url"])
+                if (parsed.scheme == "file" or parsed.path.lower().endswith(".whl")
+                        or data.get("archive_info") is not None):
+                    kind = MANIFEST_WHEEL_KIND
+        except (TypeError, ValueError, json.JSONDecodeError):
+            reason = "invalid direct_url.json"
+    metadata_root = Path(getattr(dist, "_path", "")).resolve()
+    site_root = metadata_root.parent
+    normalized = distribution_name.lower().replace("-", "_").replace(".", "_")
+    if kind is None and metadata_root:
+        markers = (tuple(site_root.glob(f"__editable__.{normalized}*.pth"))
+                   + tuple(site_root.glob(f"__editable___{normalized}*finder.py"))
+                   + tuple(site_root.glob(f"{normalized}*.egg-link")))
+        if markers:
+            kind = MANIFEST_EDITABLE_KIND
+    if kind is None and metadata_root:
+        spec = importlib.util.find_spec(import_package_name)
+        origin = Path(spec.origin).resolve() if spec and spec.origin else None
+        if origin:
+            kind = MANIFEST_WHEEL_KIND if origin.is_relative_to(site_root) else MANIFEST_EDITABLE_KIND
+    if kind is None:
+        reason = reason or "distribution metadata and import origin did not resolve install kind"
+    return {
+        "install_kind": kind or MANIFEST_UNKNOWN_KIND,
+        "wheel_version": dist.version if kind == MANIFEST_WHEEL_KIND else None,
+        "editable_origin": editable_origin,
+        **({"verification_error": reason} if reason else {}),
+    }
+
+
+MANIFEST_INTERPRETER_PROBE = "\n".join((
+    "import importlib.metadata,importlib.util,json,pathlib,sys,urllib.parse",
+    f"MANIFEST_EDITABLE_KIND={MANIFEST_EDITABLE_KIND!r}",
+    f"MANIFEST_WHEEL_KIND={MANIFEST_WHEEL_KIND!r}",
+    f"MANIFEST_UNKNOWN_KIND={MANIFEST_UNKNOWN_KIND!r}",
+    "Path=pathlib.Path",
+    textwrap.dedent(inspect.getsource(determine_distribution_install_kind)),
+    "print(json.dumps(determine_distribution_install_kind(*sys.argv[1:3])))",
+))
 
 
 def manifest_path() -> Path:
@@ -89,6 +122,29 @@ def inspect_interpreter_install_kind(python_executable: str, *, timeout_seconds:
     except (OSError, subprocess.SubprocessError, ValueError, json.JSONDecodeError) as exc:
         return {"install_kind": MANIFEST_UNKNOWN_KIND, "wheel_version": None,
                 "verification_error": str(exc)}
+
+
+@lru_cache(maxsize=1)
+def _cached_current_distribution_install_kind() -> dict:
+    """Cache only the install kind and its immutable supporting details for this process."""
+    try:
+        result = determine_distribution_install_kind(MANIFEST_DISTRIBUTION_NAME, MANIFEST_IMPORT_PACKAGE_NAME)
+    except Exception as exc:
+        result = {"install_kind": MANIFEST_UNKNOWN_KIND, "verification_error": str(exc)}
+    return {key: value for key, value in result.items() if key != "wheel_version"}
+
+
+def inspect_current_interpreter_install_kind(*, timeout_seconds: float = MANIFEST_PROBE_TIMEOUT_SECONDS) -> dict:
+    """Inspect this process in-process, refreshing mutable wheel version metadata each call."""
+    del timeout_seconds  # Kept for API compatibility; self-inspection does not perform timed I/O.
+    result = dict(_cached_current_distribution_install_kind())
+    try:
+        result["wheel_version"] = (importlib.metadata.version(MANIFEST_DISTRIBUTION_NAME)
+                                   if result["install_kind"] == MANIFEST_WHEEL_KIND else None)
+    except Exception as exc:
+        result["wheel_version"] = None
+        result["verification_error"] = str(exc)
+    return result
 
 
 def _manifest_served_identity(python_executable: str, settings: dict) -> dict:

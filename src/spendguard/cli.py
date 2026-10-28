@@ -734,6 +734,8 @@ def _dispatch(argv=None):
             _fr = _fleet.restart_stale(apply=True)
             for _x in _fr.get("restarted", []):
                 print(f"deploy: fleet — {_x.get('action')} {_x.get('launchd_label')} (pid {_x.get('pid')})")
+            if _fr.get(_fleet.FLEET_RESTART_REQUESTED_KEY):
+                print("deploy: fleet — restarts requested; run `spendguard distribute --check` to confirm convergence.")
             for _f in _fr.get(_fleet.FLEET_RESTART_FAILURE_KEY, []):
                 print(f"deploy: 🔴 fleet restart FAILED {_f.get('launchd_label')} (pid {_f.get('pid')}) — "
                       f"{_f.get('why')}", file=sys.stderr)
@@ -747,7 +749,7 @@ def _dispatch(argv=None):
                     and not _fr.get(_fleet.FLEET_RESTART_TRANSIENT_KEY)):
                 print("deploy: fleet — all tracked consumers already on the green commit.")
             if _fr.get(_fleet.FLEET_RESTART_FAILURE_KEY):
-                return _deploy_failed_verdict("one or more supervised consumers failed to return on green")
+                return _deploy_failed_verdict("one or more supervised consumer restarts could not be requested")
         _refresh_deployments = "--no-refresh" not in r
         _host_install_audit = _fleet.reconcile_registered_host_installations()
         _host_escape_count = len(_host_install_audit["escapes"])

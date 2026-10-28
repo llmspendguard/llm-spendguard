@@ -330,12 +330,7 @@ def attest_distribution_api_consumers(target, *, check=False, dry_run=False, set
         if not check and not dry_run:
             restarted = fleet.restart_stale(apply=True, consumer_id=str(consumer["pid"]), all_supervised=True)
             action = "restart-requested"
-            restart_ok = bool(restarted.get(fleet.FLEET_RESTART_CONFIRMED_KEY))
-            # Re-enumerate; PID disappearance alone is never a successful restart.
-            after = fleet.running_consumers(prune=False)
-            matching = [item for item in after if item.get("pid") == consumer["pid"]
-                        or (consumer.get("supervision_ref") and item.get("supervision_ref") == consumer.get("supervision_ref"))]
-            candidate = matching[0] if len(matching) == 1 else {}
+            restart_ok = bool(restarted.get(fleet.FLEET_RESTART_REQUESTED_KEY))
         elif dry_run and not check:
             action = "would-restart"
         python = candidate.get("python_executable")
@@ -347,7 +342,7 @@ def attest_distribution_api_consumers(target, *, check=False, dry_run=False, set
                        and identity == fleet._FLEET_PID_VERIFIED_LIVE and candidate.get("dirty") is False
                        and candidate.get("gate_enforcing") is True
                        and probe.get("confirmed") and probe.get("gate_enforcing") and restart_ok)
-        reason = "required API consumer restart was not confirmed" if not restart_ok else None
+        reason = "required API consumer restart could not be requested" if not restart_ok else None
         rows.append(distribution_surface_row(surface, "api", on_version, healthy, action=action, reason=reason,
                                              registration=candidate, probe=probe, restart=restarted))
     return rows

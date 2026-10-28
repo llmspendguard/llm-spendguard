@@ -1337,6 +1337,9 @@ def serve_http(host="127.0.0.1", port=4913):
     _prewarm_codex_daemon()
     class DescriptorGuardedMCPHTTPServer(ThreadingHTTPServer):
         def service_actions(self):
+            from . import release
+            if _auto_respawn_enabled():
+                release.exit_if_stale(logging.getLogger(__name__).warning)
             enforce_mcp_descriptor_headroom(fraction)
             service_mcp_spend_deadletters()
 

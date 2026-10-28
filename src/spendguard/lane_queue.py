@@ -1547,6 +1547,9 @@ def _drain_locked(worker, batch, lease_s, idle_rounds, idle_sleep, load_ceiling,
     _last_poll = 0.0                                                     # throttle for the batch_tracker poll (below)
     _last_dedup = 0.0                                                    # throttle for the consumer-side dedup (below)
     while True:
+        if forever:
+            from . import release
+            release.exit_if_stale()
         iters += 1
         if max_iters is not None and iters > int(max_iters):
             # NAMED, not a silent ceiling (F2): if work REMAINS when the cap ends the drain, say so — the durable rows

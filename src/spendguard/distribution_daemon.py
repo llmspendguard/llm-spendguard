@@ -132,27 +132,17 @@ def attest_distribution_daemons(target, *, check=False, dry_run=False, settings=
             elif consumer.get("pid"):
                 result = fleet.restart_stale(apply=True, consumer_id=consumer["pid"], all_supervised=True)
                 restart_evidence = result
-                restart_ok = bool(result.get(fleet.FLEET_RESTART_CONFIRMED_KEY))
-                action = "restarted" if restart_ok else "restart-unconfirmed"
-                label = consumer.get("supervision_ref")
-                refreshed = [row for row in fleet.running_consumers(prune=False)
-                             if label and row.get("supervision_ref") == label]
-                if len(refreshed) == 1:
-                    consumer = {**refreshed[0], "endpoint": consumer.get("endpoint")}
+                restart_ok = bool(result.get(fleet.FLEET_RESTART_REQUESTED_KEY))
+                action = "restart-requested" if restart_ok else "restart-request-failed"
             else:
                 restart_ok = False
                 if fleet.fleet_control_restarts_enabled():
                     try:
                         restart_evidence = fleet.kickstart_declared_launchd_consumer(MCP_HTTP_LAUNCHD_LABEL)
-                        restart_ok = bool(restart_evidence.get("ok")) and fleet.verify_launchd_consumer_green_return(
-                            label=MCP_HTTP_LAUNCHD_LABEL, green_sha=target.get("sha"))
+                        restart_ok = bool(restart_evidence.get("ok"))
                     except Exception as exc:
                         restart_evidence = {"error": f"{type(exc).__name__}: {exc}"}
-                refreshed = [item for item in fleet.running_consumers(prune=False)
-                             if item.get("supervision_ref") == MCP_HTTP_LAUNCHD_LABEL]
-                if len(refreshed) == 1:
-                    consumer = {**refreshed[0], "endpoint": policy["mcp_endpoint"]}
-                action = "restarted" if restart_ok else "restart-unconfirmed"
+                action = "restart-requested" if restart_ok else "restart-request-failed"
         row = prove_distribution_mcp_daemon(consumer, target, policy)
         row["action_taken"] = action
         if restart_evidence is not None:
@@ -160,6 +150,6 @@ def attest_distribution_daemons(target, *, check=False, dry_run=False, settings=
         if not restart_ok:
             row["healthy"] = False
             row["straggler_reason"] = "; ".join(filter(None, (
-                row["straggler_reason"], "required daemon restart was not confirmed")))
+                row["straggler_reason"], "required daemon restart could not be requested")))
         rows.append(row)
     return rows

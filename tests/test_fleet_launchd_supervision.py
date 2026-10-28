@@ -91,14 +91,14 @@ def test_dry_run_apply_failure_and_kill_switch(monkeypatch):
     calls = []
     monkeypatch.setattr(fleet, "kickstart_declared_launchd_consumer",
                         lambda label: calls.append(label) or {"ok": True, "detail": "kickstarted"})
-    monkeypatch.setattr(fleet, "verify_launchd_consumer_green_return", lambda **_kwargs: False)
     monkeypatch.setattr(fleet, "launchd_consumer_label_loaded", lambda _label: True)
 
     dry = fleet.restart_stale(apply=False)
     assert not calls and dry["restarted"][0]["action"] == "would kickstart"
     applied = fleet.restart_stale(apply=True)
     assert calls == [TEST_LABEL]
-    assert applied["failed"] and not applied["confirmed"]
+    assert not applied["failed"] and not applied["confirmed"]
+    assert applied[fleet.FLEET_RESTART_REQUESTED_KEY][0]["launchd_label"] == TEST_LABEL
 
     calls.clear()
     monkeypatch.setenv(fleet.FLEET_RESTARTS_ENABLED_ENV, "0")

@@ -30,7 +30,7 @@ def exercise_distribution_api_red_green():
     def repair_api_fixture_registration(**arguments):
         assert arguments == {"apply": True, "consumer_id": str(API_FIXTURE_PID), "all_supervised": True}
         state.update(consumer=copy.deepcopy(clean), probe=copy.deepcopy(clean_probe), identity=fleet._FLEET_PID_VERIFIED_LIVE)
-        return {fleet.FLEET_RESTART_CONFIRMED_KEY: [{"pid": API_FIXTURE_PID}]}
+        return {fleet.FLEET_RESTART_REQUESTED_KEY: [{"pid": API_FIXTURE_PID}]}
 
     mutations = (
         ("on_version", lambda: state["consumer"].update(served_sha=API_FIXTURE_OLD)),
@@ -47,7 +47,9 @@ def exercise_distribution_api_red_green():
             red = distribution_api.attest_distribution_api_consumers(target, check=True, settings={})
             assert red[0]["surface"] == f"api:{API_FIXTURE_PID}" and red[0]["straggler_reason"]
             restart.assert_not_called()
-            green = distribution_api.attest_distribution_api_consumers(target, settings={})
+            requested = distribution_api.attest_distribution_api_consumers(target, settings={})
+            assert requested[0]["action_taken"] == "restart-requested"
+            green = distribution_api.attest_distribution_api_consumers(target, check=True, settings={})
             assert not green[0]["straggler_reason"]
             restart.reset_mock()
             mutate()
