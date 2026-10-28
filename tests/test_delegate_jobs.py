@@ -1,5 +1,7 @@
 """Offline durability, handoff, dedup, and compatibility contracts for delegate jobs."""
+import contextlib
 import datetime
+import io
 import json
 import os
 import pathlib
@@ -44,6 +46,22 @@ check_delegate_job_contract("finished row reports done", delegate_jobs.read_dele
 check_delegate_job_contract(
     "whole changed-files list and full receipt survive roundtrip",
     delegate_jobs.read_delegate_job_result(job_id) == payload)
+
+print("-- scalar terminal payload remains collectible through the CLI --")
+scalar_delegate_result_payload = "complete scalar delegate result"
+scalar_delegate_result_job_id = delegate_jobs.create_delegate_job(
+    kind="agentic", task_fingerprint="scalar-result-fingerprint", cwd=os.getcwd(),
+    provider="fixture-provider", intent="fixture-intent", dirty_before=set())
+delegate_jobs.finish_delegate_job(
+    scalar_delegate_result_job_id, state="done", result_payload=scalar_delegate_result_payload)
+scalar_delegate_result_stdout = io.StringIO()
+with contextlib.redirect_stdout(scalar_delegate_result_stdout):
+    scalar_delegate_result_exit_code = delegate_router.delegate_cli(
+        ["--collect", scalar_delegate_result_job_id])
+check_delegate_job_contract(
+    "scalar collect payload prints unchanged and returns success",
+    scalar_delegate_result_exit_code == 0
+    and json.loads(scalar_delegate_result_stdout.getvalue()) == scalar_delegate_result_payload)
 
 print("-- start returns before worker completion and another connection reads the result --")
 thread_payload = {**payload, "execution": {"text": "thread-owned durable result"}}

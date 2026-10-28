@@ -678,7 +678,7 @@ def delegate_cli(argv=None):
         result = (delegate_jobs.read_delegate_job_result(args.collect) if args.collect
                   else delegate_jobs.read_delegate_job(args.status))
         print(json.dumps(result, indent=2, sort_keys=True))
-        return 2 if result.get("error") else 0
+        return 2 if isinstance(result, dict) and result.get("error") else 0
     if not args.task:
         parser.error("task is required unless --collect, --status or --recover is supplied")
     release_warning = _delegate_release_state_warning()
