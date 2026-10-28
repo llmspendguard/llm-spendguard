@@ -362,6 +362,10 @@ def parse_distribution_cli_arguments(argv=None):
 
 def distribute_command(argv=None):
     args = parse_distribution_cli_arguments(argv)
-    result = distribute_fleet(check=args.check, roots=args.roots, dry_run=args.dry_run)
+    if args.json:
+        with contextlib.redirect_stdout(sys.stderr):
+            result = distribute_fleet(check=args.check, roots=args.roots, dry_run=args.dry_run)
+    else:
+        result = distribute_fleet(check=args.check, roots=args.roots, dry_run=args.dry_run)
     print(json.dumps(result, indent=2, sort_keys=True) if args.json else render_distribution_table(result))
     return result["exit_code"]
