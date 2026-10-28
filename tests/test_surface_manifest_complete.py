@@ -47,13 +47,14 @@ def test_manifest_probe_ignores_unrelated_spendguard_pth_for_wheel_install():
     with tempfile.TemporaryDirectory() as temporary:
         result = run_manifest_probe_fixture(Path(temporary), MANIFEST_FIXTURE_WHEEL_DIRECT_URL)
     assert result == {"install_kind": manifest.MANIFEST_WHEEL_KIND,
-                      "wheel_version": MANIFEST_FIXTURE_WHEEL_VERSION}
+                      "wheel_version": MANIFEST_FIXTURE_WHEEL_VERSION, "editable_origin": None}
 
 
 def test_manifest_probe_recognizes_own_pep660_editable_metadata():
     with tempfile.TemporaryDirectory() as temporary:
         result = run_manifest_probe_fixture(Path(temporary), MANIFEST_FIXTURE_EDITABLE_DIRECT_URL)
-    assert result == {"install_kind": manifest.MANIFEST_EDITABLE_KIND, "wheel_version": None}
+    assert result == {"install_kind": manifest.MANIFEST_EDITABLE_KIND, "wheel_version": None,
+                      "editable_origin": "/fixture/source"}
 
 
 def test_surface_manifest_persists_complete_discovery_with_editable_and_wheel_kinds():

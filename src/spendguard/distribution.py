@@ -13,6 +13,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from . import config, consumer_audit, fleet, release, setup
 from .distribution_daemon import attest_distribution_daemons
@@ -22,6 +23,14 @@ DISTRIBUTION_PROBE_TIMEOUT_S = consumer_audit.CONSUMER_AUDIT_PROBE_TIMEOUT_SECON
 DISTRIBUTION_INSTALL_TIMEOUT_S = fleet._CONSUMER_EDITABLE_REFRESH_TIMEOUT_S
 DISTRIBUTION_CHECKOUT_DIRECTORY = "distribution-checkouts"
 DISTRIBUTION_VERSION_SYMBOL = "__version__"
+DISTRIBUTION_WHEELS_DIRECTORY = "distribution-wheels"
+DISTRIBUTION_BUILD_TIMEOUT_SETTING = "install_timeout_s"
+DISTRIBUTION_MAX_WORKERS_SETTING = "max_install_workers"
+DISTRIBUTION_DEFAULT_MAX_WORKERS = 4
+DISTRIBUTION_WHEEL_BUILD_COMMAND = ("-m", "pip", "wheel", "--no-deps", "--no-build-isolation")
+DISTRIBUTION_GIT_METADATA_NAME = ".git"
+DISTRIBUTION_GITDIR_PREFIX = "gitdir:"
+DISTRIBUTION_WORKTREES_DIRECTORY = "worktrees"
 DISTRIBUTION_INTERPRETER_PROBE = '''import json,sys
 preloaded = 'spendguard' in sys.modules
 import spendguard
@@ -50,7 +59,7 @@ def distribution_policy():
     return policy
 
 
-def resolve_distribution_target():
+def resolve_distribution_target(version=None):
     """Resolve version from the blessed commit, never this process's installed version."""
     from . import _version
     pointer = release.green_pointer()
@@ -68,7 +77,52 @@ def resolve_distribution_target():
         raise ValueError("deployed version is not uniquely established")
     if pointer.get("version") and pointer["version"] != versions[0]:
         raise ValueError("pointer version disagrees with deployed commit")
-    return {"sha": pointer["sha"], "version": versions[0], "checkout": str(repository)}
+    return {"sha": pointer["sha"], "version": version or versions[0], "green_version": versions[0],
+            "checkout": str(repository)}
+
+
+def distribution_wheel_cache_path():
+    """Return the configured-home wheel cache shared by convergence runs."""
+    return Path(config.HOME) / DISTRIBUTION_WHEELS_DIRECTORY
+
+
+def cached_distribution_wheels(version):
+    """Return cached wheels whose parsed distribution and version match exactly."""
+    from .manifest import MANIFEST_DISTRIBUTION_NAME
+    try:
+        from packaging.utils import parse_wheel_filename
+    except ModuleNotFoundError:
+        from pip._vendor.packaging.utils import parse_wheel_filename
+    matches = []
+    cache = distribution_wheel_cache_path()
+    for candidate in cache.glob("*.whl") if cache.is_dir() else ():
+        try:
+            name, wheel_version, _build, _tags = parse_wheel_filename(candidate.name)
+        except ValueError:
+            continue
+        if str(name) == MANIFEST_DISTRIBUTION_NAME and str(wheel_version) == version:
+            matches.append(candidate)
+    return sorted(matches)
+
+
+def ensure_distribution_wheel(target, checkout, settings):
+    """Reuse or build the green wheel, then verify its embedded filename version."""
+    existing = cached_distribution_wheels(target["version"])
+    if existing:
+        return existing[0]
+    if target["version"] != target.get("green_version", target["version"]):
+        raise FileNotFoundError(f"rollback wheel is not cached: {target['version']}")
+    cache = distribution_wheel_cache_path()
+    cache.mkdir(parents=True, exist_ok=True)
+    command = [sys.executable, *DISTRIBUTION_WHEEL_BUILD_COMMAND, "--wheel-dir", str(cache), str(checkout)]
+    completed = subprocess.run(command, capture_output=True, text=True,
+                               timeout=settings[DISTRIBUTION_BUILD_TIMEOUT_SETTING], check=False)
+    if completed.returncode:
+        raise RuntimeError((completed.stderr or completed.stdout or "wheel build failed").strip())
+    built = cached_distribution_wheels(target["version"])
+    if not built:
+        raise ValueError(f"built wheel version does not match target: {target['version']}")
+    return built[0]
 
 
 def distribution_clean_environment():
@@ -178,6 +232,63 @@ def distribution_interpreter_on_target(probe, target):
                 and probe.get("sha") == target["sha"] and probe.get("dirty") is False)
 
 
+def distribution_install_attestation(install, probe, target, *, dev_venv=False):
+    """Return install-kind-aware target status and a stable machine reason."""
+    from . import manifest
+    kind = install.get("install_kind")
+    if dev_venv:
+        dev_target = {**target, "version": target.get("green_version", target["version"])}
+        on_target = kind == manifest.MANIFEST_EDITABLE_KIND and distribution_interpreter_on_target(probe, dev_target)
+        return on_target, None if on_target else "dev_editable_not_green"
+    if kind == manifest.MANIFEST_EDITABLE_KIND:
+        return False, "still_editable"
+    if kind != manifest.MANIFEST_WHEEL_KIND:
+        return False, "wheel_missing"
+    if install.get("wheel_version") != target["version"]:
+        return False, "wrong_version"
+    return True, None
+
+
+def distribution_dev_venv_status(install, target):
+    """Classify dev only from editable metadata origin and canonical source ownership."""
+    from . import manifest
+    if install.get("install_kind") != manifest.MANIFEST_EDITABLE_KIND:
+        return False, None
+    origin = install.get("editable_origin")
+    if not origin:
+        return None, "editable_origin_unknown"
+    canonical_checkout = Path(target.get("checkout", Path(__file__).resolve().parents[2])).resolve()
+    resolved_origin = Path(origin).resolve()
+    if resolved_origin == canonical_checkout:
+        return True, None
+    target_git = canonical_checkout / DISTRIBUTION_GIT_METADATA_NAME
+    origin_git = resolved_origin / DISTRIBUTION_GIT_METADATA_NAME
+    try:
+        if target_git.is_dir():
+            common_git = target_git.resolve()
+        elif target_git.is_file():
+            marker = target_git.read_text().strip()
+            if not marker.startswith(DISTRIBUTION_GITDIR_PREFIX):
+                return None, "canonical_source_unknown"
+            git_directory = Path(marker[len(DISTRIBUTION_GITDIR_PREFIX):].strip()).resolve()
+            common_git = (git_directory.parents[1] if git_directory.parent.name == DISTRIBUTION_WORKTREES_DIRECTORY
+                          else git_directory)
+        else:
+            return False, None
+        return origin_git.is_dir() and origin_git.resolve() == common_git, None
+    except (OSError, IndexError):
+        return None, "canonical_source_unknown"
+
+
+def inspect_distribution_install(python, policy):
+    """Inspect installation metadata without allowing startup hooks to mutate live state."""
+    from . import manifest
+    timeout = policy.get("probe_timeout_s", DISTRIBUTION_PROBE_TIMEOUT_S)
+    with distribution_probe_environment() as environment:
+        return manifest.inspect_interpreter_install_kind(
+            python, timeout_seconds=timeout, environment=environment)
+
+
 def distribution_surface_row(surface, kind, on_version=False, healthy=False, fd_ok=None, action="none", reason=None, **evidence):
     return {"surface": str(surface), "kind": kind, "on_version": bool(on_version), "healthy": bool(healthy),
             "fd_ok": fd_ok, "action_taken": action,
@@ -242,13 +353,13 @@ def attest_distribution_api_consumers(target, *, check=False, dry_run=False, set
     return rows
 
 
-def distribute_fleet(*, check=False, roots=None, dry_run=False, settings=None):
+def distribute_fleet(*, check=False, roots=None, dry_run=False, settings=None, version=None):
     """Idempotent scheduler/library entry. Any missing proof is a named straggler."""
     rows = []
     target = None
     audit_pruning = []
     try:
-        target = resolve_distribution_target()
+        target = resolve_distribution_target(version=version)
         policy = distribution_policy()
         audit_settings = config.consumer_audit_settings() if settings is None else settings
         try:
@@ -267,7 +378,12 @@ def distribute_fleet(*, check=False, roots=None, dry_run=False, settings=None):
                 inventory = {
                     "interpreters": [
                         {"python": surface["canonical_path"], "venv": str(Path(surface["canonical_path"]).parent.parent),
-                         "kind": "venv"}
+                         "kind": "venv", "install": {
+                             "install_kind": surface.get("install_kind"),
+                             "wheel_version": surface.get("wheel_version"),
+                             "editable_origin": surface.get("editable_origin"),
+                             "verification_error": surface.get("verification_error"),
+                         }}
                         for surface in persisted_manifest["surfaces"] if surface["surface_kind"] == "venv"
                     ],
                     "gaps": persisted_manifest.get("gaps", []),
@@ -292,18 +408,53 @@ def distribute_fleet(*, check=False, roots=None, dry_run=False, settings=None):
         audit_pruning = audit["pruned_at_depth"]
         checkout = None
         checkout_error = None
+        wheel_error = None
         if not check and not dry_run:
             try:
                 checkout = prepare_distribution_checkout(target, policy)
+                ensure_distribution_wheel(target, checkout, policy)
             except Exception as exc:
                 checkout_error = str(exc)
+                wheel_error = f"wheel unavailable: {exc}"
+
+        planned = []
         for python, item in sorted(interpreters.items()):
+            install = item.get("install") or inspect_distribution_install(python, policy)
+            managed_venv = item.get("kind") == "venv"
+            dev_status, classification_error = (distribution_dev_venv_status(install, target)
+                                                 if managed_venv else (True, None))
+            planned.append((python, item, install, dev_status, classification_error))
+
+        install_results = {}
+        wheel_candidates = [(python, item) for python, item, _install, dev_status, classification_error in planned
+                            if dev_status is False and classification_error is None]
+        if not check and not dry_run and checkout and not wheel_error:
+            configured_workers = int(config._cfg_get(
+                DISTRIBUTION_CONFIG_SECTION, DISTRIBUTION_MAX_WORKERS_SETTING,
+                DISTRIBUTION_DEFAULT_MAX_WORKERS))
+            worker_count = max(1, min(configured_workers, len(wheel_candidates) or 1))
+            with ThreadPoolExecutor(max_workers=worker_count) as executor:
+                futures = {executor.submit(
+                    setup.refresh_consumer_wheel_package, python, distribution_wheel_cache_path(),
+                    target["version"], policy["install_timeout_s"]): (python, item)
+                    for python, item in wheel_candidates}
+                for future in as_completed(futures):
+                    python, item = futures[future]
+                    try:
+                        future.result()
+                        hook_code = (setup.install_hook(item["venv"], install_pkg=False) if item.get("venv")
+                                     else setup.install_hook(user=True, python=python, install_pkg=False))
+                        install_results[python] = ("wheel-installed", None if not hook_code else f"gate arm exited {hook_code}")
+                    except Exception as exc:
+                        install_results[python] = ("wheel-install-failed", f"convergence failed: {exc}")
+
+        for python, item, install, dev_status, classification_error in planned:
             action = "none"
-            error = checkout_error
-            if not check and not dry_run and checkout:
+            error = classification_error
+            if dev_status is True and not check and not dry_run and checkout:
                 try:
                     fleet._refresh_editable_install(python, checkout, policy["install_timeout_s"])
-                    action = "reinstalled"
+                    action = "editable-reinstalled"
                     hook_code = (setup.install_hook(item["venv"], install_pkg=False) if item.get("venv")
                                  else setup.install_hook(user=True, python=python, install_pkg=False))
                     if hook_code:
@@ -311,11 +462,22 @@ def distribute_fleet(*, check=False, roots=None, dry_run=False, settings=None):
                 except Exception as exc:
                     error = f"convergence failed: {exc}"
             elif dry_run and not check:
-                action = "would-reinstall"
+                action = "would-reinstall-editable" if dev_status is True else "would-install-wheel"
+            elif not check and not dry_run and dev_status is False:
+                action, error = install_results.get(python, ("wheel-install-failed", wheel_error or checkout_error))
             probe = probe_distribution_interpreter(python, policy)
-            rows.append(distribution_surface_row(python, item["kind"], distribution_interpreter_on_target(probe, target),
+            refreshed_install = (inspect_distribution_install(python, policy)
+                if not check and not dry_run and error is None else install)
+            if item.get("kind") == "venv":
+                on_target, attestation_reason = distribution_install_attestation(
+                    refreshed_install, probe, target, dev_venv=dev_status is True)
+            else:
+                on_target = distribution_interpreter_on_target(probe, target)
+                attestation_reason = None if on_target else "identity_not_green"
+            rows.append(distribution_surface_row(python, item["kind"], on_target,
                                                  probe.get("confirmed") and probe.get("gate_enforcing") and not error,
-                                                 action=action, reason=error, probe=probe))
+                                                 action=action, reason=error or attestation_reason, probe=probe,
+                                                 install=refreshed_install, dev_venv=dev_status is True))
         # Retain audit arming rather than growing a parallel workspace policy.
         if not check and not dry_run:
             try:
@@ -357,6 +519,7 @@ def parse_distribution_cli_arguments(argv=None):
     parser.add_argument("--json", action="store_true")
     parser.add_argument("--roots", nargs="+")
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--version")
     return parser.parse_args(argv)
 
 
@@ -364,8 +527,8 @@ def distribute_command(argv=None):
     args = parse_distribution_cli_arguments(argv)
     if args.json:
         with contextlib.redirect_stdout(sys.stderr):
-            result = distribute_fleet(check=args.check, roots=args.roots, dry_run=args.dry_run)
+            result = distribute_fleet(check=args.check, roots=args.roots, dry_run=args.dry_run, version=args.version)
     else:
-        result = distribute_fleet(check=args.check, roots=args.roots, dry_run=args.dry_run)
+        result = distribute_fleet(check=args.check, roots=args.roots, dry_run=args.dry_run, version=args.version)
     print(json.dumps(result, indent=2, sort_keys=True) if args.json else render_distribution_table(result))
     return result["exit_code"]

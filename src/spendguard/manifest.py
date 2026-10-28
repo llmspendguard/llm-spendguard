@@ -30,10 +30,14 @@ dist=importlib.metadata.distribution(name)
 direct=dist.read_text('direct_url.json')
 kind=None
 reason=None
+editable_origin=None
 if direct:
  try:
   data=json.loads(direct)
-  if data.get('dir_info',{}).get('editable') is True: kind='editable'
+  if data.get('dir_info',{}).get('editable') is True:
+   kind='editable'
+   parsed=urllib.parse.urlparse(data.get('url',''))
+   if parsed.scheme=='file': editable_origin=str(pathlib.Path(urllib.parse.unquote(parsed.path)).resolve())
   elif data.get('url'):
    parsed=urllib.parse.urlparse(data['url'])
    if parsed.scheme=='file' or parsed.path.lower().endswith('.whl') or data.get('archive_info') is not None: kind='wheel'
@@ -51,7 +55,8 @@ if kind is None and metadata_root:
   if origin.is_relative_to(site_root): kind='wheel'
   else: kind='editable'
 if kind is None: reason=reason or 'distribution metadata and import origin did not resolve install kind'
-print(json.dumps({'install_kind':kind or 'unknown','wheel_version':dist.version if kind=='wheel' else None,**({'verification_error':reason} if reason else {})}))
+print(json.dumps({'install_kind':kind or 'unknown','wheel_version':dist.version if kind=='wheel' else None,
+ 'editable_origin':editable_origin,**({'verification_error':reason} if reason else {})}))
 '''
 
 
@@ -65,13 +70,13 @@ def canonical_manifest_surface_path(value: str | os.PathLike[str]) -> str:
     return str(Path(value).expanduser().resolve(strict=False))
 
 
-def inspect_interpreter_install_kind(python_executable: str, *, timeout_seconds: float) -> dict:
+def inspect_interpreter_install_kind(python_executable: str, *, timeout_seconds: float, environment=None) -> dict:
     """Read installed distribution metadata in the target interpreter."""
     try:
         completed = subprocess.run(
             [python_executable, "-c", MANIFEST_INTERPRETER_PROBE, MANIFEST_DISTRIBUTION_NAME,
              MANIFEST_IMPORT_PACKAGE_NAME],
-            capture_output=True, text=True, timeout=timeout_seconds, check=False,
+            capture_output=True, text=True, timeout=timeout_seconds, check=False, env=environment,
         )
         if completed.returncode:
             return {"install_kind": MANIFEST_UNKNOWN_KIND, "wheel_version": None,
