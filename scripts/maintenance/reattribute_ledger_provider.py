@@ -21,6 +21,7 @@ import time
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "src"))
 from spendguard import config, pricing   # noqa: E402
+from spendguard.money_scale import real_usd_to_nano_usd
 
 
 def main(argv=None):
@@ -66,10 +67,12 @@ def main(argv=None):
         con.backup(snap)                                   # CONSISTENT snapshot (handles WAL), not a live file copy
     snap.close()
     print(f"\nsnapshot taken: {bak}")
+    from spendguard.calls import _ensure_call_observation_schema
+    _ensure_call_observation_schema(con)
     with con:
         for r in rows:
-            con.execute("UPDATE calls SET provider=?, cost=? WHERE id=?",
-                        (a.to_provider, new_costs[r["id"]], r["id"]))
+            con.execute("UPDATE calls SET provider=?, cost=?, cost_nano=? WHERE id=?",
+                        (a.to_provider, new_costs[r["id"]], real_usd_to_nano_usd(new_costs[r["id"]]), r["id"]))
     print(f"APPLIED: {len(rows)} row(s) re-attributed to {a.to_provider!r} and re-priced. Rollback: restore {bak}.")
     con.close()
     return 0

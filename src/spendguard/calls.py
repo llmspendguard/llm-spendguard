@@ -11,11 +11,61 @@ Shares the SQLite db with budget (config.db_path()), table `calls`. RLock — re
 hold it and call _calls_db() which re-acquires).
 """
 import os, datetime, threading, hashlib, inspect, contextlib, uuid
+import logging
+from decimal import Decimal, localcontext
 from typing import Optional
 
 from . import config
 from .ledger_fork_locks import new_fork_reset_ledger_state
 from .schema_indexes import ensure_ordered_index_coverage
+from .money_scale import real_usd_to_nano_usd, nano_usd_to_usd, assert_nano_total_matches
+
+CALL_OBSERVATION_NANO_COLUMNS = {column: f"{column}_nano" for column in ("cost", "input_cost_floor")}
+
+
+def _call_observation_nano_amounts(cost, input_cost_floor):
+    # Mirrors are derived: public writers have fixed signatures rejecting nano
+    # keyword arguments; callers supply only the preserved REAL amounts.
+    return tuple(None if amount is None else real_usd_to_nano_usd(float(amount))
+                 for amount in (cost, input_cost_floor))
+
+
+def _backfill_call_observation_nano_columns(connection, missing_columns):
+    conversion_gaps = []
+    for raw_column, nano_column in CALL_OBSERVATION_NANO_COLUMNS.items():
+        if nano_column not in missing_columns:
+            continue
+        for storage_row_id, row_id, raw_amount in connection.execute(f"SELECT rowid,id,{raw_column} FROM calls"):
+            try:
+                nano_amount = None if raw_amount is None else real_usd_to_nano_usd(raw_amount)
+            except (ValueError, TypeError, OverflowError) as conversion_error:
+                conversion_gaps.append(((storage_row_id, row_id), raw_column, str(conversion_error)))
+                continue
+            connection.execute(f"UPDATE calls SET {nano_column}=? WHERE rowid=?", (nano_amount, storage_row_id))
+    if conversion_gaps:
+        raise ValueError(f"call_observation_nano_invalid_amount_gap count={len({gap[0] for gap in conversion_gaps})} "
+                         f"amount_count={len(conversion_gaps)} rows={conversion_gaps!r}")
+    for raw_column, nano_column in CALL_OBSERVATION_NANO_COLUMNS.items():
+        nano_total = sum(row[0] for row in connection.execute(
+            f"SELECT {nano_column} FROM calls WHERE {nano_column} IS NOT NULL"))
+        converted_total = sum(real_usd_to_nano_usd(row[0]) for row in connection.execute(
+            f"SELECT {raw_column} FROM calls WHERE {raw_column} IS NOT NULL"))
+        # Integer accumulation followed by Decimal scaling is an exact Decimal sum,
+        # independent of ambient Decimal precision and SQLite SUM integer overflow.
+        assert_nano_total_matches(nano_total, nano_usd_to_usd(converted_total),
+                                  tolerance_usd='0', label=f"calls.{raw_column}")
+        float_total = connection.execute(f"SELECT SUM({raw_column}) FROM calls").fetchone()[0]
+        # Nano is now more precise than the historical binary-float SUM; this delta
+        # is informational, never the equality gate above.
+        exact_usd = nano_usd_to_usd(nano_total)
+        historical_usd = Decimal(str(float_total or 0))
+        with localcontext() as delta_context:
+            carry_digits = 2
+            delta_context.prec = (max(exact_usd.adjusted(), historical_usd.adjusted())
+                                  - min(exact_usd.as_tuple().exponent, historical_usd.as_tuple().exponent)
+                                  + carry_digits)
+            delta = exact_usd - historical_usd
+        logging.getLogger(__name__).info("calls_nano_float_sum_delta column=%s delta_usd=%s", raw_column, delta)
 
 _lock = new_fork_reset_ledger_state(globals(), "_lock", threading.RLock)
 _local = threading.local()
@@ -332,6 +382,18 @@ def caller():
 
 # ── storage ──
 def _ensure_call_observation_schema(c):
+    c.execute("SAVEPOINT call_observation_nano_schema")
+    try:
+        _initialize_call_observation_nano_schema(c)
+        c.execute("RELEASE SAVEPOINT call_observation_nano_schema")
+    except BaseException:
+        c.execute("ROLLBACK TO SAVEPOINT call_observation_nano_schema")
+        c.execute("RELEASE SAVEPOINT call_observation_nano_schema")
+        raise
+    c.commit()
+
+
+def _initialize_call_observation_nano_schema(c):
     """Create the calls table + its indexes + forward-only additive columns. Idempotent; run once per pooled
     connection by config.pooled_ledger_conn."""
     c.execute("""CREATE TABLE IF NOT EXISTS calls(
@@ -352,6 +414,7 @@ def _ensure_call_observation_schema(c):
     # so the f-string is the only way and carries no injection surface. `executor` = which subscription
     # lane served the call; `project` = the repo it belongs to (so lane plan-value attributes like spend).
     _have = {r[1] for r in c.execute("PRAGMA table_info(calls)").fetchall()}
+    missing_nano_columns = set(CALL_OBSERVATION_NANO_COLUMNS.values()) - _have
     # `effort` = the reasoning-effort TIER actually sent (none|minimal|low|medium|high|… or the wire
     # value a model accepts), so cost×quality can be sliced per (intent, model, EFFORT) — the axis the
     # best-value selector titrates. NULL on a non-reasoning call, a call that sent no effort, or a legacy row.
@@ -399,9 +462,12 @@ def _ensure_call_observation_schema(c):
                         ("resolved_lane", "TEXT"), ("redirect_reason", "TEXT"),
                         ("cache_read_tok", "INTEGER"), ("cache_write_tok", "INTEGER"),
                         ("routing_snapshot_json", "TEXT"), ("request_schema_json", "TEXT"),
-                        ("request_max_tokens", "INTEGER"), ("request_decomposition_json", "TEXT")):
+                        ("request_max_tokens", "INTEGER"), ("request_decomposition_json", "TEXT"),
+                        *((column, "INTEGER") for column in CALL_OBSERVATION_NANO_COLUMNS.values())):
         if _col not in _have:
             c.execute(f"ALTER TABLE calls ADD COLUMN {_col} {_decl}")
+    if missing_nano_columns:
+        _backfill_call_observation_nano_columns(c, missing_nano_columns)
     # Completeness is orthogonal to success/failure. NULL denotes unverifiable legacy
     # provenance; never infer historical completeness from a zero token count.
     c.execute("CREATE INDEX IF NOT EXISTS idx_calls_executor ON calls(executor)")  # per-lane rollups
@@ -418,7 +484,6 @@ def _ensure_call_observation_schema(c):
     routing_audit.ensure_decisions_call_fk_schema(c, commit=False)
     # Default-on complete content retention shares this connection so large governed fans do not
     # consume a second per-thread ledger connection. Its schema/purge seam is additive and local-only.
-    c.commit()
 
 
 def _calls_db():
@@ -684,8 +749,8 @@ def record_call(provider, model, kind, cost, in_tok=0, out_tok=0, latency=None,
                 "quality,quality_src,quality_conf,outcome,http_status,provider_error,retry_after,attempts,disposition,disposition_reason,retry_of,fell_from,fell_reason,"
                 "call_class,origin_session,requested_model,served_model,resolved_lane,redirect_reason,cache_read_tok,cache_write_tok,"
                 "routing_snapshot_json,request_schema_json,request_max_tokens,request_decomposition_json,"
-                "settlement_complete,input_cost_floor,token_usage_complete) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "settlement_complete,input_cost_floor,token_usage_complete,cost_nano,input_cost_floor_nano) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (cid, ts, chain, intent, who or ctx.get("who") or caller(), provider, model, kind,
                  *settlement_values[:3], latency, ph, psnip, osnip, finish,
                  executor, proj, (effort or None), suspect,
@@ -705,7 +770,8 @@ def record_call(provider, model, kind, cost, in_tok=0, out_tok=0, latency=None,
                  routing_audit.encode_audit_json(routing_snapshot),
                  routing_audit.encode_audit_json(request_schema),
                  (int(request_max_tokens) if request_max_tokens is not None else None),
-                 routing_audit.encode_audit_json(request_decomposition), *settlement_values[3:]))
+                 routing_audit.encode_audit_json(request_decomposition), *settlement_values[3:],
+                 *_call_observation_nano_amounts(settlement_values[2], settlement_values[4])))
             routing_audit.insert_linked_decision(
                 audit_connection,
                 call_id=cid,
@@ -793,11 +859,12 @@ def insert(provider, model, kind, cost, in_tok=0, out_tok=0, ts=None, intent=Non
         _calls_db().execute(
             "INSERT INTO calls (id,ts,chain,intent,caller,provider,model,kind,in_tok,out_tok,"
             "cost,quality,quality_src,quality_conf,effort,project,call_class,origin_session,"
-            "settlement_complete,input_cost_floor,token_usage_complete) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "settlement_complete,input_cost_floor,token_usage_complete,cost_nano,input_cost_floor_nano) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (cid, ts, chain, intent, who, provider, model, kind,
              *settlement_values[:3], quality, quality_src, quality_conf,
-             (effort or None), proj, call_class, origin_session, *settlement_values[3:]))
+             (effort or None), proj, call_class, origin_session, *settlement_values[3:],
+             *_call_observation_nano_amounts(settlement_values[2], settlement_values[4])))
         _calls_db().commit()
     return cid
 
@@ -814,8 +881,8 @@ def reconcile_calls_batch_estimate(provider, model, intent, in_tok, out_tok, cos
             return False
         settlement_values = _call_settlement_values(provider, model, "batch", cost, in_tok, out_tok)
         con.execute("UPDATE calls SET in_tok=?, out_tok=?, cost=?, settlement_complete=?, input_cost_floor=?, "
-                    "token_usage_complete=? WHERE id=?",
-                    (*settlement_values, row[0]))
+                    "token_usage_complete=?, cost_nano=?, input_cost_floor_nano=? WHERE id=?",
+                    (*settlement_values, *_call_observation_nano_amounts(settlement_values[2], settlement_values[4]), row[0]))
         con.commit()
     return True
 
