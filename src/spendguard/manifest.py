@@ -16,6 +16,7 @@ import urllib.parse
 from functools import lru_cache
 
 from . import config, fleet, setup
+from ._version import __version__ as SPENDGUARD_WRITER_VERSION
 
 MANIFEST_FILENAME = "surface-manifest.json"
 MANIFEST_SCHEMA_VERSION = 1
@@ -30,6 +31,7 @@ MANIFEST_DAEMON_CONSUMER_ROLE = fleet.CONSUMER_ROLE_DAEMON
 MANIFEST_DAEMON_SURFACE_KIND = "mcp"
 MANIFEST_RUNNING_CONSUMER_SURFACE_KIND = "consumer"
 MANIFEST_UNREPRESENTABLE_CONSUMER_REASON = "missing_executable_and_supervision_identity"
+MANIFEST_DIST_INFO_UNSTATTABLE_SENTINEL = "unstattable-dist-info"
 
 
 def determine_distribution_install_kind(distribution_name: str, import_package_name: str) -> dict:
@@ -103,6 +105,54 @@ def canonical_manifest_surface_path(value: str | os.PathLike[str]) -> str:
     return str(Path(value).expanduser().resolve(strict=False))
 
 
+def manifest_scan_root_mtimes(roots) -> dict:
+    """Capture the mechanical invalidation key for interpreter enumeration roots."""
+    result = {}
+    for value in roots or ():
+        path = Path(value).expanduser().absolute()
+        try:
+            result[str(path)] = path.stat().st_mtime_ns
+        except OSError:
+            result[str(path)] = None
+    return result
+
+
+def interpreter_distribution_metadata_mtime(python_executable: str) -> int | None:
+    """Return the newest target dist-info mtime without importing target code."""
+    executable = Path(python_executable).resolve(strict=False)
+    venv = executable.parent.parent
+    candidates = tuple(venv.glob("lib/python*/site-packages/llm_spendguard*.dist-info"))
+    mtimes = []
+    for candidate in candidates:
+        try:
+            mtimes.append(candidate.stat().st_mtime_ns)
+        except OSError:
+            continue
+    return max(mtimes) if mtimes else None
+
+
+def interpreter_distribution_metadata_candidates(python_executable: str) -> list:
+    """Return every target dist-info identity for audit-cache invalidation."""
+    executable = Path(python_executable).resolve(strict=False)
+    venv = executable.parent.parent
+    candidates = tuple(venv.glob("lib/python*/site-packages/llm_spendguard*.dist-info"))
+    identities = []
+    for candidate in sorted(candidates, key=lambda path: str(path.relative_to(venv))):
+        candidate_name = str(candidate.relative_to(venv))
+        try:
+            candidate_mtime = candidate.stat().st_mtime_ns
+        except OSError:
+            candidate_mtime = MANIFEST_DIST_INFO_UNSTATTABLE_SENTINEL
+        identities.append([candidate_name, candidate_mtime])
+    return identities
+
+
+def interpreter_audit_cache_key(python_executable: str) -> dict:
+    return {"interpreter_realpath": str(Path(python_executable).resolve(strict=False)),
+            "dist_info_candidates": interpreter_distribution_metadata_candidates(python_executable),
+            "writer_version": SPENDGUARD_WRITER_VERSION}
+
+
 def inspect_interpreter_install_kind(python_executable: str, *, timeout_seconds: float, environment=None) -> dict:
     """Read installed distribution metadata in the target interpreter."""
     try:
@@ -174,6 +224,7 @@ def build_surface_manifest(*, roots=None, settings=None, now=None) -> dict:
         surfaces[("venv", python_executable)] = {
             "canonical_path": python_executable, "surface_kind": "venv",
             **install, **identity, "last_verified_at": verified_at,
+            "audit_cache_key": interpreter_audit_cache_key(python_executable),
         }
 
     for consumer in fleet.running_consumers(prune=False):
@@ -211,7 +262,10 @@ def build_surface_manifest(*, roots=None, settings=None, now=None) -> dict:
             "served_sha": None, "role": "cli", "last_verified_at": verified_at,
         }
 
-    manifest = {"schema_version": MANIFEST_SCHEMA_VERSION, "last_verified_at": verified_at,
+    configured_roots = (resolved_settings.get("workspace_roots", ()) if roots is None else roots)
+    manifest = {"schema_version": MANIFEST_SCHEMA_VERSION, "writer_version": SPENDGUARD_WRITER_VERSION,
+                "last_verified_at": verified_at,
+                "enumeration_root_mtimes": manifest_scan_root_mtimes(configured_roots),
                 "surfaces": sorted(surfaces.values(), key=lambda row: (row["surface_kind"], row["canonical_path"])),
                 "gaps": discovery["gaps"]}
     destination = manifest_path()

@@ -135,7 +135,8 @@ def test_distribution_probe_snapshot_is_load_bearing():
     # Actual unisolated startup reproduces the original fleet.db write. Removing
     # only the environment guard must turn the same no-persistence assertion red.
     with patch.object(distribution, "distribution_probe_environment",
-                      lambda: contextlib.nullcontext(distribution.distribution_clean_environment())):
+                      lambda timeout_seconds=None: contextlib.nullcontext(
+                          distribution.distribution_clean_environment())):
         try:
             exercise_distribution_probe_startup_without_persistence()
         except AssertionError as error:
