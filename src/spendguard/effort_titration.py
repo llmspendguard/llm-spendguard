@@ -28,7 +28,67 @@ import json
 import sys
 
 from . import adapters, advisor, bakeoff, budget, calls, config, gate, models, pricing
+from decimal import Decimal, localcontext
+import logging
 from .ledger_writer import serialize_ledger_function
+from .money_scale import real_usd_to_nano_usd, nano_usd_to_usd, assert_nano_total_matches
+
+EFFORT_PROGRESS_NANO_COLUMNS = {column: f"{column}_nano" for column in ("cost",)}
+
+
+def _effort_progress_nano_amounts(cost):
+    # Fixed-signature writers accept only raw amounts; nano mirrors are derived.
+    return tuple(None if amount is None else real_usd_to_nano_usd(float(amount))
+                 for amount in (cost,))
+
+
+def _backfill_effort_progress_nano_columns(connection, missing_columns):
+    conversion_gaps = []
+    for raw_column, nano_column in EFFORT_PROGRESS_NANO_COLUMNS.items():
+        if nano_column not in missing_columns:
+            continue
+        for storage_row_id, raw_amount in connection.execute(f"SELECT rowid,{raw_column} FROM effort_titration"):
+            try:
+                nano_amount = None if raw_amount is None else real_usd_to_nano_usd(raw_amount)
+            except (ValueError, TypeError, OverflowError) as conversion_error:
+                conversion_gaps.append((storage_row_id, raw_column, str(conversion_error)))
+                continue
+            connection.execute(f"UPDATE effort_titration SET {nano_column}=? WHERE rowid=?", (nano_amount, storage_row_id))
+    if conversion_gaps:
+        raise ValueError(f"effort_progress_nano_invalid_amount_gap count={len({gap[0] for gap in conversion_gaps})} "
+                         f"amount_count={len(conversion_gaps)} rows={conversion_gaps!r}")
+    for raw_column, nano_column in EFFORT_PROGRESS_NANO_COLUMNS.items():
+        nano_total = sum(row[0] for row in connection.execute(
+            f"SELECT {nano_column} FROM effort_titration WHERE {nano_column} IS NOT NULL"))
+        converted_total = sum(real_usd_to_nano_usd(row[0]) for row in connection.execute(
+            f"SELECT {raw_column} FROM effort_titration WHERE {raw_column} IS NOT NULL"))
+        # Python integer accumulation and Decimal scaling stay exact independently
+        # of ambient Decimal precision and SQLite SUM integer overflow.
+        assert_nano_total_matches(nano_total, nano_usd_to_usd(converted_total),
+                                  tolerance_usd='0', label=f"effort_progress.{raw_column}")
+        float_total = connection.execute(f"SELECT SUM({raw_column}) FROM effort_titration").fetchone()[0]
+        # Nano is now more precise than the historical float sum; informational only.
+        exact_usd = nano_usd_to_usd(nano_total)
+        historical_usd = Decimal(str(float_total or 0))
+        with localcontext() as delta_context:
+            carry_digits = 2
+            delta_context.prec = (max(exact_usd.adjusted(), historical_usd.adjusted())
+                                  - min(exact_usd.as_tuple().exponent, historical_usd.as_tuple().exponent)
+                                  + carry_digits)
+            delta = exact_usd - historical_usd
+        logging.getLogger(__name__).info("effort_progress_nano_float_sum_delta column=%s delta_usd=%s", raw_column, delta)
+
+
+def _initialize_effort_progress_nano_schema(connection):
+    existing_columns = {row[1] for row in connection.execute("PRAGMA table_info(effort_titration)")}
+    missing_columns = set(EFFORT_PROGRESS_NANO_COLUMNS.values()) - existing_columns
+    for nano_column in EFFORT_PROGRESS_NANO_COLUMNS.values():
+        if nano_column in missing_columns:
+            connection.execute(f"ALTER TABLE effort_titration ADD COLUMN {nano_column} INTEGER")
+    if missing_columns:
+        _backfill_effort_progress_nano_columns(connection, missing_columns)
+
+
 from .submit import _count_tokens
 
 _LADDER = ("minimal", "low", "medium", "high")   # default tiers to A/B; the send-side heal drops any an endpoint rejects
@@ -72,10 +132,22 @@ def _ckpt_db():
 
 
 def _ensure_effort_progress_schema(db):
+    db.execute("SAVEPOINT effort_progress_nano_schema")
+    try:
+        _initialize_effort_progress_schema(db)
+        db.execute("RELEASE SAVEPOINT effort_progress_nano_schema")
+    except BaseException:
+        db.execute("ROLLBACK TO SAVEPOINT effort_progress_nano_schema")
+        db.execute("RELEASE SAVEPOINT effort_progress_nano_schema")
+        raise
+    db.commit()
+
+
+def _initialize_effort_progress_schema(db):
     db.execute("CREATE TABLE IF NOT EXISTS effort_titration(intent TEXT, model TEXT, effort TEXT, "
                "n INTEGER, sum_score REAL, usable INTEGER, failed TEXT, cost REAL, consumed INTEGER, "
                "updated TEXT, PRIMARY KEY(intent, model, effort))")
-    db.commit()
+    _initialize_effort_progress_nano_schema(db)
 
 
 def _new_acc():
@@ -109,12 +181,16 @@ def _load_progress(intent, model, efforts):
 def _save_one(intent, model, effort, a):
     """Persist ONE effort's accumulator — called after EVERY measured prompt, so a mid-chunk crash loses nothing
     already measured and a failed prompt stays recorded by identity (the durable checkpoint the resume reads)."""
+    if any(column in a for column in EFFORT_PROGRESS_NANO_COLUMNS.values()):
+        raise TypeError("effort progress nano amounts are derived from preserved REAL cost")
     db = _ckpt_db()
     ts = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
     with budget._lock:
-        db.execute("INSERT OR REPLACE INTO effort_titration VALUES (?,?,?,?,?,?,?,?,?,?)",
+        db.execute("INSERT OR REPLACE INTO effort_titration "
+                   "(intent,model,effort,n,sum_score,usable,failed,cost,consumed,updated,cost_nano) "
+                   "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
                    (intent, model, effort, a["n"], a["sum_score"], a["usable"], json.dumps(a["failed"]),
-                    a["cost"], a["consumed"], ts))
+                    a["cost"], a["consumed"], ts, *_effort_progress_nano_amounts(a["cost"])))
         db.commit()
 
 

@@ -12,7 +12,66 @@ import math
 from pathlib import Path
 
 from . import budget, config
+from decimal import Decimal, localcontext
+import logging
 from .ledger_writer import best_effort_ledger_function
+from .money_scale import real_usd_to_nano_usd, nano_usd_to_usd, assert_nano_total_matches
+
+SAVINGS_NANO_COLUMNS = {column: f"{column}_nano" for column in ("amount",)}
+
+
+def _savings_nano_amounts(amount):
+    # Fixed-signature writers accept only raw amounts; nano mirrors are derived.
+    return tuple(None if amount is None else real_usd_to_nano_usd(float(amount))
+                 for amount in (amount,))
+
+
+def _backfill_savings_nano_columns(connection, missing_columns):
+    conversion_gaps = []
+    for raw_column, nano_column in SAVINGS_NANO_COLUMNS.items():
+        if nano_column not in missing_columns:
+            continue
+        for storage_row_id, raw_amount in connection.execute(f"SELECT rowid,{raw_column} FROM savings"):
+            try:
+                nano_amount = None if raw_amount is None else real_usd_to_nano_usd(raw_amount)
+            except (ValueError, TypeError, OverflowError) as conversion_error:
+                conversion_gaps.append((storage_row_id, raw_column, str(conversion_error)))
+                continue
+            connection.execute(f"UPDATE savings SET {nano_column}=? WHERE rowid=?", (nano_amount, storage_row_id))
+    if conversion_gaps:
+        raise ValueError(f"savings_nano_invalid_amount_gap count={len({gap[0] for gap in conversion_gaps})} "
+                         f"amount_count={len(conversion_gaps)} rows={conversion_gaps!r}")
+    for raw_column, nano_column in SAVINGS_NANO_COLUMNS.items():
+        nano_total = sum(row[0] for row in connection.execute(
+            f"SELECT {nano_column} FROM savings WHERE {nano_column} IS NOT NULL"))
+        converted_total = sum(real_usd_to_nano_usd(row[0]) for row in connection.execute(
+            f"SELECT {raw_column} FROM savings WHERE {raw_column} IS NOT NULL"))
+        # Python integer accumulation and Decimal scaling stay exact independently
+        # of ambient Decimal precision and SQLite SUM integer overflow.
+        assert_nano_total_matches(nano_total, nano_usd_to_usd(converted_total),
+                                  tolerance_usd='0', label=f"savings.{raw_column}")
+        float_total = connection.execute(f"SELECT SUM({raw_column}) FROM savings").fetchone()[0]
+        # Nano is now more precise than the historical float sum; informational only.
+        exact_usd = nano_usd_to_usd(nano_total)
+        historical_usd = Decimal(str(float_total or 0))
+        with localcontext() as delta_context:
+            carry_digits = 2
+            delta_context.prec = (max(exact_usd.adjusted(), historical_usd.adjusted())
+                                  - min(exact_usd.as_tuple().exponent, historical_usd.as_tuple().exponent)
+                                  + carry_digits)
+            delta = exact_usd - historical_usd
+        logging.getLogger(__name__).info("savings_nano_float_sum_delta column=%s delta_usd=%s", raw_column, delta)
+
+
+def _initialize_savings_nano_schema(connection):
+    existing_columns = {row[1] for row in connection.execute("PRAGMA table_info(savings)")}
+    missing_columns = set(SAVINGS_NANO_COLUMNS.values()) - existing_columns
+    for nano_column in SAVINGS_NANO_COLUMNS.values():
+        if nano_column in missing_columns:
+            connection.execute(f"ALTER TABLE savings ADD COLUMN {nano_column} INTEGER")
+    if missing_columns:
+        _backfill_savings_nano_columns(connection, missing_columns)
+
 
 # per-source confidence → coefficient of variation (lower confidence ⇒ wider spread). certain ⟂ counterfactual.
 # best-value = the auto-selector chose a cheaper (model, effort) that held the intent's MEASURED quality bar; it is a
@@ -56,10 +115,22 @@ def _savings_db():
 
 
 def _ensure_guard_savings_schema(db):
+    db.execute("SAVEPOINT savings_nano_schema")
+    try:
+        _initialize_guard_savings_schema(db)
+        db.execute("RELEASE SAVEPOINT savings_nano_schema")
+    except BaseException:
+        db.execute("ROLLBACK TO SAVEPOINT savings_nano_schema")
+        db.execute("RELEASE SAVEPOINT savings_nano_schema")
+        raise
+    db.commit()
+
+
+def _initialize_guard_savings_schema(db):
     db.execute("CREATE TABLE IF NOT EXISTS savings "
                "(ts TEXT, day TEXT, project TEXT, source TEXT, amount REAL, cv REAL)")
     db.execute("CREATE INDEX IF NOT EXISTS idx_savings_day ON savings(day)")
-    db.commit()
+    _initialize_savings_nano_schema(db)
 
 
 @best_effort_ledger_function
@@ -82,8 +153,9 @@ def record_saving(source, amount, confidence=None, project=None):
         now = datetime.datetime.now(datetime.timezone.utc)
         db = _savings_db()
         with budget._lock:
-            db.execute("INSERT INTO savings (ts,day,project,source,amount,cv) VALUES (?,?,?,?,?,?)",
-                       (now.isoformat(timespec="seconds"), now.strftime("%Y-%m-%d"), proj, source, amount, cv))
+            db.execute("INSERT INTO savings (ts,day,project,source,amount,cv,amount_nano) VALUES (?,?,?,?,?,?,?)",
+                       (now.isoformat(timespec="seconds"), now.strftime("%Y-%m-%d"), proj, source, amount, cv,
+                        *_savings_nano_amounts(amount)))
             db.commit()
     except Exception as e:
         # Never RAISES (guarding must not break the call path) — but never SILENT either: a swallowed DB write
@@ -215,15 +287,17 @@ def record_decision(intent, requested_model, chosen_model, counterfactual_usd, a
         db = _decisions_db()
         with budget._lock:
             cls = reason_class if reason_class in _DECISION_REASON_CLASSES else None
+            from . import routing_audit
             db.execute("INSERT INTO decisions (ts,day,project,intent,basis,requested_model,requested_effort,"
-                       "chosen_model,chosen_effort,counterfactual_usd,actual_usd,saved_usd,why,reason_class,call_id) "
-                       "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                       "chosen_model,chosen_effort,counterfactual_usd,actual_usd,saved_usd,why,reason_class,call_id,"
+                       "counterfactual_usd_nano,actual_usd_nano,saved_usd_nano) "
+                       "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                        (now.isoformat(timespec="seconds"), now.strftime("%Y-%m-%d"), proj, intent, basis,
                         requested_model, requested_effort, chosen_model, chosen_effort,
                         float(counterfactual_usd) if counterfactual_usd is not None else None,
                         float(actual_usd) if actual_usd is not None else None,
                         float(saved_usd) if saved_usd is not None else None, why, cls,
-                        call_id))
+                        call_id, *routing_audit._decision_nano_amounts(counterfactual_usd, actual_usd, saved_usd)))
             db.commit()
     except Exception:
         raise

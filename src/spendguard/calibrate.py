@@ -41,7 +41,66 @@ import time
 import datetime
 
 from . import pricing
+from decimal import Decimal, localcontext
+import logging
 from .ledger_writer import best_effort_ledger_function, current_ledger_writer_connection, serialize_ledger_function
+from .money_scale import real_usd_to_nano_usd, nano_usd_to_usd, assert_nano_total_matches
+
+COST_PREDICTION_NANO_COLUMNS = {column: f"{column}_nano" for column in ("predicted_usd", "actual_usd",)}
+
+
+def _cost_prediction_nano_amounts(predicted_usd, actual_usd):
+    # Fixed-signature writers accept only raw amounts; nano mirrors are derived.
+    return tuple(None if amount is None else real_usd_to_nano_usd(float(amount))
+                 for amount in (predicted_usd, actual_usd,))
+
+
+def _backfill_cost_prediction_nano_columns(connection, missing_columns):
+    conversion_gaps = []
+    for raw_column, nano_column in COST_PREDICTION_NANO_COLUMNS.items():
+        if nano_column not in missing_columns:
+            continue
+        for storage_row_id, raw_amount in connection.execute(f"SELECT rowid,{raw_column} FROM cost_predictions"):
+            try:
+                nano_amount = None if raw_amount is None else real_usd_to_nano_usd(raw_amount)
+            except (ValueError, TypeError, OverflowError) as conversion_error:
+                conversion_gaps.append((storage_row_id, raw_column, str(conversion_error)))
+                continue
+            connection.execute(f"UPDATE cost_predictions SET {nano_column}=? WHERE rowid=?", (nano_amount, storage_row_id))
+    if conversion_gaps:
+        raise ValueError(f"cost_prediction_nano_invalid_amount_gap count={len({gap[0] for gap in conversion_gaps})} "
+                         f"amount_count={len(conversion_gaps)} rows={conversion_gaps!r}")
+    for raw_column, nano_column in COST_PREDICTION_NANO_COLUMNS.items():
+        nano_total = sum(row[0] for row in connection.execute(
+            f"SELECT {nano_column} FROM cost_predictions WHERE {nano_column} IS NOT NULL"))
+        converted_total = sum(real_usd_to_nano_usd(row[0]) for row in connection.execute(
+            f"SELECT {raw_column} FROM cost_predictions WHERE {raw_column} IS NOT NULL"))
+        # Python integer accumulation and Decimal scaling stay exact independently
+        # of ambient Decimal precision and SQLite SUM integer overflow.
+        assert_nano_total_matches(nano_total, nano_usd_to_usd(converted_total),
+                                  tolerance_usd='0', label=f"cost_prediction.{raw_column}")
+        float_total = connection.execute(f"SELECT SUM({raw_column}) FROM cost_predictions").fetchone()[0]
+        # Nano is now more precise than the historical float sum; informational only.
+        exact_usd = nano_usd_to_usd(nano_total)
+        historical_usd = Decimal(str(float_total or 0))
+        with localcontext() as delta_context:
+            carry_digits = 2
+            delta_context.prec = (max(exact_usd.adjusted(), historical_usd.adjusted())
+                                  - min(exact_usd.as_tuple().exponent, historical_usd.as_tuple().exponent)
+                                  + carry_digits)
+            delta = exact_usd - historical_usd
+        logging.getLogger(__name__).info("cost_prediction_nano_float_sum_delta column=%s delta_usd=%s", raw_column, delta)
+
+
+def _initialize_cost_prediction_nano_schema(connection):
+    existing_columns = {row[1] for row in connection.execute("PRAGMA table_info(cost_predictions)")}
+    missing_columns = set(COST_PREDICTION_NANO_COLUMNS.values()) - existing_columns
+    for nano_column in COST_PREDICTION_NANO_COLUMNS.values():
+        if nano_column in missing_columns:
+            connection.execute(f"ALTER TABLE cost_predictions ADD COLUMN {nano_column} INTEGER")
+    if missing_columns:
+        _backfill_cost_prediction_nano_columns(connection, missing_columns)
+
 
 P_LO, P_HI = 0.50, 0.90       # the two quantiles every learned quantity reports
 SHRINK_K = 8.0                # EB prior strength: a level with n obs gets weight n/(n+K) vs its parent
@@ -67,6 +126,17 @@ def _con():
 
 
 def _ensure_cost_predictions_schema(c):
+    c.execute("SAVEPOINT cost_prediction_nano_schema")
+    try:
+        _initialize_cost_predictions_schema(c)
+        c.execute("RELEASE SAVEPOINT cost_prediction_nano_schema")
+    except BaseException:
+        c.execute("ROLLBACK TO SAVEPOINT cost_prediction_nano_schema")
+        c.execute("RELEASE SAVEPOINT cost_prediction_nano_schema")
+        raise
+
+
+def _initialize_cost_predictions_schema(c):
     c.execute("""CREATE TABLE IF NOT EXISTS cost_predictions(
         job_id TEXT PRIMARY KEY, ts TEXT, label TEXT, model TEXT, transport TEXT,
         n_req INTEGER, est_in INTEGER, est_out_max INTEGER, predicted_usd REAL,
@@ -74,6 +144,7 @@ def _ensure_cost_predictions_schema(c):
         actual_in INTEGER, actual_out INTEGER, actual_usd REAL, actual_calls INTEGER,
         paired_ts TEXT)""")
     c.execute("CREATE INDEX IF NOT EXISTS idx_cp_paired ON cost_predictions(paired_ts)")
+    _initialize_cost_prediction_nano_schema(c)
 
 
 def _identity():
@@ -370,10 +441,10 @@ def record_prediction(job_id, label, model, predicted_usd, est_in=None, est_out_
         con = _con()
         con.execute("INSERT OR REPLACE INTO cost_predictions "
                     "(job_id, ts, label, model, transport, n_req, est_in, est_out_max, predicted_usd, "
-                    "user, project) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                    "user, project, predicted_usd_nano, actual_usd_nano) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     (str(job_id), datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
                      label, model, transport, int(n), est_in, est_out_max, predicted_usd,
-                     user or du, project or dp))
+                     user or du, project or dp, *_cost_prediction_nano_amounts(predicted_usd, None)))
         con.commit()
         return True
     except Exception:
@@ -411,11 +482,12 @@ def pair(now=None):
             stamp = datetime.datetime.fromtimestamp(now, tz=datetime.timezone.utc) \
                 .isoformat(timespec="seconds")
             if rows:
+                actual_usd = round(sum(r[2] or 0 for r in rows), 6)
                 con.execute("UPDATE cost_predictions SET actual_in=?, actual_out=?, actual_usd=?, "
-                            "actual_calls=?, paired_ts=? WHERE job_id=?",
+                            "actual_calls=?, paired_ts=?, actual_usd_nano=? WHERE job_id=?",
                             (sum(r[0] for r in rows) if all(r[0] is not None for r in rows) else None,
                              sum(r[1] for r in rows) if all(r[1] is not None for r in rows) else None,
-                             round(sum(r[2] or 0 for r in rows), 6), len(rows), stamp, job_id))
+                             actual_usd, len(rows), stamp, _cost_prediction_nano_amounts(None, actual_usd)[1], job_id))
                 paired += 1
             else:
                 con.execute("UPDATE cost_predictions SET actual_calls=0, paired_ts=? WHERE job_id=?",

@@ -4,8 +4,11 @@ Request and response bodies remain solely in the age-bounded ``call_content`` ti
 """
 import datetime
 import json
+import logging
+from decimal import Decimal, localcontext
 
 from .schema_indexes import ensure_ordered_index_coverage
+from .money_scale import real_usd_to_nano_usd, nano_usd_to_usd, assert_nano_total_matches
 
 
 ROUTING_SNAPSHOT_COLUMN = "routing_snapshot_json"
@@ -34,6 +37,9 @@ DECISION_COLUMNS = (
     "chosen_model", "chosen_effort", "counterfactual_usd", "actual_usd", "saved_usd",
     "why", "reason_class", "call_id",
 )
+DECISION_NANO_COLUMNS = {column: f"{column}_nano" for column in
+                         ("counterfactual_usd", "actual_usd", "saved_usd")}
+DECISION_STORAGE_COLUMNS = (*DECISION_COLUMNS, *DECISION_NANO_COLUMNS.values())
 DIRECT_ROUTING_BASIS = "direct"
 DIRECT_ROUTING_REASON = "requested route served without a recorded substitution"
 DIRECT_ROUTING_REASON_CLASS = "other"
@@ -87,12 +93,72 @@ def _create_decisions_table(connection, table_name):
         "ts TEXT, day TEXT, project TEXT, intent TEXT, basis TEXT, "
         "requested_model TEXT, requested_effort TEXT, chosen_model TEXT, chosen_effort TEXT, "
         "counterfactual_usd REAL, actual_usd REAL, saved_usd REAL, why TEXT, reason_class TEXT, "
-        "call_id TEXT REFERENCES calls(id))"
+        "call_id TEXT REFERENCES calls(id), "
+        + ",".join(f"{column} INTEGER" for column in DECISION_NANO_COLUMNS.values()) + ")"
     )
+
+
+def _decision_nano_amounts(counterfactual_usd, actual_usd, saved_usd):
+    # Fixed writer signatures reject direct nano inputs: mirrors are derived.
+    return tuple(None if amount is None else real_usd_to_nano_usd(float(amount))
+                 for amount in (counterfactual_usd, actual_usd, saved_usd))
+
+
+def _backfill_decision_nano_columns(connection, missing_columns):
+    conversion_gaps = []
+    for raw_column, nano_column in DECISION_NANO_COLUMNS.items():
+        for storage_row_id, raw_amount in connection.execute(
+                f"SELECT rowid,{raw_column} FROM {DECISIONS_TABLE}"):
+            try:
+                nano_amount = None if raw_amount is None else real_usd_to_nano_usd(raw_amount)
+            except (ValueError, TypeError, OverflowError) as conversion_error:
+                conversion_gaps.append((storage_row_id, raw_column, str(conversion_error)))
+                continue
+            if nano_column in missing_columns:
+                connection.execute(f"UPDATE {DECISIONS_TABLE} SET {nano_column}=? WHERE rowid=?",
+                                   (nano_amount, storage_row_id))
+    if conversion_gaps:
+        raise ValueError(f"decision_nano_invalid_amount_gap count={len({gap[0] for gap in conversion_gaps})} "
+                         f"amount_count={len(conversion_gaps)} rows={conversion_gaps!r}")
+    for raw_column, nano_column in DECISION_NANO_COLUMNS.items():
+        nano_total = sum(row[0] for row in connection.execute(
+            f"SELECT {nano_column} FROM {DECISIONS_TABLE} WHERE {nano_column} IS NOT NULL"))
+        converted_total = sum(real_usd_to_nano_usd(row[0]) for row in connection.execute(
+            f"SELECT {raw_column} FROM {DECISIONS_TABLE} WHERE {raw_column} IS NOT NULL"))
+        # Integer accumulation followed by Decimal scaling is an exact Decimal sum,
+        # independent of ambient Decimal precision and SQLite SUM integer overflow.
+        assert_nano_total_matches(nano_total, nano_usd_to_usd(converted_total),
+                                  tolerance_usd='0', label=f"decisions.{raw_column}")
+        float_total = connection.execute(
+            f"SELECT SUM({raw_column}) FROM {DECISIONS_TABLE}").fetchone()[0]
+        # Nano is now more precise than the historical binary-float SUM; this delta
+        # is informational, never the equality gate above.
+        exact_usd = nano_usd_to_usd(nano_total)
+        historical_usd = Decimal(str(float_total or 0))
+        with localcontext() as delta_context:
+            carry_digits = 2
+            delta_context.prec = (max(exact_usd.adjusted(), historical_usd.adjusted())
+                                  - min(exact_usd.as_tuple().exponent, historical_usd.as_tuple().exponent)
+                                  + carry_digits)
+            delta = exact_usd - historical_usd
+        logging.getLogger(__name__).info("decisions_nano_float_sum_delta column=%s delta_usd=%s", raw_column, delta)
 
 
 def ensure_decisions_call_fk_schema(connection, *, commit=True):
     """Create or migrate decisions so nullable historical rows coexist with an enforced call FK."""
+    connection.execute("SAVEPOINT decision_nano_schema")
+    try:
+        _initialize_decision_nano_fk_schema(connection)
+        connection.execute("RELEASE SAVEPOINT decision_nano_schema")
+    except BaseException:
+        connection.execute("ROLLBACK TO SAVEPOINT decision_nano_schema")
+        connection.execute("RELEASE SAVEPOINT decision_nano_schema")
+        raise
+    if commit:
+        connection.commit()
+
+
+def _initialize_decision_nano_fk_schema(connection):
     _create_decisions_table(connection, DECISIONS_TABLE)
     existing_columns = {row[1] for row in connection.execute(
         f"PRAGMA table_info({DECISIONS_TABLE})").fetchall()}
@@ -103,23 +169,25 @@ def ensure_decisions_call_fk_schema(connection, *, commit=True):
     has_call_fk = any(
         row[2] == "calls" and row[3] == "call_id" and row[4] == "id" for row in foreign_keys
     )
-    if not has_call_fk:
+    missing_nano_columns = set(DECISION_NANO_COLUMNS.values()) - existing_columns
+    if not has_call_fk or missing_nano_columns:
         connection.execute(f"DROP TABLE IF EXISTS {DECISIONS_MIGRATION_TABLE}")
         _create_decisions_table(connection, DECISIONS_MIGRATION_TABLE)
-        projection = ",".join(DECISION_COLUMNS)
+        carried_columns = (*DECISION_COLUMNS, *(column for column in DECISION_NANO_COLUMNS.values()
+                                                if column not in missing_nano_columns))
+        projection = ",".join(carried_columns)
         connection.execute(
-            f"INSERT INTO {DECISIONS_MIGRATION_TABLE} ({projection}) "
-            f"SELECT {projection} FROM {DECISIONS_TABLE}"
+            f"INSERT INTO {DECISIONS_MIGRATION_TABLE} (rowid,{projection}) "
+            f"SELECT rowid,{projection} FROM {DECISIONS_TABLE}"
         )
         connection.execute(f"DROP TABLE {DECISIONS_TABLE}")
         connection.execute(
             f"ALTER TABLE {DECISIONS_MIGRATION_TABLE} RENAME TO {DECISIONS_TABLE}"
         )
+        _backfill_decision_nano_columns(connection, missing_nano_columns)
     ensure_ordered_index_coverage(connection, DECISIONS_TABLE, ("day",))
     ensure_ordered_index_coverage(connection, DECISIONS_TABLE, ("intent",))
     ensure_ordered_index_coverage(connection, DECISIONS_TABLE, ("call_id",))
-    if commit:
-        connection.commit()
 
 
 def insert_linked_decision(connection, *, call_id, project, intent, basis, requested_model,
@@ -128,7 +196,8 @@ def insert_linked_decision(connection, *, call_id, project, intent, basis, reque
     """Insert the audit decision on the caller's existing transaction and connection."""
     recorded_at = timestamp or datetime.datetime.now(datetime.timezone.utc)
     connection.execute(
-        f"INSERT INTO {DECISIONS_TABLE} ({','.join(DECISION_COLUMNS)}) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        f"INSERT INTO {DECISIONS_TABLE} ({','.join(DECISION_STORAGE_COLUMNS)}) "
+        f"VALUES ({','.join('?' for column in DECISION_STORAGE_COLUMNS)})",
         (
             recorded_at.isoformat(timespec="seconds"), recorded_at.strftime("%Y-%m-%d"), project,
             intent, basis, requested_model, requested_effort, chosen_model, chosen_effort,
@@ -136,6 +205,7 @@ def insert_linked_decision(connection, *, call_id, project, intent, basis, reque
             (float(actual_usd) if actual_usd is not None else None),
             (float(saved_usd) if saved_usd is not None else None), why,
             reason_class, call_id,
+            *_decision_nano_amounts(counterfactual_usd, actual_usd, saved_usd),
         ),
     )
 

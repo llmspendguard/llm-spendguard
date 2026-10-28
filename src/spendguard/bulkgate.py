@@ -23,7 +23,57 @@ import threading
 import contextlib
 from . import config
 from .ledger_fork_locks import new_fork_reset_ledger_state
+from decimal import Decimal, localcontext
+import logging
 from .ledger_writer import best_effort_ledger_function, serialize_ledger_function
+from .money_scale import real_usd_to_nano_usd, nano_usd_to_usd, assert_nano_total_matches
+
+GATE_ESTIMATE_NANO_COLUMNS = {column: f"{column}_nano" for column in ("est_usd",)}
+
+
+def _gate_estimate_nano_amounts(est_usd):
+    # Fixed-signature writers accept only raw amounts; nano mirrors are derived.
+    return tuple(None if amount is None else real_usd_to_nano_usd(float(amount))
+                 for amount in (est_usd,))
+
+
+def _backfill_gate_estimate_nano_columns(connection, missing_columns):
+    conversion_gaps = []
+    for raw_column, nano_column in GATE_ESTIMATE_NANO_COLUMNS.items():
+        if nano_column not in missing_columns:
+            continue
+        for storage_row_id, raw_amount in connection.execute(f"SELECT rowid,{raw_column} FROM gate_ledger"):
+            try:
+                nano_amount = None if raw_amount is None else real_usd_to_nano_usd(raw_amount)
+            except (ValueError, TypeError, OverflowError) as conversion_error:
+                conversion_gaps.append((storage_row_id, raw_column, str(conversion_error)))
+                continue
+            connection.execute(f"UPDATE gate_ledger SET {nano_column}=? WHERE rowid=?", (nano_amount, storage_row_id))
+    if conversion_gaps:
+        raise ValueError(f"gate_estimate_nano_invalid_amount_gap count={len({gap[0] for gap in conversion_gaps})} "
+                         f"amount_count={len(conversion_gaps)} rows={conversion_gaps!r}")
+    for raw_column, nano_column in GATE_ESTIMATE_NANO_COLUMNS.items():
+        nano_total = sum(row[0] for row in connection.execute(
+            f"SELECT {nano_column} FROM gate_ledger WHERE {nano_column} IS NOT NULL"))
+        converted_total = sum(real_usd_to_nano_usd(row[0]) for row in connection.execute(
+            f"SELECT {raw_column} FROM gate_ledger WHERE {raw_column} IS NOT NULL"))
+        # Python integer accumulation and Decimal scaling stay exact independently
+        # of ambient Decimal precision and SQLite SUM integer overflow.
+        assert_nano_total_matches(nano_total, nano_usd_to_usd(converted_total),
+                                  tolerance_usd='0', label=f"gate_ledger.{raw_column}")
+        float_total = connection.execute(f"SELECT SUM({raw_column}) FROM gate_ledger").fetchone()[0]
+        # Nano is now more precise than the historical float sum; informational only.
+        exact_usd = nano_usd_to_usd(nano_total)
+        historical_usd = Decimal(str(float_total or 0))
+        with localcontext() as delta_context:
+            carry_digits = 2
+            delta_context.prec = (max(exact_usd.adjusted(), historical_usd.adjusted())
+                                  - min(exact_usd.as_tuple().exponent, historical_usd.as_tuple().exponent)
+                                  + carry_digits)
+            delta = exact_usd - historical_usd
+        logging.getLogger(__name__).info("gate_ledger_nano_float_sum_delta column=%s delta_usd=%s", raw_column, delta)
+
+
 from .gate import SpendGateRefused   # the common base for DELIBERATE gate refusals (see GateBlocked below).
 # Import direction: gate depends on bulkgate but only LAZILY (inside functions), and bulkgate imports nothing
 # else from gate — so this top-level import is acyclic (gate always finishes loading before bulkgate here).
@@ -50,6 +100,18 @@ class GateBlocked(SpendGateRefused):
 
 
 def _ensure_gate_schema(c):
+    c.execute("SAVEPOINT gate_estimate_nano_schema")
+    try:
+        _initialize_gate_schema(c)
+        c.execute("RELEASE SAVEPOINT gate_estimate_nano_schema")
+    except BaseException:
+        c.execute("ROLLBACK TO SAVEPOINT gate_estimate_nano_schema")
+        c.execute("RELEASE SAVEPOINT gate_estimate_nano_schema")
+        raise
+    c.commit()
+
+
+def _initialize_gate_schema(c):
     """Create the gate_ledger table (+ its forward-only additive columns). Idempotent; run once per pooled connection
     by config.pooled_ledger_conn. The gate_calls / gate_latency tables are ensured by _gate_calls_db() on the same
     (now pooled) connection."""
@@ -66,11 +128,13 @@ def _ensure_gate_schema(c):
     # eval_verdict is the pass/fail; eval_score/eval_note carry the judge's graded reasoning; eval_model
     # records WHICH model judged (honesty). Test = "did it parse the shape"; eval = "is it GOOD".
     gate_existing_columns = {row[1] for row in c.execute("PRAGMA table_info(gate_ledger)")}
+    missing_nano_columns = set(GATE_ESTIMATE_NANO_COLUMNS.values()) - gate_existing_columns
     for col, decl in (("contract", "TEXT"), ("contract_hash", "TEXT"), ("data_sig", "TEXT"),
                       ("test_parsed", "INTEGER"), ("test_salvaged", "INTEGER"),
                       ("test_failed", "INTEGER"), ("test_failure", "TEXT"),
                       ("eval_at", "REAL"), ("eval_bar", "TEXT"), ("eval_verdict", "INTEGER"),
-                      ("eval_score", "REAL"), ("eval_note", "TEXT"), ("eval_model", "TEXT")):
+                      ("eval_score", "REAL"), ("eval_note", "TEXT"), ("eval_model", "TEXT"),
+                      *((column, "INTEGER") for column in GATE_ESTIMATE_NANO_COLUMNS.values())):
         if col in gate_existing_columns:
             continue
         try:
@@ -78,7 +142,8 @@ def _ensure_gate_schema(c):
         except sqlite3.OperationalError:
             pass                                  # already present
     _ensure_gate_response_schema(c)
-    c.commit()
+    if missing_nano_columns:
+        _backfill_gate_estimate_nano_columns(c, missing_nano_columns)
 
 
 def _gate_db():
@@ -160,10 +225,11 @@ def record_estimate(sig, model, est_usd, est_count):
     now = time.time()
     with _lock:
         _gate_db().execute(
-            "INSERT INTO gate_ledger (sig,model,estimated_at,est_usd,est_count,updated_at) VALUES (?,?,?,?,?,?) "
+            "INSERT INTO gate_ledger (sig,model,estimated_at,est_usd,est_count,updated_at,est_usd_nano) VALUES (?,?,?,?,?,?,?) "
             "ON CONFLICT(sig) DO UPDATE SET model=excluded.model, estimated_at=excluded.estimated_at, "
-            "est_usd=excluded.est_usd, est_count=excluded.est_count, updated_at=excluded.updated_at",
-            (sig, model, now, float(est_usd), int(est_count), now))
+            "est_usd=excluded.est_usd, est_count=excluded.est_count, updated_at=excluded.updated_at, "
+            "est_usd_nano=excluded.est_usd_nano",
+            (sig, model, now, float(est_usd), int(est_count), now, *_gate_estimate_nano_amounts(est_usd)))
         _gate_db().commit()
     # FORWARD IT TO THE LEARNED ESTIMATOR. This wrote gate_ledger and stopped. calibrate.pair() reads
     # cost_predictions and NOTHING bridged the two, so every estimate spendguard's own gate recorded was
