@@ -4,6 +4,44 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 
 ## [Unreleased]
 
+## [0.16.5] — 2026-10-27
+
+Registration / distribution / efficiency hardening. The theme is making the distribution system correctly
+built, wired, used, tested, and efficient: consumers now run a pinned wheel (not a shared editable checkout),
+every daemon self-heals onto current code without a blocking poll, and the diagnostic/ledger paths that made
+attestation time out or bloat were fixed at the source.
+
+### Performance
+- `spendguard doctor` / the `distribute --check` host probe no longer recompute overage and residency live on
+  the diagnostic path — they serve the cache-only path, so attestation completes well under the probe timeout
+  instead of timing out (92s → ~2.9s on the real ledger).
+- Ledger: ordered-index coverage for the hot analytic queries (calls, spend_events, decisions).
+- Content: retained request/response bodies are losslessly compressed (zlib+base64, legacy-plaintext read kept)
+  and `call_content.call_id` is indexed (SCAN → SEARCH). A resumable `spendguard compress-content` backfill
+  reclaims existing rows (call_content ~3.4GB → ~0.21GB on this host).
+
+### Distribution & registration
+- Complete, eagerly-persisted surface manifest is the single source of truth for `distribute --check`;
+  install kind (editable vs wheel) is determined specifically for this distribution, never by a global `.pth`
+  scan. `spendguard manifest build|show`.
+- Consumers converge onto a **pinned wheel** (`pip install -U --no-index --find-links <local cache>
+  llm-spendguard==<version>`), built once locally and reused idempotently with a filename-version cross-check;
+  the single development venv stays editable, identified by its editable origin resolving to the canonical
+  checkout/repo (never a hardcoded path). Rollback installs a cached prior version (`distribute --version`).
+  The shared local-home invariant is unchanged.
+- Attestation is install-kind aware (`still_editable`, `wheel_missing`, `wrong_version`,
+  `dev_editable_not_green`); `distribute --json` is a single pure JSON document.
+- Every long-running supervised daemon self-respawns onto current code (previously only the MCP server). The
+  respawn trigger is install-kind aware (editable → green HEAD; wheel → installed version differs from the
+  running one; unknown → never) and inspects this process in-process without forking. The blocking
+  launchd re-registration poll is removed: a restart is requested and convergence is confirmed by a later
+  non-blocking `distribute --check`.
+- Fleet supervision discovers the launchd label from the running environment and reaps by verified pid
+  identity; `spendguard delegate --collect` handles a scalar JSON result without crashing.
+
+### Tests
+- Test runs no longer leak per-test temp homes; a session guard fails the suite on a spendguard-owned temp leak.
+
 ## [0.16.4] — 2026-10-27
 
 Supersedes the never-published 0.16.3 (its fixes ship here too). The theme is the ledger-connection
