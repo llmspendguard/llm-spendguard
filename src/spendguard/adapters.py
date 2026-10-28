@@ -1755,6 +1755,65 @@ _EMBED_MAX_INPUT_CHARS = 32000    # ~8k-token per-input ceiling (OpenAI) as a co
 #                                   text is marked failed for THAT item, never sent to 400 the whole chunk it rides in.
 _DEFAULT_EMBED_MODEL = "text-embedding-3-small"   # LAST-RESORT fail-safe ONLY if the catalog curates no OpenAI embedding
 #                                                   model (a broken catalog) — never the normal path (see below).
+EMBED_CHECKPOINT_DIRNAME = "embed-checkpoints"
+# Six hours comfortably exceeds a normal minutes-to-low-hours multi-chunk embed run, while moving legacy bulk
+# promptly enough that probe snapshots do not carry it for the seven-day retention window.
+EMBED_CHECKPOINT_INFLIGHT_GRACE_HOURS = float(
+    config._cfg_get("safety", "embed_checkpoint_inflight_grace_hours", 6.0)
+)
+EMBED_CHECKPOINT_SECONDS_PER_HOUR = 60.0 * 60.0
+EMBED_CHECKPOINT_INFLIGHT_GRACE_SECONDS = (
+    EMBED_CHECKPOINT_INFLIGHT_GRACE_HOURS * EMBED_CHECKPOINT_SECONDS_PER_HOUR
+)
+
+
+def _embed_checkpoint_dir():
+    from .distribution import mark_distribution_ephemeral_dir
+    return mark_distribution_ephemeral_dir(config.HOME / EMBED_CHECKPOINT_DIRNAME)
+
+
+def _embed_checkpoint_path(basename):
+    legacy_path = config.HOME / basename
+    checkpoint_dir = _embed_checkpoint_dir()
+    return legacy_path if legacy_path.exists() else checkpoint_dir / basename
+
+
+def migrate_cold_legacy_embed_checkpoints(keep_path=None):
+    """Move cold realtime checkpoints; return moved, deduplicated, retained, skipped, and error."""
+    import os as _os
+
+    checkpoint_dir = _embed_checkpoint_dir()
+    keep = _os.path.abspath(keep_path) if keep_path else None
+    cutoff = time.time() - EMBED_CHECKPOINT_INFLIGHT_GRACE_SECONDS
+    out = {"moved": 0, "deduplicated": 0, "retained": 0, "skipped": 0, "error": None}
+    try:
+        names = _os.listdir(str(config.HOME))
+    except FileNotFoundError:
+        return out
+    except OSError as exc:
+        out["error"] = f"{type(exc).__name__}: {str(exc)[:80]}"
+        return out
+    for name in names:
+        # Batch envelopes stay at top level for collect-path safety; new ones already use the marked directory.
+        if not (name.startswith("embed_") and name.endswith(".jsonl")) or name.startswith("embed_batch_"):
+            continue
+        source = _os.path.join(str(config.HOME), name)
+        target = _os.path.join(str(checkpoint_dir), name)
+        try:
+            if not _os.path.isfile(source):
+                continue
+            if (keep and _os.path.abspath(source) == keep) or _os.stat(source).st_mtime >= cutoff:
+                out["retained"] += 1
+                continue
+            if _os.path.exists(target):
+                _os.unlink(source)
+                out["deduplicated"] += 1
+            else:
+                _os.replace(source, target)
+                out["moved"] += 1
+        except OSError:
+            out["skipped"] += 1
+    return out
 
 
 def _chat_default_model():
@@ -1847,7 +1906,7 @@ def embed(texts, model=None, *, dimensions=None, max_batch=None, timeout_s=None,
 
     ROBUST BULK (the CHUNK-never-single-shot rule, all four parts):
       • CHUNKED into requests of at most `max_batch` inputs;
-      • DURABLE BY DEFAULT — a MULTI-chunk run auto-checkpoints to a jsonl under HOME (a single request is atomic;
+      • DURABLE BY DEFAULT — a MULTI-chunk run auto-checkpoints to a jsonl under HOME's marked checkpoint dir (a single request is atomic;
         more than one is crash-losable), each chunk APPENDED (keyed by sha256(text) — CONTENT, not position) BEFORE
         the next runs, so a crash RESUMES and never re-pays, and a changed list re-embeds only new texts;
       • per-request TIMEOUT (default _EMBED_TIMEOUT_S) so a hung call can't wedge the run;
@@ -1880,9 +1939,10 @@ def embed(texts, model=None, *, dimensions=None, max_batch=None, timeout_s=None,
         #                                                           WHOLE chunk (every input in it fails), so clamp, never trust max_batch
     if checkpoint is None and len(items) > _n:
         _ck = _hl.sha256(f"{raw}|{len(items)}|{keys[0]}|{keys[-1]}".encode()).hexdigest()[:10]
-        checkpoint = str(config.HOME / f"embed_{raw}_{_ck}.jsonl")    # durable by default for a multi-request run
+        checkpoint = str(_embed_checkpoint_path(f"embed_{raw}_{_ck}.jsonl"))  # durable by default for a multi-request run
         try:
-            gc_embed_checkpoints(apply=True, keep_path=checkpoint)    # BOUND the dir on create — these are spendguard's
+            migrate_cold_legacy_embed_checkpoints(keep_path=checkpoint)
+            gc_embed_checkpoints(apply=True, keep_path=checkpoint, include_legacy_top_level=False)  # BOUND the marked
         except Exception:                                             # OWN temp files (unlike codex's, which is why that
             pass                                                      # gc is opt-in). A gc failure never breaks the run.
     base["checkpoint"] = checkpoint
@@ -1976,8 +2036,10 @@ def embed(texts, model=None, *, dimensions=None, max_batch=None, timeout_s=None,
                       if n_missing else None)}
 
 
-def gc_embed_checkpoints(max_age_days=None, max_total_gb=None, apply=False, keep_path=None):
-    """Bound the `embed_<model>_<hash>.jsonl` resume checkpoints that embed() writes under HOME. Measured
+def gc_embed_checkpoints(max_age_days=None, max_total_gb=None, apply=False, keep_path=None,
+                         include_legacy_top_level=True):
+    """Bound the `embed_<model>_<hash>.jsonl` resume checkpoints that embed() writes in its marked dir, plus legacy
+    top-level HOME checkpoints. Measured
     2026-10-08: 1,016 files / 19.65 GiB had accumulated in ~/.spendguard, 1,014 of them inside one month — embed()
     created a checkpoint per multi-chunk run and NOTHING ever pruned one.
 
@@ -2005,34 +2067,39 @@ def gc_embed_checkpoints(max_age_days=None, max_total_gb=None, apply=False, keep
         max_age_days = float(config._cfg_get("safety", "embed_checkpoint_max_age_days", 7.0))
     if max_total_gb is None:
         max_total_gb = float(config._cfg_get("safety", "embed_checkpoint_max_gb", 5.0))
-    out = {"dir": str(config.HOME), "examined": 0, "stale": 0, "over_cap": 0, "bytes": 0, "deleted": 0,
+    checkpoint_dir = _embed_checkpoint_dir()
+    out = {"dir": str(checkpoint_dir), "examined": 0, "stale": 0, "over_cap": 0, "bytes": 0, "deleted": 0,
            "skipped": 0, "apply": bool(apply), "cutoff_days": max_age_days, "max_total_gb": max_total_gb,
            "error": None}
-    try:
-        names = _os.listdir(str(config.HOME))
-    except OSError as e:                                  # a real scan failure is surfaced, not a false 'empty, clean'
-        out["error"] = f"{type(e).__name__}: {str(e)[:80]}"
-        return out
     keep = _os.path.abspath(keep_path) if keep_path else None
     cutoff = time.time() - max(0.0, float(max_age_days)) * 86400.0
     cold, warm = [], []                                   # (mtime, size, path) — cold = past the age bound
-    for name in names:
-        # FORMAT match on spendguard's own naming, not a judgement: embed_<model>_<hash>.jsonl, excluding the
-        # embed_batch_ envelopes (a submitted batch still needs those to collect).
-        if not (name.startswith("embed_") and name.endswith(".jsonl")) or name.startswith("embed_batch_"):
-            continue
-        p = _os.path.join(str(config.HOME), name)
+    scan_dirs = (checkpoint_dir, config.HOME) if include_legacy_top_level else (checkpoint_dir,)
+    for scan_dir in scan_dirs:
         try:
-            if not _os.path.isfile(p):
-                continue
-            st = _os.stat(p)
-        except OSError:
-            out["skipped"] += 1                           # could not stat → COUNTED, never silently ignored
+            names = _os.listdir(str(scan_dir))
+        except FileNotFoundError:
             continue
-        if keep and _os.path.abspath(p) == keep:
-            continue                                      # the in-flight run's own checkpoint — both bounds skip it
-        out["examined"] += 1
-        (cold if st.st_mtime < cutoff else warm).append((st.st_mtime, int(st.st_size), p))
+        except OSError as e:                              # a real scan failure is surfaced, not a false 'empty, clean'
+            out["error"] = f"{type(e).__name__}: {str(e)[:80]}"
+            return out
+        for name in names:
+            # FORMAT match on spendguard's own naming, not a judgement: embed_<model>_<hash>.jsonl, excluding the
+            # embed_batch_ envelopes (a submitted batch still needs those to collect).
+            if not (name.startswith("embed_") and name.endswith(".jsonl")) or name.startswith("embed_batch_"):
+                continue
+            p = _os.path.join(str(scan_dir), name)
+            try:
+                if not _os.path.isfile(p):
+                    continue
+                st = _os.stat(p)
+            except OSError:
+                out["skipped"] += 1                       # could not stat → COUNTED, never silently ignored
+                continue
+            if keep and _os.path.abspath(p) == keep:
+                continue                                  # the in-flight run's own checkpoint — both bounds skip it
+            out["examined"] += 1
+            (cold if st.st_mtime < cutoff else warm).append((st.st_mtime, int(st.st_size), p))
     doomed = list(cold)
     out["stale"] = len(cold)
     warm.sort()                                           # oldest first — the size bound evicts the coldest survivors
@@ -2081,7 +2148,7 @@ def embed_batch(texts, model=None, *, dimensions=None, jsonl_path=None, cap_doll
         return base
     if not jsonl_path:                                               # a stable, content-derived name (so a re-run reuses it)
         _tag = _hl.sha256(f"{raw}|{len(items)}|{items[0][:80]}|{items[-1][:80]}".encode("utf-8", "replace")).hexdigest()[:10]
-        jsonl_path = str(config.HOME / f"embed_batch_{raw}_{_tag}.jsonl")
+        jsonl_path = str(_embed_checkpoint_path(f"embed_batch_{raw}_{_tag}.jsonl"))
     try:
         with open(jsonl_path, "w") as fh:
             for i, t in enumerate(items):

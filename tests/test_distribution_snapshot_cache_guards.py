@@ -8,6 +8,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from unittest.mock import patch
 from unittest import TestCase
 
@@ -28,7 +29,7 @@ atexit.register(shutil.rmtree, os.environ["SPENDGUARD_HOME"], ignore_errors=True
 os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from spendguard import config_schema, distribution, manifest
+from spendguard import adapters, config_schema, distribution, manifest
 
 
 def seed_distribution_snapshot_guard_home(root):
@@ -346,6 +347,54 @@ def guard_11_owned_output_and_configured_ledger_follow_provenance(tmp_path):
     assert [path for path in snapshot.rglob(ledger.name)] == [cloned_ledger]
 
 
+def guard_12_embed_checkpoints_follow_ephemeral_dir_provenance(tmp_path):
+    home = seed_distribution_snapshot_guard_home(tmp_path)
+    cache = tmp_path / "probe-cache"
+    with patch.object(adapters.config, "HOME", home), \
+         patch.object(distribution, "distribution_probe_cache_paths",
+                      return_value=(cache, cache / "base", cache / "fingerprint.json")):
+        checkpoint_dir = adapters._embed_checkpoint_dir()
+        checkpoint = checkpoint_dir / "embed_model_hash.jsonl"
+        checkpoint.write_text("checkpoint")
+        assert checkpoint.parent == home / adapters.EMBED_CHECKPOINT_DIRNAME
+        assert (checkpoint_dir / distribution.DISTRIBUTION_EPHEMERAL_MARKER).is_file()
+        assert distribution.distribution_snapshot_excluded(home, adapters.EMBED_CHECKPOINT_DIRNAME)
+        assert not distribution.distribution_snapshot_excluded(home, "embed_fixture.jsonl")
+        snapshot = distribution.ensure_distribution_probe_base()
+        assert not (snapshot / adapters.EMBED_CHECKPOINT_DIRNAME).exists()
+        assert (snapshot / "embed_fixture.jsonl").read_text() == "checkpoint"
+
+
+def guard_13_cold_legacy_embed_checkpoints_move_but_warm_ones_remain(tmp_path):
+    home = seed_distribution_snapshot_guard_home(tmp_path)
+    cache = tmp_path / "probe-cache"
+    cold = home / "embed_cold_hash.jsonl"
+    warm = home / "embed_warm_hash.jsonl"
+    cold.write_text("cold-checkpoint")
+    warm.write_text("warm-checkpoint")
+    grace_seconds = adapters.EMBED_CHECKPOINT_INFLIGHT_GRACE_SECONDS
+    now = time.time()
+    cold_mtime = now - grace_seconds - grace_seconds
+    os.utime(cold, (cold_mtime, cold_mtime))
+    os.utime(warm, (now, now))
+    with patch.object(adapters.config, "HOME", home), \
+         patch.object(distribution.config, "HOME", home), \
+         patch.object(distribution, "distribution_probe_cache_paths",
+                      return_value=(cache, cache / "base", cache / "fingerprint.json")):
+        migration_result = adapters.migrate_cold_legacy_embed_checkpoints()
+        assert migration_result["moved"] == 1
+        assert migration_result["retained"] >= 1
+        checkpoint_dir = home / adapters.EMBED_CHECKPOINT_DIRNAME
+        assert not cold.exists()
+        assert (checkpoint_dir / cold.name).read_text() == "cold-checkpoint"
+        assert warm.read_text() == "warm-checkpoint"
+        assert adapters._embed_checkpoint_path(warm.name) == warm
+        snapshot = distribution.ensure_distribution_probe_base()
+        assert not (snapshot / adapters.EMBED_CHECKPOINT_DIRNAME).exists()
+        assert not (snapshot / cold.name).exists()
+        assert (snapshot / warm.name).read_text() == "warm-checkpoint"
+
+
 def run_distribution_snapshot_guard_with_temporary_path(guard):
     with tempfile.TemporaryDirectory() as temporary_directory:
         guard(Path(temporary_directory))
@@ -411,6 +460,18 @@ def test_guard_11_owned_output_and_configured_ledger_follow_provenance():
     )
 
 
+def test_guard_12_embed_checkpoints_follow_ephemeral_dir_provenance():
+    run_distribution_snapshot_guard_with_temporary_path(
+        guard_12_embed_checkpoints_follow_ephemeral_dir_provenance
+    )
+
+
+def test_guard_13_cold_legacy_embed_checkpoints_move_but_warm_ones_remain():
+    run_distribution_snapshot_guard_with_temporary_path(
+        guard_13_cold_legacy_embed_checkpoints_move_but_warm_ones_remain
+    )
+
+
 if __name__ == "__main__":
     test_guard_1_unchanged_snapshot_skips_bulk_copy_and_policy_touch_rebuilds()
     test_guard_2_excludes_outputs_but_keeps_policy_and_consistent_ledger()
@@ -423,4 +484,6 @@ if __name__ == "__main__":
     test_guard_9_nonregular_entry_presence_changes_fingerprint()
     test_guard_10_unknown_named_entries_are_fingerprinted_and_copied()
     test_guard_11_owned_output_and_configured_ledger_follow_provenance()
+    test_guard_12_embed_checkpoints_follow_ephemeral_dir_provenance()
+    test_guard_13_cold_legacy_embed_checkpoints_move_but_warm_ones_remain()
     print("PASS distribution snapshot/cache guards")
