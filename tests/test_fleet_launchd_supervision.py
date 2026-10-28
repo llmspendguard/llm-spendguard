@@ -2,6 +2,8 @@
 import os
 import pathlib
 import sqlite3
+import subprocess
+import sys
 import tempfile
 import contextlib
 import io
@@ -62,8 +64,9 @@ def test_supervision_schema_fresh_and_idempotent_migration():
     assert {fleet.CONSUMER_SUPERVISION_MODE_COLUMN, fleet.CONSUMER_SUPERVISION_REF_COLUMN} <= columns
 
 
-def test_declared_launchd_registration_round_trips_and_legacy_is_unsupervised():
+def test_declared_launchd_registration_round_trips_and_legacy_is_unsupervised(monkeypatch):
     _reset_registry()
+    monkeypatch.setenv(fleet.LAUNCHD_SERVICE_NAME_ENV, TEST_LABEL)
     release.served_sha = lambda: {"sha": OLD_SHA, "short": OLD_SHA, "dirty": False}
     release.green_pointer = lambda: {"sha": GREEN_SHA, "short": GREEN_SHA}
     fleet.register_consumer(role=fleet.CONSUMER_ROLE_DAEMON,
@@ -89,6 +92,7 @@ def test_dry_run_apply_failure_and_kill_switch(monkeypatch):
     monkeypatch.setattr(fleet, "kickstart_declared_launchd_consumer",
                         lambda label: calls.append(label) or {"ok": True, "detail": "kickstarted"})
     monkeypatch.setattr(fleet, "verify_launchd_consumer_green_return", lambda **_kwargs: False)
+    monkeypatch.setattr(fleet, "launchd_consumer_label_loaded", lambda _label: True)
 
     dry = fleet.restart_stale(apply=False)
     assert not calls and dry["restarted"][0]["action"] == "would kickstart"
@@ -140,6 +144,65 @@ def test_fleet_consumers_cli_and_label_single_sources(monkeypatch):
             == launchd_labels.CODEX_BROKER_OWNER_LAUNCHD_LABEL)
     installer = pathlib.Path(__file__).resolve().parents[1] / "scripts" / "lane" / "install_lane_drainer.sh"
     assert "from spendguard.launchd_labels import LANE_DRAIN_LAUNCHD_LABEL" in installer.read_text()
+
+
+def test_registration_discovers_xpc_label_and_restart_refuses_unloaded_label(monkeypatch):
+    _reset_registry()
+    discovered_label = TEST_LABEL + ".installed"
+    monkeypatch.setenv(fleet.LAUNCHD_SERVICE_NAME_ENV, discovered_label)
+    release.served_sha = lambda: {"sha": OLD_SHA, "short": OLD_SHA, "dirty": False}
+    release.green_pointer = lambda: {"sha": GREEN_SHA, "short": GREEN_SHA}
+    fleet.register_consumer(
+        role=fleet.CONSUMER_ROLE_DAEMON,
+        supervision_mode=fleet.SUPERVISION_LAUNCHD,
+        supervision_ref=launchd_labels.MCP_HTTP_LAUNCHD_LABEL,
+    )
+    registered = fleet.running_consumers(prune=False)[0]
+    assert registered["supervision_ref"] == discovered_label
+    assert registered["launchd_label"] == discovered_label
+
+    kickstarts = []
+    monkeypatch.setattr(fleet, "launchd_consumer_label_loaded", lambda _label: False)
+    monkeypatch.setattr(
+        fleet, "kickstart_declared_launchd_consumer", lambda label: kickstarts.append(label) or {"ok": True})
+    refused = fleet.restart_stale(apply=True)
+    assert not kickstarts
+    assert refused["warn"][0]["why"] == "cannot restart — recorded launchd label is not currently loaded"
+
+
+def test_dead_consumer_reaper_requires_unloaded_supervisor_and_preserves_live_identity(monkeypatch):
+    _reset_registry()
+    completed_process = subprocess.Popen([sys.executable, "-c", "pass"])
+    completed_process.wait()
+    dead_pid = completed_process.pid
+    _insert_consumer(pid=dead_pid, mode=fleet.SUPERVISION_LAUNCHD, ref=TEST_LABEL)
+    _insert_consumer(pid=TEST_PID, mode=fleet.SUPERVISION_LAUNCHD, ref=TEST_LABEL + ".live")
+    monkeypatch.setattr(
+        fleet,
+        "launchd_consumer_label_loaded",
+        lambda label: False if label == TEST_LABEL else True,
+    )
+    consumers = fleet.running_consumers()
+    assert {consumer["pid"] for consumer in consumers} == {TEST_PID}
+    with sqlite3.connect(config.HOME / "fleet.db") as connection:
+        assert {row[0] for row in connection.execute("SELECT pid FROM consumers")} == {TEST_PID}
+
+
+def test_null_create_time_row_cannot_inherit_launchd_declaration(monkeypatch):
+    _reset_registry()
+    _insert_consumer(pid=TEST_PID, create_time=None, mode=None, ref=None)
+    monkeypatch.setenv(fleet.LAUNCHD_SERVICE_NAME_ENV, TEST_LABEL)
+    fleet._registered_pid = TEST_PID
+    fleet.register_consumer(
+        role=fleet.CONSUMER_ROLE_DAEMON,
+        supervision_mode=fleet.SUPERVISION_LAUNCHD,
+        supervision_ref=TEST_LABEL,
+    )
+    with sqlite3.connect(config.HOME / "fleet.db") as connection:
+        row = connection.execute(
+            "SELECT supervision_mode,supervision_ref,launchd_label FROM consumers WHERE pid=?", (TEST_PID,)
+        ).fetchone()
+    assert row == (None, None, None)
 
 
 if __name__ == "__main__":

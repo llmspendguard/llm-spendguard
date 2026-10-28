@@ -111,6 +111,8 @@ def test_fleet_pid_identity_controls_reporting_pruning_and_kickstarts():
     fleet.psutil = fake_psutil
     fleet.kickstart_declared_launchd_consumer = fake_kickstart
     fleet.verify_launchd_consumer_green_return = lambda **_kwargs: True
+    real_label_loaded = fleet.launchd_consumer_label_loaded
+    fleet.launchd_consumer_label_loaded = lambda _label: False
     release.green_pointer = lambda: {"sha": GREEN_SHA, "short": GREEN_SHA}
     try:
         consumers = fleet.running_consumers()
@@ -126,6 +128,7 @@ def test_fleet_pid_identity_controls_reporting_pruning_and_kickstarts():
             remaining = {row[0] for row in connection.execute("SELECT pid FROM consumers")}
         assert VANISHED_PID not in remaining and RECYCLED_PID not in remaining
 
+        fleet.launchd_consumer_label_loaded = lambda _label: True
         result = fleet.restart_stale(apply=True)
         targets = kickstarts
         assert any(VERIFIED_LABEL in target for target in targets), targets
@@ -142,6 +145,7 @@ def test_fleet_pid_identity_controls_reporting_pruning_and_kickstarts():
         fleet.psutil = real_psutil
         fleet.kickstart_declared_launchd_consumer = real_kickstart
         fleet.verify_launchd_consumer_green_return = real_verify
+        fleet.launchd_consumer_label_loaded = real_label_loaded
         release.green_pointer = real_green_pointer
 
 
