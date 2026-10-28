@@ -19,14 +19,18 @@ from . import claudecode, config, ledger_read
 # computed an OLDER snapshot can never clobber a newer one).
 _MEMO_LOCK = threading.Lock()
 _STATUS_MEMO = {"t": 0.0, "val": None}
+DEFAULT_OVERAGE_STATUS_FRESHNESS_SECONDS = 60.0
+OVERAGE_DIAGNOSTIC_WALL_BUDGET_SECONDS = 1.0
 
 
 def _status_ttl_s():
     """Seconds a cached overage status stays fresh (config plan_admission.overage_status_ttl_s, default 60)."""
     try:
-        return float(config._cfg_get("plan_admission", "overage_status_ttl_s", 60.0) or 60.0)
+        return float(config._cfg_get("plan_admission", "overage_status_ttl_s",
+                                     DEFAULT_OVERAGE_STATUS_FRESHNESS_SECONDS)
+                     or DEFAULT_OVERAGE_STATUS_FRESHNESS_SECONDS)
     except Exception:
-        return 60.0
+        return DEFAULT_OVERAGE_STATUS_FRESHNESS_SECONDS
 
 
 def _status_cache_path():
@@ -76,6 +80,20 @@ def _compute_overage_status():
             "real_overage_by_month_usd": {row[0]: float(row[1] or 0.0) for row in month[:6]}}
 
 
+def _unknown_stale_overage_status(computed_at=None):
+    """Fail-closed diagnostic result when no fresh bounded-cost verdict exists."""
+    age = None if computed_at is None else round(max(0.0, time.time() - float(computed_at)), 1)
+    return {"on_overage_now": None,
+            "meaning": "unknown = cached overage status is absent or stale; run an explicit refresh",
+            "observed_overage_windows": None, "real_overage_by_month_usd": {},
+            "as_of": computed_at, "age_s": age, "cached": True, "stale": True}
+
+
+def refresh_overage_status_cache():
+    """Explicit slow-path refresh; diagnostics and admission checks never invoke it implicitly."""
+    return current_overage_status(force=True)
+
+
 def current_overage_status(max_age_s=None, force=False):
     """Return the observable current overage state and historical real-dollar overage by month.
 
@@ -84,25 +102,39 @@ def current_overage_status(max_age_s=None, force=False):
     disk-backed so a fresh CLI process does not re-pay the scan. `force=True` (or `max_age_s=0`) bypasses the cache
     and recomputes; `max_age_s` overrides the TTL for a caller that needs a tighter freshness bound. Every return
     carries `as_of`/`age_s`/`cached` (see _stamp), so a TTL-served value is self-describing, never a silent skip.
-    Caching is bypassed entirely under SPENDGUARD_TEST_ISOLATED so tests stay hermetic (no cross-run cache bleed)."""
+    A normal call is strictly cache-only and therefore bounded: a missing or stale cache returns an explicit
+    unknown verdict. Only ``force=True`` performs the full refresh, keeping transcript and ledger scans out of
+    doctor/admission hot paths. Test isolation disables disk reuse but does not weaken that bound."""
     isolated = bool(os.getenv("SPENDGUARD_TEST_ISOLATED"))
+    force = bool(force or max_age_s == 0)
     ttl = (_status_ttl_s() if max_age_s is None else float(max_age_s))
     now = time.time()
-    if not force and not isolated and ttl > 0:
+    diagnostic_deadline = time.monotonic() + OVERAGE_DIAGNOSTIC_WALL_BUDGET_SECONDS
+    if not force and ttl > 0:
         hit = _memo_get(ttl, now)
         if hit is not None:
             return _stamp(hit[1], hit[0], cached=True)      # in-process hit
-        if os.path.exists(_status_cache_path()):            # disk hit (fresh process rides a recent CLI/daemon scan)
+        stale_computed_at = None
+        if not isolated and os.path.exists(_status_cache_path()):
             try:
+                if time.monotonic() >= diagnostic_deadline:
+                    return _unknown_stale_overage_status()
                 with open(_status_cache_path()) as fh:
                     blob = json.load(fh)
+                if time.monotonic() >= diagnostic_deadline:
+                    return _unknown_stale_overage_status()
                 if (isinstance(blob, dict) and isinstance(blob.get("status"), dict)
                         and (now - float(blob.get("ts", 0.0))) < ttl):
                     _memo_put(float(blob["ts"]), blob["status"])
                     return _stamp(blob["status"], float(blob["ts"]), cached=True)
+                if isinstance(blob, dict):
+                    stale_computed_at = float(blob.get("ts", 0.0)) or None
             except Exception as e:                          # a PRESENT-but-broken cache is NOT a silent miss: announce it
-                config.warn_once("[spendguard] overage status disk cache unreadable (%s) — recomputing the ~10s "
-                                 "transcript scan this call; the cache is not speeding fresh processes" % e)
+                config.warn_once("[spendguard] overage status disk cache unreadable (%s) — returning UNKNOWN; "
+                                 "run an explicit overage refresh" % e)
+        return _unknown_stale_overage_status(stale_computed_at)
+    if not force:
+        return _unknown_stale_overage_status()
     status = _compute_overage_status()
     _memo_put(now, status)
     if not isolated:
@@ -119,7 +151,7 @@ def current_overage_status(max_age_s=None, force=False):
 
 def overage_cli(_argv=None):
     status = current_overage_status()
-    state = "YES" if status["on_overage_now"] else "no"
+    state = "UNKNOWN" if status["on_overage_now"] is None else ("YES" if status["on_overage_now"] else "no")
     print(f"paid overage now: {state} — {status['meaning']}")
     print(f"observed overage windows: {status['observed_overage_windows']}")
     if status["real_overage_by_month_usd"]:

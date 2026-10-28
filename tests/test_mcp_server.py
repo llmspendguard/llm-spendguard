@@ -240,7 +240,8 @@ ck("spend_overview NEVER exposes a single summed grand-total that mixes the two 
    not any("est" in k and "real" in k for k in ovp) and "grand_total" not in ovp)
 
 st = rpc("tools/call", {"name": "spendguard_overage_status", "arguments": {}})["result"]["structuredContent"]
-ck("overage_status answers on_overage_now as a bool", isinstance(st.get("on_overage_now"), bool))
+ck("overage_status preserves stale status as explicit UNKNOWN",
+   st.get("on_overage_now") is None and st.get("stale") is True and "unknown" in st.get("meaning", ""))
 
 tc = rpc("tools/call", {"name": "spendguard_top_conversations", "arguments": {"by": "est", "limit": 3}})["result"]
 ck("top_conversations returns a conversations list (empty ok on an empty ledger)",

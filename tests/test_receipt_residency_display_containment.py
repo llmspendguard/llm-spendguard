@@ -65,6 +65,7 @@ def run_receipt_residency_display_containment():
                 display_residency_expected, DISPLAY_RESIDENCY_MONEY_DIGITS)
             assert sum(display_residency_decomposition["by_source_usd"].values()) == round(
                 display_residency_expected, DISPLAY_RESIDENCY_MONEY_DIGITS)
+            claudecode.refresh_residency_summary_cache(DISPLAY_RESIDENCY_SESSION)
             assert receipt.cli(["--all"]) == 0
         assert DISPLAY_RESIDENCY_EXPECTED_LINE % display_residency_expected in display_residency_stdout.getvalue()
         assert "unavailable" not in display_residency_stdout.getvalue()
