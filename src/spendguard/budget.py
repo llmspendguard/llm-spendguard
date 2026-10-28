@@ -380,8 +380,8 @@ def snapshot(reason="", keep=None, force=False, *, compact_source=None, compact_
     import time as _time
     try:
         src = config.db_path()
-        d = config.HOME / "snapshots"
-        d.mkdir(parents=True, exist_ok=True)
+        from .distribution import mark_distribution_ephemeral_dir
+        d = mark_distribution_ephemeral_dir(config.HOME / "snapshots")
         # THROTTLE — a snapshot is a FULL-DB copy. Before this, the scheduled reconcile's reattribute took one on
         # EVERY run, so a full backup landed ~every 45 min and keep=4 rotated through in ~3h (measured 2026-10-08:
         # the snapshot set fully regenerated between two glances). A routine mutation only needs a RECENT recovery

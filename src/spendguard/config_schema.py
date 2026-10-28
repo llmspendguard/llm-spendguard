@@ -43,11 +43,6 @@ SETTINGS = [
     *[dict(section="distribute", key=key, store="config.json:distribute." + key,
            env=None, default=default, kind=kind, secret=False, desc=desc)
       for key, default, kind, desc in (
-          ("snapshot_excludes", ["snapshots", "reclaim-backups", "distribution-checkouts",
-           "distribution-wheels", "distribution-probe-cache", "embed_*.jsonl", "*~",
-           "*.corrupt.*", "*.bak", "*.pre-migration*", "*.[0-9][0-9][0-9][0-9]*.*",
-           "spend.db", "spend.db-*", "lane_queue.db", "lane_queue.db-*"], "json",
-           "Top-level names and glob patterns omitted from isolated distribution probe snapshots."),
           ("probe_cache_dirname", "distribution-probe-cache", "str",
            "Spendguard-home directory containing the content-addressed probe base snapshot."),
           ("probe_cache_root", str(Path(tempfile.gettempdir()) / "spendguard-distribution-probe-cache"), "str",

@@ -36,8 +36,10 @@ def seed_distribution_snapshot_guard_home(root):
     home.mkdir()
     (home / "policy.json").write_text("policy")
     (home / "snapshots").mkdir()
+    (home / "snapshots" / distribution.DISTRIBUTION_EPHEMERAL_MARKER).touch()
     (home / "snapshots" / "large.db").write_text("recovery")
     (home / "reclaim-backups").mkdir()
+    (home / "reclaim-backups" / distribution.DISTRIBUTION_EPHEMERAL_MARKER).touch()
     (home / "reclaim-backups" / "large.db").write_text("backup")
     (home / "embed_fixture.jsonl").write_text("checkpoint")
     (home / "old.json~").write_text("rotation")
@@ -79,7 +81,7 @@ def guard_2_excludes_outputs_but_keeps_policy_and_consistent_ledger(tmp_path):
             assert (snapshot / "policy.json").read_text() == "policy"
             assert not (snapshot / "snapshots").exists()
             assert not (snapshot / "reclaim-backups").exists()
-            assert not (snapshot / "embed_fixture.jsonl").exists()
+            assert (snapshot / "embed_fixture.jsonl").read_text() == "checkpoint"
             policy = json.loads((snapshot / distribution.config.CONFIG_JSON.name).read_text())
             assert Path(policy["budget"]["db_path"]).read_bytes() == b"ledger-evidence"
 
@@ -240,7 +242,7 @@ def guard_6_enumeration_ttl_root_mtime_and_audit_key_invalidation(tmp_path):
 
 
 def test_guard_7_new_operational_values_are_schema_defaults():
-    expected = {"snapshot_excludes", "probe_cache_dirname", "probe_cache_root", "probe_cache_base_name",
+    expected = {"probe_cache_dirname", "probe_cache_root", "probe_cache_base_name",
                 "probe_cache_record_name", "probe_temp_prefix", "probe_temp_marker_name",
                 "enumeration_cache_ttl_s", "audit_cache_ttl_s"}
     entries = {entry["key"]: entry for entry in config_schema.SETTINGS
@@ -286,6 +288,62 @@ def guard_9_nonregular_entry_presence_changes_fingerprint(tmp_path):
     fingerprint_without_fifo = distribution.distribution_snapshot_fingerprint(home)
     assert fingerprint_with_fifo != fingerprint_without_fifo
     assert regular_control.stat() == regular_control_details
+
+
+def guard_10_unknown_named_entries_are_fingerprinted_and_copied(tmp_path):
+    home = tmp_path / "state"
+    home.mkdir()
+    user_snapshots = home / "snapshots"
+    user_snapshots.mkdir()
+    required_policy = user_snapshots / "required-policy.json"
+    required_policy.write_text("required")
+    user_backup = home / "policy.bak"
+    user_backup.write_text("user backup")
+    encoded_manifests = []
+    real_json_dumps = distribution.json.dumps
+
+    def capture_distribution_snapshot_manifest(value, *args, **kwargs):
+        if isinstance(value, list):
+            encoded_manifests.append(value)
+        return real_json_dumps(value, *args, **kwargs)
+
+    cache = tmp_path / "probe-cache"
+    with patch.object(distribution.config, "HOME", home), \
+         patch.object(distribution.json, "dumps", side_effect=capture_distribution_snapshot_manifest), \
+         patch.object(distribution, "distribution_probe_cache_paths",
+                      return_value=(cache, cache / "base", cache / "fingerprint.json")):
+        distribution.distribution_snapshot_fingerprint(home)
+        snapshot = distribution.rebuild_or_reuse_distribution_probe_base()
+    fingerprint_paths = {row[0] for row in encoded_manifests[0]}
+    assert required_policy.relative_to(home).as_posix() in fingerprint_paths
+    assert user_backup.relative_to(home).as_posix() in fingerprint_paths
+    assert (snapshot / required_policy.relative_to(home)).read_text() == "required"
+    assert (snapshot / user_backup.relative_to(home)).read_text() == "user backup"
+
+
+def guard_11_owned_output_and_configured_ledger_follow_provenance(tmp_path):
+    home = tmp_path / "state"
+    home.mkdir()
+    owned_output = distribution.mark_distribution_ephemeral_dir(home / "snapshots")
+    (owned_output / "large-output.db").write_text("output")
+    ledger = home / "configured.db"
+    ledger.write_bytes(b"ledger-evidence")
+    (home / distribution.config.CONFIG_JSON.name).write_text(json.dumps(
+        {"budget": {"db_path": str(ledger)}}))
+    cache = tmp_path / "probe-cache"
+    with patch.object(distribution.config, "HOME", home), \
+         patch.object(distribution, "distribution_probe_cache_paths",
+                      return_value=(cache, cache / "base", cache / "fingerprint.json")), \
+         patch.object(distribution.fleet, "sqlite_snapshot_source_evidence",
+                      side_effect=lambda path: ((Path(path).stat().st_size, Path(path).stat().st_mtime_ns),
+                                                Path(path).read_bytes()) if Path(path).is_file() else None):
+        snapshot = distribution.rebuild_or_reuse_distribution_probe_base()
+        assert not (snapshot / owned_output.name).exists()
+        assert not (snapshot / ledger.name).exists()
+        distribution.distribution_snapshot_configured_ledgers(snapshot)
+    cloned_ledger = snapshot / "db_path" / ledger.name
+    assert cloned_ledger.read_bytes() == b"ledger-evidence"
+    assert [path for path in snapshot.rglob(ledger.name)] == [cloned_ledger]
 
 
 def run_distribution_snapshot_guard_with_temporary_path(guard):
@@ -341,6 +399,18 @@ def test_guard_9_nonregular_entry_presence_changes_fingerprint():
     )
 
 
+def test_guard_10_unknown_named_entries_are_fingerprinted_and_copied():
+    run_distribution_snapshot_guard_with_temporary_path(
+        guard_10_unknown_named_entries_are_fingerprinted_and_copied
+    )
+
+
+def test_guard_11_owned_output_and_configured_ledger_follow_provenance():
+    run_distribution_snapshot_guard_with_temporary_path(
+        guard_11_owned_output_and_configured_ledger_follow_provenance
+    )
+
+
 if __name__ == "__main__":
     test_guard_1_unchanged_snapshot_skips_bulk_copy_and_policy_touch_rebuilds()
     test_guard_2_excludes_outputs_but_keeps_policy_and_consistent_ledger()
@@ -351,4 +421,6 @@ if __name__ == "__main__":
     test_guard_7_new_operational_values_are_schema_defaults()
     test_guard_8_vanished_walked_entry_differs_from_never_present()
     test_guard_9_nonregular_entry_presence_changes_fingerprint()
+    test_guard_10_unknown_named_entries_are_fingerprinted_and_copied()
+    test_guard_11_owned_output_and_configured_ledger_follow_provenance()
     print("PASS distribution snapshot/cache guards")
