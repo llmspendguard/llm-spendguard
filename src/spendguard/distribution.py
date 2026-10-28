@@ -4,7 +4,6 @@ from __future__ import annotations
 import argparse
 import ast
 from datetime import datetime, timezone
-import fnmatch
 import hashlib
 import json
 import logging
@@ -30,6 +29,7 @@ DISTRIBUTION_INSTALL_TIMEOUT_S = fleet._CONSUMER_EDITABLE_REFRESH_TIMEOUT_S
 DISTRIBUTION_CHECKOUT_DIRECTORY = "distribution-checkouts"
 DISTRIBUTION_VERSION_SYMBOL = "__version__"
 DISTRIBUTION_WHEELS_DIRECTORY = "distribution-wheels"
+DISTRIBUTION_EPHEMERAL_MARKER = ".spendguard-ephemeral"
 DISTRIBUTION_BUILD_TIMEOUT_SETTING = "install_timeout_s"
 DISTRIBUTION_MAX_WORKERS_SETTING = "max_install_workers"
 DISTRIBUTION_DEFAULT_MAX_WORKERS = 4
@@ -103,6 +103,14 @@ def distribution_wheel_cache_path():
     return Path(config.HOME) / DISTRIBUTION_WHEELS_DIRECTORY
 
 
+def mark_distribution_ephemeral_dir(path):
+    """Create a spendguard-owned disposable directory and record that ownership."""
+    directory = Path(path)
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / DISTRIBUTION_EPHEMERAL_MARKER).touch(exist_ok=True)
+    return directory
+
+
 def cached_distribution_wheels(version):
     """Return cached wheels whose parsed distribution and version match exactly."""
     from .manifest import MANIFEST_DISTRIBUTION_NAME
@@ -124,13 +132,12 @@ def cached_distribution_wheels(version):
 
 def ensure_distribution_wheel(target, checkout, settings):
     """Reuse or build the green wheel, then verify its embedded filename version."""
+    cache = mark_distribution_ephemeral_dir(distribution_wheel_cache_path())
     existing = cached_distribution_wheels(target["version"])
     if existing:
         return existing[0]
     if target["version"] != target.get("green_version", target["version"]):
         raise FileNotFoundError(f"rollback wheel is not cached: {target['version']}")
-    cache = distribution_wheel_cache_path()
-    cache.mkdir(parents=True, exist_ok=True)
     command = [sys.executable, *DISTRIBUTION_WHEEL_BUILD_COMMAND, "--wheel-dir", str(cache), str(checkout)]
     completed = subprocess.run(command, capture_output=True, text=True,
                                timeout=settings[DISTRIBUTION_BUILD_TIMEOUT_SETTING], check=False)
@@ -167,16 +174,37 @@ def distribution_probe_cache_paths():
             cache / str(distribution_config_value("probe_cache_record_name")))
 
 
+def distribution_configured_ledger_paths(policy_home):
+    """Resolve configured ledger identities and exact SQLite sidecar identities."""
+    policy_path = Path(policy_home) / config.CONFIG_JSON.name
+    if not policy_path.exists():
+        return set()
+    budget_policy = json.loads(policy_path.read_text()).get("budget", {})
+    resolved_paths = set()
+    for setting in ("db_path", "lane_queue_db_path"):
+        configured_path = budget_policy.get(setting)
+        if not configured_path:
+            continue
+        ledger_path = Path(configured_path).expanduser().resolve()
+        resolved_paths.update({ledger_path, *(Path(str(ledger_path) + suffix)
+                                              for suffix in ("-wal", "-shm", "-journal"))})
+    return resolved_paths
+
+
 def distribution_snapshot_excluded(directory, name):
-    """Return whether a stored entry is output/recovery state, never probe input."""
+    """Exclude only top-level entries whose spendguard ownership is proven."""
     source_home = Path(config.HOME).resolve(strict=False)
     parent = Path(directory).resolve(strict=False)
     if parent != source_home:
         return False
-    if name == str(distribution_config_value("probe_cache_dirname")):
+    entry = (parent / name).resolve(strict=False)
+    if entry in distribution_configured_ledger_paths(source_home):
         return True
-    return any(fnmatch.fnmatchcase(name, pattern)
-               for pattern in distribution_config_value("snapshot_excludes"))
+    if entry.is_dir() and (entry / DISTRIBUTION_EPHEMERAL_MARKER).exists():
+        return True
+    configured_probe_cache = (source_home / str(
+        distribution_config_value("probe_cache_dirname"))).resolve(strict=False)
+    return entry == configured_probe_cache and entry.is_dir()
 
 
 def distribution_snapshot_fingerprint(source):
@@ -215,14 +243,15 @@ def rebuild_or_reuse_distribution_probe_base():
     """Reuse an unchanged cached policy snapshot or atomically rebuild it once."""
     source = Path(config.HOME)
     cache, base, record = distribution_probe_cache_paths()
+    mark_distribution_ephemeral_dir(cache)
     fingerprint = distribution_snapshot_fingerprint(source)
     try:
         previous = json.loads(record.read_text())
     except (OSError, ValueError, TypeError):
         previous = {}
     if base.is_dir() and previous.get("fingerprint") == fingerprint:
+        mark_distribution_ephemeral_dir(base)
         return base
-    cache.mkdir(parents=True, exist_ok=True)
     build = cache / f"{base.name}.building-{os.getpid()}"
     if build.exists():
         shutil.rmtree(build)
@@ -231,6 +260,7 @@ def rebuild_or_reuse_distribution_probe_base():
                         copy_function=copy_distribution_snapshot_entry)
     else:
         build.mkdir()
+    mark_distribution_ephemeral_dir(build)
     if base.exists():
         shutil.rmtree(base)
     build.replace(base)
@@ -397,11 +427,14 @@ def distribution_snapshot_configured_ledgers(snapshot):
         return
     policy = json.loads(policy_path.read_text())
     budget_policy = policy.get("budget", {})
+    configured_ledger_paths = distribution_configured_ledger_paths(snapshot)
     for setting in ("db_path", "lane_queue_db_path"):
         configured_path = budget_policy.get(setting)
         if not configured_path:
             continue
         ledger_source = Path(configured_path).expanduser().resolve()
+        if ledger_source not in configured_ledger_paths:
+            raise ValueError(f"configured ledger identity was not resolved: {setting}")
         ledger_destination = snapshot / setting / ledger_source.name
         ledger_destination.parent.mkdir()
         sources = [ledger_source, Path(str(ledger_source) + "-wal")]
@@ -430,8 +463,11 @@ def prepare_distribution_checkout(target, settings):
         return str(checkout)
     configured = config._cfg_get(DISTRIBUTION_CONFIG_SECTION, "checkout_root")
     destination = (Path(configured).expanduser() if configured else Path(config.HOME) / DISTRIBUTION_CHECKOUT_DIRECTORY) / target["sha"]
+    if not configured:
+        mark_distribution_ephemeral_dir(destination.parent)
     if not destination.exists():
-        destination.parent.mkdir(parents=True, exist_ok=True)
+        if configured:
+            destination.parent.mkdir(parents=True, exist_ok=True)
         distribution_git_query(checkout, "worktree", "add", "--detach", str(destination), target["sha"])
     if (distribution_git_query(destination, "rev-parse", "HEAD") != target["sha"]
             or distribution_git_query(destination, "status", "--porcelain", "--untracked-files=no")):
