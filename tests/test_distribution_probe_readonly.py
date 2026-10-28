@@ -3,6 +3,7 @@ import contextlib
 import atexit
 import io
 import json
+import logging
 import os
 from pathlib import Path
 import socket
@@ -10,6 +11,7 @@ import shutil
 import sqlite3
 import sys
 import tempfile
+import unittest
 import venv
 from unittest.mock import patch
 from types import SimpleNamespace
@@ -31,6 +33,7 @@ from spendguard import fleet  # noqa: E402
 
 PROBE_READONLY_BOOTSTRAP_NAME = "sitecustomize.py"
 PROBE_READONLY_BOOTSTRAP = "import spendguard; spendguard.install()\n"
+PROBE_READONLY_TRANSIENT_STATE_NAME = "transient-state.json"
 
 
 def exercise_distribution_probe_startup_without_persistence(disabled=False, runtime_socket=False):
@@ -85,6 +88,47 @@ def exercise_distribution_probe_startup_without_persistence(disabled=False, runt
             assert {path.relative_to(state) for path in state.rglob("*")} == original_entries
         if runtime_endpoint is not None:
             runtime_endpoint.close()
+
+
+def test_distribution_probe_snapshot_tolerates_source_entry_copy_race():
+    with tempfile.TemporaryDirectory() as temporary_directory:
+        state = Path(temporary_directory) / "state"
+        state.mkdir()
+        transient_state = state / PROBE_READONLY_TRANSIENT_STATE_NAME
+        transient_state.touch()
+        snapshot = Path(temporary_directory) / "snapshot"
+        real_copy2 = shutil.copy2
+
+        def remove_distribution_fixture_source_during_copy(source, destination):
+            transient_state.unlink()
+            return real_copy2(source, destination)
+
+        with patch.object(distribution.shutil, "copy2", side_effect=remove_distribution_fixture_source_during_copy):
+            with unittest.TestCase().assertLogs(distribution.__name__, level=logging.WARNING) as records:
+                distribution.copy_distribution_snapshot_entry(transient_state, snapshot)
+        assert not snapshot.exists()
+        assert str(transient_state) in records.output[0]
+
+
+def test_distribution_probe_snapshot_copy_race_fails_closed_for_present_source():
+    with tempfile.TemporaryDirectory() as temporary_directory:
+        state = Path(temporary_directory) / "state"
+        state.mkdir()
+        persistent_state = state / PROBE_READONLY_TRANSIENT_STATE_NAME
+        persistent_state.touch()
+        snapshot = Path(temporary_directory) / "snapshot"
+
+        with patch.object(distribution.shutil, "copy2", side_effect=FileNotFoundError):
+            try:
+                distribution.copy_distribution_snapshot_entry(persistent_state, snapshot)
+            except FileNotFoundError:
+                pass
+            else:
+                raise AssertionError("still-present snapshot source did not fail closed")
+
+
+test_distribution_probe_snapshot_tolerates_source_entry_copy_race()
+test_distribution_probe_snapshot_copy_race_fails_closed_for_present_source()
 
 
 def test_distribution_probe_snapshot_is_load_bearing():

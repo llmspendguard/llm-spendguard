@@ -46,7 +46,7 @@ def assert_distribution_inventory_named_red(result, surface):
     assert result["exit_code"] != 0 and surface in result["summary"]["stragglers"], result
 
 
-def test_distribution_external_directory_symlink_is_named_gap():
+def test_distribution_external_symlinked_venv_is_named_consumer():
     with distribution_inventory_fixture() as (root, _state, workspace, settings):
         external = root / "external-stale-venv"
         (external / "bin").mkdir(parents=True)
@@ -55,8 +55,8 @@ def test_distribution_external_directory_symlink_is_named_gap():
         linked = workspace / "linked-stale-venv"
         linked.symlink_to(external, target_is_directory=True)
         result = distribution.distribute_fleet(check=True, settings=settings)
-        assert_distribution_inventory_named_red(result, str(linked))
-        settings["consumer_audit_exempt"] = [linked]
+        assert_distribution_inventory_named_red(result, str((external / "bin" / "python").resolve()))
+        settings["consumer_audit_exempt"] = [external]
         assert distribution.distribute_fleet(check=True, settings=settings)["exit_code"] == 0
 
 
@@ -159,8 +159,8 @@ def test_distribution_unlocated_pipx_installation_is_named_gap():
 
 def test_distribution_inventory_guards_are_load_bearing():
     mutations = (
-        (setup, "discover_distribution_interpreters", "if linked_directory.is_symlink():", "if False:",
-         test_distribution_external_directory_symlink_is_named_gap),
+        (setup, "discover_distribution_interpreters", "if not configuration.is_file():", "if True:",
+         test_distribution_external_symlinked_venv_is_named_consumer),
         (fleet, "discover_host_spendguard_installations",
          'raise RuntimeError(f"pipx inventory failed: {result.stderr or result.stdout}")',
          'return []', test_distribution_denied_pipx_inventory_is_named_gap),
@@ -193,7 +193,7 @@ def test_distribution_inventory_guards_are_load_bearing():
 
 if __name__ == "__main__":
     failures = []
-    for regression in (test_distribution_external_directory_symlink_is_named_gap,
+    for regression in (test_distribution_external_symlinked_venv_is_named_consumer,
                        test_distribution_denied_pipx_inventory_is_named_gap,
                        test_distribution_check_empty_registry_is_read_only,
                        test_distribution_failed_consumer_row_is_named_gap,

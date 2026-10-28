@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import ast
 import json
+import logging
 import math
 import os
 from pathlib import Path
@@ -31,6 +32,8 @@ DISTRIBUTION_WHEEL_BUILD_COMMAND = ("-m", "pip", "wheel", "--no-deps", "--no-bui
 DISTRIBUTION_GIT_METADATA_NAME = ".git"
 DISTRIBUTION_GITDIR_PREFIX = "gitdir:"
 DISTRIBUTION_WORKTREES_DIRECTORY = "worktrees"
+DISTRIBUTION_SNAPSHOT_VANISHED_ENTRY_MESSAGE = "distribution snapshot omitted vanished source entry: %s"
+DISTRIBUTION_SNAPSHOT_LOGGER = logging.getLogger(__name__)
 DISTRIBUTION_INTERPRETER_PROBE = '''import json,sys
 preloaded = 'spendguard' in sys.modules
 import spendguard
@@ -144,7 +147,8 @@ def distribution_probe_environment():
         source = Path(config.HOME)
         snapshot = Path(probe_state_directory) / source.name
         if source.exists():
-            shutil.copytree(source, snapshot, ignore=distribution_snapshot_runtime_endpoints)
+            shutil.copytree(source, snapshot, ignore=distribution_snapshot_runtime_endpoints,
+                            copy_function=copy_distribution_snapshot_entry)
         else:
             snapshot.mkdir()
         distribution_snapshot_configured_ledgers(snapshot)
@@ -152,6 +156,17 @@ def distribution_probe_environment():
         environment["SPENDGUARD_HOME"] = str(snapshot)
         environment["PYTHONDONTWRITEBYTECODE"] = "1"
         yield environment
+
+
+def copy_distribution_snapshot_entry(source, destination):
+    """Copy stable probe state while tolerating an entry proven to have vanished."""
+    try:
+        return shutil.copy2(source, destination)
+    except FileNotFoundError:
+        if Path(source).exists():
+            raise
+        DISTRIBUTION_SNAPSHOT_LOGGER.warning(DISTRIBUTION_SNAPSHOT_VANISHED_ENTRY_MESSAGE, source)
+        return str(destination)
 
 
 def distribution_snapshot_runtime_endpoints(directory, names):

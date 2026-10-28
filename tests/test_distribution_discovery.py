@@ -26,7 +26,7 @@ def test_distribution_discovery_keeps_nested_and_symlinked_consumers():
                 sys, "executable", str(fixture_host_python)), patch.object(sys, "prefix", sys.base_prefix):
             result = setup.discover_distribution_interpreters(settings=configured)
         found = {row["venv"] for row in result["interpreters"] if row["kind"] == "venv"}
-        assert found == {str(venv) for venv in consumers}, result
+        assert found == {str(venv.resolve()) for venv in consumers}, result
         assert not result["gaps"], result
 
 

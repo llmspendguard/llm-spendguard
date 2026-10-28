@@ -414,7 +414,7 @@ _DISTRIBUTION_SCAN_DIRECTORY_BUDGET_DEFAULT = 65536
 
 
 def discover_distribution_interpreters(roots=None, settings=None, extra=None):
-    """Union configured on-disk venvs, host installs and registrations without collapsing venv symlinks.
+    """Union configured on-disk venvs, host installs and registrations by real identity.
 
     Filesystem structure defines interpreter identity here; no judgement about source meaning or
     LLM use removes a consumer. Resource or discovery failures are explicit attestation gaps.
@@ -429,8 +429,8 @@ def discover_distribution_interpreters(roots=None, settings=None, extra=None):
     candidates, gaps = {}, []
 
     def retain_distribution_interpreter(python, venv=None, kind="framework-python"):
-        executable = Path(python).expanduser().absolute()
-        venv_path = Path(venv).expanduser().absolute() if venv else None
+        executable = Path(python).expanduser().absolute().resolve()
+        venv_path = Path(venv).expanduser().absolute().resolve() if venv else None
         if venv_path is None and (executable.parent.parent /
                                  consumer_audit.CONSUMER_AUDIT_VENV_CONFIGURATION_NAME).is_file():
             venv_path = executable.parent.parent
@@ -470,6 +470,7 @@ def discover_distribution_interpreters(roots=None, settings=None, extra=None):
     directory_budget = int(resolved_settings.get(
         "distribution_scan_directory_budget", config._cfg_get(
             "distribute", "scan_directory_budget", _DISTRIBUTION_SCAN_DIRECTORY_BUDGET_DEFAULT)))
+    visited_directory_realpaths = set()
     for root in sorted({Path(value).expanduser().absolute() for value in scan_roots}):
         if consumer_audit._consumer_path_is_exempt(None, root, exemptions):
             continue
@@ -483,17 +484,46 @@ def discover_distribution_interpreters(roots=None, settings=None, extra=None):
 
         for directory, names, files in os.walk(root, onerror=record_distribution_walk_failure):
             current = Path(directory)
+            try:
+                current_realpath = current.resolve(strict=True)
+            except OSError as error:
+                record_distribution_walk_failure(error)
+                names[:] = []
+                continue
+            if current_realpath in visited_directory_realpaths:
+                names[:] = []
+                continue
+            visited_directory_realpaths.add(current_realpath)
             visited_directories += 1
             if visited_directories > directory_budget:
                 gaps.append({"surface": str(root), "reason": "enumeration directory budget exhausted"})
                 break
             names[:] = sorted(name for name in names if not consumer_audit._consumer_path_is_exempt(
                 None, current / name, exemptions))
-            for name in names:
+            linked_directory_names = []
+            for name in tuple(names):
                 linked_directory = current / name
-                if linked_directory.is_symlink():
+                if not linked_directory.is_symlink():
+                    continue
+                linked_directory_names.append(name)
+                try:
+                    resolved_directory = linked_directory.resolve(strict=True)
+                except OSError as error:
                     gaps.append({"surface": str(linked_directory),
-                                 "reason": "directory symlink subtree was not enumerated"})
+                                 "reason": f"symlink resolution failed: {error}"})
+                    continue
+                configuration = resolved_directory / consumer_audit.CONSUMER_AUDIT_VENV_CONFIGURATION_NAME
+                if not configuration.is_file():
+                    continue
+                executable_paths = (*consumer_audit.CONSUMER_AUDIT_POSIX_EXECUTABLE_PATHS,
+                                    consumer_audit.CONSUMER_AUDIT_WINDOWS_EXECUTABLE_PATH)
+                executable = next((resolved_directory.joinpath(*parts) for parts in executable_paths
+                                   if resolved_directory.joinpath(*parts).is_file()), None)
+                if executable is None:
+                    gaps.append({"surface": str(resolved_directory), "reason": "venv interpreter missing"})
+                else:
+                    retain_distribution_interpreter(executable, resolved_directory, "venv")
+            names[:] = [name for name in names if name not in linked_directory_names]
             if consumer_audit.CONSUMER_AUDIT_VENV_CONFIGURATION_NAME in files:
                 executable_paths = (*consumer_audit.CONSUMER_AUDIT_POSIX_EXECUTABLE_PATHS,
                                     consumer_audit.CONSUMER_AUDIT_WINDOWS_EXECUTABLE_PATH)
