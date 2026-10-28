@@ -1,5 +1,6 @@
 """Offline host proof through the real distribute CLI, with a gate mutation kill."""
 import contextlib
+from datetime import datetime, timezone
 import inspect
 import io
 import json
@@ -11,7 +12,7 @@ from unittest.mock import patch
 
 os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-from spendguard import distribution  # noqa: E402
+from spendguard import distribution, manifest  # noqa: E402
 
 HOST_GATE_TARGET = {"sha": "host-gate-fixture", "version": "host-gate-fixture"}
 HOST_GATE_DOCTOR_OK = 0
@@ -22,6 +23,15 @@ HOST_GATE_DOCTOR_STDERR = "host doctor fixture stderr\n"
 
 @contextlib.contextmanager
 def distribution_host_gate_fixture(proof, doctor_code=HOST_GATE_DOCTOR_OK):
+    verified_at = datetime.now(timezone.utc).isoformat()
+    persisted_manifest = {
+        "schema_version": manifest.MANIFEST_SCHEMA_VERSION,
+        "writer_version": manifest.SPENDGUARD_WRITER_VERSION,
+        "last_verified_at": verified_at,
+        "enumeration_root_mtimes": manifest.manifest_scan_root_mtimes(()),
+        "surfaces": [],
+        "gaps": [],
+    }
     with contextlib.ExitStack() as stack:
         for attribute, value in (
             ("resolve_distribution_target", HOST_GATE_TARGET),
@@ -36,6 +46,9 @@ def distribution_host_gate_fixture(proof, doctor_code=HOST_GATE_DOCTOR_OK):
                                          return_value={"consumers": [], "pruned_at_depth": []}))
         stack.enter_context(patch.object(distribution.setup, "discover_distribution_interpreters",
                                          return_value={"interpreters": [], "gaps": []}))
+        stack.enter_context(patch.object(manifest, "manifest_path",
+                                         return_value=SimpleNamespace(is_file=lambda: True)))
+        stack.enter_context(patch.object(manifest, "read_surface_manifest", return_value=persisted_manifest))
         doctor = stack.enter_context(patch.object(distribution.subprocess, "run", return_value=SimpleNamespace(
             returncode=doctor_code, stdout=HOST_GATE_DOCTOR_STDOUT, stderr=HOST_GATE_DOCTOR_STDERR)))
         yield doctor
@@ -77,8 +90,9 @@ def test_distribution_host_requires_confirmed_enforcing_gate():
                 assert host["straggler_reason"] == "host gate not enforcing"
             assert result["summary"]["stragglers"] == ([] if healthy else ["host"])
             assert (code == 0) is healthy
-            doctor.assert_called_once()
-            assert doctor.call_args.args[0] == [sys.executable, "-m", "spendguard", "doctor"]
+            doctor_calls = [call for call in doctor.call_args_list
+                            if call.args[0] == [sys.executable, "-m", "spendguard", "doctor"]]
+            assert len(doctor_calls) == 1
 
 
 def test_distribution_host_enforcement_guard_is_load_bearing():

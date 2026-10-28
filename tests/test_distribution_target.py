@@ -35,6 +35,8 @@ def test_distribution_target_uses_pointer_commit_version_and_rejects_missing_or_
 def test_distribution_interpreter_probe_is_bounded_and_identity_checks_are_load_bearing():
     def fixture_interpreter_subprocess(arguments, **options):
         assert options["timeout"] == POLICY_FIXTURE["probe_timeout_s"]
+        if arguments[:3] == ["cp", "-c", "-R"]:
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
         assert arguments[1:] == ["-c", dist.DISTRIBUTION_INTERPRETER_PROBE]
         assert "PYTHONPATH" not in options["env"]
         return SimpleNamespace(returncode=0, stdout=json.dumps(GOOD_PROBE_FIXTURE), stderr="")
@@ -52,6 +54,9 @@ def test_distribution_interpreter_probe_is_bounded_and_identity_checks_are_load_
 def assert_distribution_host_doctor_red_then_green():
     for return_code in (1, 0):
         def fixture_host_doctor(arguments, fixture_return_code=return_code, **options):
+            if arguments[:3] == ["cp", "-c", "-R"]:
+                assert options["timeout"] == POLICY_FIXTURE["probe_timeout_s"]
+                return SimpleNamespace(returncode=0, stdout="", stderr="")
             assert arguments[1:] == ["-m", "spendguard", "doctor"]
             assert options["timeout"] == POLICY_FIXTURE["probe_timeout_s"]
             return SimpleNamespace(returncode=fixture_return_code, stdout="fixture doctor output", stderr="")
