@@ -377,8 +377,9 @@ class _CodexDaemonBroker:
         """Build and serve only when this facade carries this process's exact owner identity."""
         if not self._become_owner_if_available():
             return False
+        from . import release
         while not self._stopping.wait(config.codex_daemon_pool_settings()["health_interval_s"]):
-            pass
+            release.exit_if_stale(config.warn_once)
         return True
 
     def broker_running(self):

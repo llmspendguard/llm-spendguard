@@ -16,7 +16,7 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
     os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="spendguard-reqshape-")
     os.execv(sys.executable, [sys.executable] + sys.argv)
 
-import inspect, json, sqlite3                            # noqa: E402
+import inspect, json                                     # noqa: E402
 
 from spendguard import callio, config                    # noqa: E402
 
@@ -34,7 +34,7 @@ SCHEMA = {"type": "json_schema", "json_schema": {"name": "verdict"}}
 callio.record_io_sample("probe", "openai", "gpt-5.5", "batch_1", "cid_1", "is X a Y?", "NO", out_tok=4,
               system="Answer with exactly YES or NO.", req_schema=SCHEMA, req_max_tokens=16)
 
-c = sqlite3.connect(config.db_path())
+c = config.fresh_ledger_conn(callio._ensure_callio_schema)
 row = c.execute("SELECT system, req_schema, req_max_tokens FROM call_io WHERE custom_id='cid_1'").fetchone()
 check("the SYSTEM message is stored", row and row[0] == "Answer with exactly YES or NO.", str(row))
 check("the output CONTRACT is stored", row and json.loads(row[1]) == SCHEMA, str(row[1] if row else None))

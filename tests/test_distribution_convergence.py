@@ -11,7 +11,7 @@ from unittest.mock import patch
 
 os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-from spendguard import distribution as distribution  # noqa: E402
+from spendguard import distribution as distribution, manifest  # noqa: E402
 
 FIXTURE_CURRENT_VERSION = "fixture-current"
 FIXTURE_PREVIOUS_VERSION = "fixture-previous"
@@ -48,6 +48,12 @@ def exercise_distribution_fixture():
             stack.enter_context(patch.object(distribution, "probe_distribution_interpreter", side_effect=fixture_distribution_probe))
             stack.enter_context(patch.object(distribution.fleet, "_refresh_editable_install", side_effect=fixture_distribution_reinstall))
             stack.enter_context(patch.object(distribution, "prepare_distribution_checkout", return_value=str(root)))
+            stack.enter_context(patch.object(distribution, "ensure_distribution_wheel"))
+            stack.enter_context(patch.object(
+                distribution, "inspect_distribution_install",
+                return_value={"install_kind": manifest.MANIFEST_EDITABLE_KIND,
+                              "wheel_version": None, "editable_origin": str(root)}))
+            stack.enter_context(patch.object(manifest, "manifest_path", return_value=root / "absent-manifest.json"))
             stack.enter_context(patch.object(distribution.setup, "install_hook", return_value=0))
             stack.enter_context(patch.object(distribution, "attest_distribution_host", return_value=distribution.distribution_surface_row("host", "host", True, True)))
             stack.enter_context(patch.object(distribution, "attest_distribution_api_consumers", return_value=[]))
@@ -55,7 +61,7 @@ def exercise_distribution_fixture():
 
             def assert_distribution_old_consumer_is_red():
                 result = distribution.distribute_fleet(check=True)
-                assert result["exit_code"] != 0 and interpreter in result["summary"]["stragglers"]
+                assert result["exit_code"] != 0 and interpreter in result["summary"]["stragglers"], result
                 assert not any(event[0] == "install" for event in events)
                 return result
 

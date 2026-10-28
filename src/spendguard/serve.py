@@ -135,6 +135,14 @@ def serve(host=DEFAULT_HOST, port=DEFAULT_PORT, token=None):
                             supervision_mode=fleet.SUPERVISION_LAUNCHD,
                             supervision_ref=ASK_SERVE_LAUNCHD_LABEL)
     httpd = make_server(host, port, token)
+    from . import release
+    original_service_actions = httpd.service_actions
+
+    def serve_respawn_service_actions():
+        release.exit_if_stale(print)
+        original_service_actions()
+
+    httpd.service_actions = serve_respawn_service_actions
     print(f"spendguard ask server on http://{host}:{port}  (POST /ask · GET /health · /metadata)"
           + ("  [Bearer token required]" if token else "  [localhost, no auth]"))
     try:

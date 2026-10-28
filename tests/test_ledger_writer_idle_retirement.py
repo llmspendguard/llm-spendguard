@@ -4,6 +4,7 @@ import contextlib
 import faulthandler
 import threading
 import time
+import types
 
 from _pytest_fixture_bridge import align_test_startup_home, run_pytest_style
 
@@ -15,6 +16,8 @@ IDLE_REPRO_PATH_COUNT = 5
 IDLE_REPRO_SECONDS = 0.1
 IDLE_REPRO_INTERVALS = 10
 IDLE_REPRO_POLL_DIVISOR = 10
+IDLE_REPRO_CLOCK_START = 0.0
+IDLE_REPRO_CLOCK_ADVANCE_INTERVALS = 2
 IDLE_REPRO_EXTENSION = ".sqlite"
 IDLE_REPRO_SQL = "CREATE TABLE IF NOT EXISTS retirement_probe(value INTEGER)"
 IDLE_REPRO_INSERT = "INSERT INTO retirement_probe VALUES (?)"
@@ -27,6 +30,10 @@ def test_distinct_path_writers_retire_and_recreate(monkeypatch, tmp_path):
     baseline_threads = {thread for thread in threading.enumerate()
                         if thread.name == ledger_writer.LEDGER_WRITER_THREAD_NAME}
     original_cfg_get = config._cfg_get
+    idle_repro_clock = {"now": IDLE_REPRO_CLOCK_START}
+
+    def idle_repro_monotonic():
+        return idle_repro_clock["now"]
 
     def idle_repro_configuration(section, key, default=None):
         if (section, key) == ("ledger", "writer_idle_seconds"):
@@ -34,12 +41,17 @@ def test_distinct_path_writers_retire_and_recreate(monkeypatch, tmp_path):
         return original_cfg_get(section, key, default)
 
     monkeypatch.setattr(config, "_cfg_get", idle_repro_configuration)
+    monkeypatch.setattr(ledger_writer, "time", types.SimpleNamespace(
+        monotonic=idle_repro_monotonic,
+        sleep=time.sleep,
+    ))
     paths = [tmp_path / f"{index}{IDLE_REPRO_EXTENSION}" for index in range(IDLE_REPRO_PATH_COUNT)]
     try:
         for path in paths:
             ledger.SpendLedger(path)
         owners = list(ledger_writer._ledger_writer_registry.values())
         assert len(owners) == IDLE_REPRO_PATH_COUNT
+        idle_repro_clock["now"] += IDLE_REPRO_SECONDS * IDLE_REPRO_CLOCK_ADVANCE_INTERVALS
         deadline = time.monotonic() + IDLE_REPRO_SECONDS * IDLE_REPRO_INTERVALS
         while time.monotonic() < deadline:
             live_threads = {thread for thread in threading.enumerate()

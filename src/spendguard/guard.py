@@ -32,6 +32,23 @@ DECISIONS_SUMMARY_TOTAL_SQL = "SELECT COUNT(*) AS decisions,CASE WHEN COUNT(save
 DECISIONS_SUMMARY_INTENT_SQL = """SELECT COALESCE(intent,'(none)') AS intent,COUNT(*) AS decisions,
 CASE WHEN COUNT(saved_usd)=COUNT(*) THEN COALESCE(SUM(saved_usd),0) END AS saved_usd FROM decisions {where}
 GROUP BY COALESCE(intent,'(none)') ORDER BY saved_usd DESC LIMIT ?"""
+DECISIONS_SINCE_ROWID_CTE_SQL = (
+    "WITH matching_decision_rowids AS MATERIALIZED "
+    "(SELECT rowid FROM decisions WHERE day BETWEEN ? AND ?) "
+)
+DECISIONS_SUMMARY_TOTAL_SINCE_SQL = (
+    DECISIONS_SINCE_ROWID_CTE_SQL
+    + "SELECT COUNT(*) AS decisions,"
+    "CASE WHEN COUNT(saved_usd)=COUNT(*) THEN COALESCE(SUM(saved_usd),0) END AS saved_usd "
+    "FROM decisions WHERE rowid IN (SELECT rowid FROM matching_decision_rowids)"
+)
+DECISIONS_SUMMARY_INTENT_SINCE_SQL = (
+    DECISIONS_SINCE_ROWID_CTE_SQL
+    + "SELECT COALESCE(intent,'(none)') AS intent,COUNT(*) AS decisions,"
+    "CASE WHEN COUNT(saved_usd)=COUNT(*) THEN COALESCE(SUM(saved_usd),0) END AS saved_usd "
+    "FROM decisions WHERE rowid IN (SELECT rowid FROM matching_decision_rowids) "
+    "GROUP BY COALESCE(intent,'(none)') ORDER BY saved_usd DESC LIMIT ?"
+)
 
 
 def _savings_db():
@@ -168,6 +185,7 @@ def _decisions_db():
 
 def _ensure_guard_decisions_schema(db):
     from . import routing_audit
+    from .schema_indexes import ensure_ordered_indexes_coverage
     routing_audit.ensure_decisions_call_fk_schema(db, commit=False)
     # forward-only additive column: `why` = the SPECIFIC routing reason ("bandit → codex (gpt-5.6-sol)", "tier-3
     # base fallback", "lane-miss → metered", "best-value") so "why did X run instead of the model requested" is a
@@ -177,6 +195,9 @@ def _ensure_guard_decisions_schema(db):
         db.execute("ALTER TABLE decisions ADD COLUMN why TEXT")
     if "reason_class" not in _have:
         db.execute("ALTER TABLE decisions ADD COLUMN reason_class TEXT")
+    ensure_ordered_indexes_coverage(db, "decisions", (
+        (("day", "ts"), False),
+    ))
     db.commit()
 
 
@@ -243,12 +264,13 @@ def decisions_summary(since=None, intent_limit=None):
     from .ledger_read import LedgerSQLReadRequest, ledger_read_table_exists, read_ledger_sql
     if not Path(config.db_path()).exists() or not ledger_read_table_exists("decisions"):
         return {"decisions": 0, "saved_usd": 0.0, "by_intent": []}
-    where = "WHERE day >= ?" if since else ""
-    parameters = (since,) if since else ()
+    total_sql = DECISIONS_SUMMARY_TOTAL_SINCE_SQL if since else DECISIONS_SUMMARY_TOTAL_SQL.format(where="")
+    intent_sql = DECISIONS_SUMMARY_INTENT_SINCE_SQL if since else DECISIONS_SUMMARY_INTENT_SQL.format(where="")
+    parameters = (since, datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d")) if since else ()
     total = read_ledger_sql(LedgerSQLReadRequest(
-        DECISIONS_SUMMARY_TOTAL_SQL.format(where=where), parameters=parameters))[0]
+        total_sql, parameters=parameters))[0]
     ranked = read_ledger_sql(LedgerSQLReadRequest(
-        DECISIONS_SUMMARY_INTENT_SQL.format(where=where), parameters=parameters + (int(intent_limit),),
+        intent_sql, parameters=parameters + (int(intent_limit),),
         row_cap=int(intent_limit)))
     return {"decisions": int(total["decisions"]), "saved_usd": _decision_nullable_round(total["saved_usd"], 4),
             "by_intent": [{"intent": row["intent"], "decisions": int(row["decisions"]),

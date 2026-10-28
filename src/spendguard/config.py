@@ -1519,6 +1519,8 @@ def open_ledger_connection(path=None, timeout=LEDGER_CONNECT_TIMEOUT_S, *, tune=
         options.setdefault("check_same_thread", False)
         c = sqlite3.connect(path, timeout=timeout,
                             factory=_CountedLedgerConnection, **options)
+        from spendguard.content_compression import ledger_text_factory
+        c.text_factory = ledger_text_factory
         c._ledger_home_path = path
         c._ledger_opened_path_identity = opened_path_identity
         c._ledger_request_step_lock = threading.RLock()
@@ -1690,8 +1692,11 @@ def open_ledger_maintenance_connection(path=None, *, read_only=True, timeout=0):
     import sqlite3
     ledger = Path(path or db_path()).resolve(strict=True)
     mode = "ro" if read_only else "rw"
-    return sqlite3.connect(f"{ledger.as_uri()}?mode={mode}", uri=True, timeout=timeout,
-                           isolation_level=None)
+    connection = sqlite3.connect(f"{ledger.as_uri()}?mode={mode}", uri=True, timeout=timeout,
+                                 isolation_level=None)
+    from spendguard.content_compression import ledger_text_factory
+    connection.text_factory = ledger_text_factory
+    return connection
 
 
 def pooled_ledger_conn(key, ensure_schema, path=None):

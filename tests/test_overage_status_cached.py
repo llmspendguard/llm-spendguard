@@ -51,10 +51,10 @@ def _rm_cache():
         pass
 
 
-# ── (a) compute ONCE per TTL: 1st computes, 2nd rides the in-process memo (same marker = not recomputed) ──
+# ── (a) explicit refresh computes; ordinary reads ride the in-process memo ──
 _clear_memo()
 _rm_cache()
-r1 = overage.current_overage_status()
+r1 = overage.refresh_overage_status_cache()
 r2 = overage.current_overage_status()
 ck("2nd call did NOT recompute (same marker = in-process memo hit)", r1.get("mk") == r2.get("mk"), (r1, r2))
 ck("1st return is marked not-cached", r1.get("cached") is False, r1)
@@ -74,13 +74,15 @@ rd = overage.current_overage_status()
 ck("fresh process served from disk cache (marker matches last compute)", rd.get("mk") == r4.get("mk"), (r4, rd))
 ck("disk-served return is marked cached", rd.get("cached") is True, rd)
 
-# ── (e) SPENDGUARD_TEST_ISOLATED bypasses the cache entirely (fresh marker each call; no file written) ──
+# ── (e) isolation prevents disk bleed but never permits an implicit slow refresh ──
 os.environ["SPENDGUARD_TEST_ISOLATED"] = "1"
 _clear_memo()
 _rm_cache()
 ri1 = overage.current_overage_status()
 ri2 = overage.current_overage_status()
-ck("under TEST_ISOLATED every call recomputes (distinct markers)", ri1.get("mk") != ri2.get("mk"), (ri1, ri2))
+ck("under TEST_ISOLATED missing cache is explicit unknown", ri1.get("stale") is True and ri1.get("on_overage_now") is None,
+   (ri1, ri2))
+ck("under TEST_ISOLATED ordinary calls never run the slow probe", "mk" not in ri1 and "mk" not in ri2, (ri1, ri2))
 ck("under TEST_ISOLATED no disk cache file is written", not os.path.exists(_CACHE_FILE), _CACHE_FILE)
 os.environ.pop("SPENDGUARD_TEST_ISOLATED", None)
 

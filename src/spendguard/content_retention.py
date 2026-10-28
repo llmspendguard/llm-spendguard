@@ -13,6 +13,7 @@ from . import config
 from .ledger_fork_locks import new_fork_reset_ledger_state
 from .config_schema import SETTINGS
 from .schema_indexes import ensure_ordered_index_coverage
+from .content_compression import compress_retained_text
 
 
 CONTENT_RETENTION_CONFIG_SECTION = "content_retention"
@@ -91,6 +92,7 @@ def _ensure_content_retention_schema(connection):
         response_json TEXT NOT NULL
     )""")
     ensure_ordered_index_coverage(connection, CONTENT_RETENTION_TABLE, ("ts",))
+    ensure_ordered_index_coverage(connection, CONTENT_RETENTION_TABLE, ("call_id",))
     connection.commit()
     try:
         _purge_expired_content_rows(connection)
@@ -112,9 +114,9 @@ def record_governed_call_content(call_id, prompt, system, response, *, timestamp
     retained_at = timestamp or datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
     connection = None
     try:
-        encoded_prompt = _encode_complete_value(prompt)
-        encoded_system = _encode_complete_value(system)
-        encoded_response = _encode_complete_value(response)
+        encoded_prompt = compress_retained_text(_encode_complete_value(prompt))
+        encoded_system = compress_retained_text(_encode_complete_value(system))
+        encoded_response = compress_retained_text(_encode_complete_value(response))
         # Schema setup may synchronously dispatch to the writer; admit it before
         # taking the retention lock, following the global writer lock order.
         connection = _content_retention_db()

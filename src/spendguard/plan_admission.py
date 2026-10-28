@@ -29,11 +29,14 @@ def lane_risk(lane):
     remaining = row.get("remaining_pct") if row else None
     capped = bool(row and row.get("known") and remaining is not None and float(remaining) <= _threshold())
     spec = lane_registry.lane_spec(lane) or {}
-    paid_overage = bool(not test_isolated and spec.get("subagent_host")
-                        and overage.current_overage_status().get("on_overage_now"))
+    overage_status = (overage.current_overage_status()
+                      if not test_isolated and spec.get("subagent_host") else None)
+    paid_overage = bool(overage_status and overage_status.get("on_overage_now") is True)
+    overage_unknown = bool(overage_status and overage_status.get("on_overage_now") is None)
     proactive_shed = lane in _shed_set()
     return {"lane": lane, "remaining_pct": remaining, "known": bool(row and row.get("known")),
-            "capped": capped, "paid_overage": paid_overage, "proactive_shed": proactive_shed,
+            "capped": capped, "paid_overage": paid_overage, "overage_unknown": overage_unknown,
+            "proactive_shed": proactive_shed,
             "test_isolated": test_isolated, "at_risk": capped or paid_overage or proactive_shed,
             "lane_health": {lane_row.get("lane"): lane_row for lane_row in lane_rows if lane_row.get("lane")}}
 

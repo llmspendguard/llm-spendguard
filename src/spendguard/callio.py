@@ -18,6 +18,7 @@ import traceback
 from . import config
 from .ledger_fork_locks import new_fork_reset_ledger_state
 from .ledger_writer import best_effort_ledger_function, serialize_ledger_function
+from .content_compression import compress_retained_text
 
 _lock = new_fork_reset_ledger_state(globals(), "_lock", threading.RLock)
 _callio_logger = logging.getLogger(__name__)
@@ -147,22 +148,16 @@ def record_io_sample(intent, provider, model, batch, custom_id, prompt, output, 
            system=None, req_schema=None, req_max_tokens=0, cap_chars=None, finish_reason=None, effort=None):
     """Insert one sample (idempotent on batch+custom_id). Returns id or None if duplicate.
 
-    `cap_chars` overrides the per-body character cap for THIS write (default: snip_chars(), the judge-sized 800). The
-    LIVE capture path passes a large replay-fidelity cap so a captured prompt is REPLAYABLE (not a partial task); the
-    truncated flag and the grow-only refill both key on whatever cap is in force here, so fidelity is per-write."""
+    ``cap_chars`` remains an accepted compatibility parameter, but retained evidence is stored whole. Live capture
+    performs its containment check before calling this function; persisted prompt/output bodies are never sliced."""
     cid = _uid()
     ts = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
-    cap = int(cap_chars) if cap_chars else snip_chars()
     # The replay guard keys on PROMPT truncation ONLY: bakeoff/titration REPLAY the prompt, so a cut prompt is a
     # different task and must be excluded — but a full prompt with a cut OUTPUT stays perfectly replayable (the output
     # is regenerated). Conflating the two would wrongly exclude a usable prompt. The warning still fires on either cut.
-    _trunc = 1 if len(prompt or "") > cap else 0
+    _trunc = 0
     from . import bulkgate
     _reply_truncated = bulkgate.is_truncated(finish_reason)
-    if _trunc or len(output or "") > cap:
-        config.warn_once("[spendguard] call_io capture for intent %r CUT a body at %d chars — a cut PROMPT excludes the "
-                         "row from replay/bakeoff (a partial task); raise callio.snip_chars and re-fetch for full "
-                         "fidelity. (An output-only cut is kept: the prompt stays replayable.)" % (intent, cap))
     try:
         with _lock:
             cur = _callio_db().execute(
@@ -170,10 +165,10 @@ def record_io_sample(intent, provider, model, batch, custom_id, prompt, output, 
                 "in_tok,out_tok,source,system,req_schema,req_max_tokens,truncated,quality,quality_src,quality_conf,effort,shape_complete) "
                 "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (cid, ts, intent, provider, model, batch, str(custom_id),
-                 (prompt or "")[:cap], (output or "")[:cap],
+                 compress_retained_text(prompt or ""), compress_retained_text(output or ""),
                  None if in_tok is None else int(in_tok), None if out_tok is None else int(out_tok), source,
-                 system or "",
-                 req_schema if isinstance(req_schema, str) else json.dumps(req_schema) if req_schema else "",
+                 compress_retained_text(system or ""),
+                 compress_retained_text(req_schema if isinstance(req_schema, str) else json.dumps(req_schema) if req_schema else ""),
                  int(req_max_tokens or 0), _trunc,
                  ("bad" if _reply_truncated else None), ("truncation" if _reply_truncated else None),
                  (1.0 if _reply_truncated else None), effort, 1))
@@ -187,16 +182,18 @@ def record_io_sample(intent, provider, model, batch, custom_id, prompt, output, 
             # was longer, so a fetch carrying a longer prompt and a shorter output overwrote the stored
             # output with the shorter one. That is the exact truncation this grow-only rule exists to
             # prevent, performed by the rule itself. CASE per column keeps them independent.
-            _p, _o = (prompt or "")[:cap], (output or "")[:cap]
-            _callio_db().execute(
-                "UPDATE call_io SET "
-                "prompt = CASE WHEN LENGTH(?) > LENGTH(COALESCE(prompt,'')) THEN ? ELSE prompt END, "
-                "output = CASE WHEN LENGTH(?) > LENGTH(COALESCE(output,'')) THEN ? ELSE output END, "
-                # a bigger-cap refill that GROWS the stored prompt adopts THIS capture's truncated flag (so a
-                # full re-fetch clears it); an unchanged/shorter capture leaves the existing flag untouched.
-                "truncated = CASE WHEN LENGTH(?) > LENGTH(COALESCE(prompt,'')) THEN ? ELSE truncated END "
-                "WHERE batch=? AND custom_id=?",
-                (_p, _p, _o, _o, _p, _trunc, batch, str(custom_id)))
+            existing_prompt, existing_output, existing_truncated = _callio_db().execute(
+                "SELECT prompt,output,truncated FROM call_io WHERE batch=? AND custom_id=?",
+                (batch, str(custom_id)),
+            ).fetchone()
+            prompt_grows = len(prompt or "") > len(existing_prompt or "")
+            output_grows = len(output or "") > len(existing_output or "")
+            if prompt_grows or output_grows:
+                _callio_db().execute(
+                    "UPDATE call_io SET prompt=?,output=?,truncated=? WHERE batch=? AND custom_id=?",
+                    (compress_retained_text(prompt or "") if prompt_grows else compress_retained_text(existing_prompt or ""),
+                     compress_retained_text(output or "") if output_grows else compress_retained_text(existing_output or ""),
+                     _trunc if prompt_grows else existing_truncated, batch, str(custom_id)))
             # Shape is executable replay evidence, never display text: keep it WHOLE, independent
             # of the prompt/output storage cap. A source refill repairs legacy incomplete shape.
             _callio_db().execute(
@@ -204,8 +201,8 @@ def record_io_sample(intent, provider, model, batch, custom_id, prompt, output, 
                 "req_schema=COALESCE(NULLIF(req_schema,''),?), "
                 "req_max_tokens=CASE WHEN COALESCE(req_max_tokens,0)=0 THEN ? ELSE req_max_tokens END, "
                 "effort=COALESCE(effort,?) WHERE batch=? AND custom_id=?",
-                (system or "",
-                 req_schema if isinstance(req_schema, str) else json.dumps(req_schema) if req_schema else "",
+                (compress_retained_text(system or ""),
+                 compress_retained_text(req_schema if isinstance(req_schema, str) else json.dumps(req_schema) if req_schema else ""),
                  int(req_max_tokens or 0), effort, batch, str(custom_id)))
             _callio_db().commit()
         # Honor the docstring ('Returns id or None if duplicate'): a duplicate still GROWS the row above (a
@@ -337,8 +334,11 @@ def _apply_callio_conversation_links(ctxs):
     with _lock:
         db = _callio_db()
         for bid, d in ctxs.items():
-            ctx = (d.get("before", "") + "\n--- [batch ran here: " + (d.get("at", "") or "")[:120] + "] ---\n" + d.get("after", "")).strip()
-            r = db.execute("UPDATE call_io SET conv_id=?, context=? WHERE batch=?", (d.get("conv", ""), ctx[:8000], bid))
+            ctx = (d.get("before", "") + "\n--- [batch ran here: " + (d.get("at", "") or "") + "] ---\n" + d.get("after", "")).strip()
+            r = db.execute(
+                "UPDATE call_io SET conv_id=?, context=? WHERE batch=?",
+                (d.get("conv", ""), compress_retained_text(ctx), bid),
+            )
             n += r.rowcount
         db.commit()
     return n

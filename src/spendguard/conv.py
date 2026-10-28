@@ -212,7 +212,7 @@ def _basename(cwd):
 
 
 def _seg_id(sid, ts, prompt):
-    return hashlib.sha1("|".join([sid or "", ts or "", (prompt or "")[:120]]).encode()).hexdigest()[:16]
+    return hashlib.sha1("|".join([sid or "", ts or "", prompt or ""]).encode()).hexdigest()[:16]
 
 
 def _user_candidate(obj, txt):
@@ -342,7 +342,7 @@ def segment_records(records, sid="", cwd_default="", ask_verdicts=None):
         ask = _is_user_ask(obj, txt, ask_verdicts)
         if ask:
             _flush()
-            cur = {"sid": sid, "cwd": cwd, "project_prior": _basename(cwd), "prompt": ask[:200],
+            cur = {"sid": sid, "cwd": cwd, "project_prior": _basename(cwd), "prompt": ask,
                    "batch_ids": set(), "ts": ts, "day": (ts or "")[:10]}
         if cur is None:                                   # spend/text before any user ask → a headless segment
             cur = {"sid": sid, "cwd": cwd, "project_prior": _basename(cwd), "prompt": "",
@@ -380,7 +380,7 @@ _SEG_TAU = 70   # below this confidence (or a non-llm/human source) → the conv
 
 
 def _content_hash(seg):
-    return hashlib.sha1("|".join([seg.get("cwd") or "", (seg.get("prompt") or "")[:200],
+    return hashlib.sha1("|".join([seg.get("cwd") or "", seg.get("prompt") or "",
                                   ",".join(seg.get("batch_ids") or [])]).encode()).hexdigest()[:16]
 
 
@@ -412,6 +412,7 @@ def _seg_put_cls(seg_id, cls, source="llm", model="", seg=None):
     the LLM's full DETERMINATION (cls as JSON — what it classified/extracted) · model · ts. So we never re-pay AND
     can re-derive / selectively re-run when the model or prompt changes. An llm write NEVER overwrites a human one."""
     from . import learn
+    from .content_compression import compress_retained_text
     with learn._lock:
         db = learn._insights_db()
         cur = db.execute("SELECT source FROM seg_attribution WHERE seg_id=?", (seg_id,)).fetchone()
@@ -422,7 +423,8 @@ def _seg_put_cls(seg_id, cls, source="llm", model="", seg=None):
             "INSERT OR REPLACE INTO seg_attribution"
             "(seg_id,content_hash,sid,cwd,prompt,project,org,team,confidence,source,model,ts,batch_ids,determination) "
             "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-            (seg_id, _content_hash(seg), seg.get("sid", ""), seg.get("cwd", ""), (seg.get("prompt") or "")[:300],
+            (seg_id, _content_hash(seg), seg.get("sid", ""), seg.get("cwd", ""),
+             compress_retained_text(seg.get("prompt") or ""),
              (cls.get("project") or ""), (cls.get("org") or ""), (cls.get("team") or ""),
              int(cls.get("confidence") or 0), source, model, learn._now(),
              json.dumps(seg.get("batch_ids") or []), json.dumps(cls)))

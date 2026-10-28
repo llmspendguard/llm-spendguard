@@ -1,4 +1,5 @@
 """Fake provider transport; real submit, reconciliation, registry, queue and collect."""
+import atexit
 import concurrent.futures
 import collections
 import json
@@ -9,7 +10,9 @@ import sys
 import tempfile
 from unittest.mock import patch
 
-os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="sg-exactly-chaos-")
+isolated_home_owner = tempfile.TemporaryDirectory(prefix="sg-exactly-chaos-")
+atexit.register(isolated_home_owner.cleanup)
+os.environ["SPENDGUARD_HOME"] = isolated_home_owner.name
 os.environ["SPENDGUARD_TEST_ISOLATED"] = "1"
 
 # Let tests/-level siblings loaded via runpy import _script_checks.

@@ -76,7 +76,7 @@ def exercise_distribution_daemon_red_green():
     def repair_distribution_fixture_daemon(**arguments):
         assert arguments == {"apply": True, "consumer_id": DAEMON_FIXTURE_PID, "all_supervised": True}
         state.update(status=copy.deepcopy(clean), broken_probe=False, leaked=False)
-        return {daemon.fleet.FLEET_RESTART_CONFIRMED_KEY: [{"pid": DAEMON_FIXTURE_PID}]}
+        return {daemon.fleet.FLEET_RESTART_REQUESTED_KEY: [{"pid": DAEMON_FIXTURE_PID}]}
 
     def inspect_distribution_fixture_fds(pid, ledger_path=None):
         assert pid == DAEMON_FIXTURE_PID
@@ -234,17 +234,15 @@ def exercise_distribution_missing_http_owner_restart():
                 "supervision_ref": daemon.MCP_HTTP_LAUNCHD_LABEL}
     proof = {"surface": DAEMON_FIXTURE_ENDPOINT, "kind": "daemon", "on_version": True,
              "healthy": True, "fd_ok": True, "straggler_reason": None, "evidence": {}}
-    with patch.object(daemon.fleet, "running_consumers", side_effect=[[], [consumer]]), \
+    with patch.object(daemon.fleet, "running_consumers", return_value=[]), \
          patch.object(daemon.fleet, "fleet_control_restarts_enabled", return_value=True), \
          patch.object(daemon.fleet, "kickstart_declared_launchd_consumer", return_value={"ok": True}) as kick, \
-         patch.object(daemon.fleet, "verify_launchd_consumer_green_return", return_value=True) as verify, \
          patch.object(daemon, "prove_distribution_mcp_daemon", return_value=proof) as attest:
         rows = daemon.attest_distribution_daemons(target, settings={"mcp_endpoint": DAEMON_FIXTURE_ENDPOINT})
         kick.assert_called_once_with(daemon.MCP_HTTP_LAUNCHD_LABEL)
-        verify.assert_called_once_with(label=daemon.MCP_HTTP_LAUNCHD_LABEL, green_sha=DAEMON_FIXTURE_SHA)
-        assert attest.call_args.args[0]["pid_create_time"] == DAEMON_FIXTURE_CREATED
-        assert rows[0]["action_taken"] == "restarted" and not rows[0]["straggler_reason"]
-    print("[OK] missing HTTP owner uses shared launchd restart and fresh registry identity")
+        assert attest.call_args.args[0].get("pid") is None
+        assert rows[0]["action_taken"] == "restart-requested" and not rows[0]["straggler_reason"]
+    print("[OK] missing HTTP owner requests shared launchd restart without blocking")
 
 
 if __name__ == "__main__":

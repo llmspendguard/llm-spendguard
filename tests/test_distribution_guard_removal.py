@@ -56,7 +56,7 @@ def distribution_api_guard_fixture():
              "metadata_version": GUARD_REMOVAL_VERSION, "sha": GUARD_REMOVAL_SHA,
              "dirty": False, "gate_enforcing": True}
     state = {"registration": registration, "probe": probe, "after": [registration],
-             "restart": {guard_api.fleet.FLEET_RESTART_CONFIRMED_KEY: [{"pid": GUARD_REMOVAL_PID}]}}
+             "restart": {guard_api.fleet.FLEET_RESTART_REQUESTED_KEY: [{"pid": GUARD_REMOVAL_PID}]}}
     enumerations = []
 
     def enumerate_guard_api_registrations(**arguments):
@@ -110,20 +110,21 @@ def exercise_distribution_api_probe_enforcement_guard_removal():
         require_distribution_guard_mutant_killed(rejects, guard_api, "attest_distribution_api_consumers", mutant)
 
 
-def exercise_distribution_api_registration_present_guard_removal():
-    with distribution_api_guard_fixture() as (state, rejects):
-        state["after"] = []
-        mutant = compile_distribution_guard_removal(guard_api.attest_distribution_api_consumers, (
-            ('candidate = matching[0] if len(matching) == 1 else {}',
-             'candidate = matching[0] if len(matching) == 1 else consumer'),))
-        require_distribution_guard_mutant_killed(rejects, guard_api, "attest_distribution_api_consumers", mutant)
+def exercise_distribution_api_restart_uses_current_registration():
+    with distribution_api_guard_fixture() as (state, _rejects):
+        guard_api.fleet.running_consumers.reset_mock()
+        registration = state["registration"]
+        target = {"version": registration["version"], "sha": registration["served_sha"]}
+        rows = guard_api.attest_distribution_api_consumers(target, settings={})
+        assert guard_api.fleet.running_consumers.call_count == 1
+        assert len(rows) == 1 and rows[0]["healthy"], rows
 
 
 def exercise_distribution_api_restart_confirmed_guard_removal():
     with distribution_api_guard_fixture() as (state, rejects):
         state["restart"] = {}
         mutant = compile_distribution_guard_removal(guard_api.attest_distribution_api_consumers, (
-            ('restart_ok = bool(restarted.get(fleet.FLEET_RESTART_CONFIRMED_KEY))', 'restart_ok = True'),))
+            ('restart_ok = bool(restarted.get(fleet.FLEET_RESTART_REQUESTED_KEY))', 'restart_ok = True'),))
         require_distribution_guard_mutant_killed(rejects, guard_api, "attest_distribution_api_consumers", mutant)
 
 
@@ -137,7 +138,7 @@ def distribution_daemon_guard_fixture():
               "gate_enforcing": True, "served": {"sha": GUARD_REMOVAL_SHA, "dirty": False}}
     state = {"consumers": [consumer], "status": status,
              "identity": guard_daemon.fleet._FLEET_PID_VERIFIED_LIVE,
-             "restart": {guard_daemon.fleet.FLEET_RESTART_CONFIRMED_KEY: [{"pid": GUARD_REMOVAL_PID}]}}
+             "restart": {guard_daemon.fleet.FLEET_RESTART_REQUESTED_KEY: [{"pid": GUARD_REMOVAL_PID}]}}
     policy = {"mcp_endpoint": GUARD_REMOVAL_ENDPOINT, "probe_timeout_s": GUARD_REMOVAL_TIMEOUT}
 
     def answer_guard_daemon_rpc(endpoint, method, params, timeout):
@@ -191,7 +192,7 @@ def exercise_distribution_daemon_restart_confirmed_guard_removal():
     with distribution_daemon_guard_fixture() as (state, rejects):
         state["restart"] = {}
         mutant = compile_distribution_guard_removal(guard_daemon.attest_distribution_daemons, (
-            ('restart_ok = bool(result.get(fleet.FLEET_RESTART_CONFIRMED_KEY))', 'restart_ok = True'),))
+            ('restart_ok = bool(result.get(fleet.FLEET_RESTART_REQUESTED_KEY))', 'restart_ok = True'),))
         require_distribution_guard_mutant_killed(rejects, guard_daemon, "attest_distribution_daemons", mutant)
 
 
@@ -226,7 +227,7 @@ if __name__ == "__main__":
     exercise_distribution_api_enforcement_guard_removal()
     exercise_distribution_api_probe_confirmation_guard_removal()
     exercise_distribution_api_probe_enforcement_guard_removal()
-    exercise_distribution_api_registration_present_guard_removal()
+    exercise_distribution_api_restart_uses_current_registration()
     exercise_distribution_api_restart_confirmed_guard_removal()
     exercise_distribution_daemon_pid_match_guard_removal()
     exercise_distribution_daemon_pid_identity_liveness_guard_removal()

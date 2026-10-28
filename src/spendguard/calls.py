@@ -413,6 +413,7 @@ def _ensure_call_observation_schema(c):
     c.execute("CREATE INDEX IF NOT EXISTS idx_calls_class_session ON calls(call_class, origin_session)")
     ensure_ordered_index_coverage(c, "calls", ("kind", "ts"))
     ensure_ordered_index_coverage(c, "calls", ("kind", "provider", "model", "intent"))
+    ensure_ordered_index_coverage(c, "calls", ("finish", "ts"))
     from . import routing_audit
     routing_audit.ensure_decisions_call_fk_schema(c, commit=False)
     # Default-on complete content retention shares this connection so large governed fans do not

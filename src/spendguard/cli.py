@@ -145,6 +145,8 @@ _GROUPS = [
         ("keys-audit", "scan repo .env files for a provider key that would SHADOW the keys.env SSOT (the stale-shadow 401 doctor can't see)"),
         ("consumer-audit", "prove every workspace LLM consumer is gated and on the deployed sha; safely arm fixable venvs"),
         ("distribute", "converge every local surface and attest the deployed release; --check verifies without mutation"),
+        ("manifest", "build or show the persisted complete inventory of gated surfaces"),
+        ("manifest", "build/show the persisted complete inventory of gated surfaces"),
         ("deploy", "run the full gate, then promote committed HEAD → green pointer (running MCP servers roll onto latest+best)"),
         ("release", "show release status, then converge and attest the fleet (--check verifies only; --json)"),
         ("fleet", "tracked consumers and deployments (--restart, --json, or deregister <python_executable>)"),
@@ -511,6 +513,9 @@ def _dispatch(argv=None):
     if cmd == "delegate":
         from . import delegate_router
         return delegate_router.delegate_cli(rest)
+    if cmd == "manifest":
+        from .manifest import manifest_command
+        return manifest_command(rest)
     if cmd == "reap-orphans":
         return reap_orphaned_warm_servers_cli(rest)
     if cmd == "queue-manage":
@@ -519,6 +524,9 @@ def _dispatch(argv=None):
         return lane_leak_check_cli(rest)
     if cmd == "ledger-read":
         return ledger_read_cli(rest)
+    if cmd == "compress-content":
+        from .content_compression_backfill import content_compression_backfill_cli
+        return content_compression_backfill_cli(rest)
     if cmd == "agent-spawn-gate":
         from . import agent_spawn_gate
         return agent_spawn_gate.cmd(rest)
@@ -726,6 +734,8 @@ def _dispatch(argv=None):
             _fr = _fleet.restart_stale(apply=True)
             for _x in _fr.get("restarted", []):
                 print(f"deploy: fleet — {_x.get('action')} {_x.get('launchd_label')} (pid {_x.get('pid')})")
+            if _fr.get(_fleet.FLEET_RESTART_REQUESTED_KEY):
+                print("deploy: fleet — restarts requested; run `spendguard distribute --check` to confirm convergence.")
             for _f in _fr.get(_fleet.FLEET_RESTART_FAILURE_KEY, []):
                 print(f"deploy: 🔴 fleet restart FAILED {_f.get('launchd_label')} (pid {_f.get('pid')}) — "
                       f"{_f.get('why')}", file=sys.stderr)
@@ -739,7 +749,7 @@ def _dispatch(argv=None):
                     and not _fr.get(_fleet.FLEET_RESTART_TRANSIENT_KEY)):
                 print("deploy: fleet — all tracked consumers already on the green commit.")
             if _fr.get(_fleet.FLEET_RESTART_FAILURE_KEY):
-                return _deploy_failed_verdict("one or more supervised consumers failed to return on green")
+                return _deploy_failed_verdict("one or more supervised consumer restarts could not be requested")
         _refresh_deployments = "--no-refresh" not in r
         _host_install_audit = _fleet.reconcile_registered_host_installations()
         _host_escape_count = len(_host_install_audit["escapes"])

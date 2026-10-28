@@ -3192,6 +3192,9 @@ def _cli(cmd="status", live=False):
             try:
                 from . import plan_admission as _plan_admit
                 for _risk in _plan_admit.risks():
+                    if _risk.get("overage_unknown"):
+                        print(f"  plan axis : ⚪ {_risk['lane']} overage UNKNOWN (cached status absent/stale; "
+                              "diagnostics never run a full-ledger refresh)")
                     if _risk.get("at_risk"):
                         _why = "PAID OVERAGE" if _risk.get("paid_overage") else f"{_risk.get('remaining_pct')}% left"
                         print(f"  plan axis : 🔴 {_risk['lane']} {_why} — labelled discretionary calls reroute or REFUSE")

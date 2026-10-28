@@ -12,7 +12,7 @@ INCREMENTAL + idempotent (this is the "track what's analyzed, update only the ne
     totals, so the server upsert (keyed by row uid) stays correct as sessions grow.
 Cost ≈ pricing.realtime_cost(model, input+cache_create+cache_read, output, cached=cache_read). Project = cwd name.
 """
-import os, json, glob, pathlib, datetime, hashlib
+import os, json, glob, pathlib, datetime, hashlib, time
 
 from . import config, conv, pricing
 
@@ -25,6 +25,9 @@ OVERAGE_DISCARD_SAMPLE_FIELD = "identifier_sample"
 OVERAGE_DISCARD_MONTH_FIELD = "month"
 OVERAGE_DISCARD_CONVERSATION_FIELD = "conversation_id"
 OVERAGE_DISCARD_REASON_FIELD = "reason"
+RESIDENCY_SUMMARY_FRESHNESS_SECONDS = 60.0
+RESIDENCY_SUMMARY_CACHE_MAX_BYTES = 1_048_576
+RESIDENCY_SUMMARY_CACHE_NAME = "residency_summary_cache.json"
 
 
 class OverageAttributionResult(dict):
@@ -1139,53 +1142,77 @@ def residency_decomposition(conv_id, instruction_tokens=None, instruction_paths=
             "gaps": residency_totals["gaps"], "reconciles": reconciles and not residency_totals["gaps"]}
 
 
-def residency_summary_lines(conv_id=None):
-    """Bounded receipt/doctor rendering for the newest (or explicitly named) Claude Code conversation."""
-    from .ledger_read import LedgerReadError, LedgerReadTimeout, read_cc_residency_totals
+def _residency_summary_cache_path():
+    return os.path.join(os.path.dirname(config.db_path()), RESIDENCY_SUMMARY_CACHE_NAME)
 
+
+def _render_residency_decomposition_lines(result):
+    """Render an already-computed residency decomposition without touching a ledger or transcript."""
+    measured = result.get("measured_recurring_usd")
+    if measured is None:
+        return ["residency : cache-read cost unavailable (model unpriced)"]
+    buckets = result["by_source_usd"]
+    lines = [("residency : Est sub value cache-read $%.4f = instructions $%.4f + tool_result $%.4f + conversation $%.4f"
+              % (measured, buckets["instructions"] or 0, buckets["tool_result"] or 0,
+                 buckets["conversation"] or 0))]
+    turns = result["turns"]
+    lines.append("            Est sub value $%.4f/turn = instructions $%.4f + tool_result $%.4f + conversation $%.4f" %
+                 (measured / turns, (buckets["instructions"] or 0) / turns,
+                  (buckets["tool_result"] or 0) / turns, (buckets["conversation"] or 0) / turns))
+    for residency_gap in result["gaps"]:
+        lines.append("            GAP %s: %s\n%s" %
+                     (residency_gap["unit"], residency_gap["error"], residency_gap["traceback"]))
+    for item in result["top_contributors"]:
+        resident = item.get("allocated_measured_usd")
+        alternative = item.get("subagent_usd")
+        comparison = ("$%.4f of the re-read cost vs $%.4f to read once in a subagent" % (resident, alternative)
+                      if resident is not None and alternative is not None else "cost unavailable")
+        lines.append("            %s · %s tok, resident ~%s turns · %s" %
+                     (item["label"], item["tokens"], item["remaining_turns"], comparison))
+    return lines
+
+
+def refresh_residency_summary_cache(conv_id=None):
+    """Explicit slow path: decompose a complete transcript and persist its bounded diagnostic summary."""
+    from .ledger_read import read_cc_residency_totals
+
+    if not conv_id:
+        conv_id = read_cc_residency_totals()["conv_id"]
+    if not conv_id:
+        return ["residency : no Claude Code transcript data"]
+    paths = [os.path.expanduser("~/.claude/CLAUDE.md")]
+    paths += glob.glob(os.path.expanduser("~/.claude/projects/*/memory/MEMORY.md"))
+    result = residency_decomposition(conv_id, instruction_paths=paths)
+    computed_at = time.time()
+    config.update_json(
+        _residency_summary_cache_path(),
+        lambda _old: {"ts": computed_at, "conv_id": conv_id, "result": result},
+        reason="residency summary cache", quarantine_unparseable=True, keep_backups=0,
+    )
+    return _render_residency_decomposition_lines(result)
+
+
+def residency_summary_lines(conv_id=None):
+    """Bounded cache-only receipt/doctor rendering; never reads ledgers or tokenizes transcripts inline."""
+    cache_path = _residency_summary_cache_path()
     try:
-        if not conv_id:
-            conv_id = read_cc_residency_totals()["conv_id"]
-        if not conv_id:
-            return ["residency : no Claude Code transcript data"]
-        # Instruction residency from DETERMINISTIC, home-anchored sources only — never os.getcwd(), whose value would
-        # make the number depend on WHERE the receipt is run (an ambient dependency, and the very thing
-        # residency_decomposition promises not to source ambiently). residency_decomposition records the resolved
-        # paths as provenance (instruction_source). A caller that wants a repo-local CLAUDE.md counted passes it in.
-        paths = [os.path.expanduser("~/.claude/CLAUDE.md")]
-        paths += glob.glob(os.path.expanduser("~/.claude/projects/*/memory/MEMORY.md"))
-        result = residency_decomposition(conv_id, instruction_paths=paths)
-        measured = result.get("measured_recurring_usd")
-        if measured is None:
-            return ["residency : cache-read cost unavailable (model unpriced)"]
-        buckets = result["by_source_usd"]
-        lines = [("residency : Est sub value cache-read $%.4f = instructions $%.4f + tool_result $%.4f + conversation $%.4f"
-                  % (measured, buckets["instructions"] or 0, buckets["tool_result"] or 0,
-                     buckets["conversation"] or 0))]
-        turns = result["turns"]
-        lines.append("            Est sub value $%.4f/turn = instructions $%.4f + tool_result $%.4f + conversation $%.4f" %
-                     (measured / turns, (buckets["instructions"] or 0) / turns,
-                      (buckets["tool_result"] or 0) / turns, (buckets["conversation"] or 0) / turns))
-        for residency_gap in result["gaps"]:
-            lines.append("            GAP %s: %s\n%s" %
-                         (residency_gap["unit"], residency_gap["error"], residency_gap["traceback"]))
-        for item in result["top_contributors"]:
-            resident = item.get("allocated_measured_usd")    # its RECONCILED share of the measured total (header-consistent)
-            alternative = item.get("subagent_usd")
-            comparison = ("$%.4f of the re-read cost vs $%.4f to read once in a subagent" % (resident, alternative)
-                          if resident is not None and alternative is not None else "cost unavailable")
-            lines.append("            %s · %s tok, resident ~%s turns · %s" %
-                         (item["label"], item["tokens"], item["remaining_turns"], comparison))
-        return lines
-    except LedgerReadTimeout:
-        return ["residency : unavailable (ledger scan exceeded its time budget)"]
-    except LedgerReadError as exc:
-        return [f"residency : unavailable ({type(exc).__name__}: {exc})"]
-    except Exception as exc:
-        import logging
-        import traceback
-        logging.getLogger(__name__).exception("Residency rendering refused")
-        return [f"residency : unavailable ({exc!r})\n{traceback.format_exc()}"]
+        if not os.path.exists(cache_path):
+            return ["residency : unknown (stale; run an explicit residency refresh)"]
+        if os.path.getsize(cache_path) > RESIDENCY_SUMMARY_CACHE_MAX_BYTES:
+            return ["residency : unknown (stale; cached summary exceeds its size budget)"]
+        with open(cache_path, encoding="utf-8") as cache_file:
+            cached = json.load(cache_file)
+        computed_at = float(cached.get("ts", 0.0))
+        if time.time() - computed_at >= RESIDENCY_SUMMARY_FRESHNESS_SECONDS:
+            return ["residency : unknown (stale; run an explicit residency refresh)"]
+        if conv_id and cached.get("conv_id") != conv_id:
+            return ["residency : unknown (stale; cached summary is for another conversation)"]
+        result = cached.get("result")
+        if not isinstance(result, dict):
+            return ["residency : unknown (stale; cached summary is invalid)"]
+        return _render_residency_decomposition_lines(result)
+    except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        return [f"residency : unknown (stale; cache unreadable: {type(exc).__name__})"]
 
 
 def context_cmd(conv_id=None, top=10):

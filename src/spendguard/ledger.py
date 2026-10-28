@@ -511,7 +511,11 @@ class SpendLedger:
             "spend_events",
             tuple(((index_column,), False) for index_column in _INDEXES) + ((
                 ("source", "cost_type", "cost_basis", "provider", "model", "intent"), False
-            ),),
+            ), (
+                ("source", "occurred_at", "conv_id"), False
+            ), (
+                ("source", "conv_id", "occurred_at"), False
+            )),
         )
         self._conn.execute("CREATE INDEX IF NOT EXISTS idx_audit_event ON spend_audit(event_id)")
         if not self._defer:

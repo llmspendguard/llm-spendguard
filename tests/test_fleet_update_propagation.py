@@ -176,9 +176,21 @@ ck("dead pid pruned from the registry on read", ghost == 0)
 
 # ── 5. restart_stale (dry run): a launchd-managed stale consumer → would kickstart; unsupervised → warn ──
 release.green_pointer = lambda: {"sha": "BBBBBBB", "short": "BBBBBBB"}   # make this process stale
+declared_fixture_label = f"{__name__}.launchd"
+os.environ[fleet.LAUNCHD_SERVICE_NAME_ENV] = declared_fixture_label
 _reregister(role=fleet.CONSUMER_ROLE_DAEMON, supervision_mode=fleet.SUPERVISION_LAUNCHD,
-            supervision_ref="com.example.fake")
+            supervision_ref=declared_fixture_label)
+os.environ.pop(fleet.LAUNCHD_SERVICE_NAME_ENV)
+original_launchd_consumer_label_loaded = fleet.launchd_consumer_label_loaded
+
+
+def report_fixture_launchd_label_as_loaded(_label):
+    return True
+
+
+fleet.launchd_consumer_label_loaded = report_fixture_launchd_label_as_loaded
 res = fleet.restart_stale(apply=False)
+fleet.launchd_consumer_label_loaded = original_launchd_consumer_label_loaded
 ck("dry-run reports it as 'would kickstart' (no real restart)", res["dry_run"] is True
    and any("would kickstart" in r.get("action", "") for r in res["restarted"]))
 _reregister(role=fleet.CONSUMER_ROLE_DAEMON)

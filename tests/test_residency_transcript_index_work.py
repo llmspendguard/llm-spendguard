@@ -101,6 +101,7 @@ def test_residency_index_bounds_warm_full_commands(tmp_path):
         # Warm the index using the same complete target lookup both commands consume.
         expected_records = residency_index_legacy_records(INDEX_WORK_SESSION)
         assert claudecode._conv_transcript_records(INDEX_WORK_SESSION) == expected_records
+        claudecode.refresh_residency_summary_cache(INDEX_WORK_SESSION)
         observed = {}
         for command in ("doctor", "receipt"):
             with patch.object(claudecode, "_conv_transcript_records", residency_index_legacy_records):

@@ -25,26 +25,18 @@ RUNNER_CALIBRATION_COVERAGE_ENV = "SPENDGUARD_COVERAGE"
 RUNNER_CALIBRATION_COVERAGE_DISABLED = "0"
 TEST_SESSION_TEMP_ENV = "TMPDIR"
 TEST_SESSION_TEMP_ROOT_PREFIX = "spendguard-test-session-"
-SPENDGUARD_OWNED_TEMP_PREFIXES = (
-    "spendguard-antigravity-", "spendguard-chat-cookies-", "spendguard-codex-",
-    "spendguard-kimi-", "spendguard-subscription-", "codex-home", "codexhome", "codexsess",
-    "codex-authrace-", "fake-repo-", "fake-transcripts-", "repo-cli-", "ghlit-", "ghlit2-",
-    "ghcap-", "__main__", "hr_stress_", "doctor-residency-refusal-", "wd-gitrepo-", "wd-notrepo-",
-    "sg-auth-robust-", "sg-codexauth-", "sg-codexhome-", "spendguard-medA-",
-)
 LEGITIMATE_TEMP_CACHE_PREFIX_ALLOWLIST = (
     "fastembed_cache", "node-compile-cache", "data-gym-cache", "pytest-", "pytest-of-",
 )
 
 
 def new_owned_temp_entries(initial_entries, temp_root):
-    """Return newly leaked spendguard/test entries, excluding known externally-owned caches."""
-    current_entries = {entry.name for entry in Path(temp_root).iterdir()}
+    """Return newly leaked test directories, excluding known externally-owned caches."""
+    current_entries = {entry.name for entry in Path(temp_root).iterdir() if entry.is_dir()}
     new_entries = current_entries - set(initial_entries)
     return sorted(
         name for name in new_entries
-        if name.startswith(SPENDGUARD_OWNED_TEMP_PREFIXES)
-        and not name.startswith(LEGITIMATE_TEMP_CACHE_PREFIX_ALLOWLIST)
+        if not name.startswith(LEGITIMATE_TEMP_CACHE_PREFIX_ALLOWLIST)
     )
 
 

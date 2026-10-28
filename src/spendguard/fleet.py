@@ -29,7 +29,6 @@ import subprocess
 import sys
 import tempfile
 import threading
-import time
 from contextlib import closing
 
 from . import config
@@ -77,6 +76,7 @@ CONSUMER_SUPERVISION_MODE_COLUMN = "supervision_mode"
 CONSUMER_SUPERVISION_REF_COLUMN = "supervision_ref"
 FLEET_RESTARTS_ENABLED_DEFAULT = True
 FLEET_RESTARTS_ENABLED_ENV = "SPENDGUARD_FLEET_RESTARTS_ENABLED"
+LAUNCHD_SERVICE_NAME_ENV = "XPC_SERVICE_NAME"
 
 
 def __getattr__(name):
@@ -87,10 +87,9 @@ def __getattr__(name):
 
     globals()[name] = psutil
     return psutil
-FLEET_RESTART_VERIFY_TIMEOUT_S_DEFAULT = 15.0
-FLEET_RESTART_VERIFY_POLL_S_DEFAULT = 0.25
 FLEET_RESTART_FAILURE_KEY = "failed"
 FLEET_RESTART_CONFIRMED_KEY = "confirmed"
+FLEET_RESTART_REQUESTED_KEY = "restart-requested"
 CONSUMER_ROLE_PRECEDENCE = {
     CONSUMER_ROLE_UNSPECIFIED: 0,
     CONSUMER_ROLE_EPHEMERAL: 1,
@@ -394,6 +393,21 @@ def _classify_fleet_pid_identity(pid, recorded_create_time):
     return _FLEET_PID_VERIFIED_LIVE
 
 
+def _resolve_current_process_supervision(supervision_mode, supervision_ref):
+    """Replace an installation naming default with launchd's identity for this process.
+
+    A caller's reference describes its intended installation, not the host's already-installed
+    service. XPC_SERVICE_NAME is the identity launchd assigned to this process; without it the
+    process cannot honestly claim live launchd supervision.
+    """
+    if supervision_mode != SUPERVISION_LAUNCHD:
+        return supervision_mode, supervision_ref, None
+    managing_label = os.environ.get(LAUNCHD_SERVICE_NAME_ENV)
+    if not managing_label:
+        return None, None, None
+    return SUPERVISION_LAUNCHD, managing_label, managing_label
+
+
 def _update_current_consumer_declarations(role, supervision_mode, supervision_ref):
     """Upgrade this process identity's role and explicit supervision descriptor. Never raises."""
     try:
@@ -421,7 +435,7 @@ def _update_current_consumer_declarations(role, supervision_mode, supervision_re
                     lower_role_placeholders = ",".join("?" for _role in lower_precedence_roles)
                     connection.execute(
                         f"UPDATE {CONSUMER_TABLE_NAME} SET {CONSUMER_ROLE_COLUMN}=? "
-                        f"WHERE pid=? AND pid_create_time IS ? AND "
+                        f"WHERE pid=? AND pid_create_time=? AND "
                         f"({CONSUMER_ROLE_COLUMN} IS NULL OR "
                         f"{CONSUMER_ROLE_COLUMN} IN ({lower_role_placeholders}))",
                         (role, pid, pid_create_time, *lower_precedence_roles),
@@ -429,8 +443,9 @@ def _update_current_consumer_declarations(role, supervision_mode, supervision_re
                 if table_exists and supervision_mode is not None:
                     connection.execute(
                         f"UPDATE {CONSUMER_TABLE_NAME} SET {CONSUMER_SUPERVISION_MODE_COLUMN}=?,"
-                        f"{CONSUMER_SUPERVISION_REF_COLUMN}=? WHERE pid=? AND pid_create_time IS ?",
-                        (supervision_mode, supervision_ref, pid, pid_create_time),
+                        f"{CONSUMER_SUPERVISION_REF_COLUMN}=?,launchd_label=? "
+                        f"WHERE pid=? AND pid_create_time=?",
+                        (supervision_mode, supervision_ref, supervision_ref, pid, pid_create_time),
                     )
     except Exception:
         pass
@@ -446,10 +461,10 @@ def register_consumer(label=None, role=None, supervision_mode=None, supervision_
     _consumer_registration_lock.acquire()
     try:
         current_pid = os.getpid()
-        if supervision_mode == SUPERVISION_LAUNCHD and not supervision_ref:
-            return
         if supervision_mode not in (None, SUPERVISION_LAUNCHD):
             return
+        supervision_mode, supervision_ref, discovered_launchd_label = _resolve_current_process_supervision(
+            supervision_mode, supervision_ref)
         if _registered_pid == current_pid:
             if role is not None or supervision_mode is not None:
                 _update_current_consumer_declarations(role, supervision_mode, supervision_ref)
@@ -483,7 +498,8 @@ def register_consumer(label=None, role=None, supervision_mode=None, supervision_
                               f"{CONSUMER_GATE_ENFORCING_COLUMN}) "
                               "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                               (current_pid, getattr(_version, "__version__", None), s.get("sha"), s.get("short"),
-                               1 if s.get("dirty") else 0, _cmdline(), label, now, sys.prefix, sys.executable,
+                               1 if s.get("dirty") else 0, _cmdline(), discovered_launchd_label or label, now,
+                               sys.prefix, sys.executable,
                                pid_create_time, resolved_role, supervision_mode, supervision_ref,
                                int(consumer_gate_enforcing)))
             if _consumer_deregister_hook_pid != current_pid:
@@ -552,9 +568,12 @@ def running_consumers(prune=True):
                 inventory_surface = f"consumer pid:{pid}"
                 identity_state = _classify_fleet_pid_identity(pid, recorded_create_time)
                 if identity_state == _FLEET_PID_GONE:
-                    gone.append((pid, recorded_create_time))
-                    if prune:
-                        continue
+                    label_loaded = (launchd_consumer_label_loaded(supervision_ref)
+                                    if supervision_mode == SUPERVISION_LAUNCHD else False)
+                    if label_loaded is False:
+                        gone.append((pid, recorded_create_time))
+                        if prune:
+                            continue
                 identity_verified = identity_state == _FLEET_PID_VERIFIED_LIVE
                 if not identity_verified or not green_sha or not sha:
                     stale = None                      # cannot establish from a sha compare (no pointer / pinned install)
@@ -605,20 +624,16 @@ def bootout_declared_launchd_consumer(label):
     return {"ok": result.returncode == 0, "detail": result.stderr.strip() or result.stdout.strip()}
 
 
-def verify_launchd_consumer_green_return(*, label, green_sha,
-                                          timeout_s=FLEET_RESTART_VERIFY_TIMEOUT_S_DEFAULT,
-                                          poll_s=FLEET_RESTART_VERIFY_POLL_S_DEFAULT):
-    """Boundedly verify a declared launchd consumer has re-registered alive on the promoted SHA."""
-    deadline = time.monotonic() + timeout_s
-    while time.monotonic() < deadline:
-        for consumer in running_consumers():
-            if (consumer.get("supervision_mode") == SUPERVISION_LAUNCHD
-                    and consumer.get("supervision_ref") == label
-                    and consumer.get("identity_verified")
-                    and consumer.get("served_sha") == green_sha):
-                return True
-        time.sleep(poll_s)
-    return False
+def launchd_consumer_label_loaded(label):
+    """Return whether launchd currently owns ``label``; uncertainty is represented by ``None``."""
+    if not label:
+        return False
+    try:
+        from .codex_broker_owner import run_declared_launchd_action
+        result = run_declared_launchd_action(("print",), label)
+    except Exception:
+        return None
+    return result.returncode == 0
 
 
 def restart_stale(apply=False, consumer_id=None, all_supervised=False):
@@ -629,7 +644,7 @@ def restart_stale(apply=False, consumer_id=None, all_supervised=False):
     (default) is a DRY RUN: it reports what it WOULD do without touching anything. Returns
     {restarted:[...], warn:[...], transient:[...], dry_run:bool}. $0, never raises — a restart hiccup is reported,
     not thrown."""
-    restarted, confirmed, failed, warn, transient = [], [], [], [], []
+    restarted, requested, confirmed, failed, warn, transient = [], [], [], [], [], []
     green_sha = None
     try:
         from . import release
@@ -661,6 +676,13 @@ def restart_stale(apply=False, consumer_id=None, all_supervised=False):
             warn.append({"pid": c["pid"], "cmdline": c["cmdline"],
                          "why": "cannot restart — no promoted green pointer"})
             continue
+        label_loaded = launchd_consumer_label_loaded(label)
+        if label_loaded is not True:
+            warn.append({"pid": c["pid"], "cmdline": c["cmdline"],
+                         "why": ("cannot restart — recorded launchd label is not currently loaded"
+                                 if label_loaded is False else
+                                 "cannot restart — launchd label state could not be verified")})
+            continue
         if not apply:
             restarted.append({"pid": c["pid"], "launchd_label": label, "action": "would kickstart"})
             continue
@@ -678,13 +700,10 @@ def restart_stale(apply=False, consumer_id=None, all_supervised=False):
         if not action.get("ok"):
             failed.append({"pid": c["pid"], "launchd_label": label,
                            "why": "kickstart failed", "detail": action.get("detail")})
-        elif verify_launchd_consumer_green_return(label=label, green_sha=green_sha):
-            confirmed.append({"pid": c["pid"], "launchd_label": label, "served_sha": green_sha})
         else:
-            failed.append({"pid": c["pid"], "launchd_label": label,
-                           "why": "FAILED restart — consumer did not return on promoted green SHA",
-                           "target_sha": green_sha})
+            requested.append({"pid": c["pid"], "launchd_label": label, "target_sha": green_sha})
     return {"restarted": restarted, FLEET_RESTART_CONFIRMED_KEY: confirmed,
+            FLEET_RESTART_REQUESTED_KEY: requested,
             FLEET_RESTART_FAILURE_KEY: failed, "warn": warn,
             FLEET_RESTART_TRANSIENT_KEY: transient, "dry_run": not apply, "disabled": apply and not enabled}
 

@@ -106,18 +106,36 @@ def stale_vs_green():
     return g.get("sha") != s.get("sha")
 
 
+def current_respawn_decision():
+    """Return the total, traceable install-aware replacement decision for this process."""
+    from . import __version__
+    from .manifest import (MANIFEST_EDITABLE_KIND, MANIFEST_WHEEL_KIND,
+                           inspect_current_interpreter_install_kind)
+    install = inspect_current_interpreter_install_kind()
+    if install.get("install_kind") == MANIFEST_EDITABLE_KIND:
+        if not stale_vs_green():
+            return {"should_respawn": False, "install_kind": MANIFEST_EDITABLE_KIND,
+                    "reason": "editable process is not behind the green pointer"}
+        green = green_pointer()
+        head = _git_src("rev-parse", "HEAD")
+        lands_on_green = bool(green and head and green.get("sha") == head)
+        return {"should_respawn": lands_on_green, "install_kind": MANIFEST_EDITABLE_KIND,
+                "reason": ("editable replacement loads green HEAD" if lands_on_green else
+                           "editable replacement would not load the green HEAD")}
+    if install.get("install_kind") == MANIFEST_WHEEL_KIND:
+        installed_version = install.get("wheel_version")
+        differs = bool(installed_version and installed_version != __version__)
+        return {"should_respawn": differs, "install_kind": MANIFEST_WHEEL_KIND,
+                "reason": ("installed wheel differs from the running package" if differs else
+                           "running package already matches the installed wheel"),
+                "running_version": __version__, "installed_version": installed_version}
+    return {"should_respawn": False, "install_kind": install.get("install_kind", "unknown"),
+            "reason": install.get("verification_error") or "install kind is unresolved"}
+
+
 def should_respawn():
-    """Loop-safe respawn trigger: True only when EXITING would actually land a fresh process on the green commit.
-    A fresh process serves the LIVE checkout HEAD (editable install), so exiting resolves staleness only if
-    HEAD == green AND this process is behind it. If green != HEAD (the checkout is not itself at the green
-    commit — someone promoted an older sha, or HEAD moved on without a deploy), a respawn would just serve the
-    same non-green code again — an exit loop — so we do NOT respawn. This is the guard that makes auto-respawn
-    safe to leave on by default."""
-    if not stale_vs_green():
-        return False
-    g = green_pointer()
-    head = _git_src("rev-parse", "HEAD")              # LIVE head — what a fresh process would serve, not the frozen one
-    return bool(g and head and g.get("sha") == head)
+    """Return whether a replacement process would load newer code without creating an exit loop."""
+    return current_respawn_decision()["should_respawn"]
 
 
 def exit_if_stale(log=None):
@@ -182,7 +200,8 @@ def release_status():
         note = "no green pointer yet — this process serves %s; run `spendguard deploy` to bless it" % s.get("short")
     else:
         note = "version unknown (not a git checkout) — staleness cannot be established; the server keeps running"
-    return {"served": s, "green": g, "stale": stale,
+    respawn = current_respawn_decision()
+    return {"served": s, "green": g, "stale": stale, "respawn": respawn,
             "served_dirty": bool((s or {}).get("dirty")), "pointer_path": str(pointer_path()), "note": note}
 
 

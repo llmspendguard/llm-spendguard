@@ -81,7 +81,7 @@ def exercise_residency_ledger_containment():
                             abs_tol=RESIDENCY_CONTAINMENT_PRECISION)
         assert decomposition["top_contributors"]
         assert all(item["subagent_usd"] is not None for item in decomposition["top_contributors"])
-        rendered = "\n".join(claudecode.residency_summary_lines())
+        rendered = "\n".join(claudecode.refresh_residency_summary_cache(RESIDENCY_CONTAINMENT_SESSION))
         assert "unavailable" not in rendered, rendered
         assert "instructions" in rendered and "tool_result" in rendered and "conversation" in rendered
         assert "subagent" in rendered, rendered
@@ -102,7 +102,7 @@ def exercise_residency_ledger_containment():
         readable_reference = reference - pricing.realtime_cost(
             fault_model, fault_tokens, 0, cached_in_tok=fault_tokens)
         assert math.isclose(damaged["measured_recurring_usd"], readable_reference)
-        damaged_lines = "\n".join(claudecode.residency_summary_lines())
+        damaged_lines = "\n".join(claudecode.refresh_residency_summary_cache(RESIDENCY_CONTAINMENT_SESSION))
         assert "GAP" in damaged_lines and named_gap["unit"] in damaged_lines, damaged_lines
     print(f"OK residency_ledger_containment: all {seed_count} rows priced; corrupt tail named")
 

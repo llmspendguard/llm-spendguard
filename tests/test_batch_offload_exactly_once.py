@@ -13,12 +13,15 @@ callio.find_live_batch_by_metadata reconcile, with only the OpenAI CLIENT faked 
 passed INTO the fake client, never a module global) that create appends to and list/retrieve read. No network, no spend.
 models.resolve_effort is stubbed so no live effort probe fires. Isolated SPENDGUARD_HOME.
 """
+import atexit
 import os
 import sys
 import tempfile
 import time
 
-os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="sg-batch-offload-exactly-once-")
+isolated_home_owner = tempfile.TemporaryDirectory(prefix="sg-batch-offload-exactly-once-")
+atexit.register(isolated_home_owner.cleanup)
+os.environ["SPENDGUARD_HOME"] = isolated_home_owner.name
 os.environ.setdefault("SPENDGUARD_TEST_ISOLATED", "1")
 os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
 os.environ.setdefault("OPENAI_API_KEY", "sk-test-not-used")     # the fake client ignores it; resolves the key lookup

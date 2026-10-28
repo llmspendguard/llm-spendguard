@@ -24,6 +24,10 @@ _EDITABLE_METADATA_PROBE = (
     "and (lambda u: bool(u and json.loads(u).get('dir_info',{}).get('editable')))"
     "(d.read_text('direct_url.json')) for d in m.distributions())))")
 _EDITABLE_INSTALL_OPTIONS = ("--no-cache-dir",)
+_WHEEL_UPGRADE_OPTION = "-U"
+_WHEEL_NO_INDEX_OPTION = "--no-index"
+_WHEEL_FIND_LINKS_OPTION = "--find-links"
+_SPENDGUARD_DISTRIBUTION_NAME = "llm-spendguard"
 _PEP517_EDITABLE_INSTALL_OPTION = "--use-pep517"
 _NO_BUILD_ISOLATION_OPTION = "--no-build-isolation"
 _PIP_NO_INDEX_ENVIRONMENT_VARIABLE = "PIP_NO_INDEX"
@@ -110,6 +114,22 @@ def refresh_consumer_editable_package(python_executable, repo_root, timeout):
                                     capture_output=True, text=True, timeout=timeout)
     if metadata_probe.returncode == 0 and metadata_probe.stdout.strip() == "1":
         purge_shadowing_in_tree_egg_info(repo_root)
+
+
+def consumer_wheel_install_command(python_executable, wheel_cache, version):
+    """Build the pinned, offline consumer install command."""
+    requirement = f"{_SPENDGUARD_DISTRIBUTION_NAME}=={version}"
+    return [str(python_executable), "-m", "pip", "install", _WHEEL_UPGRADE_OPTION,
+            _WHEEL_NO_INDEX_OPTION, _WHEEL_FIND_LINKS_OPTION, str(wheel_cache), requirement]
+
+
+def refresh_consumer_wheel_package(python_executable, wheel_cache, version, timeout):
+    """Install one cached wheel without consulting an index."""
+    import subprocess
+    command = consumer_wheel_install_command(python_executable, wheel_cache, version)
+    result = subprocess.run(command, capture_output=True, text=True, timeout=timeout)
+    if result.returncode:
+        raise RuntimeError((result.stderr or result.stdout or "pip wheel install failed").strip())
 
 _FAILCLOSED_FINDER_SOURCE = '''class _SpendguardGateFailclosedFinder:
     _spendguard_gate_failclosed = True

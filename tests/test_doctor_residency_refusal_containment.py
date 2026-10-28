@@ -14,12 +14,10 @@ align_test_startup_home(DOCTOR_RESIDENCY_REFUSAL_HOME_PREFIX)
 import spendguard
 from spendguard import budget, calls, claudecode, config, gate, ledger_read, setup
 
-DOCTOR_RESIDENCY_TIMEOUT_LINE = "residency : unavailable (ledger scan exceeded its time budget)"
 DOCTOR_RESIDENCY_SCHEMA_REASON = "injected missing residency schema"
-DOCTOR_RESIDENCY_SCHEMA_LINE = (
-    f"residency : unavailable (LedgerReadSchemaError: {DOCTOR_RESIDENCY_SCHEMA_REASON})")
 DOCTOR_RESIDENCY_CONTINUATION_LINE = "delegation lanes ready: injected continuation"
 DOCTOR_RESIDENCY_TRACEBACK_MARKER = "Traceback (most recent call last)"
+DOCTOR_RESIDENCY_STALE_LINE = "residency : unknown (stale; run an explicit residency refresh)"
 
 
 def run_doctor_residency_refusal_containment():
@@ -29,12 +27,10 @@ def run_doctor_residency_refusal_containment():
     budget._ledger()  # Initialize only the isolated fixture's schema before doctor status reads.
     calls._calls_db()
     refusal_cases = (
-        (ledger_read.LedgerReadTimeout(ledger_read.DEFAULT_LEDGER_READ_TIME_BUDGET_S),
-         DOCTOR_RESIDENCY_TIMEOUT_LINE),
-        (ledger_read.LedgerReadSchemaError(DOCTOR_RESIDENCY_SCHEMA_REASON),
-         DOCTOR_RESIDENCY_SCHEMA_LINE),
+        ledger_read.LedgerReadTimeout(ledger_read.DEFAULT_LEDGER_READ_TIME_BUDGET_S),
+        ledger_read.LedgerReadSchemaError(DOCTOR_RESIDENCY_SCHEMA_REASON),
     )
-    for refusal, expected_line in refusal_cases:
+    for refusal in refusal_cases:
         @contextlib.contextmanager
         def inject_doctor_residency_connection_refusal(path=None, refusal_to_raise=refusal):
             assert path is None or Path(path).parent == config.HOME
@@ -56,20 +52,26 @@ def run_doctor_residency_refusal_containment():
                     assert caught_refusal is refusal, "containment refusal must retain its typed identity"
                 else:
                     raise AssertionError("bounded read must refuse instead of returning partial totals")
-            # Fault only the optional axis during the full doctor invocation; other ledger
-            # consumers retain their real isolated fixture connection and containment.
+            # The explicit refresh retains the typed refusal. Doctor itself is cache-only and
+            # must neither touch this reader nor turn the refusal into a traceback.
             with patch.object(ledger_read, "read_cc_residency_totals", side_effect=refusal), \
                     patch.object(setup, "_startup_gate_active", return_value=True), \
                     patch("spendguard.delegate_router.delegation_doctor_line",
                           return_value=DOCTOR_RESIDENCY_CONTINUATION_LINE), \
                     contextlib.redirect_stdout(doctor_output), \
                     contextlib.redirect_stderr(doctor_errors):
-                assert claudecode.residency_summary_lines() == [expected_line]
+                try:
+                    claudecode.refresh_residency_summary_cache()
+                except ledger_read.LedgerReadError as caught_refresh_refusal:
+                    assert caught_refresh_refusal is refusal
+                else:
+                    raise AssertionError("explicit residency refresh must preserve the typed refusal")
+                assert claudecode.residency_summary_lines() == [DOCTOR_RESIDENCY_STALE_LINE]
                 assert gate._cli("doctor") == 0
         finally:
             refusal_logger.removeHandler(refusal_handler)
         rendered_doctor = doctor_output.getvalue()
-        assert expected_line in rendered_doctor
+        assert DOCTOR_RESIDENCY_STALE_LINE in rendered_doctor
         assert DOCTOR_RESIDENCY_CONTINUATION_LINE in rendered_doctor
         assert DOCTOR_RESIDENCY_TRACEBACK_MARKER not in rendered_doctor
         assert DOCTOR_RESIDENCY_TRACEBACK_MARKER not in doctor_errors.getvalue()
