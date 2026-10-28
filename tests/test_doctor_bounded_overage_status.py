@@ -1,5 +1,6 @@
 """Doctor remains bounded when overage and residency caches are stale."""
 import contextlib
+import atexit
 import io
 import json
 import os
@@ -20,7 +21,9 @@ _TRANSCRIPT_TEXT_BYTES = 4_096
 _TRANSCRIPT_SESSION_ID = "doctor-bounded-residency-session"
 _TRANSCRIPT_MODEL = "claude-sonnet-4-6"
 
-isolated_home = tempfile.mkdtemp(prefix="spendguard-doctor-bounded-")
+isolated_home_owner = tempfile.TemporaryDirectory(prefix="spendguard-doctor-bounded-")
+atexit.register(isolated_home_owner.cleanup)
+isolated_home = isolated_home_owner.name
 ledger_path = os.path.join(isolated_home, "spend.db")
 database = sqlite3.connect(ledger_path)
 database.execute("CREATE TABLE spend_events(id TEXT PRIMARY KEY, occurred_at TEXT, source TEXT, cost_usd REAL)")

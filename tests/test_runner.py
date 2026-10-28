@@ -16,6 +16,8 @@ import math
 import pathlib
 import shutil
 
+import conftest
+
 import pytest
 
 # Reference-machine seconds; runner compute calibration scales this tight budget.
@@ -79,6 +81,7 @@ from scripts.test.chunked_suite import (  # noqa: E402
 RUNNER_SCRATCH_HOME_PREFIX = "sg-pytest-"
 RUNNER_SCRATCH_TMPDIR_PREFIX = "sg-pytest-tmp-"
 RUNNER_SCRATCH_PREFIXES = (RUNNER_SCRATCH_HOME_PREFIX, RUNNER_SCRATCH_TMPDIR_PREFIX)
+DELIBERATE_TEMP_LEAK_DIRECTORY_NAME = "deliberate-tempdir-leak"
 SCRIPTS = sorted(
     f for f in glob.glob(os.path.join(HERE, "test_*.py"))
     if os.path.basename(f) != "test_runner.py"
@@ -169,3 +172,15 @@ def test_runner_subprocess_scratch_has_no_net_growth(runner_budget_scale):
         "runner subprocess scratch survived result collection: "
         f"added={sorted(scratch_after - scratch_before)!r}, removed={sorted(scratch_before - scratch_after)!r}"
     )
+
+
+def test_session_temp_leak_guard_rejects_deliberate_directory(tmp_path):
+    """Mutation proof: a surviving directory must make the session guard fail."""
+    initial_entries = {entry.name for entry in tmp_path.iterdir()}
+    deliberate_leak = tmp_path / DELIBERATE_TEMP_LEAK_DIRECTORY_NAME
+    deliberate_leak.mkdir()
+    try:
+        with pytest.raises(pytest.fail.Exception, match="session leaked spendguard-owned temporary entries"):
+            conftest.assert_no_new_owned_temp_entries(initial_entries, tmp_path)
+    finally:
+        deliberate_leak.rmdir()
