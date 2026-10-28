@@ -16,6 +16,7 @@ from spendguard import distribution as distribution, manifest  # noqa: E402
 FIXTURE_CURRENT_VERSION = "fixture-current"
 FIXTURE_PREVIOUS_VERSION = "fixture-previous"
 FIXTURE_CURRENT_SHA = "fixture-green-sha"
+FIXTURE_WHEEL_INSTALL_KIND = manifest.MANIFEST_WHEEL_KIND
 
 
 def exercise_distribution_fixture():
@@ -97,6 +98,7 @@ def exercise_distribution_fixture():
             green_rows = {row["surface"]: row for row in green["surfaces"]}
             assert green_rows[interpreter]["on_version"] is True
             assert ("install", interpreter) in events
+            assert events.index(("probe", interpreter)) < events.index(("install", interpreter))
             events.clear()
             assert distribution.distribute_fleet(check=True)["exit_code"] == 0
             assert not any(event[0] == "install" for event in events)
@@ -121,3 +123,61 @@ def exercise_distribution_fixture():
 
 
 exercise_distribution_fixture()
+
+
+def exercise_distribution_wheel_live_probe_gate():
+    with tempfile.TemporaryDirectory() as temporary:
+        root = Path(temporary)
+        interpreter = str(root / "consumer" / "bin" / "python")
+        target = {"sha": FIXTURE_CURRENT_SHA, "version": FIXTURE_CURRENT_VERSION,
+                  "green_version": FIXTURE_CURRENT_VERSION, "checkout": str(root)}
+        installed = {"install_kind": FIXTURE_WHEEL_INSTALL_KIND,
+                     "wheel_version": FIXTURE_PREVIOUS_VERSION, "editable_origin": None}
+        inventory = {"interpreters": [{"python": interpreter, "venv": str(root / "consumer"),
+                                        "kind": "venv", "install": installed}], "gaps": []}
+
+        def run_case(initial_probe, expected_action, mutation_expected):
+            probe = copy.deepcopy(initial_probe)
+            mutations = []
+
+            def refresh_wheel(candidate, wheel, version, timeout):
+                mutations.append(candidate)
+                probe.update(version=FIXTURE_CURRENT_VERSION, metadata_version=FIXTURE_CURRENT_VERSION,
+                             sha=None, confirmed=True, dirty=True)
+
+            with contextlib.ExitStack() as stack:
+                stack.enter_context(patch.object(distribution, "resolve_distribution_target", return_value=target))
+                stack.enter_context(patch.object(distribution.config, "consumer_audit_settings", return_value={}))
+                stack.enter_context(patch.object(distribution.setup, "discover_distribution_interpreters", return_value=inventory))
+                stack.enter_context(patch.object(distribution.consumer_audit, "audit_consumer_workspaces",
+                                                 return_value={"consumers": [], "pruned_at_depth": []}))
+                stack.enter_context(patch.object(distribution, "prepare_distribution_checkout", return_value=str(root)))
+                stack.enter_context(patch.object(distribution, "ensure_distribution_wheel"))
+                stack.enter_context(patch.object(distribution, "probe_distribution_interpreter",
+                                                 side_effect=lambda candidate, settings: copy.deepcopy(probe)))
+                stack.enter_context(patch.object(distribution.setup, "refresh_consumer_wheel_package",
+                                                 side_effect=refresh_wheel))
+                stack.enter_context(patch.object(distribution.setup, "install_hook", return_value=0))
+                stack.enter_context(patch.object(distribution, "inspect_distribution_install", return_value=installed))
+                stack.enter_context(patch.object(manifest, "manifest_path", return_value=root / "absent-manifest.json"))
+                stack.enter_context(patch.object(distribution, "attest_distribution_host",
+                                                 return_value=distribution.distribution_surface_row(
+                                                     "host", "host", True, True)))
+                stack.enter_context(patch.object(distribution, "attest_distribution_api_consumers", return_value=[]))
+                stack.enter_context(patch.object(distribution, "attest_distribution_daemons", return_value=[]))
+                result = distribution.distribute_fleet()
+            surface = next(row for row in result["surfaces"] if row["surface"] == interpreter)
+            assert surface["action_taken"] == expected_action, surface
+            assert bool(mutations) is mutation_expected, mutations
+
+        target_probe = {"confirmed": True, "version": FIXTURE_CURRENT_VERSION,
+                        "metadata_version": FIXTURE_CURRENT_VERSION, "sha": None,
+                        "gate_enforcing": True, "dirty": True}
+        stale_probe = {**target_probe, "version": FIXTURE_PREVIOUS_VERSION,
+                       "metadata_version": FIXTURE_PREVIOUS_VERSION}
+        run_case(target_probe, distribution.DISTRIBUTION_WHEEL_ALREADY_CONVERGED_ACTION, False)
+        run_case(stale_probe, "wheel-installed", True)
+    print("OK distribution wheel live probe skips converged mutation and installs stale candidate")
+
+
+exercise_distribution_wheel_live_probe_gate()

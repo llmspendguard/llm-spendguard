@@ -98,6 +98,7 @@ def test_surface_manifest_persists_complete_discovery_with_editable_and_wheel_ki
         assert venv_rows[str(wheel_python.resolve())]["install_kind"] == manifest.MANIFEST_WHEEL_KIND
         assert venv_rows[str(wheel_python.resolve())]["wheel_version"] == MANIFEST_FIXTURE_WHEEL_VERSION
         assert persisted == result
+        assert result["writer_version"] == manifest.SPENDGUARD_WRITER_VERSION
         assert json.loads((root / "state" / manifest.MANIFEST_FILENAME).read_text()) == result
 
 

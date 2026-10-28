@@ -12,6 +12,9 @@ reading the repo — enumerate exactly what's configurable, what the valid optio
 Environment variable (`env`) always overrides the file when set.
 """
 
+import tempfile
+from pathlib import Path
+
 from .config import CODEX_POOL_SIZE_DEFAULT
 from .weekly_cap_guard import (
     WEEKLY_CAP_GUARD_BLOCKED_SPAWN_TOOLS_DEFAULT,
@@ -37,6 +40,30 @@ from .config import DISK_GUARD_FLOOR_DEFAULT_BYTES, DISK_GUARD_FLOOR_ENV
 from .fleet import FLEET_RESTARTS_ENABLED_DEFAULT, FLEET_RESTARTS_ENABLED_ENV
 
 SETTINGS = [
+    *[dict(section="distribute", key=key, store="config.json:distribute." + key,
+           env=None, default=default, kind=kind, secret=False, desc=desc)
+      for key, default, kind, desc in (
+          ("snapshot_excludes", ["snapshots", "reclaim-backups", "distribution-checkouts",
+           "distribution-wheels", "distribution-probe-cache", "embed_*.jsonl", "*~",
+           "*.corrupt.*", "*.bak", "*.pre-migration*", "*.[0-9][0-9][0-9][0-9]*.*",
+           "spend.db", "spend.db-*", "lane_queue.db", "lane_queue.db-*"], "json",
+           "Top-level names and glob patterns omitted from isolated distribution probe snapshots."),
+          ("probe_cache_dirname", "distribution-probe-cache", "str",
+           "Spendguard-home directory containing the content-addressed probe base snapshot."),
+          ("probe_cache_root", str(Path(tempfile.gettempdir()) / "spendguard-distribution-probe-cache"), "str",
+           "Persistent root outside spendguard home for per-home distribution probe snapshots."),
+          ("probe_cache_base_name", "base", "str", "Directory name of the cached probe base snapshot."),
+          ("probe_cache_record_name", "fingerprint.json", "str",
+           "Atomic JSON record holding the cached probe snapshot fingerprint."),
+          ("probe_temp_prefix", "spendguard-distribution-probe-", "str",
+           "Prefix identifying spendguard-owned disposable probe roots in the system temporary directory."),
+          ("probe_temp_marker_name", ".spendguard-probe", "str",
+           "Marker that proves a temporary root belongs to the distribution probe lifecycle."),
+          ("enumeration_cache_ttl_s", 86400, "int",
+           "Maximum age in seconds for cached interpreter enumeration when scan-root mtimes are unchanged."),
+          ("audit_cache_ttl_s", 300, "int",
+           "Maximum age in seconds for install-state audit rows whose interpreter, dist-info, and writer version match."),
+      )],
     dict(section="fleet", key="restarts_enabled", store="config.json:fleet.restarts_enabled",
          env=FLEET_RESTARTS_ENABLED_ENV, default=FLEET_RESTARTS_ENABLED_DEFAULT, kind="bool", secret=False,
          desc="Allow the fleet control plane to restart declared launchd-supervised consumers."),
