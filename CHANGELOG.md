@@ -4,6 +4,36 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 
 ## [Unreleased]
 
+## [0.16.8] — 2026-10-28
+
+Two themes: a ledger read/write concurrency fix so a cap/receipt read can no longer be refused merely because
+a write is in flight, and distribution-probe exclusion by provenance rather than by name.
+
+### Reliability — ledger read/write concurrency
+- A budget/cap/flow read no longer raises `LedgerQueryDeadline` just because a PLAIN write transaction is in
+  flight on the same thread. `_ledger()` hands a read the thread's writer connection when one is active, and
+  `spent_dec` previously refused instantly (`self._conn.in_transaction`) to avoid a reader's interrupt rolling
+  back the pending write — which made `budget.exceeded` fail closed and block the gated call (observed blocking
+  `spendguard delegate`). `own_spend_ledger_read_scope` now detects a plain pending writer and routes the read
+  to the existing separate committed-snapshot reader, so cap/all-time/flow reads return the last-committed
+  total instead of refusing. Preserved: deferred-commit bulk scopes still read PENDING spend, a genuinely
+  expired/contended read still raises, and the cap still fails closed on a REAL read failure. This was a
+  concurrency refusal, NOT read slowness — the countable sum over the full ledger measures ~0.2s. Regression
+  tests in `tests/test_ledger_query_deadline.py` reproduce the in-flight-writer case and the deferred-pending
+  invariant.
+
+### Distribution & registration
+- `distribute` decides snapshot exclusion by spendguard OWNERSHIP, never by name/glob (#243): a top-level
+  entry is omitted from the isolated probe snapshot only when it is a configured ledger (by resolved-path
+  identity, including `-wal`/`-shm`/`-journal`) or a directory carrying the `.spendguard-ephemeral` marker
+  written via `mark_distribution_ephemeral_dir`. Unknown entries are INCLUDED, and an unresolvable configured
+  ledger fails loud — replacing the previous `snapshot_excludes` + `fnmatch` name/glob matching.
+- Embed resume checkpoints are written into a marker-tagged `embed-checkpoints` directory so probe snapshots
+  exclude them by provenance (#244): `embed()` / `embed_batch()` write under `EMBED_CHECKPOINT_DIRNAME` via
+  `_embed_checkpoint_dir()` (which marks the dir), `gc_embed_checkpoints` scans the marked dir and drains any
+  legacy top-level checkpoints, and the directory is excluded by the #243 ownership rule with no change to
+  `distribution.py`.
+
 ## [0.16.5] — 2026-10-27
 
 Registration / distribution / efficiency hardening. The theme is making the distribution system correctly

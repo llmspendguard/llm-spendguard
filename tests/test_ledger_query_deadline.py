@@ -10,7 +10,7 @@ from _pytest_fixture_bridge import align_test_startup_home, run_pytest_style
 
 align_test_startup_home(prefix=__name__)
 
-from spendguard import budget, config, ledger, ledger_read
+from spendguard import budget, config, ledger, ledger_read, ledger_writer
 
 DEADLINE_GUARD_ROWS = 512
 DEADLINE_GUARD_STEP_S = 0.001
@@ -24,9 +24,10 @@ DEADLINE_GUARD_LOAD_MULTIPLIER = 10
 DEADLINE_GUARD_MINIMUM_RECOVERY_S = config.LEDGER_CONNECT_TIMEOUT_S
 DEADLINE_GUARD_SHARED_SCAN_MULTIPLIER = 1.5
 DEADLINE_GUARD_DAY = budget._utc().strftime("%Y-%m-%d")
+DEADLINE_GUARD_MONTH = budget._utc().strftime("%Y-%m-01")
 DEADLINE_GUARD_SOURCE = "progress-deadline-guard"
 DEADLINE_GUARD_AMOUNT = "1"
-DEADLINE_GUARD_PENDING_AMOUNT = "0"
+DEADLINE_GUARD_PENDING_AMOUNT = "7"
 DEADLINE_GUARD_JOB = "deadline-guard-job"
 DEADLINE_GUARD_EMPTY_JOB = "deadline-guard-empty-job"
 DEADLINE_GUARD_FAILURE_MESSAGE = "injected deadline replacement failure"
@@ -37,6 +38,7 @@ DEADLINE_GUARD_INSERT_SQL = """INSERT OR IGNORE INTO spend_events
     (id, day, source, realtime_usd, chain, status, is_meta, reconciled)
     VALUES (?, ?, ?, ?, ?, 'posted', 0, 0)"""
 DEADLINE_GUARD_SNAPSHOT_SQL = "SELECT * FROM spend_events ORDER BY id"
+DEADLINE_GUARD_DELETE_PENDING_SQL = "DELETE FROM spend_events WHERE id=?"
 
 
 def slow_deadline_guard_decimal_step(self, value):
@@ -168,20 +170,46 @@ def test_ledger_query_deadline_preserves_pending_write():
             DEADLINE_GUARD_PENDING_AMOUNT, DEADLINE_GUARD_JOB))
         pending_rows = capture_deadline_guard_rows(current)
         assert connection.in_transaction
-        try:
-            budget.spent_since(DEADLINE_GUARD_DAY, deadline_s=DEADLINE_GUARD_BUDGET_S)
-        except ledger_read.LedgerQueryDeadline:
-            pass
-        else:
-            raise AssertionError("deadline read must refuse before interrupting a pending write")
+        with patch.object(ledger_writer, "current_ledger_writer_connection", return_value=connection):
+            assert budget.spent_since(DEADLINE_GUARD_MONTH) == DEADLINE_GUARD_ROWS
+            assert budget.spent_all_time() == DEADLINE_GUARD_ROWS
+            verdict = budget.exceeded(0.0)
+            assert verdict is None or verdict[0] != "ledger-query-deadline"
+            with patch.object(ledger._DecSum, "step", slow_deadline_guard_decimal_step):
+                try:
+                    budget.spent_since(DEADLINE_GUARD_DAY, deadline_s=DEADLINE_GUARD_BUDGET_S)
+                except ledger_read.LedgerQueryDeadline:
+                    pass
+                else:
+                    raise AssertionError("snapshot aggregate must still enforce its deadline")
         assert current._conn is connection and connection.in_transaction
         assert capture_deadline_guard_rows(current) == pending_rows
         assert tuple(tuple(row) for row in connection.execute(DEADLINE_GUARD_AUDIT_SQL)) == audit_before
         connection.commit()
         assert capture_deadline_guard_rows(current) == pending_rows
+        connection.execute(DEADLINE_GUARD_DELETE_PENDING_SQL, (DEADLINE_GUARD_PENDING_ID,))
+        connection.commit()
     finally:
         close_deadline_guard_thread_ledger()
 
+
+
+def test_deferred_writer_deadline_guard_counts_pending_spend():
+    current = seed_deadline_guard_ledger()
+    connection = current._conn
+    try:
+        connection.execute(DEADLINE_GUARD_INSERT_SQL, (
+            DEADLINE_GUARD_PENDING_ID, DEADLINE_GUARD_DAY, DEADLINE_GUARD_SOURCE,
+            DEADLINE_GUARD_PENDING_AMOUNT, DEADLINE_GUARD_JOB))
+        connection._ledger_bulk_commit_deferred = True
+        with patch.object(ledger_writer, "current_ledger_writer_connection", return_value=connection):
+            assert budget.spent_since(DEADLINE_GUARD_DAY) == (
+                DEADLINE_GUARD_ROWS + int(DEADLINE_GUARD_PENDING_AMOUNT))
+        assert connection.in_transaction
+    finally:
+        connection._ledger_bulk_commit_deferred = False
+        connection.rollback()
+        close_deadline_guard_thread_ledger()
 
 
 def test_ledger_query_deadline_replacement_fault_recovers():

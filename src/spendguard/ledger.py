@@ -370,10 +370,18 @@ def own_spend_ledger_read_scope(method):
                 raise LedgerQueryDeadline(deadline_s)
             expires = time.monotonic() + deadline_s
         expires = effective_ledger_admission_deadline(expires)
-        if self._conn is not None:
+        from .ledger_writer import ledger_connection_commit_deferred
+        # A plain writer must never receive a reader's interrupt/progress handler.
+        # Existing bounded read snapshots may themselves have BEGIN in flight.
+        snapshot_pending_writer = (
+            self._conn is not None and self._conn.in_transaction
+            and not ledger_connection_commit_deferred(self._conn)
+            and not getattr(self._conn, "_ledger_owned_read_deadline", False)
+        )
+        if self._conn is not None and not snapshot_pending_writer:
             return method(self, *args, **kwargs)
         from .ledger_writer import ledger_bulk_scope_matches, reserved_ledger_bulk_read_connection
-        if ledger_bulk_scope_matches(self.db_path):
+        if not snapshot_pending_writer and ledger_bulk_scope_matches(self.db_path):
             def read_reserved_bulk_transaction():
                 facade = copy.copy(self)
                 facade._conn = reserved_ledger_bulk_read_connection(self.db_path)
@@ -940,8 +948,8 @@ class SpendLedger:
         rows — the same four the legacy countable_charges view excluded. Returns a decimal string.
 
         ``deadline_s`` is a relative monotonic wall-clock duration. None preserves
-        the legacy unbounded read. Expiry or an unsafe pending write transaction
-        raises LedgerQueryDeadline; no incomplete aggregate escapes."""
+        the legacy unbounded read. Plain pending writes use a separate committed
+        snapshot; expiry raises LedgerQueryDeadline, never an incomplete aggregate."""
         if self._conn is None:
             from .ledger_read import LedgerQueryDeadline
             try:
