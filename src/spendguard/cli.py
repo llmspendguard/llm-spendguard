@@ -145,6 +145,8 @@ _GROUPS = [
         ("keys-audit", "scan repo .env files for a provider key that would SHADOW the keys.env SSOT (the stale-shadow 401 doctor can't see)"),
         ("consumer-audit", "prove every workspace LLM consumer is gated and on the deployed sha; safely arm fixable venvs"),
         ("distribute", "converge every local surface and attest the deployed release; --check verifies without mutation"),
+        ("manifest", "build or show the persisted complete inventory of gated surfaces"),
+        ("manifest", "build/show the persisted complete inventory of gated surfaces"),
         ("deploy", "run the full gate, then promote committed HEAD → green pointer (running MCP servers roll onto latest+best)"),
         ("release", "show release status, then converge and attest the fleet (--check verifies only; --json)"),
         ("fleet", "tracked consumers and deployments (--restart, --json, or deregister <python_executable>)"),
@@ -511,6 +513,9 @@ def _dispatch(argv=None):
     if cmd == "delegate":
         from . import delegate_router
         return delegate_router.delegate_cli(rest)
+    if cmd == "manifest":
+        from .manifest import manifest_command
+        return manifest_command(rest)
     if cmd == "reap-orphans":
         return reap_orphaned_warm_servers_cli(rest)
     if cmd == "queue-manage":

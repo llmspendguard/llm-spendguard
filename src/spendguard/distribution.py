@@ -258,7 +258,22 @@ def distribute_fleet(*, check=False, roots=None, dry_run=False, settings=None):
             rows.append(distribution_surface_row("consumer-audit", "enumeration", reason=str(exc)))
             audit = {"consumers": [], "pruned_at_depth": []}
         try:
-            inventory = setup.discover_distribution_interpreters(roots=roots, settings=audit_settings)
+            if check:
+                from .manifest import manifest_path, read_surface_manifest
+                persisted_manifest = read_surface_manifest() if manifest_path().is_file() else None
+            else:
+                persisted_manifest = None
+            if persisted_manifest is not None:
+                inventory = {
+                    "interpreters": [
+                        {"python": surface["canonical_path"], "venv": str(Path(surface["canonical_path"]).parent.parent),
+                         "kind": "venv"}
+                        for surface in persisted_manifest["surfaces"] if surface["surface_kind"] == "venv"
+                    ],
+                    "gaps": persisted_manifest.get("gaps", []),
+                }
+            else:
+                inventory = setup.discover_distribution_interpreters(roots=roots, settings=audit_settings)
         except Exception as exc:
             rows.append(distribution_surface_row("interpreter-discovery", "enumeration", reason=str(exc)))
             inventory = {"interpreters": [], "gaps": []}
