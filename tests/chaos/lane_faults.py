@@ -2,13 +2,16 @@
 
 No live fidelity claim: fake transport, real registry, durable queue and guardrail-D door.
 """
+import atexit
 import concurrent.futures
 import os
 import tempfile
 import threading
 from unittest.mock import patch
 
-os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="sg-lane-chaos-")
+isolated_home_owner = tempfile.TemporaryDirectory(prefix="sg-lane-chaos-")
+atexit.register(isolated_home_owner.cleanup)
+os.environ["SPENDGUARD_HOME"] = isolated_home_owner.name
 os.environ["SPENDGUARD_TEST_ISOLATED"] = "1"
 os.environ["SPENDGUARD_LANE_ATTEMPTS"] = "3"
 os.environ["SPENDGUARD_LANE_BACKOFF_S"] = "0.001"

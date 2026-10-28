@@ -1,6 +1,6 @@
 """Doctor remains bounded when overage and residency caches are stale."""
-import contextlib
 import atexit
+import contextlib
 import io
 import json
 import os
@@ -20,6 +20,30 @@ _TRANSCRIPT_RECORD_COUNT = 2_000
 _TRANSCRIPT_TEXT_BYTES = 4_096
 _TRANSCRIPT_SESSION_ID = "doctor-bounded-residency-session"
 _TRANSCRIPT_MODEL = "claude-sonnet-4-6"
+_EXPECTED_DIAGNOSTIC_EXIT_CODE = 1
+_SUBPROCESS_DOCTOR_PROBE = (
+    "from unittest.mock import patch\n"
+    "from spendguard import gate, setup\n"
+    "with patch.object(setup, '_startup_gate_active', return_value=False):\n"
+    "    raise SystemExit(gate._cli('doctor'))\n"
+)
+_AMBIENT_PROVIDER_ENVIRONMENT_VARIABLES = (
+    "ANTHROPIC_API_KEY",
+    "ANTHROPIC_AUTH_TOKEN",
+    "ANTHROPIC_BASE_URL",
+    "DASHSCOPE_API_KEY",
+    "DEEPSEEK_API_KEY",
+    "GEMINI_API_KEY",
+    "GOOGLE_API_KEY",
+    "MOONSHOT_API_KEY",
+    "OPENAI_API_KEY",
+    "OPENAI_BASE_URL",
+    "SPENDGUARD_ENV",
+    "SPENDGUARD_KEYS_ENV",
+    "VOYAGE_API_KEY",
+    "ZAI_API_KEY",
+    "ZAI_CODING_API_KEY",
+)
 
 isolated_home_owner = tempfile.TemporaryDirectory(prefix="spendguard-doctor-bounded-")
 atexit.register(isolated_home_owner.cleanup)
@@ -49,6 +73,9 @@ for transcript_index in range(_TRANSCRIPT_FILE_COUNT):
 
 with open(os.path.join(isolated_home, "overage_status_cache.json"), "w", encoding="utf-8") as cache_file:
     json.dump({"ts": _STALE_CACHE_TIMESTAMP, "status": {"on_overage_now": False}}, cache_file)
+
+for environment_variable in _AMBIENT_PROVIDER_ENVIRONMENT_VARIABLES:
+    os.environ.pop(environment_variable, None)
 
 environment = dict(os.environ)
 environment.update({"SPENDGUARD_HOME": isolated_home, "SPENDGUARD_NO_AUTOINSTALL": "1",
@@ -83,13 +110,13 @@ with patch.object(claudecode, "residency_decomposition",
                   side_effect=fail_if_live_residency_decomposition_runs), \
         patch.object(claudecode, "_conv_transcript_records",
                      side_effect=fail_if_live_residency_decomposition_runs), \
-        patch.object(setup, "_startup_gate_active", return_value=True), \
+        patch.object(setup, "_startup_gate_active", return_value=False), \
         contextlib.redirect_stdout(doctor_probe_output):
     bounded_doctor_returncode = gate._cli("doctor")
 
 started = time.monotonic()
 completed = subprocess.run(
-    [sys.executable, "-S", "-m", "spendguard", "doctor"], env=environment,
+    [sys.executable, "-S", "-c", _SUBPROCESS_DOCTOR_PROBE], env=environment,
     capture_output=True, text=True, check=False, timeout=_DOCTOR_WALL_BUDGET_SECONDS,
 )
 elapsed = time.monotonic() - started
@@ -102,7 +129,7 @@ if cached_status.get("on_overage_now") is not None or not cached_status.get("sta
     failures.append("current_overage_status did not return an explicit stale/unknown verdict")
 if elapsed >= _DOCTOR_WALL_BUDGET_SECONDS:
     failures.append(f"doctor exceeded wall budget: {elapsed:.3f}s")
-if bounded_doctor_returncode != 0:
+if bounded_doctor_returncode != _EXPECTED_DIAGNOSTIC_EXIT_CODE:
     failures.append(f"in-process fatal-seam doctor failed with {bounded_doctor_returncode}")
 if "residency : unknown (stale" not in doctor_probe_output.getvalue():
     failures.append("doctor did not disclose the absent residency cache as stale/unknown")
@@ -110,7 +137,7 @@ if "overage UNKNOWN" not in combined_output:
     failures.append("doctor did not disclose the stale cached verdict as UNKNOWN")
 if "residency : unknown (stale" not in combined_output:
     failures.append("subprocess doctor did not disclose the absent residency cache as stale/unknown")
-if completed.returncode != 0:
+if completed.returncode != _EXPECTED_DIAGNOSTIC_EXIT_CODE:
     failures.append(f"doctor failed with {completed.returncode}: {combined_output}")
 
 print(f"{'[FAIL]' if failures else 'OK'} test_doctor_bounded_overage_status: "

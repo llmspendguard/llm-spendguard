@@ -1,4 +1,5 @@
 """Power-loss model against real retention: only fsynced archive bytes survive."""
+import atexit
 import contextlib
 import datetime
 import json
@@ -7,7 +8,9 @@ import stat
 import tempfile
 from unittest.mock import patch
 
-os.environ.setdefault("SPENDGUARD_HOME", tempfile.mkdtemp(prefix="sg-retention-chaos-"))
+isolated_home_owner = tempfile.TemporaryDirectory(prefix="sg-retention-chaos-")
+atexit.register(isolated_home_owner.cleanup)
+os.environ.setdefault("SPENDGUARD_HOME", isolated_home_owner.name)
 os.environ["SPENDGUARD_TEST_ISOLATED"] = "1"
 
 import spendguard  # noqa: E402

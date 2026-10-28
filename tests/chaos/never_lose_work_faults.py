@@ -1,4 +1,5 @@
 """Durable-write and drain fault injection over real whole-job and lane-queue accounting."""
+import atexit
 import concurrent.futures
 import datetime
 import os
@@ -8,7 +9,9 @@ import sys
 import tempfile
 from unittest.mock import patch
 
-os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="sg-work-chaos-")
+isolated_home_owner = tempfile.TemporaryDirectory(prefix="sg-work-chaos-")
+atexit.register(isolated_home_owner.cleanup)
+os.environ["SPENDGUARD_HOME"] = isolated_home_owner.name
 os.environ["SPENDGUARD_TEST_ISOLATED"] = "1"
 
 # Let tests/-level siblings loaded via runpy import _script_checks.
@@ -42,17 +45,18 @@ def run_never_lose_work_chaos_contract():
     import openai
     registry = fixture["_Registry"]()
     # Invalid parent directory injects a real durable-write failure, not a replacement receipt.
-    checkpoint = os.path.join(tempfile.mkdtemp(), "absent", "checkpoint")
-    with patch.object(whole_job, "_method_for", return_value=("batch", 0.0, "fixture")), \
-            patch.object(config, "advisor_model", return_value=fixture["MODEL"]), \
-            patch.object(models, "resolve_effort", return_value=None), \
-            patch.object(openai, "OpenAI", side_effect=lambda *a, **kw: fixture["_FakeOpenAI"](registry)):
-        result = whole_job.run_jobs(jobs, {"urgency": "batch"}, checkpoint=checkpoint)
-    assert registry.created == 1
-    handle = result["pending"][0]
-    assert result["pending"] == [handle]
-    assert result["receipt"]["persist_failures"] == [handle], result
-    assert not whole_job.load_pending(checkpoint + ".pending.jsonl")
+    with tempfile.TemporaryDirectory() as absent_checkpoint_owner:
+        checkpoint = os.path.join(absent_checkpoint_owner, "absent", "checkpoint")
+        with patch.object(whole_job, "_method_for", return_value=("batch", 0.0, "fixture")), \
+                patch.object(config, "advisor_model", return_value=fixture["MODEL"]), \
+                patch.object(models, "resolve_effort", return_value=None), \
+                patch.object(openai, "OpenAI", side_effect=lambda *a, **kw: fixture["_FakeOpenAI"](registry)):
+            result = whole_job.run_jobs(jobs, {"urgency": "batch"}, checkpoint=checkpoint)
+        assert registry.created == 1
+        handle = result["pending"][0]
+        assert result["pending"] == [handle]
+        assert result["receipt"]["persist_failures"] == [handle], result
+        assert not whole_job.load_pending(checkpoint + ".pending.jsonl")
 
     # A short executor response must leave a named gap, never silently disappear.
     with patch.object(whole_job, "_method_for", return_value=("realtime", 0.0, "fixture")), \
