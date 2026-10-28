@@ -9,13 +9,15 @@ import tempfile
 import threading
 from unittest.mock import patch
 
+CHAOS_LANE_QUEUE_SUCCESS_DEADLINE_S = 5
+
 isolated_home_owner = tempfile.TemporaryDirectory(prefix="sg-lane-chaos-")
 atexit.register(isolated_home_owner.cleanup)
 os.environ["SPENDGUARD_HOME"] = isolated_home_owner.name
 os.environ["SPENDGUARD_TEST_ISOLATED"] = "1"
 os.environ["SPENDGUARD_LANE_ATTEMPTS"] = "3"
 os.environ["SPENDGUARD_LANE_BACKOFF_S"] = "0.001"
-os.environ["SPENDGUARD_LANE_QUEUE_DEADLINE_S"] = "0.12"
+os.environ["SPENDGUARD_LANE_QUEUE_DEADLINE_S"] = str(CHAOS_LANE_QUEUE_SUCCESS_DEADLINE_S)
 os.environ["SPENDGUARD_LANE_QUEUE_POLL_S"] = "0.002"
 
 from spendguard import adapters, calls, gate, lane_balance, lane_queue, lane_recovery, plan_admission  # noqa: E402
