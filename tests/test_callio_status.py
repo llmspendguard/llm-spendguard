@@ -1,8 +1,7 @@
 """`spendguard callio-status` — the corpus-fill readout you consult BEFORE estimating a sweep.
 
-The count that matters for readiness is not `sampled` but `replayable` (truncated=0): bakeoff/effort-titrate sample
-ONLY non-truncated rows, so an intent with 50 samples but all truncated (the old 800-char judge snip) can't run a
-sweep. This guards that status_rows reports sampled / replayable / live / judged correctly per (intent, model), and
+Retained bodies are now compressed whole, so every newly captured sample is replayable; the legacy `truncated`
+column remains only to protect old partial rows. This guards status_rows per (intent, model), and
 that the --intent substring filter works.
 
 Offline + hermetic: temp HOME, no network.
@@ -32,7 +31,7 @@ def report_check(name, cond):
 
 fails = []
 
-# intentA/m1: one FULL batch row (replayable) + one TRUNCATED batch row (prompt > the 800 snip → truncated=1, excluded)
+# intentA/m1: both the short and formerly-over-cap batch rows are whole and replayable.
 callio.record_io_sample("intentA", "openai", "m1", "b1", "c1", "short batch prompt", "out")
 callio.record_io_sample("intentA", "openai", "m1", "b2", "c2", "P" * 900, "out")
 # intentB/m2: one LIVE row (source live_io, whole → replayable)
@@ -43,7 +42,7 @@ by = {(d["intent"], d["model"]): d for d in callio.status_rows()}
 print("-- sampled counts every row; replayable counts only truncated=0 (what a sweep can sample) --")
 _a = by.get(("intentA", "m1"))
 fails += report_check("intentA/m1: sampled=2", _a and _a["sampled"] == 2)
-fails += report_check("intentA/m1: replayable=1 (the truncated 900-char row is EXCLUDED)", _a and _a["replayable"] == 1)
+fails += report_check("intentA/m1: both whole rows are replayable", _a and _a["replayable"] == 2)
 fails += report_check("intentA/m1: live=0 (both were batch rows)", _a and _a["live"] == 0)
 
 print("\n-- a LIVE-captured row is counted as replayable AND flagged live --")

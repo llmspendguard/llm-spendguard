@@ -519,6 +519,9 @@ def _dispatch(argv=None):
         return lane_leak_check_cli(rest)
     if cmd == "ledger-read":
         return ledger_read_cli(rest)
+    if cmd == "compress-content":
+        from .content_compression_backfill import content_compression_backfill_cli
+        return content_compression_backfill_cli(rest)
     if cmd == "agent-spawn-gate":
         from . import agent_spawn_gate
         return agent_spawn_gate.cmd(rest)
