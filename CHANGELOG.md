@@ -4,6 +4,44 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 
 ## [Unreleased]
 
+## [0.16.9] — 2026-10-29
+
+Themes: three follow-up fixes completing what 0.16.8 started — the spend_events half of the nano-USD migration,
+the distribution-probe disk leak, and a wheel-build hygiene gap that let a removed source reship to the fleet.
+
+### Reliability — spend_events nano columns (completes 0.16.8's nano-USD SSOT)
+- 0.16.8 added nano-USD mirror columns and legacy-safe readers, but the `spend_events` table was never migrated
+  on existing DBs and two of its readers referenced the nano columns UNCONDITIONALLY. On a pre-migration DB
+  `read_spend_aggregates` and `read_represented_call_cell` raised
+  `sqlite3.OperationalError: no such column: realtime_usd_nano` → `LedgerReadSchemaError`, which broke
+  `spendguard delegate` on this and any un-migrated host. Fix: both readers now probe the available columns and
+  use `_prefer_nano_else_legacy_column` with a `COALESCE(<nano>, <legacy>*NANO_USD_PER_USD)` fallback, so they
+  return correct values on a legacy DB and prefer nano after migration, and never hard-fail on a missing nano
+  column. A new additive `_initialize_spend_event_nano_schema` ALTERs in the missing `*_usd_nano` columns and
+  backfills each from its legacy `*_usd` column (shared rounding via `real_usd_to_nano_usd` /
+  `assert_nano_total_matches`), invoked on ledger open beside the calls-table init; idempotent, preserves
+  already-populated nano. Guards in `tests/test_spend_event_nano_schema_gap.py` (6 cases).
+
+### Distribution — probe-snapshot disk leak
+- `distribute` built its isolated probe snapshot by deep-copying the configured ledgers into every per-fingerprint
+  base (and into the fingerprint itself), so default-located ledgers (~1.8G + 1.4G here) forced a full multi-GB
+  rebuild on every run, and a killed rebuild orphaned `base.building-<pid>` dirs that were never reclaimed (~20G
+  recovered after the fix). Fix: `distribution_configured_ledger_paths()` now resolves the effective
+  `config.db_path()` and `config.lane_queue_db_path()` (plus `-wal`/`-shm`/`-journal` sidecars) and excludes them
+  by path identity regardless of location; the base build writes its owner marker before copytree and
+  `sweep_stale_distribution_probe_base_builds` reclaims abandoned builds while preserving live owners. Guards in
+  `tests/test_distribution_probe_disk_leak.py` (3 cases).
+
+### Distribution — wheel-build hygiene
+- `pip wheel --no-build-isolation` reuses in-place setuptools state, so a file removed from src that still sat in
+  a stale `build/lib/` was repackaged into every fleet wheel; `prepare_distribution_checkout`'s cleanliness gate
+  (`git status --untracked-files=no`) ignored the untracked `build/`, so the stale leaf slipped through. Observed
+  on 0.16.8: 5 converged venvs carried the removed `spendguard/prices.json`. Fix:
+  `purge_stale_build_artifacts_in_checkout` removes `<checkout>/build` and root/src `*.egg-info` (regenerable
+  only, symlink-guarded) before the build; `--no-build-isolation` is retained. Guard:
+  `test_catalog_ssot_distribution_wheel_excludes_stale_removed_leaf` plants a stale build leaf and asserts the
+  wheel excludes it while retaining `model_catalog.json`.
+
 ## [0.16.8] — 2026-10-28
 
 Themes: an integer nano-USD money SSOT with legacy-safe readers so every cost read is exact and never silently
