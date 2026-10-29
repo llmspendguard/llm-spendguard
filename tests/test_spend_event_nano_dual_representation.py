@@ -13,7 +13,7 @@ align_test_startup_home(prefix=__name__)
 
 from spendguard import ledger as nano_ledger_module
 from spendguard import budget as nano_budget_module
-from spendguard.money_scale import assert_nano_total_matches, usd_to_nano_usd
+from spendguard.money_scale import assert_nano_total_matches, usd_to_nano_usd, nano_usd_to_usd
 
 
 NANO_FIXTURE_DB_NAME = "nano-dual-representation.sqlite"
@@ -76,15 +76,18 @@ def assert_spend_event_shadow_rows(connection):
 def test_spend_event_nano_backfill_read_preservation_and_idempotency(tmp_path):
     database_path, before_rows, before_total = create_legacy_nano_proof_database(tmp_path)
     migrated = nano_ledger_module.SpendLedger(database_path)
-    expected_spent = sum((Decimal(value or NANO_FIXTURE_ZERO) for value in before_total[:2]), Decimal(0))
-    assert Decimal(migrated.spent_dec()) == expected_spent
+    expected_spent = sum((nano_usd_to_usd(usd_to_nano_usd(Decimal(value or NANO_FIXTURE_ZERO)))
+                          for value in before_total[:2]), Decimal(0))
+    # spend_events readers are nano-granular post-cutover; raw TEXT retains full precision.
+    assert Decimal(migrated.spent_dec()) == nano_usd_to_usd(usd_to_nano_usd(expected_spent))
     with patch.object(nano_budget_module, '_ledger', return_value=migrated):
         assert nano_budget_module.spent_all_time() == float(expected_spent)
     with sqlite3.connect(database_path) as source_connection, sqlite3.connect(NANO_FIXTURE_MEMORY_DATABASE) as owned_connection:
         source_connection.backup(owned_connection)
         owned_ledger = nano_ledger_module.SpendLedger(NANO_FIXTURE_MEMORY_DATABASE, owned_connection=owned_connection)
         for column, before_value in zip(nano_ledger_module.USD_COLS, before_total):
-            assert Decimal(owned_ledger._cat_dec((column,), migrated._COUNTABLE)) == Decimal(before_value or NANO_FIXTURE_ZERO)
+            assert Decimal(owned_ledger._cat_dec((column,), migrated._COUNTABLE)) == nano_usd_to_usd(
+                usd_to_nano_usd(Decimal(before_value or NANO_FIXTURE_ZERO)))
     with sqlite3.connect(database_path) as connection:
         assert_spend_event_shadow_rows(connection)
         old_column_count = len(before_rows[0])

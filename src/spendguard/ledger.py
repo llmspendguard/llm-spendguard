@@ -32,7 +32,7 @@ from types import MappingProxyType, MethodType
 from .schema_indexes import ensure_ordered_indexes_coverage
 from decimal import Decimal, InvalidOperation, getcontext
 from . import config
-from .money_scale import usd_to_nano_usd, assert_nano_total_matches
+from .money_scale import usd_to_nano_usd, nano_usd_to_usd, assert_nano_total_matches
 
 getcontext().prec = 34   # ample for exact money arithmetic (28 is the default; money never needs more than this)
 
@@ -320,6 +320,17 @@ class _DecSum:
 
     def finalize(self):
         return str(self.acc)
+
+
+def spend_event_nano_sum_to_decimal(total):
+    """Convert a native category SUM at the USD boundary; an empty SUM is zero.
+
+    NULL mirrors (including non-USD amounts) are excluded by SUM. Unlike the
+    former TEXT aggregate, foreign denominations are never treated as USD.
+    Sub-nano raw precision remains preserved in TEXT; readers use nano precision.
+    INTEGER overflow raises in SQLite rather than losing precision through REAL.
+    """
+    return Decimal(format(nano_usd_to_usd(0 if total is None else total).normalize(), 'f'))
 
 
 _LIVE_SEQ = itertools.count()
@@ -968,11 +979,11 @@ class SpendLedger:
             w += " AND COALESCE(is_meta,0)=0"
         w += " AND COALESCE(status,'') NOT IN ('void')"       # void excluded; a reversed pair nets to 0 via its negation
         from .ledger_read import LedgerReadRequest, read_ledger_rows
-        request = LedgerReadRequest(columns=tuple(cols) + tuple(f"dec_sum({c}) AS {c}" for c in USD_COLS)
+        request = LedgerReadRequest(columns=tuple(cols) + tuple(f"SUM({SPEND_EVENT_NANO_COLUMNS[c]}) AS {c}" for c in USD_COLS)
             + ("COUNT(*) AS n",), where_sql="1=1" + w, parameters=tuple(args), group_by=tuple(cols))
 
         def pack(row):
-            vals = {c: to_dec(row[len(cols) + i]) for i, c in enumerate(USD_COLS)}   # exact Decimal per category
+            vals = {c: spend_event_nano_sum_to_decimal(row[len(cols) + i]) for i, c in enumerate(USD_COLS)}
             billed = sum((vals[c] for c in BILLED_USD_COLS), Decimal(0))
             out = {c: float(vals[c]) for c in USD_COLS}
             out.update(billed_usd=float(billed), est_value_usd=float(vals["est_chat_usd"]), n=row[-1])
@@ -1006,11 +1017,11 @@ class SpendLedger:
         w, args = self._where(since, until, {**(where or {}), **filters})
         if filt:
             w += " AND " + filt
-        sums = ", ".join(f"dec_sum({c})" for c in cols)
+        sums = ", ".join(f"SUM({SPEND_EVENT_NANO_COLUMNS[c]})" for c in cols)
         cursor = self._conn.execute(f"SELECT {sums} FROM spend_events WHERE 1=1" + w, args)
         try:
             r = cursor.fetchone()
-            return str(sum((to_dec(x) for x in r), Decimal(0)))
+            return format(sum((spend_event_nano_sum_to_decimal(x) for x in r), Decimal(0)), 'f')
         finally:
             cursor.close()
 
@@ -1180,9 +1191,9 @@ class SpendLedger:
         if filt:
             w += " AND " + filt
         rows = read_ledger_rows(LedgerReadRequest(
-            columns=tuple(f"dec_sum({column}) AS {column}" for column in cols),
+            columns=tuple(f"SUM({SPEND_EVENT_NANO_COLUMNS[column]}) AS {column}" for column in cols),
             where_sql="1=1" + w, parameters=tuple(args)), path=self.db_path)
-        return str(sum((to_dec(value) for value in rows[0].values), Decimal(0)))
+        return format(sum((spend_event_nano_sum_to_decimal(value) for value in rows[0].values), Decimal(0)), 'f')
 
     # The lifecycle-status EXCLUSION, named once (same enum the DDL defines: draft|posted|reconciled|locked|
     # reversed|void). Reused by the grouped/meta primitives so the "not a void/reversed entry" rule lives in one
@@ -1222,7 +1233,7 @@ class SpendLedger:
         if filt:
             w += " AND " + filt
         from .ledger_read import LedgerReadRequest, read_ledger_rows
-        projections = tuple(gcols) + tuple(f"dec_sum({c}) AS {c}" for c in allcols)
+        projections = tuple(gcols) + tuple(f"SUM({SPEND_EVENT_NANO_COLUMNS[c]}) AS {c}" for c in allcols)
         projections += tuple(f"CASE WHEN COUNT({c}) = COUNT(*) THEN SUM({c}) ELSE NULL END AS {c}"
                              for c in icols) + ("COUNT(*) AS n",)
         out = {}
@@ -1230,8 +1241,8 @@ class SpendLedger:
         for row in read_ledger_rows(LedgerReadRequest(columns=projections, where_sql="1=1" + w,
                 parameters=tuple(args), group_by=tuple(gcols)), path=self.db_path):
             key = tuple(row[i] for i in range(len(gcols))) if len(gcols) > 1 else row[0]
-            total = sum((to_dec(row[base + i]) for i in range(len(allcols))), Decimal(0))
-            rec = {"usd": str(total), "n": row[-1]}
+            total = sum((spend_event_nano_sum_to_decimal(row[base + i]) for i in range(len(allcols))), Decimal(0))
+            rec = {"usd": format(total, 'f'), "n": row[-1]}
             for j, ic in enumerate(icols):
                 token_total = row[base + len(allcols) + j]
                 rec[ic] = None if token_total is None else int(token_total)
@@ -1353,9 +1364,9 @@ class SpendLedger:
             w += " AND COALESCE(status,'') NOT IN ('void')"
         from .ledger_read import LedgerReadRequest, read_ledger_rows
         r = read_ledger_rows(LedgerReadRequest(
-            columns=tuple(f"dec_sum({column}) AS {column}" for column in USD_COLS),
+            columns=tuple(f"SUM({SPEND_EVENT_NANO_COLUMNS[column]}) AS {column}" for column in USD_COLS),
             where_sql="1=1" + w, parameters=tuple(args)), path=self.db_path)[0]
-        return str(sum((to_dec(x) for x in r.values), Decimal(0)))       # add the category totals exactly
+        return format(sum((spend_event_nano_sum_to_decimal(x) for x in r.values), Decimal(0)), 'f')
 
     def sum_usd(self, since=None, until=None, where=None, include_meta=True, include_void=False, **filters):
         """Total USD for the filter, as a FLOAT — the display convenience. Exactness lives in `sum_dec`;

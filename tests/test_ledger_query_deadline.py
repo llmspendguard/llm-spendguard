@@ -4,6 +4,8 @@ import sqlite3
 import sys
 import threading
 import time
+from contextlib import contextmanager, ExitStack
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from _pytest_fixture_bridge import align_test_startup_home, run_pytest_style
@@ -13,7 +15,7 @@ align_test_startup_home(prefix=__name__)
 from spendguard import budget, config, ledger, ledger_read, ledger_writer
 
 DEADLINE_GUARD_ROWS = 512
-DEADLINE_GUARD_STEP_S = 0.001
+DEADLINE_GUARD_SCAN_S = 1.0
 DEADLINE_GUARD_BUDGET_S = 0.01
 DEADLINE_GUARD_WORKERS = 4
 # Parallel gate load can serialize each worker's connection recovery. Bound the
@@ -33,17 +35,47 @@ DEADLINE_GUARD_EMPTY_JOB = "deadline-guard-empty-job"
 DEADLINE_GUARD_FAILURE_MESSAGE = "injected deadline replacement failure"
 DEADLINE_GUARD_PENDING_ID = "deadline-guard-pending-write"
 DEADLINE_GUARD_AUDIT_SQL = "SELECT * FROM spend_audit ORDER BY id"
-DEADLINE_GUARD_ORIGINAL_STEP = ledger._DecSum.step
-DEADLINE_GUARD_INSERT_SQL = """INSERT OR IGNORE INTO spend_events
-    (id, day, source, realtime_usd, chain, status, is_meta, reconciled)
-    VALUES (?, ?, ?, ?, ?, 'posted', 0, 0)"""
+DEADLINE_GUARD_POSTED_STATUS = "posted"
 DEADLINE_GUARD_SNAPSHOT_SQL = "SELECT * FROM spend_events ORDER BY id"
 DEADLINE_GUARD_DELETE_PENDING_SQL = "DELETE FROM spend_events WHERE id=?"
 
 
-def slow_deadline_guard_decimal_step(self, value):
-    time.sleep(DEADLINE_GUARD_STEP_S)
-    DEADLINE_GUARD_ORIGINAL_STEP(self, value)
+@contextmanager
+def advance_deadline_guard_on_sqlite_progress():
+    """Charge virtual scan time on the first real VM poll, then run the real guard."""
+    clock_state = threading.local()
+    original_handler_setter = config._CountedLedgerConnection.set_progress_handler
+
+    def deadline_guard_virtual_monotonic():
+        return time.monotonic() + getattr(clock_state, "elapsed", 0.0)
+
+    def install_deadline_guard_progress(connection, handler, interval):
+        charged = False
+
+        def charge_deadline_guard_scan():
+            nonlocal charged
+            if not charged:
+                clock_state.elapsed = getattr(clock_state, "elapsed", 0.0) + DEADLINE_GUARD_SCAN_S
+                charged = True
+            return handler()
+
+        return original_handler_setter(connection,
+            charge_deadline_guard_scan if handler is not None else None, interval)
+
+    clock_proxy = SimpleNamespace(**{name: getattr(time, name) for name in dir(time)})
+    clock_proxy.monotonic = deadline_guard_virtual_monotonic
+    with ExitStack() as patches:
+        for module in (ledger, ledger_read, config, budget):
+            patches.enter_context(patch.object(module, "time", clock_proxy))
+        patches.enter_context(patch.object(config._CountedLedgerConnection,
+            "set_progress_handler", install_deadline_guard_progress))
+        yield clock_proxy
+
+
+def record_deadline_guard_fixture_event(current, event_id, amount):
+    return current.record_event(dict(id=event_id, day=DEADLINE_GUARD_DAY,
+        source=DEADLINE_GUARD_SOURCE, realtime_usd=amount, chain=DEADLINE_GUARD_JOB,
+        status=DEADLINE_GUARD_POSTED_STATUS))
 
 
 def seed_deadline_guard_ledger():
@@ -51,10 +83,8 @@ def seed_deadline_guard_ledger():
     if current._conn is None:
         current._restore_spend_aggregate_connection()
         current._explicit_owned_connection = True
-    current._conn.executemany(DEADLINE_GUARD_INSERT_SQL, (
-        (str(index), DEADLINE_GUARD_DAY, DEADLINE_GUARD_SOURCE,
-         DEADLINE_GUARD_AMOUNT, DEADLINE_GUARD_JOB)
-        for index in range(DEADLINE_GUARD_ROWS)))
+    for index in range(DEADLINE_GUARD_ROWS):
+        record_deadline_guard_fixture_event(current, str(index), DEADLINE_GUARD_AMOUNT)
     current._conn.commit()
     return current
 
@@ -88,7 +118,7 @@ def test_ledger_query_deadline_fault_and_recovery():
     expired_connection = current._conn
     started = time.monotonic()
     try:
-        with patch.object(ledger._DecSum, "step", slow_deadline_guard_decimal_step):
+        with advance_deadline_guard_on_sqlite_progress():
             try:
                 budget.spent_since(DEADLINE_GUARD_DAY, deadline_s=DEADLINE_GUARD_BUDGET_S)
             except ledger_read.LedgerQueryDeadline:
@@ -140,7 +170,7 @@ def test_ledger_query_deadline_concurrent_pool_baseline():
             close_deadline_guard_thread_ledger()
 
     started = time.monotonic()
-    with patch.object(ledger._DecSum, "step", slow_deadline_guard_decimal_step):
+    with advance_deadline_guard_on_sqlite_progress():
         with concurrent.futures.ThreadPoolExecutor(max_workers=DEADLINE_GUARD_WORKERS) as executor:
             futures = [executor.submit(contend_deadline_guard_reader) for _ in range(DEADLINE_GUARD_WORKERS)]
             for future in futures:
@@ -152,7 +182,7 @@ def test_ledger_query_deadline_concurrent_pool_baseline():
 def test_ledger_query_deadline_budget_refuses():
     seed_deadline_guard_ledger()
     try:
-        with patch.object(ledger._DecSum, "step", slow_deadline_guard_decimal_step):
+        with advance_deadline_guard_on_sqlite_progress():
             refusal = budget.exceeded(deadline_s=DEADLINE_GUARD_BUDGET_S)
         assert refusal is not None, "deadline must refuse even without a configured cap"
     finally:
@@ -164,18 +194,18 @@ def test_ledger_query_deadline_preserves_pending_write():
     current = seed_deadline_guard_ledger()
     connection = current._conn
     try:
-        audit_before = tuple(tuple(row) for row in connection.execute(DEADLINE_GUARD_AUDIT_SQL))
-        connection.execute(DEADLINE_GUARD_INSERT_SQL, (
-            DEADLINE_GUARD_PENDING_ID, DEADLINE_GUARD_DAY, DEADLINE_GUARD_SOURCE,
-            DEADLINE_GUARD_PENDING_AMOUNT, DEADLINE_GUARD_JOB))
+        current._defer = True
+        record_deadline_guard_fixture_event(current, DEADLINE_GUARD_PENDING_ID, DEADLINE_GUARD_PENDING_AMOUNT)
+        current._defer = False
         pending_rows = capture_deadline_guard_rows(current)
+        audit_before = tuple(tuple(row) for row in connection.execute(DEADLINE_GUARD_AUDIT_SQL))
         assert connection.in_transaction
         with patch.object(ledger_writer, "current_ledger_writer_connection", return_value=connection):
             assert budget.spent_since(DEADLINE_GUARD_MONTH) == DEADLINE_GUARD_ROWS
             assert budget.spent_all_time() == DEADLINE_GUARD_ROWS
             verdict = budget.exceeded(0.0)
             assert verdict is None or verdict[0] != "ledger-query-deadline"
-            with patch.object(ledger._DecSum, "step", slow_deadline_guard_decimal_step):
+            with advance_deadline_guard_on_sqlite_progress():
                 try:
                     budget.spent_since(DEADLINE_GUARD_DAY, deadline_s=DEADLINE_GUARD_BUDGET_S)
                 except ledger_read.LedgerQueryDeadline:
@@ -198,9 +228,9 @@ def test_deferred_writer_deadline_guard_counts_pending_spend():
     current = seed_deadline_guard_ledger()
     connection = current._conn
     try:
-        connection.execute(DEADLINE_GUARD_INSERT_SQL, (
-            DEADLINE_GUARD_PENDING_ID, DEADLINE_GUARD_DAY, DEADLINE_GUARD_SOURCE,
-            DEADLINE_GUARD_PENDING_AMOUNT, DEADLINE_GUARD_JOB))
+        current._defer = True
+        record_deadline_guard_fixture_event(current, DEADLINE_GUARD_PENDING_ID, DEADLINE_GUARD_PENDING_AMOUNT)
+        current._defer = False
         connection._ledger_bulk_commit_deferred = True
         with patch.object(ledger_writer, "current_ledger_writer_connection", return_value=connection):
             assert budget.spent_since(DEADLINE_GUARD_DAY) == (
@@ -231,7 +261,7 @@ def test_ledger_query_deadline_replacement_fault_recovers():
             return proxy
 
         try:
-            with patch.object(ledger._DecSum, "step", slow_deadline_guard_decimal_step), \
+            with advance_deadline_guard_on_sqlite_progress(), \
                     patch.object(config, "open_ledger_connection", side_effect=fail_deadline_guard_replacement):
                 try:
                     budget.spent_since(DEADLINE_GUARD_DAY, deadline_s=DEADLINE_GUARD_BUDGET_S)
@@ -263,15 +293,15 @@ def test_ledger_query_deadline_replacement_fault_recovers():
 def test_ledger_query_deadline_shared_budget_window():
     seed_deadline_guard_ledger()
     try:
-        with patch.object(ledger._DecSum, "step", slow_deadline_guard_decimal_step):
-            started = time.monotonic()
+        with advance_deadline_guard_on_sqlite_progress() as scan_clock:
+            started = scan_clock.monotonic()
             with ledger_read.ledger_request_scope(
                     deadline_s=DEADLINE_GUARD_OPERATION_TIMEOUT_S):
                 assert budget.spent_since(
                     DEADLINE_GUARD_DAY,
                     deadline_s=DEADLINE_GUARD_OPERATION_TIMEOUT_S,
                 ) == DEADLINE_GUARD_ROWS
-            scan_duration = time.monotonic() - started
+            scan_duration = scan_clock.monotonic() - started
             shared_budget = scan_duration * DEADLINE_GUARD_SHARED_SCAN_MULTIPLIER
             started = time.monotonic()
             refusal = budget.exceeded(deadline_s=shared_budget)

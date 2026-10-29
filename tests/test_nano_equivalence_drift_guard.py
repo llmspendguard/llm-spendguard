@@ -1,4 +1,4 @@
-"""Permanent offline Stage 6 guard; no reader cutover.
+"""Permanent offline Stage 6/7a guard with independent raw-TEXT references.
 
 Read-only diagnostic: import this file and call nano_equivalence_self_check(conn).
 It reopens conn's on-disk main database with mode=ro, and returns named gaps
@@ -121,11 +121,13 @@ def nano_equivalence_self_check(connection):
                         f'SELECT rowid,{"currency" if table == "spend_events" else "NULL"} FROM {table} '
                         f'WHERE ({predicate}) AND {col} IS NOT NULL AND {col}_nano IS NULL', parameters):
                     gaps.append(f'missing_nano:{table}.{col}:rowid={rowid}:currency={currency}')
-            aggregate = 'SUM' if is_real else 'dec_sum'
-            raw_totals = readonly.execute(
-                f'SELECT {",".join(f"{aggregate}({col})" for col in columns)} FROM {table} WHERE {predicate}',
-                parameters).fetchone()
-            raw_total = sum((Decimal(str(value or 0)) for value in raw_totals), Decimal(0))
+            if is_real:
+                raw_totals = readonly.execute(
+                    f'SELECT {",".join(f"SUM({col})" for col in columns)} FROM {table} WHERE {predicate}',
+                    parameters).fetchone()
+                raw_total = sum((Decimal(str(value or 0)) for value in raw_totals), Decimal(0))
+            else:
+                raw_total = raw_text_ledger_decimal_reference(readonly, columns, predicate, parameters)
             # Separate SUM per column avoids SQLite row-expression NULL arithmetic.
             nano_total = sum(value or 0 for value in readonly.execute(
                 f'SELECT {",".join(f"SUM({col}_nano)" for col in columns)} FROM {table} WHERE {predicate}',
@@ -148,6 +150,66 @@ def nano_equivalence_self_check(connection):
                 entry.update(reader_result=None, delta=None, ok=False)
                 gaps.append('unknown_reader_total:decisions.saved_usd:NULL')
     return report
+
+
+def raw_text_ledger_decimal_reference(connection, columns, predicate, parameters=()):
+    """Sum complete raw TEXT rows in Python, independently of all nano readers."""
+    return sum((Decimal(value) for row in connection.execute(
+        f'SELECT {",".join(columns)} FROM spend_events WHERE {predicate}', parameters)
+        for value in row if value is not None), Decimal(0))
+
+
+def assert_stage7a_reader_text_equivalence(database, spend_ledger, where=None):
+    """Exercise each cutover reader against TEXT under its exact inclusion rules."""
+    where = where or {}
+    scope = '1=1' + ''.join(f' AND {column}=?' for column in where)
+    parameters = tuple(where.values())
+
+    def stage7a_assert_reference(actual, columns, predicate, extra_parameters=()):
+        reference = raw_text_ledger_decimal_reference(
+            database, columns, scope + ' AND ' + predicate, parameters + extra_parameters)
+        assert abs(Decimal(str(actual)) - reference) <= Decimal(DRIFT_PROOF_CENT), (
+            columns, predicate, actual, reference)
+
+    for name, columns, predicate in DRIFT_PROOF_TEXT_SPECS:
+        stage7a_assert_reference(getattr(spend_ledger, name)(where=where), columns, predicate)
+        stage7a_assert_reference(spend_ledger._cat_dec(columns, predicate, where=where), columns, predicate)
+        stage7a_assert_reference(spend_ledger._bounded_category_total(columns, predicate, where=where), columns, predicate)
+    if not where:
+        stage7a_assert_reference(spend_ledger.running_llm_total_dec(), ledger.LLM_USD_COLS,
+                                ledger.SpendLedger._COUNTABLE)
+    for meta, void in itertools.product((False, True), repeat=2):
+        predicate = '1=1'
+        if not meta:
+            predicate += ' AND ' + DRIFT_PROOF_NO_META
+        if not void:
+            predicate += ' AND ' + DRIFT_PROOF_NONVOID
+        stage7a_assert_reference(spend_ledger.sum_dec(where=where, include_meta=meta, include_void=void),
+                                ledger.USD_COLS, predicate)
+        stage7a_assert_reference(spend_ledger.sum_usd(where=where, include_meta=meta, include_void=void),
+                                ledger.USD_COLS, predicate)
+    for meta in (False, True):
+        predicate = DRIFT_PROOF_NONVOID
+        if not meta:
+            predicate += ' AND ' + DRIFT_PROOF_NO_META
+        for groups in (None, 'day'):
+            rolled = spend_ledger.rollup(group_by=groups, where=where, include_meta=meta)
+            for day, values in (rolled.items() if groups else ((None, rolled),)):
+                grouped_predicate = predicate + (' AND day IS ?' if groups else '')
+                group_parameters = (day,) if groups else ()
+                for column in ledger.USD_COLS:
+                    stage7a_assert_reference(values[column], (column,), grouped_predicate, group_parameters)
+                stage7a_assert_reference(values['billed_usd'], ledger.BILLED_USD_COLS,
+                                        grouped_predicate, group_parameters)
+                stage7a_assert_reference(values['est_value_usd'], ('est_chat_usd',),
+                                        grouped_predicate, group_parameters)
+    for void in (False, True):
+        predicate = ledger.SpendLedger._COUNTABLE
+        if not void:
+            predicate += ' AND ' + ledger.SpendLedger._NOT_VOID
+        for day, values in spend_ledger.sum_by('day', where=where, include_void=void,
+                filt=ledger.SpendLedger._COUNTABLE).items():
+            stage7a_assert_reference(values['usd'], ledger.USD_COLS, predicate + ' AND day IS ?', (day,))
 
 
 def create_nano_equivalence_fixture(directory):
@@ -201,6 +263,10 @@ def create_nano_equivalence_fixture(directory):
 def test_nano_equivalence_canonical_readers_and_filter_cross_product(tmp_path):
     path, database, spend_ledger = create_nano_equivalence_fixture(tmp_path)
     try:
+        assert_stage7a_reader_text_equivalence(database, spend_ledger)
+        for status in DRIFT_PROOF_STATUSES:
+            if status is not None:
+                assert_stage7a_reader_text_equivalence(database, spend_ledger, {'status': status})
         report = nano_equivalence_self_check(database)
         assert report and all(entry['ok'] for name, entry in report.items()
                               if name != 'decisions_summary'), report
@@ -218,13 +284,11 @@ def test_nano_equivalence_canonical_readers_and_filter_cross_product(tmp_path):
             if status is None:
                 continue  # _where uses equality; NULL lifecycle is checked by the whole totals.
             for name, cols, filt in DRIFT_PROOF_TEXT_SPECS:
-                scoped_total = sum(value or 0 for value in database.execute(
-                    f'SELECT {",".join(f"SUM({col}_nano)" for col in cols)} FROM spend_events '
-                    f'WHERE ({filt}) AND status=? AND day>=? AND day<=?',
-                    (status, DRIFT_PROOF_DAY, DRIFT_PROOF_DAY)).fetchone())
-                assert_nano_total_matches(scoped_total, Decimal(getattr(spend_ledger, name)(
-                    since=DRIFT_PROOF_DAY, until=DRIFT_PROOF_DAY, where={'status': status})),
-                    tolerance_usd=DRIFT_PROOF_ZERO_TOLERANCE, label=f'{name}:{status}')
+                scoped_reference = raw_text_ledger_decimal_reference(database, cols,
+                    f'({filt}) AND status=? AND day>=? AND day<=?',
+                    (status, DRIFT_PROOF_DAY, DRIFT_PROOF_DAY))
+                assert abs(scoped_reference - Decimal(getattr(spend_ledger, name)(
+                    since=DRIFT_PROOF_DAY, until=DRIFT_PROOF_DAY, where={'status': status}))) <= Decimal(DRIFT_PROOF_CENT)
         assert database.execute('SELECT SUM(batch_usd_nano) FROM spend_events').fetchone()[0] > (1 << DRIFT_PROOF_BINARY_INTEGER_BITS)
         floor = ledger_read._read_incomplete_settlement_totals(database)
         assert abs(report['incomplete_settlement_floor']['nano_result'] - Decimal(str(floor['input_cost_floor']))) <= Decimal(DRIFT_PROOF_CENT)
@@ -294,6 +358,11 @@ def test_nano_equivalence_readonly_gaps_and_drift_are_never_passed(tmp_path):
             f'WHERE currency=? AND ({ledger.SpendLedger._COUNTABLE})', (DRIFT_PROOF_USD,)).fetchone())
         assert_nano_total_matches(usd_total, Decimal(spend_ledger.spent_dec(where={'currency': DRIFT_PROOF_USD})),
                                   tolerance_usd=DRIFT_PROOF_ZERO_TOLERANCE, label='USD-only total with denomination gap')
+        assert_stage7a_reader_text_equivalence(database, spend_ledger, {'currency': DRIFT_PROOF_USD})
+        foreign_reference = raw_text_ledger_decimal_reference(database, ledger.LLM_USD_COLS,
+            'currency=? AND (' + ledger.SpendLedger._COUNTABLE + ')', (DRIFT_PROOF_OTHER_CURRENCY,))
+        assert foreign_reference == Decimal(DRIFT_PROOF_SUBNANO)
+        assert Decimal(spend_ledger.spent_dec(where={'currency': DRIFT_PROOF_OTHER_CURRENCY})) == 0
         database.execute('DELETE FROM spend_events WHERE id=?', (__name__,))
         database.execute('INSERT INTO spend_events(id,currency,status,batch_usd,batch_usd_nano) VALUES(?,?,?,?,?)',
                          (__name__, DRIFT_PROOF_USD, 'posted', DRIFT_PROOF_SUBNANO, usd_to_nano_usd(DRIFT_PROOF_SUBNANO)))
@@ -307,6 +376,20 @@ def test_nano_equivalence_readonly_gaps_and_drift_are_never_passed(tmp_path):
         database.execute('ALTER TABLE calls DROP COLUMN cost_nano')
         database.commit()
         assert 'missing_mirror:calls.cost_nano' in nano_equivalence_self_check(database)['recorded_call_total']['gaps']
+    finally:
+        database.close()
+
+
+def test_stage7a_reader_reference_rejects_injected_cent_corruption(tmp_path):
+    _, database, spend_ledger = create_nano_equivalence_fixture(tmp_path)
+    try:
+        # Corrupt every populated mirror by a cent: the independent TEXT oracle
+        # must reject the now-nano readers themselves, not merely a mirror sum.
+        database.execute('UPDATE spend_events SET batch_usd_nano=batch_usd_nano+?',
+                         (usd_to_nano_usd(DRIFT_PROOF_CENT),))
+        database.commit()
+        with pytest.raises(AssertionError):
+            assert_stage7a_reader_text_equivalence(database, spend_ledger)
     finally:
         database.close()
 
