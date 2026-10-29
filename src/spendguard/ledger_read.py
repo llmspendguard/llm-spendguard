@@ -106,7 +106,7 @@ COALESCE(SUM({cost_nano}),0)/{nano}.0 AS cost FROM calls WHERE finish IN ('max_t
 AND ts>=? GROUP BY model ORDER BY SUM({cost_nano}) DESC""".format(
     cost_nano=CALL_COST_NANO_COLUMN, nano=NANO_USD_PER_USD)
 _CC_SPEND_OVERVIEW_SQL_TEMPLATE = """SELECT
-COALESCE(SUM(CASE WHEN source='claude-code' THEN {est_nano} ELSE 0 END),0)/{nano}.0 AS est,
+COALESCE(SUM(CASE WHEN source='claude-code' THEN {est_value} ELSE 0 END),0) AS est,
 COALESCE(SUM(CASE WHEN source='anthropic-invoice' AND intent LIKE 'anthropic-invoice:cc-overage%' THEN {realtime_nano} ELSE 0 END),0)/{nano}.0 AS over,
 COALESCE(SUM(CASE WHEN source='anthropic-invoice' THEN {subscription_nano} ELSE 0 END),0)/{nano}.0 AS sub,
 COALESCE(SUM(CASE WHEN source='anthropic-invoice-api' THEN {realtime_nano} ELSE 0 END),0)/{nano}.0 AS api
@@ -995,7 +995,18 @@ def read_receipt_truncation_groups(since, path=None):
 
 
 def read_cc_spend_overview(path=None):
-    return read_ledger_sql(LedgerSQLReadRequest(CC_SPEND_OVERVIEW_SQL), path)[0]
+    schema_rows = read_ledger_sql(LedgerSQLReadRequest(COST_INTEGRITY_SCHEMA_SQL, (LEDGER_EVENTS_TABLE,)), path)
+    overview_available_columns = {row["name"] for row in schema_rows}
+    overview_est_column = _prefer_nano_else_legacy_column(
+        overview_available_columns, CC_ESTIMATE_NANO_COLUMN, CC_ESTIMATE_LEGACY_COLUMN)
+    overview_est_value = overview_est_column
+    if overview_est_column == CC_ESTIMATE_NANO_COLUMN:
+        overview_est_value = f"{overview_est_column}/{NANO_USD_PER_USD}.0"
+        if CC_ESTIMATE_LEGACY_COLUMN in overview_available_columns:
+            overview_est_value = f"COALESCE({overview_est_value},{CC_ESTIMATE_LEGACY_COLUMN})"
+    overview_substitutions = dict(_SPEND_EVENT_SQL_SUBSTITUTIONS, est_value=overview_est_value)
+    overview_sql = _CC_SPEND_OVERVIEW_SQL_TEMPLATE.format(**overview_substitutions)
+    return read_ledger_sql(LedgerSQLReadRequest(overview_sql), path)[0]
 
 
 def read_cc_top_conversations(limit=None, path=None):
@@ -1397,6 +1408,10 @@ _SPEND_EVENT_SQL_SUBSTITUTIONS = {
     "subscription_nano": SPEND_EVENT_NANO_COLUMNS["subscription_usd"],
     "nano": NANO_USD_PER_USD,
 }
+CC_ESTIMATE_NANO_COLUMN = _SPEND_EVENT_SQL_SUBSTITUTIONS["est_nano"]
+CC_ESTIMATE_LEGACY_COLUMN = next(legacy_column for legacy_column, nano_column in SPEND_EVENT_NANO_COLUMNS.items()
+                                 if nano_column == CC_ESTIMATE_NANO_COLUMN)
+_SPEND_EVENT_SQL_SUBSTITUTIONS["est_value"] = f"{CC_ESTIMATE_NANO_COLUMN}/{NANO_USD_PER_USD}.0"
 DELEGATE_INVOICED_MONTHS_SQL = _DELEGATE_INVOICED_MONTHS_SQL_TEMPLATE.format(**_SPEND_EVENT_SQL_SUBSTITUTIONS)
 INVOICE_OVERAGE_MONTH_SQL = _INVOICE_OVERAGE_MONTH_SQL_TEMPLATE.format(**_SPEND_EVENT_SQL_SUBSTITUTIONS)
 CC_SPEND_OVERVIEW_SQL = _CC_SPEND_OVERVIEW_SQL_TEMPLATE.format(**_SPEND_EVENT_SQL_SUBSTITUTIONS)
