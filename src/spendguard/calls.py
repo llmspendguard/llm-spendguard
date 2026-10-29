@@ -18,7 +18,7 @@ from typing import Optional
 from . import config
 from .ledger_fork_locks import new_fork_reset_ledger_state
 from .schema_indexes import ensure_ordered_index_coverage
-from .money_scale import real_usd_to_nano_usd, nano_usd_to_usd, assert_nano_total_matches
+from .money_scale import NANO_USD_PER_USD, real_usd_to_nano_usd, nano_usd_to_usd, assert_nano_total_matches
 
 CALL_OBSERVATION_NANO_COLUMNS = {column: f"{column}_nano" for column in ("cost", "input_cost_floor")}
 
@@ -911,7 +911,22 @@ def intent_spend(intent, window_s=86400):
            - datetime.timedelta(seconds=max(1, int(window_s)))).isoformat(timespec="seconds")
     try:
         from . import ledger_read
-        return float(ledger_read.read_call_intent_cost(intent, cut) or 0.0)
+        connection = _calls_db()
+        available_columns = {column[1] for column in connection.execute("PRAGMA table_info(calls)")}
+        legacy_cost_column, nano_cost_column = next(iter(CALL_OBSERVATION_NANO_COLUMNS.items()))
+        selected_cost_column = ledger_read._prefer_nano_else_legacy_column(
+            available_columns, nano_cost_column, legacy_cost_column)
+        if selected_cost_column is None:
+            raise RuntimeError("Calls ledger has no cost column")
+        if selected_cost_column == nano_cost_column:
+            cost_expression = (
+                f"COALESCE({nano_cost_column}, ROUND({legacy_cost_column} * {NANO_USD_PER_USD}))")
+            total_expression = f"COALESCE(SUM({cost_expression}),0)/{NANO_USD_PER_USD}.0"
+        else:
+            total_expression = f"COALESCE(SUM({legacy_cost_column}),0)"
+        total = connection.execute(
+            f"SELECT {total_expression} FROM calls WHERE intent=? AND ts>=?", (intent, cut)).fetchone()[0]
+        return float(total)
     except Exception:
         config.rollback_ledger_conn("calls")
         raise  # an unknown settlement must not disable the running monetary cap
