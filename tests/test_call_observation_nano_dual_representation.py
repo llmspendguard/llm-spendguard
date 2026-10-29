@@ -11,6 +11,7 @@ from _pytest_fixture_bridge import align_test_startup_home, run_pytest_style
 align_test_startup_home(prefix=__name__)
 
 from spendguard import calls, ledger_read
+from spendguard.ledger_schema_migrations import CALL_NANO_SCHEMA_MIGRATION
 from spendguard.money_scale import real_usd_to_nano_usd, nano_usd_to_usd, assert_nano_total_matches
 
 CALL_NANO_PROOF_AMOUNTS = (-1.25, 0.0, None, 0.1234567895, 0.1, 0.2)
@@ -31,6 +32,7 @@ def create_call_nano_legacy_fixture(path, amounts=CALL_NANO_PROOF_AMOUNTS):
         calls._ensure_call_observation_schema(connection)
     for column in calls.CALL_OBSERVATION_NANO_COLUMNS.values():
         connection.execute(f'ALTER TABLE calls DROP COLUMN {column}')
+    connection.execute('DELETE FROM ledger_schema_migrations WHERE migration=?', (CALL_NANO_SCHEMA_MIGRATION,))
     for index, amount in enumerate(amounts):
         connection.execute('INSERT INTO calls(id,cost,input_cost_floor) VALUES(?,?,?)',
                            (str(index), amount, amount))
@@ -142,15 +144,18 @@ def test_call_nano_maintenance_writer_dual_writes(tmp_path):
         assert all(row[0] == CALL_NANO_PROOF_REVISED for row in connection.execute('SELECT cost FROM calls'))
 
 
-def test_call_nano_partial_schema_detects_single_nano_drift(tmp_path):
+def test_call_nano_partial_schema_preserves_populated_mirrors(tmp_path):
     connection = create_call_nano_legacy_fixture(tmp_path / CALL_NANO_PROOF_DB)
     calls._ensure_call_observation_schema(connection)
     connection.execute('ALTER TABLE calls DROP COLUMN input_cost_floor_nano')
     connection.execute('UPDATE calls SET cost_nano=cost_nano+1 WHERE cost IS NOT NULL')
+    connection.execute('DELETE FROM ledger_schema_migrations WHERE migration=?', (CALL_NANO_SCHEMA_MIGRATION,))
+    preserved_cost_nano = connection.execute('SELECT id,cost_nano FROM calls ORDER BY id').fetchall()
     connection.commit()
-    with pytest.raises(AssertionError, match='tolerance USD 0'):
-        calls._ensure_call_observation_schema(connection)
-    assert 'input_cost_floor_nano' not in {row[1] for row in connection.execute('PRAGMA table_info(calls)')}
+    calls._ensure_call_observation_schema(connection)
+    assert connection.execute('SELECT id,cost_nano FROM calls ORDER BY id').fetchall() == preserved_cost_nano
+    for raw_floor, nano_floor in connection.execute('SELECT input_cost_floor,input_cost_floor_nano FROM calls'):
+        assert nano_floor == (None if raw_floor is None else real_usd_to_nano_usd(raw_floor))
     connection.close()
 
 

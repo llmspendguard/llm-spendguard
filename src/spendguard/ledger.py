@@ -32,6 +32,8 @@ from types import MappingProxyType, MethodType
 from .schema_indexes import ensure_ordered_indexes_coverage
 from decimal import Decimal, InvalidOperation, getcontext
 from . import config
+from .ledger_schema_migrations import (own_spend_ledger_schema_reads, nano_schema_migration_completed,
+                                      record_nano_schema_migration_completion, SPEND_NANO_SCHEMA_MIGRATION)
 from .money_scale import NANO_USD_PER_USD, usd_to_nano_usd, nano_usd_to_usd, assert_nano_total_matches, real_usd_to_nano_usd
 
 getcontext().prec = 34   # ample for exact money arithmetic (28 is the default; money never needs more than this)
@@ -40,16 +42,30 @@ SCHEMA_VERSION = 6
 LEDGER_RATE_PROVENANCE_GAP = "ledger_rate_provenance_gap"
 
 
+@own_spend_ledger_schema_reads
 def _initialize_spend_event_nano_schema(connection):
     """Repair an existing spend_events table under the caller's migration savepoint.
 
     Calls-only databases need no spend table. Preserve populated nano mirrors,
     including intentional differences from their legacy representation.
     """
+    if nano_schema_migration_completed(connection, SPEND_NANO_SCHEMA_MIGRATION):
+        return
     available = {row[1] for row in connection.execute("PRAGMA table_info(spend_events)")}
     if not available:
         return
     missing = set(SPEND_EVENT_NANO_COLUMNS.values()) - available
+    if not missing:
+        pending_predicate = ' OR '.join(
+            f'({nano_column} IS NULL AND {legacy_column} IS NOT NULL)'
+            for legacy_column, nano_column in SPEND_EVENT_NANO_COLUMNS.items())
+        # Pre-gate databases may already be complete. Probe for one pending row
+        # once, rather than redoing each column's backfill and verification.
+        pending = connection.execute(
+            f'SELECT 1 FROM spend_events WHERE {pending_predicate} LIMIT 1').fetchone()
+        if pending is None:
+            record_nano_schema_migration_completion(connection, SPEND_NANO_SCHEMA_MIGRATION)
+            return
     for nano_column in sorted(missing):
         connection.execute(f"ALTER TABLE spend_events ADD COLUMN {nano_column} INTEGER")
     for legacy_column, nano_column in SPEND_EVENT_NANO_COLUMNS.items():
@@ -64,6 +80,7 @@ def _initialize_spend_event_nano_schema(connection):
                 f"SELECT {nano_column} FROM spend_events WHERE rowid=?", (storage_row_id,)).fetchone()[0]
             assert_nano_total_matches(stored_nano, nano_usd_to_usd(nano_amount),
                                       tolerance_usd='0', label=f"spend_events.{legacy_column}")
+    record_nano_schema_migration_completion(connection, SPEND_NANO_SCHEMA_MIGRATION)
 
 
 def ledger_posting_metadata():

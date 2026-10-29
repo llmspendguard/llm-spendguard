@@ -18,6 +18,8 @@ from typing import Optional
 from . import config
 from .ledger_fork_locks import new_fork_reset_ledger_state
 from .schema_indexes import ensure_ordered_index_coverage
+from .ledger_schema_migrations import (own_spend_ledger_schema_reads, nano_schema_migration_completed,
+                     record_nano_schema_migration_completion, CALL_NANO_SCHEMA_MIGRATION)
 from .money_scale import NANO_USD_PER_USD, real_usd_to_nano_usd, nano_usd_to_usd, assert_nano_total_matches
 
 CALL_OBSERVATION_NANO_COLUMNS = {column: f"{column}_nano" for column in ("cost", "input_cost_floor")}
@@ -30,29 +32,36 @@ def _call_observation_nano_amounts(cost, input_cost_floor):
                  for amount in (cost, input_cost_floor))
 
 
+@own_spend_ledger_schema_reads
 def _backfill_call_observation_nano_columns(connection, missing_columns):
     conversion_gaps = []
+    expected_nano_totals = {}
     for raw_column, nano_column in CALL_OBSERVATION_NANO_COLUMNS.items():
+        expected_nano_totals[raw_column] = sum(row[0] for row in connection.execute(
+            f"SELECT {nano_column} FROM calls WHERE {nano_column} IS NOT NULL"))
         if nano_column not in missing_columns:
             continue
-        for storage_row_id, row_id, raw_amount in connection.execute(f"SELECT rowid,id,{raw_column} FROM calls"):
+        for storage_row_id, row_id, raw_amount in connection.execute(
+                f"SELECT rowid,id,{raw_column} FROM calls "
+                f"WHERE {nano_column} IS NULL AND {raw_column} IS NOT NULL"):
             try:
                 nano_amount = None if raw_amount is None else real_usd_to_nano_usd(raw_amount)
             except (ValueError, TypeError, OverflowError) as conversion_error:
                 conversion_gaps.append(((storage_row_id, row_id), raw_column, str(conversion_error)))
                 continue
             connection.execute(f"UPDATE calls SET {nano_column}=? WHERE rowid=?", (nano_amount, storage_row_id))
+            expected_nano_totals[raw_column] += nano_amount
     if conversion_gaps:
         raise ValueError(f"call_observation_nano_invalid_amount_gap count={len({gap[0] for gap in conversion_gaps})} "
                          f"amount_count={len(conversion_gaps)} rows={conversion_gaps!r}")
     for raw_column, nano_column in CALL_OBSERVATION_NANO_COLUMNS.items():
         nano_total = sum(row[0] for row in connection.execute(
             f"SELECT {nano_column} FROM calls WHERE {nano_column} IS NOT NULL"))
-        converted_total = sum(real_usd_to_nano_usd(row[0]) for row in connection.execute(
-            f"SELECT {raw_column} FROM calls WHERE {raw_column} IS NOT NULL"))
         # Integer accumulation followed by Decimal scaling is an exact Decimal sum,
         # independent of ambient Decimal precision and SQLite SUM integer overflow.
-        assert_nano_total_matches(nano_total, nano_usd_to_usd(converted_total),
+        # Populated mirrors are authoritative; verify the preserved amounts plus
+        # exactly the conversions performed, including partially migrated schemas.
+        assert_nano_total_matches(nano_total, nano_usd_to_usd(expected_nano_totals[raw_column]),
                                   tolerance_usd='0', label=f"calls.{raw_column}")
         float_total = connection.execute(f"SELECT SUM({raw_column}) FROM calls").fetchone()[0]
         # Nano is now more precise than the historical binary-float SUM; this delta
@@ -381,6 +390,7 @@ def caller():
 
 
 # ── storage ──
+@own_spend_ledger_schema_reads
 def _ensure_call_observation_schema(c):
     c.execute("SAVEPOINT call_observation_nano_schema")
     try:
@@ -395,6 +405,7 @@ def _ensure_call_observation_schema(c):
     c.commit()
 
 
+@own_spend_ledger_schema_reads
 def _initialize_call_observation_nano_schema(c):
     """Create the calls table + its indexes + forward-only additive columns. Idempotent; run once per pooled
     connection by config.pooled_ledger_conn."""
@@ -416,7 +427,8 @@ def _initialize_call_observation_nano_schema(c):
     # so the f-string is the only way and carries no injection surface. `executor` = which subscription
     # lane served the call; `project` = the repo it belongs to (so lane plan-value attributes like spend).
     _have = {r[1] for r in c.execute("PRAGMA table_info(calls)").fetchall()}
-    missing_nano_columns = set(CALL_OBSERVATION_NANO_COLUMNS.values()) - _have
+    nano_migration_done = nano_schema_migration_completed(c, CALL_NANO_SCHEMA_MIGRATION)
+    missing_nano_columns = set() if nano_migration_done else set(CALL_OBSERVATION_NANO_COLUMNS.values()) - _have
     # `effort` = the reasoning-effort TIER actually sent (none|minimal|low|medium|high|… or the wire
     # value a model accepts), so cost×quality can be sliced per (intent, model, EFFORT) — the axis the
     # best-value selector titrates. NULL on a non-reasoning call, a call that sent no effort, or a legacy row.
@@ -469,7 +481,19 @@ def _initialize_call_observation_nano_schema(c):
         if _col not in _have:
             c.execute(f"ALTER TABLE calls ADD COLUMN {_col} {_decl}")
     if missing_nano_columns:
+        # A partially migrated schema can also have NULL mirrors in columns
+        # already present. Repair those without overwriting populated mirrors.
+        missing_nano_columns = set(CALL_OBSERVATION_NANO_COLUMNS.values())
+    if not nano_migration_done and not missing_nano_columns:
+        pending_predicate = ' OR '.join(
+            f'({nano_column} IS NULL AND {raw_column} IS NOT NULL)'
+            for raw_column, nano_column in CALL_OBSERVATION_NANO_COLUMNS.items())
+        if c.execute(f'SELECT 1 FROM calls WHERE {pending_predicate} LIMIT 1').fetchone() is not None:
+            missing_nano_columns = set(CALL_OBSERVATION_NANO_COLUMNS.values())
+    if missing_nano_columns:
         _backfill_call_observation_nano_columns(c, missing_nano_columns)
+    if not nano_migration_done:
+        record_nano_schema_migration_completion(c, CALL_NANO_SCHEMA_MIGRATION)
     # Completeness is orthogonal to success/failure. NULL denotes unverifiable legacy
     # provenance; never infer historical completeness from a zero token count.
     c.execute("CREATE INDEX IF NOT EXISTS idx_calls_executor ON calls(executor)")  # per-lane rollups
