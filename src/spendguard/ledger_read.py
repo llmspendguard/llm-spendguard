@@ -73,7 +73,13 @@ INVOICE_OVERAGE_INTENT_PATTERN = "anthropic-invoice:cc-overage%"
 
 
 CALL_COST_NANO_COLUMN = CALL_OBSERVATION_NANO_COLUMNS["cost"]
+CALL_COST_COLUMN = next(
+    legacy_column for legacy_column, nano_column in CALL_OBSERVATION_NANO_COLUMNS.items()
+    if nano_column == CALL_COST_NANO_COLUMN)
 CALL_INPUT_COST_FLOOR_NANO_COLUMN = CALL_OBSERVATION_NANO_COLUMNS["input_cost_floor"]
+CALL_INPUT_COST_FLOOR_COLUMN = next(
+    legacy_column for legacy_column, nano_column in CALL_OBSERVATION_NANO_COLUMNS.items()
+    if nano_column == CALL_INPUT_COST_FLOOR_NANO_COLUMN)
 _DELEGATE_INVOICED_MONTHS_SQL_TEMPLATE = """SELECT substr(occurred_at,1,7) AS month,
 SUM({realtime_nano})/{nano}.0 AS dollars FROM spend_events
 WHERE source=? AND intent LIKE ? GROUP BY month"""
@@ -152,11 +158,15 @@ READ_REALIZED_CALL_RATES_COLUMNS = ("AVG(CASE WHEN ts < ? THEN cost END) AS befo
          "AVG(CASE WHEN ts >= ? THEN cost END) AS after_rate", "SUM(ts >= ?) AS after_n")
 READ_RECORDING_GAP_CELLS_COLUMNS = ("intent", "provider", "model", "date(ts) AS day", f"SUM({CALL_COST_NANO_COLUMN})/{NANO_USD_PER_USD}.0 AS calls_billed")
 READ_CALIBRATION_SUMMARY_COLUMNS = ("intent", "model", "kind", "COUNT(*) AS n", f"SUM({CALL_COST_NANO_COLUMN})/{NANO_USD_PER_USD}.0 AS cost")
-RECORDED_CALL_TOTAL_SQL = f"SELECT COALESCE(SUM({CALL_COST_NANO_COLUMN}),0)/{NANO_USD_PER_USD}.0 AS recorded_call_total FROM calls"
-INCOMPLETE_CALL_SCHEMA_COLUMNS = ("settlement_complete", "input_cost_floor")
-INCOMPLETE_CALL_TOTALS_SQL = """SELECT COUNT(*) AS n,
-SUM({input_floor_nano})/{nano}.0 AS input_cost_floor FROM calls WHERE settlement_complete=0""".format(
+RECORDED_CALL_NANO_TOTAL_SQL = f"SELECT COALESCE(SUM({CALL_COST_NANO_COLUMN}),0)/{NANO_USD_PER_USD}.0 AS recorded_call_total FROM calls"
+RECORDED_CALL_LEGACY_TOTAL_SQL = f"SELECT COALESCE(SUM({CALL_COST_COLUMN}),0) AS recorded_call_total FROM calls"
+INCOMPLETE_CALL_REQUIRED_SCHEMA_COLUMNS = ("settlement_complete",)
+INCOMPLETE_CALL_NANO_TOTALS_SQL = """SELECT COUNT(*) AS n,
+SUM(COALESCE({input_floor_nano},0))/{nano}.0 AS input_cost_floor FROM calls WHERE settlement_complete=0""".format(
     input_floor_nano=CALL_INPUT_COST_FLOOR_NANO_COLUMN, nano=NANO_USD_PER_USD)
+INCOMPLETE_CALL_LEGACY_TOTALS_SQL = """SELECT COUNT(*) AS n,
+SUM({input_floor}) AS input_cost_floor FROM calls WHERE settlement_complete=0""".format(
+    input_floor=CALL_INPUT_COST_FLOOR_COLUMN)
 
 
 @dataclass
@@ -595,6 +605,15 @@ def _ledger_bounded_read_handle(path, time_budget, *, bulk_chunked=False):
             read_owner.__exit__(None, None, None)
 
 
+def _prefer_nano_else_legacy_column(available_columns, nano_column, legacy_column):
+    """Select the exact nano column when present, otherwise its legacy twin."""
+    if nano_column in available_columns:
+        return nano_column
+    if legacy_column in available_columns:
+        return legacy_column
+    return None
+
+
 def _read_incomplete_settlement_totals(connection, since=None, project=None):
     """Read explicit completeness metadata, retaining unknown historical state.
 
@@ -603,9 +622,15 @@ def _read_incomplete_settlement_totals(connection, since=None, project=None):
     recoverable completeness information and are never backfilled here.
     """
     available = {column[1] for column in connection.execute("PRAGMA table_info(calls)")}
-    if not all(column in available for column in INCOMPLETE_CALL_SCHEMA_COLUMNS):
+    input_cost_floor_column = _prefer_nano_else_legacy_column(
+        available, CALL_INPUT_COST_FLOOR_NANO_COLUMN, CALL_INPUT_COST_FLOOR_COLUMN)
+    if (not all(column in available for column in INCOMPLETE_CALL_REQUIRED_SCHEMA_COLUMNS)
+            or input_cost_floor_column is None):
         return {"n": 0, "input_cost_floor": None}
-    incomplete_sql = INCOMPLETE_CALL_TOTALS_SQL
+    if input_cost_floor_column == CALL_INPUT_COST_FLOOR_NANO_COLUMN:
+        incomplete_sql = INCOMPLETE_CALL_NANO_TOTALS_SQL
+    else:
+        incomplete_sql = INCOMPLETE_CALL_LEGACY_TOTALS_SQL
     incomplete_parameters = []
     if since is not None:
         incomplete_sql += " AND ts>=?"
@@ -782,11 +807,21 @@ def read_recorded_call_total(path=None, *, time_budget=DEFAULT_LEDGER_READ_TIME_
     LedgerReadError. Consumers may explicitly catch that and choose zero or None.
     """
     try:
-        recorded_rows = read_ledger_sql(
-            LedgerSQLReadRequest(RECORDED_CALL_TOTAL_SQL, time_budget=time_budget), path)
+        with _ledger_read_connection(path, time_budget=time_budget) as recorded_connection:
+            available = {column[1] for column in recorded_connection.execute("PRAGMA table_info(calls)")}
+            incomplete_totals = _read_incomplete_settlement_totals(recorded_connection)
+            if incomplete_totals["n"]:
+                raise LedgerSettlementIncomplete(
+                    incomplete_totals["n"], incomplete_totals["input_cost_floor"])
+            recorded_cost_column = _prefer_nano_else_legacy_column(
+                available, CALL_COST_NANO_COLUMN, CALL_COST_COLUMN)
+            recorded_total_sql = (RECORDED_CALL_NANO_TOTAL_SQL
+                                  if recorded_cost_column == CALL_COST_NANO_COLUMN
+                                  else RECORDED_CALL_LEGACY_TOTAL_SQL)
+            recorded_total = recorded_connection.execute(recorded_total_sql).fetchone()[0]
     except config.LedgerConnectionLimitError as exc:
         raise LedgerReadOpenError(f"Recorded-call total connection admission refused: {exc}") from exc
-    return float(recorded_rows[0]["recorded_call_total"])
+    return float(recorded_total)
 
 
 def read_conversation_spend_since(since, conv, *, deadline_s=config.LEDGER_QUERY_DEADLINE_S):

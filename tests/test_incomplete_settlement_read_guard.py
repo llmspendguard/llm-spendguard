@@ -12,13 +12,19 @@ os.environ.setdefault("SPENDGUARD_HOME", tempfile.mkdtemp())
 from spendguard import ledger_read, lane_quota_cost
 
 SETTLEMENT_GUARD_DATABASE_NAME = "settlement-read.sqlite"
+SETTLEMENT_GUARD_NANO_DATABASE_NAME = "settlement-nano-read.sqlite"
 SETTLEMENT_GUARD_LEGACY_DATABASE_NAME = "legacy-read.sqlite"
 SETTLEMENT_GUARD_INPUT_FLOOR = 0.25
+SETTLEMENT_GUARD_INPUT_FLOOR_NANO = int(
+    SETTLEMENT_GUARD_INPUT_FLOOR * ledger_read.NANO_USD_PER_USD)
 SETTLEMENT_GUARD_SELECTED_TIME = "2026-01-01"
 SETTLEMENT_GUARD_PROJECT = "settlement-guard"
 SETTLEMENT_GUARD_SCHEMA = """CREATE TABLE calls (
 cost REAL, out_tok INTEGER, settlement_complete INTEGER,
 input_cost_floor REAL, ts TEXT, project TEXT)"""
+SETTLEMENT_GUARD_NANO_SCHEMA = f"""CREATE TABLE calls (
+cost REAL, out_tok INTEGER, settlement_complete INTEGER,
+{ledger_read.CALL_INPUT_COST_FLOOR_NANO_COLUMN} INTEGER, ts TEXT, project TEXT)"""
 SETTLEMENT_GUARD_QUERIES = (
     "SELECT SUM(cost) FROM calls",
     "SELECT COUNT(*) FROM calls",
@@ -56,6 +62,30 @@ def test_incomplete_settlement_sql_cannot_hide_unknowns():
         assert settlement_guard_metadata == {"n": 1, "input_cost_floor": SETTLEMENT_GUARD_INPUT_FLOOR}
         assert ledger_read.read_ledger_sql(
             ledger_read.LedgerSQLReadRequest("SELECT 1 AS independent"), settlement_guard_path)[0][0] == 1
+
+
+def test_incomplete_settlement_nano_floor_cannot_hide_unknowns():
+    with tempfile.TemporaryDirectory() as settlement_nano_directory:
+        settlement_nano_path = Path(settlement_nano_directory) / SETTLEMENT_GUARD_NANO_DATABASE_NAME
+        with sqlite3.connect(settlement_nano_path) as settlement_nano_writer:
+            settlement_nano_writer.execute(SETTLEMENT_GUARD_NANO_SCHEMA)
+            settlement_nano_writer.execute(
+                "INSERT INTO calls VALUES (NULL,NULL,0,?,?,?)",
+                (SETTLEMENT_GUARD_INPUT_FLOOR_NANO, SETTLEMENT_GUARD_SELECTED_TIME,
+                 SETTLEMENT_GUARD_PROJECT))
+        try:
+            ledger_read.read_ledger_sql(
+                ledger_read.LedgerSQLReadRequest("SELECT SUM(cost) FROM calls"),
+                settlement_nano_path)
+        except ledger_read.LedgerSettlementIncomplete as settlement_nano_error:
+            assert settlement_nano_error.incomplete_count == 1
+            assert settlement_nano_error.input_cost_floor == SETTLEMENT_GUARD_INPUT_FLOOR
+        else:
+            raise AssertionError("Incomplete nano evidence accepted")
+        settlement_nano_metadata = ledger_read.read_incomplete_call_settlements(
+            SETTLEMENT_GUARD_SELECTED_TIME, SETTLEMENT_GUARD_PROJECT, settlement_nano_path)
+        assert settlement_nano_metadata == {
+            "n": 1, "input_cost_floor": SETTLEMENT_GUARD_INPUT_FLOOR}
 
 
 def test_legacy_settlement_schema_is_not_guessed():
@@ -104,6 +134,7 @@ def test_quota_absent_schema_classification_uses_original_snapshot():
 
 if __name__ == "__main__":
     test_incomplete_settlement_sql_cannot_hide_unknowns()
+    test_incomplete_settlement_nano_floor_cannot_hide_unknowns()
     test_legacy_settlement_schema_is_not_guessed()
     test_quota_absent_schema_classification_uses_original_snapshot()
-    print("3 incomplete settlement reader guards passed")
+    print("4 incomplete settlement reader guards passed")

@@ -16,6 +16,16 @@ RECORDED_GUARD_ABSENT = "absent.sqlite"
 RECORDED_GUARD_CORRUPT = "corrupt.sqlite"
 RECORDED_GUARD_EMPTY = "empty.sqlite"
 RECORDED_GUARD_COSTS = (0.25, 1.5, -0.125)
+RECORDED_GUARD_NANO_DATABASE = "consumer-ledger-nano.sqlite"
+RECORDED_GUARD_SETTLEMENT_DATABASE = "consumer-ledger-settlement.sqlite"
+RECORDED_GUARD_COMPLETE_SETTLEMENT = 1
+RECORDED_GUARD_INCOMPLETE_SETTLEMENT = 0
+RECORDED_GUARD_SETTLEMENT_SCHEMA_SQL = (
+    "CREATE TABLE calls(cost REAL, input_cost_floor REAL, settlement_complete INTEGER)"
+)
+RECORDED_GUARD_SETTLEMENT_INSERT_SQL = (
+    "INSERT INTO calls(cost, input_cost_floor, settlement_complete) VALUES (?, ?, ?)"
+)
 RECORDED_GUARD_LOCK_BUDGET_S = 0.05
 RECORDED_GUARD_CORRUPT_BYTES = b"this is deliberately not a SQLite database"
 RECORDED_GUARD_CONNECTION_SENTINEL = 29
@@ -118,6 +128,43 @@ def run_recorded_total_metrics_guards():
             assert ledger_read.read_recorded_call_total(database) == sum(RECORDED_GUARD_COSTS)
         finally:
             writer.close()
+        nano_database = home / RECORDED_GUARD_NANO_DATABASE
+        nano_writer = config.open_ledger_connection(nano_database, tune=False)
+        try:
+            nano_writer.execute("CREATE TABLE calls(cost_nano INTEGER)")
+            nano_writer.executemany(
+                "INSERT INTO calls(cost_nano) VALUES (?)",
+                ((int(cost * ledger_read.NANO_USD_PER_USD),) for cost in RECORDED_GUARD_COSTS),
+            )
+            nano_writer.commit()
+            assert ledger_read.read_recorded_call_total(nano_database) == sum(RECORDED_GUARD_COSTS)
+        finally:
+            nano_writer.close()
+        settlement_database = home / RECORDED_GUARD_SETTLEMENT_DATABASE
+        settlement_writer = config.open_ledger_connection(settlement_database, tune=False)
+        try:
+            settlement_writer.execute(RECORDED_GUARD_SETTLEMENT_SCHEMA_SQL)
+            settlement_writer.executemany(
+                RECORDED_GUARD_SETTLEMENT_INSERT_SQL,
+                ((cost, cost, RECORDED_GUARD_COMPLETE_SETTLEMENT)
+                 for cost in RECORDED_GUARD_COSTS),
+            )
+            settlement_writer.commit()
+            assert ledger_read.read_recorded_call_total(settlement_database) == sum(RECORDED_GUARD_COSTS)
+            incomplete_cost = RECORDED_GUARD_COSTS[0]
+            settlement_writer.execute(
+                RECORDED_GUARD_SETTLEMENT_INSERT_SQL,
+                (incomplete_cost, incomplete_cost, RECORDED_GUARD_INCOMPLETE_SETTLEMENT),
+            )
+            settlement_writer.commit()
+            try:
+                ledger_read.read_recorded_call_total(settlement_database)
+            except ledger_read.LedgerSettlementIncomplete:
+                pass
+            else:
+                raise AssertionError("incomplete settlement must refuse a raw recorded-call total")
+        finally:
+            settlement_writer.close()
         assert_recorded_admission_deadline(database)
         # Reproduce cyclic-GC finalization inside a bounded open while another
         # caller owns admission. An explicitly closed slot must never wait again.
