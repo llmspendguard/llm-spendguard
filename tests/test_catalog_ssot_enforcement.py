@@ -1,9 +1,13 @@
 """Structural source and observed-ledger guards, including deliberate fault mutations."""
 import ast
+import importlib.metadata
 import json
 import sqlite3
 import shutil
+import subprocess
+import sysconfig
 import uuid
+import venv
 import zipfile
 from pathlib import Path
 
@@ -32,9 +36,32 @@ GUARD_LEDGER_FILENAME = "observations.sqlite"
 GUARD_ADVISOR_SECTION = "advisor"
 GUARD_LANE_MODELS_KEY = "lane_models"
 CATALOG_WHEEL_PROJECT_FILES = ("pyproject.toml", "README.md")
+CATALOG_OFFLINE_BUILD_TOOLS = ("setuptools", "wheel", "packaging")
 
 
-def test_catalog_ssot_distribution_wheel_excludes_stale_removed_leaf(tmp_path, monkeypatch):
+@pytest.mark.parametrize("pipless", (False, True))
+def test_catalog_ssot_distribution_wheel_excludes_stale_removed_leaf(tmp_path, monkeypatch, pipless):
+    if pipless:
+        builder = venv.EnvBuilder(with_pip=False)
+        environment = tmp_path / "builder"
+        builder.create(environment)
+        context = builder.ensure_directories(environment)
+        purelib = Path(subprocess.check_output(
+            [context.env_exe, "-c", "import sysconfig; print(sysconfig.get_path('purelib'))"], text=True
+        ).strip())
+        # Provision only already-installed build tooling, never pip or a network installer.
+        for tool in CATALOG_OFFLINE_BUILD_TOOLS:
+            installed = importlib.metadata.distribution(tool)
+            for entry in installed.files:
+                source = Path(installed.locate_file(entry))
+                if not source.is_relative_to(Path(sysconfig.get_path("purelib"))) or ".." in entry.parts:
+                    continue
+                destination = purelib / entry
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(source, destination)
+        absent = subprocess.run([context.env_exe, "-m", "pip", "--version"], capture_output=True, text=True)
+        assert absent.returncode != 0 and "No module named pip" in absent.stderr
+        monkeypatch.setattr(distribution.sys, "executable", context.env_exe)
     checkout = tmp_path / "checkout"
     source_directory = distribution.DISTRIBUTION_SOURCE_DIRECTORY_NAME
     package_name = model_catalog.__package__

@@ -172,6 +172,8 @@ def test_distribution_wheel_build_cache_and_version_cross_check(tmp_path):
     wheel_name = f"llm_spendguard-{WHEEL_FIXTURE_VERSION}-py3-none-any.whl"
 
     def fixture_build(command, **options):
+        if command[1:] == list(distribution.DISTRIBUTION_PIP_PROBE_COMMAND):
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
         assert "--no-deps" in command and "--no-build-isolation" in command
         (tmp_path / "state" / distribution.DISTRIBUTION_WHEELS_DIRECTORY / wheel_name).touch()
         return SimpleNamespace(returncode=0, stdout="", stderr="")
@@ -180,7 +182,11 @@ def test_distribution_wheel_build_cache_and_version_cross_check(tmp_path):
             distribution.subprocess, "run", side_effect=fixture_build) as builder:
         first = distribution.ensure_distribution_wheel(target, tmp_path, WHEEL_FIXTURE_POLICY)
         second = distribution.ensure_distribution_wheel(target, tmp_path, WHEEL_FIXTURE_POLICY)
-    assert first == second and builder.call_count == 1
+    assert first == second
+    assert [invocation.args[0][1:] for invocation in builder.call_args_list] == [
+        list(distribution.DISTRIBUTION_PIP_PROBE_COMMAND),
+        [*distribution.DISTRIBUTION_WHEEL_BUILD_COMMAND, "--wheel-dir", str(first.parent), str(tmp_path)],
+    ]
 
     wrong_target = {**target, "version": WHEEL_FIXTURE_OLD_VERSION}
     with patch.object(distribution.config, "HOME", tmp_path / "state"):
