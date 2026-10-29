@@ -763,7 +763,11 @@ def distribute_fleet(*, check=False, roots=None, dry_run=False, settings=None, v
         install_results = {}
         wheel_candidates = [(python, item) for python, item, _install, dev_status, classification_error in planned
                             if dev_status is False and classification_error is None]
-        if not check and not dry_run and checkout and not wheel_error:
+        editable_results = {}
+        editable_candidates = [(python, item, classification_error)
+                               for python, item, _install, dev_status, classification_error in planned
+                               if dev_status is True]
+        if not check and not dry_run and checkout:
             configured_workers = int(config._cfg_get(
                 DISTRIBUTION_CONFIG_SECTION, DISTRIBUTION_MAX_WORKERS_SETTING,
                 DISTRIBUTION_DEFAULT_MAX_WORKERS))
@@ -782,7 +786,7 @@ def distribute_fleet(*, check=False, roots=None, dry_run=False, settings=None, v
             with ThreadPoolExecutor(max_workers=worker_count) as executor:
                 futures = {executor.submit(
                     install_distribution_wheel_after_live_probe, python, item): (python, item)
-                    for python, item in wheel_candidates}
+                    for python, item in wheel_candidates if not wheel_error}
                 for future in as_completed(futures):
                     python, item = futures[future]
                     try:
@@ -791,10 +795,10 @@ def distribute_fleet(*, check=False, roots=None, dry_run=False, settings=None, v
                     except Exception as exc:
                         install_results[python] = ("wheel-install-failed", f"convergence failed: {exc}")
 
-        for python, item, install, dev_status, classification_error in planned:
-            action = "none"
-            error = classification_error
-            if dev_status is True and not check and not dry_run and checkout:
+            def converge_editable_dev_venv_after_live_probe(python, item, classification_error):
+                action = "none"
+                error = classification_error
+                live_probe = None
                 try:
                     live_probe = probe_distribution_interpreter(python, policy)
                     if distribution_interpreter_on_target(live_probe, target):
@@ -808,6 +812,25 @@ def distribute_fleet(*, check=False, roots=None, dry_run=False, settings=None, v
                         error = f"gate arm exited {hook_code}"
                 except Exception as exc:
                     error = f"convergence failed: {exc}"
+                return action, error, live_probe
+
+            worker_count = max(1, min(configured_workers, len(editable_candidates) or 1))
+            with ThreadPoolExecutor(max_workers=worker_count) as executor:
+                futures = {executor.submit(
+                    converge_editable_dev_venv_after_live_probe, python, item, classification_error): python
+                    for python, item, classification_error in editable_candidates}
+                for future in as_completed(futures):
+                    python = futures[future]
+                    try:
+                        editable_results[python] = future.result()
+                    except Exception as exc:
+                        editable_results[python] = ("none", f"convergence failed: {exc}", None)
+
+        for python, item, install, dev_status, classification_error in planned:
+            action = "none"
+            error = classification_error
+            if dev_status is True and not check and not dry_run and checkout:
+                action, error, _live_probe = editable_results[python]
             elif dry_run and not check:
                 action = "would-reinstall-editable" if dev_status is True else "would-install-wheel"
             elif not check and not dry_run and dev_status is False:

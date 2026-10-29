@@ -1,7 +1,9 @@
 """Offline proofs for cached wheels, dev preservation, and kind-aware attestation."""
 from datetime import datetime, timezone
+from contextlib import ExitStack
 from pathlib import Path
 import sys
+from threading import Barrier, Lock, get_ident
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -18,6 +20,93 @@ WHEEL_FIXTURE_OLD_VERSION = "7.6.5"
 WHEEL_FIXTURE_SHA = "fixture-green-sha"
 WHEEL_FIXTURE_STALE_SHA = "fixture-stale-sha"
 WHEEL_FIXTURE_POLICY = {"probe_timeout_s": 2.0, "install_timeout_s": 3.0}
+EDITABLE_POOL_FIXTURE_WORKERS = 3
+EDITABLE_POOL_FIXTURE_WAIT_SECONDS = 10
+EDITABLE_POOL_FIXTURE_FAILURE = "editable fixture failure"
+
+
+def test_distribution_editable_pool_concurrency_and_failure_isolation(tmp_path):
+    target = wheel_fixture_target(tmp_path)
+    interpreters = [{"python": str(tmp_path / str(index) / "bin" / "python"),
+                     "venv": str(tmp_path / str(index)), "kind": "venv"}
+                    for index in range(EDITABLE_POOL_FIXTURE_WORKERS)]
+    failed_python = interpreters[0]["python"]
+    rendezvous = Barrier(EDITABLE_POOL_FIXTURE_WORKERS)
+    events_lock = Lock()
+    entered = set()
+    installed = set()
+    hooks = set()
+    refresh_threads = set()
+    caller_thread = get_ident()
+    healthy_probe = {"confirmed": True, "version": WHEEL_FIXTURE_VERSION,
+                     "metadata_version": WHEEL_FIXTURE_VERSION, "sha": target["sha"],
+                     "dirty": False, "gate_enforcing": True}
+
+    def editable_pool_fixture_refresh(python, checkout, timeout):
+        assert checkout == str(tmp_path)
+        assert timeout == WHEEL_FIXTURE_POLICY["install_timeout_s"]
+        with events_lock:
+            entered.add(python)
+            refresh_threads.add(get_ident())
+        rendezvous.wait(timeout=EDITABLE_POOL_FIXTURE_WAIT_SECONDS)
+        if python == failed_python:
+            raise RuntimeError(EDITABLE_POOL_FIXTURE_FAILURE)
+        with events_lock:
+            installed.add(python)
+
+    def editable_pool_fixture_probe(python, _policy):
+        with events_lock:
+            current = python in installed
+        return healthy_probe if current else {**healthy_probe, "sha": WHEEL_FIXTURE_STALE_SHA}
+
+    def editable_pool_fixture_hook(venv, *, install_pkg):
+        assert install_pkg is False
+        with events_lock:
+            hooks.add(venv)
+        return 0
+
+    original_attestation = distribution.distribution_install_attestation
+
+    def editable_pool_fixture_attestation(*args, **kwargs):
+        # Every convergence action must finish before the first row is attested.
+        assert entered == {item["python"] for item in interpreters}
+        assert installed == {item["python"] for item in interpreters if item["python"] != failed_python}
+        assert hooks == {item["venv"] for item in interpreters if item["python"] != failed_python}
+        return original_attestation(*args, **kwargs)
+
+    with ExitStack() as patches:
+        replacements = [
+            (distribution, "resolve_distribution_target", {"return_value": target}),
+            (distribution, "distribution_policy", {"return_value": WHEEL_FIXTURE_POLICY}),
+            (distribution.config, "_cfg_get", {"return_value": EDITABLE_POOL_FIXTURE_WORKERS}),
+            (distribution.consumer_audit, "audit_consumer_workspaces",
+             {"return_value": {"consumers": [], "pruned_at_depth": []}}),
+            (distribution.setup, "discover_distribution_interpreters",
+             {"return_value": {"interpreters": interpreters, "gaps": []}}),
+            (distribution, "inspect_distribution_install", {"return_value": editable_fixture_install(tmp_path)}),
+            (distribution, "distribution_dev_venv_status", {"return_value": (True, None)}),
+            (distribution, "prepare_distribution_checkout", {"return_value": str(tmp_path)}),
+            (distribution, "ensure_distribution_wheel", {}),
+            (distribution.fleet, "_refresh_editable_install", {"side_effect": editable_pool_fixture_refresh}),
+            (distribution.setup, "install_hook", {"side_effect": editable_pool_fixture_hook}),
+            (distribution, "probe_distribution_interpreter", {"side_effect": editable_pool_fixture_probe}),
+            (distribution, "distribution_install_attestation", {"side_effect": editable_pool_fixture_attestation}),
+            (distribution, "attest_distribution_api_consumers", {"return_value": []}),
+            (distribution, "attest_distribution_daemons", {"return_value": []}),
+            (distribution, "attest_distribution_host",
+             {"return_value": distribution.distribution_surface_row("host", "host", True, True)}),
+        ]
+        for owner, attribute, options in replacements:
+            patches.enter_context(patch.object(owner, attribute, **options))
+        result = distribution.distribute_fleet(settings={})
+    assert len(refresh_threads) == EDITABLE_POOL_FIXTURE_WORKERS
+    assert caller_thread not in refresh_threads
+    rows = {row["surface"]: row for row in result["surfaces"]}
+    assert rows[failed_python]["straggler_reason"] == f"convergence failed: {EDITABLE_POOL_FIXTURE_FAILURE}"
+    for python in installed:
+        assert rows[python]["action_taken"] == "editable-reinstalled"
+        assert rows[python]["straggler_reason"] is None
+        assert rows[python]["on_version"] is True
 
 
 def wheel_fixture_target(root):
@@ -215,6 +304,8 @@ def test_distribution_check_reports_install_kind_reasons(tmp_path):
 
 if __name__ == "__main__":
     import tempfile
+    with tempfile.TemporaryDirectory() as temporary_directory:
+        test_distribution_editable_pool_concurrency_and_failure_isolation(Path(temporary_directory))
     with tempfile.TemporaryDirectory() as temporary_directory:
         test_distribution_dev_venv_inside_checkout_is_dev(Path(temporary_directory))
     with tempfile.TemporaryDirectory() as temporary_directory:
