@@ -4,6 +4,27 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 
 ## [Unreleased]
 
+## [0.16.10] — 2026-10-29
+
+Theme: complete the distribution probe-snapshot leak fix — 0.16.9 (c365037) excluded the configured ledgers but
+still copied ledger BACKUP dirs into every probe base.
+
+### Distribution — probe snapshot allowlists policy files (completes 0.16.9's leak fix)
+- c365037 excluded the configured `spend.db`/`lane_queue.db` from the isolated probe snapshot, but the `copytree`
+  still copied ledger backup directories that live at other paths under `SPENDGUARD_HOME` — `snapshots/`
+  (`budget.snapshot_once` recovery copies) and `.reclaim-quarantine-*/` (ledger-reclaim quarantines). Observed on
+  this host: after a green-pointer promotion changed the fingerprint, `distribute --check` rebuilt a 7.8G probe base
+  because it had copied a 6.4G `.reclaim-quarantine-*/consistent/` (spend.db 4.7G + lane_queue.db 1.4G) wholesale;
+  `shutil.copytree` writes real blocks, so each rebuild burned multi-GB of real disk. Fix: `distribution_snapshot_`
+  `excluded` is inverted from a denylist to an ALLOWLIST — the probe base retains ONLY the bounded policy files a
+  probe needs (`config.json`, the gate flag, the release pointer; file-checked) and excludes everything else at home
+  root plus all nested entries, so a newly-named backup kind can never leak in. The installed package lives in the
+  probe venv (not `SPENDGUARD_HOME`), so policy+flag+pointer is sufficient to prove the install. Additionally,
+  `sweep_stale_distribution_probe_base_builds` now reclaims sibling cached bases (including the TMPDIR cache) whose
+  owner is proven dead, and a reused base refreshes its owner marker so it is not swept while live. Guards in
+  `tests/test_distribution_probe_disk_leak.py` / `tests/test_distribution_snapshot_cache_guards.py` assert the base
+  holds only the allowlisted files and none of the ledgers, queue, recovery snapshot, or an arbitrary seeded backup.
+
 ## [0.16.9] — 2026-10-29
 
 Themes: three follow-up fixes completing what 0.16.8 started — the spend_events half of the nano-USD migration,
