@@ -27,6 +27,7 @@ BROKER_WAL_SLOW_SQL = """WITH RECURSIVE slow(value) AS
 BROKER_WAL_CHECKPOINT_SQL = "PRAGMA wal_checkpoint(TRUNCATE)"
 POOL_WAL_WATCHDOG_S = 1.0
 POOL_WAL_FIXTURE_SIZE = 1
+POOL_WAL_STUB_IDLE_S = float("inf")
 
 
 class BrokerLedgerAbandonmentGuards(unittest.TestCase):
@@ -100,7 +101,8 @@ class BrokerLedgerAbandonmentGuards(unittest.TestCase):
         def create_pool_snapshot_worker():
             return SimpleNamespace(run_warm=invoke_pool_snapshot_fixture,
                                    ensure_running=Mock(return_value=object()),
-                                   shutdown=Mock(), running=Mock(return_value=True))
+                                   shutdown=Mock(), running=Mock(return_value=True),
+                                   seconds_since_last_activity=lambda: POOL_WAL_STUB_IDLE_S)
 
         pool = codex_daemon._CodexDaemonPool(create_pool_snapshot_worker, size=POOL_WAL_FIXTURE_SIZE)
         caller = threading.Thread(target=lambda: results.append(

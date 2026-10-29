@@ -643,7 +643,7 @@ class _CodexDaemonPool:
                                 lease_reads.cancel_ledger_request()
                                 retire = True
                                 result = {"text": None, "thread": kwargs.get("thread"),
-                                          "error": "codex lease absolute backstop expired", "timed_out": True}
+                                          "error": "codex lease absolute deadline expired", "timed_out": True}
                                 break
                             completed.wait(min(admission_settings["lease_idle_s"], remaining_s))
                             if completed.is_set():
@@ -652,13 +652,13 @@ class _CodexDaemonPool:
                                 lease_reads.cancel_ledger_request()
                                 retire = True
                                 result = {"text": None, "thread": kwargs.get("thread"),
-                                          "error": "codex lease no-progress reclaim", "timed_out": True}
+                                          "error": "codex lease no-progress deadline expired", "timed_out": True}
                                 break
                             if time.monotonic() >= deadline:
                                 lease_reads.cancel_ledger_request()
                                 retire = True
                                 result = {"text": None, "thread": kwargs.get("thread"),
-                                          "error": "codex lease absolute backstop expired", "timed_out": True}
+                                          "error": "codex lease absolute deadline expired", "timed_out": True}
                                 break
                         if result is not None:
                             pass
