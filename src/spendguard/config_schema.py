@@ -15,6 +15,7 @@ Environment variable (`env`) always overrides the file when set.
 import tempfile
 from pathlib import Path
 
+from . import config
 from .config import CODEX_POOL_SIZE_DEFAULT
 from .weekly_cap_guard import (
     WEEKLY_CAP_GUARD_BLOCKED_SPAWN_TOOLS_DEFAULT,
@@ -416,6 +417,16 @@ SETTINGS = [
     dict(section="advisor", key="codex_daemon_pool_size", store="config.json:advisor.codex_daemon_pool_size",
          env="SPENDGUARD_CODEX_DAEMON_POOL_SIZE", default=CODEX_POOL_SIZE_DEFAULT, kind="int", secret=False,
          desc="Always-warm exclusive Codex workers behind the single host broker; one restores single-child capacity."),
+    dict(section="advisor", key="codex_daemon_lease_idle_s",
+         store="config.json:advisor.codex_daemon_lease_idle_s",
+         env="SPENDGUARD_CODEX_DAEMON_LEASE_IDLE_S", default=config.CODEX_DAEMON_LEASE_IDLE_S_DEFAULT,
+         kind="float", secret=False,
+         desc="Reclaim a leased Codex worker after this many seconds without progress."),
+    dict(section="advisor", key="codex_daemon_lease_max_s",
+         store="config.json:advisor.codex_daemon_lease_max_s",
+         env="SPENDGUARD_CODEX_DAEMON_LEASE_MAX_S", default=config.CODEX_DAEMON_LEASE_MAX_S_DEFAULT,
+         kind="float", secret=False,
+         desc="Absolute runaway backstop for a Codex lease, in seconds."),
     dict(section="advisor", key="codex_daemon_pool_isolate_homes",
          store="config.json:advisor.codex_daemon_pool_isolate_homes",
          env="SPENDGUARD_CODEX_DAEMON_POOL_ISOLATE_HOMES", default=False, kind="enum:true,false", secret=False,

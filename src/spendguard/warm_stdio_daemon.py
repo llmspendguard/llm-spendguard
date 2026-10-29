@@ -347,6 +347,12 @@ class _WarmStdioJsonRpcDaemon:
             self._idle_timer = timer
         timer.start()
 
+    def seconds_since_last_activity(self):
+        """Return elapsed monotonic seconds since this daemon last sent or received turn traffic."""
+        with self._state_lock:
+            last_activity = self._last_activity
+        return time.monotonic() - last_activity
+
     # ── waiter registry (responses correlated by JSON-RPC id) ─────────────────────────────────────────────────
     def _register_waiter(self, rid, **extra):
         """A pending request waiter: ``event`` fires when the response for ``rid`` arrives (``msg`` holds it).
@@ -383,6 +389,8 @@ class _WarmStdioJsonRpcDaemon:
     # ── the one writer + the one reader ───────────────────────────────────────────────────────────────────────
     def _write_rpc(self, p, obj):
         """Bound lock acquisition and partial writes to the unbuffered child pipe."""
+        with self._state_lock:
+            self._last_activity = time.monotonic()
         budget = float(config._cfg_get("advisor", "lane_write_timeout_s", self.STARTUP_TIMEOUT_S))
         if not math.isfinite(budget) or budget <= 0:
             raise ValueError("advisor.lane_write_timeout_s must be positive and finite")
@@ -453,6 +461,8 @@ class _WarmStdioJsonRpcDaemon:
                         continue
                     if not isinstance(msg, dict):
                         continue
+                    with self._state_lock:
+                        self._last_activity = time.monotonic()
                     mid = msg.get("id")
                     # A `method` marks a message the server ORIGINATED — a notification (no id) or a request to us
                     # (id present). Neither is a response to our request, so neither goes to the waiter path; a

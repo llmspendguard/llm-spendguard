@@ -196,7 +196,8 @@ class CodexAdmissionBoundsGuards(unittest.TestCase):
         def admission_watchdog_factory():
             worker = SimpleNamespace(run_warm=Mock(return_value=dict(ADMISSION_TEST_REPLY)),
                                      ensure_running=Mock(return_value=object()), shutdown=Mock(),
-                                     running=Mock(return_value=True))
+                                     running=Mock(return_value=True),
+                                     seconds_since_last_activity=lambda: ADMISSION_TEST_WAIT_S)
             if not workers:
                 worker.run_warm.side_effect = lambda **kwargs: released.wait(ADMISSION_TEST_WAIT_S)
                 worker.shutdown.side_effect = released.set
@@ -209,7 +210,7 @@ class CodexAdmissionBoundsGuards(unittest.TestCase):
             pool = codex_daemon._CodexDaemonPool(admission_watchdog_factory, size=ADMISSION_TEST_POOL_SIZE)
             try:
                 result = pool.run_warm(ADMISSION_TEST_PROMPT, timeout=ADMISSION_TEST_TURN_S)
-                self.assertIn("deadline", result["error"])
+                self.assertIn("backstop expired", result["error"])
                 self.assertTrue(recovered.wait(ADMISSION_TEST_WAIT_S))
                 self.assertTrue(workers[0].shutdown.called)
                 self.assertEqual(pool.run_warm(ADMISSION_TEST_PROMPT), ADMISSION_TEST_REPLY)

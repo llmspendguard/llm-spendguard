@@ -129,6 +129,8 @@ CODEX_POOL_SIZE_DEFAULT = 20   # warm codex app-servers kept ready per host, fle
 CODEX_DAEMON_MAX_WAITERS_DEFAULT = 32
 CODEX_DAEMON_REQUEST_READ_TIMEOUT_DEFAULT_S = 5.0
 CODEX_DAEMON_RECYCLE_ON_TIMEOUT_DEFAULT = True
+CODEX_DAEMON_LEASE_IDLE_S_DEFAULT = 120  # Reclaim a leased worker after this long without progress.
+CODEX_DAEMON_LEASE_MAX_S_DEFAULT = 1800  # Reclaim a progressing lease at this absolute runaway backstop.
 CODEX_POOL_ISOLATE_DEFAULT = False
 CODEX_POOL_HEALTH_INTERVAL_DEFAULT_S = 25.0
 CODEX_POOL_RESPAWN_BACKOFF_DEFAULT_S = 1.0
@@ -743,8 +745,17 @@ def codex_daemon_admission_settings():
         "advisor", "codex_daemon_recycle_on_timeout", CODEX_DAEMON_RECYCLE_ON_TIMEOUT_DEFAULT))
     if isinstance(recycle, str):
         recycle = recycle.lower() in CODEX_POOL_TRUE_VALUES
+    lease_idle_s = float(os.getenv("SPENDGUARD_CODEX_DAEMON_LEASE_IDLE_S", _cfg_get(
+        "advisor", "codex_daemon_lease_idle_s", CODEX_DAEMON_LEASE_IDLE_S_DEFAULT)))
+    lease_max_s = float(os.getenv("SPENDGUARD_CODEX_DAEMON_LEASE_MAX_S", _cfg_get(
+        "advisor", "codex_daemon_lease_max_s", CODEX_DAEMON_LEASE_MAX_S_DEFAULT)))
+    if not math.isfinite(lease_idle_s) or lease_idle_s <= 0:
+        raise ValueError("advisor.codex_daemon_lease_idle_s must be positive and finite")
+    if not math.isfinite(lease_max_s) or lease_max_s <= 0:
+        raise ValueError("advisor.codex_daemon_lease_max_s must be positive and finite")
     return {"max_waiters": max_waiters, "request_read_timeout_s": read_timeout,
-            "recycle_on_timeout": bool(recycle)}
+            "recycle_on_timeout": bool(recycle), "lease_idle_s": lease_idle_s,
+            "lease_max_s": lease_max_s}
 
 
 def _codex_pool_file_store_toml(source_text):

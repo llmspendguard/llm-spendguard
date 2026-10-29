@@ -584,11 +584,13 @@ class _CodexDaemonPool:
     def pool_run_warm(self, prompt, **kwargs):
         from .dispatch import DispatchTimeout
         kwargs = {"prompt": prompt, **kwargs}
+        admission_settings = config.codex_daemon_admission_settings()
         if kwargs.get("recycle_on_timeout") is None:
-            kwargs["recycle_on_timeout"] = config.codex_daemon_admission_settings()["recycle_on_timeout"]
-        deadline_s = kwargs.get("timeout") or self.CALL_TIMEOUT_S
+            kwargs["recycle_on_timeout"] = admission_settings["recycle_on_timeout"]
+        caller_timeout_s = kwargs.get("timeout")
+        deadline_s = caller_timeout_s or admission_settings["lease_max_s"]
         if deadline_s <= 0:
-            deadline_s = self.CALL_TIMEOUT_S
+            deadline_s = admission_settings["lease_max_s"]
         deadline = time.monotonic() + deadline_s
         result = None
         attempted_workers = set()
@@ -632,19 +634,37 @@ class _CodexDaemonPool:
                     with ledger_request_scope() as lease_reads:
                         lease_context = contextvars.copy_context()
                         threading.Thread(target=lease_context.run, args=(invoke_pool_lease,), daemon=True).start()
-                        if not completed.wait(max(0, deadline - time.monotonic())):
-                            # The worker lifecycle keeps its existing recycling
-                            # policy; release any ledger work owned by this lease
-                            # before returning a detached invocation to recovery.
-                            lease_reads.cancel_ledger_request()
-                            retire = True
-                            result = {"text": None, "thread": kwargs.get("thread"),
-                                      "error": "codex pool leased turn deadline expired", "timed_out": True}
+                        while not completed.is_set():
+                            remaining_s = deadline - time.monotonic()
+                            if remaining_s <= 0:
+                                lease_reads.cancel_ledger_request()
+                                retire = True
+                                result = {"text": None, "thread": kwargs.get("thread"),
+                                          "error": "codex lease absolute backstop expired", "timed_out": True}
+                                break
+                            completed.wait(min(admission_settings["lease_idle_s"], remaining_s))
+                            if completed.is_set():
+                                break
+                            if worker.seconds_since_last_activity() >= admission_settings["lease_idle_s"]:
+                                lease_reads.cancel_ledger_request()
+                                retire = True
+                                result = {"text": None, "thread": kwargs.get("thread"),
+                                          "error": "codex lease no-progress reclaim", "timed_out": True}
+                                break
+                            if time.monotonic() >= deadline:
+                                lease_reads.cancel_ledger_request()
+                                retire = True
+                                result = {"text": None, "thread": kwargs.get("thread"),
+                                          "error": "codex lease absolute backstop expired", "timed_out": True}
+                                break
+                        if result is not None:
+                            pass
                         elif "exception" in outcome:
                             raise outcome["exception"]
                         else:
                             result = outcome["result"]
                 else:
+                    # Named gap: the opt-out synchronous path has no heartbeat-based lease recovery.
                     result = worker.run_warm(**call_kwargs)
                 recycle = bool(result.get("error"))
                 retry_auth = bool(result.get("auth_error"))
