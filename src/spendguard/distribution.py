@@ -174,17 +174,10 @@ def distribution_probe_cache_paths():
             cache / str(distribution_config_value("probe_cache_record_name")))
 
 
-def distribution_configured_ledger_paths(policy_home):
-    """Resolve configured ledger identities and exact SQLite sidecar identities."""
-    policy_path = Path(policy_home) / config.CONFIG_JSON.name
-    if not policy_path.exists():
-        return set()
-    budget_policy = json.loads(policy_path.read_text()).get("budget", {})
+def distribution_configured_ledger_paths():
+    """Resolve effective ledger identities and exact SQLite sidecar identities."""
     resolved_paths = set()
-    for setting in ("db_path", "lane_queue_db_path"):
-        configured_path = budget_policy.get(setting)
-        if not configured_path:
-            continue
+    for configured_path in (config.db_path(), config.lane_queue_db_path()):
         ledger_path = Path(configured_path).expanduser().resolve()
         resolved_paths.update({ledger_path, *(Path(str(ledger_path) + suffix)
                                               for suffix in ("-wal", "-shm", "-journal"))})
@@ -198,7 +191,7 @@ def distribution_snapshot_excluded(directory, name):
     if parent != source_home:
         return False
     entry = (parent / name).resolve(strict=False)
-    if entry in distribution_configured_ledger_paths(source_home):
+    if entry in distribution_configured_ledger_paths():
         return True
     if entry.is_dir() and (entry / DISTRIBUTION_EPHEMERAL_MARKER).exists():
         return True
@@ -244,6 +237,7 @@ def rebuild_or_reuse_distribution_probe_base():
     source = Path(config.HOME)
     cache, base, record = distribution_probe_cache_paths()
     mark_distribution_ephemeral_dir(cache)
+    sweep_stale_distribution_probe_base_builds(cache, base)
     fingerprint = distribution_snapshot_fingerprint(source)
     try:
         previous = json.loads(record.read_text())
@@ -255,11 +249,12 @@ def rebuild_or_reuse_distribution_probe_base():
     build = cache / f"{base.name}.building-{os.getpid()}"
     if build.exists():
         shutil.rmtree(build)
+    build.mkdir()
+    write_distribution_probe_owner_marker(
+        build / str(distribution_config_value("probe_temp_marker_name")))
     if source.exists():
         shutil.copytree(source, build, ignore=distribution_snapshot_ignored_entries,
-                        copy_function=copy_distribution_snapshot_entry)
-    else:
-        build.mkdir()
+                        copy_function=copy_distribution_snapshot_entry, dirs_exist_ok=True)
     mark_distribution_ephemeral_dir(build)
     if base.exists():
         shutil.rmtree(base)
@@ -280,7 +275,18 @@ def sweep_stale_distribution_probe_roots():
     temporary_root = Path(tempfile.gettempdir())
     prefix = str(distribution_config_value("probe_temp_prefix"))
     marker = str(distribution_config_value("probe_temp_marker_name"))
-    for candidate in temporary_root.glob(f"{prefix}*"):
+    sweep_distribution_probe_owner_candidates(temporary_root.glob(f"{prefix}*"), marker)
+
+
+def sweep_stale_distribution_probe_base_builds(cache, base):
+    """Reclaim interrupted cached-base builds only after proving the owner is gone."""
+    marker = str(distribution_config_value("probe_temp_marker_name"))
+    sweep_distribution_probe_owner_candidates(cache.glob(f"{base.name}.building-*"), marker)
+
+
+def sweep_distribution_probe_owner_candidates(candidates, marker):
+    """Apply the recycle-safe owner proof uniformly to marked probe directories."""
+    for candidate in candidates:
         marker_path = candidate / marker
         if not candidate.is_dir() or not marker_path.is_file():
             continue
@@ -427,7 +433,7 @@ def distribution_snapshot_configured_ledgers(snapshot):
         return
     policy = json.loads(policy_path.read_text())
     budget_policy = policy.get("budget", {})
-    configured_ledger_paths = distribution_configured_ledger_paths(snapshot)
+    configured_ledger_paths = distribution_configured_ledger_paths()
     for setting in ("db_path", "lane_queue_db_path"):
         configured_path = budget_policy.get(setting)
         if not configured_path:

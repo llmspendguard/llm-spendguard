@@ -74,9 +74,11 @@ def guard_2_excludes_outputs_but_keeps_policy_and_consistent_ledger(tmp_path):
     (home / distribution.config.CONFIG_JSON.name).write_text(json.dumps(
         {"budget": {"db_path": str(ledger)}}))
     with patch.object(distribution.config, "HOME", home), \
+         patch.object(distribution.config, "CONFIG_JSON", home / distribution.config.CONFIG_JSON.name), \
          patch.object(distribution.fleet, "sqlite_snapshot_source_evidence",
                       side_effect=lambda path: ((Path(path).stat().st_size, Path(path).stat().st_mtime_ns),
                                                 Path(path).read_bytes()) if Path(path).is_file() else None):
+        distribution.config.cfg_invalidate()
         with distribution.distribution_probe_environment() as environment:
             snapshot = Path(environment["SPENDGUARD_HOME"])
             assert (snapshot / "policy.json").read_text() == "policy"
@@ -333,11 +335,13 @@ def guard_11_owned_output_and_configured_ledger_follow_provenance(tmp_path):
         {"budget": {"db_path": str(ledger)}}))
     cache = tmp_path / "probe-cache"
     with patch.object(distribution.config, "HOME", home), \
+         patch.object(distribution.config, "CONFIG_JSON", home / distribution.config.CONFIG_JSON.name), \
          patch.object(distribution, "distribution_probe_cache_paths",
                       return_value=(cache, cache / "base", cache / "fingerprint.json")), \
          patch.object(distribution.fleet, "sqlite_snapshot_source_evidence",
                       side_effect=lambda path: ((Path(path).stat().st_size, Path(path).stat().st_mtime_ns),
                                                 Path(path).read_bytes()) if Path(path).is_file() else None):
+        distribution.config.cfg_invalidate()
         snapshot = distribution.rebuild_or_reuse_distribution_probe_base()
         assert not (snapshot / owned_output.name).exists()
         assert not (snapshot / ledger.name).exists()

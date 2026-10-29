@@ -164,7 +164,9 @@ def test_distribution_probe_absolute_ledgers_are_disposable():
         policy_path = state / distribution.config.CONFIG_JSON.name
         policy_path.write_text(json.dumps({"budget": {"db_path": str(ledger)}}))
         original = {path: path.read_bytes() for path in root.rglob("*") if path.is_file()}
-        with patch.object(distribution.config, "HOME", state):
+        with patch.object(distribution.config, "HOME", state), \
+             patch.object(distribution.config, "CONFIG_JSON", policy_path):
+            distribution.config.cfg_invalidate()
             with distribution.distribution_probe_environment() as environment:
                 snapshot = Path(environment["SPENDGUARD_HOME"])
                 policy = json.loads((snapshot / policy_path.name).read_text())
