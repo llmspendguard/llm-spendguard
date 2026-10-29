@@ -10,10 +10,64 @@ PAST run from the `calls` corpus — and marks the judge `unknown` (it was never
 never a guess. "Cannot tell" is not "clean."
 """
 import json
+import logging
 import sqlite3
 import time
+from decimal import Decimal, localcontext
 
 from . import config
+from .money_scale import real_usd_to_nano_usd, nano_usd_to_usd, assert_nano_total_matches
+
+
+def _backfill_measurement_nano_columns(connection):
+    conversion_gaps = []
+    for storage_row_id, reading_id, raw_amount in connection.execute(
+            "SELECT rowid,reading_id,spend_usd FROM measurements"):
+        try:
+            nano_amount = None if raw_amount is None else real_usd_to_nano_usd(raw_amount)
+        except (ValueError, TypeError, OverflowError) as conversion_error:
+            conversion_gaps.append(((storage_row_id, reading_id), str(conversion_error)))
+            continue
+        connection.execute("UPDATE measurements SET spend_usd_nano=? WHERE rowid=?",
+                           (nano_amount, storage_row_id))
+    if conversion_gaps:
+        raise ValueError(f"measurement_nano_invalid_amount_gap count={len(conversion_gaps)} "
+                         f"rows={conversion_gaps!r}")
+    nano_total = sum(row[0] for row in connection.execute(
+        "SELECT spend_usd_nano FROM measurements WHERE spend_usd_nano IS NOT NULL"))
+    converted_total = sum(real_usd_to_nano_usd(row[0]) for row in connection.execute(
+        "SELECT spend_usd FROM measurements WHERE spend_usd IS NOT NULL"))
+    # Integer accumulation then Decimal scaling is exact regardless of ambient
+    # Decimal precision or SQLite SUM integer overflow.
+    assert_nano_total_matches(nano_total, nano_usd_to_usd(converted_total),
+                              tolerance_usd='0', label='measurements.spend_usd')
+    float_total = connection.execute("SELECT SUM(spend_usd) FROM measurements").fetchone()[0]
+    # Nano is more precise than the historical binary-float SUM; this delta is
+    # informational only, never the equality gate above.
+    exact_usd = nano_usd_to_usd(nano_total)
+    historical_usd = Decimal(str(float_total or 0))
+    with localcontext() as delta_context:
+        carry_digits = 2
+        delta_context.prec = (max(exact_usd.adjusted(), historical_usd.adjusted())
+                              - min(exact_usd.as_tuple().exponent, historical_usd.as_tuple().exponent)
+                              + carry_digits)
+        delta = exact_usd - historical_usd
+    logging.getLogger(__name__).info("measurements_nano_float_sum_delta delta_usd=%s", delta)
+
+
+def _ensure_measurement_nano_schema(connection):
+    connection.execute("SAVEPOINT measurement_nano_schema")
+    try:
+        existing_columns = {row[1] for row in connection.execute("PRAGMA table_info(measurements)")}
+        if "spend_usd_nano" not in existing_columns:
+            connection.execute("ALTER TABLE measurements ADD COLUMN spend_usd_nano INTEGER")
+            _backfill_measurement_nano_columns(connection)
+        connection.execute("RELEASE SAVEPOINT measurement_nano_schema")
+    except BaseException:
+        connection.execute("ROLLBACK TO SAVEPOINT measurement_nano_schema")
+        connection.execute("RELEASE SAVEPOINT measurement_nano_schema")
+        raise
+    connection.commit()
 
 
 def _measurements_db():
@@ -24,6 +78,11 @@ def _measurements_db():
         reading_id TEXT PRIMARY KEY, instrument_id TEXT, parent_id TEXT, ts REAL, intent TEXT, kind TEXT,
         judge_mix TEXT, judge_basis TEXT, judge_pinned INTEGER, aggregation TEXT, sample_ids TEXT, sample_hash TEXT,
         n INTEGER, rubric TEXT, rubric_hash TEXT, candidates TEXT, values_json TEXT, spend_usd REAL, sg_version TEXT)""")
+    try:
+        _ensure_measurement_nano_schema(con)
+    except BaseException:
+        con.close()
+        raise
     con.execute("CREATE INDEX IF NOT EXISTS idx_meas_instrument ON measurements(instrument_id)")
     con.execute("CREATE INDEX IF NOT EXISTS idx_meas_intent ON measurements(intent, ts)")
     con.commit()
@@ -91,12 +150,18 @@ def record_reading(*, intent, kind, judge_mix, sample_ids, rubric, candidates, v
     s_hash, r_hash = sample_hash(sample_ids), rubric_hash(rubric)
     iid = instrument_id(intent, kind, jm, aggregation, s_hash, r_hash, candidates or [])
     rid = "rd_" + _meas_sha(iid, ts, json.dumps(values, sort_keys=True, default=str))[:24]
+    # The fixed signature rejects derived spend_usd_nano keyword arguments.
+    stored_spend_usd = float(spend_usd or 0.0)
+    stored_spend_usd_nano = real_usd_to_nano_usd(stored_spend_usd)
     con = _measurements_db()
-    con.execute("INSERT OR REPLACE INTO measurements VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+    con.execute("INSERT OR REPLACE INTO measurements "
+                "(reading_id,instrument_id,parent_id,ts,intent,kind,judge_mix,judge_basis,judge_pinned,"
+                "aggregation,sample_ids,sample_hash,n,rubric,rubric_hash,candidates,values_json,spend_usd,"
+                "sg_version,spend_usd_nano) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (rid, iid, parent_id, ts, intent, kind, json.dumps(jm), judge_basis, 1 if judge_pinned else 0,
                  aggregation, json.dumps(list(sample_ids or [])), s_hash, len(sample_ids or []),
                  json.dumps(rubric, default=str), r_hash, json.dumps(sorted(candidates or [])),
-                 json.dumps(values, default=str), float(spend_usd or 0.0), _sg_version()))
+                 json.dumps(values, default=str), stored_spend_usd, _sg_version(), stored_spend_usd_nano))
     con.commit()
     con.close()
     return rid
