@@ -4,6 +4,50 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 
 ## [Unreleased]
 
+## [0.16.11] — 2026-10-29
+
+Theme: fix the nano-USD migration regression that turned CI red (a backfill read mis-routed to the deadline-bounded
+cursor while its own write savepoint was open), make the migration one-shot, and parallelize the two pipeline steps
+that were still serial. PyPI goes 0.16.9 → 0.16.11, so this wheel also carries 0.16.10's probe-snapshot allowlist.
+
+### Reliability — nano migration reads run writer-owned, and the migration is now one-shot (fixes `LedgerQueryDeadline`)
+- 0.16.9's `_initialize_spend_event_nano_schema` runs inside the caller's write savepoint, but its backfill SELECT
+  and per-row read-back were routed by `_HomeAlignedLedgerCursor` to the separate managed read cursor with a 5s
+  wall-clock deadline. That cursor cannot see the savepoint's uncommitted writes and defers against the in-flight
+  writer ("connection busy") until the deadline fires → `LedgerQueryDeadline: Ledger read exceeded wall-clock budget
+  5.0 seconds`. It is data-dependent (only when a legacy `spend_events` table actually has rows to backfill), which
+  is why it surfaced on the 0.16.10 release gate and left ci.yml red, not in ordinary runs. The calls-table backfill
+  (`_backfill_call_observation_nano_columns`) had the identical latent pattern, escaping only because the calls table
+  is created fresh with nano columns. Fix: a new `src/spendguard/ledger_schema_migrations.py` wraps both migrations
+  with `own_spend_ledger_schema_reads`, which runs their reads directly on the migrating writer via the EXISTING
+  `_ledger_owned_read_deadline` mechanism (the 0.16.8 writer-handoff path) — home-alignment still enforced, the 5s
+  deadline that protects normal app reads untouched.
+- The migration is now ONE-SHOT. Previously the nano init + backfill scan ran on every ledger open, so even a fully
+  migrated DB re-scanned `WHERE {nano} IS NULL AND {legacy} IS NOT NULL` on every open. Completion is now recorded
+  per-table in a `ledger_schema_migrations` table (separate records for `spend_events` and `calls`, since a
+  calls-only DB has no spend table); a completed migration short-circuits to a cheap version check. A pre-gate DB
+  already migrated by 0.16.9 (nano columns present + backfilled) is recognized as complete via a single bounded
+  `LIMIT 1` pending probe and stamped, without a full re-scan. Populated nano mirrors (including intentional
+  differences from their legacy representation) are preserved; partial migrations are repaired without double-count.
+  Guards in `tests/test_spend_event_nano_schema_gap.py` (12 cases, incl. both tables reproduce the deadline against
+  the old code) and `tests/test_call_observation_nano_dual_representation.py`.
+
+### Pipeline speed — the release gate and the distribute editable path were the last serial steps
+- The release workflow's test gate ran `pytest` SERIALLY (~12 min) and re-proved exactly what ci.yml already runs
+  sharded + `-n auto` in ~2 min on the same commit. Fixed to `pytest -n auto` (pytest-xdist is already in the `dev`
+  extra the gate installs), and the gate's `setup-python` now reuses the pip wheel cache across runs (pip-path parity
+  with CI's uv cache). No source or published-artifact change — the build job keeps full build isolation. The release
+  gate also now asserts the pushed tag equals `spendguard._version.__version__` before any expensive step, so a
+  file↔tag version drift can never publish a mismatched wheel.
+- `distribute` converged WHEEL consumers in parallel (`ThreadPoolExecutor`) but reinstalled each editable DEV venv
+  SERIALLY in the row-build loop; on a multi-dev-venv fleet that serial `_refresh_editable_install` was the wall-time
+  floor while the wheel path beside it was already parallel. Factored the dev-venv convergence into
+  `converge_editable_dev_venv_after_live_probe` and run it through a bounded `ThreadPoolExecutor` sized from the same
+  `distribution.max_workers`, mirroring the wheel worker; the row-build loop now reads per-venv results. Editable
+  convergence also no longer skips when the wheel build errors (dev venvs reinstall from the checkout, not the wheel).
+  Guard: `test_distribution_editable_pool_concurrency_and_failure_isolation` (proves pool concurrency + per-venv
+  failure isolation).
+
 ## [0.16.10] — 2026-10-29
 
 Theme: complete the distribution probe-snapshot leak fix — 0.16.9 (c365037) excluded the configured ledgers but
