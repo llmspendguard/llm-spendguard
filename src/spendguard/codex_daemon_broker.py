@@ -329,6 +329,12 @@ class _CodexDaemonBroker:
 
     def broker_run_warm(self, prompt, model=None, thread=None, reasoning=None, sandbox="read-only", cwd=None,
                         timeout=None, recycle_on_timeout=None):
+        if os.environ.get(config.CODEX_LEASE_ACTIVE_ENV):
+            config.warn_once("[spendguard] nested-codex-lease -> cold-exec divert")
+            from . import codex_exec
+            return codex_exec.run_cold_prompt(
+                prompt, model=model, thread=thread, reasoning=reasoning, sandbox=sandbox, cwd=cwd,
+                timeout=timeout, recycle_on_timeout=recycle_on_timeout)
         kwargs = {"prompt": prompt, "model": model, "thread": thread, "reasoning": reasoning,
                   "sandbox": sandbox, "cwd": os.fspath(cwd) if cwd is not None else None, "timeout": timeout,
                   "recycle_on_timeout": recycle_on_timeout}

@@ -373,6 +373,10 @@ class _WarmStdioJsonRpcDaemon:
         """Provider-specific waiter dicts (beyond ``self._waiters``) the dead-pipe path must also wake. Default none."""
         return []
 
+    def _lease_marker_env(self):
+        """Provider-specific marker inherited by every descendant of a leased warm process."""
+        return {}
+
     def _fail_all_waiters(self):
         """A dead/closed pipe: wake EVERY pending caller with a dead marker so none hangs to its full timeout."""
         with self._state_lock:
@@ -585,6 +589,7 @@ class _WarmStdioJsonRpcDaemon:
                                  bufsize=0, cwd=_SAFE_CWD,
                                  start_new_session=hasattr(os, "killpg") and hasattr(os, "getpgid"),
                                  env={**config.lane_exec_env(launcher), **self._environment_overrides,
+                                      **self._lease_marker_env(),
                                       **_warm_owner_marker_env(self._LANE_LABEL)})   # owner identity last: authoritative
             except Exception:
                 return None

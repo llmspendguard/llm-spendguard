@@ -2261,6 +2261,7 @@ def content_hash(data, length):
 
 
 _WARNED_ONCE = set()
+CODEX_LEASE_ACTIVE_ENV = "SPENDGUARD_CODEX_LEASE_ACTIVE"
 
 
 def warn_once(msg, prefix=""):

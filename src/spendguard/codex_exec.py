@@ -140,13 +140,14 @@ def _run_cold_codex_with_reaper(cmd, timeout, env, cwd):
     deliberately left alone. There is no global signature-based sweep.
     """
     import psutil
-    from . import execution_journal
+    from . import config, execution_journal
+    child_environment = {**env, config.CODEX_LEASE_ACTIVE_ENV: "1"}
     dispatch_id = execution_journal.current_durable_execution_id()
     captured = {}
     stop = threading.Event()
     logger = logging.getLogger(__name__)
     try:
-        policy = _codex_stdio_reap_policy(env, cwd=cwd)
+        policy = _codex_stdio_reap_policy(child_environment, cwd=cwd)
     except Exception:
         logger.warning("cold codex MCP cleanup: config unavailable; cleanup disabled", exc_info=True)
         policy = ([], set())
@@ -155,7 +156,7 @@ def _run_cold_codex_with_reaper(cmd, timeout, env, cwd):
         stdout_target = evidence_streams.enter_context(paths["stdout"].open("ab")) if paths else subprocess.PIPE
         stderr_target = evidence_streams.enter_context(paths["stderr"].open("ab")) if paths else subprocess.PIPE
         child = evidence_streams.enter_context(subprocess.Popen(cmd, stdout=stdout_target, stderr=stderr_target, text=True,
-                          env=env, stdin=subprocess.DEVNULL, cwd=cwd))
+                          env=child_environment, stdin=subprocess.DEVNULL, cwd=cwd))
         if dispatch_id:
             execution_journal.bind_durable_execution_child(dispatch_id, child.pid)
         def _capture_cold_codex_descendants(root):
@@ -216,7 +217,12 @@ def _run_cold_codex_with_reaper(cmd, timeout, env, cwd):
 
 TIMEOUT_S = 300               # meta prompts are small; a hung CLI must not stall the daily report
 CODEX_EXEC_SUBCOMMAND = "exec"
+CODEX_EXEC_RESUME_SUBCOMMAND = "resume"
 CODEX_SANDBOX_FLAG = "--sandbox"
+CODEX_JSON_FLAG = "--json"
+CODEX_OUTPUT_LAST_MESSAGE_FLAG = "--output-last-message"
+CODEX_SKIP_REPOSITORY_CHECK_FLAG = "--skip-git-repo-check"
+CODEX_MODEL_FLAG = "--model"
 CODEX_AGENTIC_APPROVAL_FLAG = "--approve-for-me"
 _USAGE_TTL_S = 300            # the codex rate-limit log is re-read at most this often (shared cache adds reset-boundary)
 _AUTH_RECHECK_BACKOFF_S = 0.75  # a non-zero `codex login status` is confirmed once (transient vs real logout) before False
@@ -627,6 +633,61 @@ def run_prompt(prompt, system=None, model=None, timeout=TIMEOUT_S, reasoning=Non
         return _run_prompt_in_cwd(prompt, system=system, model=model, timeout=timeout, reasoning=reasoning,
                                   max_tokens=max_tokens, sandbox=sandbox, cwd=resolved_cwd,
                                   recycle_on_timeout=recycle_on_timeout, delegate_context=delegate_context)
+    finally:
+        if neutral_cwd:
+            shutil.rmtree(neutral_cwd, ignore_errors=True)
+
+
+def run_cold_prompt(prompt, model=None, thread=None, reasoning=None, sandbox="read-only", cwd=None,
+                    timeout=None, recycle_on_timeout=None):
+    """Run one tracked cold Codex request with the warm broker's argument and result contract."""
+    del recycle_on_timeout
+    if sandbox not in ("read-only", "workspace-write"):
+        return {"error": f"unsupported codex sandbox {sandbox!r}"}
+    executable = _bin()
+    if not executable:
+        return {"error": "codex CLI unavailable for cold reentrancy diversion"}
+    from . import config
+    environment = config.lane_exec_env(executable)
+    resolved_timeout = TIMEOUT_S if timeout is None else timeout
+    neutral_cwd = None
+    try:
+        if cwd is None:
+            neutral_cwd = tempfile.mkdtemp(prefix=CODEX_EXEC_WORK_DIRECTORY_PREFIX)
+            resolved_cwd = neutral_cwd
+        else:
+            resolved_cwd = os.path.abspath(os.path.expanduser(os.fspath(cwd)))
+        with tempfile.TemporaryDirectory(prefix=CODEX_EXEC_WORK_DIRECTORY_PREFIX) as output_directory:
+            output_path = os.path.join(output_directory, CODEX_DELEGATE_OUTPUT_FILENAME)
+            command = [executable, CODEX_EXEC_SUBCOMMAND, CODEX_JSON_FLAG,
+                       CODEX_OUTPUT_LAST_MESSAGE_FLAG, output_path, CODEX_SANDBOX_FLAG, sandbox,
+                       CODEX_SKIP_REPOSITORY_CHECK_FLAG, *_plugin_disable_flags(), *_mcp_disable_flags()]
+            if model:
+                command.extend((CODEX_MODEL_FLAG, model))
+            effort = _codex_effort(reasoning)
+            if effort:
+                command.extend((CODEX_CONFIG_OVERRIDE_FLAG, f'model_reasoning_effort="{effort}"'))
+            if thread:
+                command.extend((CODEX_EXEC_RESUME_SUBCOMMAND, thread))
+            command.append(prompt)
+            started_at = time.time()
+            try:
+                completed = _run_cold_codex_with_reaper(
+                    command, resolved_timeout, environment, resolved_cwd)
+            except subprocess.TimeoutExpired:
+                return {"error": f"cold codex execution timed out after {resolved_timeout} seconds"}
+            if completed.returncode != 0:
+                return {"error": completed.stderr.strip() or
+                        f"cold codex execution exited {completed.returncode}"}
+            try:
+                with open(output_path, encoding="utf-8") as output_stream:
+                    answer = output_stream.read()
+            except OSError as error:
+                return {"error": f"cold codex execution produced no final-message file: {error}"}
+            if not answer:
+                return {"error": "cold codex execution produced an empty final message"}
+            return {"text": answer, "thread": thread, "error": None,
+                    "latency": round(time.time() - started_at, 2), "effort": effort}
     finally:
         if neutral_cwd:
             shutil.rmtree(neutral_cwd, ignore_errors=True)

@@ -162,6 +162,9 @@ class _CodexDaemon(_WarmStdioJsonRpcDaemon):
         self._turn_waiters = {}                # (thread_id, turn_id) -> completion waiter
         self._pending_turn_notifications = {}  # notification can race ahead of the turn/start response
 
+    def _lease_marker_env(self):
+        return {config.CODEX_LEASE_ACTIVE_ENV: "1"}
+
     # ── codex notification demux (by threadId/turnId), overriding the base no-op ──────────────────────────────
     def _drop_turn_waiter(self, waiter):
         key = (waiter.get("turn_thread_id"), waiter.get("turn_id"))

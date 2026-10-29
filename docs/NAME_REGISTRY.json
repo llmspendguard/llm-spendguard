@@ -344,6 +344,11 @@
       "verdict": "PROTOCOL",
       "why": "Per-lane toggle for the warm daemon path (env SPENDGUARD_<LANE>_DAEMON \u2192 config advisor.<lane>_daemon, default on); codex_exec and kimi_exec each own their lane's switch, read by that lane's run_prompt before trying the warm path. Same contract per lane, mirroring the _bin protocol. [PROTOCOL, warm-lane exec pool, 2026-10-08.]"
     },
+    "_lease_marker_env": {
+      "n": 2,
+      "verdict": "PROTOCOL",
+      "why": "The base-called hook returning the env marker merged into every warm app-server spawn (and thereby inherited by all its descendants); base _WarmStdioJsonRpcDaemon._lease_marker_env returns {} (no marker), _CodexDaemon._lease_marker_env returns {CODEX_LEASE_ACTIVE_ENV: '1'} so a codex request nested inside an active lease detects the marker and diverts to a tracked cold codex exec instead of taking a second pool lease (the wedge fix). Same contract, per-provider body, exactly like the _extra_waiters_to_fail / _route_notification / _spawn_cmd / _on_response hook overrides. [PROTOCOL, codex warm-daemon wedge fix Stage B, 2026-10-28.]"
+    },
     "_bin": {
       "n": 4,
       "verdict": "PROTOCOL",
