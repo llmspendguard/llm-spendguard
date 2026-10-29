@@ -34,6 +34,7 @@ import time
 from typing import Optional
 
 from . import config
+from .money_scale import NANO_USD_PER_USD
 from .sources import CLAUDE_CODE_SOURCE, CLAUDE_CHAT_SOURCE, CODEX_SOURCE
 
 LEVELS = ("off", "footer", "flow", "verbose")
@@ -183,7 +184,7 @@ def _receipt_est_records():
         with _ledger_read_connection() as conn:
             rows = conn.execute(
                 "SELECT source, day, org, team, project_primary, "
-                "SUM(COALESCE(CAST(est_chat_usd AS REAL), 0)) FROM spend_events "
+                f"SUM(COALESCE(est_chat_usd_nano, 0))/{NANO_USD_PER_USD}.0 AS usd FROM spend_events "
                 "WHERE day >= ? AND est_chat_usd IS NOT NULL AND billed = 0 "
                 f"AND {SpendLedger._LIVE_FILTER} "
                 "GROUP BY source, day, org, team, project_primary", (min(week, month),)).fetchall()

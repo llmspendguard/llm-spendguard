@@ -15,7 +15,7 @@ from . import budget, config
 from decimal import Decimal, localcontext
 import logging
 from .ledger_writer import best_effort_ledger_function
-from .money_scale import real_usd_to_nano_usd, nano_usd_to_usd, assert_nano_total_matches
+from .money_scale import NANO_USD_PER_USD, real_usd_to_nano_usd, nano_usd_to_usd, assert_nano_total_matches
 
 SAVINGS_NANO_COLUMNS = {column: f"{column}_nano" for column in ("amount",)}
 
@@ -87,9 +87,9 @@ CERTAIN = ("cache", "block", "cascade", "realized", "prompt_cache")   # vs count
 # refuses it, loudly, rather than silently inflating the tally. (The dominant "advisor/routing" saving IS this axis.)
 _RESERVED_SOURCES = ("plan",)
 SAVED_SINCE_SOURCE_SQL = "SELECT source,COALESCE(SUM(amount),0) AS amount FROM savings {where} GROUP BY source"
-DECISIONS_SUMMARY_TOTAL_SQL = "SELECT COUNT(*) AS decisions,CASE WHEN COUNT(saved_usd)=COUNT(*) THEN COALESCE(SUM(saved_usd),0) END AS saved_usd FROM decisions {where}"
-DECISIONS_SUMMARY_INTENT_SQL = """SELECT COALESCE(intent,'(none)') AS intent,COUNT(*) AS decisions,
-CASE WHEN COUNT(saved_usd)=COUNT(*) THEN COALESCE(SUM(saved_usd),0) END AS saved_usd FROM decisions {where}
+DECISIONS_SUMMARY_TOTAL_SQL = f"SELECT COUNT(*) AS decisions,CASE WHEN COUNT(saved_usd_nano)=COUNT(*) THEN ROUND(COALESCE(SUM(saved_usd_nano),0)/{NANO_USD_PER_USD}.0,4) ELSE NULL END AS saved_usd FROM decisions {{where}}"
+DECISIONS_SUMMARY_INTENT_SQL = f"""SELECT COALESCE(intent,'(none)') AS intent,COUNT(*) AS decisions,
+CASE WHEN COUNT(saved_usd_nano)=COUNT(*) THEN ROUND(COALESCE(SUM(saved_usd_nano),0)/{NANO_USD_PER_USD}.0,4) ELSE NULL END AS saved_usd FROM decisions {{where}}
 GROUP BY COALESCE(intent,'(none)') ORDER BY saved_usd DESC LIMIT ?"""
 DECISIONS_SINCE_ROWID_CTE_SQL = (
     "WITH matching_decision_rowids AS MATERIALIZED "
@@ -98,13 +98,13 @@ DECISIONS_SINCE_ROWID_CTE_SQL = (
 DECISIONS_SUMMARY_TOTAL_SINCE_SQL = (
     DECISIONS_SINCE_ROWID_CTE_SQL
     + "SELECT COUNT(*) AS decisions,"
-    "CASE WHEN COUNT(saved_usd)=COUNT(*) THEN COALESCE(SUM(saved_usd),0) END AS saved_usd "
+    f"CASE WHEN COUNT(saved_usd_nano)=COUNT(*) THEN ROUND(COALESCE(SUM(saved_usd_nano),0)/{NANO_USD_PER_USD}.0,4) ELSE NULL END AS saved_usd "
     "FROM decisions WHERE rowid IN (SELECT rowid FROM matching_decision_rowids)"
 )
 DECISIONS_SUMMARY_INTENT_SINCE_SQL = (
     DECISIONS_SINCE_ROWID_CTE_SQL
     + "SELECT COALESCE(intent,'(none)') AS intent,COUNT(*) AS decisions,"
-    "CASE WHEN COUNT(saved_usd)=COUNT(*) THEN COALESCE(SUM(saved_usd),0) END AS saved_usd "
+    f"CASE WHEN COUNT(saved_usd_nano)=COUNT(*) THEN ROUND(COALESCE(SUM(saved_usd_nano),0)/{NANO_USD_PER_USD}.0,4) ELSE NULL END AS saved_usd "
     "FROM decisions WHERE rowid IN (SELECT rowid FROM matching_decision_rowids) "
     "GROUP BY COALESCE(intent,'(none)') ORDER BY saved_usd DESC LIMIT ?"
 )
@@ -346,9 +346,11 @@ def decisions_summary(since=None, intent_limit=None):
     ranked = read_ledger_sql(LedgerSQLReadRequest(
         intent_sql, parameters=parameters + (int(intent_limit),),
         row_cap=int(intent_limit)))
-    return {"decisions": int(total["decisions"]), "saved_usd": _decision_nullable_round(total["saved_usd"], 4),
+    total_saved = total["saved_usd"]
+    return {"decisions": int(total["decisions"]), "saved_usd": _decision_nullable_round(total_saved, 4),
             "by_intent": [{"intent": row["intent"], "decisions": int(row["decisions"]),
-                           "saved_usd": _decision_nullable_round(row["saved_usd"], 4)} for row in ranked]}
+                           "saved_usd": _decision_nullable_round(
+                               row["saved_usd"] if row["saved_usd"] is not None else None, 4)} for row in ranked]}
 
 
 def _decision_nullable_sum(values):

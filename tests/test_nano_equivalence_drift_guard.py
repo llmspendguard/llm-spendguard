@@ -15,7 +15,7 @@ import spendguard
 spendguard.require()
 import pytest
 
-from spendguard import ledger, ledger_read, calls, guard, calibrate, effort_titration, measurement
+from spendguard import ledger, ledger_read, calls, guard, receipt, reliability, calibrate, effort_titration, measurement
 from spendguard.money_scale import (
     assert_nano_total_matches, nano_usd_to_usd, real_usd_to_nano_usd, usd_to_nano_usd, NANO_USD_PER_USD,
 )
@@ -32,6 +32,7 @@ DRIFT_PROOF_USD = 'USD'
 DRIFT_PROOF_OTHER_CURRENCY = 'EUR'
 DRIFT_PROOF_DAY = '2026-01-02'
 DRIFT_PROOF_OTHER_DAY = '2026-01-01'
+DRIFT_PROOF_NO_ROWS_SINCE = '9999-12-31'
 DRIFT_PROOF_SUBNANO = '0.0000005213'
 DRIFT_PROOF_ZERO_TOLERANCE = '0'
 DRIFT_PROOF_CENT = '0.01'
@@ -303,6 +304,77 @@ def assert_stage7b_reader_text_equivalence(database, database_path):
             assert actual_delta != Decimal(DRIFT_PROOF_ZERO_TOLERANCE), reader_name
 
 
+def assert_stage7c_reader_text_equivalence(database, database_path):
+    """Exercise every Stage 7c reader against independent raw money columns."""
+    database.execute('UPDATE calls SET settlement_complete=1, token_usage_complete=1')
+    database.commit()
+
+    def decision_reference(since):
+        predicate = 'day >= ?' if since else '1=1'
+        parameters = (since,) if since else ()
+        rows = database.execute(
+            'SELECT COALESCE(intent,\'(none)\'),saved_usd FROM decisions WHERE ' + predicate,
+            parameters).fetchall()
+        by_intent = {}
+        for intent, saved_usd in rows:
+            by_intent.setdefault(intent, []).append(saved_usd)
+        nullable_total = (sum((Decimal(str(value)) for _, value in rows), Decimal(0))
+                          if all(value is not None for _, value in rows) else None)
+        nullable_groups = {
+            intent: (sum((Decimal(str(value)) for value in values), Decimal(0))
+                     if all(value is not None for value in values) else None)
+            for intent, values in by_intent.items()
+        }
+        return rows, nullable_total, nullable_groups
+
+    with patch.object(guard.config, 'db_path', return_value=database_path):
+        for since in (None, DRIFT_PROOF_DAY, DRIFT_PROOF_NO_ROWS_SINCE):
+            reference_rows, reference_total, reference_groups = decision_reference(since)
+            for intent_limit in (None, len(DRIFT_PROOF_REAL_AMOUNTS)):
+                actual = guard.decisions_summary(since=since, intent_limit=intent_limit)
+                assert actual['decisions'] == len(reference_rows)
+                assert actual['saved_usd'] is None or isinstance(actual['saved_usd'], float)
+                assert (None if actual['saved_usd'] is None else Decimal(str(actual['saved_usd']))) == (
+                    None if reference_total is None else round(reference_total, 4))
+                actual_groups = {row['intent']: row for row in actual['by_intent']}
+                for intent, reference_saved in reference_groups.items():
+                    assert actual_groups[intent]['decisions'] == len(
+                        [row for row in reference_rows if row[0] == intent])
+                    actual_saved = actual_groups[intent]['saved_usd']
+                    assert actual_saved is None or isinstance(actual_saved, float)
+                    assert (None if actual_saved is None else Decimal(str(actual_saved))) == (
+                        None if reference_saved is None else round(reference_saved, 4))
+
+    database.execute('UPDATE spend_events SET billed=0,source=?,org=?,team=?,project_primary=?',
+                     (__name__, __name__, __name__, __name__))
+    database.execute('UPDATE calls SET fell_from=?', (__name__,))
+    database.commit()
+    raw_est_total = raw_text_ledger_decimal_reference(
+        database, ('est_chat_usd',),
+        f'day>=? AND est_chat_usd IS NOT NULL AND billed=0 AND {ledger.SpendLedger._LIVE_FILTER}',
+        (DRIFT_PROOF_OTHER_DAY,))
+    with patch.object(receipt.config, 'db_path', return_value=database_path), patch.object(
+            receipt, '_receipt_aggregate_cache_path', return_value=database_path.with_suffix('.missing')), patch.object(
+            receipt, '_windows', return_value=(DRIFT_PROOF_DAY, DRIFT_PROOF_OTHER_DAY, DRIFT_PROOF_OTHER_DAY)):
+        est_records = receipt._receipt_est_records()
+        assert all(isinstance(value, float) for record in est_records.values()
+                   for value in record['by_day'].values())
+        actual_est_total = sum((Decimal(str(value)) for record in est_records.values()
+                                for value in record['by_day'].values()), Decimal(0))
+        assert abs(actual_est_total - raw_est_total) <= Decimal(DRIFT_PROOF_CENT)
+
+    raw_lane_total = sum((Decimal(str(row[0])) for row in database.execute(
+        'SELECT cost FROM calls WHERE fell_from IS NOT NULL AND fell_from != \'\' AND cost IS NOT NULL')),
+        Decimal(0))
+    with patch.object(ledger_read.config, 'db_path', return_value=database_path):
+        for since in (None, DRIFT_PROOF_DAY, DRIFT_PROOF_NO_ROWS_SINCE):
+            actual_rows = reliability.lane_fallback_spend(since)
+            assert all(isinstance(row['metered_usd'], float) for row in actual_rows)
+            actual_lane_total = sum((Decimal(str(row['metered_usd'])) for row in actual_rows), Decimal(0))
+            expected_lane_total = raw_lane_total if since != DRIFT_PROOF_NO_ROWS_SINCE else Decimal(0)
+            assert abs(actual_lane_total - expected_lane_total) <= Decimal(DRIFT_PROOF_CENT)
+
+
 def create_nano_equivalence_fixture(directory):
     path = directory / DRIFT_PROOF_DATABASE
     database = sqlite3.connect(path, check_same_thread=False)
@@ -389,6 +461,7 @@ def test_nano_equivalence_canonical_readers_and_filter_cross_product(tmp_path):
         database.commit()
         assert_nano_total_matches(int(report['recorded_call_total']['nano_result'] * NANO_USD_PER_USD),
                                  Decimal(str(ledger_read.read_recorded_call_total(path))), label='actual recorded reader')
+        assert_stage7c_reader_text_equivalence(database, path)
         with patch.object(guard.config, 'db_path', return_value=path):
             assert abs(report['saved_since']['nano_result'] - Decimal(str(guard.saved_since()['total']))) <= Decimal(DRIFT_PROOF_CENT)
             # NULL saved_usd is deliberately unknown in the unlimited reader.
@@ -482,6 +555,29 @@ def test_stage7a_reader_reference_rejects_injected_cent_corruption(tmp_path):
         database.commit()
         with pytest.raises(AssertionError):
             assert_stage7a_reader_text_equivalence(database, spend_ledger)
+    finally:
+        database.close()
+
+
+def test_stage7c_reader_reference_rejects_injected_cent_corruption(tmp_path):
+    path, database, _ = create_nano_equivalence_fixture(tmp_path)
+    try:
+        corruption_intent = test_stage7c_reader_reference_rejects_injected_cent_corruption.__name__
+        database.execute(
+            'UPDATE decisions SET intent=? '
+            'WHERE rowid=(SELECT MIN(rowid) FROM decisions WHERE saved_usd IS NOT NULL)',
+            (corruption_intent,))
+        fully_observable_group = database.execute(
+            'SELECT intent FROM decisions GROUP BY intent '
+            'HAVING intent=? AND COUNT(*)=COUNT(saved_usd)',
+            (corruption_intent,)).fetchone()
+        assert fully_observable_group is not None and fully_observable_group[0] == corruption_intent
+        database.execute(
+            'UPDATE decisions SET saved_usd_nano=saved_usd_nano+? WHERE intent=?',
+            (usd_to_nano_usd(DRIFT_PROOF_CENT), corruption_intent))
+        database.commit()
+        with pytest.raises(AssertionError):
+            assert_stage7c_reader_text_equivalence(database, path)
     finally:
         database.close()
 
