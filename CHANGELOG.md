@@ -6,8 +6,10 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 
 ## [0.16.8] — 2026-10-28
 
-Two themes: a ledger read/write concurrency fix so a cap/receipt read can no longer be refused merely because
-a write is in flight, and distribution-probe exclusion by provenance rather than by name.
+Themes: an integer nano-USD money SSOT with legacy-safe readers so every cost read is exact and never silently
+zero; codex warm-lease reclaim by progress rather than a flat deadline; a ledger read/write concurrency fix so a
+cap/receipt read can no longer be refused merely because a write is in flight; and distribution-probe exclusion by
+provenance rather than by name.
 
 ### Reliability — ledger read/write concurrency
 - A budget/cap/flow read no longer raises `LedgerQueryDeadline` just because a PLAIN write transaction is in
@@ -33,6 +35,30 @@ a write is in flight, and distribution-probe exclusion by provenance rather than
   `_embed_checkpoint_dir()` (which marks the dir), `gc_embed_checkpoints` scans the marked dir and drains any
   legacy top-level checkpoints, and the directory is excluded by the #243 ownership rule with no change to
   `distribution.py`.
+
+### Money storage — integer nano-USD SSOT
+- Every REAL-dollar amount is now mirrored in an integer `*_nano` twin alongside its legacy TEXT/REAL column, so
+  sums are exact (no float drift) while legacy readers keep working. Added the nano-USD SSOT scale, exact
+  converters, and a nano↔raw equivalence drift guard; dual-write + backfill mirror `spend_events` amounts,
+  `calls.cost` + `input_cost_floor`, the auxiliary REAL amount tables, and `measurements.spend_usd`, each with the
+  existing readers unchanged at write time.
+- The money readers then cut over to a native integer nano-USD `SUM` on the `SpendLedger` core, in `ledger_read.py`,
+  and the last three readers — so aggregates are computed in integer space end-to-end.
+- Legacy-safe reads close the migration gap: `read_recorded_call_total`, `intent_spend` (per-intent running cap),
+  `_cat_dec` (category aggregate), and `read_cc_spend_overview` now probe the schema and prefer the nano twin,
+  `COALESCE`-ing to the legacy column for any NULL-nano / un-backfilled row rather than returning 0 or raising —
+  so a read against a pre-migration row yields the correct amount.
+- Restored the settlement money-guards that the migration had weakened: `read_recorded_call_total` and
+  `intent_spend` now REFUSE (raise `LedgerSettlementIncomplete`, surfaced as a gate refusal) when an incomplete
+  provider settlement is in the window, instead of summing a floor-free total that could silently bypass the
+  configured cap. Regression coverage in `tests/test_partial_provider_usage.py` and the nano drift guard.
+
+### Codex warm-lease reclaim by progress
+- Warm codex leases are reclaimed by PROGRESS rather than a flat 180s deadline, so a lease still making progress
+  is not killed mid-flight, and a codex request nested inside a lease is diverted to a tracked cold exec. The
+  watchdog contract is explicit: the no-progress branch reports `"no-progress deadline expired"` and the absolute
+  backstop branch reports `"absolute backstop expired"`. Covered by `tests/test_codex_pool_admission_bounds.py`
+  and `tests/test_broker_ledger_abandonment.py`.
 
 ## [0.16.5] — 2026-10-27
 
