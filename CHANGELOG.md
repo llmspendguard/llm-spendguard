@@ -4,6 +4,30 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 
 ## [Unreleased]
 
+## [0.16.12] — 2026-10-29
+
+Theme: a telemetry ledger write must never crash its caller. One decorator flip closes the last `serialize` outlier
+among the reachability-cache writers, so a contended health-cache write warns-once instead of stalling a commit.
+
+### Reliability — `_persist_health` is best-effort, not fatal (stops a telemetry write from killing its caller)
+- `reliability._persist_health` caches the last reachability sweep (one `lane_health` row per resource) so the
+  receipt + notifier can surface a red lane for $0 with no fresh sweep. It is pure telemetry, yet it was the lone
+  `@serialize_ledger_function` (raises on failure) among its eight sibling reachability-cache writers — the other
+  seven are `@best_effort_ledger_function`. Under ledger-writer contention (warm daemon + MCP server + a pre-commit
+  hook all hitting the single writer at once) its write raised `LedgerQueryDeadline` uncaught out of the CLI health
+  path (`reliability.py:768`) and stalled a commit chain. Fix: flip it to `@best_effort_ledger_function` so a
+  contended telemetry write warns-once and returns, never propagating; drop the now-unused `serialize_ledger_function`
+  import. Durable spend/money writers are untouched — the two-decorator split (required mutations raise, optional
+  bookkeeping is best-effort) is exactly the point, and this write belongs on the best-effort side.
+- Guard: `tests/test_optional_writer_dispatch_contract.py` now exercises `_persist_health` alongside the other
+  optional writers — a malformed ledger or a dispatch `LedgerQueryDeadline` must warn and return, while a deliberate
+  gate stop must still propagate. Proven to FAIL against the old `@serialize_ledger_function` decorator.
+- Fixed two pre-existing `tests/test_reliability.py` failures that predated the `_metered_target` dependency-preference
+  layer (`model_preflight.configured_specs`): the test neutralized `probe_models` but not that later layer, so the
+  derivation blocks saw this install's real configured openai model instead of the catalog-derived default. The test
+  now stubs `configured_specs` empty to isolate the derivation path, and adds an assertion covering the
+  dependency-preference layer itself so it is guarded too.
+
 ## [0.16.11] — 2026-10-29
 
 Theme: fix the nano-USD migration regression that turned CI red (a backfill read mis-routed to the deadline-bounded
