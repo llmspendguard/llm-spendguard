@@ -34,6 +34,9 @@ DISTRIBUTION_BUILD_TIMEOUT_SETTING = "install_timeout_s"
 DISTRIBUTION_MAX_WORKERS_SETTING = "max_install_workers"
 DISTRIBUTION_DEFAULT_MAX_WORKERS = 4
 DISTRIBUTION_WHEEL_BUILD_COMMAND = ("-m", "pip", "wheel", "--no-deps", "--no-build-isolation")
+DISTRIBUTION_BUILD_DIRECTORY_NAME = "build"
+DISTRIBUTION_SOURCE_DIRECTORY_NAME = "src"
+DISTRIBUTION_EGG_INFO_GLOB = "*.egg-info"
 DISTRIBUTION_GIT_METADATA_NAME = ".git"
 DISTRIBUTION_GITDIR_PREFIX = "gitdir:"
 DISTRIBUTION_WORKTREES_DIRECTORY = "worktrees"
@@ -130,6 +133,17 @@ def cached_distribution_wheels(version):
     return sorted(matches)
 
 
+def purge_stale_build_artifacts_in_checkout(checkout):
+    """Purge regenerable setuptools state so removed sources cannot reenter wheels."""
+    checkout = Path(checkout)
+    shutil.rmtree(checkout / DISTRIBUTION_BUILD_DIRECTORY_NAME, ignore_errors=True)
+    for metadata_root in (checkout, checkout / DISTRIBUTION_SOURCE_DIRECTORY_NAME):
+        if metadata_root.is_symlink():
+            continue
+        for metadata in metadata_root.glob(DISTRIBUTION_EGG_INFO_GLOB):
+            shutil.rmtree(metadata, ignore_errors=True)
+
+
 def ensure_distribution_wheel(target, checkout, settings):
     """Reuse or build the green wheel, then verify its embedded filename version."""
     cache = mark_distribution_ephemeral_dir(distribution_wheel_cache_path())
@@ -138,6 +152,7 @@ def ensure_distribution_wheel(target, checkout, settings):
         return existing[0]
     if target["version"] != target.get("green_version", target["version"]):
         raise FileNotFoundError(f"rollback wheel is not cached: {target['version']}")
+    purge_stale_build_artifacts_in_checkout(checkout)
     command = [sys.executable, *DISTRIBUTION_WHEEL_BUILD_COMMAND, "--wheel-dir", str(cache), str(checkout)]
     completed = subprocess.run(command, capture_output=True, text=True,
                                timeout=settings[DISTRIBUTION_BUILD_TIMEOUT_SETTING], check=False)

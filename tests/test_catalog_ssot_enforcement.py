@@ -2,7 +2,9 @@
 import ast
 import json
 import sqlite3
+import shutil
 import uuid
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -11,7 +13,7 @@ from _pytest_fixture_bridge import align_test_startup_home, run_pytest_style
 
 align_test_startup_home(prefix=__name__)
 
-from spendguard import config, model_catalog, pricing  # noqa: E402
+from spendguard import config, distribution, model_catalog, pricing  # noqa: E402
 
 CATALOG_GUARD_ROOT = Path(__file__).resolve().parents[1]
 CATALOG_OBSERVATIONS_PATH = Path(__file__).with_name("fixtures") / "catalog_observed_models.json"
@@ -29,6 +31,36 @@ PRICING_MODULE_DECLARATION_BINDINGS = frozenset({
 GUARD_LEDGER_FILENAME = "observations.sqlite"
 GUARD_ADVISOR_SECTION = "advisor"
 GUARD_LANE_MODELS_KEY = "lane_models"
+CATALOG_WHEEL_PROJECT_FILES = ("pyproject.toml", "README.md")
+
+
+def test_catalog_ssot_distribution_wheel_excludes_stale_removed_leaf(tmp_path, monkeypatch):
+    checkout = tmp_path / "checkout"
+    source_directory = distribution.DISTRIBUTION_SOURCE_DIRECTORY_NAME
+    package_name = model_catalog.__package__
+    shutil.copytree(CATALOG_GUARD_ROOT / source_directory, checkout / source_directory)
+    for filename in CATALOG_WHEEL_PROJECT_FILES:
+        shutil.copy2(CATALOG_GUARD_ROOT / filename, checkout / filename)
+    stale_package = checkout / distribution.DISTRIBUTION_BUILD_DIRECTORY_NAME / "lib" / package_name
+    stale_package.mkdir(parents=True)
+    (stale_package / LEGACY_PRICE_FILENAME).write_text("{}")
+    catalog_source = checkout / source_directory / package_name / Path(model_catalog.DATA_PATH).name
+    original_catalog = catalog_source.read_bytes()
+    metadata_name = "stale.egg-info"
+    stale_metadata = [checkout / metadata_name, checkout / source_directory / metadata_name]
+    for metadata in stale_metadata:
+        metadata.mkdir()
+        (metadata / "PKG-INFO").write_text(metadata.name)
+    monkeypatch.setattr(config, "HOME", tmp_path / "home")
+    monkeypatch.setenv("PIP_NO_INDEX", "1")
+    target = {"version": distribution.SPENDGUARD_WRITER_VERSION}
+    wheel = distribution.ensure_distribution_wheel(target, checkout, distribution.distribution_policy())
+    with zipfile.ZipFile(wheel) as archive:
+        assert f"{package_name}/{LEGACY_PRICE_FILENAME}" not in archive.namelist()
+        assert archive.read(f"{package_name}/{catalog_source.name}") == original_catalog
+    assert catalog_source.read_bytes() == original_catalog
+    assert not (catalog_source.parent / LEGACY_PRICE_FILENAME).exists()
+    assert all(not metadata.exists() for metadata in stale_metadata)
 
 
 def assert_catalog_source_structure(source_units):
