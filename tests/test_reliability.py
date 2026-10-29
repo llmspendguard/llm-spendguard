@@ -1,6 +1,7 @@
 """The lane + metered reachability sweep — estimate-first ($0), then a tiny live probe per resource — must (a)
 never spend on the estimate, (b) enumerate every configured lane + every KEYED metered provider, (c) build a
-reachability matrix, and (d) derive a metered target without a blind hardcode (config → default → cheapest-served).
+reachability matrix, and (d) derive a metered target without a blind hardcode
+(config override → a model THIS install depends on → named default → cheapest-served).
 
 Offline: adapters.call, the lane probe, config.api_key, and the catalog/pricing are stubbed — no network, no
 spend. The load-bearing guarantee is ESTIMATE-FIRST: sweep(run=False) must make ZERO calls.
@@ -14,7 +15,8 @@ os.environ.setdefault("SPENDGUARD_TEST_ISOLATED", "1")
 os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
-from spendguard import reliability, adapters, config, catalog, pricing, lanes, lane_catalog   # noqa: E402
+from spendguard import (reliability, adapters, config, catalog, pricing, lanes, lane_catalog,   # noqa: E402
+                        model_preflight)
 
 fails = []
 PROBE_TIMEOUT_SECONDS = 3
@@ -35,6 +37,10 @@ catalog.live_model_ids = lambda prov: {"openai": ["gpt-5-nano", "babbage-002"], 
 _PRICES = {"openai:gpt-5-nano": 0.4, "openai:babbage-002": 1.6, "deepseek:deepseek-v4-flash": 0.28}
 pricing.price = lambda m: {"out": _PRICES.get(m)}
 pricing.realtime_cost = lambda m, i, o: 0.00001
+# `_metered_target` PREFERS a model this install actually depends on (model_preflight.configured_specs) over the
+# catalog derivation. Stub it empty by DEFAULT so the derivation blocks below isolate the config→default→cheapest
+# path; the dependency-preference layer gets its own assertion in block (d) with a temporary stub.
+model_preflight.configured_specs = lambda: ()
 
 # Count calls so we can PROVE the estimate spends nothing.
 _calls = {"n": 0}
@@ -53,6 +59,10 @@ lanes.probe = lambda timeout_s=None: [{"lane": "codex", "ok": True, "latency": 2
 
 print("-- (d) the metered target is derived, never a blind hardcode --")
 config._cfg_get = (lambda orig: (lambda s, k, d=None: {} if (s, k) == ("reliability", "probe_models") else orig(s, k, d)))(config._cfg_get)
+model_preflight.configured_specs = lambda: ("openai:gpt-5.6-sol",)   # a model this install DEPENDS on for openai
+check("a configured openai dependency is PREFERRED over the derivation (verify the id you depend on)",
+      reliability._metered_target("openai") == "gpt-5.6-sol")
+model_preflight.configured_specs = lambda: ()                        # none configured → fall through to derivation
 check("openai target = the named cheap default (gpt-5-nano, and it IS in the live catalog)", reliability._metered_target("openai") == "gpt-5-nano")
 check("deepseek default ('deepseek-chat') absent → derived cheapest-served (deepseek-v4-flash, not babbage)",
       reliability._metered_target("deepseek") == "deepseek-v4-flash")

@@ -38,6 +38,7 @@ def exercise_optional_writer_dispatch_contract():
         (reliability._persist_lane_remediation_verdict, lambda: reliability._persist_lane_remediation_verdict(
             OPTIONAL_WRITER_TEST_LABEL, OPTIONAL_WRITER_TEST_LABEL, OPTIONAL_WRITER_TEST_LABEL, {})),
         (reliability._prune_superseded_lane_health, lambda: reliability._prune_superseded_lane_health([], [], [])),
+        (reliability._persist_health, lambda: reliability._persist_health({}, None)),
         (guard.record_saving, lambda: guard.record_saving(OPTIONAL_WRITER_TEST_LABEL, OPTIONAL_WRITER_TEST_AMOUNT)),
         (guard.record_decision, lambda: guard.record_decision(
             OPTIONAL_WRITER_TEST_LABEL, OPTIONAL_WRITER_TEST_LABEL, OPTIONAL_WRITER_TEST_LABEL,

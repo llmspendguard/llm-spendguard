@@ -16,7 +16,7 @@ import logging
 import traceback
 
 from . import adapters, config
-from .ledger_writer import (best_effort_ledger_function, serialize_ledger_function,
+from .ledger_writer import (best_effort_ledger_function,
                             run_ledger_write, current_ledger_writer_connection)
 
 _PROBE_IN, _PROBE_OUT = 12, 8          # a one-line probe prompt + a one-word reply
@@ -544,7 +544,12 @@ def note_lane_model_ok(lane, model):
         raise
 
 
-@serialize_ledger_function
+# Telemetry cache write, NOT a money mutation: caches the reachability sweep so the receipt + notifier read it for
+# $0. Must be best-effort like its sibling telemetry writers — under ledger-writer contention (warm daemon + MCP
+# server + a commit hook all hitting the writer) a serialize_ledger_function raised LedgerQueryDeadline uncaught out
+# of the CLI health path (768) and stalled a commit chain. A telemetry write failing must warn-once, never crash its
+# caller. Durable spend/money writers stay serialize_ledger_function (the whole point of the two-decorator split).
+@best_effort_ledger_function
 def _persist_health(sweep_result, acts=None):
     """Record the last check's reachability (+ any remediation fixes) so the RECEIPT and the notifier can read it
     with NO new sweep — that is what lets a red lane surface in every conversation for $0. One row per resource.
