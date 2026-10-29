@@ -614,7 +614,7 @@ def _prefer_nano_else_legacy_column(available_columns, nano_column, legacy_colum
     return None
 
 
-def _read_incomplete_settlement_totals(connection, since=None, project=None):
+def _read_incomplete_settlement_totals(connection, since=None, project=None, intent=None):
     """Read explicit completeness metadata, retaining unknown historical state.
 
     This is the one raw calls read: it reports the gap rather than consuming an
@@ -639,6 +639,9 @@ def _read_incomplete_settlement_totals(connection, since=None, project=None):
         from .budget import normalize_ledger_project_id
         incomplete_sql += " AND project=?"
         incomplete_parameters.append(normalize_ledger_project_id(project))
+    if intent is not None:
+        incomplete_sql += " AND intent=?"
+        incomplete_parameters.append(intent)
     incomplete_row = connection.execute(incomplete_sql, tuple(incomplete_parameters)).fetchone()
     return {"n": int(incomplete_row[0]), "input_cost_floor": incomplete_row[1]}
 

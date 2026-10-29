@@ -913,6 +913,11 @@ def intent_spend(intent, window_s=86400):
         from . import ledger_read
         connection = _calls_db()
         available_columns = {column[1] for column in connection.execute("PRAGMA table_info(calls)")}
+        incomplete = ledger_read._read_incomplete_settlement_totals(
+            connection, since=cut, intent=intent)
+        if incomplete["n"]:
+            raise ledger_read.LedgerSettlementIncomplete(
+                incomplete["n"], incomplete["input_cost_floor"])
         legacy_cost_column, nano_cost_column = next(iter(CALL_OBSERVATION_NANO_COLUMNS.items()))
         selected_cost_column = ledger_read._prefer_nano_else_legacy_column(
             available_columns, nano_cost_column, legacy_cost_column)
@@ -927,6 +932,8 @@ def intent_spend(intent, window_s=86400):
         total = connection.execute(
             f"SELECT {total_expression} FROM calls WHERE intent=? AND ts>=?", (intent, cut)).fetchone()[0]
         return float(total)
+    except ledger_read.LedgerSettlementIncomplete:
+        raise
     except Exception:
         config.rollback_ledger_conn("calls")
         raise  # an unknown settlement must not disable the running monetary cap
