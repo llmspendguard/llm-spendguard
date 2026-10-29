@@ -38,9 +38,10 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
 
 import contextlib, io, sqlite3, subprocess                                      # noqa: E402
 from functools import partial
+from unittest.mock import patch
 from _script_checks import record_script_check
 
-from spendguard import bulkgate, config, expected_output, receipt               # noqa: E402
+from spendguard import bulkgate, calls, config, expected_output, receipt        # noqa: E402
 
 # How long the executed-command check waits on a child interpreter. A hung child would otherwise hang the
 # whole suite, and an unbounded wait is the defect this repo's own external-call doctrine blocks at write time.
@@ -55,6 +56,10 @@ NO_CAP_MODEL = "gpt-5-mini"
 
 # The real shape of the raisable class on this ledger: a judge bounded to a few hundred output tokens.
 BOUNDED_JUDGE_CAP = 220
+TRUNCATION_FIXTURE_KIND = "realtime"
+TRUNCATION_FIXTURE_COST = 1.0
+TRUNCATION_FIXTURE_FINISH = "max_tokens"
+TRUNCATION_FIXTURE_UNSEEN_MODEL = "a-model-never-seen-by-the-gate"
 
 
 class Checks:
@@ -222,11 +227,15 @@ def case_the_block_renders_with_a_remedy_for_every_model_it_lists(checks: Checks
     # derived from the window itself rather than written down, so it cannot drift out of range with the clock.
     inside_the_window = f"{receipt._windows()[2]}T12:00:00+00:00"
     with contextlib.closing(connection()) as c:
-        c.execute("CREATE TABLE IF NOT EXISTS calls (id TEXT PRIMARY KEY, ts TEXT, model TEXT, "
-                  "finish TEXT, cost REAL)")
-        for model in (AT_CEILING_MODEL, RAISABLE_MODEL, NO_CAP_MODEL, "a-model-never-seen-by-the-gate"):
-            c.execute("INSERT INTO calls (id, ts, model, finish, cost) VALUES (?,?,?,?,?)",
-                      (f"truncation-remedy-fixture-{model}", inside_the_window, model, "max_tokens", 1.0))
+        calls._ensure_call_observation_schema(c)
+        with patch.object(calls, "_calls_db", return_value=c):
+            for model in (AT_CEILING_MODEL, RAISABLE_MODEL, NO_CAP_MODEL, TRUNCATION_FIXTURE_UNSEEN_MODEL):
+                calls.record_call.__wrapped__(
+                    __name__, model, TRUNCATION_FIXTURE_KIND, TRUNCATION_FIXTURE_COST,
+                    finish=TRUNCATION_FIXTURE_FINISH,
+                    intent=__name__, project=__name__)
+                c.execute("UPDATE calls SET ts=? WHERE id=(SELECT id FROM calls ORDER BY rowid DESC LIMIT 1)",
+                          (inside_the_window,))
         c.commit()
         lines = receipt._truncation_rows(c)
     checks.that("the truncation block rendered", bool(lines), f"got {lines!r}")

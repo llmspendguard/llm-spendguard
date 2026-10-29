@@ -16,7 +16,9 @@ import functools
 import inspect
 
 from . import config
+from .calls import CALL_OBSERVATION_NANO_COLUMNS
 from .ledger_deadline_polling import LedgerDeadlinePolling
+from .money_scale import NANO_USD_PER_USD
 
 CC_RESIDENCY_SOURCE = "claude-code"
 CC_RESIDENCY_LATEST_SQL = "SELECT conv_id FROM spend_events WHERE source=? ORDER BY occurred_at DESC,conv_id DESC LIMIT 1"
@@ -68,51 +70,57 @@ ADVISOR_EVIDENCE_COLUMNS = tuple("provider model intent cost in_tok out_tok qual
 ADVISOR_INTERNAL_INTENT_PATTERN = "spendguard:%"
 INVOICE_OVERAGE_SOURCE = "anthropic-invoice"
 INVOICE_OVERAGE_INTENT_PATTERN = "anthropic-invoice:cc-overage%"
-DELEGATE_INVOICED_MONTHS_SQL = """SELECT substr(occurred_at,1,7) AS month,
-SUM(CAST(realtime_usd AS REAL)) AS dollars FROM spend_events
+
+
+CALL_COST_NANO_COLUMN = CALL_OBSERVATION_NANO_COLUMNS["cost"]
+CALL_INPUT_COST_FLOOR_NANO_COLUMN = CALL_OBSERVATION_NANO_COLUMNS["input_cost_floor"]
+_DELEGATE_INVOICED_MONTHS_SQL_TEMPLATE = """SELECT substr(occurred_at,1,7) AS month,
+SUM({realtime_nano})/{nano}.0 AS dollars FROM spend_events
 WHERE source=? AND intent LIKE ? GROUP BY month"""
 DELEGATE_PLAN_SOURCE = "claude-code"
-INVOICE_OVERAGE_MONTH_SQL = """SELECT substr(occurred_at,1,7) AS mo,
-ROUND(SUM(CAST(realtime_usd AS REAL)),2) AS amount FROM spend_events
+_INVOICE_OVERAGE_MONTH_SQL_TEMPLATE = """SELECT substr(occurred_at,1,7) AS mo,
+ROUND(SUM({realtime_nano})/{nano}.0,2) AS amount FROM spend_events
 WHERE source=? AND intent LIKE ? GROUP BY mo ORDER BY mo DESC"""
 COST_INTEGRITY_CACHE_COLUMNS = ("cache_read_tok", "cache_write_tok")
 COST_INTEGRITY_SCHEMA_SQL = "SELECT name FROM pragma_table_info(?)"
 COST_INTEGRITY_BUCKET_SQL = """SELECT model,date(ts) AS d,kind,COUNT(*) AS n,
-SUM(COALESCE(cost,0)) AS c,{input_projection} AS i,
+SUM(COALESCE({cost_nano},0))/{nano}.0 AS c,{{input_projection}} AS i,
 CASE WHEN COUNT(out_tok)=COUNT(*) THEN SUM(out_tok) END AS o,
-{cache_read_projection} AS cache_read_tok,
-{cache_write_projection} AS cache_write_tok FROM calls
+{{cache_read_projection}} AS cache_read_tok,
+{{cache_write_projection}} AS cache_write_tok FROM calls
 WHERE ts>=? AND kind IN ('realtime','batch')
-AND cost IS NOT NULL AND suspect IS NULL GROUP BY model,date(ts),kind{cache_completeness_group}"""
+AND cost IS NOT NULL AND suspect IS NULL GROUP BY model,date(ts),kind{{cache_completeness_group}}""".format(
+    cost_nano=CALL_COST_NANO_COLUMN, nano=NANO_USD_PER_USD)
 RECEIPT_LANE_ACTIVITY_SQL = """SELECT executor,COUNT(*) AS n,
 CASE WHEN COUNT(in_tok)=COUNT(*) THEN COALESCE(SUM(in_tok),0) END AS in_tok,
 CASE WHEN COUNT(out_tok)=COUNT(*) THEN COALESCE(SUM(out_tok),0) END AS out_tok
 FROM calls WHERE kind='subscription' AND ts>=? GROUP BY executor ORDER BY n DESC"""
 RECEIPT_TRUNCATION_GROUPS_SQL = """SELECT model,COUNT(*) AS n,
-COALESCE(SUM(cost),0) AS cost FROM calls WHERE finish IN ('max_tokens','length')
-AND ts>=? GROUP BY model ORDER BY cost DESC"""
-CC_SPEND_OVERVIEW_SQL = """SELECT
-COALESCE(SUM(CASE WHEN source='claude-code' THEN CAST(est_chat_usd AS REAL) ELSE 0 END),0) AS est,
-COALESCE(SUM(CASE WHEN source='anthropic-invoice' AND intent LIKE 'anthropic-invoice:cc-overage%' THEN CAST(realtime_usd AS REAL) ELSE 0 END),0) AS over,
-COALESCE(SUM(CASE WHEN source='anthropic-invoice' THEN CAST(subscription_usd AS REAL) ELSE 0 END),0) AS sub,
-COALESCE(SUM(CASE WHEN source='anthropic-invoice-api' THEN CAST(realtime_usd AS REAL) ELSE 0 END),0) AS api
+COALESCE(SUM({cost_nano}),0)/{nano}.0 AS cost FROM calls WHERE finish IN ('max_tokens','length')
+AND ts>=? GROUP BY model ORDER BY SUM({cost_nano}) DESC""".format(
+    cost_nano=CALL_COST_NANO_COLUMN, nano=NANO_USD_PER_USD)
+_CC_SPEND_OVERVIEW_SQL_TEMPLATE = """SELECT
+COALESCE(SUM(CASE WHEN source='claude-code' THEN {est_nano} ELSE 0 END),0)/{nano}.0 AS est,
+COALESCE(SUM(CASE WHEN source='anthropic-invoice' AND intent LIKE 'anthropic-invoice:cc-overage%' THEN {realtime_nano} ELSE 0 END),0)/{nano}.0 AS over,
+COALESCE(SUM(CASE WHEN source='anthropic-invoice' THEN {subscription_nano} ELSE 0 END),0)/{nano}.0 AS sub,
+COALESCE(SUM(CASE WHEN source='anthropic-invoice-api' THEN {realtime_nano} ELSE 0 END),0)/{nano}.0 AS api
 FROM spend_events"""
-CC_TOP_CONVERSATIONS_SQL = """SELECT conv_id,ROUND(SUM(CAST(est_chat_usd AS REAL)),2) AS v,COUNT(*) AS n,
+_CC_TOP_CONVERSATIONS_SQL_TEMPLATE = """SELECT conv_id,ROUND(SUM({est_nano})/{nano}.0,2) AS v,COUNT(*) AS n,
 MAX(COALESCE(in_tok,0)+COALESCE(cache_read_tok,0)+COALESCE(cache_write_tok,0)) AS mx
-FROM spend_events WHERE source='claude-code' GROUP BY conv_id ORDER BY v DESC"""
-CC_CONVERSATION_COST_SQL = """SELECT
-COALESCE(SUM(CASE WHEN source='claude-code' THEN CAST(est_chat_usd AS REAL) ELSE 0 END),0) AS est,
+FROM spend_events WHERE source='claude-code' GROUP BY conv_id ORDER BY SUM({est_nano}) DESC"""
+_CC_CONVERSATION_COST_SQL_TEMPLATE = """SELECT
+COALESCE(SUM(CASE WHEN source='claude-code' THEN {est_nano} ELSE 0 END),0)/{nano}.0 AS est,
 COUNT(CASE WHEN source='claude-code' THEN 1 END) AS n,
-COALESCE(SUM(CASE WHEN source='claude-code-overflow' THEN CAST(realtime_usd AS REAL) ELSE 0 END),0) AS over
+COALESCE(SUM(CASE WHEN source='claude-code-overflow' THEN {realtime_nano} ELSE 0 END),0)/{nano}.0 AS over
 FROM spend_events WHERE conv_id=?"""
 CALL_INTENTS_SQL = "SELECT intent,COUNT(*) AS c FROM calls WHERE intent IS NOT NULL AND intent!='' GROUP BY intent HAVING c>=? ORDER BY c DESC"
 CALL_MAX_ROWID_SQL = "SELECT COALESCE(MAX(rowid),0) AS maximum FROM calls"
-CALL_FLOW_COLUMNS = ("COUNT(*) AS n", "CASE WHEN COUNT(in_tok)=COUNT(*) THEN COALESCE(SUM(in_tok),0) END AS in_tok", "CASE WHEN COUNT(out_tok)=COUNT(*) THEN COALESCE(SUM(out_tok),0) END AS out_tok", "COALESCE(SUM(cost),0.0) AS cost", "MAX(caller) AS caller")
-CALL_COST_COLUMNS = ("COALESCE(intent,'(none)') AS intent", "COALESCE(model,'?') AS model", "COUNT(*) AS n", "COALESCE(SUM(cost),0) AS cost", "SUM(CASE WHEN quality='good' THEN 1 ELSE 0 END) AS good", "SUM(CASE WHEN quality='bad' THEN 1 ELSE 0 END) AS bad")
+CALL_FLOW_COLUMNS = ("COUNT(*) AS n", "CASE WHEN COUNT(in_tok)=COUNT(*) THEN COALESCE(SUM(in_tok),0) END AS in_tok", "CASE WHEN COUNT(out_tok)=COUNT(*) THEN COALESCE(SUM(out_tok),0) END AS out_tok", f"COALESCE(SUM({CALL_COST_NANO_COLUMN}),0)/{NANO_USD_PER_USD}.0 AS cost", "MAX(caller) AS caller")
+CALL_COST_COLUMNS = ("COALESCE(intent,'(none)') AS intent", "COALESCE(model,'?') AS model", "COUNT(*) AS n", f"COALESCE(SUM({CALL_COST_NANO_COLUMN}),0)/{NANO_USD_PER_USD}.0 AS cost", "SUM(CASE WHEN quality='good' THEN 1 ELSE 0 END) AS good", "SUM(CASE WHEN quality='bad' THEN 1 ELSE 0 END) AS bad")
 CALL_EXECUTOR_EXPRESSION = "COALESCE(NULLIF(NULLIF(executor,''),'api'), provider)"
 CALL_MODEL_EXPRESSION = "COALESCE(model,'?')"
 CALL_OUTCOME_EXPRESSION = "COALESCE(outcome,'')"
-CALL_METERED_COLUMNS = ("COALESCE(intent,'(none)') AS intent", "COALESCE(model,'?') AS model", "COUNT(*) AS n", "COALESCE(SUM(cost),0) AS cost", "CASE WHEN COUNT(in_tok)=COUNT(*) THEN COALESCE(SUM(in_tok),0) END AS in_tok", "CASE WHEN COUNT(in_tok)=COUNT(*) THEN COALESCE(AVG(in_tok),0) END AS avg_in")
+CALL_METERED_COLUMNS = ("COALESCE(intent,'(none)') AS intent", "COALESCE(model,'?') AS model", "COUNT(*) AS n", f"COALESCE(SUM({CALL_COST_NANO_COLUMN}),0)/{NANO_USD_PER_USD}.0 AS cost", "CASE WHEN COUNT(in_tok)=COUNT(*) THEN COALESCE(SUM(in_tok),0) END AS in_tok", "CASE WHEN COUNT(in_tok)=COUNT(*) THEN COALESCE(AVG(in_tok),0) END AS avg_in")
 LANE_SUBSCRIPTION_READ_COLUMNS = ("executor", "ts", "provider", "model", "in_tok", "out_tok", "project")
 CALL_KNOWN_INTENT_COLUMN = ("DISTINCT intent",)
 LANE_TOKEN_METRIC_COLUMNS = ("COUNT(*) AS n", "CASE WHEN COUNT(in_tok+out_tok)=COUNT(*) THEN SUM(in_tok+out_tok) END AS total", "CASE WHEN COUNT(in_tok)=COUNT(*) THEN SUM(in_tok) END AS input", "CASE WHEN COUNT(out_tok)=COUNT(*) THEN SUM(out_tok) END AS output")
@@ -124,30 +132,31 @@ LEDGER_ROUTING_SERVED_SQL = "COALESCE(NULLIF(served_model,''),'unknown')"
 CALIBRATION_CALL_COLUMNS = ("intent", "model", "kind", "in_tok", "out_tok", "cost", "ts")
 CALIBRATION_ACTUAL_COLUMNS = ("in_tok", "out_tok", "cost", "ts", "model")
 CALIBRATION_CORPUS_PREDICATE = "cost > 0 AND in_tok > 0 AND out_tok > 0 AND model IS NOT NULL"
-CC_OVERFLOW_COLUMNS = ("conv_id", "SUM(CAST(realtime_usd AS REAL)) AS billed")
-CC_ATTRIBUTION_MONTH_COLUMNS = ("substr(occurred_at,1,7) AS mo", "SUM(CAST(realtime_usd AS REAL)) AS billed")
-CC_ATTRIBUTION_WINDOW_COLUMNS = ("substr(occurred_at,1,7) AS mo", "conv_id",
-                                 "SUM(CAST(est_chat_usd AS REAL)) AS est")
-CC_ATTRIBUTION_FALLBACK_COLUMNS = ("substr(occurred_at,1,7) AS mo", "conv_id", "SUM(CAST(est_chat_usd AS REAL)) AS est")
+_CC_OVERFLOW_COLUMNS_TEMPLATE = ("conv_id", "SUM({realtime_nano})/{nano}.0 AS billed")
+_CC_ATTRIBUTION_MONTH_COLUMNS_TEMPLATE = ("substr(occurred_at,1,7) AS mo", "SUM({realtime_nano})/{nano}.0 AS billed")
+_CC_ATTRIBUTION_WINDOW_COLUMNS_TEMPLATE = ("substr(occurred_at,1,7) AS mo", "conv_id",
+                                           "SUM({est_nano})/{nano}.0 AS est")
+_CC_ATTRIBUTION_FALLBACK_COLUMNS_TEMPLATE = ("substr(occurred_at,1,7) AS mo", "conv_id", "SUM({est_nano})/{nano}.0 AS est")
 CC_CONVERSATION_TURN_COLUMNS = ("conv_id", "occurred_at", "model", "COALESCE(in_tok,0)", "COALESCE(cache_read_tok,0)", "COALESCE(cache_write_tok,0)")
 CC_ESTIMATE_PREDICATE = "source='claude-code' AND est_chat_usd IS NOT NULL"
-READ_CALL_INTENT_COST_COLUMNS = ("COALESCE(SUM(cost),0) AS cost",)
+READ_CALL_INTENT_COST_COLUMNS = (f"COALESCE(SUM({CALL_COST_NANO_COLUMN}),0)/{NANO_USD_PER_USD}.0 AS cost",)
 COUNT_RECENT_CALL_TESTS_COLUMNS = ("id",)
 READ_LANE_RECENT_COUNTS_COLUMNS = ("executor", "COUNT(*) AS n")
 READ_INTENT_MODEL_USAGE_COLUMNS = ("model", "COUNT(*) AS n")
 READ_BAKEOFF_MEASUREMENTS_COLUMNS = ("model", "quality", "ts")
-READ_LANE_FALLBACK_COSTS_COLUMNS = ("fell_from", "COUNT(*) AS n", "COALESCE(SUM(cost),0) AS cost")
+READ_LANE_FALLBACK_COSTS_COLUMNS = ("fell_from", "COUNT(*) AS n", f"COALESCE(SUM({CALL_COST_NANO_COLUMN}),0)/{NANO_USD_PER_USD}.0 AS cost")
 READ_LANE_CUMULATIVE_TOKENS_COLUMNS = ("executor", "CASE WHEN COUNT(in_tok+out_tok)=COUNT(*) THEN SUM(in_tok+out_tok) END AS tokens")
-READ_DELEGATE_OVERAGE_EVIDENCE_COLUMNS = ("SUM(CAST(est_chat_usd AS REAL)) AS value",)
+_READ_DELEGATE_OVERAGE_EVIDENCE_COLUMNS_TEMPLATE = ("SUM({est_nano})/{nano}.0 AS value",)
 READ_REALIZED_ADOPTIONS_COLUMNS = ("intent", "MIN(ts) AS adopted_ts")
 READ_REALIZED_CALL_RATES_COLUMNS = ("AVG(CASE WHEN ts < ? THEN cost END) AS before_rate", "SUM(ts < ?) AS before_n",
          "AVG(CASE WHEN ts >= ? THEN cost END) AS after_rate", "SUM(ts >= ?) AS after_n")
-READ_RECORDING_GAP_CELLS_COLUMNS = ("intent", "provider", "model", "date(ts) AS day", "SUM(cost) AS calls_billed")
-READ_CALIBRATION_SUMMARY_COLUMNS = ("intent", "model", "kind", "COUNT(*) AS n", "SUM(cost) AS cost")
-RECORDED_CALL_TOTAL_SQL = "SELECT COALESCE(SUM(cost),0) AS recorded_call_total FROM calls"
+READ_RECORDING_GAP_CELLS_COLUMNS = ("intent", "provider", "model", "date(ts) AS day", f"SUM({CALL_COST_NANO_COLUMN})/{NANO_USD_PER_USD}.0 AS calls_billed")
+READ_CALIBRATION_SUMMARY_COLUMNS = ("intent", "model", "kind", "COUNT(*) AS n", f"SUM({CALL_COST_NANO_COLUMN})/{NANO_USD_PER_USD}.0 AS cost")
+RECORDED_CALL_TOTAL_SQL = f"SELECT COALESCE(SUM({CALL_COST_NANO_COLUMN}),0)/{NANO_USD_PER_USD}.0 AS recorded_call_total FROM calls"
 INCOMPLETE_CALL_SCHEMA_COLUMNS = ("settlement_complete", "input_cost_floor")
 INCOMPLETE_CALL_TOTALS_SQL = """SELECT COUNT(*) AS n,
-SUM(input_cost_floor) AS input_cost_floor FROM calls WHERE settlement_complete=0"""
+SUM({input_floor_nano})/{nano}.0 AS input_cost_floor FROM calls WHERE settlement_complete=0""".format(
+    input_floor_nano=CALL_INPUT_COST_FLOOR_NANO_COLUMN, nano=NANO_USD_PER_USD)
 
 
 @dataclass
@@ -879,7 +888,7 @@ def read_recent_calls(since=None, until=None, where=None, limit=None, path=None)
 
 
 def read_spend_aggregates(group_by=("provider", "day"), since=None, until=None, path=None):
-    from .ledger import USD_COLS
+    from .ledger import SPEND_EVENT_NANO_COLUMNS, USD_COLS, spend_event_nano_sum_to_decimal
     dimensions = tuple(group_by)
     if dimensions not in LEDGER_READ_AGGREGATE_DIMENSIONS:
         raise ValueError(f"Unsupported ledger aggregate dimensions {dimensions!r}")
@@ -888,9 +897,14 @@ def read_spend_aggregates(group_by=("provider", "day"), since=None, until=None, 
         if value is not None:
             predicates.append(f"day {operator} ?")
             parameters.append(value)
-    projections = dimensions + tuple(f"dec_sum({column}) AS {column}" for column in USD_COLS) + ("COUNT(*) AS n",)
-    return read_ledger_rows(LedgerReadRequest(columns=projections, where_sql=" AND ".join(predicates),
+    projections = dimensions + tuple(
+        f"SUM({SPEND_EVENT_NANO_COLUMNS[column]}) AS {column}" for column in USD_COLS) + ("COUNT(*) AS n",)
+    rows = read_ledger_rows(LedgerReadRequest(columns=projections, where_sql=" AND ".join(predicates),
         parameters=tuple(parameters), group_by=dimensions, order_by=dimensions), path)
+    money_start = len(dimensions)
+    return tuple(LedgerReadRow(row.columns, row.values[:money_start] + tuple(
+        spend_event_nano_sum_to_decimal(value)
+        for value in row.values[money_start:money_start + len(USD_COLS)]) + row.values[-1:]) for row in rows)
 
 
 def read_advisor_evidence(as_of=None, intent=None, path=None):
@@ -982,7 +996,7 @@ def read_call_cost_summary(intent=None, path=None):
     where = "(intent IS NULL OR intent NOT LIKE ?)" + (" AND intent=?" if intent else "")
     parameters = (ADVISOR_INTERNAL_INTENT_PATTERN,) + ((intent,) if intent else ())
     return read_ledger_rows(LedgerReadRequest(LEDGER_CALLS_TABLE, CALL_COST_COLUMNS, where, parameters,
-        ("SUM(cost) DESC",), ("intent", "model")), path)
+        (f"SUM({CALL_COST_NANO_COLUMN}) DESC",), ("intent", "model")), path)
 
 
 def read_call_output_means(intent, call_class=None, origin_session=None, path=None):
@@ -1012,7 +1026,7 @@ def read_call_lane_outcomes(executor, since=None, call_class=None, path=None):
 def read_call_metered_intents(since, path=None):
     where = "cost > 0 AND ts >= ? AND COALESCE(NULLIF(executor,''),'') IN ('','api') AND kind='realtime' AND (intent IS NULL OR intent NOT LIKE ?)"
     return read_ledger_rows(LedgerReadRequest(LEDGER_CALLS_TABLE, CALL_METERED_COLUMNS, where,
-        (since, ADVISOR_INTERNAL_INTENT_PATTERN), ("SUM(cost) DESC",), ("intent", "model")), path)
+        (since, ADVISOR_INTERNAL_INTENT_PATTERN), (f"SUM({CALL_COST_NANO_COLUMN}) DESC",), ("intent", "model")), path)
 
 
 def count_recent_call_tests(intent, since, kinds, model=None, path=None):
@@ -1154,10 +1168,10 @@ def read_recording_gap_cells(intent_like=None, path=None):
 
 
 def read_represented_call_cell(intent, model, day, path=None):
-    from .ledger import LLM_USD_COLS, SpendLedger
+    from .ledger import LLM_USD_COLS, SPEND_EVENT_NANO_COLUMNS, SpendLedger
     represented = (f"COALESCE(SUM(CASE WHEN {SpendLedger._COUNTABLE} THEN "
-                   + "+".join(f"COALESCE({column},0)" for column in LLM_USD_COLS)
-                   + " ELSE 0 END),0) AS represented")
+                   + "+".join(f"COALESCE({SPEND_EVENT_NANO_COLUMNS[column]},0)" for column in LLM_USD_COLS)
+                   + f" ELSE 0 END),0)/{NANO_USD_PER_USD}.0 AS represented")
     return read_ledger_rows(LedgerReadRequest(LEDGER_EVENTS_TABLE, (represented,),
         "intent=? AND model=? AND day=?", (intent, model, day)), path)[0][0]
 
@@ -1168,12 +1182,12 @@ def read_routing_history_report(intent, *, since=None, as_of=None, limit=20):
     limit = max(0, int(limit))
     totals_row = _fetch_route_realized_rows(
         f"""SELECT COUNT(*),
-                   COALESCE(SUM(CASE WHEN {LEDGER_ROUTING_METERED_SQL} THEN cost ELSE 0 END),0),
+                   COALESCE(SUM(CASE WHEN {LEDGER_ROUTING_METERED_SQL} THEN {CALL_COST_NANO_COLUMN} ELSE 0 END),0)/{NANO_USD_PER_USD}.0,
                    COALESCE(SUM(CASE WHEN {LEDGER_ROUTING_METERED_SQL} THEN 1 ELSE 0 END),0),
                    COALESCE(SUM(CASE WHEN COALESCE(cost,0)<=0 THEN 1 ELSE 0 END),0),
                    COALESCE(SUM(CASE WHEN {LEDGER_ROUTING_EXECUTOR_SQL}='unknown' OR {LEDGER_ROUTING_LANE_SQL}='unknown' THEN 1 ELSE 0 END),0),
                    COALESCE(SUM(CASE WHEN cost>0 THEN 1 ELSE 0 END),0),
-                   COALESCE(SUM(CASE WHEN cost>0 THEN cost ELSE 0 END),0),
+                   COALESCE(SUM(CASE WHEN cost>0 THEN {CALL_COST_NANO_COLUMN} ELSE 0 END),0)/{NANO_USD_PER_USD}.0,
                    COALESCE(SUM(CASE WHEN COALESCE(cost,0)<=0
                                      AND {LEDGER_ROUTING_EXECUTOR_SQL} NOT IN ('unknown','api') THEN 1 ELSE 0 END),0)
             FROM calls WHERE {where}""", args)[0]
@@ -1188,7 +1202,7 @@ def read_routing_history_report(intent, *, since=None, as_of=None, limit=20):
 
     grouped = _fetch_route_realized_rows(
         f"""SELECT {LEDGER_ROUTING_EXECUTOR_SQL}, {LEDGER_ROUTING_LANE_SQL}, COUNT(*),
-                   COALESCE(SUM(CASE WHEN {LEDGER_ROUTING_METERED_SQL} THEN cost ELSE 0 END),0),
+                   COALESCE(SUM(CASE WHEN {LEDGER_ROUTING_METERED_SQL} THEN {CALL_COST_NANO_COLUMN} ELSE 0 END),0)/{NANO_USD_PER_USD}.0,
                    COALESCE(SUM(CASE WHEN {LEDGER_ROUTING_METERED_SQL} THEN 1 ELSE 0 END),0),
                    COALESCE(SUM(CASE WHEN COALESCE(cost,0)<=0 THEN 1 ELSE 0 END),0),
                    GROUP_CONCAT(DISTINCT NULLIF(served_model,'')),
@@ -1206,7 +1220,7 @@ def read_routing_history_report(intent, *, since=None, as_of=None, limit=20):
 
     model_rows = _fetch_route_realized_rows(
         f"""SELECT {LEDGER_ROUTING_SERVED_SQL}, COUNT(*),
-                   COALESCE(SUM(CASE WHEN {LEDGER_ROUTING_METERED_SQL} THEN cost ELSE 0 END),0),
+                   COALESCE(SUM(CASE WHEN {LEDGER_ROUTING_METERED_SQL} THEN {CALL_COST_NANO_COLUMN} ELSE 0 END),0)/{NANO_USD_PER_USD}.0,
                    COALESCE(SUM(CASE WHEN {LEDGER_ROUTING_METERED_SQL} THEN 1 ELSE 0 END),0),
                    COALESCE(SUM(CASE WHEN COALESCE(cost,0)<=0 THEN 1 ELSE 0 END),0)
             FROM calls WHERE {where} GROUP BY {LEDGER_ROUTING_SERVED_SQL}
@@ -1229,7 +1243,7 @@ def read_routing_history_report(intent, *, since=None, as_of=None, limit=20):
     total_fell = _fetch_route_realized_rows(f"SELECT COUNT(*) FROM calls WHERE {fell_where}", args)[0][0]
     fell_reason_rows = _fetch_route_realized_rows(
         f"""SELECT COALESCE(NULLIF(fell_reason,''),'unknown'), COUNT(*),
-                   COALESCE(SUM(CASE WHEN {LEDGER_ROUTING_METERED_SQL} THEN cost ELSE 0 END),0)
+                   COALESCE(SUM(CASE WHEN {LEDGER_ROUTING_METERED_SQL} THEN {CALL_COST_NANO_COLUMN} ELSE 0 END),0)/{NANO_USD_PER_USD}.0
             FROM calls WHERE {fell_where}
             GROUP BY COALESCE(NULLIF(fell_reason,''),'unknown') ORDER BY COUNT(*) DESC, 1""", args)
     fell_from_rows = _fetch_route_realized_rows(
@@ -1338,3 +1352,29 @@ def read_cc_conversation_turns(min_day=None, path=None):
         parameters = (min_day,)
     return read_ledger_rows(LedgerReadRequest(LEDGER_EVENTS_TABLE, CC_CONVERSATION_TURN_COLUMNS,
         where, parameters, order_by=("conv_id", "occurred_at")), path)
+
+
+from .ledger import SPEND_EVENT_NANO_COLUMNS
+
+_SPEND_EVENT_SQL_SUBSTITUTIONS = {
+    "realtime_nano": SPEND_EVENT_NANO_COLUMNS["realtime_usd"],
+    "est_nano": SPEND_EVENT_NANO_COLUMNS["est_chat_usd"],
+    "subscription_nano": SPEND_EVENT_NANO_COLUMNS["subscription_usd"],
+    "nano": NANO_USD_PER_USD,
+}
+DELEGATE_INVOICED_MONTHS_SQL = _DELEGATE_INVOICED_MONTHS_SQL_TEMPLATE.format(**_SPEND_EVENT_SQL_SUBSTITUTIONS)
+INVOICE_OVERAGE_MONTH_SQL = _INVOICE_OVERAGE_MONTH_SQL_TEMPLATE.format(**_SPEND_EVENT_SQL_SUBSTITUTIONS)
+CC_SPEND_OVERVIEW_SQL = _CC_SPEND_OVERVIEW_SQL_TEMPLATE.format(**_SPEND_EVENT_SQL_SUBSTITUTIONS)
+CC_TOP_CONVERSATIONS_SQL = _CC_TOP_CONVERSATIONS_SQL_TEMPLATE.format(**_SPEND_EVENT_SQL_SUBSTITUTIONS)
+CC_CONVERSATION_COST_SQL = _CC_CONVERSATION_COST_SQL_TEMPLATE.format(**_SPEND_EVENT_SQL_SUBSTITUTIONS)
+CC_OVERFLOW_COLUMNS = tuple(value.format(**_SPEND_EVENT_SQL_SUBSTITUTIONS)
+                            for value in _CC_OVERFLOW_COLUMNS_TEMPLATE)
+CC_ATTRIBUTION_MONTH_COLUMNS = tuple(value.format(**_SPEND_EVENT_SQL_SUBSTITUTIONS)
+                                     for value in _CC_ATTRIBUTION_MONTH_COLUMNS_TEMPLATE)
+CC_ATTRIBUTION_WINDOW_COLUMNS = tuple(value.format(**_SPEND_EVENT_SQL_SUBSTITUTIONS)
+                                      for value in _CC_ATTRIBUTION_WINDOW_COLUMNS_TEMPLATE)
+CC_ATTRIBUTION_FALLBACK_COLUMNS = tuple(value.format(**_SPEND_EVENT_SQL_SUBSTITUTIONS)
+                                        for value in _CC_ATTRIBUTION_FALLBACK_COLUMNS_TEMPLATE)
+READ_DELEGATE_OVERAGE_EVIDENCE_COLUMNS = tuple(
+    value.format(**_SPEND_EVENT_SQL_SUBSTITUTIONS)
+    for value in _READ_DELEGATE_OVERAGE_EVIDENCE_COLUMNS_TEMPLATE)

@@ -53,8 +53,9 @@ def test_call_nano_migration_preserves_raw_readers_and_is_idempotent(tmp_path):
     path = tmp_path / CALL_NANO_PROOF_DB
     connection = create_call_nano_legacy_fixture(path)
     before = connection.execute('SELECT id,cost,input_cost_floor FROM calls').fetchall()
-    expected = connection.execute('SELECT SUM(cost) FROM calls').fetchone()[0]
-    assert ledger_read.read_recorded_call_total(path) == expected
+    # FLAGGED EXPECTED: the sub-nano fixture amount is intentionally quantized through the money SSOT.
+    expected = float(nano_usd_to_usd(sum(
+        real_usd_to_nano_usd(raw) for raw in CALL_NANO_PROOF_AMOUNTS if raw is not None)))
     calls._ensure_call_observation_schema(connection)
     assert_call_nano_fixture_mirrors(connection)
     assert connection.execute('SELECT id,cost,input_cost_floor FROM calls').fetchall() == before

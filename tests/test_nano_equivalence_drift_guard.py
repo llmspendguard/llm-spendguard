@@ -22,6 +22,7 @@ from spendguard.money_scale import (
 from _pytest_fixture_bridge import run_pytest_style
 
 DRIFT_PROOF_DATABASE = 'nano-equivalence.sqlite'
+DRIFT_PROOF_MUTATED_DATABASE = 'nano-equivalence-mutated.sqlite'
 DRIFT_PROOF_STATUSES = ('draft', 'posted', 'void', 'reversed', 'reconciled', 'locked', None)
 DRIFT_PROOF_FLAGS = ((0, 0, None), (1, 0, None), (0, 1, None),
                      (0, 0, 'reconstructed'), (None, None, None))
@@ -212,6 +213,96 @@ def assert_stage7a_reader_text_equivalence(database, spend_ledger, where=None):
             stage7a_assert_reference(values['usd'], ledger.USD_COLS, predicate + ' AND day IS ?', (day,))
 
 
+def assert_stage7b_reader_text_equivalence(database, database_path):
+    """Exercise every Stage 7b projection family against independent raw storage."""
+    aggregate_rows = ledger_read.read_spend_aggregates(path=database_path)
+    for aggregate_row in aggregate_rows:
+        dimensions = (aggregate_row['provider'], aggregate_row['day'])
+        for column in ledger.USD_COLS:
+            raw_reference = raw_text_ledger_decimal_reference(
+                database, (column,), 'provider IS ? AND day IS ?', dimensions)
+            assert aggregate_row[column] == raw_reference
+
+    raw_call_total = sum((Decimal(str(row[0])) for row in database.execute(
+        'SELECT cost FROM calls WHERE cost IS NOT NULL')), Decimal(0))
+    raw_positive_call_total = sum((Decimal(str(row[0])) for row in database.execute(
+        'SELECT cost FROM calls WHERE cost>0')), Decimal(0))
+    database.execute("UPDATE calls SET finish='length', suspect=NULL, executor=NULL, kind='realtime', "
+                     "settlement_complete=1, token_usage_complete=1")
+    database.commit()
+    float_call_results = {
+        'recorded_call_total': ledger_read.read_recorded_call_total(database_path),
+        'call_intent_cost': ledger_read.read_call_intent_cost(__name__, DRIFT_PROOF_OTHER_DAY, database_path),
+        'call_flow': ledger_read.read_call_flow(path=database_path)['cost'],
+        'receipt_truncation': ledger_read.read_receipt_truncation_groups(
+            DRIFT_PROOF_OTHER_DAY, database_path)[0]['cost'],
+        'call_cost_summary': ledger_read.read_call_cost_summary(__name__, database_path)[0]['cost'],
+        'call_metered_intents': ledger_read.read_call_metered_intents(
+            DRIFT_PROOF_OTHER_DAY, database_path)[0]['cost'],
+    }
+    for reader_name, actual in float_call_results.items():
+        raw_reference = raw_positive_call_total if reader_name == 'call_metered_intents' else raw_call_total
+        assert abs(Decimal(str(actual)) - raw_reference) <= Decimal(DRIFT_PROOF_CENT), (
+            reader_name, actual, raw_reference)
+
+    mutation_nano = usd_to_nano_usd(DRIFT_PROOF_CENT)
+    mutated_path = database_path.with_name(DRIFT_PROOF_MUTATED_DATABASE)
+    with contextlib.closing(sqlite3.connect(mutated_path)) as mutated_database:
+        database.backup(mutated_database)
+        for nano_column in ledger.SPEND_EVENT_NANO_COLUMNS.values():
+            mutated_database.execute(
+                f'UPDATE spend_events SET {nano_column}={nano_column}+? WHERE {nano_column} IS NOT NULL',
+                (mutation_nano,))
+        for nano_column in calls.CALL_OBSERVATION_NANO_COLUMNS.values():
+            mutated_database.execute(
+                f'UPDATE calls SET {nano_column}={nano_column}+? WHERE {nano_column} IS NOT NULL',
+                (mutation_nano,))
+        mutated_database.commit()
+
+        mutated_aggregate_rows = ledger_read.read_spend_aggregates(path=mutated_path)
+        assert len(mutated_aggregate_rows) == len(aggregate_rows)
+        for raw_row, mutated_row in zip(aggregate_rows, mutated_aggregate_rows, strict=True):
+            dimensions = (raw_row['provider'], raw_row['day'])
+            assert dimensions == (mutated_row['provider'], mutated_row['day'])
+            for raw_column in ledger.USD_COLS:
+                nano_column = ledger.SPEND_EVENT_NANO_COLUMNS[raw_column]
+                populated_count = mutated_database.execute(
+                    f'SELECT COUNT({nano_column}) FROM spend_events WHERE provider IS ? AND day IS ?',
+                    dimensions).fetchone()[0]
+                expected_delta = nano_usd_to_usd(populated_count * mutation_nano)
+                assert mutated_row[raw_column] - raw_row[raw_column] == expected_delta
+                untouched_raw = raw_text_ledger_decimal_reference(
+                    mutated_database, (raw_column,), 'provider IS ? AND day IS ?', dimensions)
+                assert untouched_raw == raw_row[raw_column]
+
+        mutated_call_results = {
+            'recorded_call_total': ledger_read.read_recorded_call_total(mutated_path),
+            'call_intent_cost': ledger_read.read_call_intent_cost(
+                __name__, DRIFT_PROOF_OTHER_DAY, mutated_path),
+            'call_flow': ledger_read.read_call_flow(path=mutated_path)['cost'],
+            'receipt_truncation': ledger_read.read_receipt_truncation_groups(
+                DRIFT_PROOF_OTHER_DAY, mutated_path)[0]['cost'],
+            'call_cost_summary': ledger_read.read_call_cost_summary(
+                __name__, mutated_path)[0]['cost'],
+            'call_metered_intents': ledger_read.read_call_metered_intents(
+                DRIFT_PROOF_OTHER_DAY, mutated_path)[0]['cost'],
+        }
+        populated_call_count = mutated_database.execute(
+            f'SELECT COUNT({calls.CALL_OBSERVATION_NANO_COLUMNS["cost"]}) FROM calls '
+            f'WHERE {calls.CALL_OBSERVATION_NANO_COLUMNS["cost"]} IS NOT NULL').fetchone()[0]
+        positive_call_count = mutated_database.execute(
+            f'SELECT COUNT({calls.CALL_OBSERVATION_NANO_COLUMNS["cost"]}) FROM calls WHERE cost>0 '
+            f'AND {calls.CALL_OBSERVATION_NANO_COLUMNS["cost"]} IS NOT NULL').fetchone()[0]
+        for reader_name, mutated_result in mutated_call_results.items():
+            affected_count = (positive_call_count if reader_name == 'call_metered_intents'
+                              else populated_call_count)
+            expected_delta = nano_usd_to_usd(affected_count * mutation_nano)
+            actual_delta = Decimal(str(mutated_result)) - Decimal(str(float_call_results[reader_name]))
+            assert abs(actual_delta - expected_delta) <= Decimal(DRIFT_PROOF_CENT), (
+                reader_name, actual_delta, expected_delta)
+            assert actual_delta != Decimal(DRIFT_PROOF_ZERO_TOLERANCE), reader_name
+
+
 def create_nano_equivalence_fixture(directory):
     path = directory / DRIFT_PROOF_DATABASE
     database = sqlite3.connect(path, check_same_thread=False)
@@ -314,6 +405,7 @@ def test_nano_equivalence_canonical_readers_and_filter_cross_product(tmp_path):
             checkpoint_total = sum(effort_titration._load_progress(str(index), __name__, [__name__])[__name__]['cost']
                                    for index in range(len(DRIFT_PROOF_REAL_AMOUNTS)))
             assert abs(report['effort_checkpoint_cost']['nano_result'] - Decimal(str(checkpoint_total))) <= Decimal(DRIFT_PROOF_CENT)
+        assert_stage7b_reader_text_equivalence(database, path)
         # Measurement readers use a distinct file; point the established read connection at this fixture.
         with patch.object(measurement, '_measurements_db', return_value=database):
             measured_total = sum(row['spend_usd'] or 0 for row in measurement.list_readings(limit=len(DRIFT_PROOF_REAL_AMOUNTS)))

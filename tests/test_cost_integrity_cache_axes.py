@@ -10,7 +10,7 @@ from types import SimpleNamespace
 os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="sg-cache-axes-")
 os.environ["SPENDGUARD_NO_AUTOINSTALL"] = "1"
 
-from spendguard import cost_integrity, ledger_read, pricing
+from spendguard import calls, cost_integrity, ledger_read, pricing
 
 CACHE_AXIS_MODEL = "claude-opus-4-8"
 CACHE_AXIS_FRESH = 1234
@@ -23,9 +23,6 @@ CACHE_AXIS_DAY = "offline-day"
 CACHE_AXIS_KINDS = ("realtime", "batch")
 CACHE_AXIS_FAILURE = "injected pricing outage"
 CACHE_AXIS_DATABASE_NAME = "cache_axes.sqlite"
-CACHE_AXIS_SCHEMA = """CREATE TABLE calls (model TEXT,ts TEXT,kind TEXT,cost REAL,
-in_tok INTEGER,out_tok INTEGER,suspect TEXT,cache_read_tok INTEGER,cache_write_tok INTEGER)"""
-CACHE_AXIS_INSERT = "INSERT INTO calls VALUES (?,datetime('now'),?,?,?,?,NULL,?,?)"
 
 for cache_axis_kind in CACHE_AXIS_KINDS:
     cache_axis_rates = pricing.price(CACHE_AXIS_MODEL)
@@ -59,9 +56,13 @@ cache_axis_realtime_cost = pricing.realtime_cost(CACHE_AXIS_MODEL, CACHE_AXIS_FR
                                                 cache_creation_tok=CACHE_AXIS_WRITE)
 cache_axis_path = Path(os.environ["SPENDGUARD_HOME"]) / CACHE_AXIS_DATABASE_NAME
 with sqlite3.connect(cache_axis_path) as cache_axis_connection:
-    cache_axis_connection.execute(CACHE_AXIS_SCHEMA)
-    cache_axis_connection.execute(CACHE_AXIS_INSERT, (CACHE_AXIS_MODEL, CACHE_AXIS_KINDS[0], cache_axis_realtime_cost,
-                                  CACHE_AXIS_FRESH + CACHE_AXIS_READ, CACHE_AXIS_OUTPUT, CACHE_AXIS_READ, CACHE_AXIS_WRITE))
+    calls._ensure_call_observation_schema(cache_axis_connection)
+    with patch.object(calls, "_calls_db", return_value=cache_axis_connection):
+        calls.record_call.__wrapped__(
+            __name__, CACHE_AXIS_MODEL, CACHE_AXIS_KINDS[0], cache_axis_realtime_cost,
+            in_tok=CACHE_AXIS_FRESH + CACHE_AXIS_READ, out_tok=CACHE_AXIS_OUTPUT,
+            cache_read_tok=CACHE_AXIS_READ, cache_write_tok=CACHE_AXIS_WRITE,
+            intent=__name__, project=__name__)
 cache_axis_rows = ledger_read.read_cost_integrity_buckets(CACHE_AXIS_DAYS, cache_axis_path)
 assert cost_integrity.classify_impossible_cost_buckets(row.values for row in cache_axis_rows) == ([], 0)
 assert cache_axis_rows[0]["i"] == CACHE_AXIS_FRESH
@@ -69,8 +70,12 @@ assert cache_axis_rows[0]["cache_read_tok"] == CACHE_AXIS_READ
 assert cache_axis_rows[0]["cache_write_tok"] == CACHE_AXIS_WRITE
 # Fault dimension: partially populated bucket cannot silently SUM past a missing cache component.
 with sqlite3.connect(cache_axis_path) as cache_axis_connection:
-    cache_axis_connection.execute(CACHE_AXIS_INSERT, (CACHE_AXIS_MODEL, CACHE_AXIS_KINDS[0], cache_axis_realtime_cost,
-                                  CACHE_AXIS_FRESH, CACHE_AXIS_OUTPUT, None, CACHE_AXIS_WRITE))
+    with patch.object(calls, "_calls_db", return_value=cache_axis_connection):
+        calls.record_call.__wrapped__(
+            __name__, CACHE_AXIS_MODEL, CACHE_AXIS_KINDS[0], cache_axis_realtime_cost,
+            in_tok=CACHE_AXIS_FRESH, out_tok=CACHE_AXIS_OUTPUT,
+            cache_read_tok=None, cache_write_tok=CACHE_AXIS_WRITE,
+            intent=__name__, project=__name__)
 cache_axis_rows = ledger_read.read_cost_integrity_buckets(CACHE_AXIS_DAYS, cache_axis_path)
 assert len(cache_axis_rows) == len(CACHE_AXIS_KINDS)
 assert any(row["cache_read_tok"] is None for row in cache_axis_rows)
@@ -101,7 +106,7 @@ with patch.object(ledger_read, "read_cost_integrity_buckets", return_value=cache
 print("OK cache axis reconstruction, legacy coverage, and injected failures")
 
 # Provider observations must reach the real calls writer, not just hand-built SQL fixtures.
-from spendguard import calls, gate, guard, bulkgate
+from spendguard import gate, guard, bulkgate
 
 cache_axis_usage = SimpleNamespace(input_tokens=CACHE_AXIS_FRESH, output_tokens=CACHE_AXIS_OUTPUT,
     cache_read_input_tokens=CACHE_AXIS_READ, cache_creation_input_tokens=CACHE_AXIS_WRITE,

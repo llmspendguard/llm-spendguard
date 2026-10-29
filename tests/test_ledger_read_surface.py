@@ -47,6 +47,7 @@ SURFACE_FORMATTED_MONEY = "receipt-ssot-money"
 SURFACE_ESTIMATED_VALUE = "2.0"
 SURFACE_SEED_INTENT = "surface-characterization"
 SURFACE_OVERVIEW_ID_PREFIX = "overview"
+SURFACE_CALL_KIND = "realtime"
 
 
 def seed_surface_conversations(path, conversation_count):
@@ -62,14 +63,17 @@ def seed_surface_conversations(path, conversation_count):
     close_ledger_writers()
 
 
-def seed_surface_overview_raw_rows(path, raw_row_count, conversation_count):
+def seed_surface_overview_events(path, event_count, conversation_count):
     writer = SpendLedger(path, owned_connection=config.open_ledger_connection(path))
-    writer._conn.executemany(
-        "INSERT INTO spend_events(id,source,occurred_at,day,provider,est_chat_usd,conv_id) VALUES (?,?,?,?,?,?,?)",
-        ((f"{SURFACE_OVERVIEW_ID_PREFIX}-{index}", SURFACE_CONVERSATION_SOURCE, SURFACE_SEED_DAY, SURFACE_SEED_DAY,
-          SURFACE_SEED_PROVIDER, SURFACE_ESTIMATED_VALUE, str(index % conversation_count))
-         for index in range(raw_row_count)))
-    writer._conn.commit()
+    for index in range(event_count):
+        writer.record_event({
+            "id": f"{SURFACE_OVERVIEW_ID_PREFIX}-{index}",
+            "source": SURFACE_CONVERSATION_SOURCE,
+            "occurred_at": SURFACE_SEED_DAY,
+            "provider": SURFACE_SEED_PROVIDER,
+            "est_chat_usd": SURFACE_ESTIMATED_VALUE,
+            "conv_id": str(index % conversation_count),
+        })
     writer._conn.close()
     close_ledger_writers()
 
@@ -111,8 +115,10 @@ def run_surface_guards(failures):
                             and grouped_total[SURFACE_SEED_PROVIDER]["est_chat_usd"] == SURFACE_SEED_COUNT * float(SURFACE_ESTIMATED_VALUE)
                             and grouped_total[SURFACE_SEED_PROVIDER]["billed_usd"] == expected_total, failures)
         calls._ensure_call_observation_schema(writer._conn)
-        writer._conn.execute("INSERT INTO calls(ts,intent,provider,model,cost) VALUES (?,?,?,?,?)",
-                             (SURFACE_SEED_DAY, SURFACE_SEED_INTENT, SURFACE_SEED_PROVIDER, SURFACE_SEED_SOURCE, SURFACE_ESTIMATED_VALUE))
+        with patch.object(calls, "_calls_db", return_value=writer._conn):
+            calls.record_call.__wrapped__(
+                SURFACE_SEED_PROVIDER, SURFACE_SEED_SOURCE, SURFACE_CALL_KIND, SURFACE_ESTIMATED_VALUE,
+                intent=SURFACE_SEED_INTENT, project=__name__)
         writer._conn.commit()
         writer._conn.close()
         close_ledger_writers()
@@ -153,7 +159,7 @@ def run_surface_guards(failures):
                 f"paged conversations return min({conversation_count}, {SURFACE_TEST_CAP}) rows without raising",
                 len(page) == min(conversation_count, SURFACE_TEST_CAP), failures)
         overview_path = Path(surface_directory) / "overview.sqlite"
-        seed_surface_overview_raw_rows(
+        seed_surface_overview_events(
             overview_path, SURFACE_OVERVIEW_RAW_ROW_COUNT, SURFACE_OVERVIEW_CONVERSATION_COUNT)
         overview = ledger_read.read_cc_spend_overview(path=overview_path)
         check_surface_guard("spend overview aggregates more raw rows than the global row cap without raising",
