@@ -32,7 +32,7 @@ from types import MappingProxyType, MethodType
 from .schema_indexes import ensure_ordered_indexes_coverage
 from decimal import Decimal, InvalidOperation, getcontext
 from . import config
-from .money_scale import usd_to_nano_usd, nano_usd_to_usd, assert_nano_total_matches
+from .money_scale import NANO_USD_PER_USD, usd_to_nano_usd, nano_usd_to_usd, assert_nano_total_matches
 
 getcontext().prec = 34   # ample for exact money arithmetic (28 is the default; money never needs more than this)
 
@@ -1017,11 +1017,17 @@ class SpendLedger:
         w, args = self._where(since, until, {**(where or {}), **filters})
         if filt:
             w += " AND " + filt
-        sums = ", ".join(f"SUM({SPEND_EVENT_NANO_COLUMNS[c]})" for c in cols)
+        sums = ", ".join(
+            f"dec_sum(COALESCE({SPEND_EVENT_NANO_COLUMNS[c]}, "
+            f"CASE WHEN currency='USD' THEN "
+            f"CAST(ROUND({c} * {NANO_USD_PER_USD}) AS INTEGER) END))"
+            for c in cols
+        )
         cursor = self._conn.execute(f"SELECT {sums} FROM spend_events WHERE 1=1" + w, args)
         try:
             r = cursor.fetchone()
-            return format(sum((spend_event_nano_sum_to_decimal(x) for x in r), Decimal(0)), 'f')
+            return format(sum((spend_event_nano_sum_to_decimal(None if x is None else int(x))
+                               for x in r), Decimal(0)), 'f')
         finally:
             cursor.close()
 
