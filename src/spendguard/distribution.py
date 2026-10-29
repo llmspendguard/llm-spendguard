@@ -200,11 +200,11 @@ def distribution_configured_ledger_paths():
 
 
 def distribution_snapshot_excluded(directory, name):
-    """Exclude only top-level entries whose spendguard ownership is proven."""
+    """Copy only bounded probe policy files, never arbitrary home state or backups."""
     source_home = Path(config.HOME).resolve(strict=False)
     parent = Path(directory).resolve(strict=False)
     if parent != source_home:
-        return False
+        return True
     entry = (parent / name).resolve(strict=False)
     if entry in distribution_configured_ledger_paths():
         return True
@@ -212,7 +212,9 @@ def distribution_snapshot_excluded(directory, name):
         return True
     configured_probe_cache = (source_home / str(
         distribution_config_value("probe_cache_dirname"))).resolve(strict=False)
-    return entry == configured_probe_cache and entry.is_dir()
+    if entry == configured_probe_cache and entry.is_dir():
+        return True
+    return name not in (config.CONFIG_JSON.name, config.FLAG.name, release.POINTER_NAME) or not entry.is_file()
 
 
 def distribution_snapshot_fingerprint(source):
@@ -260,6 +262,8 @@ def rebuild_or_reuse_distribution_probe_base():
         previous = {}
     if base.is_dir() and previous.get("fingerprint") == fingerprint:
         mark_distribution_ephemeral_dir(base)
+        write_distribution_probe_owner_marker(
+            base / str(distribution_config_value("probe_temp_marker_name")))
         return base
     build = cache / f"{base.name}.building-{os.getpid()}"
     if build.exists():
@@ -294,9 +298,16 @@ def sweep_stale_distribution_probe_roots():
 
 
 def sweep_stale_distribution_probe_base_builds(cache, base):
-    """Reclaim interrupted cached-base builds only after proving the owner is gone."""
+    """Reclaim interrupted builds and sibling cached bases with proven-dead owners."""
     marker = str(distribution_config_value("probe_temp_marker_name"))
     sweep_distribution_probe_owner_candidates(cache.glob(f"{base.name}.building-*"), marker)
+    for candidate in cache.parent.iterdir():
+        if candidate == cache or candidate.is_symlink() or not candidate.is_dir():
+            continue
+        if not (candidate / DISTRIBUTION_EPHEMERAL_MARKER).is_file():
+            continue
+        sweep_distribution_probe_owner_candidates(
+            (candidate,), Path(base.name) / marker)
 
 
 def sweep_distribution_probe_owner_candidates(candidates, marker):
@@ -346,10 +357,10 @@ def clone_distribution_probe_base(base, destination, timeout_seconds):
 
 @contextlib.contextmanager
 def distribution_probe_environment(timeout_seconds=None):
-    """Observe the real policy through a disposable, complete state snapshot.
+    """Observe the real policy through a disposable, bounded policy snapshot.
 
     Startup hooks and doctor may register an interpreter or initialize a ledger.
-    Keeping all state, including gate-disable markers, preserves their proof while
+    Keeping policy and gate-disable markers preserves their proof while
     confining those incidental writes to temporary storage for every probe.
     """
     sweep_stale_distribution_probe_roots()

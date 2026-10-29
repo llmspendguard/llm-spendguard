@@ -1,6 +1,7 @@
 """Guards for bounded, cached, isolated distribution observation."""
 import atexit
 from datetime import datetime, timedelta, timezone
+import errno
 import json
 import os
 from pathlib import Path
@@ -18,6 +19,8 @@ DISTRIBUTION_STALE_DIST_INFO_NAME = "llm_spendguard-stale.dist-info"
 DISTRIBUTION_SNAPSHOT_FIFO_NAME = "discovered-unit.fifo"
 DISTRIBUTION_SNAPSHOT_REGULAR_CONTROL_NAME = "regular-control.json"
 DISTRIBUTION_SNAPSHOT_REGULAR_CONTROL_CONTENT = "unchanged regular evidence"
+DISTRIBUTION_SNAPSHOT_STALE_OWNER_PID_OFFSET = 1
+DISTRIBUTION_SNAPSHOT_STALE_OWNER_CREATE_TIME = "0.0"
 if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
     os.environ["SPENDGUARD_TEST_ISOLATED"] = "1"
     os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(
@@ -35,7 +38,7 @@ from spendguard import adapters, config_schema, distribution, manifest
 def seed_distribution_snapshot_guard_home(root):
     home = root / "state"
     home.mkdir()
-    (home / "policy.json").write_text("policy")
+    (home / distribution.config.CONFIG_JSON.name).write_text(json.dumps({"budget": {"backend": "sqlite"}}))
     (home / "snapshots").mkdir()
     (home / "snapshots" / distribution.DISTRIBUTION_EPHEMERAL_MARKER).touch()
     (home / "snapshots" / "large.db").write_text("recovery")
@@ -61,8 +64,8 @@ def guard_1_unchanged_snapshot_skips_bulk_copy_and_policy_touch_rebuilds(tmp_pat
         distribution.ensure_distribution_probe_base()
         distribution.ensure_distribution_probe_base()
         assert len(base_copies) == 1
-        policy = home / "policy.json"
-        policy.write_text("changed-policy")
+        policy = home / distribution.config.CONFIG_JSON.name
+        policy.write_text(json.dumps({"budget": {"backend": "sqlite"}, "changed_policy": True}))
         distribution.ensure_distribution_probe_base()
         assert len(base_copies) == 2
 
@@ -81,10 +84,10 @@ def guard_2_excludes_outputs_but_keeps_policy_and_consistent_ledger(tmp_path):
         distribution.config.cfg_invalidate()
         with distribution.distribution_probe_environment() as environment:
             snapshot = Path(environment["SPENDGUARD_HOME"])
-            assert (snapshot / "policy.json").read_text() == "policy"
+            assert (snapshot / distribution.config.CONFIG_JSON.name).is_file()
             assert not (snapshot / "snapshots").exists()
             assert not (snapshot / "reclaim-backups").exists()
-            assert (snapshot / "embed_fixture.jsonl").read_text() == "checkpoint"
+            assert not (snapshot / "embed_fixture.jsonl").exists()
             policy = json.loads((snapshot / distribution.config.CONFIG_JSON.name).read_text())
             assert Path(policy["budget"]["db_path"]).read_bytes() == b"ledger-evidence"
 
@@ -256,26 +259,28 @@ def test_guard_7_new_operational_values_are_schema_defaults():
             key: entry["default"] for key, entry in entries.items()}
 
 
-def guard_8_vanished_walked_entry_differs_from_never_present(tmp_path):
-    home = tmp_path / "state"
+def guard_8_vanished_policy_is_omitted_from_probe_fingerprint(tmp_path):
+    home = (tmp_path / "state").resolve()
     home.mkdir()
-    vanished_entry = home / "vanished.json"
+    vanished_entry = home / distribution.config.CONFIG_JSON.name
     vanished_entry.write_text("walked evidence")
     real_path_stat = Path.stat
 
     def raise_for_vanished_distribution_snapshot_entry(path, *args, **kwargs):
         if path == vanished_entry:
-            raise FileNotFoundError(path)
+            raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), str(path))
         return real_path_stat(path, *args, **kwargs)
 
-    with patch.object(Path, "stat", raise_for_vanished_distribution_snapshot_entry):
+    with patch.object(distribution.config, "HOME", home), \
+         patch.object(Path, "stat", raise_for_vanished_distribution_snapshot_entry):
         vanished_fingerprint = distribution.distribution_snapshot_fingerprint(home)
     vanished_entry.unlink()
-    absent_fingerprint = distribution.distribution_snapshot_fingerprint(home)
-    assert vanished_fingerprint != absent_fingerprint
+    with patch.object(distribution.config, "HOME", home):
+        absent_fingerprint = distribution.distribution_snapshot_fingerprint(home)
+    assert vanished_fingerprint == absent_fingerprint
 
 
-def guard_9_nonregular_entry_presence_changes_fingerprint(tmp_path):
+def guard_9_nonregular_entry_preserves_probe_fingerprint(tmp_path):
     if not hasattr(os, "mkfifo"):
         print("  [SKIP] os.mkfifo unavailable on this platform")
         return
@@ -289,11 +294,11 @@ def guard_9_nonregular_entry_presence_changes_fingerprint(tmp_path):
     regular_control_details = regular_control.stat()
     fifo.unlink()
     fingerprint_without_fifo = distribution.distribution_snapshot_fingerprint(home)
-    assert fingerprint_with_fifo != fingerprint_without_fifo
+    assert fingerprint_with_fifo == fingerprint_without_fifo
     assert regular_control.stat() == regular_control_details
 
 
-def guard_10_unknown_named_entries_are_fingerprinted_and_copied(tmp_path):
+def guard_10_unknown_named_entries_are_excluded_from_probe_state(tmp_path):
     home = tmp_path / "state"
     home.mkdir()
     user_snapshots = home / "snapshots"
@@ -318,10 +323,10 @@ def guard_10_unknown_named_entries_are_fingerprinted_and_copied(tmp_path):
         distribution.distribution_snapshot_fingerprint(home)
         snapshot = distribution.rebuild_or_reuse_distribution_probe_base()
     fingerprint_paths = {row[0] for row in encoded_manifests[0]}
-    assert required_policy.relative_to(home).as_posix() in fingerprint_paths
-    assert user_backup.relative_to(home).as_posix() in fingerprint_paths
-    assert (snapshot / required_policy.relative_to(home)).read_text() == "required"
-    assert (snapshot / user_backup.relative_to(home)).read_text() == "user backup"
+    assert required_policy.relative_to(home).as_posix() not in fingerprint_paths
+    assert user_backup.relative_to(home).as_posix() not in fingerprint_paths
+    assert not (snapshot / required_policy.relative_to(home)).exists()
+    assert not (snapshot / user_backup.relative_to(home)).exists()
 
 
 def guard_11_owned_output_and_configured_ledger_follow_provenance(tmp_path):
@@ -363,10 +368,10 @@ def guard_12_embed_checkpoints_follow_ephemeral_dir_provenance(tmp_path):
         assert checkpoint.parent == home / adapters.EMBED_CHECKPOINT_DIRNAME
         assert (checkpoint_dir / distribution.DISTRIBUTION_EPHEMERAL_MARKER).is_file()
         assert distribution.distribution_snapshot_excluded(home, adapters.EMBED_CHECKPOINT_DIRNAME)
-        assert not distribution.distribution_snapshot_excluded(home, "embed_fixture.jsonl")
+        assert distribution.distribution_snapshot_excluded(home, "embed_fixture.jsonl")
         snapshot = distribution.ensure_distribution_probe_base()
         assert not (snapshot / adapters.EMBED_CHECKPOINT_DIRNAME).exists()
-        assert (snapshot / "embed_fixture.jsonl").read_text() == "checkpoint"
+        assert not (snapshot / "embed_fixture.jsonl").exists()
 
 
 def guard_13_cold_legacy_embed_checkpoints_move_but_warm_ones_remain(tmp_path):
@@ -396,12 +401,39 @@ def guard_13_cold_legacy_embed_checkpoints_move_but_warm_ones_remain(tmp_path):
         snapshot = distribution.ensure_distribution_probe_base()
         assert not (snapshot / adapters.EMBED_CHECKPOINT_DIRNAME).exists()
         assert not (snapshot / cold.name).exists()
-        assert (snapshot / warm.name).read_text() == "warm-checkpoint"
+        assert not (snapshot / warm.name).exists()
 
 
 def run_distribution_snapshot_guard_with_temporary_path(guard):
     with tempfile.TemporaryDirectory() as temporary_directory:
         guard(Path(temporary_directory))
+
+
+def test_distribution_sibling_cache_namespaces_preserve_live_owners():
+    with tempfile.TemporaryDirectory() as directory:
+        cache_root = Path(directory)
+        base_name = str(distribution.distribution_config_value("probe_cache_base_name"))
+        marker_name = str(distribution.distribution_config_value("probe_temp_marker_name"))
+        stale_owner_pid = os.getpid() + DISTRIBUTION_SNAPSHOT_STALE_OWNER_PID_OFFSET
+        with tempfile.TemporaryDirectory(dir=cache_root) as current_name, \
+             tempfile.TemporaryDirectory(dir=cache_root) as stale_name, \
+             tempfile.TemporaryDirectory(dir=cache_root) as live_name:
+            current, stale, live = map(Path, (current_name, stale_name, live_name))
+            for namespace in (current, stale, live):
+                distribution.mark_distribution_ephemeral_dir(namespace)
+                (namespace / base_name).mkdir()
+            distribution.write_distribution_probe_owner_marker(live / base_name / marker_name)
+            (stale / base_name / marker_name).write_text(json.dumps({
+                distribution.DISTRIBUTION_PROBE_OWNER_PID_KEY: stale_owner_pid,
+                distribution.DISTRIBUTION_PROBE_OWNER_CREATE_TIME_KEY: DISTRIBUTION_SNAPSHOT_STALE_OWNER_CREATE_TIME,
+            }))
+            with patch.object(distribution.fleet, "_classify_fleet_pid_identity",
+                              return_value=distribution.fleet._FLEET_PID_GONE) as classify:
+                distribution.sweep_stale_distribution_probe_base_builds(current, current / base_name)
+            assert not stale.exists()
+            assert current.is_dir()
+            assert live.is_dir()
+            classify.assert_called_once_with(stale_owner_pid, DISTRIBUTION_SNAPSHOT_STALE_OWNER_CREATE_TIME)
 
 
 def test_guard_1_unchanged_snapshot_skips_bulk_copy_and_policy_touch_rebuilds():
@@ -440,21 +472,21 @@ def test_guard_6_enumeration_ttl_root_mtime_and_audit_key_invalidation():
     )
 
 
-def test_guard_8_vanished_walked_entry_differs_from_never_present():
+def test_guard_8_vanished_policy_is_omitted_from_probe_fingerprint():
     run_distribution_snapshot_guard_with_temporary_path(
-        guard_8_vanished_walked_entry_differs_from_never_present
+        guard_8_vanished_policy_is_omitted_from_probe_fingerprint
     )
 
 
-def test_guard_9_nonregular_entry_presence_changes_fingerprint():
+def test_guard_9_nonregular_entry_preserves_probe_fingerprint():
     run_distribution_snapshot_guard_with_temporary_path(
-        guard_9_nonregular_entry_presence_changes_fingerprint
+        guard_9_nonregular_entry_preserves_probe_fingerprint
     )
 
 
-def test_guard_10_unknown_named_entries_are_fingerprinted_and_copied():
+def test_guard_10_unknown_named_entries_are_excluded_from_probe_state():
     run_distribution_snapshot_guard_with_temporary_path(
-        guard_10_unknown_named_entries_are_fingerprinted_and_copied
+        guard_10_unknown_named_entries_are_excluded_from_probe_state
     )
 
 
@@ -477,6 +509,7 @@ def test_guard_13_cold_legacy_embed_checkpoints_move_but_warm_ones_remain():
 
 
 if __name__ == "__main__":
+    test_distribution_sibling_cache_namespaces_preserve_live_owners()
     test_guard_1_unchanged_snapshot_skips_bulk_copy_and_policy_touch_rebuilds()
     test_guard_2_excludes_outputs_but_keeps_policy_and_consistent_ledger()
     test_guard_3_probe_cleanup_on_success_exception_and_stale_sweep()
@@ -484,9 +517,9 @@ if __name__ == "__main__":
     test_guard_5_mutating_path_live_probes_before_cached_candidate_install()
     test_guard_6_enumeration_ttl_root_mtime_and_audit_key_invalidation()
     test_guard_7_new_operational_values_are_schema_defaults()
-    test_guard_8_vanished_walked_entry_differs_from_never_present()
-    test_guard_9_nonregular_entry_presence_changes_fingerprint()
-    test_guard_10_unknown_named_entries_are_fingerprinted_and_copied()
+    test_guard_8_vanished_policy_is_omitted_from_probe_fingerprint()
+    test_guard_9_nonregular_entry_preserves_probe_fingerprint()
+    test_guard_10_unknown_named_entries_are_excluded_from_probe_state()
     test_guard_11_owned_output_and_configured_ledger_follow_provenance()
     test_guard_12_embed_checkpoints_follow_ephemeral_dir_provenance()
     test_guard_13_cold_legacy_embed_checkpoints_move_but_warm_ones_remain()

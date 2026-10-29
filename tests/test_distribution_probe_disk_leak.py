@@ -13,6 +13,7 @@ align_test_startup_home(prefix=__name__)
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from spendguard import distribution
+from spendguard import budget
 
 PROBE_DISK_LEAK_SIDECARS = ("-wal", "-shm", "-journal")
 PROBE_DISK_LEAK_INITIAL_CONTENT = b"initial ledger"
@@ -20,6 +21,7 @@ PROBE_DISK_LEAK_CHANGED_CONTENT = b"changed ledger with additional transactions"
 PROBE_DISK_LEAK_MTIME_INCREMENT_NS = 1_000_000_000
 PROBE_DISK_LEAK_PID_OFFSET = 1
 PROBE_DISK_LEAK_STALE_CREATE_TIME = "0.0"
+PROBE_DISK_LEAK_BULK_BYTES = 1024 * 1024
 
 
 @contextlib.contextmanager
@@ -110,7 +112,45 @@ def test_distribution_abandoned_builds_swept_but_live_owners_preserved():
             distribution.shutil.rmtree(cache, ignore_errors=True)
 
 
+def test_distribution_probe_base_allows_only_required_policy_files():
+    with isolated_distribution_disk_leak_home() as home, tempfile.TemporaryDirectory() as temporary:
+        # Ask the owning writer for its recovery path; legacy snapshots lacked
+        # the ephemeral marker, so remove it to reproduce the reported leak.
+        recovery = budget.snapshot(reason=__name__, force=True)
+        assert recovery is not None
+        recovery = Path(recovery)
+        (recovery.parent / distribution.DISTRIBUTION_EPHEMERAL_MARKER).unlink()
+        recovery.write_bytes(PROBE_DISK_LEAK_INITIAL_CONTENT * PROBE_DISK_LEAK_BULK_BYTES)
+        ledger = Path(distribution.config.db_path())
+        queue = Path(distribution.config.lane_queue_db_path())
+        queue.write_bytes(PROBE_DISK_LEAK_INITIAL_CONTENT)
+        # An arbitrary new backup kind must be excluded without teaching the
+        # production filter its name or layout (including nested ledger copies).
+        backup = Path(tempfile.mkdtemp(dir=home))
+        nested = Path(tempfile.mkdtemp(dir=backup))
+        (nested / ledger.name).write_bytes(PROBE_DISK_LEAK_INITIAL_CONTENT)
+        cache = Path(temporary)
+        base = cache / str(distribution.distribution_config_value("probe_cache_base_name"))
+        record = cache / str(distribution.distribution_config_value("probe_cache_record_name"))
+        policy = home / distribution.config.CONFIG_JSON.name
+        with patch.object(distribution, "distribution_probe_cache_paths", return_value=(cache, base, record)):
+            built = distribution.rebuild_or_reuse_distribution_probe_base()
+            assert (built / policy.name).read_bytes() == policy.read_bytes()
+            assert not (built / ledger.name).exists()
+            assert not (built / queue.name).exists()
+            assert not (built / recovery.parent.name).exists()
+            assert not (built / backup.name).exists()
+            assert {path.name for path in built.iterdir()} == {
+                policy.name, distribution.DISTRIBUTION_EPHEMERAL_MARKER,
+                str(distribution.distribution_config_value("probe_temp_marker_name")),
+            }
+            fingerprint = distribution.distribution_snapshot_fingerprint(home)
+            (nested / queue.name).write_bytes(PROBE_DISK_LEAK_CHANGED_CONTENT)
+            assert distribution.distribution_snapshot_fingerprint(home) == fingerprint
+
+
 if __name__ == "__main__":
     test_distribution_default_ledgers_and_sidecars_excluded()
     test_distribution_ledger_mutations_preserve_snapshot_fingerprint()
     test_distribution_abandoned_builds_swept_but_live_owners_preserved()
+    test_distribution_probe_base_allows_only_required_policy_files()
