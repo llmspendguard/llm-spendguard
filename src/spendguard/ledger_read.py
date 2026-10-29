@@ -4,6 +4,8 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from pathlib import Path
+from decimal import Decimal
+import re
 import sqlite3
 import time
 import weakref
@@ -721,7 +723,10 @@ def read_ledger_sql(request: LedgerSQLReadRequest, path=None) -> tuple[LedgerRea
     tokens = request.sql.upper().split()
     if not tokens or tokens[0] not in ("SELECT", "WITH"):
         raise ValueError("Ledger read requests require SELECT")
-    if "*" in "".join(request.sql.upper().split()).replace(LEDGER_READ_COUNT_EXPRESSION, ""):
+    projection_tokens = "".join(request.sql.upper().split()).replace(LEDGER_READ_COUNT_EXPRESSION, "")
+    # A column times an integer scale is arithmetic, not a wildcard projection.
+    projection_tokens = re.sub(r"\b[A-Z_][A-Z_0-9]*\*[0-9]+\b", "", projection_tokens)
+    if "*" in projection_tokens:
         raise ValueError("Ledger reads require explicit column projections")
     from contextlib import nullcontext
     from .ledger_writer import require_ledger_writer_request_live
@@ -935,13 +940,22 @@ def read_spend_aggregates(group_by=("provider", "day"), since=None, until=None, 
         if value is not None:
             predicates.append(f"day {operator} ?")
             parameters.append(value)
-    projections = dimensions + tuple(
-        f"SUM({SPEND_EVENT_NANO_COLUMNS[column]}) AS {column}" for column in USD_COLS) + ("COUNT(*) AS n",)
+    schema_rows = read_ledger_sql(LedgerSQLReadRequest(COST_INTEGRITY_SCHEMA_SQL, (LEDGER_EVENTS_TABLE,)), path)
+    available = {row["name"] for row in schema_rows}
+    expressions = []
+    for column in USD_COLS:
+        nano_column = SPEND_EVENT_NANO_COLUMNS[column]
+        selected = _prefer_nano_else_legacy_column(available, nano_column, column)
+        legacy_nano = f"{column}*{NANO_USD_PER_USD}"
+        expression = f"COALESCE({selected},{legacy_nano})" if selected == nano_column else legacy_nano
+        expressions.append(f"SUM({expression}) AS {column}")
+    projections = dimensions + tuple(expressions) + ("COUNT(*) AS n",)
     rows = read_ledger_rows(LedgerReadRequest(columns=projections, where_sql=" AND ".join(predicates),
         parameters=tuple(parameters), group_by=dimensions, order_by=dimensions), path)
     money_start = len(dimensions)
     return tuple(LedgerReadRow(row.columns, row.values[:money_start] + tuple(
-        spend_event_nano_sum_to_decimal(value)
+        (Decimal(str(value)) / NANO_USD_PER_USD if isinstance(value, float)
+         else spend_event_nano_sum_to_decimal(value))
         for value in row.values[money_start:money_start + len(USD_COLS)]) + row.values[-1:]) for row in rows)
 
 
@@ -1218,8 +1232,17 @@ def read_recording_gap_cells(intent_like=None, path=None):
 
 def read_represented_call_cell(intent, model, day, path=None):
     from .ledger import LLM_USD_COLS, SPEND_EVENT_NANO_COLUMNS, SpendLedger
+    schema_rows = read_ledger_sql(LedgerSQLReadRequest(COST_INTEGRITY_SCHEMA_SQL, (LEDGER_EVENTS_TABLE,)), path)
+    available = {row["name"] for row in schema_rows}
+    expressions = []
+    for column in LLM_USD_COLS:
+        nano_column = SPEND_EVENT_NANO_COLUMNS[column]
+        selected = _prefer_nano_else_legacy_column(available, nano_column, column)
+        legacy_nano = f"{column}*{NANO_USD_PER_USD}"
+        expression = f"COALESCE({selected},{legacy_nano},0)" if selected == nano_column else f"COALESCE({legacy_nano},0)"
+        expressions.append(expression)
     represented = (f"COALESCE(SUM(CASE WHEN {SpendLedger._COUNTABLE} THEN "
-                   + "+".join(f"COALESCE({SPEND_EVENT_NANO_COLUMNS[column]},0)" for column in LLM_USD_COLS)
+                   + "+".join(expressions)
                    + f" ELSE 0 END),0)/{NANO_USD_PER_USD}.0 AS represented")
     return read_ledger_rows(LedgerReadRequest(LEDGER_EVENTS_TABLE, (represented,),
         "intent=? AND model=? AND day=?", (intent, model, day)), path)[0][0]

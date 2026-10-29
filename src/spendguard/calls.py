@@ -385,6 +385,8 @@ def _ensure_call_observation_schema(c):
     c.execute("SAVEPOINT call_observation_nano_schema")
     try:
         _initialize_call_observation_nano_schema(c)
+        from .ledger import _initialize_spend_event_nano_schema
+        _initialize_spend_event_nano_schema(c)
         c.execute("RELEASE SAVEPOINT call_observation_nano_schema")
     except BaseException:
         c.execute("ROLLBACK TO SAVEPOINT call_observation_nano_schema")

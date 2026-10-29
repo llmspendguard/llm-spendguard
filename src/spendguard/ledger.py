@@ -32,12 +32,38 @@ from types import MappingProxyType, MethodType
 from .schema_indexes import ensure_ordered_indexes_coverage
 from decimal import Decimal, InvalidOperation, getcontext
 from . import config
-from .money_scale import NANO_USD_PER_USD, usd_to_nano_usd, nano_usd_to_usd, assert_nano_total_matches
+from .money_scale import NANO_USD_PER_USD, usd_to_nano_usd, nano_usd_to_usd, assert_nano_total_matches, real_usd_to_nano_usd
 
 getcontext().prec = 34   # ample for exact money arithmetic (28 is the default; money never needs more than this)
 
 SCHEMA_VERSION = 6
 LEDGER_RATE_PROVENANCE_GAP = "ledger_rate_provenance_gap"
+
+
+def _initialize_spend_event_nano_schema(connection):
+    """Repair an existing spend_events table under the caller's migration savepoint.
+
+    Calls-only databases need no spend table. Preserve populated nano mirrors,
+    including intentional differences from their legacy representation.
+    """
+    available = {row[1] for row in connection.execute("PRAGMA table_info(spend_events)")}
+    if not available:
+        return
+    missing = set(SPEND_EVENT_NANO_COLUMNS.values()) - available
+    for nano_column in sorted(missing):
+        connection.execute(f"ALTER TABLE spend_events ADD COLUMN {nano_column} INTEGER")
+    for legacy_column, nano_column in SPEND_EVENT_NANO_COLUMNS.items():
+        for storage_row_id, raw_amount in connection.execute(
+                f"SELECT rowid,{legacy_column} FROM spend_events "
+                f"WHERE {nano_column} IS NULL AND {legacy_column} IS NOT NULL"):
+            nano_amount = (real_usd_to_nano_usd(raw_amount) if isinstance(raw_amount, float)
+                           else usd_to_nano_usd(str(raw_amount)))
+            connection.execute(f"UPDATE spend_events SET {nano_column}=? WHERE rowid=?",
+                               (nano_amount, storage_row_id))
+            stored_nano = connection.execute(
+                f"SELECT {nano_column} FROM spend_events WHERE rowid=?", (storage_row_id,)).fetchone()[0]
+            assert_nano_total_matches(stored_nano, nano_usd_to_usd(nano_amount),
+                                      tolerance_usd='0', label=f"spend_events.{legacy_column}")
 
 
 def ledger_posting_metadata():
