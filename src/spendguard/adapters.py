@@ -139,10 +139,7 @@ def _executor():
     v = __import__("os").environ.get("SPENDGUARD_ADVISOR_EXECUTOR")
     if v:
         return v.strip().lower()
-    try:
-        return str(config._cfg_get("advisor", "executor", "api")).lower()
-    except Exception:
-        return "api"
+    return str(config._cfg_get("advisor", "executor", "api")).lower()
 
 
 # ── subscription lanes (executor=pool uses both; each serves ONLY its own provider's prompts) ──
@@ -448,6 +445,8 @@ def _lane_for(prov):
     import importlib
     try:
         return lane, importlib.import_module(f".{mod}", __package__)
+    except config.ConfigurationReadError:
+        raise
     except Exception:
         return None
 

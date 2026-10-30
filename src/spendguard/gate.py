@@ -2791,7 +2791,7 @@ def core_gated_sdk_packages():
     return sorted({spec[0].partition(".")[0] for spec in specs})
 
 
-def _enforcement_armed():
+def _unarmed_sdk_details():
     """Each installed core SDK must be fully patched or covered by a live import-completion hook.
 
     Optional adapters must have their exact live callback armed before import, or their real capture signal after
@@ -2801,6 +2801,7 @@ def _enforcement_armed():
     specs = INTERCEPTORS + _EXTRA + RT_INTERCEPTORS + STREAM_INTERCEPTORS + UNIT_INTERCEPTORS
     packages = set(core_gated_sdk_packages())
     finder = _gate_package_import_finder
+    unarmed_details = []
     for module_name in gated_sdk_modules():
         package = module_name.partition(".")[0]
         try:
@@ -2808,8 +2809,9 @@ def _enforcement_armed():
                 continue
             if module_name not in sys.modules and importlib.util.find_spec(module_name) is None:
                 continue
-        except Exception:
-            return False
+        except Exception as import_error:
+            unarmed_details.append(f"{module_name}: importability check failed ({import_error})")
+            continue
         if module_name in _ADAPTER_GATED_SDK_MODULES:
             with finder.lock:
                 armed = (finder in sys.meta_path
@@ -2817,30 +2819,30 @@ def _enforcement_armed():
             adapter_module = sys.modules.get(module_name)
             if adapter_module is None:
                 if not armed:
-                    return False
+                    unarmed_details.append(f"{module_name}: live import hook missing")
                 continue
             adapter_spec = getattr(adapter_module, "__spec__", None)
             if getattr(adapter_spec, "_initializing", False):
                 if not armed or not isinstance(adapter_spec.loader, _GatePackagePostImportLoader):
-                    return False
+                    unarmed_details.append(f"{module_name}: import completion hook missing")
                 continue
             try:
                 if not _imported_adapter_sdk_is_wired(module_name):
-                    return False
-            except Exception:
-                return False
+                    unarmed_details.append(f"{module_name}: adapter capture callback missing")
+            except Exception as adapter_error:
+                unarmed_details.append(f"{module_name}: adapter capture check failed ({adapter_error})")
             continue
         with finder.lock:
             armed = finder in sys.meta_path and _patch_imported_sdk_package in finder.callbacks.get(package, ())
         module = sys.modules.get(package)
         if module is None:
             if not armed:
-                return False
+                unarmed_details.append(f"{module_name}: live import hook missing")
             continue
         module_spec = getattr(module, "__spec__", None)
         if getattr(module_spec, "_initializing", False):
             if not armed or not isinstance(module_spec.loader, _GatePackagePostImportLoader):
-                return False
+                unarmed_details.append(f"{module_name}: import completion hook missing")
             continue
         found_surface = False
         for spec in specs:
@@ -2851,10 +2853,15 @@ def _enforcement_armed():
             if method is not None:
                 found_surface = True
                 if not getattr(method, "_spend_gated", False):
-                    return False
+                    unarmed_details.append(f"{spec[0]}.{spec[1]}.{spec[2]}: interceptor missing")
         if not found_surface:
-            return False
-    return True
+            unarmed_details.append(f"{module_name}: no intercepted SDK surface found")
+    return unarmed_details
+
+
+def _enforcement_armed():
+    """Whether every installed SDK is intercepted or covered by a live import-completion hook."""
+    return not _unarmed_sdk_details()
 
 
 def require(cap: "float | None" = None) -> None:
@@ -2869,10 +2876,12 @@ def require(cap: "float | None" = None) -> None:
                                "called require() — refusing to spend ungated. `spendguard on` to re-enable.")
     install(cap=cap)
     if not _enforcement_armed():
+        unarmed_description = "; ".join(_unarmed_sdk_details()) or "SDK enforcement could not be verified"
         raise SpendGateRefused(
             "spendguard is NOT enforcing in this interpreter — an installed LLM SDK is neither fully patched "
-            "nor covered by a live import hook. require() refuses to spend ungated. Fix: run under a gated "
-            "venv, or import spendguard before the SDK is imported/used.")
+            f"nor covered by a live import hook: {unarmed_description}. require() refuses to spend ungated. "
+            "Fix: run under a gated venv (`spendguard doctor` must report ENFORCING HERE: YES), "
+            "or import spendguard before the named SDK is imported/used.")
 
 
 def _render_key_status_lines(statuses, down):

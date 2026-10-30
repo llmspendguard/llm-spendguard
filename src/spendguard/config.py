@@ -661,29 +661,42 @@ def cfg_invalidate():
     _cfg._mtime = None
 
 
+class ConfigurationReadError(RuntimeError):
+    """Configuration could not be read; defaults must not authorize metered fallback."""
+
+
 def _cfg():
     """~/.spendguard/config.json (cached, and re-read when the file changes on disk)."""
     import json as _json
     # THE MTIME IS PART OF THE CACHE KEY. Another process (or `config set` in this one) can rewrite the
     # file at any time, and a stale read of a settings file is how a knob appears not to work.
     try:
-        _m = CONFIG_JSON.stat().st_mtime if CONFIG_JSON.exists() else None
-    except OSError:
+        _m = CONFIG_JSON.stat().st_mtime
+    except FileNotFoundError:
         _m = None
+    except Exception as error:
+        cfg_invalidate()
+        raise ConfigurationReadError(
+            f"Cannot inspect spendguard config {CONFIG_JSON}: {error}. "
+            "Restore readable configuration before routing work; metered fallback is refused."
+        ) from error
     if getattr(_cfg, "_mtime", "unset") != _m:
         _cfg._cache = None
-    _cfg._mtime = _m                       # always recorded, so "no file yet" is a state and not an absence
     if getattr(_cfg, "_cache", None) is None:
         c = {}
         try:
-            if CONFIG_JSON.exists():
+            if _m is not None:
                 c = _json.loads(CONFIG_JSON.read_text())
-        except Exception:
-            pass
-        # a valid-but-non-object config.json (a list/scalar/null) is corrupt for our purposes: every caller does
-        # `.get(section)` / `dict(_cfg())`, which raises on a non-dict. Read it as EMPTY (defaults apply), consistent
-        # with the parse-error path above — the WRITER (update_json required/quarantine) is what surfaces corruption loudly.
-        _cfg._cache = c if isinstance(c, dict) else {}
+            if not isinstance(c, dict):
+                raise ValueError("configuration must be a JSON object")
+        except Exception as error:
+            cfg_invalidate()
+            raise ConfigurationReadError(
+                f"Cannot read spendguard config {CONFIG_JSON}: {error}. "
+                "Repair the configuration before routing work; metered fallback is refused."
+            ) from error
+        _cfg._cache = c
+    _cfg._mtime = _m                       # commit only a successful read (or confirmed absence)
     return _cfg._cache
 
 
@@ -940,6 +953,8 @@ def _policy_cap(cls, window):
         v = node.get(window)
         if isinstance(v, dict) and v.get("usd") is not None:
             return {"usd": float(v["usd"]), "mode": v.get("mode", "advisory")}
+    except ConfigurationReadError:
+        raise
     except Exception:
         pass
     return None

@@ -153,9 +153,12 @@ def cmd(argv=None):
     return review_literal_token_estimates(judge="--judge" in argv)
 
 
-def review_literal_token_estimates(*, judge: bool = False) -> int:
-    """Run the existing literal-estimate scan and optional durable adjudication."""
-    root = pathlib.Path(__file__).resolve().parents[2]
+def review_literal_token_estimates(*, judge: bool = False, repo_root=None) -> int:
+    """Scan ``repo_root`` (the working directory by default), optionally recording adjudications."""
+    # Scan and verdict storage must share the caller's root. Using the installed
+    # package location would certify this tool's sources instead of the project
+    # the operator asked to audit, including when invoked through an installed CLI.
+    root = pathlib.Path(repo_root or pathlib.Path.cwd())
     res = unruled_and_quotes(root)
     print(f"{res['total']} cost call(s) with literal token counts · {len(res['cleared'])} ruled NOT a quote "
           f"· {len(res['failed'])} ruled QUOTED PRICE · {len(res['unjudged'])} UNJUDGED")
