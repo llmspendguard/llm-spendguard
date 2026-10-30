@@ -74,6 +74,8 @@ jobs:
           # deterministic — a backtracking resolve once pulled pydantic 1.x and broke `import anthropic` (httpx2.Timeout).
           # Refresh the editable install even on a cache hit, so checkout metadata always matches the current tree.
           uv pip install --python "${CI_TEST_VENV}/bin/python" -e "$CI_TEST_EXTRAS" "$CI_PYDANTIC_FLOOR"
+      - name: Enforce spend governance in the suite environment
+        run: |
           "${CI_TEST_VENV}/bin/spendguard" install-hook --venv "$CI_TEST_VENV"
       - name: Provision the declared build backend for offline consumers
         run: |
@@ -136,11 +138,17 @@ jobs:
             ${{ env.CI_TEST_VENV }}
             ${{ env.TIKTOKEN_CACHE_DIR }}
           key: ${{ env.CI_TEST_CACHE_REVISION }}-${{ runner.os }}-${{ runner.arch }}-${{ steps.python.outputs.python-version }}-${{ hashFiles('pyproject.toml', '.github/workflows/ci.yml') }}
+      - name: Reset the verification environment before its clean installation
+        run: uv venv --clear --python "${{ steps.python.outputs.python-path }}" "$CI_TEST_VENV"
       - name: Install the same coverage environment freshly for independent evidence
         run: |
-          uv venv --clear --python "${{ steps.python.outputs.python-path }}" "$CI_TEST_VENV"
+          if [ ! -x "${CI_TEST_VENV}/bin/python" ]; then
+            uv venv --python "${{ steps.python.outputs.python-path }}" "$CI_TEST_VENV"
+          fi
           echo "${PWD}/${CI_TEST_VENV}/bin" >> "$GITHUB_PATH"
           uv pip install --python "${CI_TEST_VENV}/bin/python" -e "$CI_TEST_EXTRAS" "$CI_PYDANTIC_FLOOR"
+      - name: Record successful clean installation and enforce spend governance
+        run: |
           "${CI_TEST_VENV}/bin/python" -c 'import json, os, pathlib, sys; pathlib.Path(os.environ["CI_READINESS_INSTALL_REPORT"]).write_text(json.dumps({"interpreter": sys.executable, "clean": True, "installation_exit_code": 0}))'
           "${CI_TEST_VENV}/bin/spendguard" install-hook --venv "$CI_TEST_VENV"
       - name: Verify the same interpreter enforces spend governance
@@ -162,22 +170,17 @@ jobs:
           coverage report --fail-under=40
           coverage report --fail-under=78 --include="*/gate.py,*/guard.py,*/budget.py,*/reconcile.py,*/ledger_sync.py,*/pricing.py,*/attribution.py,*/adapters.py,*/tag.py,*/backfill.py,*/deid.py,*/litellm_adapter.py,*/bedrock_adapter.py"
       - name: Record complete clean-environment readiness evidence (offline)
-        env:
-          HTTP_PROXY: ${{ env.CI_OFFLINE_PROXY }}
-          HTTPS_PROXY: ${{ env.CI_OFFLINE_PROXY }}
-          ALL_PROXY: ${{ env.CI_OFFLINE_PROXY }}
-          http_proxy: ${{ env.CI_OFFLINE_PROXY }}
-          https_proxy: ${{ env.CI_OFFLINE_PROXY }}
-          all_proxy: ${{ env.CI_OFFLINE_PROXY }}
-          NO_PROXY: ""
-          no_proxy: ""
-          PIP_NO_INDEX: "1"
-        run: python scripts/test/readiness_environment_evidence.py record --clean-install-report "$CI_READINESS_INSTALL_REPORT" --output "$CI_READINESS_EVIDENCE_ROOT"
+        run: |
+          export HTTP_PROXY="$CI_OFFLINE_PROXY" HTTPS_PROXY="$CI_OFFLINE_PROXY" ALL_PROXY="$CI_OFFLINE_PROXY"
+          export http_proxy="$CI_OFFLINE_PROXY" https_proxy="$CI_OFFLINE_PROXY" all_proxy="$CI_OFFLINE_PROXY"
+          export NO_PROXY= no_proxy= PIP_NO_INDEX=1
+          python scripts/test/readiness_environment_evidence.py record --clean-install-report "$CI_READINESS_INSTALL_REPORT" --output "$CI_READINESS_EVIDENCE_ROOT"
       - name: Upload complete readiness logs and hashes
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: ${{ env.CI_READINESS_ARTIFACT_PREFIX }}-${{ matrix.python-version }}
           path: ${{ env.CI_READINESS_EVIDENCE_ROOT }}
+          include-hidden-files: true
           if-no-files-found: error
 
   readiness:
@@ -204,14 +207,8 @@ jobs:
       - name: Verify artifact integrity and merge environment evidence
         run: python scripts/test/readiness_environment_evidence.py merge --input "$CI_READINESS_EVIDENCE_ROOT" --output "$CI_READINESS_ENVIRONMENT_REPORT"
       - name: Blocking offline capability readiness gate
-        env:
-          HTTP_PROXY: ${{ env.CI_OFFLINE_PROXY }}
-          HTTPS_PROXY: ${{ env.CI_OFFLINE_PROXY }}
-          ALL_PROXY: ${{ env.CI_OFFLINE_PROXY }}
-          http_proxy: ${{ env.CI_OFFLINE_PROXY }}
-          https_proxy: ${{ env.CI_OFFLINE_PROXY }}
-          all_proxy: ${{ env.CI_OFFLINE_PROXY }}
-          NO_PROXY: ""
-          no_proxy: ""
-          PIP_NO_INDEX: "1"
-        run: spendguard selfcheck --environment-report "$CI_READINESS_ENVIRONMENT_REPORT"
+        run: |
+          export HTTP_PROXY="$CI_OFFLINE_PROXY" HTTPS_PROXY="$CI_OFFLINE_PROXY" ALL_PROXY="$CI_OFFLINE_PROXY"
+          export http_proxy="$CI_OFFLINE_PROXY" https_proxy="$CI_OFFLINE_PROXY" all_proxy="$CI_OFFLINE_PROXY"
+          export NO_PROXY= no_proxy= PIP_NO_INDEX=1
+          spendguard selfcheck --environment-report "$CI_READINESS_ENVIRONMENT_REPORT"
