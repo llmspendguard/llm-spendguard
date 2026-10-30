@@ -180,6 +180,8 @@ contributors that month** (free ≤ 2), and the team sees combined spend, govern
 
 ## Where to next
 
+- **[Capability reference](CAPABILITY_REFERENCE.md)** — registered commands, API and MCP contracts.
+
 - **[Architecture](ARCHITECTURE.md)** — how the gate, pricing resolution, the learning loop, and the meta-cage fit together (with diagrams), plus honest known limitations.
 - **[Using with Claude & agents](USING-WITH-CLAUDE.md)** — wire spendguard into *every* assistant session with a standing `CLAUDE.md` rule and slash-commands.
 - **[Learning advisor](learning-advisor.md)** — the corpus → insights → temporal graph, the deterministic / caged-LLM split, and the meta-budget cage.

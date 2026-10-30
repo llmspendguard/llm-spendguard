@@ -31,6 +31,7 @@ class CapabilityReadinessItem:
     arguments: dict[str, Any]
     reason: str
     standard: str | None = None
+    section: str | None = None
 
 
 @dataclass(frozen=True)
@@ -49,6 +50,7 @@ def load_capability_readiness_manifest():
         id=item["id"], description=item["description"], gate=item.get("gate"),
         arguments=item.get("arguments", {}), reason=item.get("reason", ""),
         standard=item.get("standard"),
+        section=item.get("section"),
     ) for item in declaration["items"])
     if len({item.id for item in items}) != len(items):
         raise ValueError("Duplicate readiness item identifiers")
@@ -114,15 +116,27 @@ def render_capability_readiness_definition():
              "A supplied clean-environment report must match the current input fingerprint and its complete verification logs.",
              "", "## Project invariants", ""]
     for item in items:
-        if item.standard is not None:
+        if item.standard is not None or item.section is not None:
             continue
         lines.extend([f"- [ ] **{item.id}** — {item.description}",
                       f"  Gate: `{item.gate}`; inputs: `{json.dumps(item.arguments, sort_keys=True)}`.", ""])
-    lines.extend(["## External standards — UNREVIEWED", "",
-                  "These mappings are intentionally unreviewed stubs. They keep selfcheck red until reviewed and assigned gates.", ""])
+    lines.extend(["## External standards — reviewed offline subsets", "",
+                  "PASS covers the declared offline subset, not certification or an external badge. Reviewed N/A checks remain tracked below.", ""])
     for item in items:
         if item.standard is not None:
-            lines.extend([f"- [ ] [{item.description}]({item.standard}) — {item.reason}", ""])
+            lines.extend([f"- [ ] [{item.description}]({item.standard}) — {item.reason}",
+                          f"  Gate: `{item.gate}`."])
+            for check in item.arguments.get("reviews", []):
+                lines.append(f"  - **{check['id']}** ({check['disposition']}): {check['reason']} Tracking: {check['tracking']}.")
+            lines.append("")
+    lines.extend(["## Architectural & code quality", "",
+                  "Objective offline fitness functions enforce the recorded scope and measured ratchets. Reviewed exclusions are tracked explicitly.", ""])
+    for item in items:
+        if item.section != "architecture":
+            continue
+        lines.extend([f"- [ ] **{item.id}** — {item.description}",
+                      f"  Gate: `{item.gate}`; inputs: `{json.dumps(item.arguments, sort_keys=True)}`.",
+                      f"  Review: {item.reason}", ""])
     return "\n".join(lines)
 
 
@@ -138,4 +152,3 @@ def run_capability_selfcheck(*, repo_root=None, environment_report=None, json_ou
         }
     print(json.dumps(report, indent=2) if json_output else render_capability_readiness_report(report))
     return READINESS_SUCCESS_EXIT if report["ready"] else READINESS_INCOMPLETE_EXIT
-

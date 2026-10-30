@@ -2,6 +2,7 @@
 import contextlib
 import inspect
 import os
+import sys
 from pathlib import Path
 import tempfile
 from types import SimpleNamespace
@@ -26,7 +27,9 @@ def distribution_inventory_fixture():
         state.mkdir()
         workspace = root / "workspace"
         workspace.mkdir()
-        settings = {"workspace_roots": [workspace], "consumer_audit_exempt": []}
+        # The host is attested separately by this fixture. Exclude its real venv
+        # from the synthetic consumer inventory, wherever verification installed it.
+        settings = {"workspace_roots": [workspace], "consumer_audit_exempt": [Path(sys.prefix)]}
         for owner, attribute, value in (
             (fleet.config, "HOME", state),
             (distribution, "resolve_distribution_target", INVENTORY_TARGET),
@@ -56,7 +59,7 @@ def test_distribution_external_symlinked_venv_is_named_consumer():
         linked.symlink_to(external, target_is_directory=True)
         result = distribution.distribute_fleet(check=True, settings=settings)
         assert_distribution_inventory_named_red(result, str((external / "bin" / "python").resolve()))
-        settings["consumer_audit_exempt"] = [external]
+        settings["consumer_audit_exempt"].append(external)
         assert distribution.distribute_fleet(check=True, settings=settings)["exit_code"] == 0
 
 

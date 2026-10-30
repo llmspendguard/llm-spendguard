@@ -1,16 +1,457 @@
 {
-  "revision": 1,
+  "revision": 3,
   "items": [
-    {"id":"surface-parity","description":"Every capability is exposed on CLI, API and MCP except declared deliberate absences.","gate":"spendguard.capability_readiness_gates:run_capability_script_readiness_gate","arguments":{"scripts":["tests/test_capability_surface_parity_guard.py"]}},
-    {"id":"help-non-trivial","description":"Every CLI command exposes real flags or its explicit no-flags declaration.","gate":"spendguard.capability_readiness_gates:run_capability_script_readiness_gate","arguments":{"scripts":["tests/test_capability_cli_help_guard.py"]}},
-    {"id":"docs-present","description":"Generated API reference and parameter contracts match the current registry.","gate":"spendguard.capability_readiness_gates:run_capability_script_readiness_gate","arguments":{"scripts":["tests/test_capability_documentation_guard.py"]}},
-    {"id":"no-release-on-red-ci","description":"Release promotion fails closed when CI is red or unknown.","gate":"spendguard.capability_readiness_gates:run_capability_script_readiness_gate","arguments":{"scripts":["tests/test_release_green_pointer.py"]}},
-    {"id":"env-parity-in-verification","description":"Current source passes required checks in independent clean environments.","gate":"spendguard.capability_readiness_gates:assess_capability_environment_evidence","arguments":{"patterns":["src/spendguard/**/*.py","src/spendguard/capability*.json","src/spendguard/capability*.jsonl","scripts/test/*.py","tests/**/*.py","pyproject.toml"],"required_checks":["ruff","name-uniqueness","surface-suites","offline-audit"]}},
-    {"id":"money-correctness","description":"Money scale, exact ledger arithmetic and global receipt allocation remain correct.","gate":"spendguard.capability_readiness_gates:run_capability_script_readiness_gate","arguments":{"scripts":["tests/test_money_scale.py","tests/test_ledger_money_is_exact_decimal.py","tests/test_receipt_global_dollar_allocation.py"]}},
-    {"id":"openssf-scorecard","description":"OpenSSF Scorecard mapping.","gate":null,"reason":"UNREVIEWED: external standard mapping is deferred by the task.","standard":"https://scorecard.dev/"},
-    {"id":"openssf-best-practices","description":"OpenSSF Best Practices Badge mapping.","gate":null,"reason":"UNREVIEWED: external standard mapping is deferred by the task.","standard":"https://www.bestpractices.dev/"},
-    {"id":"pypa-packaging","description":"PyPA packaging standards mapping.","gate":null,"reason":"UNREVIEWED: external standard mapping is deferred by the task.","standard":"https://packaging.python.org/"},
-    {"id":"clig-guidelines","description":"Command Line Interface Guidelines mapping.","gate":null,"reason":"UNREVIEWED: external standard mapping is deferred by the task.","standard":"https://clig.dev/"},
-    {"id":"diataxis","description":"Diátaxis documentation framework mapping.","gate":null,"reason":"UNREVIEWED: external standard mapping is deferred by the task.","standard":"https://diataxis.fr/"}
+    {
+      "id": "architecture-import-cycles",
+      "section": "architecture",
+      "description": "Track existing import cycles and reject new cyclic edges; complete acyclicity is reviewed N/A.",
+      "gate": "spendguard.architectural_fitness:run_architectural_fitness_gate",
+      "arguments": {"invariant": "cycles"},
+      "reason": "AST includes deferred imports. Exact measured cyclic components and reviewed scope are recorded in architectural_fitness_baseline.json; removing existing cycles is tracked in docs/READINESS-FOLLOWUP.md. No claim of complete acyclicity."
+    },
+    {
+      "id": "architecture-layer-boundaries",
+      "section": "architecture",
+      "description": "Application code may use the recorded standard-library-only foundations; foundations may not import application modules.",
+      "gate": "spendguard.architectural_fitness:run_architectural_fitness_gate",
+      "arguments": {"invariant": "layers"},
+      "reason": "Actual foundation modules and rationale are baseline data. Full core/adapters/surfaces layering is reviewed N/A: config and pricing contain deferred imports into adapters/calls. Track broader decomposition in docs/READINESS-FOLLOWUP.md."
+    },
+    {
+      "id": "architecture-complexity-ratchet",
+      "section": "architecture",
+      "description": "Radon cyclomatic complexity and maintainability index must not regress past measured per-file baselines.",
+      "gate": "spendguard.architectural_fitness:run_architectural_fitness_gate",
+      "arguments": {"invariant": "complexity"},
+      "reason": "Every current file is independently measured for Python 3.11 and 3.12 in architectural_fitness_baseline.json. New files and unsupported Python minors require reviewed measurements; no invented grade threshold."
+    },
+    {
+      "id": "architecture-duplication-ratchet",
+      "section": "architecture",
+      "description": "Pylint symilar duplicate significant lines and groups must not exceed measured current duplication.",
+      "gate": "spendguard.architectural_fitness:run_architectural_fitness_gate",
+      "arguments": {"invariant": "duplication"},
+      "reason": "Package-wide current duplication and documented detector settings are baseline data. Existing clones are debt tracked in docs/READINESS-FOLLOWUP.md, not a zero-duplication claim."
+    },
+    {
+      "id": "architecture-dead-code",
+      "section": "architecture",
+      "description": "Vulture definite unused variables and unreachable code require individually reviewed compatibility exceptions.",
+      "gate": "spendguard.architectural_fitness:run_architectural_fitness_gate",
+      "arguments": {"invariant": "dead"},
+      "reason": "The recorded 100% certainty subset is gated across the package. Exact allowlist entries carry reasons. Lower-confidence dead functions and dynamic callers are reviewed N/A pending caller review in docs/READINESS-FOLLOWUP.md."
+    },
+    {
+      "id": "architecture-type-integrity",
+      "section": "architecture",
+      "description": "Mypy checks the measured existing clean annotated surface without suppressing its diagnostics.",
+      "gate": "spendguard.architectural_fitness:run_architectural_fitness_gate",
+      "arguments": {"invariant": "types"},
+      "reason": "The exact clean subset and isolation options are baseline data. Full-package type coverage is reviewed N/A and tracked in docs/READINESS-FOLLOWUP.md; py.typed is not evidence of clean typing."
+    },
+    {
+      "id": "architecture-name-uniqueness",
+      "section": "architecture",
+      "description": "Existing unique-semantic naming fitness function; no duplicate implementation.",
+      "gate": "spendguard.capability_readiness_gates:run_capability_script_readiness_gate",
+      "arguments": {"scripts": ["tests/test_names_stay_unique.py"]},
+      "reason": "Cites the existing registry-backed naming gate and docs/NAME_REGISTRY.json; collisions require an adjudicated verdict."
+    },
+    {
+      "id": "architecture-surface-parity",
+      "section": "architecture",
+      "description": "Existing capability-surface-parity fitness function, also declared as surface-parity in Project invariants.",
+      "gate": "spendguard.capability_readiness_gates:run_capability_script_readiness_gate",
+      "arguments": {"scripts": ["tests/test_capability_surface_parity_guard.py"]},
+      "reason": "Cites and reuses the existing parity gate; its projection/SSOT implementation is unchanged."
+    },
+    {
+      "id": "surface-parity",
+      "description": "Every capability is exposed on CLI, API and MCP except declared deliberate absences.",
+      "gate": "spendguard.capability_readiness_gates:run_capability_script_readiness_gate",
+      "arguments": {
+        "scripts": [
+          "tests/test_capability_surface_parity_guard.py"
+        ]
+      }
+    },
+    {
+      "id": "help-non-trivial",
+      "description": "Every CLI command exposes real flags or its explicit no-flags declaration.",
+      "gate": "spendguard.capability_readiness_gates:run_capability_script_readiness_gate",
+      "arguments": {
+        "scripts": [
+          "tests/test_capability_cli_help_guard.py"
+        ]
+      }
+    },
+    {
+      "id": "docs-present",
+      "description": "Generated API reference and parameter contracts match the current registry.",
+      "gate": "spendguard.capability_readiness_gates:run_capability_script_readiness_gate",
+      "arguments": {
+        "scripts": [
+          "tests/test_capability_documentation_guard.py"
+        ]
+      }
+    },
+    {
+      "id": "no-release-on-red-ci",
+      "description": "Release promotion fails closed when CI is red or unknown.",
+      "gate": "spendguard.capability_readiness_gates:run_capability_script_readiness_gate",
+      "arguments": {
+        "scripts": [
+          "tests/test_release_green_pointer.py"
+        ]
+      }
+    },
+    {
+      "id": "env-parity-in-verification",
+      "description": "Current source passes required checks in independent clean environments.",
+      "gate": "spendguard.capability_readiness_gates:assess_capability_environment_evidence",
+      "arguments": {
+        "patterns": [
+          "src/spendguard/**/*.py",
+          "src/spendguard/capability*.json",
+          "src/spendguard/capability*.jsonl",
+          "src/spendguard/architectural_fitness_baseline.json",
+          "scripts/test/*.py",
+          "tests/**/*.py",
+          "pyproject.toml",
+          ".github/workflows/*",
+          "docs/*.md",
+          "LICENSE",
+          "SECURITY.md",
+          "CONTRIBUTING.md",
+          "README.md",
+          "CHANGELOG.md",
+          "src/spendguard/distribution_build_wheels/*.whl"
+        ],
+        "required_checks": [
+          "ruff",
+          "name-uniqueness",
+          "surface-suites",
+          "offline-audit"
+        ]
+      }
+    },
+    {
+      "id": "money-correctness",
+      "description": "Money scale, exact ledger arithmetic and global receipt allocation remain correct.",
+      "gate": "spendguard.capability_readiness_gates:run_capability_script_readiness_gate",
+      "arguments": {
+        "scripts": [
+          "tests/test_money_scale.py",
+          "tests/test_ledger_money_is_exact_decimal.py",
+          "tests/test_receipt_global_dollar_allocation.py"
+        ]
+      }
+    },
+    {
+      "id": "openssf-scorecard",
+      "description": "OpenSSF Scorecard mapping.",
+      "standard": "https://scorecard.dev/",
+      "gate": "spendguard.external_standard_readiness:assess_external_standard_subset",
+      "reason": "Reviewed offline subset only; no external certification claimed.",
+      "arguments": {
+        "kind": "scorecard",
+        "policy": {
+          "required_files": [
+            "LICENSE",
+            "SECURITY.md"
+          ],
+          "workflows": [
+            ".github/workflows/*.yml",
+            ".github/workflows/*.yaml"
+          ],
+          "safe_run_expressions": [
+            "steps.python.outputs.python-path",
+            "matrix.shard-index",
+            "matrix.python-version"
+          ],
+          "binary_suffixes": [
+            ".whl",
+            ".exe",
+            ".dll",
+            ".so",
+            ".dylib",
+            ".pyc",
+            ".class",
+            ".jar",
+            ".zip",
+            ".tar",
+            ".gz"
+          ],
+          "binary_waivers": [
+            {
+              "path": "src/spendguard/distribution_build_wheels/setuptools-84.2.1-py3-none-any.whl",
+              "sha256": "ca140b45d5325a9478f880e351484f62fef15f336462e449ca0c03c873d589c2",
+              "version": "84.2.1",
+              "document": "docs/WAIVERS.md"
+            }
+          ],
+          "waiver_metadata_suffix": ".dist-info/METADATA",
+          "wheel_metadata_depth": 2
+        },
+        "reviews": [
+          {
+            "id": "License / Security-Policy",
+            "disposition": "GATED-OFFLINE",
+            "reason": "Repository license and security policy files are required.",
+            "tracking": "docs/READINESS.md"
+          },
+          {
+            "id": "Token-Permissions",
+            "disposition": "GATED-OFFLINE",
+            "reason": "Every workflow defaults to contents: read and no workflow-wide write grants.",
+            "tracking": "docs/READINESS.md"
+          },
+          {
+            "id": "Dangerous-Workflow subset",
+            "disposition": "GATED-OFFLINE",
+            "reason": "Reject pull_request_target and unreviewed inline run expressions. The three permitted expressions are trusted runner output or configured numeric/version matrix data.",
+            "tracking": "docs/READINESS.md"
+          },
+          {
+            "id": "Pinned-Dependencies Actions subset",
+            "disposition": "GATED-OFFLINE",
+            "reason": "All remote Actions references require immutable 40-hex commits.",
+            "tracking": "docs/READINESS.md"
+          },
+          {
+            "id": "Binary-Artifacts",
+            "disposition": "REVIEWED-EXCEPTION",
+            "reason": "The vendored setuptools backend is a real binary-artifact finding; enforce the exact reviewed wheel SHA256, not a Scorecard pass.",
+            "tracking": "docs/WAIVERS.md"
+          },
+          {
+            "id": "Pinned-Dependencies remaining ecosystems",
+            "disposition": "REVIEWED-N/A",
+            "reason": "Full dependency pin coverage requires the Scorecard runner; this gate checks Actions only.",
+            "tracking": "docs/READINESS-FOLLOWUP.md"
+          },
+          {
+            "id": "Branch-Protection / Code-Review / Maintained / CI-Tests / Vulnerabilities / Fuzzing / Signed-Releases / Dependency-Update-Tool / CII-Best-Practices / Contributors / Packaging / SAST / Webhooks / License recognition",
+            "disposition": "REVIEWED-N/A",
+            "reason": "Requires live GitHub API, OSV, Scorecard runner, or external service state; file presence is not a score for these checks.",
+            "tracking": "docs/READINESS-FOLLOWUP.md"
+          }
+        ]
+      }
+    },
+    {
+      "id": "openssf-best-practices",
+      "description": "OpenSSF Best Practices Badge Passing mapping.",
+      "standard": "https://www.bestpractices.dev/en/criteria/0",
+      "gate": "spendguard.external_standard_readiness:assess_external_standard_subset",
+      "reason": "Reviewed offline subset only; no external certification claimed.",
+      "arguments": {
+        "kind": "best-practices",
+        "policy": {
+          "required_files": [
+            "LICENSE",
+            "README.md",
+            "CONTRIBUTING.md",
+            "SECURITY.md",
+            "CHANGELOG.md",
+            "tests/test_runner.py",
+            ".github/workflows/ci.yml"
+          ],
+          "project": "pyproject.toml",
+          "analysis_tool": "ruff",
+          "sast_workflow": ".github/workflows/security.yml",
+          "sast_actions": [
+            "github/codeql-action/init",
+            "github/codeql-action/analyze"
+          ]
+        },
+        "reviews": [
+          {
+            "id": "Repository evidence subset",
+            "disposition": "GATED-OFFLINE",
+            "reason": "Require license, README, contribution/security reporting documents, release notes, git, suite entrypoint and configured ruff + CodeQL.",
+            "tracking": "docs/READINESS.md"
+          },
+          {
+            "id": "All other Passing criteria and adequacy attestations",
+            "disposition": "REVIEWED-N/A",
+            "reason": "Live questionnaire, maintenance history, secure-development knowledge and document/process adequacy require maintainer attestation; repository files cannot certify them.",
+            "tracking": "https://www.bestpractices.dev/en/criteria/0"
+          }
+        ]
+      }
+    },
+    {
+      "id": "pypa-packaging",
+      "description": "PyPA packaging standards mapping.",
+      "standard": "https://packaging.python.org/en/latest/tutorials/packaging-projects/",
+      "gate": "spendguard.external_standard_readiness:assess_external_standard_subset",
+      "reason": "Reviewed offline subset only; no external certification claimed.",
+      "arguments": {
+        "kind": "packaging",
+        "policy": {
+          "source_directory": "source",
+          "artifact_directory": "artifacts",
+          "venv_directory": "installed",
+          "venv_python": "bin/python",
+          "venv_command": "bin/spendguard",
+          "artifact_suffixes": [
+            ".gz",
+            ".whl"
+          ],
+          "wheel_suffix": ".whl",
+          "metadata_suffix": ".dist-info/METADATA",
+          "metadata_fields": [
+            "Name",
+            "Version",
+            "Summary",
+            "Description-Content-Type",
+            "License",
+            "Requires-Python",
+            "Classifier",
+            "Project-URL"
+          ],
+          "environment": {
+            "PIP_NO_INDEX": "1",
+            "PIP_DISABLE_PIP_VERSION_CHECK": "1"
+          },
+          "runtime_dependency": "psutil",
+          "site_probe": "import sysconfig; print(sysconfig.get_path('purelib'))",
+          "import_probe": "import spendguard; from importlib.metadata import version; assert spendguard.__version__ == version('llm-spendguard')"
+        },
+        "reviews": [
+          {
+            "id": "Build / metadata / installed behavior",
+            "disposition": "GATED-OFFLINE",
+            "reason": "Build sdist and wheel offline with shipped backend provisioning; twine strict-check both; require core metadata/readme; import and version from a fresh venv with offline runtime dependency copied from this interpreter.",
+            "tracking": "docs/READINESS.md"
+          },
+          {
+            "id": "Publishing / index acceptance",
+            "disposition": "REVIEWED-N/A",
+            "reason": "PyPI credentials, network upload and index policy are external to offline artifact validity.",
+            "tracking": "docs/READINESS-FOLLOWUP.md"
+          }
+        ]
+      }
+    },
+    {
+      "id": "clig-guidelines",
+      "description": "Command Line Interface Guidelines mapping.",
+      "standard": "https://clig.dev/",
+      "gate": "spendguard.external_standard_readiness:assess_external_standard_subset",
+      "reason": "Reviewed offline subset only; no external certification claimed.",
+      "arguments": {
+        "kind": "cli",
+        "policy": {
+          "help_arguments": [
+            [
+              "--help"
+            ],
+            [
+              "-h"
+            ],
+            [
+              "help"
+            ]
+          ],
+          "version_arguments": [
+            [
+              "--version"
+            ],
+            [
+              "version"
+            ]
+          ],
+          "help_groups": [
+            "start here:",
+            "see the money:",
+            "spend less (measured, not guessed):",
+            "teams:",
+            "setup & plumbing:"
+          ],
+          "environment": {
+            "NO_COLOR": "1",
+            "TERM": "dumb"
+          },
+          "unknown_command": "versio",
+          "suggestion": "version",
+          "help_scripts": [
+            "tests/test_capability_cli_help_guard.py"
+          ]
+        },
+        "reviews": [
+          {
+            "id": "Help / version / errors / plain output",
+            "disposition": "GATED-OFFLINE",
+            "reason": "Exercise help aliases, installed version, unknown-command stderr + suggestion and plain redirected NO_COLOR output; reuse complete real-flags guard.",
+            "tracking": "docs/READINESS.md"
+          },
+          {
+            "id": "Human usability / interactive behavior / remaining advice",
+            "disposition": "REVIEWED-N/A",
+            "reason": "Empathy, naming quality, interactive terminal UX, signal behavior and task-specific output design need human usability review; no all-command behavioral compliance claim.",
+            "tracking": "docs/READINESS-FOLLOWUP.md"
+          }
+        ]
+      }
+    },
+    {
+      "id": "diataxis",
+      "description": "Diátaxis documentation framework mapping.",
+      "standard": "https://diataxis.fr/start-here/",
+      "gate": "spendguard.external_standard_readiness:assess_external_standard_subset",
+      "reason": "Reviewed offline subset only; no external certification claimed.",
+      "arguments": {
+        "kind": "diataxis",
+        "policy": {
+          "quadrants": {
+            "reference": {
+              "document": "docs/CAPABILITY_REFERENCE.md",
+              "link": "CAPABILITY_REFERENCE.md",
+              "indexes": [
+                "docs/index.md"
+              ]
+            },
+            "explanation": {
+              "document": "docs/ARCHITECTURE.md",
+              "link": "ARCHITECTURE.md",
+              "indexes": [
+                "docs/index.md"
+              ]
+            },
+            "how-to": {
+              "document": "docs/USING-WITH-CLAUDE.md",
+              "link": "USING-WITH-CLAUDE.md",
+              "indexes": [
+                "docs/index.md"
+              ]
+            },
+            "tutorial": {
+              "document": "docs/index.md",
+              "link": "#quickstart",
+              "indexes": [
+                "docs/index.md"
+              ],
+              "heading": "Quickstart"
+            }
+          }
+        },
+        "reviews": [
+          {
+            "id": "Four discoverable quadrants",
+            "disposition": "GATED-OFFLINE",
+            "reason": "Existing index quickstart provides the guided install/govern/verify sequence; architecture explains, agent guide gives tasks, capability reference describes interfaces. LAUNCH is marketing planning, not a tutorial.",
+            "tracking": "docs/READINESS.md"
+          },
+          {
+            "id": "Pedagogical quality / quadrant purity",
+            "disposition": "REVIEWED-N/A",
+            "reason": "Learning effectiveness and information architecture quality require reader evaluation, not file or keyword checks.",
+            "tracking": "docs/READINESS-FOLLOWUP.md"
+          }
+        ]
+      }
+    }
   ]
 }

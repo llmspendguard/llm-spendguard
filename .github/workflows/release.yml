@@ -7,6 +7,9 @@ on:
   push:
     tags: ['v*']
 
+permissions:
+  contents: read
+
 jobs:
   test:                          # GATE — a version tag must NOT publish an unverified build (forensic tool: no red build ships)
     runs-on: ubuntu-latest
@@ -17,8 +20,8 @@ jobs:
       # crude chars/token fallback that would 1-token-diverge the two estimators (measured: 257 vs 256).
       TIKTOKEN_CACHE_DIR: ${{ github.workspace }}/.tiktoken-cache
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
         with:
           python-version: '3.12'
           cache: 'pip'                     # reuse the pip wheel cache across runs (CI uses uv's cache; this is the pip-path parity)
@@ -70,8 +73,8 @@ jobs:
       id-token: write          # OIDC token for trusted publishing
       contents: write          # create the GitHub Release
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
         with:
           python-version: '3.12'
       - name: Build sdist + wheel
