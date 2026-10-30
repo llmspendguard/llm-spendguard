@@ -78,12 +78,31 @@ def assert_setup_read_refuses_occupied_writer(read_callback):
     assert not setup_holder.is_alive()
 
 
-def test_budget_first_touch_admission_is_inside_deadline():
-    for setup_accessor in (
-            lambda: budget.spent_all_time(deadline_s=WRITER_REPRO_DEADLINE_S),
-            lambda: budget.spent_since(None, deadline_s=WRITER_REPRO_DEADLINE_S),
-            lambda: budget.spent_by_job(WRITER_REPRO_JOB, deadline_s=WRITER_REPRO_DEADLINE_S)):
-        assert_setup_read_refuses_occupied_writer(setup_accessor)
+def test_budget_first_touch_avoids_occupied_writer_admission():
+    ledger.SpendLedger()
+    budget._reset_ledger()
+    consumer_occupied = threading.Event()
+    consumer_release = threading.Event()
+
+    def hold_consumer_setup_writer_callback():
+        consumer_occupied.set()
+        consumer_release.wait(timeout=config.LEDGER_WRITE_TIMEOUT_S)
+
+    consumer_holder = threading.Thread(target=lambda: ledger_writer.run_ledger_write(
+        hold_consumer_setup_writer_callback))
+    consumer_holder.start()
+    try:
+        assert consumer_occupied.wait(timeout=config.LEDGER_WRITE_TIMEOUT_S)
+        for setup_accessor in (
+                lambda: budget.spent_all_time(deadline_s=WRITER_REPRO_DEADLINE_S),
+                lambda: budget.spent_since(None, deadline_s=WRITER_REPRO_DEADLINE_S),
+                lambda: budget.spent_by_job(WRITER_REPRO_JOB, deadline_s=WRITER_REPRO_DEADLINE_S)):
+            assert setup_accessor() == 0
+            assert consumer_holder.is_alive()
+        assert getattr(budget._LEDGER_TL, "led", None) is None
+    finally:
+        consumer_release.set()
+        consumer_holder.join(timeout=config.LEDGER_WRITE_TIMEOUT_S)
 
 
 def test_request_scope_schema_admission_is_inside_deadline():

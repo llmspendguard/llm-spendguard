@@ -166,7 +166,7 @@ def _receipt_est_records():
     Numeric TEXT is cast per row before aggregation, independently of every real-dollar column.
     """
     import sqlite3
-    from .ledger_read import _ledger_read_connection
+    from .ledger_read import _ledger_read_connection, consumer_empty_spend_compatibility
     from .sources import receipt_source_family
     from .ledger import SpendLedger
 
@@ -183,7 +183,7 @@ def _receipt_est_records():
     ledger_records = {}
     today, week, month = _windows()
     try:
-        with _ledger_read_connection() as conn:
+        with consumer_empty_spend_compatibility(), _ledger_read_connection() as conn:
             rows = conn.execute(
                 "SELECT source, day, org, team, project_primary, "
                 f"SUM(COALESCE(est_chat_usd_nano, 0))/{NANO_USD_PER_USD}.0 AS usd FROM spend_events "

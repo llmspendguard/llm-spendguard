@@ -42,6 +42,28 @@ SCHEMA_VERSION = 6
 LEDGER_RATE_PROVENANCE_GAP = "ledger_rate_provenance_gap"
 
 
+class LedgerDateBoundaryError(ValueError):
+    """A date-granular spend window received an invalid calendar-date boundary."""
+
+
+def validate_ledger_date_bounds(since=None, until=None):
+    """Reject timestamp windows without changing dates or legacy empty bounds."""
+    for boundary_name, boundary_value in (("since", since), ("until", until)):
+        if boundary_value is None or boundary_value == "":
+            continue
+        try:
+            if not isinstance(boundary_value, str):
+                raise ValueError("a calendar-date string is required")
+            if datetime.date.fromisoformat(boundary_value).isoformat() == boundary_value:
+                continue
+        except ValueError:
+            pass
+        raise LedgerDateBoundaryError(
+            f"{boundary_name} must be a YYYY-MM-DD date — the ledger 'day' column is date-granular; "
+            f"got {boundary_value!r}. Pass a date (truncate the timestamp), "
+            "or read the timestamp-granular calls table directly.")
+
+
 @own_spend_ledger_schema_reads
 def _initialize_spend_event_nano_schema(connection):
     """Repair an existing spend_events table under the caller's migration savepoint.
@@ -972,6 +994,7 @@ class SpendLedger:
         return d
 
     def _where(self, since, until, where):
+        validate_ledger_date_bounds(since, until)
         sql, args = "", []
         if since:
             sql += " AND day >= ?"; args.append(since)

@@ -2,7 +2,6 @@
 import datetime
 import contextlib
 import os
-import sqlite3
 import stat
 import sys
 import tempfile
@@ -32,13 +31,7 @@ ledger_path = config.db_path()
 os.chmod(ledger_path, READONLY_FILE_MODE)
 try:
     since = datetime.date.today().isoformat()
-    try:
-        budget.spent_since(since)
-    except sqlite3.OperationalError as readonly_error:
-        assert "readonly" in str(readonly_error).lower()
-    else:
-        raise AssertionError("write-capable ledger aggregate did not attempt readonly schema initialization")
-
+    assert budget.spent_since(since) == FIXTURE_COST
     assert budget.spent_since(since, read_only=True) == FIXTURE_COST
     rendered = receipt.render_tree()
     assert "spend this month" in rendered

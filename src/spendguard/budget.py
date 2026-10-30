@@ -9,6 +9,8 @@ import contextlib, datetime, hashlib, pathlib, tempfile, threading
 import sys
 import sqlite3
 import time
+import functools
+import inspect
 from . import config
 from .ledger_fork_locks import new_fork_reset_ledger_state
 from .ledger_writer import serialize_ledger_function
@@ -60,6 +62,9 @@ _LEDGER_TL = threading.local()
 
 def _ledger():
     """Cache a connection-free facade; reads close scoped handles and mutations borrow the serialized owner."""
+    scoped_reader = getattr(_LEDGER_TL, "read_ledger", None)
+    if scoped_reader is not None:
+        return scoped_reader
     led = getattr(_LEDGER_TL, "led", None)
     if led is None:
         from .ledger import SpendLedger
@@ -73,10 +78,58 @@ def _ledger():
     return led
 
 
+def _budget_writer_is_initialized():
+    """An existing facade or executing owner can read without schema initialization."""
+    from .ledger_writer import current_ledger_writer_connection
+    if current_ledger_writer_connection(config.db_path()) is not None:
+        return True
+    initialized_ledger = getattr(_LEDGER_TL, "led", None)
+    return (initialized_ledger is not None
+            and pathlib.Path(initialized_ledger.db_path).resolve() == pathlib.Path(config.db_path()).resolve())
+
+
+def _consumer_aggregate_snapshot(aggregate):
+    """Keep pure consumer aggregates off schema initialization and writer admission."""
+    deadline_parameter = inspect.signature(aggregate).parameters.get("deadline_s")
+
+    @functools.wraps(aggregate)
+    def invoke_consumer_budget_aggregate(*args, **kwargs):
+        if (_budget_writer_is_initialized()
+                or getattr(_LEDGER_TL, "read_ledger", None) is not None):
+            return aggregate(*args, **kwargs)
+        from .ledger import SpendLedger
+        from .ledger_read import (_ledger_read_connection, DEFAULT_LEDGER_READ_TIME_BUDGET_S,
+                                  SPEND_EVENT_READ_COLUMNS, LedgerReadTimeout, LedgerQueryDeadline,
+                                  consumer_empty_spend_compatibility)
+        aggregate_budget = (kwargs.get("deadline_s", deadline_parameter.default)
+                            if deadline_parameter is not None else DEFAULT_LEDGER_READ_TIME_BUDGET_S)
+        if aggregate_budget is None:
+            aggregate_budget = DEFAULT_LEDGER_READ_TIME_BUDGET_S
+        try:
+            with consumer_empty_spend_compatibility(), \
+                    _ledger_read_connection(time_budget=aggregate_budget) as aggregate_connection:
+                aggregate_reader = object.__new__(SpendLedger)
+                aggregate_reader.db_path = config.db_path()
+                aggregate_reader._conn = aggregate_connection
+                aggregate_reader._cols = set(SPEND_EVENT_READ_COLUMNS)
+                aggregate_reader._explicit_owned_connection = True
+                aggregate_reader._total_memo = None
+                aggregate_reader._defer = False
+                _LEDGER_TL.read_ledger = aggregate_reader
+                try:
+                    return aggregate(*args, **kwargs)
+                finally:
+                    _LEDGER_TL.read_ledger = None
+        except LedgerReadTimeout as aggregate_timeout:
+            raise LedgerQueryDeadline(aggregate_budget) from aggregate_timeout
+    return invoke_consumer_budget_aggregate
+
+
 def _reset_ledger():
     """Drop THIS thread's cached ledger connection so the next read reconnects clean — call after a destructive
     schema change. Replaces the old `budget._LEDGER = None`, which a thread-local cache cannot honor."""
     _LEDGER_TL.led = None
+    _LEDGER_TL.read_ledger = None
 
 
 def _reset_budget_after_fork():
@@ -533,6 +586,7 @@ def _count_moves(fixes):
     return out
 
 
+@_consumer_aggregate_snapshot
 def projects_for_conv(conv):
     """Distinct repos (projects) THIS conversation touched — its workload spend. Powers the contextual receipt's
     collapsed view (a conversation can span repos; this very chat touched llm-spendguard + manga2anime + lmm)."""
@@ -541,6 +595,7 @@ def projects_for_conv(conv):
     return _ledger().distinct("project_primary", where={"conv_id": str(conv), "is_meta": 0})
 
 
+@_consumer_aggregate_snapshot
 def all_projects():
     """All repos with workload spend (the expanded all-repos view) — excludes meta + reconciliation-mirror rows."""
     return _ledger().distinct("project_primary", where={"is_meta": 0, "reconciled": 0})
@@ -739,6 +794,9 @@ def spent_since(day, project=None, conv=None, *, deadline_s=config.LEDGER_QUERY_
     LedgerQueryDeadline rather than returning an incomplete spend value.
     Optionally SCOPE to a `project` (repo) and/or `conv` (conversation) — the receipt uses this to show what is
     relevant to the current repo/conversation, not a global sum.
+    A cold consumer automatically uses a bounded read-only snapshot, without
+    initializing or migrating the writer. An initialized owner retains its
+    existing facade; read_only=True always forces the snapshot path.
 
     Repointed onto spend_events (the money-of-record). This is LLM-only by construction: GPU/remote spend has
     its OWN cap (resources.compute_exceeded) and is no longer lumped into the LLM total as the old
@@ -749,14 +807,14 @@ def spent_since(day, project=None, conv=None, *, deadline_s=config.LEDGER_QUERY_
         where["project_primary"] = normalize_ledger_project_id(project)
     if conv is not None:
         where["conv_id"] = str(conv)
-    if conv is not None or read_only:
-        # Conversation consumers must never initialize/migrate the write ledger.
+    if conv is not None or read_only or not _budget_writer_is_initialized():
+        # Consumers must never initialize/migrate the write ledger.
         # The bounded reader owns setup, lock waiting, stepping and disposal;
         # spent_dec remains the single definition of the countable aggregate.
         from .ledger import SpendLedger
         from .ledger_read import (_ledger_read_connection, LedgerReadTimeout,
                                   LedgerQueryDeadline, DEFAULT_LEDGER_READ_TIME_BUDGET_S,
-                                  SPEND_EVENT_READ_COLUMNS)
+                                  SPEND_EVENT_READ_COLUMNS, consumer_empty_spend_compatibility)
         conversation_budget = (deadline_s if deadline_s is not None
                                else DEFAULT_LEDGER_READ_TIME_BUDGET_S)
         import math
@@ -767,7 +825,8 @@ def spent_since(day, project=None, conv=None, *, deadline_s=config.LEDGER_QUERY_
                 and conversation_ledger._conn.in_transaction):
             raise LedgerQueryDeadline(conversation_budget)
         try:
-            with _ledger_read_connection(time_budget=conversation_budget) as conversation_connection:
+            with consumer_empty_spend_compatibility(), \
+                    _ledger_read_connection(time_budget=conversation_budget) as conversation_connection:
                 # Coverage and aggregate must observe one snapshot, even when a
                 # separate WAL writer commits an incomplete settlement mid-read.
                 # The bounded reader rolls back on exit, including failures.
@@ -786,6 +845,7 @@ def spent_since(day, project=None, conv=None, *, deadline_s=config.LEDGER_QUERY_
     return spend_total
 
 
+@_consumer_aggregate_snapshot
 def input_cache_split(since=None, project=None, conv=None):
     """Measured input-token cache axes across live ledger rows: read, write, and total processed input.
 
@@ -811,6 +871,7 @@ def input_cache_split(since=None, project=None, conv=None):
 
 
 @bind_ledger_query_deadline
+@_consumer_aggregate_snapshot
 def spent_by_job(job, since=None, *, deadline_s=config.LEDGER_QUERY_DEADLINE_S):
     """Gate-recorded billed LLM $ for ONE job/run tag — the rows whose `chain` == `spendguard.context(chain=<job>)`.
     This is the concurrency-SAFE "my spend": the chain is per-run, so a job's total never sweeps in a CONCURRENT run
@@ -826,6 +887,7 @@ def spent_by_job(job, since=None, *, deadline_s=config.LEDGER_QUERY_DEADLINE_S):
 
 
 @bind_ledger_query_deadline
+@_consumer_aggregate_snapshot
 def spent_all_time(*, deadline_s=config.LEDGER_QUERY_DEADLINE_S):
     """Running total of ALL gate-recorded countable LLM billed-$ to date — the flow-receipt BASELINE, read at a
     flow's enter and its exit so the DELTA is what that flow spent (calls.context / receipt.emit_flow). Memoized
@@ -838,6 +900,7 @@ def spent_all_time(*, deadline_s=config.LEDGER_QUERY_DEADLINE_S):
     return all_spend_total
 
 
+@_consumer_aggregate_snapshot
 def suspect_batches(since):
     """Batch spend since `since`, with the token counts, so an operator can SEE the arithmetic behind a number
     they doubt. `row` is the spend_events id — the exact handle for `spendguard quarantine --row`. Batch rows
@@ -921,6 +984,7 @@ def unquarantine_charge(row=None, ts=None, reason=""):
     return n
 
 
+@_consumer_aggregate_snapshot
 def unpriced_since(day):
     """[{provider, model, calls}] of calls recorded with NO price since `day` — the cost_basis='unpriced' rows.
     The tokens are real; only the dollars are unknown. Surfacing this is the difference between "we spent $0"
@@ -1009,6 +1073,7 @@ def reprice_unpriced(model=None, apply=False, actor="reprice"):
     return plan
 
 
+@_consumer_aggregate_snapshot
 def quarantined_since(day):
     """[{day, provider, model, cost, project, n}] of QUARANTINED rows (status=void) since `day` — estimates the
     gate proved impossible. They are kept (forensics: what the estimator claimed, and when) and excluded from
@@ -1021,6 +1086,7 @@ def quarantined_since(day):
     return sorted(out, key=lambda x: -x["cost"])
 
 
+@_consumer_aggregate_snapshot
 def by_basis(day):
     """{basis: {'cost': $, 'n': rows}} since `day` — how much of the headline is a projection vs a bill, read
     from cost_basis on spend_events. Excludes meta + reconciliation mirrors + quarantine (void) + unpriced.
@@ -1031,6 +1097,7 @@ def by_basis(day):
 
 
 # ── reconciliation: make the LOCAL ledger reflect PROVIDER-billed truth (the gap = ungoverned/pre-ledger spend) ──
+@_consumer_aggregate_snapshot
 def by_provider_day(kind=None, since=None):
     """{(provider, day): $} of GATE-recorded COUNTABLE spend — the attributed side of reconcile. Read from
     spend_events via the single _COUNTABLE filter (reconciliation mirrors, meta, quarantine, reconstructed all
@@ -1041,6 +1108,7 @@ def by_provider_day(kind=None, since=None):
     return {(p or "?", d): float(v["usd"]) for (p, d), v in res.items() if float(v["usd"]) != 0}
 
 
+@_consumer_aggregate_snapshot
 def reconciled_by_project(since=None):
     """{project: $} of RECONCILED batch-marker rows (recon_marker='(provider-batch)' — the provider-truth gap
     reconcile_into_ledger attributed by evidence). The 'attributed' side of the reconcile loop, complement to
@@ -1049,6 +1117,7 @@ def reconciled_by_project(since=None):
     return {(p or "unattributed"): float(v["usd"]) for p, v in res.items()}
 
 
+@_consumer_aggregate_snapshot
 def gate_by_project_day(kind=None, since=None):
     """{(project, day): $} of GATE-recorded (attributed) COUNTABLE spend — read from spend_events via _COUNTABLE
     (reconciliation mirrors/meta/quarantine/reconstructed excluded). Used to compute the per-project gap so the
@@ -1096,6 +1165,7 @@ def clear_reconciled(since=None, model=None, providers=None):
 # ── estimate→actual true-down (ledger_sync.true_down writes these; the gate's batch rows are PRE-SUBMIT
 #    estimates, so once the provider bills the actuals the ledger must come down to the billed truth) ──
 # RAW-CHARGES-OK: excludes true-down as well, which the view deliberately keeps
+@_consumer_aggregate_snapshot
 def gate_batch_cells(since=None):
     """{(project, provider, model, day): $} of GATE-LIVE batch rows — the estimate base the true-down corrects.
     Excludes every reconcile marker model AND prior true-down rows (idempotence: corrections never feed the next
@@ -1247,6 +1317,7 @@ def external_exceeded(pending=0.0):
     return ("external", cap, spent) if spent > cap else None
 
 
+@_consumer_aggregate_snapshot
 def meta_spent_since(day):
     """spendguard's OWN (meta) spend since `day` — the is_meta rows, on their own cap line. Read from
     spend_events via meta_dec (excludes voided/reversed; a meta row is never quarantine/unpriced)."""
@@ -1269,6 +1340,7 @@ def meta_exceeded(pending=0.0):
 
 
 # RAW-CHARGES-OK: carries its own kind/meta switch per caller; markers already excluded
+@_consumer_aggregate_snapshot
 def by_day(kind=None, exclude_meta=False, since=None, exclude_reconciled=False):
     """{day: total$} from the local ledger, optionally filtered by kind / excluding meta / excluding reconciled
     (provider-truth) rows / since a date. exclude_reconciled is essential for the LEAK check AND the trust check:
@@ -1300,6 +1372,7 @@ def by_day(kind=None, exclude_meta=False, since=None, exclude_reconciled=False):
 # RAW-CHARGES-OK: the SaaS PUSH payload deliberately carries backfill AND meta rows — the org
 # dashboard needs them. countable_charges strips both, so routing this through it silently
 # changed what we ship upstream; tests/test_ledger_marker_matrix.py caught it.
+@_consumer_aggregate_snapshot
 def by_dims(since=None):
     """Per-day rows grouped by (day, provider, model, kind) for the SaaS roll-up push — the structured shape
     the server's /v1/ledger expects (vs by_day's flat {day: $}). Returns dicts with cost in $ and a call count.
@@ -1333,6 +1406,7 @@ def by_dims(since=None):
 
 
 # RAW-CHARGES-OK: excludes true-down as well, which the view deliberately keeps
+@_consumer_aggregate_snapshot
 def by_key(since=None):
     """{(provider, key_fp): {'cost': $, 'calls': n}} of gate-recorded workload — per-KEY spend (which
     workspace/project key did this money flow through?). Excludes meta and every reconcile marker row
@@ -1346,6 +1420,7 @@ def by_key(since=None):
     return {(p or "?", fp or "(none)"): {"cost": float(v["usd"]), "calls": v["n"]} for (p, fp), v in res.items()}
 
 
+@_consumer_aggregate_snapshot
 def by_intent(since=None):
     """{intent: {'cost': $, 'calls': n}} of gate-recorded COUNTABLE LLM workload since `since` — billed-$ grouped by
     the forensic `intent` label, so "what did each job-type cost" is a command (`receipt --by-intent`), not the
@@ -1359,6 +1434,7 @@ def by_intent(since=None):
     return {(i or "(unlabelled)"): {"cost": float(v["usd"]), "calls": v["n"]} for i, v in res.items()}
 
 
+@_consumer_aggregate_snapshot
 def billed_by_model(intent=None, as_of=None):
     """{'provider:model': billed $} of COUNTABLE LLM spend from the LEDGER (money of record), optionally scoped to one
     `intent` and/or AS-OF a date (`day <= as_of`, matching advise's backtest window). This is the COST BASIS advise /
@@ -1375,6 +1451,7 @@ def billed_by_model(intent=None, as_of=None):
     return {f"{(p or '?')}:{(m or '?')}": float(v["usd"]) for (p, m), v in res.items()}
 
 
+@_consumer_aggregate_snapshot
 def ledger_start(kind=None):
     """Earliest day in the ledger — spend before this wasn't recorded locally (pre-ledger). With `kind`, the
     earliest day for THAT category (its money column populated): axes start recording at different times

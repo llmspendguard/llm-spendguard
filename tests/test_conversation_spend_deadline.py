@@ -2,8 +2,10 @@
 import concurrent.futures
 import sqlite3
 import sys
+import tempfile
 import threading
 import time
+from pathlib import Path
 from unittest.mock import patch
 
 from _pytest_fixture_bridge import align_test_startup_home, run_pytest_style
@@ -11,6 +13,8 @@ from _pytest_fixture_bridge import align_test_startup_home, run_pytest_style
 align_test_startup_home(prefix=__name__)
 
 from spendguard import budget, config, ledger, ledger_read
+import spendguard
+from spendguard.money_scale import NANO_USD_PER_USD
 
 CONVERSATION_FAULT_ROWS = 2048
 CONVERSATION_FAULT_WORKERS = 4
@@ -40,6 +44,9 @@ def seed_conversation_consumer_fault_rows():
     seed._conn.executemany(CONVERSATION_FAULT_INSERT, (
         (str(index), CONVERSATION_FAULT_DAY, CONVERSATION_FAULT_ID)
         for index in range(CONVERSATION_FAULT_ROWS)))
+    seed._conn.execute(
+        f"UPDATE spend_events SET {ledger.SPEND_EVENT_NANO_COLUMNS['realtime_usd']}=? WHERE conv_id=?",
+        (NANO_USD_PER_USD, CONVERSATION_FAULT_ID))
     seed._conn.commit()
     seed._conn.close()
     from spendguard.ledger_writer import close_ledger_writers
@@ -80,6 +87,62 @@ def test_conversation_spend_deadline_cold_read_never_initializes_writer():
     with patch.object(ledger.SpendLedger, "__init__", side_effect=AssertionError("write initialization")):
         assert budget.spent_since(CONVERSATION_FAULT_DAY, conv=CONVERSATION_FAULT_ID,
                                   deadline_s=CONVERSATION_FAULT_FAST_S) == CONVERSATION_FAULT_ROWS
+
+
+def test_unscoped_consumer_snapshot_while_writer_transaction_is_open():
+    """A cold consumer's ordinary API call must never request a writer handoff."""
+    seed_conversation_consumer_fault_rows()
+    writer = config.open_ledger_connection()
+    try:
+        writer.execute("BEGIN IMMEDIATE")
+
+        def query_cold_consumer_snapshot():
+            assert getattr(budget._LEDGER_TL, "led", None) is None
+            with patch.object(ledger.SpendLedger, "__init__",
+                              side_effect=AssertionError("consumer initialized write ledger")):
+                automatic = budget.spent_since(CONVERSATION_FAULT_DAY,
+                                               deadline_s=CONVERSATION_FAULT_DEADLINE_S)
+                explicit = budget.spent_since(CONVERSATION_FAULT_DAY, read_only=True,
+                                              deadline_s=CONVERSATION_FAULT_FAST_S)
+                assert automatic == explicit == CONVERSATION_FAULT_ROWS
+                assert {"capability_ledger_read_budget_spent_since",
+                        "capability_ledger_read_ledger_read_read_spend_since"} <= set(spendguard.__all__)
+                assert spendguard.capability_ledger_read_budget_spent_since(CONVERSATION_FAULT_DAY,
+                                               deadline_s=CONVERSATION_FAULT_FAST_S) == automatic
+                assert spendguard.capability_ledger_read_ledger_read_read_spend_since(CONVERSATION_FAULT_DAY,
+                                                   deadline_s=CONVERSATION_FAULT_FAST_S) == automatic
+                assert budget.spent_by_job(CONVERSATION_FAULT_ID,
+                                           deadline_s=CONVERSATION_FAULT_FAST_S) == 0
+                assert budget.spent_all_time(deadline_s=CONVERSATION_FAULT_FAST_S) == automatic
+                assert sum(budget.by_day().values()) == automatic
+                assert budget.input_cache_split()["input_tok"] == 0
+            assert getattr(budget._LEDGER_TL, "led", None) is None
+
+        with concurrent.futures.ThreadPoolExecutor() as pool:
+            pool.submit(query_cold_consumer_snapshot).result(timeout=CONVERSATION_FAULT_FAST_S)
+        assert writer.in_transaction
+    finally:
+        writer.rollback()
+        writer.close()
+
+
+def test_initialized_budget_owner_retains_writer_facade_fast_path():
+    seed_conversation_consumer_fault_rows()
+    budget._reset_ledger()
+    owner_facade = budget._ledger()
+    try:
+        with patch.object(budget, "_ledger", return_value=owner_facade) as owner_lookup:
+            ordinary = budget.spent_since(CONVERSATION_FAULT_DAY,
+                                          deadline_s=CONVERSATION_FAULT_FAST_S)
+            owner_lookup.assert_called_once_with()
+        assert ordinary == CONVERSATION_FAULT_ROWS
+        assert budget.spent_since(CONVERSATION_FAULT_DAY, read_only=True,
+                                  deadline_s=CONVERSATION_FAULT_FAST_S) == ordinary
+        with patch.object(budget, "_ledger", side_effect=AssertionError("forced snapshot used writer")):
+            assert spendguard.capability_ledger_read_ledger_read_read_spend_since(CONVERSATION_FAULT_DAY,
+                                               deadline_s=CONVERSATION_FAULT_FAST_S) == ordinary
+    finally:
+        budget._reset_ledger()
 
 
 def test_conversation_settlement_coverage_shares_spend_deadline():
@@ -214,6 +277,30 @@ def test_conversation_spend_deadline_concurrent_admission_accounts_once():
         for handle in handles:
             handle.close()
     assert config.ledger_connection_count() == baseline
+
+
+def test_consumer_empty_ledger_compatibility_never_creates_persistent_schema():
+    with tempfile.TemporaryDirectory() as consumer_directory:
+        consumer_path = Path(consumer_directory) / Path(config.db_path()).name
+        budget._reset_ledger()
+        try:
+            with patch.object(config, "db_path", return_value=consumer_path), \
+                    patch.object(ledger.SpendLedger, "__init__", side_effect=AssertionError("consumer initialized writer")):
+                assert budget.spent_since(CONVERSATION_FAULT_DAY) == 0
+                assert not consumer_path.exists()
+                with sqlite3.connect(consumer_path) as calls_only_connection:
+                    calls_only_connection.execute("CREATE TABLE calls (id TEXT)")
+                ledger_bytes_before = consumer_path.read_bytes()
+                assert budget.spent_since(CONVERSATION_FAULT_DAY) == 0
+                assert budget.spent_since(CONVERSATION_FAULT_DAY, read_only=True) == 0
+                assert budget.by_basis(CONVERSATION_FAULT_DAY) == {}
+                assert consumer_path.read_bytes() == ledger_bytes_before
+                with sqlite3.connect(consumer_path) as schema_connection:
+                    assert schema_connection.execute(
+                        "SELECT name FROM sqlite_master WHERE name=?", (ledger_read.LEDGER_EVENTS_TABLE,)
+                    ).fetchone() is None
+        finally:
+            budget._reset_ledger()
 
 
 if __name__ == "__main__":

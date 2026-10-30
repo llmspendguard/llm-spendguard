@@ -64,6 +64,37 @@ LEDGER_READ_DISABLE_PROGRESS_VM_INSTRUCTIONS = 0
 LEDGER_READ_SQLITE_PRIMARY_CODE_MASK = 0xFF
 LEDGER_READ_COUNT_EXPRESSION = "COUNT(*)"
 LEDGER_EVIDENCE_SNAPSHOT_SAVEPOINT = "ledger_evidence_snapshot"
+_CONSUMER_EMPTY_SPEND_COMPATIBILITY = ContextVar("consumer_empty_spend_compatibility", default=False)
+CONSUMER_EMPTY_LEDGER_MEMORY_PATH = ":memory:"
+
+
+@contextmanager
+def consumer_empty_spend_compatibility():
+    """Preserve empty pre-initialization budget totals without creating a write ledger."""
+    compatibility_token = _CONSUMER_EMPTY_SPEND_COMPATIBILITY.set(True)
+    try:
+        yield
+    finally:
+        _CONSUMER_EMPTY_SPEND_COMPATIBILITY.reset(compatibility_token)
+
+
+def _provide_consumer_empty_spend_view(connection):
+    """Only an absent table gets an empty connection-local view; existing schemas stay authoritative."""
+    from .ledger import SPEND_EVENT_NANO_COLUMNS
+    if connection.execute("SELECT 1 FROM sqlite_master WHERE name=?", (LEDGER_EVENTS_TABLE,)).fetchone():
+        return
+    empty_spend_columns = (*SPEND_EVENT_READ_COLUMNS, *SPEND_EVENT_NANO_COLUMNS.values())
+    empty_spend_projection = ",".join(f'NULL AS "{column}"' for column in empty_spend_columns)
+    connection.execute(f"CREATE TEMP VIEW {LEDGER_EVENTS_TABLE} AS SELECT {empty_spend_projection} WHERE 0")
+
+
+def _consumer_ledger_read_target(ledger_path):
+    """Resolve an empty-installation stand-in only inside the consumer compatibility scope."""
+    if _CONSUMER_EMPTY_SPEND_COMPATIBILITY.get() and not ledger_path.exists():
+        return CONSUMER_EMPTY_LEDGER_MEMORY_PATH
+    return ledger_path.as_uri() + "?mode=ro"
+
+
 SPEND_EVENT_READ_COLUMNS = tuple("""id dedup_key source content_hash schema_version ts_utc occurred_at recorded_at tz local_datetime day period eligibility_window window_start window_end currency batch_usd realtime_usd est_chat_usd remote_compute_usd subscription_usd external_usd cost_type billed is_meta cost_basis amount_confidence rate_in rate_out fx_rate base_usd provider model model_kind finish in_tok out_tok cache_read_tok cache_write_tok reasoning_tok num_calls num_items latency org team projects project_primary member_ref key_fp account_id customer_id cost_center engagement billable invoice_id conv_id seg_id call_id cwd batch_id from_message_ids prior_message_ids post_message_ids script repo host prompt_hash prompt_snip output_snip evidence_uri intent actor chain attr_what attr_why attr_how attr_reason attr_confidence attr_source attr_model attr_ts attr_version recorded_by ingest_version status revision locked locked_at lock_reason reverses_id adjusts_id superseded_by reconciled reconciled_vs reconciled_at reconciliation_id gap_flag period_closed recon_marker quality quality_src quality_conf cache_hit savings_cv tags""".split())
 RECENT_CALL_READ_COLUMNS = tuple("id ts chain intent caller provider model kind in_tok out_tok cost latency finish quality executor project effort outcome disposition".split())
 LEDGER_READ_ALLOWED_TABLES = (LEDGER_EVENTS_TABLE, LEDGER_CALLS_TABLE, LEDGER_INSIGHTS_TABLE)
@@ -524,7 +555,9 @@ def _ledger_bounded_read_handle(path, time_budget, *, bulk_chunked=False):
         remaining = deadline_at - time.monotonic()
         if remaining <= 0:
             raise LedgerReadTimeout(time_budget)
-        read_owner = config.managed_ledger_read_connection(ledger_path.as_uri() + "?mode=ro", uri=True,
+        empty_spend_compatibility = _CONSUMER_EMPTY_SPEND_COMPATIBILITY.get()
+        read_path = _consumer_ledger_read_target(ledger_path)
+        read_owner = config.managed_ledger_read_connection(read_path, uri=True,
             timeout=min(config.LEDGER_CONNECT_TIMEOUT_S, remaining),
             deadline_at=deadline_at)
         connection = read_owner.__enter__()
@@ -568,6 +601,8 @@ def _ledger_bounded_read_handle(path, time_budget, *, bulk_chunked=False):
             request_scope.register_request_read_connection(connection)
         from .ledger import _DecSum
         connection.create_aggregate("dec_sum", LEDGER_READ_DECIMAL_ARITY, _DecSum)
+        if empty_spend_compatibility:
+            _provide_consumer_empty_spend_view(connection)
         if request_scope is not None:
             request_scope.require_ledger_request_live()
         polling_started = time.monotonic()
@@ -832,6 +867,20 @@ def read_recorded_call_total(path=None, *, time_budget=DEFAULT_LEDGER_READ_TIME_
     return float(recorded_total)
 
 
+def read_spend_since(since, project=None, conv=None, *, deadline_s=config.LEDGER_QUERY_DEADLINE_S):
+    """Return complete countable workload spend from a bounded read-only snapshot.
+
+    Optional project and conversation scopes retain budget.spent_since semantics;
+    no write-ledger initialization or migration is performed.
+    """
+    from . import budget
+    try:
+        return budget.spent_since(since, project=project, conv=conv,
+                                  deadline_s=deadline_s, read_only=True)
+    except config.LedgerConnectionLimitError as exc:
+        raise LedgerReadOpenError(f"Spend snapshot connection admission refused: {exc}") from exc
+
+
 def read_conversation_spend_since(since, conv, *, deadline_s=config.LEDGER_QUERY_DEADLINE_S):
     """Thin in-process name for the existing countable conversation aggregate."""
     from . import budget
@@ -888,7 +937,8 @@ def read_ledger_count(request: LedgerReadRequest | None = None, path=None) -> in
 
 
 def read_spend_events(since=None, until=None, where=None, category_column=None, limit=None, path=None):
-    from .ledger import USD_COLS
+    from .ledger import USD_COLS, validate_ledger_date_bounds
+    validate_ledger_date_bounds(since, until)
     predicates, parameters = [], []
     for column, operator, value in (("day", ">=", since), ("day", "<=", until)):
         if value is not None:

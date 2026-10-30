@@ -80,7 +80,8 @@ def test_spend_event_nano_backfill_read_preservation_and_idempotency(tmp_path):
                           for value in before_total[:2]), Decimal(0))
     # spend_events readers are nano-granular post-cutover; raw TEXT retains full precision.
     assert Decimal(migrated.spent_dec()) == nano_usd_to_usd(usd_to_nano_usd(expected_spent))
-    with patch.object(nano_budget_module, '_ledger', return_value=migrated):
+    with patch.object(nano_budget_module.config, 'db_path', return_value=database_path), \
+            patch.object(nano_budget_module._LEDGER_TL, 'led', migrated, create=True):
         assert nano_budget_module.spent_all_time() == float(expected_spent)
     with sqlite3.connect(database_path) as source_connection, sqlite3.connect(NANO_FIXTURE_MEMORY_DATABASE) as owned_connection:
         source_connection.backup(owned_connection)
