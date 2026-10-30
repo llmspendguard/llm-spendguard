@@ -1,0 +1,2763 @@
+[
+  {
+    "token_id": "agent-spawn-gate/--pretooluse-hook",
+    "commands": [
+      "agent-spawn-gate"
+    ],
+    "spelling": "--pretooluse-hook",
+    "name": "pretooluse_hook",
+    "json_type": "boolean",
+    "required": false,
+    "default": false,
+    "cli_nargs": 0,
+    "cli_action": "store_true",
+    "help": "requires --pretooluse-hook membership; unknown argv ignored; stdin JSON; invalid input fail-open",
+    "compatibility_policy": "requires --pretooluse-hook membership; unknown argv ignored; stdin JSON; invalid input fail-open"
+  },
+  {
+    "token_id": "install-agent-gate/--uninstall",
+    "commands": [
+      "install-agent-gate"
+    ],
+    "spelling": "--uninstall",
+    "name": "uninstall",
+    "json_type": "boolean",
+    "required": false,
+    "default": false,
+    "cli_nargs": 0,
+    "cli_action": "store_true",
+    "help": "each argv must equal --uninstall; duplicates accepted; unknown token exit2",
+    "compatibility_policy": "each argv must equal --uninstall; duplicates accepted; unknown token exit2"
+  },
+  {
+    "token_id": "audit/--ci",
+    "commands": [
+      "audit"
+    ],
+    "spelling": "--ci",
+    "name": "ci",
+    "json_type": "boolean",
+    "required": false,
+    "default": false,
+    "cli_nargs": 0,
+    "cli_action": "store_true",
+    "help": "--ci/--deep/--run presence; unknown tokens ignored",
+    "compatibility_policy": "--ci/--deep/--run presence; unknown tokens ignored"
+  },
+  {
+    "token_id": "audit/--deep",
+    "commands": [
+      "audit"
+    ],
+    "spelling": "--deep",
+    "name": "deep",
+    "json_type": "boolean",
+    "required": false,
+    "default": false,
+    "cli_nargs": 0,
+    "cli_action": "store_true",
+    "help": "--ci/--deep/--run presence; unknown tokens ignored",
+    "compatibility_policy": "--ci/--deep/--run presence; unknown tokens ignored"
+  },
+  {
+    "token_id": "audit/--run",
+    "commands": [
+      "audit"
+    ],
+    "spelling": "--run",
+    "name": "run",
+    "json_type": "boolean",
+    "required": false,
+    "default": false,
+    "cli_nargs": 0,
+    "cli_action": "store_true",
+    "help": "--ci/--deep/--run presence; unknown tokens ignored",
+    "compatibility_policy": "--ci/--deep/--run presence; unknown tokens ignored"
+  },
+  {
+    "token_id": "balances/--cached",
+    "commands": [
+      "balances"
+    ],
+    "spelling": "--cached",
+    "name": "cached",
+    "json_type": "boolean",
+    "required": false,
+    "default": false,
+    "cli_nargs": 0,
+    "cli_action": "store_true",
+    "help": "--cached membership; other tokens ignored",
+    "compatibility_policy": "--cached membership; other tokens ignored"
+  },
+  {
+    "token_id": "chat/--days",
+    "commands": [
+      "chat"
+    ],
+    "spelling": "--days",
+    "name": "days",
+    "json_type": "integer",
+    "required": false,
+    "default": null,
+    "cli_nargs": 1,
+    "cli_action": "store",
+    "help": "first default show; --days first safe int errors None; --by first safe default week; test/enable/disable/status/accept/push-taxonomy;discover(--sample first safe int errors None,--run,--no-apply);classify;loop(--run,--discover);sync(--dry);work;story(days or7);show/list(--by-project,--no-refresh); unknown first exit1",
+    "compatibility_policy": "first default show; --days first safe int errors None; --by first safe default week; test/enable/disable/status/accept/push-taxonomy;discover(--sample first safe int errors None,--run,--no-apply);classify;loop(--run,--discover);sync(--dry);work;story(days or7);show/list(--by-project,--no-refresh); unknown first exit1"
+  },
+  {
+    "token_id": "chat/--by",
+    "commands": [
+      "chat"
+    ],
+    "spelling": "--by",
+    "name": "by",
+    "json_type": "string",
+    "required": false,
+    "default": null,
+    "cli_nargs": 1,
+    "cli_action": "store",
+    "help": "first default show; --days first safe int errors None; --by first safe default week; test/enable/disable/status/accept/push-taxonomy;discover(--sample first safe int errors None,--run,--no-apply);classify;loop(--run,--discover);sync(--dry);work;story(days or7);show/list(--by-project,--no-refresh); unknown first exit1",
+    "compatibility_policy": "first default show; --days first safe int errors None; --by first safe default week; test/enable/disable/status/accept/push-taxonomy;discover(--sample first safe int errors None,--run,--no-apply);classify;loop(--run,--discover);sync(--dry);work;story(days or7);show/list(--by-project,--no-refresh); unknown first exit1"
+  },
+  {
+    "token_id": "chat/--sample",
+    "commands": [
+      "chat"
+    ],
+    "spelling": "--sample",
+    "name": "sample",
+    "json_type": "integer",
+    "required": false,
+    "default": null,
+    "cli_nargs": 1,
+    "cli_action": "store",
+    "help": "first default show; --days first safe int errors None; --by first safe default week; test/enable/disable/status/accept/push-taxonomy;discover(--sample first safe int errors None,--run,--no-apply);classify;loop(--run,--discover);sync(--dry);work;story(days or7);show/list(--by-project,--no-refresh); unknown first exit1",
+    "compatibility_policy": "first default show; --days first safe int errors None; --by first safe default week; test/enable/disable/status/accept/push-taxonomy;discover(--sample first safe int errors None,--run,--no-apply);classify;loop(--run,--discover);sync(--dry);work;story(days or7);show/list(--by-project,--no-refresh); unknown first exit1"
+  },
+  {
+    "token_id": "chat/--by-project",
+    "commands": [
+      "chat"
+    ],
+    "spelling": "--by-project",
+    "name": "by_project",
+    "json_type": "boolean",
+    "required": false,
+    "default": false,
+    "cli_nargs": 0,
+    "cli_action": "store_true",
+    "help": "first default show; --days first safe int errors None; --by first safe default week; test/enable/disable/status/accept/push-taxonomy;discover(--sample first safe int errors None,--run,--no-apply);classify;loop(--run,--discover);sync(--dry);work;story(days or7);show/list(--by-project,--no-refresh); unknown first exit1",
+    "compatibility_policy": "first default show; --days first safe int errors None; --by first safe default week; test/enable/disable/status/accept/push-taxonomy;discover(--sample first safe int errors None,--run,--no-apply);classify;loop(--run,--discover);sync(--dry);work;story(days or7);show/list(--by-project,--no-refresh); unknown first exit1"
+  },
+  {
+    "token_id": "chat/--run",
+    "commands": [
+      "chat"
+    ],
+    "spelling": "--run",
+    "name": "run",
+    "json_type": "boolean",
+    "required": false,
+    "default": false,
+    "cli_nargs": 0,
+    "cli_action": "store_true",
+    "help": "first default show; --days first safe int errors None; --by first safe default week; test/enable/disable/status/accept/push-taxonomy;discover(--sample first safe int errors None,--run,--no-apply);classify;loop(--run,--discover);sync(--dry);work;story(days or7);show/list(--by-project,--no-refresh); unknown first exit1",
+    "compatibility_policy": "first default show; --days first safe int errors None; --by first safe default week; test/enable/disable/status/accept/push-taxonomy;discover(--sample first safe int errors None,--run,--no-apply);classify;loop(--run,--discover);sync(--dry);work;story(days or7);show/list(--by-project,--no-refresh); unknown first exit1"
+  },
+  {
+    "token_id": "chat/--no-apply",
+    "commands": [
+      "chat"
+    ],
+    "spelling": "--no-apply",
+    "name": "no_apply",
+    "json_type": "boolean",
+    "required": false,
+    "default": false,
+    "cli_nargs": 0,
+    "cli_action": "store_true",
+    "help": "first default show; --days first safe int errors None; --by first safe default week; test/enable/disable/status/accept/push-taxonomy;discover(--sample first safe int errors None,--run,--no-apply);classify;loop(--run,--discover);sync(--dry);work;story(days or7);show/list(--by-project,--no-refresh); unknown first exit1",
+    "compatibility_policy": "first default show; --days first safe int errors None; --by first safe default week; test/enable/disable/status/accept/push-taxonomy;discover(--sample first safe int errors None,--run,--no-apply);classify;loop(--run,--discover);sync(--dry);work;story(days or7);show/list(--by-project,--no-refresh); unknown first exit1"
+  },
+  {
+    "token_id": "chat/--reclassify",
+    "commands": [
+      "chat"
+    ],
+    "spelling": "--reclassify",
+    "name": "reclassify",
+    "json_type": "boolean",
+    "required": false,
+    "default": false,
+    "cli_nargs": 0,
+    "cli_action": "store_true",
+    "help": "first default show; --days first safe int errors None; --by first safe default week; test/enable/disable/status/accept/push-taxonomy;discover(--sample first safe int errors None,--run,--no-apply);classify;loop(--run,--discover);sync(--dry);work;story(days or7);show/list(--by-project,--no-refresh); unknown first exit1",
+    "compatibility_policy": "first default show; --days first safe int errors None; --by first safe default week; test/enable/disable/status/accept/push-taxonomy;discover(--sample first safe int errors None,--run,--no-apply);classify;loop(--run,--discover);sync(--dry);work;story(days or7);show/list(--by-project,--no-refresh); unknown first exit1"
+  },
+  {
+    "token_id": "chat/--discover",
+    "commands": [
+      "chat"
+    ],
+    "spelling": "--discover",
+    "name": "discover",
+    "json_type": "boolean",
+    "required": false,
+    "default": false,
+    "cli_nargs": 0,
+    "cli_action": "store_true",
+    "help": "first default show; --days first safe int errors None; --by first safe default week; test/enable/disable/status/accept/push-taxonomy;discover(--sample first safe int errors None,--run,--no-apply);classify;loop(--run,--discover);sync(--dry);work;story(days or7);show/list(--by-project,--no-refresh); unknown first exit1",
+    "compatibility_policy": "first default show; --days first safe int errors None; --by first safe default week; test/enable/disable/status/accept/push-taxonomy;discover(--sample first safe int errors None,--run,--no-apply);classify;loop(--run,--discover);sync(--dry);work;story(days or7);show/list(--by-project,--no-refresh); unknown first exit1"
+  },
+  {
+    "token_id": "chat/--no-refresh",
+    "commands": [
+      "chat"
+    ],
+    "spelling": "--no-refresh",
+    "name": "no_refresh",
+    "json_type": "boolean",
+    "required": false,
+    "default": false,
+    "cli_nargs": 0,
+    "cli_action": "store_true",
+    "help": "first default show; --days first safe int errors None; --by first safe default week; test/enable/disable/status/accept/push-taxonomy;discover(--sample first safe int errors None,--run,--no-apply);classify;loop(--run,--discover);sync(--dry);work;story(days or7);show/list(--by-project,--no-refresh); unknown first exit1",
+    "compatibility_policy": "first default show; --days first safe int errors None; --by first safe default week; test/enable/disable/status/accept/push-taxonomy;discover(--sample first safe int errors None,--run,--no-apply);classify;loop(--run,--discover);sync(--dry);work;story(days or7);show/list(--by-project,--no-refresh); unknown first exit1"
+  },
+  {
+    "token_id": "chat/--dry",
+    "commands": [
+      "chat"
+    ],
+    "spelling": "--dry",
+    "name": "dry",
+    "json_type": "boolean",
+    "required": false,
+    "default": false,
+    "cli_nargs": 0,
+    "cli_action": "store_true",
+    "help": "first default show; --days first safe int errors None; --by first safe default week; test/enable/disable/status/accept/push-taxonomy;discover(--sample first safe int errors None,--run,--no-apply);classify;loop(--run,--discover);sync(--dry);work;story(days or7);show/list(--by-project,--no-refresh); unknown first exit1",
+    "compatibility_policy": "first default show; --days first safe int errors None; --by first safe default week; test/enable/disable/status/accept/push-taxonomy;discover(--sample first safe int errors None,--run,--no-apply);classify;loop(--run,--discover);sync(--dry);work;story(days or7);show/list(--by-project,--no-refresh); unknown first exit1"
+  },
+  {
+    "token_id": "claude-code/--rebuild",
+    "commands": [
+      "claude-code"
+    ],
+    "spelling": "--rebuild",
+    "name": "rebuild",
+    "json_type": "boolean",
+    "required": false,
+    "default": false,
+    "cli_nargs": 0,
+    "cli_action": "store_true",
+    "help": "remove all --rebuild before selecting first sub default show; sync early; --days/--limit first plus next int, missing/invalid becomes None; --by first plus next else week; ingest(--reset/--dry);overflow/billing-state/billing aliases;context(--conv first safe,top=limit or10);conversations/convs(top=limit or15);invoices(--csv first safe);attribute(top=limit or12);overage/overage-tally;compact(--tailor first safe else newest, --run);classify(--run/--reclassify,days);work(by,days);story(days or7); unknown first falls through show",
+    "compatibility_policy": "remove all --rebuild before selecting first sub default show; sync early; --days/--limit first plus next int, missing/invalid becomes None; --by first plus next else week; ingest(--reset/--dry);overflow/billing-state/billing aliases;context(--conv first safe,top=limit or10);conversations/convs(top=limit or15);invoices(--csv first safe);attribute(top=limit or12);overage/overage-tally;compact(--tailor first safe else newest, --run);classify(--run/--reclassify,days);work(by,days);story(days or7); unknown first falls through show"
+  },
+  {
+    "token_id": "claude-code/--days",
+    "commands": [
+      "claude-code"
+    ],
+    "spelling": "--days",
+    "name": "days",
+    "json_type": "integer",
+    "required": false,
+    "default": null,
+    "cli_nargs": 1,
+    "cli_action": "store",
+    "help": "remove all --rebuild before selecting first sub default show; sync early; --days/--limit first plus next int, missing/invalid becomes None; --by first plus next else week; ingest(--reset/--dry);overflow/billing-state/billing aliases;context(--conv first safe,top=limit or10);conversations/convs(top=limit or15);invoices(--csv first safe);attribute(top=limit or12);overage/overage-tally;compact(--tailor first safe else newest, --run);classify(--run/--reclassify,days);work(by,days);story(days or7); unknown first falls through show",
+    "compatibility_policy": "remove all --rebuild before selecting first sub default show; sync early; --days/--limit first plus next int, missing/invalid becomes None; --by first plus next else week; ingest(--reset/--dry);overflow/billing-state/billing aliases;context(--conv first safe,top=limit or10);conversations/convs(top=limit or15);invoices(--csv first safe);attribute(top=limit or12);overage/overage-tally;compact(--tailor first safe else newest, --run);classify(--run/--reclassify,days);work(by,days);story(days or7); unknown first falls through show"
+  },
+  {
+    "token_id": "claude-code/--by",
+    "commands": [
+      "claude-code"
+    ],
+    "spelling": "--by",
+    "name": "by",
+    "json_type": "string",
+    "required": false,
+    "default": null,
+    "cli_nargs": 1,
+    "cli_action": "store",
+    "help": "remove all --rebuild before selecting first sub default show; sync early; --days/--limit first plus next int, missing/invalid becomes None; --by first plus next else week; ingest(--reset/--dry);overflow/billing-state/billing aliases;context(--conv first safe,top=limit or10);conversations/convs(top=limit or15);invoices(--csv first safe);attribute(top=limit or12);overage/overage-tally;compact(--tailor first safe else newest, --run);classify(--run/--reclassify,days);work(by,days);story(days or7); unknown first falls through show",
+    "compatibility_policy": "remove all --rebuild before selecting first sub default show; sync early; --days/--limit first plus next int, missing/invalid becomes None; --by first plus next else week; ingest(--reset/--dry);overflow/billing-state/billing aliases;context(--conv first safe,top=limit or10);conversations/convs(top=limit or15);invoices(--csv first safe);attribute(top=limit or12);overage/overage-tally;compact(--tailor first safe else newest, --run);classify(--run/--reclassify,days);work(by,days);story(days or7); unknown first falls through show"
+  },
+  {
+    "token_id": "claude-code/--limit",
+    "commands": [
+      "claude-code"
+    ],
+    "spelling": "--limit",
+    "name": "limit",
+    "json_type": "integer",
+    "required": false,
+    "default": null,
+    "cli_nargs": 1,
+    "cli_action": "store",
+    "help": "remove all --rebuild before selecting first sub default show; sync early; --days/--limit first plus next int, missing/invalid becomes None; --by first plus next else week; ingest(--reset/--dry);overflow/billing-state/billing aliases;context(--conv first safe,top=limit or10);conversations/convs(top=limit or15);invoices(--csv first safe);attribute(top=limit or12);overage/overage-tally;compact(--tailor first safe else newest, --run);classify(--run/--reclassify,days);work(by,days);story(days or7); unknown first falls through show",
+    "compatibility_policy": "remove all --rebuild before selecting first sub default show; sync early; --days/--limit first plus next int, missing/invalid becomes None; --by first plus next else week; ingest(--reset/--dry);overflow/billing-state/billing aliases;context(--conv first safe,top=limit or10);conversations/convs(top=limit or15);invoices(--csv first safe);attribute(top=limit or12);overage/overage-tally;compact(--tailor first safe else newest, --run);classify(--run/--reclassify,days);work(by,days);story(days or7); unknown first falls through show"
+  },
+  {
+    "token_id": "claude-code/--tailor",
+    "commands": [
+      "claude-code"
+    ],
+    "spelling": "--tailor",
+    "name": "tailor",
+    "json_type": "boolean",
+    "required": false,
+    "default": false,
+    "cli_nargs": 0,
+    "cli_action": "store_true",
+    "help": "remove all --rebuild before selecting first sub default show; sync early; --days/--limit first plus next int, missing/invalid becomes None; --by first plus next else week; ingest(--reset/--dry);overflow/billing-state/billing aliases;context(--conv first safe,top=limit or10);conversations/convs(top=limit or15);invoices(--csv first safe);attribute(top=limit or12);overage/overage-tally;compact(--tailor first safe else newest, --run);classify(--run/--reclassify,days);work(by,days);story(days or7); unknown first falls through show",
+    "compatibility_policy": "remove all --rebuild before selecting first sub default show; sync early; --days/--limit first plus next int, missing/invalid becomes None; --by first plus next else week; ingest(--reset/--dry);overflow/billing-state/billing aliases;context(--conv first safe,top=limit or10);conversations/convs(top=limit or15);invoices(--csv first safe);attribute(top=limit or12);overage/overage-tally;compact(--tailor first safe else newest, --run);classify(--run/--reclassify,days);work(by,days);story(days or7); unknown first falls through show"
+  },
+  {
+    "token_id": "claude-code/--reset",
+    "commands": [
+      "claude-code"
+    ],
+    "spelling": "--reset",
+    "name": "reset",
+    "json_type": "boolean",
+    "required": false,
+    "default": false,
+    "cli_nargs": 0,
+    "cli_action": "store_true",
+    "help": "remove all --rebuild before selecting first sub default show; sync early; --days/--limit first plus next int, missing/invalid becomes None; --by first plus next else week; ingest(--reset/--dry);overflow/billing-state/billing aliases;context(--conv first safe,top=limit or10);conversations/convs(top=limit or15);invoices(--csv first safe);attribute(top=limit or12);overage/overage-tally;compact(--tailor first safe else newest, --run);classify(--run/--reclassify,days);work(by,days);story(days or7); unknown first falls through show",
+    "compatibility_policy": "remove all --rebuild before selecting first sub default show; sync early; --days/--limit first plus next int, missing/invalid becomes None; --by first plus next else week; ingest(--reset/--dry);overflow/billing-state/billing aliases;context(--conv first safe,top=limit or10);conversations/convs(top=limit or15);invoices(--csv first safe);attribute(top=limit or12);overage/overage-tally;compact(--tailor first safe else newest, --run);classify(--run/--reclassify,days);work(by,days);story(days or7); unknown first falls through show"
+  },
+  {
+    "token_id": "claude-code/--dry",
+    "commands": [
+      "claude-code"
+    ],
+    "spelling": "--dry",
+    "name": "dry",
+    "json_type": "boolean",
+    "required": false,
+    "default": false,
+    "cli_nargs": 0,
+    "cli_action": "store_true",
+    "help": "remove all --rebuild before selecting first sub default show; sync early; --days/--limit first plus next int, missing/invalid becomes None; --by first plus next else week; ingest(--reset/--dry);overflow/billing-state/billing aliases;context(--conv first safe,top=limit or10);conversations/convs(top=limit or15);invoices(--csv first safe);attribute(top=limit or12);overage/overage-tally;compact(--tailor first safe else newest, --run);classify(--run/--reclassify,days);work(by,days);story(days or7); unknown first falls through show",
+    "compatibility_policy": "remove all --rebuild before selecting first sub default show; sync early; --days/--limit first plus next int, missing/invalid becomes None; --by first plus next else week; ingest(--reset/--dry);overflow/billing-state/billing aliases;context(--conv first safe,top=limit or10);conversations/convs(top=limit or15);invoices(--csv first safe);attribute(top=limit or12);overage/overage-tally;compact(--tailor first safe else newest, --run);classify(--run/--reclassify,days);work(by,days);story(days or7); unknown first falls through show"
+  },
+  {
+    "token_id": "claude-code/--conv",
+    "commands": [
+      "claude-code"
+    ],
+    "spelling": "--conv",
+    "name": "conv",
+    "json_type": "string",
+    "required": false,
+    "default": null,
+    "cli_nargs": 1,
+    "cli_action": "store",
+    "help": "remove all --rebuild before selecting first sub default show; sync early; --days/--limit first plus next int, missing/invalid becomes None; --by first plus next else week; ingest(--reset/--dry);overflow/billing-state/billing aliases;context(--conv first safe,top=limit or10);conversations/convs(top=limit or15);invoices(--csv first safe);attribute(top=limit or12);overage/overage-tally;compact(--tailor first safe else newest, --run);classify(--run/--reclassify,days);work(by,days);story(days or7); unknown first falls through show",
+    "compatibility_policy": "remove all --rebuild before selecting first sub default show; sync early; --days/--limit first plus next int, missing/invalid becomes None; --by first plus next else week; ingest(--reset/--dry);overflow/billing-state/billing aliases;context(--conv first safe,top=limit or10);conversations/convs(top=limit or15);invoices(--csv first safe);attribute(top=limit or12);overage/overage-tally;compact(--tailor first safe else newest, --run);classify(--run/--reclassify,days);work(by,days);story(days or7); unknown first falls through show"
+  },
+  {
+    "token_id": "claude-code/--csv",
+    "commands": [
+      "claude-code"
+    ],
+    "spelling": "--csv",
+    "name": "csv",
+    "json_type": "string",
+    "required": false,
+    "default": null,
+    "cli_nargs": 1,
+    "cli_action": "store",
+    "help": "remove all --rebuild before selecting first sub default show; sync early; --days/--limit first plus next int, missing/invalid becomes None; --by first plus next else week; ingest(--reset/--dry);overflow/billing-state/billing aliases;context(--conv first safe,top=limit or10);conversations/convs(top=limit or15);invoices(--csv first safe);attribute(top=limit or12);overage/overage-tally;compact(--tailor first safe else newest, --run);classify(--run/--reclassify,days);work(by,days);story(days or7); unknown first falls through show",
+    "compatibility_policy": "remove all --rebuild before selecting first sub default show; sync early; --days/--limit first plus next int, missing/invalid becomes None; --by first plus next else week; ingest(--reset/--dry);overflow/billing-state/billing aliases;context(--conv first safe,top=limit or10);conversations/convs(top=limit or15);invoices(--csv first safe);attribute(top=limit or12);overage/overage-tally;compact(--tailor first safe else newest, --run);classify(--run/--reclassify,days);work(by,days);story(days or7); unknown first falls through show"
+  },
+  {
+    "token_id": "claude-code/--run",
+    "commands": [
+      "claude-code"
+    ],
+    "spelling": "--run",
+    "name": "run",
+    "json_type": "boolean",
+    "required": false,
+    "default": false,
+    "cli_nargs": 0,
+    "cli_action": "store_true",
+    "help": "remove all --rebuild before selecting first sub default show; sync early; --days/--limit first plus next int, missing/invalid becomes None; --by first plus next else week; ingest(--reset/--dry);overflow/billing-state/billing aliases;context(--conv first safe,top=limit or10);conversations/convs(top=limit or15);invoices(--csv first safe);attribute(top=limit or12);overage/overage-tally;compact(--tailor first safe else newest, --run);classify(--run/--reclassify,days);work(by,days);story(days or7); unknown first falls through show",
+    "compatibility_policy": "remove all --rebuild before selecting first sub default show; sync early; --days/--limit first plus next int, missing/invalid becomes None; --by first plus next else week; ingest(--reset/--dry);overflow/billing-state/billing aliases;context(--conv first safe,top=limit or10);conversations/convs(top=limit or15);invoices(--csv first safe);attribute(top=limit or12);overage/overage-tally;compact(--tailor first safe else newest, --run);classify(--run/--reclassify,days);work(by,days);story(days or7); unknown first falls through show"
+  },
+  {
+    "token_id": "claude-code/--reclassify",
+    "commands": [
+      "claude-code"
+    ],
+    "spelling": "--reclassify",
+    "name": "reclassify",
+    "json_type": "boolean",
+    "required": false,
+    "default": false,
+    "cli_nargs": 0,
+    "cli_action": "store_true",
+    "help": "remove all --rebuild before selecting first sub default show; sync early; --days/--limit first plus next int, missing/invalid becomes None; --by first plus next else week; ingest(--reset/--dry);overflow/billing-state/billing aliases;context(--conv first safe,top=limit or10);conversations/convs(top=limit or15);invoices(--csv first safe);attribute(top=limit or12);overage/overage-tally;compact(--tailor first safe else newest, --run);classify(--run/--reclassify,days);work(by,days);story(days or7); unknown first falls through show",
+    "compatibility_policy": "remove all --rebuild before selecting first sub default show; sync early; --days/--limit first plus next int, missing/invalid becomes None; --by first plus next else week; ingest(--reset/--dry);overflow/billing-state/billing aliases;context(--conv first safe,top=limit or10);conversations/convs(top=limit or15);invoices(--csv first safe);attribute(top=limit or12);overage/overage-tally;compact(--tailor first safe else newest, --run);classify(--run/--reclassify,days);work(by,days);story(days or7); unknown first falls through show"
+  },
+  {
+    "token_id": "claude-code/--transcript",
+    "commands": [
+      "claude-code"
+    ],
+    "spelling": "--transcript",
+    "name": "transcript",
+    "json_type": "string",
+    "required": false,
+    "default": null,
+    "cli_nargs": 1,
+    "cli_action": "store",
+    "help": "remove all --rebuild before selecting first sub default show; sync early; --days/--limit first plus next int, missing/invalid becomes None; --by first plus next else week; ingest(--reset/--dry);overflow/billing-state/billing aliases;context(--conv first safe,top=limit or10);conversations/convs(top=limit or15);invoices(--csv first safe);attribute(top=limit or12);overage/overage-tally;compact(--tailor first safe else newest, --run);classify(--run/--reclassify,days);work(by,days);story(days or7); unknown first falls through show",
+    "compatibility_policy": "remove all --rebuild before selecting first sub default show; sync early; --days/--limit first plus next int, missing/invalid becomes None; --by first plus next else week; ingest(--reset/--dry);overflow/billing-state/billing aliases;context(--conv first safe,top=limit or10);conversations/convs(top=limit or15);invoices(--csv first safe);attribute(top=limit or12);overage/overage-tally;compact(--tailor first safe else newest, --run);classify(--run/--reclassify,days);work(by,days);story(days or7); unknown first falls through show"
+  },
+  {
+    "token_id": "doctor+status/--live",
+    "commands": [
+      "doctor",
+      "status"
+    ],
+    "spelling": "--live",
+    "name": "live",
+    "json_type": "boolean",
+    "required": false,
+    "default": false,
+    "cli_nargs": 0,
+    "cli_action": "store_true",
+    "help": "--live presence; all other argv ignored",
+    "compatibility_policy": "--live presence; all other argv ignored"
+  },
+  {
+    "token_id": "reconcile/--since",
+    "commands": [
+      "reconcile"
+    ],
+    "spelling": "--since",
+    "name": "since",
+    "json_type": "string",
+    "required": false,
+    "default": null,
+    "cli_nargs": 1,
+    "cli_action": "store",
+    "help": "Report provider truth from this date; the all-provider mode uses the first occurrence and accepts an omitted value.",
+    "compatibility_policy": "Exact existing argv transport"
+  },
+  {
+    "token_id": "deploy/--skip-consumer-verify",
+    "commands": [
+      "deploy"
+    ],
+    "spelling": "--skip-consumer-verify",
+    "name": "skip_consumer_verify",
+    "json_type": "boolean",
+    "required": false,
+    "default": false,
+    "cli_nargs": 0,
+    "cli_action": "store_true",
+    "help": "Skip deterministic workspace consumer verification after promotion.",
+    "compatibility_policy": "Exact existing argv transport"
+  },
+  {
+    "token_id": "deploy/--no-restart",
+    "commands": [
+      "deploy"
+    ],
+    "spelling": "--no-restart",
+    "name": "no_restart",
+    "json_type": "boolean",
+    "required": false,
+    "default": false,
+    "cli_nargs": 0,
+    "cli_action": "store_true",
+    "help": "Skip restarting stale supervised fleet consumers after promotion.",
+    "compatibility_policy": "Exact existing argv transport"
+  },
+  {
+    "token_id": "deploy/--no-refresh",
+    "commands": [
+      "deploy"
+    ],
+    "spelling": "--no-refresh",
+    "name": "no_refresh",
+    "json_type": "boolean",
+    "required": false,
+    "default": false,
+    "cli_nargs": 0,
+    "cli_action": "store_true",
+    "help": "Skip refreshing stale editable-install dependency metadata after promotion.",
+    "compatibility_policy": "Exact existing argv transport"
+  },
+  {
+    "token_id": "deploy/--no-gate",
+    "commands": [
+      "deploy"
+    ],
+    "spelling": "--no-gate",
+    "name": "no_gate",
+    "json_type": "boolean",
+    "required": false,
+    "default": false,
+    "cli_nargs": 0,
+    "cli_action": "store_true",
+    "help": "Trust a just-run gate and skip running the gate again.",
+    "compatibility_policy": "Exact existing argv transport"
+  },
+  {
+    "token_id": "deploy/--allow-dirty",
+    "commands": [
+      "deploy"
+    ],
+    "spelling": "--allow-dirty",
+    "name": "allow_dirty",
+    "json_type": "boolean",
+    "required": false,
+    "default": false,
+    "cli_nargs": 0,
+    "cli_action": "store_true",
+    "help": "Allow promotion with tracked uncommitted changes.",
+    "compatibility_policy": "Exact existing argv transport"
+  },
+  {
+    "token_id": "deploy/--dry-run",
+    "commands": [
+      "deploy"
+    ],
+    "spelling": "--dry-run",
+    "name": "dry_run",
+    "json_type": "boolean",
+    "required": false,
+    "default": false,
+    "cli_nargs": 0,
+    "cli_action": "store_true",
+    "help": "Show planned consumer repairs without writing hooks.",
+    "compatibility_policy": "Exact existing argv transport"
+  },
+  {
+    "token_id": "deploy/--no-auto-arm",
+    "commands": [
+      "deploy"
+    ],
+    "spelling": "--no-auto-arm",
+    "name": "no_auto_arm",
+    "json_type": "boolean",
+    "required": false,
+    "default": false,
+    "cli_nargs": 0,
+    "cli_action": "store_true",
+    "help": "Audit consumers without arming safely fixable environments.",
+    "compatibility_policy": "Exact existing argv transport"
+  },
+  {
+    "token_id": "fleet/--restart",
+    "commands": [
+      "fleet"
+    ],
+    "spelling": "--restart",
+    "name": "restart",
+    "json_type": "boolean",
+    "required": false,
+    "default": false,
+    "cli_nargs": 0,
+    "cli_action": "store_true",
+    "help": "Restart stale supervised consumers in the legacy fleet status mode.",
+    "compatibility_policy": "Exact existing argv transport"
+  },
+  {
+    "token_id": "fleet/--json",
+    "commands": [
+      "fleet"
+    ],
+    "spelling": "--json",
+    "name": "json",
+    "json_type": "boolean",
+    "required": false,
+    "default": false,
+    "cli_nargs": 0,
+    "cli_action": "store_true",
+    "help": "Print fleet consumers or status as JSON.",
+    "compatibility_policy": "Exact existing argv transport"
+  },
+  {
+    "token_id": "fleet/--consumer",
+    "commands": [
+      "fleet"
+    ],
+    "spelling": "--consumer",
+    "name": "consumer",
+    "json_type": "string",
+    "required": false,
+    "default": null,
+    "cli_nargs": 1,
+    "cli_action": "store",
+    "help": "Select the registered consumer identity for restart or stop.",
+    "compatibility_policy": "Exact existing argv transport"
+  },
+  {
+    "token_id": "fleet/--apply",
+    "commands": [
+      "fleet"
+    ],
+    "spelling": "--apply",
+    "name": "apply",
+    "json_type": "boolean",
+    "required": false,
+    "default": false,
+    "cli_nargs": 0,
+    "cli_action": "store_true",
+    "help": "Apply the requested fleet action; restart otherwise reports its plan.",
+    "compatibility_policy": "Exact existing argv transport"
+  },
+  {
+    "token_id": "fleet/--all-supervised",
+    "commands": [
+      "fleet"
+    ],
+    "spelling": "--all-supervised",
+    "name": "all_supervised",
+    "json_type": "boolean",
+    "required": false,
+    "default": false,
+    "cli_nargs": 0,
+    "cli_action": "store_true",
+    "help": "Select every supervised consumer for restart.",
+    "compatibility_policy": "Exact existing argv transport"
+  },
+  {
+    "token_id": "fleet/--dry-run",
+    "commands": [
+      "fleet"
+    ],
+    "spelling": "--dry-run",
+    "name": "dry_run",
+    "json_type": "boolean",
+    "required": false,
+    "default": false,
+    "cli_nargs": 0,
+    "cli_action": "store_true",
+    "help": "Report the legacy fleet restart plan without applying it.",
+    "compatibility_policy": "Exact existing argv transport"
+  },
+  {
+    "token_id": "fleet/--stale",
+    "commands": [
+      "fleet"
+    ],
+    "spelling": "--stale",
+    "name": "stale",
+    "json_type": "boolean",
+    "required": false,
+    "default": false,
+    "cli_nargs": 0,
+    "cli_action": "store_true",
+    "help": "Select stale consumers for restart.",
+    "compatibility_policy": "Exact existing argv transport"
+  },
+  {
+    "token_id": "release/--json",
+    "commands": [
+      "release"
+    ],
+    "spelling": "--json",
+    "name": "json",
+    "json_type": "boolean",
+    "required": false,
+    "default": false,
+    "cli_nargs": 0,
+    "cli_action": "store_true",
+    "help": "Print release state as JSON.",
+    "compatibility_policy": "Exact existing argv transport"
+  },
+  {
+    "token_id": "release/--check",
+    "commands": [
+      "release"
+    ],
+    "spelling": "--check",
+    "name": "check",
+    "json_type": "boolean",
+    "required": false,
+    "default": false,
+    "cli_nargs": 0,
+    "cli_action": "store_true",
+    "help": "Check that the active installation matches the release pointer.",
+    "compatibility_policy": "Exact existing argv transport"
+  },
+  {
+    "token_id": "release/--dry-run",
+    "commands": [
+      "release"
+    ],
+    "spelling": "--dry-run",
+    "name": "dry_run",
+    "json_type": "boolean",
+    "required": false,
+    "default": false,
+    "cli_nargs": 0,
+    "cli_action": "store_true",
+    "help": "Report release state without applying any convergence writes.",
+    "compatibility_policy": "Exact existing argv transport"
+  },
+  {
+    "token_id": "plan-queue/--watch",
+    "commands": [
+      "plan-queue"
+    ],
+    "spelling": "--watch",
+    "name": "watch",
+    "json_type": "boolean",
+    "required": false,
+    "default": false,
+    "cli_nargs": 0,
+    "cli_action": "store_true",
+    "help": "--watch presence selects watch; first --interval/--ticks with following token; convert truthy interval float and ticks int; missing values leave None; --json membership only nonwatch branch; unknown ignored",
+    "compatibility_policy": "--watch presence selects watch; first --interval/--ticks with following token; convert truthy interval float and ticks int; missing values leave None; --json membership only nonwatch branch; unknown ignored"
+  },
+  {
+    "token_id": "plan-queue/--json",
+    "commands": [
+      "plan-queue"
+    ],
+    "spelling": "--json",
+    "name": "json",
+    "json_type": "boolean",
+    "required": false,
+    "default": false,
+    "cli_nargs": 0,
+    "cli_action": "store_true",
+    "help": "--watch presence selects watch; first --interval/--ticks with following token; convert truthy interval float and ticks int; missing values leave None; --json membership only nonwatch branch; unknown ignored",
+    "compatibility_policy": "--watch presence selects watch; first --interval/--ticks with following token; convert truthy interval float and ticks int; missing values leave None; --json membership only nonwatch branch; unknown ignored"
+  },
+  {
+    "token_id": "plan-queue/--interval",
+    "commands": [
+      "plan-queue"
+    ],
+    "spelling": "--interval",
+    "name": "interval",
+    "json_type": "number",
+    "required": false,
+    "default": null,
+    "cli_nargs": 1,
+    "cli_action": "store",
+    "help": "--watch presence selects watch; first --interval/--ticks with following token; convert truthy interval float and ticks int; missing values leave None; --json membership only nonwatch branch; unknown ignored",
+    "compatibility_policy": "--watch presence selects watch; first --interval/--ticks with following token; convert truthy interval float and ticks int; missing values leave None; --json membership only nonwatch branch; unknown ignored"
+  },
+  {
+    "token_id": "plan-queue/--ticks",
+    "commands": [
+      "plan-queue"
+    ],
+    "spelling": "--ticks",
+    "name": "ticks",
+    "json_type": "integer",
+    "required": false,
+    "default": null,
+    "cli_nargs": 1,
+    "cli_action": "store",
+    "help": "--watch presence selects watch; first --interval/--ticks with following token; convert truthy interval float and ticks int; missing values leave None; --json membership only nonwatch branch; unknown ignored",
+    "compatibility_policy": "--watch presence selects watch; first --interval/--ticks with following token; convert truthy interval float and ticks int; missing values leave None; --json membership only nonwatch branch; unknown ignored"
+  },
+  {
+    "token_id": "dispatch/--id",
+    "commands": [
+      "dispatch"
+    ],
+    "spelling": "--id",
+    "name": "id",
+    "json_type": "integer",
+    "required": false,
+    "default": null,
+    "cli_nargs": 1,
+    "cli_action": "store",
+    "help": "--id presence selects strict argparse branch --id required int and --json store_true; otherwise --json membership, unknown tokens ignored",
+    "compatibility_policy": "--id presence selects strict argparse branch --id required int and --json store_true; otherwise --json membership, unknown tokens ignored"
+  },
+  {
+    "token_id": "dispatch/--json",
+    "commands": [
+      "dispatch"
+    ],
+    "spelling": "--json",
+    "name": "json",
+    "json_type": "boolean",
+    "required": false,
+    "default": false,
+    "cli_nargs": 0,
+    "cli_action": "store_true",
+    "help": "--id presence selects strict argparse branch --id required int and --json store_true; otherwise --json membership, unknown tokens ignored",
+    "compatibility_policy": "--id presence selects strict argparse branch --id required int and --json store_true; otherwise --json membership, unknown tokens ignored"
+  },
+  {
+    "token_id": "install-mcp/--remove",
+    "commands": [
+      "install-mcp"
+    ],
+    "spelling": "--remove",
+    "name": "remove",
+    "json_type": "boolean",
+    "required": false,
+    "default": false,
+    "cli_nargs": 0,
+    "cli_action": "store_true",
+    "help": "--remove membership; all other tokens ignored",
+    "compatibility_policy": "--remove membership; all other tokens ignored"
+  },
+  {
+    "token_id": "price/--provider",
+    "commands": [
+      "price"
+    ],
+    "spelling": "--provider",
+    "name": "provider",
+    "json_type": "string",
+    "required": false,
+    "default": null,
+    "cli_nargs": 1,
+    "cli_action": "store",
+    "help": "Provider of the model being priced.",
+    "compatibility_policy": "Exact existing argv transport"
+  },
+  {
+    "token_id": "price/--in",
+    "commands": [
+      "price"
+    ],
+    "spelling": "--in",
+    "name": "in",
+    "json_type": "string",
+    "required": false,
+    "default": null,
+    "cli_nargs": 1,
+    "cli_action": "store",
+    "help": "Verified input-token price per million tokens; the pricing core validates the value.",
+    "compatibility_policy": "Exact existing argv transport"
+  },
+  {
+    "token_id": "price/--out",
+    "commands": [
+      "price"
+    ],
+    "spelling": "--out",
+    "name": "out",
+    "json_type": "string",
+    "required": false,
+    "default": null,
+    "cli_nargs": 1,
+    "cli_action": "store",
+    "help": "Verified output-token price per million tokens; the pricing core validates the value.",
+    "compatibility_policy": "Exact existing argv transport"
+  },
+  {
+    "token_id": "price/--source",
+    "commands": [
+      "price"
+    ],
+    "spelling": "--source",
+    "name": "source",
+    "json_type": "string",
+    "required": false,
+    "default": null,
+    "cli_nargs": 1,
+    "cli_action": "store",
+    "help": "Provenance URL or invoice supporting the supplied prices.",
+    "compatibility_policy": "Exact existing argv transport"
+  },
+  {
+    "token_id": "price/--batch-in",
+    "commands": [
+      "price"
+    ],
+    "spelling": "--batch-in",
+    "name": "batch_in",
+    "json_type": "string",
+    "required": false,
+    "default": null,
+    "cli_nargs": 1,
+    "cli_action": "store",
+    "help": "Verified batch input-token price per million tokens.",
+    "compatibility_policy": "Exact existing argv transport"
+  },
+  {
+    "token_id": "price/--batch-out",
+    "commands": [
+      "price"
+    ],
+    "spelling": "--batch-out",
+    "name": "batch_out",
+    "json_type": "string",
+    "required": false,
+    "default": null,
+    "cli_nargs": 1,
+    "cli_action": "store",
+    "help": "Verified batch output-token price per million tokens.",
+    "compatibility_policy": "Exact existing argv transport"
+  },
+  {
+    "token_id": "price/--cached-in",
+    "commands": [
+      "price"
+    ],
+    "spelling": "--cached-in",
+    "name": "cached_in",
+    "json_type": "string",
+    "required": false,
+    "default": null,
+    "cli_nargs": 1,
+    "cli_action": "store",
+    "help": "Verified cached input-token price per million tokens.",
+    "compatibility_policy": "Exact existing argv transport"
+  },
+  {
+    "token_id": "price/--verified",
+    "commands": [
+      "price"
+    ],
+    "spelling": "--verified",
+    "name": "verified",
+    "json_type": "string",
+    "required": false,
+    "default": null,
+    "cli_nargs": 1,
+    "cli_action": "store",
+    "help": "Date the supplied prices were verified.",
+    "compatibility_policy": "Exact existing argv transport"
+  },
+  {
+    "token_id": "reprice/--model",
+    "commands": [
+      "reprice"
+    ],
+    "spelling": "--model",
+    "name": "model",
+    "json_type": "string",
+    "required": false,
+    "default": null,
+    "cli_nargs": 1,
+    "cli_action": "store",
+    "help": "Restrict retroactive repricing to this model.",
+    "compatibility_policy": "Exact existing argv transport"
+  },
+  {
+    "token_id": "reprice/--apply",
+    "commands": [
+      "reprice"
+    ],
+    "spelling": "--apply",
+    "name": "apply",
+    "json_type": "boolean",
+    "required": false,
+    "default": false,
+    "cli_nargs": 0,
+    "cli_action": "store_true",
+    "help": "Snapshot the ledger and commit the audited repricing plan.",
+    "compatibility_policy": "Exact existing argv transport"
+  },
+  {
+    "token_id": "quarantine/--since",
+    "commands": [
+      "quarantine"
+    ],
+    "spelling": "--since",
+    "name": "since",
+    "json_type": "string",
+    "required": false,
+    "default": null,
+    "cli_nargs": 1,
+    "cli_action": "store",
+    "help": "List suspect batch charges since this timestamp; defaults to the current UTC month.",
+    "compatibility_policy": "Exact existing argv transport"
+  },
+  {
+    "token_id": "quarantine/--ts",
+    "commands": [
+      "quarantine"
+    ],
+    "spelling": "--ts",
+    "name": "ts",
+    "json_type": "string",
+    "required": false,
+    "default": null,
+    "cli_nargs": 1,
+    "cli_action": "store",
+    "help": "Quarantine the uniquely matching charge timestamp.",
+    "compatibility_policy": "Exact existing argv transport"
+  },
+  {
+    "token_id": "quarantine/--row",
+    "commands": [
+      "quarantine"
+    ],
+    "spelling": "--row",
+    "name": "row",
+    "json_type": "integer",
+    "required": false,
+    "default": null,
+    "cli_nargs": 1,
+    "cli_action": "store",
+    "help": "Quarantine this ledger row identifier; the core rejects ambiguity.",
+    "compatibility_policy": "Exact existing argv transport"
+  },
+  {
+    "token_id": "quarantine/--reason",
+    "commands": [
+      "quarantine"
+    ],
+    "spelling": "--reason",
+    "name": "reason",
+    "json_type": "string",
+    "required": false,
+    "default": null,
+    "cli_nargs": 1,
+    "cli_action": "store",
+    "help": "Record the audit reason for quarantining a charge.",
+    "compatibility_policy": "Exact existing argv transport"
+  },
+  {
+    "token_id": "savings/--json",
+    "commands": [
+      "savings"
+    ],
+    "spelling": "--json",
+    "name": "json",
+    "json_type": "boolean",
+    "required": false,
+    "default": false,
+    "cli_nargs": 0,
+    "cli_action": "store_true",
+    "help": "Print measured and counterfactual savings as JSON.",
+    "compatibility_policy": "Exact existing argv transport"
+  },
+  {
+    "token_id": "keys/--since",
+    "commands": [
+      "keys"
+    ],
+    "spelling": "--since",
+    "name": "since",
+    "json_type": "string",
+    "required": false,
+    "default": null,
+    "cli_nargs": 1,
+    "cli_action": "store",
+    "help": "last --since with next wins, default config.month_start_utc; unknown ignored",
+    "compatibility_policy": "last --since with next wins, default config.month_start_utc; unknown ignored"
+  },
+  {
+    "token_id": "codex/--rebuild",
+    "commands": [
+      "codex"
+    ],
+    "spelling": "--rebuild",
+    "name": "rebuild",
+    "json_type": "boolean",
+    "required": false,
+    "default": false,
+    "cli_nargs": 0,
+    "cli_action": "store_true",
+    "help": "remove all --rebuild; first sync early; --days first plus next int invalid/missing None; classify(--run/--reclassify); any other first token show",
+    "compatibility_policy": "remove all --rebuild; first sync early; --days first plus next int invalid/missing None; classify(--run/--reclassify); any other first token show"
+  },
+  {
+    "token_id": "codex/--days",
+    "commands": [
+      "codex"
+    ],
+    "spelling": "--days",
+    "name": "days",
+    "json_type": "integer",
+    "required": false,
+    "default": null,
+    "cli_nargs": 1,
+    "cli_action": "store",
+    "help": "remove all --rebuild; first sync early; --days first plus next int invalid/missing None; classify(--run/--reclassify); any other first token show",
+    "compatibility_policy": "remove all --rebuild; first sync early; --days first plus next int invalid/missing None; classify(--run/--reclassify); any other first token show"
+  },
+  {
+    "token_id": "codex/--run",
+    "commands": [
+      "codex"
+    ],
+    "spelling": "--run",
+    "name": "run",
+    "json_type": "boolean",
+    "required": false,
+    "default": false,
+    "cli_nargs": 0,
+    "cli_action": "store_true",
+    "help": "remove all --rebuild; first sync early; --days first plus next int invalid/missing None; classify(--run/--reclassify); any other first token show",
+    "compatibility_policy": "remove all --rebuild; first sync early; --days first plus next int invalid/missing None; classify(--run/--reclassify); any other first token show"
+  },
+  {
+    "token_id": "codex/--reclassify",
+    "commands": [
+      "codex"
+    ],
+    "spelling": "--reclassify",
+    "name": "reclassify",
+    "json_type": "boolean",
+    "required": false,
+    "default": false,
+    "cli_nargs": 0,
+    "cli_action": "store_true",
+    "help": "remove all --rebuild; first sync early; --days first plus next int invalid/missing None; classify(--run/--reclassify); any other first token show",
+    "compatibility_policy": "remove all --rebuild; first sync early; --days first plus next int invalid/missing None; classify(--run/--reclassify); any other first token show"
+  },
+  {
+    "token_id": "codex/--dry",
+    "commands": [
+      "codex"
+    ],
+    "spelling": "--dry",
+    "name": "dry",
+    "json_type": "boolean",
+    "required": false,
+    "default": false,
+    "cli_nargs": 0,
+    "cli_action": "store_true",
+    "help": "remove all --rebuild; first sync early; --days first plus next int invalid/missing None; classify(--run/--reclassify); any other first token show",
+    "compatibility_policy": "remove all --rebuild; first sync early; --days first plus next int invalid/missing None; classify(--run/--reclassify); any other first token show"
+  },
+  {
+    "token_id": "accounting/--run",
+    "commands": [
+      "accounting"
+    ],
+    "spelling": "--run",
+    "name": "run",
+    "json_type": "boolean",
+    "required": false,
+    "default": false,
+    "cli_nargs": 0,
+    "cli_action": "store_true",
+    "help": "--run membership; unknown ignored",
+    "compatibility_policy": "--run membership; unknown ignored"
+  },
+  {
+    "token_id": "estimate-literals/--judge",
+    "commands": [
+      "estimate-literals"
+    ],
+    "spelling": "--judge",
+    "name": "judge",
+    "json_type": "boolean",
+    "required": false,
+    "default": false,
+    "cli_nargs": 0,
+    "cli_action": "store_true",
+    "help": "--judge presence; all other argv ignored",
+    "compatibility_policy": "--judge presence; all other argv ignored"
+  },
+  {
+    "token_id": "focus-export/--out",
+    "commands": [
+      "focus-export"
+    ],
+    "spelling": "--out",
+    "name": "out",
+    "json_type": "string",
+    "required": false,
+    "default": null,
+    "cli_nargs": 1,
+    "cli_action": "store",
+    "help": "--since/--until/--format/--out first occurrence plus following token; missing following token uses default; unknown tokens ignored; format lowercased csv selects csv, all other format values select JSON",
+    "compatibility_policy": "--since/--until/--format/--out first occurrence plus following token; missing following token uses default; unknown tokens ignored; format lowercased csv selects csv, all other format values select JSON"
+  },
+  {
+    "token_id": "focus-export/--since",
+    "commands": [
+      "focus-export"
+    ],
+    "spelling": "--since",
+    "name": "since",
+    "json_type": "string",
+    "required": false,
+    "default": null,
+    "cli_nargs": 1,
+    "cli_action": "store",
+    "help": "--since/--until/--format/--out first occurrence plus following token; missing following token uses default; unknown tokens ignored; format lowercased csv selects csv, all other format values select JSON",
+    "compatibility_policy": "--since/--until/--format/--out first occurrence plus following token; missing following token uses default; unknown tokens ignored; format lowercased csv selects csv, all other format values select JSON"
+  },
+  {
+    "token_id": "focus-export/--until",
+    "commands": [
+      "focus-export"
+    ],
+    "spelling": "--until",
+    "name": "until",
+    "json_type": "string",
+    "required": false,
+    "default": null,
+    "cli_nargs": 1,
+    "cli_action": "store",
+    "help": "--since/--until/--format/--out first occurrence plus following token; missing following token uses default; unknown tokens ignored; format lowercased csv selects csv, all other format values select JSON",
+    "compatibility_policy": "--since/--until/--format/--out first occurrence plus following token; missing following token uses default; unknown tokens ignored; format lowercased csv selects csv, all other format values select JSON"
+  },
+  {
+    "token_id": "focus-export/--format",
+    "commands": [
+      "focus-export"
+    ],
+    "spelling": "--format",
+    "name": "format",
+    "json_type": "string",
+    "required": false,
+    "default": null,
+    "cli_nargs": 1,
+    "cli_action": "store",
+    "help": "--since/--until/--format/--out first occurrence plus following token; missing following token uses default; unknown tokens ignored; format lowercased csv selects csv, all other format values select JSON",
+    "compatibility_policy": "--since/--until/--format/--out first occurrence plus following token; missing following token uses default; unknown tokens ignored; format lowercased csv selects csv, all other format values select JSON"
+  },
+  {
+    "token_id": "keys-audit/--strict",
+    "commands": [
+      "keys-audit"
+    ],
+    "spelling": "--strict",
+    "name": "strict",
+    "json_type": "boolean",
+    "required": false,
+    "default": false,
+    "cli_nargs": 0,
+    "cli_action": "store_true",
+    "help": "--strict/--json presence; positional paths are all tokens not starting -, default dot; unknown flags ignored; their following nonflag values become paths",
+    "compatibility_policy": "--strict/--json presence; positional paths are all tokens not starting -, default dot; unknown flags ignored; their following nonflag values become paths"
+  },
+  {
+    "token_id": "keys-audit/--json",
+    "commands": [
+      "keys-audit"
+    ],
+    "spelling": "--json",
+    "name": "json",
+    "json_type": "boolean",
+    "required": false,
+    "default": false,
+    "cli_nargs": 0,
+    "cli_action": "store_true",
+    "help": "--strict/--json presence; positional paths are all tokens not starting -, default dot; unknown flags ignored; their following nonflag values become paths",
+    "compatibility_policy": "--strict/--json presence; positional paths are all tokens not starting -, default dot; unknown flags ignored; their following nonflag values become paths"
+  },
+  {
+    "token_id": "lanevalue/--sync",
+    "commands": [
+      "lanevalue"
+    ],
+    "spelling": "--sync",
+    "name": "sync",
+    "json_type": "boolean",
+    "required": false,
+    "default": false,
+    "cli_nargs": 0,
+    "cli_action": "store_true",
+    "help": "--sync presence early with --dry else stamp; other tokens ignored",
+    "compatibility_policy": "--sync presence early with --dry else stamp; other tokens ignored"
+  },
+  {
+    "token_id": "lanevalue/--dry",
+    "commands": [
+      "lanevalue"
+    ],
+    "spelling": "--dry",
+    "name": "dry",
+    "json_type": "boolean",
+    "required": false,
+    "default": false,
+    "cli_nargs": 0,
+    "cli_action": "store_true",
+    "help": "--sync presence early with --dry else stamp; other tokens ignored",
+    "compatibility_policy": "--sync presence early with --dry else stamp; other tokens ignored"
+  },
+  {
+    "token_id": "lanes/--drain",
+    "commands": [
+      "lanes"
+    ],
+    "spelling": "--drain",
+    "name": "drain",
+    "json_type": "boolean",
+    "required": false,
+    "default": false,
+    "cli_nargs": 0,
+    "cli_action": "store_true",
+    "help": "set-model first requires exact2or3 subsequent positional args. Independent branches, not exclusive, in order: probe,usage,reprobe,judge-eligibility(yes),catalog,learn,bakeoff,estimate,balance,economics,fallback,fallback-spend(since last safe default month),reasoning-map,propose,confirm,delegate,bulk,enqueue,drain,queue,purge,migrate-queue-db. drain suppresses summary. bakeoff/propose/confirm parse suffix after first flag dropping only --prefixed tokens; delegate joins non-- suffix tokens. bulk local first safe opts file/checkpoint/out/system/system-file/tier/hedge-ms/lanes; positional filter drops values by equality; lanes CLI/env/config; system-file wins; hedge nonnegative int else2; estimate returns early. enqueue suffix first safe file/priority; positional filter drops values by equality; priority int(raw or0). drain suffix first safe batch/ceiling converts truthy int/float;forever membership. Unknown tokens ignored. Preserve raw argv branch execution order.",
+    "compatibility_policy": "set-model first requires exact2or3 subsequent positional args. Independent branches, not exclusive, in order: probe,usage,reprobe,judge-eligibility(yes),catalog,learn,bakeoff,estimate,balance,economics,fallback,fallback-spend(since last safe default month),reasoning-map,propose,confirm,delegate,bulk,enqueue,drain,queue,purge,migrate-queue-db. drain suppresses summary. bakeoff/propose/confirm parse suffix after first flag dropping only --prefixed tokens; delegate joins non-- suffix tokens. bulk local first safe opts file/checkpoint/out/system/system-file/tier/hedge-ms/lanes; positional filter drops values by equality; lanes CLI/env/config; system-file wins; hedge nonnegative int else2; estimate returns early. enqueue suffix first safe file/priority; positional filter drops values by equality; priority int(raw or0). drain suffix first safe batch/ceiling converts truthy int/float;forever membership. Unknown tokens ignored. Preserve raw argv branch execution order."
+  },
+  {
+    "token_id": "lanes/--probe",
+    "commands": [
+      "lanes"
+    ],
+    "spelling": "--probe",
+    "name": "probe",
+    "json_type": "boolean",
+    "required": false,
+    "default": false,
+    "cli_nargs": 0,
+    "cli_action": "store_true",
+    "help": "set-model first requires exact2or3 subsequent positional args. Independent branches, not exclusive, in order: probe,usage,reprobe,judge-eligibility(yes),catalog,learn,bakeoff,estimate,balance,economics,fallback,fallback-spend(since last safe default month),reasoning-map,propose,confirm,delegate,bulk,enqueue,drain,queue,purge,migrate-queue-db. drain suppresses summary. bakeoff/propose/confirm parse suffix after first flag dropping only --prefixed tokens; delegate joins non-- suffix tokens. bulk local first safe opts file/checkpoint/out/system/system-file/tier/hedge-ms/lanes; positional filter drops values by equality; lanes CLI/env/config; system-file wins; hedge nonnegative int else2; estimate returns early. enqueue suffix first safe file/priority; positional filter drops values by equality; priority int(raw or0). drain suffix first safe batch/ceiling converts truthy int/float;forever membership. Unknown tokens ignored. Preserve raw argv branch execution order.",
+    "compatibility_policy": "set-model first requires exact2or3 subsequent positional args. Independent branches, not exclusive, in order: probe,usage,reprobe,judge-eligibility(yes),catalog,learn,bakeoff,estimate,balance,economics,fallback,fallback-spend(since last safe default month),reasoning-map,propose,confirm,delegate,bulk,enqueue,drain,queue,purge,migrate-queue-db. drain suppresses summary. bakeoff/propose/confirm parse suffix after first flag dropping only --prefixed tokens; delegate joins non-- suffix tokens. bulk local first safe opts file/checkpoint/out/system/system-file/tier/hedge-ms/lanes; positional filter drops values by equality; lanes CLI/env/config; system-file wins; hedge nonnegative int else2; estimate returns early. enqueue suffix first safe file/priority; positional filter drops values by equality; priority int(raw or0). drain suffix first safe batch/ceiling converts truthy int/float;forever membership. Unknown tokens ignored. Preserve raw argv branch execution order."
+  },
+  {
+    "token_id": "lanes/--usage",
+    "commands": [
+      "lanes"
+    ],
+    "spelling": "--usage",
+    "name": "usage",
+    "json_type": "boolean",
+    "required": false,
+    "default": false,
+    "cli_nargs": 0,
+    "cli_action": "store_true",
+    "help": "set-model first requires exact2or3 subsequent positional args. Independent branches, not exclusive, in order: probe,usage,reprobe,judge-eligibility(yes),catalog,learn,bakeoff,estimate,balance,economics,fallback,fallback-spend(since last safe default month),reasoning-map,propose,confirm,delegate,bulk,enqueue,drain,queue,purge,migrate-queue-db. drain suppresses summary. bakeoff/propose/confirm parse suffix after first flag dropping only --prefixed tokens; delegate joins non-- suffix tokens. bulk local first safe opts file/checkpoint/out/system/system-file/tier/hedge-ms/lanes; positional filter drops values by equality; lanes CLI/env/config; system-file wins; hedge nonnegative int else2; estimate returns early. enqueue suffix first safe file/priority; positional filter drops values by equality; priority int(raw or0). drain suffix first safe batch/ceiling converts truthy int/float;forever membership. Unknown tokens ignored. Preserve raw argv branch execution order.",
+    "compatibility_policy": "set-model first requires exact2or3 subsequent positional args. Independent branches, not exclusive, in order: probe,usage,reprobe,judge-eligibility(yes),catalog,learn,bakeoff,estimate,balance,economics,fallback,fallback-spend(since last safe default month),reasoning-map,propose,confirm,delegate,bulk,enqueue,drain,queue,purge,migrate-queue-db. drain suppresses summary. bakeoff/propose/confirm parse suffix after first flag dropping only --prefixed tokens; delegate joins non-- suffix tokens. bulk local first safe opts file/checkpoint/out/system/system-file/tier/hedge-ms/lanes; positional filter drops values by equality; lanes CLI/env/config; system-file wins; hedge nonnegative int else2; estimate returns early. enqueue suffix first safe file/priority; positional filter drops values by equality; priority int(raw or0). drain suffix first safe batch/ceiling converts truthy int/float;forever membership. Unknown tokens ignored. Preserve raw argv branch execution order."
+  },
+  {
+    "token_id": "lanes/--reprobe",
+    "commands": [
+      "lanes"
+    ],
+    "spelling": "--reprobe",
+    "name": "reprobe",
+    "json_type": "boolean",
+    "required": false,
+    "default": false,
+    "cli_nargs": 0,
+    "cli_action": "store_true",
+    "help": "set-model first requires exact2or3 subsequent positional args. Independent branches, not exclusive, in order: probe,usage,reprobe,judge-eligibility(yes),catalog,learn,bakeoff,estimate,balance,economics,fallback,fallback-spend(since last safe default month),reasoning-map,propose,confirm,delegate,bulk,enqueue,drain,queue,purge,migrate-queue-db. drain suppresses summary. bakeoff/propose/confirm parse suffix after first flag dropping only --prefixed tokens; delegate joins non-- suffix tokens. bulk local first safe opts file/checkpoint/out/system/system-file/tier/hedge-ms/lanes; positional filter drops values by equality; lanes CLI/env/config; system-file wins; hedge nonnegative int else2; estimate returns early. enqueue suffix first safe file/priority; positional filter drops values by equality; priority int(raw or0). drain suffix first safe batch/ceiling converts truthy int/float;forever membership. Unknown tokens ignored. Preserve raw argv branch execution order.",
+    "compatibility_policy": "set-model first requires exact2or3 subsequent positional args. Independent branches, not exclusive, in order: probe,usage,reprobe,judge-eligibility(yes),catalog,learn,bakeoff,estimate,balance,economics,fallback,fallback-spend(since last safe default month),reasoning-map,propose,confirm,delegate,bulk,enqueue,drain,queue,purge,migrate-queue-db. drain suppresses summary. bakeoff/propose/confirm parse suffix after first flag dropping only --prefixed tokens; delegate joins non-- suffix tokens. bulk local first safe opts file/checkpoint/out/system/system-file/tier/hedge-ms/lanes; positional filter drops values by equality; lanes CLI/env/config; system-file wins; hedge nonnegative int else2; estimate returns early. enqueue suffix first safe file/priority; positional filter drops values by equality; priority int(raw or0). drain suffix first safe batch/ceiling converts truthy int/float;forever membership. Unknown tokens ignored. Preserve raw argv branch execution order."
+  },
+  {
+    "token_id": "lanes/--judge-eligibility",
+    "commands": [
+      "lanes"
+    ],
+    "spelling": "--judge-eligibility",
+    "name": "judge_eligibility",
+    "json_type": "boolean",
+    "required": false,
+    "default": false,
+    "cli_nargs": 0,
+    "cli_action": "store_true",
+    "help": "set-model first requires exact2or3 subsequent positional args. Independent branches, not exclusive, in order: probe,usage,reprobe,judge-eligibility(yes),catalog,learn,bakeoff,estimate,balance,economics,fallback,fallback-spend(since last safe default month),reasoning-map,propose,confirm,delegate,bulk,enqueue,drain,queue,purge,migrate-queue-db. drain suppresses summary. bakeoff/propose/confirm parse suffix after first flag dropping only --prefixed tokens; delegate joins non-- suffix tokens. bulk local first safe opts file/checkpoint/out/system/system-file/tier/hedge-ms/lanes; positional filter drops values by equality; lanes CLI/env/config; system-file wins; hedge nonnegative int else2; estimate returns early. enqueue suffix first safe file/priority; positional filter drops values by equality; priority int(raw or0). drain suffix first safe batch/ceiling converts truthy int/float;forever membership. Unknown tokens ignored. Preserve raw argv branch execution order.",
+    "compatibility_policy": "set-model first requires exact2or3 subsequent positional args. Independent branches, not exclusive, in order: probe,usage,reprobe,judge-eligibility(yes),catalog,learn,bakeoff,estimate,balance,economics,fallback,fallback-spend(since last safe default month),reasoning-map,propose,confirm,delegate,bulk,enqueue,drain,queue,purge,migrate-queue-db. drain suppresses summary. bakeoff/propose/confirm parse suffix after first flag dropping only --prefixed tokens; delegate joins non-- suffix tokens. bulk local first safe opts file/checkpoint/out/system/system-file/tier/hedge-ms/lanes; positional filter drops values by equality; lanes CLI/env/config; system-file wins; hedge nonnegative int else2; estimate returns early. enqueue suffix first safe file/priority; positional filter drops values by equality; priority int(raw or0). drain suffix first safe batch/ceiling converts truthy int/float;forever membership. Unknown tokens ignored. Preserve raw argv branch execution order."
+  },
+  {
+    "token_id": "lanes/--catalog",
+    "commands": [
+      "lanes"
+    ],
+    "spelling": "--catalog",
+    "name": "catalog",
+    "json_type": "boolean",
+    "required": false,
+    "default": false,
+    "cli_nargs": 0,
+    "cli_action": "store_true",
+    "help": "set-model first requires exact2or3 subsequent positional args. Independent branches, not exclusive, in order: probe,usage,reprobe,judge-eligibility(yes),catalog,learn,bakeoff,estimate,balance,economics,fallback,fallback-spend(since last safe default month),reasoning-map,propose,confirm,delegate,bulk,enqueue,drain,queue,purge,migrate-queue-db. drain suppresses summary. bakeoff/propose/confirm parse suffix after first flag dropping only --prefixed tokens; delegate joins non-- suffix tokens. bulk local first safe opts file/checkpoint/out/system/system-file/tier/hedge-ms/lanes; positional filter drops values by equality; lanes CLI/env/config; system-file wins; hedge nonnegative int else2; estimate returns early. enqueue suffix first safe file/priority; positional filter drops values by equality; priority int(raw or0). drain suffix first safe batch/ceiling converts truthy int/float;forever membership. Unknown tokens ignored. Preserve raw argv branch execution order.",
+    "compatibility_policy": "set-model first requires exact2or3 subsequent positional args. Independent branches, not exclusive, in order: probe,usage,reprobe,judge-eligibility(yes),catalog,learn,bakeoff,estimate,balance,economics,fallback,fallback-spend(since last safe default month),reasoning-map,propose,confirm,delegate,bulk,enqueue,drain,queue,purge,migrate-queue-db. drain suppresses summary. bakeoff/propose/confirm parse suffix after first flag dropping only --prefixed tokens; delegate joins non-- suffix tokens. bulk local first safe opts file/checkpoint/out/system/system-file/tier/hedge-ms/lanes; positional filter drops values by equality; lanes CLI/env/config; system-file wins; hedge nonnegative int else2; estimate returns early. enqueue suffix first safe file/priority; positional filter drops values by equality; priority int(raw or0). drain suffix first safe batch/ceiling converts truthy int/float;forever membership. Unknown tokens ignored. Preserve raw argv branch execution order."
+  },
+  {
+    "token_id": "lanes/--learn",
+    "commands": [
+      "lanes"
+    ],
+    "spelling": "--learn",
+    "name": "learn",
+    "json_type": "boolean",
+    "required": false,
+    "default": false,
+    "cli_nargs": 0,
+    "cli_action": "store_true",
+    "help": "set-model first requires exact2or3 subsequent positional args. Independent branches, not exclusive, in order: probe,usage,reprobe,judge-eligibility(yes),catalog,learn,bakeoff,estimate,balance,economics,fallback,fallback-spend(since last safe default month),reasoning-map,propose,confirm,delegate,bulk,enqueue,drain,queue,purge,migrate-queue-db. drain suppresses summary. bakeoff/propose/confirm parse suffix after first flag dropping only --prefixed tokens; delegate joins non-- suffix tokens. bulk local first safe opts file/checkpoint/out/system/system-file/tier/hedge-ms/lanes; positional filter drops values by equality; lanes CLI/env/config; system-file wins; hedge nonnegative int else2; estimate returns early. enqueue suffix first safe file/priority; positional filter drops values by equality; priority int(raw or0). drain suffix first safe batch/ceiling converts truthy int/float;forever membership. Unknown tokens ignored. Preserve raw argv branch execution order.",
+    "compatibility_policy": "set-model first requires exact2or3 subsequent positional args. Independent branches, not exclusive, in order: probe,usage,reprobe,judge-eligibility(yes),catalog,learn,bakeoff,estimate,balance,economics,fallback,fallback-spend(since last safe default month),reasoning-map,propose,confirm,delegate,bulk,enqueue,drain,queue,purge,migrate-queue-db. drain suppresses summary. bakeoff/propose/confirm parse suffix after first flag dropping only --prefixed tokens; delegate joins non-- suffix tokens. bulk local first safe opts file/checkpoint/out/system/system-file/tier/hedge-ms/lanes; positional filter drops values by equality; lanes CLI/env/config; system-file wins; hedge nonnegative int else2; estimate returns early. enqueue suffix first safe file/priority; positional filter drops values by equality; priority int(raw or0). drain suffix first safe batch/ceiling converts truthy int/float;forever membership. Unknown tokens ignored. Preserve raw argv branch execution order."
+  },
+  {
+    "token_id": "lanes/--bakeoff",
+    "commands": [
+      "lanes"
+    ],
+    "spelling": "--bakeoff",
+    "name": "bakeoff",
+    "json_type": "array",
+    "required": false,
+    "default": null,
+    "cli_nargs": "*",
+    "cli_action": "store",
+    "help": "set-model first requires exact2or3 subsequent positional args. Independent branches, not exclusive, in order: probe,usage,reprobe,judge-eligibility(yes),catalog,learn,bakeoff,estimate,balance,economics,fallback,fallback-spend(since last safe default month),reasoning-map,propose,confirm,delegate,bulk,enqueue,drain,queue,purge,migrate-queue-db. drain suppresses summary. bakeoff/propose/confirm parse suffix after first flag dropping only --prefixed tokens; delegate joins non-- suffix tokens. bulk local first safe opts file/checkpoint/out/system/system-file/tier/hedge-ms/lanes; positional filter drops values by equality; lanes CLI/env/config; system-file wins; hedge nonnegative int else2; estimate returns early. enqueue suffix first safe file/priority; positional filter drops values by equality; priority int(raw or0). drain suffix first safe batch/ceiling converts truthy int/float;forever membership. Unknown tokens ignored. Preserve raw argv branch execution order.",
+    "compatibility_policy": "set-model first requires exact2or3 subsequent positional args. Independent branches, not exclusive, in order: probe,usage,reprobe,judge-eligibility(yes),catalog,learn,bakeoff,estimate,balance,economics,fallback,fallback-spend(since last safe default month),reasoning-map,propose,confirm,delegate,bulk,enqueue,drain,queue,purge,migrate-queue-db. drain suppresses summary. bakeoff/propose/confirm parse suffix after first flag dropping only --prefixed tokens; delegate joins non-- suffix tokens. bulk local first safe opts file/checkpoint/out/system/system-file/tier/hedge-ms/lanes; positional filter drops values by equality; lanes CLI/env/config; system-file wins; hedge nonnegative int else2; estimate returns early. enqueue suffix first safe file/priority; positional filter drops values by equality; priority int(raw or0). drain suffix first safe batch/ceiling converts truthy int/float;forever membership. Unknown tokens ignored. Preserve raw argv branch execution order."
+  },
+  {
+    "token_id": "lanes/--estimate",
+    "commands": [
+      "lanes"
+    ],
+    "spelling": "--estimate",
+    "name": "estimate",
+    "json_type": "boolean",
+    "required": false,
+    "default": false,
+    "cli_nargs": 0,
+    "cli_action": "store_true",
+    "help": "set-model first requires exact2or3 subsequent positional args. Independent branches, not exclusive, in order: probe,usage,reprobe,judge-eligibility(yes),catalog,learn,bakeoff,estimate,balance,economics,fallback,fallback-spend(since last safe default month),reasoning-map,propose,confirm,delegate,bulk,enqueue,drain,queue,purge,migrate-queue-db. drain suppresses summary. bakeoff/propose/confirm parse suffix after first flag dropping only --prefixed tokens; delegate joins non-- suffix tokens. bulk local first safe opts file/checkpoint/out/system/system-file/tier/hedge-ms/lanes; positional filter drops values by equality; lanes CLI/env/config; system-file wins; hedge nonnegative int else2; estimate returns early. enqueue suffix first safe file/priority; positional filter drops values by equality; priority int(raw or0). drain suffix first safe batch/ceiling converts truthy int/float;forever membership. Unknown tokens ignored. Preserve raw argv branch execution order.",
+    "compatibility_policy": "set-model first requires exact2or3 subsequent positional args. Independent branches, not exclusive, in order: probe,usage,reprobe,judge-eligibility(yes),catalog,learn,bakeoff,estimate,balance,economics,fallback,fallback-spend(since last safe default month),reasoning-map,propose,confirm,delegate,bulk,enqueue,drain,queue,purge,migrate-queue-db. drain suppresses summary. bakeoff/propose/confirm parse suffix after first flag dropping only --prefixed tokens; delegate joins non-- suffix tokens. bulk local first safe opts file/checkpoint/out/system/system-file/tier/hedge-ms/lanes; positional filter drops values by equality; lanes CLI/env/config; system-file wins; hedge nonnegative int else2; estimate returns early. enqueue suffix first safe file/priority; positional filter drops values by equality; priority int(raw or0). drain suffix first safe batch/ceiling converts truthy int/float;forever membership. Unknown tokens ignored. Preserve raw argv branch execution order."
+  },
+  {
+    "token_id": "lanes/--balance",
+    "commands": [
+      "lanes"
+    ],
+    "spelling": "--balance",
+    "name": "balance",
+    "json_type": "boolean",
+    "required": false,
+    "default": false,
+    "cli_nargs": 0,
+    "cli_action": "store_true",
+    "help": "set-model first requires exact2or3 subsequent positional args. Independent branches, not exclusive, in order: probe,usage,reprobe,judge-eligibility(yes),catalog,learn,bakeoff,estimate,balance,economics,fallback,fallback-spend(since last safe default month),reasoning-map,propose,confirm,delegate,bulk,enqueue,drain,queue,purge,migrate-queue-db. drain suppresses summary. bakeoff/propose/confirm parse suffix after first flag dropping only --prefixed tokens; delegate joins non-- suffix tokens. bulk local first safe opts file/checkpoint/out/system/system-file/tier/hedge-ms/lanes; positional filter drops values by equality; lanes CLI/env/config; system-file wins; hedge nonnegative int else2; estimate returns early. enqueue suffix first safe file/priority; positional filter drops values by equality; priority int(raw or0). drain suffix first safe batch/ceiling converts truthy int/float;forever membership. Unknown tokens ignored. Preserve raw argv branch execution order.",
+    "compatibility_policy": "set-model first requires exact2or3 subsequent positional args. Independent branches, not exclusive, in order: probe,usage,reprobe,judge-eligibility(yes),catalog,learn,bakeoff,estimate,balance,economics,fallback,fallback-spend(since last safe default month),reasoning-map,propose,confirm,delegate,bulk,enqueue,drain,queue,purge,migrate-queue-db. drain suppresses summary. bakeoff/propose/confirm parse suffix after first flag dropping only --prefixed tokens; delegate joins non-- suffix tokens. bulk local first safe opts file/checkpoint/out/system/system-file/tier/hedge-ms/lanes; positional filter drops values by equality; lanes CLI/env/config; system-file wins; hedge nonnegative int else2; estimate returns early. enqueue suffix first safe file/priority; positional filter drops values by equality; priority int(raw or0). drain suffix first safe batch/ceiling converts truthy int/float;forever membership. Unknown tokens ignored. Preserve raw argv branch execution order."
+  },
+  {
+    "token_id": "lanes/--economics",
+    "commands": [
+      "lanes"
+    ],
+    "spelling": "--economics",
+    "name": "economics",
+    "json_type": "boolean",
+    "required": false,
+    "default": false,
+    "cli_nargs": 0,
+    "cli_action": "store_true",
+    "help": "set-model first requires exact2or3 subsequent positional args. Independent branches, not exclusive, in order: probe,usage,reprobe,judge-eligibility(yes),catalog,learn,bakeoff,estimate,balance,economics,fallback,fallback-spend(since last safe default month),reasoning-map,propose,confirm,delegate,bulk,enqueue,drain,queue,purge,migrate-queue-db. drain suppresses summary. bakeoff/propose/confirm parse suffix after first flag dropping only --prefixed tokens; delegate joins non-- suffix tokens. bulk local first safe opts file/checkpoint/out/system/system-file/tier/hedge-ms/lanes; positional filter drops values by equality; lanes CLI/env/config; system-file wins; hedge nonnegative int else2; estimate returns early. enqueue suffix first safe file/priority; positional filter drops values by equality; priority int(raw or0). drain suffix first safe batch/ceiling converts truthy int/float;forever membership. Unknown tokens ignored. Preserve raw argv branch execution order.",
+    "compatibility_policy": "set-model first requires exact2or3 subsequent positional args. Independent branches, not exclusive, in order: probe,usage,reprobe,judge-eligibility(yes),catalog,learn,bakeoff,estimate,balance,economics,fallback,fallback-spend(since last safe default month),reasoning-map,propose,confirm,delegate,bulk,enqueue,drain,queue,purge,migrate-queue-db. drain suppresses summary. bakeoff/propose/confirm parse suffix after first flag dropping only --prefixed tokens; delegate joins non-- suffix tokens. bulk local first safe opts file/checkpoint/out/system/system-file/tier/hedge-ms/lanes; positional filter drops values by equality; lanes CLI/env/config; system-file wins; hedge nonnegative int else2; estimate returns early. enqueue suffix first safe file/priority; positional filter drops values by equality; priority int(raw or0). drain suffix first safe batch/ceiling converts truthy int/float;forever membership. Unknown tokens ignored. Preserve raw argv branch execution order."
+  },
+  {
+    "token_id": "lanes/--fallback",
+    "commands": [
+      "lanes"
+    ],
+    "spelling": "--fallback",
+    "name": "fallback",
+    "json_type": "boolean",
+    "required": false,
+    "default": false,
+    "cli_nargs": 0,
+    "cli_action": "store_true",
+    "help": "set-model first requires exact2or3 subsequent positional args. Independent branches, not exclusive, in order: probe,usage,reprobe,judge-eligibility(yes),catalog,learn,bakeoff,estimate,balance,economics,fallback,fallback-spend(since last safe default month),reasoning-map,propose,confirm,delegate,bulk,enqueue,drain,queue,purge,migrate-queue-db. drain suppresses summary. bakeoff/propose/confirm parse suffix after first flag dropping only --prefixed tokens; delegate joins non-- suffix tokens. bulk local first safe opts file/checkpoint/out/system/system-file/tier/hedge-ms/lanes; positional filter drops values by equality; lanes CLI/env/config; system-file wins; hedge nonnegative int else2; estimate returns early. enqueue suffix first safe file/priority; positional filter drops values by equality; priority int(raw or0). drain suffix first safe batch/ceiling converts truthy int/float;forever membership. Unknown tokens ignored. Preserve raw argv branch execution order.",
+    "compatibility_policy": "set-model first requires exact2or3 subsequent positional args. Independent branches, not exclusive, in order: probe,usage,reprobe,judge-eligibility(yes),catalog,learn,bakeoff,estimate,balance,economics,fallback,fallback-spend(since last safe default month),reasoning-map,propose,confirm,delegate,bulk,enqueue,drain,queue,purge,migrate-queue-db. drain suppresses summary. bakeoff/propose/confirm parse suffix after first flag dropping only --prefixed tokens; delegate joins non-- suffix tokens. bulk local first safe opts file/checkpoint/out/system/system-file/tier/hedge-ms/lanes; positional filter drops values by equality; lanes CLI/env/config; system-file wins; hedge nonnegative int else2; estimate returns early. enqueue suffix first safe file/priority; positional filter drops values by equality; priority int(raw or0). drain suffix first safe batch/ceiling converts truthy int/float;forever membership. Unknown tokens ignored. Preserve raw argv branch execution order."
+  },
+  {
+    "token_id": "lanes/--fallback-spend",
+    "commands": [
+      "lanes"
+    ],
+    "spelling": "--fallback-spend",
+    "name": "fallback_spend",
+    "json_type": "boolean",
+    "required": false,
+    "default": false,
+    "cli_nargs": 0,
+    "cli_action": "store_true",
+    "help": "set-model first requires exact2or3 subsequent positional args. Independent branches, not exclusive, in order: probe,usage,reprobe,judge-eligibility(yes),catalog,learn,bakeoff,estimate,balance,economics,fallback,fallback-spend(since last safe default month),reasoning-map,propose,confirm,delegate,bulk,enqueue,drain,queue,purge,migrate-queue-db. drain suppresses summary. bakeoff/propose/confirm parse suffix after first flag dropping only --prefixed tokens; delegate joins non-- suffix tokens. bulk local first safe opts file/checkpoint/out/system/system-file/tier/hedge-ms/lanes; positional filter drops values by equality; lanes CLI/env/config; system-file wins; hedge nonnegative int else2; estimate returns early. enqueue suffix first safe file/priority; positional filter drops values by equality; priority int(raw or0). drain suffix first safe batch/ceiling converts truthy int/float;forever membership. Unknown tokens ignored. Preserve raw argv branch execution order.",
+    "compatibility_policy": "set-model first requires exact2or3 subsequent positional args. Independent branches, not exclusive, in order: probe,usage,reprobe,judge-eligibility(yes),catalog,learn,bakeoff,estimate,balance,economics,fallback,fallback-spend(since last safe default month),reasoning-map,propose,confirm,delegate,bulk,enqueue,drain,queue,purge,migrate-queue-db. drain suppresses summary. bakeoff/propose/confirm parse suffix after first flag dropping only --prefixed tokens; delegate joins non-- suffix tokens. bulk local first safe opts file/checkpoint/out/system/system-file/tier/hedge-ms/lanes; positional filter drops values by equality; lanes CLI/env/config; system-file wins; hedge nonnegative int else2; estimate returns early. enqueue suffix first safe file/priority; positional filter drops values by equality; priority int(raw or0). drain suffix first safe batch/ceiling converts truthy int/float;forever membership. Unknown tokens ignored. Preserve raw argv branch execution order."
+  },
+  {
+    "token_id": "lanes/--reasoning-map",
+    "commands": [
+      "lanes"
+    ],
+    "spelling": "--reasoning-map",
+    "name": "reasoning_map",
+    "json_type": "boolean",
+    "required": false,
+    "default": false,
+    "cli_nargs": 0,
+    "cli_action": "store_true",
+    "help": "set-model first requires exact2or3 subsequent positional args. Independent branches, not exclusive, in order: probe,usage,reprobe,judge-eligibility(yes),catalog,learn,bakeoff,estimate,balance,economics,fallback,fallback-spend(since last safe default month),reasoning-map,propose,confirm,delegate,bulk,enqueue,drain,queue,purge,migrate-queue-db. drain suppresses summary. bakeoff/propose/confirm parse suffix after first flag dropping only --prefixed tokens; delegate joins non-- suffix tokens. bulk local first safe opts file/checkpoint/out/system/system-file/tier/hedge-ms/lanes; positional filter drops values by equality; lanes CLI/env/config; system-file wins; hedge nonnegative int else2; estimate returns early. enqueue suffix first safe file/priority; positional filter drops values by equality; priority int(raw or0). drain suffix first safe batch/ceiling converts truthy int/float;forever membership. Unknown tokens ignored. Preserve raw argv branch execution order.",
+    "compatibility_policy": "set-model first requires exact2or3 subsequent positional args. Independent branches, not exclusive, in order: probe,usage,reprobe,judge-eligibility(yes),catalog,learn,bakeoff,estimate,balance,economics,fallback,fallback-spend(since last safe default month),reasoning-map,propose,confirm,delegate,bulk,enqueue,drain,queue,purge,migrate-queue-db. drain suppresses summary. bakeoff/propose/confirm parse suffix after first flag dropping only --prefixed tokens; delegate joins non-- suffix tokens. bulk local first safe opts file/checkpoint/out/system/system-file/tier/hedge-ms/lanes; positional filter drops values by equality; lanes CLI/env/config; system-file wins; hedge nonnegative int else2; estimate returns early. enqueue suffix first safe file/priority; positional filter drops values by equality; priority int(raw or0). drain suffix first safe batch/ceiling converts truthy int/float;forever membership. Unknown tokens ignored. Preserve raw argv branch execution order."
+  },
+  {
+    "token_id": "lanes/--propose",
+    "commands": [
+      "lanes"
+    ],
+    "spelling": "--propose",
+    "name": "propose",
+    "json_type": "array",
+    "required": false,
+    "default": null,
+    "cli_nargs": "*",
+    "cli_action": "store",
+    "help": "set-model first requires exact2or3 subsequent positional args. Independent branches, not exclusive, in order: probe,usage,reprobe,judge-eligibility(yes),catalog,learn,bakeoff,estimate,balance,economics,fallback,fallback-spend(since last safe default month),reasoning-map,propose,confirm,delegate,bulk,enqueue,drain,queue,purge,migrate-queue-db. drain suppresses summary. bakeoff/propose/confirm parse suffix after first flag dropping only --prefixed tokens; delegate joins non-- suffix tokens. bulk local first safe opts file/checkpoint/out/system/system-file/tier/hedge-ms/lanes; positional filter drops values by equality; lanes CLI/env/config; system-file wins; hedge nonnegative int else2; estimate returns early. enqueue suffix first safe file/priority; positional filter drops values by equality; priority int(raw or0). drain suffix first safe batch/ceiling converts truthy int/float;forever membership. Unknown tokens ignored. Preserve raw argv branch execution order.",
+    "compatibility_policy": "set-model first requires exact2or3 subsequent positional args. Independent branches, not exclusive, in order: probe,usage,reprobe,judge-eligibility(yes),catalog,learn,bakeoff,estimate,balance,economics,fallback,fallback-spend(since last safe default month),reasoning-map,propose,confirm,delegate,bulk,enqueue,drain,queue,purge,migrate-queue-db. drain suppresses summary. bakeoff/propose/confirm parse suffix after first flag dropping only --prefixed tokens; delegate joins non-- suffix tokens. bulk local first safe opts file/checkpoint/out/system/system-file/tier/hedge-ms/lanes; positional filter drops values by equality; lanes CLI/env/config; system-file wins; hedge nonnegative int else2; estimate returns early. enqueue suffix first safe file/priority; positional filter drops values by equality; priority int(raw or0). drain suffix first safe batch/ceiling converts truthy int/float;forever membership. Unknown tokens ignored. Preserve raw argv branch execution order."
+  },
+  {
+    "token_id": "lanes/--confirm",
+    "commands": [
+      "lanes"
+    ],
+    "spelling": "--confirm",
+    "name": "confirm",
+    "json_type": "array",
+    "required": false,
+    "default": null,
+    "cli_nargs": "*",
+    "cli_action": "store",
+    "help": "set-model first requires exact2or3 subsequent positional args. Independent branches, not exclusive, in order: probe,usage,reprobe,judge-eligibility(yes),catalog,learn,bakeoff,estimate,balance,economics,fallback,fallback-spend(since last safe default month),reasoning-map,propose,confirm,delegate,bulk,enqueue,drain,queue,purge,migrate-queue-db. drain suppresses summary. bakeoff/propose/confirm parse suffix after first flag dropping only --prefixed tokens; delegate joins non-- suffix tokens. bulk local first safe opts file/checkpoint/out/system/system-file/tier/hedge-ms/lanes; positional filter drops values by equality; lanes CLI/env/config; system-file wins; hedge nonnegative int else2; estimate returns early. enqueue suffix first safe file/priority; positional filter drops values by equality; priority int(raw or0). drain suffix first safe batch/ceiling converts truthy int/float;forever membership. Unknown tokens ignored. Preserve raw argv branch execution order.",
+    "compatibility_policy": "set-model first requires exact2or3 subsequent positional args. Independent branches, not exclusive, in order: probe,usage,reprobe,judge-eligibility(yes),catalog,learn,bakeoff,estimate,balance,economics,fallback,fallback-spend(since last safe default month),reasoning-map,propose,confirm,delegate,bulk,enqueue,drain,queue,purge,migrate-queue-db. drain suppresses summary. bakeoff/propose/confirm parse suffix after first flag dropping only --prefixed tokens; delegate joins non-- suffix tokens. bulk local first safe opts file/checkpoint/out/system/system-file/tier/hedge-ms/lanes; positional filter drops values by equality; lanes CLI/env/config; system-file wins; hedge nonnegative int else2; estimate returns early. enqueue suffix first safe file/priority; positional filter drops values by equality; priority int(raw or0). drain suffix first safe batch/ceiling converts truthy int/float;forever membership. Unknown tokens ignored. Preserve raw argv branch execution order."
+  },
+  {
+    "token_id": "lanes/--delegate",
+    "commands": [
+      "lanes"
+    ],
+    "spelling": "--delegate",
+    "name": "delegate",
+    "json_type": "array",
+    "required": false,
+    "default": null,
+    "cli_nargs": "*",
+    "cli_action": "store",
+    "help": "set-model first requires exact2or3 subsequent positional args. Independent branches, not exclusive, in order: probe,usage,reprobe,judge-eligibility(yes),catalog,learn,bakeoff,estimate,balance,economics,fallback,fallback-spend(since last safe default month),reasoning-map,propose,confirm,delegate,bulk,enqueue,drain,queue,purge,migrate-queue-db. drain suppresses summary. bakeoff/propose/confirm parse suffix after first flag dropping only --prefixed tokens; delegate joins non-- suffix tokens. bulk local first safe opts file/checkpoint/out/system/system-file/tier/hedge-ms/lanes; positional filter drops values by equality; lanes CLI/env/config; system-file wins; hedge nonnegative int else2; estimate returns early. enqueue suffix first safe file/priority; positional filter drops values by equality; priority int(raw or0). drain suffix first safe batch/ceiling converts truthy int/float;forever membership. Unknown tokens ignored. Preserve raw argv branch execution order.",
+    "compatibility_policy": "set-model first requires exact2or3 subsequent positional args. Independent branches, not exclusive, in order: probe,usage,reprobe,judge-eligibility(yes),catalog,learn,bakeoff,estimate,balance,economics,fallback,fallback-spend(since last safe default month),reasoning-map,propose,confirm,delegate,bulk,enqueue,drain,queue,purge,migrate-queue-db. drain suppresses summary. bakeoff/propose/confirm parse suffix after first flag dropping only --prefixed tokens; delegate joins non-- suffix tokens. bulk local first safe opts file/checkpoint/out/system/system-file/tier/hedge-ms/lanes; positional filter drops values by equality; lanes CLI/env/config; system-file wins; hedge nonnegative int else2; estimate returns early. enqueue suffix first safe file/priority; positional filter drops values by equality; priority int(raw or0). drain suffix first safe batch/ceiling converts truthy int/float;forever membership. Unknown tokens ignored. Preserve raw argv branch execution order."
+  },
+  {
+    "token_id": "lanes/--bulk",
+    "commands": [
+      "lanes"
+    ],
+    "spelling": "--bulk",
+    "name": "bulk",
+    "json_type": "boolean",
+    "required": false,
+    "default": false,
+    "cli_nargs": 0,
+    "cli_action": "store_true",
+    "help": "set-model first requires exact2or3 subsequent positional args. Independent branches, not exclusive, in order: probe,usage,reprobe,judge-eligibility(yes),catalog,learn,bakeoff,estimate,balance,economics,fallback,fallback-spend(since last safe default month),reasoning-map,propose,confirm,delegate,bulk,enqueue,drain,queue,purge,migrate-queue-db. drain suppresses summary. bakeoff/propose/confirm parse suffix after first flag dropping only --prefixed tokens; delegate joins non-- suffix tokens. bulk local first safe opts file/checkpoint/out/system/system-file/tier/hedge-ms/lanes; positional filter drops values by equality; lanes CLI/env/config; system-file wins; hedge nonnegative int else2; estimate returns early. enqueue suffix first safe file/priority; positional filter drops values by equality; priority int(raw or0). drain suffix first safe batch/ceiling converts truthy int/float;forever membership. Unknown tokens ignored. Preserve raw argv branch execution order.",
+    "compatibility_policy": "set-model first requires exact2or3 subsequent positional args. Independent branches, not exclusive, in order: probe,usage,reprobe,judge-eligibility(yes),catalog,learn,bakeoff,estimate,balance,economics,fallback,fallback-spend(since last safe default month),reasoning-map,propose,confirm,delegate,bulk,enqueue,drain,queue,purge,migrate-queue-db. drain suppresses summary. bakeoff/propose/confirm parse suffix after first flag dropping only --prefixed tokens; delegate joins non-- suffix tokens. bulk local first safe opts file/checkpoint/out/system/system-file/tier/hedge-ms/lanes; positional filter drops values by equality; lanes CLI/env/config; system-file wins; hedge nonnegative int else2; estimate returns early. enqueue suffix first safe file/priority; positional filter drops values by equality; priority int(raw or0). drain suffix first safe batch/ceiling converts truthy int/float;forever membership. Unknown tokens ignored. Preserve raw argv branch execution order."
+  },
+  {
+    "token_id": "lanes/--enqueue",
+    "commands": [
+      "lanes"
+    ],
+    "spelling": "--enqueue",
+    "name": "enqueue",
+    "json_type": "boolean",
+    "required": false,
+    "default": false,
+    "cli_nargs": 0,
+    "cli_action": "store_true",
+    "help": "set-model first requires exact2or3 subsequent positional args. Independent branches, not exclusive, in order: probe,usage,reprobe,judge-eligibility(yes),catalog,learn,bakeoff,estimate,balance,economics,fallback,fallback-spend(since last safe default month),reasoning-map,propose,confirm,delegate,bulk,enqueue,drain,queue,purge,migrate-queue-db. drain suppresses summary. bakeoff/propose/confirm parse suffix after first flag dropping only --prefixed tokens; delegate joins non-- suffix tokens. bulk local first safe opts file/checkpoint/out/system/system-file/tier/hedge-ms/lanes; positional filter drops values by equality; lanes CLI/env/config; system-file wins; hedge nonnegative int else2; estimate returns early. enqueue suffix first safe file/priority; positional filter drops values by equality; priority int(raw or0). drain suffix first safe batch/ceiling converts truthy int/float;forever membership. Unknown tokens ignored. Preserve raw argv branch execution order.",
+    "compatibility_policy": "set-model first requires exact2or3 subsequent positional args. Independent branches, not exclusive, in order: probe,usage,reprobe,judge-eligibility(yes),catalog,learn,bakeoff,estimate,balance,economics,fallback,fallback-spend(since last safe default month),reasoning-map,propose,confirm,delegate,bulk,enqueue,drain,queue,purge,migrate-queue-db. drain suppresses summary. bakeoff/propose/confirm parse suffix after first flag dropping only --prefixed tokens; delegate joins non-- suffix tokens. bulk local first safe opts file/checkpoint/out/system/system-file/tier/hedge-ms/lanes; positional filter drops values by equality; lanes CLI/env/config; system-file wins; hedge nonnegative int else2; estimate returns early. enqueue suffix first safe file/priority; positional filter drops values by equality; priority int(raw or0). drain suffix first safe batch/ceiling converts truthy int/float;forever membership. Unknown tokens ignored. Preserve raw argv branch execution order."
+  },
+  {
+    "token_id": "lanes/--queue",
+    "commands": [
+      "lanes"
+    ],
+    "spelling": "--queue",
+    "name": "queue",
+    "json_type": "boolean",
+    "required": false,
+    "default": false,
+    "cli_nargs": 0,
+    "cli_action": "store_true",
+    "help": "set-model first requires exact2or3 subsequent positional args. Independent branches, not exclusive, in order: probe,usage,reprobe,judge-eligibility(yes),catalog,learn,bakeoff,estimate,balance,economics,fallback,fallback-spend(since last safe default month),reasoning-map,propose,confirm,delegate,bulk,enqueue,drain,queue,purge,migrate-queue-db. drain suppresses summary. bakeoff/propose/confirm parse suffix after first flag dropping only --prefixed tokens; delegate joins non-- suffix tokens. bulk local first safe opts file/checkpoint/out/system/system-file/tier/hedge-ms/lanes; positional filter drops values by equality; lanes CLI/env/config; system-file wins; hedge nonnegative int else2; estimate returns early. enqueue suffix first safe file/priority; positional filter drops values by equality; priority int(raw or0). drain suffix first safe batch/ceiling converts truthy int/float;forever membership. Unknown tokens ignored. Preserve raw argv branch execution order.",
+    "compatibility_policy": "set-model first requires exact2or3 subsequent positional args. Independent branches, not exclusive, in order: probe,usage,reprobe,judge-eligibility(yes),catalog,learn,bakeoff,estimate,balance,economics,fallback,fallback-spend(since last safe default month),reasoning-map,propose,confirm,delegate,bulk,enqueue,drain,queue,purge,migrate-queue-db. drain suppresses summary. bakeoff/propose/confirm parse suffix after first flag dropping only --prefixed tokens; delegate joins non-- suffix tokens. bulk local first safe opts file/checkpoint/out/system/system-file/tier/hedge-ms/lanes; positional filter drops values by equality; lanes CLI/env/config; system-file wins; hedge nonnegative int else2; estimate returns early. enqueue suffix first safe file/priority; positional filter drops values by equality; priority int(raw or0). drain suffix first safe batch/ceiling converts truthy int/float;forever membership. Unknown tokens ignored. Preserve raw argv branch execution order."
+  },
+  {
+    "token_id": "lanes/--purge",
+    "commands": [
+      "lanes"
+    ],
+    "spelling": "--purge",
+    "name": "purge",
+    "json_type": "boolean",
+    "required": false,
+    "default": false,
+    "cli_nargs": 0,
+    "cli_action": "store_true",
+    "help": "set-model first requires exact2or3 subsequent positional args. Independent branches, not exclusive, in order: probe,usage,reprobe,judge-eligibility(yes),catalog,learn,bakeoff,estimate,balance,economics,fallback,fallback-spend(since last safe default month),reasoning-map,propose,confirm,delegate,bulk,enqueue,drain,queue,purge,migrate-queue-db. drain suppresses summary. bakeoff/propose/confirm parse suffix after first flag dropping only --prefixed tokens; delegate joins non-- suffix tokens. bulk local first safe opts file/checkpoint/out/system/system-file/tier/hedge-ms/lanes; positional filter drops values by equality; lanes CLI/env/config; system-file wins; hedge nonnegative int else2; estimate returns early. enqueue suffix first safe file/priority; positional filter drops values by equality; priority int(raw or0). drain suffix first safe batch/ceiling converts truthy int/float;forever membership. Unknown tokens ignored. Preserve raw argv branch execution order.",
+    "compatibility_policy": "set-model first requires exact2or3 subsequent positional args. Independent branches, not exclusive, in order: probe,usage,reprobe,judge-eligibility(yes),catalog,learn,bakeoff,estimate,balance,economics,fallback,fallback-spend(since last safe default month),reasoning-map,propose,confirm,delegate,bulk,enqueue,drain,queue,purge,migrate-queue-db. drain suppresses summary. bakeoff/propose/confirm parse suffix after first flag dropping only --prefixed tokens; delegate joins non-- suffix tokens. bulk local first safe opts file/checkpoint/out/system/system-file/tier/hedge-ms/lanes; positional filter drops values by equality; lanes CLI/env/config; system-file wins; hedge nonnegative int else2; estimate returns early. enqueue suffix first safe file/priority; positional filter drops values by equality; priority int(raw or0). drain suffix first safe batch/ceiling converts truthy int/float;forever membership. Unknown tokens ignored. Preserve raw argv branch execution order."
+  },
+  {
+    "token_id": "lanes/--migrate-queue-db",
+    "commands": [
+      "lanes"
+    ],
+    "spelling": "--migrate-queue-db",
+    "name": "migrate_queue_db",
+    "json_type": "boolean",
+    "required": false,
+    "default": false,
+    "cli_nargs": 0,
+    "cli_action": "store_true",
+    "help": "set-model first requires exact2or3 subsequent positional args. Independent branches, not exclusive, in order: probe,usage,reprobe,judge-eligibility(yes),catalog,learn,bakeoff,estimate,balance,economics,fallback,fallback-spend(since last safe default month),reasoning-map,propose,confirm,delegate,bulk,enqueue,drain,queue,purge,migrate-queue-db. drain suppresses summary. bakeoff/propose/confirm parse suffix after first flag dropping only --prefixed tokens; delegate joins non-- suffix tokens. bulk local first safe opts file/checkpoint/out/system/system-file/tier/hedge-ms/lanes; positional filter drops values by equality; lanes CLI/env/config; system-file wins; hedge nonnegative int else2; estimate returns early. enqueue suffix first safe file/priority; positional filter drops values by equality; priority int(raw or0). drain suffix first safe batch/ceiling converts truthy int/float;forever membership. Unknown tokens ignored. Preserve raw argv branch execution order.",
+    "compatibility_policy": "set-model first requires exact2or3 subsequent positional args. Independent branches, not exclusive, in order: probe,usage,reprobe,judge-eligibility(yes),catalog,learn,bakeoff,estimate,balance,economics,fallback,fallback-spend(since last safe default month),reasoning-map,propose,confirm,delegate,bulk,enqueue,drain,queue,purge,migrate-queue-db. drain suppresses summary. bakeoff/propose/confirm parse suffix after first flag dropping only --prefixed tokens; delegate joins non-- suffix tokens. bulk local first safe opts file/checkpoint/out/system/system-file/tier/hedge-ms/lanes; positional filter drops values by equality; lanes CLI/env/config; system-file wins; hedge nonnegative int else2; estimate returns early. enqueue suffix first safe file/priority; positional filter drops values by equality; priority int(raw or0). drain suffix first safe batch/ceiling converts truthy int/float;forever membership. Unknown tokens ignored. Preserve raw argv branch execution order."
+  },
+  {
+    "token_id": "lanes/--file",
+    "commands": [
+      "lanes"
+    ],
+    "spelling": "--file",
+    "name": "file",
+    "json_type": "string",
+    "required": false,
+    "default": null,
+    "cli_nargs": 1,
+    "cli_action": "store",
+    "help": "set-model first requires exact2or3 subsequent positional args. Independent branches, not exclusive, in order: probe,usage,reprobe,judge-eligibility(yes),catalog,learn,bakeoff,estimate,balance,economics,fallback,fallback-spend(since last safe default month),reasoning-map,propose,confirm,delegate,bulk,enqueue,drain,queue,purge,migrate-queue-db. drain suppresses summary. bakeoff/propose/confirm parse suffix after first flag dropping only --prefixed tokens; delegate joins non-- suffix tokens. bulk local first safe opts file/checkpoint/out/system/system-file/tier/hedge-ms/lanes; positional filter drops values by equality; lanes CLI/env/config; system-file wins; hedge nonnegative int else2; estimate returns early. enqueue suffix first safe file/priority; positional filter drops values by equality; priority int(raw or0). drain suffix first safe batch/ceiling converts truthy int/float;forever membership. Unknown tokens ignored. Preserve raw argv branch execution order.",
+    "compatibility_policy": "set-model first requires exact2or3 subsequent positional args. Independent branches, not exclusive, in order: probe,usage,reprobe,judge-eligibility(yes),catalog,learn,bakeoff,estimate,balance,economics,fallback,fallback-spend(since last safe default month),reasoning-map,propose,confirm,delegate,bulk,enqueue,drain,queue,purge,migrate-queue-db. drain suppresses summary. bakeoff/propose/confirm parse suffix after first flag dropping only --prefixed tokens; delegate joins non-- suffix tokens. bulk local first safe opts file/checkpoint/out/system/system-file/tier/hedge-ms/lanes; positional filter drops values by equality; lanes CLI/env/config; system-file wins; hedge nonnegative int else2; estimate returns early. enqueue suffix first safe file/priority; positional filter drops values by equality; priority int(raw or0). drain suffix first safe batch/ceiling converts truthy int/float;forever membership. Unknown tokens ignored. Preserve raw argv branch execution order."
+  },
+  {
+    "token_id": "lanes/--checkpoint",
+    "commands": [
+      "lanes"
+    ],
+    "spelling": "--checkpoint",
+    "name": "checkpoint",
+    "json_type": "string",
+    "required": false,
+    "default": null,
+    "cli_nargs": 1,
+    "cli_action": "store",
+    "help": "set-model first requires exact2or3 subsequent positional args. Independent branches, not exclusive, in order: probe,usage,reprobe,judge-eligibility(yes),catalog,learn,bakeoff,estimate,balance,economics,fallback,fallback-spend(since last safe default month),reasoning-map,propose,confirm,delegate,bulk,enqueue,drain,queue,purge,migrate-queue-db. drain suppresses summary. bakeoff/propose/confirm parse suffix after first flag dropping only --prefixed tokens; delegate joins non-- suffix tokens. bulk local first safe opts file/checkpoint/out/system/system-file/tier/hedge-ms/lanes; positional filter drops values by equality; lanes CLI/env/config; system-file wins; hedge nonnegative int else2; estimate returns early. enqueue suffix first safe file/priority; positional filter drops values by equality; priority int(raw or0). drain suffix first safe batch/ceiling converts truthy int/float;forever membership. Unknown tokens ignored. Preserve raw argv branch execution order.",
+    "compatibility_policy": "set-model first requires exact2or3 subsequent positional args. Independent branches, not exclusive, in order: probe,usage,reprobe,judge-eligibility(yes),catalog,learn,bakeoff,estimate,balance,economics,fallback,fallback-spend(since last safe default month),reasoning-map,propose,confirm,delegate,bulk,enqueue,drain,queue,purge,migrate-queue-db. drain suppresses summary. bakeoff/propose/confirm parse suffix after first flag dropping only --prefixed tokens; delegate joins non-- suffix tokens. bulk local first safe opts file/checkpoint/out/system/system-file/tier/hedge-ms/lanes; positional filter drops values by equality; lanes CLI/env/config; system-file wins; hedge nonnegative int else2; estimate returns early. enqueue suffix first safe file/priority; positional filter drops values by equality; priority int(raw or0). drain suffix first safe batch/ceiling converts truthy int/float;forever membership. Unknown tokens ignored. Preserve raw argv branch execution order."
+  },
+  {
+    "token_id": "lanes/--out",
+    "commands": [
+      "lanes"
+    ],
+    "spelling": "--out",
+    "name": "out",
+    "json_type": "string",
+    "required": false,
+    "default": null,
+    "cli_nargs": 1,
+    "cli_action": "store",
+    "help": "set-model first requires exact2or3 subsequent positional args. Independent branches, not exclusive, in order: probe,usage,reprobe,judge-eligibility(yes),catalog,learn,bakeoff,estimate,balance,economics,fallback,fallback-spend(since last safe default month),reasoning-map,propose,confirm,delegate,bulk,enqueue,drain,queue,purge,migrate-queue-db. drain suppresses summary. bakeoff/propose/confirm parse suffix after first flag dropping only --prefixed tokens; delegate joins non-- suffix tokens. bulk local first safe opts file/checkpoint/out/system/system-file/tier/hedge-ms/lanes; positional filter drops values by equality; lanes CLI/env/config; system-file wins; hedge nonnegative int else2; estimate returns early. enqueue suffix first safe file/priority; positional filter drops values by equality; priority int(raw or0). drain suffix first safe batch/ceiling converts truthy int/float;forever membership. Unknown tokens ignored. Preserve raw argv branch execution order.",
+    "compatibility_policy": "set-model first requires exact2or3 subsequent positional args. Independent branches, not exclusive, in order: probe,usage,reprobe,judge-eligibility(yes),catalog,learn,bakeoff,estimate,balance,economics,fallback,fallback-spend(since last safe default month),reasoning-map,propose,confirm,delegate,bulk,enqueue,drain,queue,purge,migrate-queue-db. drain suppresses summary. bakeoff/propose/confirm parse suffix after first flag dropping only --prefixed tokens; delegate joins non-- suffix tokens. bulk local first safe opts file/checkpoint/out/system/system-file/tier/hedge-ms/lanes; positional filter drops values by equality; lanes CLI/env/config; system-file wins; hedge nonnegative int else2; estimate returns early. enqueue suffix first safe file/priority; positional filter drops values by equality; priority int(raw or0). drain suffix first safe batch/ceiling converts truthy int/float;forever membership. Unknown tokens ignored. Preserve raw argv branch execution order."
+  },
+  {
+    "token_id": "lanes/--system",
+    "commands": [
+      "lanes"
+    ],
+    "spelling": "--system",
+    "name": "system",
+    "json_type": "string",
+    "required": false,
+    "default": null,
+    "cli_nargs": 1,
+    "cli_action": "store",
+    "help": "set-model first requires exact2or3 subsequent positional args. Independent branches, not exclusive, in order: probe,usage,reprobe,judge-eligibility(yes),catalog,learn,bakeoff,estimate,balance,economics,fallback,fallback-spend(since last safe default month),reasoning-map,propose,confirm,delegate,bulk,enqueue,drain,queue,purge,migrate-queue-db. drain suppresses summary. bakeoff/propose/confirm parse suffix after first flag dropping only --prefixed tokens; delegate joins non-- suffix tokens. bulk local first safe opts file/checkpoint/out/system/system-file/tier/hedge-ms/lanes; positional filter drops values by equality; lanes CLI/env/config; system-file wins; hedge nonnegative int else2; estimate returns early. enqueue suffix first safe file/priority; positional filter drops values by equality; priority int(raw or0). drain suffix first safe batch/ceiling converts truthy int/float;forever membership. Unknown tokens ignored. Preserve raw argv branch execution order.",
+    "compatibility_policy": "set-model first requires exact2or3 subsequent positional args. Independent branches, not exclusive, in order: probe,usage,reprobe,judge-eligibility(yes),catalog,learn,bakeoff,estimate,balance,economics,fallback,fallback-spend(since last safe default month),reasoning-map,propose,confirm,delegate,bulk,enqueue,drain,queue,purge,migrate-queue-db. drain suppresses summary. bakeoff/propose/confirm parse suffix after first flag dropping only --prefixed tokens; delegate joins non-- suffix tokens. bulk local first safe opts file/checkpoint/out/system/system-file/tier/hedge-ms/lanes; positional filter drops values by equality; lanes CLI/env/config; system-file wins; hedge nonnegative int else2; estimate returns early. enqueue suffix first safe file/priority; positional filter drops values by equality; priority int(raw or0). drain suffix first safe batch/ceiling converts truthy int/float;forever membership. Unknown tokens ignored. Preserve raw argv branch execution order."
+  },
+  {
+    "token_id": "lanes/--system-file",
+    "commands": [
+      "lanes"
+    ],
+    "spelling": "--system-file",
+    "name": "system_file",
+    "json_type": "string",
+    "required": false,
+    "default": null,
+    "cli_nargs": 1,
+    "cli_action": "store",
+    "help": "set-model first requires exact2or3 subsequent positional args. Independent branches, not exclusive, in order: probe,usage,reprobe,judge-eligibility(yes),catalog,learn,bakeoff,estimate,balance,economics,fallback,fallback-spend(since last safe default month),reasoning-map,propose,confirm,delegate,bulk,enqueue,drain,queue,purge,migrate-queue-db. drain suppresses summary. bakeoff/propose/confirm parse suffix after first flag dropping only --prefixed tokens; delegate joins non-- suffix tokens. bulk local first safe opts file/checkpoint/out/system/system-file/tier/hedge-ms/lanes; positional filter drops values by equality; lanes CLI/env/config; system-file wins; hedge nonnegative int else2; estimate returns early. enqueue suffix first safe file/priority; positional filter drops values by equality; priority int(raw or0). drain suffix first safe batch/ceiling converts truthy int/float;forever membership. Unknown tokens ignored. Preserve raw argv branch execution order.",
+    "compatibility_policy": "set-model first requires exact2or3 subsequent positional args. Independent branches, not exclusive, in order: probe,usage,reprobe,judge-eligibility(yes),catalog,learn,bakeoff,estimate,balance,economics,fallback,fallback-spend(since last safe default month),reasoning-map,propose,confirm,delegate,bulk,enqueue,drain,queue,purge,migrate-queue-db. drain suppresses summary. bakeoff/propose/confirm parse suffix after first flag dropping only --prefixed tokens; delegate joins non-- suffix tokens. bulk local first safe opts file/checkpoint/out/system/system-file/tier/hedge-ms/lanes; positional filter drops values by equality; lanes CLI/env/config; system-file wins; hedge nonnegative int else2; estimate returns early. enqueue suffix first safe file/priority; positional filter drops values by equality; priority int(raw or0). drain suffix first safe batch/ceiling converts truthy int/float;forever membership. Unknown tokens ignored. Preserve raw argv branch execution order."
+  },
+  {
+    "token_id": "lanes/--tier",
+    "commands": [
+      "lanes"
+    ],
+    "spelling": "--tier",
+    "name": "tier",
+    "json_type": "string",
+    "required": false,
+    "default": null,
+    "cli_nargs": 1,
+    "cli_action": "store",
+    "help": "set-model first requires exact2or3 subsequent positional args. Independent branches, not exclusive, in order: probe,usage,reprobe,judge-eligibility(yes),catalog,learn,bakeoff,estimate,balance,economics,fallback,fallback-spend(since last safe default month),reasoning-map,propose,confirm,delegate,bulk,enqueue,drain,queue,purge,migrate-queue-db. drain suppresses summary. bakeoff/propose/confirm parse suffix after first flag dropping only --prefixed tokens; delegate joins non-- suffix tokens. bulk local first safe opts file/checkpoint/out/system/system-file/tier/hedge-ms/lanes; positional filter drops values by equality; lanes CLI/env/config; system-file wins; hedge nonnegative int else2; estimate returns early. enqueue suffix first safe file/priority; positional filter drops values by equality; priority int(raw or0). drain suffix first safe batch/ceiling converts truthy int/float;forever membership. Unknown tokens ignored. Preserve raw argv branch execution order.",
+    "compatibility_policy": "set-model first requires exact2or3 subsequent positional args. Independent branches, not exclusive, in order: probe,usage,reprobe,judge-eligibility(yes),catalog,learn,bakeoff,estimate,balance,economics,fallback,fallback-spend(since last safe default month),reasoning-map,propose,confirm,delegate,bulk,enqueue,drain,queue,purge,migrate-queue-db. drain suppresses summary. bakeoff/propose/confirm parse suffix after first flag dropping only --prefixed tokens; delegate joins non-- suffix tokens. bulk local first safe opts file/checkpoint/out/system/system-file/tier/hedge-ms/lanes; positional filter drops values by equality; lanes CLI/env/config; system-file wins; hedge nonnegative int else2; estimate returns early. enqueue suffix first safe file/priority; positional filter drops values by equality; priority int(raw or0). drain suffix first safe batch/ceiling converts truthy int/float;forever membership. Unknown tokens ignored. Preserve raw argv branch execution order."
+  },
+  {
+    "token_id": "lanes/--hedge-ms",
+    "commands": [
+      "lanes"
+    ],
+    "spelling": "--hedge-ms",
+    "name": "hedge_ms",
+    "json_type": "integer",
+    "required": false,
+    "default": null,
+    "cli_nargs": 1,
+    "cli_action": "store",
+    "help": "set-model first requires exact2or3 subsequent positional args. Independent branches, not exclusive, in order: probe,usage,reprobe,judge-eligibility(yes),catalog,learn,bakeoff,estimate,balance,economics,fallback,fallback-spend(since last safe default month),reasoning-map,propose,confirm,delegate,bulk,enqueue,drain,queue,purge,migrate-queue-db. drain suppresses summary. bakeoff/propose/confirm parse suffix after first flag dropping only --prefixed tokens; delegate joins non-- suffix tokens. bulk local first safe opts file/checkpoint/out/system/system-file/tier/hedge-ms/lanes; positional filter drops values by equality; lanes CLI/env/config; system-file wins; hedge nonnegative int else2; estimate returns early. enqueue suffix first safe file/priority; positional filter drops values by equality; priority int(raw or0). drain suffix first safe batch/ceiling converts truthy int/float;forever membership. Unknown tokens ignored. Preserve raw argv branch execution order.",
+    "compatibility_policy": "set-model first requires exact2or3 subsequent positional args. Independent branches, not exclusive, in order: probe,usage,reprobe,judge-eligibility(yes),catalog,learn,bakeoff,estimate,balance,economics,fallback,fallback-spend(since last safe default month),reasoning-map,propose,confirm,delegate,bulk,enqueue,drain,queue,purge,migrate-queue-db. drain suppresses summary. bakeoff/propose/confirm parse suffix after first flag dropping only --prefixed tokens; delegate joins non-- suffix tokens. bulk local first safe opts file/checkpoint/out/system/system-file/tier/hedge-ms/lanes; positional filter drops values by equality; lanes CLI/env/config; system-file wins; hedge nonnegative int else2; estimate returns early. enqueue suffix first safe file/priority; positional filter drops values by equality; priority int(raw or0). drain suffix first safe batch/ceiling converts truthy int/float;forever membership. Unknown tokens ignored. Preserve raw argv branch execution order."
+  },
+  {
+    "token_id": "lanes/--forever",
+    "commands": [
+      "lanes"
+    ],
+    "spelling": "--forever",
+    "name": "forever",
+    "json_type": "boolean",
+    "required": false,
+    "default": false,
+    "cli_nargs": 0,
+    "cli_action": "store_true",
+    "help": "set-model first requires exact2or3 subsequent positional args. Independent branches, not exclusive, in order: probe,usage,reprobe,judge-eligibility(yes),catalog,learn,bakeoff,estimate,balance,economics,fallback,fallback-spend(since last safe default month),reasoning-map,propose,confirm,delegate,bulk,enqueue,drain,queue,purge,migrate-queue-db. drain suppresses summary. bakeoff/propose/confirm parse suffix after first flag dropping only --prefixed tokens; delegate joins non-- suffix tokens. bulk local first safe opts file/checkpoint/out/system/system-file/tier/hedge-ms/lanes; positional filter drops values by equality; lanes CLI/env/config; system-file wins; hedge nonnegative int else2; estimate returns early. enqueue suffix first safe file/priority; positional filter drops values by equality; priority int(raw or0). drain suffix first safe batch/ceiling converts truthy int/float;forever membership. Unknown tokens ignored. Preserve raw argv branch execution order.",
+    "compatibility_policy": "set-model first requires exact2or3 subsequent positional args. Independent branches, not exclusive, in order: probe,usage,reprobe,judge-eligibility(yes),catalog,learn,bakeoff,estimate,balance,economics,fallback,fallback-spend(since last safe default month),reasoning-map,propose,confirm,delegate,bulk,enqueue,drain,queue,purge,migrate-queue-db. drain suppresses summary. bakeoff/propose/confirm parse suffix after first flag dropping only --prefixed tokens; delegate joins non-- suffix tokens. bulk local first safe opts file/checkpoint/out/system/system-file/tier/hedge-ms/lanes; positional filter drops values by equality; lanes CLI/env/config; system-file wins; hedge nonnegative int else2; estimate returns early. enqueue suffix first safe file/priority; positional filter drops values by equality; priority int(raw or0). drain suffix first safe batch/ceiling converts truthy int/float;forever membership. Unknown tokens ignored. Preserve raw argv branch execution order."
+  },
+  {
+    "token_id": "lanes/--yes",
+    "commands": [
+      "lanes"
+    ],
+    "spelling": "--yes",
+    "name": "yes",
+    "json_type": "boolean",
+    "required": false,
+    "default": false,
+    "cli_nargs": 0,
+    "cli_action": "store_true",
+    "help": "set-model first requires exact2or3 subsequent positional args. Independent branches, not exclusive, in order: probe,usage,reprobe,judge-eligibility(yes),catalog,learn,bakeoff,estimate,balance,economics,fallback,fallback-spend(since last safe default month),reasoning-map,propose,confirm,delegate,bulk,enqueue,drain,queue,purge,migrate-queue-db. drain suppresses summary. bakeoff/propose/confirm parse suffix after first flag dropping only --prefixed tokens; delegate joins non-- suffix tokens. bulk local first safe opts file/checkpoint/out/system/system-file/tier/hedge-ms/lanes; positional filter drops values by equality; lanes CLI/env/config; system-file wins; hedge nonnegative int else2; estimate returns early. enqueue suffix first safe file/priority; positional filter drops values by equality; priority int(raw or0). drain suffix first safe batch/ceiling converts truthy int/float;forever membership. Unknown tokens ignored. Preserve raw argv branch execution order.",
+    "compatibility_policy": "set-model first requires exact2or3 subsequent positional args. Independent branches, not exclusive, in order: probe,usage,reprobe,judge-eligibility(yes),catalog,learn,bakeoff,estimate,balance,economics,fallback,fallback-spend(since last safe default month),reasoning-map,propose,confirm,delegate,bulk,enqueue,drain,queue,purge,migrate-queue-db. drain suppresses summary. bakeoff/propose/confirm parse suffix after first flag dropping only --prefixed tokens; delegate joins non-- suffix tokens. bulk local first safe opts file/checkpoint/out/system/system-file/tier/hedge-ms/lanes; positional filter drops values by equality; lanes CLI/env/config; system-file wins; hedge nonnegative int else2; estimate returns early. enqueue suffix first safe file/priority; positional filter drops values by equality; priority int(raw or0). drain suffix first safe batch/ceiling converts truthy int/float;forever membership. Unknown tokens ignored. Preserve raw argv branch execution order."
+  },
+  {
+    "token_id": "lanes/--lanes",
+    "commands": [
+      "lanes"
+    ],
+    "spelling": "--lanes",
+    "name": "lanes",
+    "json_type": "string",
+    "required": false,
+    "default": null,
+    "cli_nargs": 1,
+    "cli_action": "store",
+    "help": "set-model first requires exact2or3 subsequent positional args. Independent branches, not exclusive, in order: probe,usage,reprobe,judge-eligibility(yes),catalog,learn,bakeoff,estimate,balance,economics,fallback,fallback-spend(since last safe default month),reasoning-map,propose,confirm,delegate,bulk,enqueue,drain,queue,purge,migrate-queue-db. drain suppresses summary. bakeoff/propose/confirm parse suffix after first flag dropping only --prefixed tokens; delegate joins non-- suffix tokens. bulk local first safe opts file/checkpoint/out/system/system-file/tier/hedge-ms/lanes; positional filter drops values by equality; lanes CLI/env/config; system-file wins; hedge nonnegative int else2; estimate returns early. enqueue suffix first safe file/priority; positional filter drops values by equality; priority int(raw or0). drain suffix first safe batch/ceiling converts truthy int/float;forever membership. Unknown tokens ignored. Preserve raw argv branch execution order.",
+    "compatibility_policy": "set-model first requires exact2or3 subsequent positional args. Independent branches, not exclusive, in order: probe,usage,reprobe,judge-eligibility(yes),catalog,learn,bakeoff,estimate,balance,economics,fallback,fallback-spend(since last safe default month),reasoning-map,propose,confirm,delegate,bulk,enqueue,drain,queue,purge,migrate-queue-db. drain suppresses summary. bakeoff/propose/confirm parse suffix after first flag dropping only --prefixed tokens; delegate joins non-- suffix tokens. bulk local first safe opts file/checkpoint/out/system/system-file/tier/hedge-ms/lanes; positional filter drops values by equality; lanes CLI/env/config; system-file wins; hedge nonnegative int else2; estimate returns early. enqueue suffix first safe file/priority; positional filter drops values by equality; priority int(raw or0). drain suffix first safe batch/ceiling converts truthy int/float;forever membership. Unknown tokens ignored. Preserve raw argv branch execution order."
+  },
+  {
+    "token_id": "lanes/--priority",
+    "commands": [
+      "lanes"
+    ],
+    "spelling": "--priority",
+    "name": "priority",
+    "json_type": "integer",
+    "required": false,
+    "default": null,
+    "cli_nargs": 1,
+    "cli_action": "store",
+    "help": "set-model first requires exact2or3 subsequent positional args. Independent branches, not exclusive, in order: probe,usage,reprobe,judge-eligibility(yes),catalog,learn,bakeoff,estimate,balance,economics,fallback,fallback-spend(since last safe default month),reasoning-map,propose,confirm,delegate,bulk,enqueue,drain,queue,purge,migrate-queue-db. drain suppresses summary. bakeoff/propose/confirm parse suffix after first flag dropping only --prefixed tokens; delegate joins non-- suffix tokens. bulk local first safe opts file/checkpoint/out/system/system-file/tier/hedge-ms/lanes; positional filter drops values by equality; lanes CLI/env/config; system-file wins; hedge nonnegative int else2; estimate returns early. enqueue suffix first safe file/priority; positional filter drops values by equality; priority int(raw or0). drain suffix first safe batch/ceiling converts truthy int/float;forever membership. Unknown tokens ignored. Preserve raw argv branch execution order.",
+    "compatibility_policy": "set-model first requires exact2or3 subsequent positional args. Independent branches, not exclusive, in order: probe,usage,reprobe,judge-eligibility(yes),catalog,learn,bakeoff,estimate,balance,economics,fallback,fallback-spend(since last safe default month),reasoning-map,propose,confirm,delegate,bulk,enqueue,drain,queue,purge,migrate-queue-db. drain suppresses summary. bakeoff/propose/confirm parse suffix after first flag dropping only --prefixed tokens; delegate joins non-- suffix tokens. bulk local first safe opts file/checkpoint/out/system/system-file/tier/hedge-ms/lanes; positional filter drops values by equality; lanes CLI/env/config; system-file wins; hedge nonnegative int else2; estimate returns early. enqueue suffix first safe file/priority; positional filter drops values by equality; priority int(raw or0). drain suffix first safe batch/ceiling converts truthy int/float;forever membership. Unknown tokens ignored. Preserve raw argv branch execution order."
+  },
+  {
+    "token_id": "lanes/--batch",
+    "commands": [
+      "lanes"
+    ],
+    "spelling": "--batch",
+    "name": "batch",
+    "json_type": "integer",
+    "required": false,
+    "default": null,
+    "cli_nargs": 1,
+    "cli_action": "store",
+    "help": "set-model first requires exact2or3 subsequent positional args. Independent branches, not exclusive, in order: probe,usage,reprobe,judge-eligibility(yes),catalog,learn,bakeoff,estimate,balance,economics,fallback,fallback-spend(since last safe default month),reasoning-map,propose,confirm,delegate,bulk,enqueue,drain,queue,purge,migrate-queue-db. drain suppresses summary. bakeoff/propose/confirm parse suffix after first flag dropping only --prefixed tokens; delegate joins non-- suffix tokens. bulk local first safe opts file/checkpoint/out/system/system-file/tier/hedge-ms/lanes; positional filter drops values by equality; lanes CLI/env/config; system-file wins; hedge nonnegative int else2; estimate returns early. enqueue suffix first safe file/priority; positional filter drops values by equality; priority int(raw or0). drain suffix first safe batch/ceiling converts truthy int/float;forever membership. Unknown tokens ignored. Preserve raw argv branch execution order.",
+    "compatibility_policy": "set-model first requires exact2or3 subsequent positional args. Independent branches, not exclusive, in order: probe,usage,reprobe,judge-eligibility(yes),catalog,learn,bakeoff,estimate,balance,economics,fallback,fallback-spend(since last safe default month),reasoning-map,propose,confirm,delegate,bulk,enqueue,drain,queue,purge,migrate-queue-db. drain suppresses summary. bakeoff/propose/confirm parse suffix after first flag dropping only --prefixed tokens; delegate joins non-- suffix tokens. bulk local first safe opts file/checkpoint/out/system/system-file/tier/hedge-ms/lanes; positional filter drops values by equality; lanes CLI/env/config; system-file wins; hedge nonnegative int else2; estimate returns early. enqueue suffix first safe file/priority; positional filter drops values by equality; priority int(raw or0). drain suffix first safe batch/ceiling converts truthy int/float;forever membership. Unknown tokens ignored. Preserve raw argv branch execution order."
+  },
+  {
+    "token_id": "lanes/--ceiling",
+    "commands": [
+      "lanes"
+    ],
+    "spelling": "--ceiling",
+    "name": "ceiling",
+    "json_type": "number",
+    "required": false,
+    "default": null,
+    "cli_nargs": 1,
+    "cli_action": "store",
+    "help": "set-model first requires exact2or3 subsequent positional args. Independent branches, not exclusive, in order: probe,usage,reprobe,judge-eligibility(yes),catalog,learn,bakeoff,estimate,balance,economics,fallback,fallback-spend(since last safe default month),reasoning-map,propose,confirm,delegate,bulk,enqueue,drain,queue,purge,migrate-queue-db. drain suppresses summary. bakeoff/propose/confirm parse suffix after first flag dropping only --prefixed tokens; delegate joins non-- suffix tokens. bulk local first safe opts file/checkpoint/out/system/system-file/tier/hedge-ms/lanes; positional filter drops values by equality; lanes CLI/env/config; system-file wins; hedge nonnegative int else2; estimate returns early. enqueue suffix first safe file/priority; positional filter drops values by equality; priority int(raw or0). drain suffix first safe batch/ceiling converts truthy int/float;forever membership. Unknown tokens ignored. Preserve raw argv branch execution order.",
+    "compatibility_policy": "set-model first requires exact2or3 subsequent positional args. Independent branches, not exclusive, in order: probe,usage,reprobe,judge-eligibility(yes),catalog,learn,bakeoff,estimate,balance,economics,fallback,fallback-spend(since last safe default month),reasoning-map,propose,confirm,delegate,bulk,enqueue,drain,queue,purge,migrate-queue-db. drain suppresses summary. bakeoff/propose/confirm parse suffix after first flag dropping only --prefixed tokens; delegate joins non-- suffix tokens. bulk local first safe opts file/checkpoint/out/system/system-file/tier/hedge-ms/lanes; positional filter drops values by equality; lanes CLI/env/config; system-file wins; hedge nonnegative int else2; estimate returns early. enqueue suffix first safe file/priority; positional filter drops values by equality; priority int(raw or0). drain suffix first safe batch/ceiling converts truthy int/float;forever membership. Unknown tokens ignored. Preserve raw argv branch execution order."
+  },
+  {
+    "token_id": "lanes/--since",
+    "commands": [
+      "lanes"
+    ],
+    "spelling": "--since",
+    "name": "since",
+    "json_type": "string",
+    "required": false,
+    "default": null,
+    "cli_nargs": 1,
+    "cli_action": "store",
+    "help": "set-model first requires exact2or3 subsequent positional args. Independent branches, not exclusive, in order: probe,usage,reprobe,judge-eligibility(yes),catalog,learn,bakeoff,estimate,balance,economics,fallback,fallback-spend(since last safe default month),reasoning-map,propose,confirm,delegate,bulk,enqueue,drain,queue,purge,migrate-queue-db. drain suppresses summary. bakeoff/propose/confirm parse suffix after first flag dropping only --prefixed tokens; delegate joins non-- suffix tokens. bulk local first safe opts file/checkpoint/out/system/system-file/tier/hedge-ms/lanes; positional filter drops values by equality; lanes CLI/env/config; system-file wins; hedge nonnegative int else2; estimate returns early. enqueue suffix first safe file/priority; positional filter drops values by equality; priority int(raw or0). drain suffix first safe batch/ceiling converts truthy int/float;forever membership. Unknown tokens ignored. Preserve raw argv branch execution order.",
+    "compatibility_policy": "set-model first requires exact2or3 subsequent positional args. Independent branches, not exclusive, in order: probe,usage,reprobe,judge-eligibility(yes),catalog,learn,bakeoff,estimate,balance,economics,fallback,fallback-spend(since last safe default month),reasoning-map,propose,confirm,delegate,bulk,enqueue,drain,queue,purge,migrate-queue-db. drain suppresses summary. bakeoff/propose/confirm parse suffix after first flag dropping only --prefixed tokens; delegate joins non-- suffix tokens. bulk local first safe opts file/checkpoint/out/system/system-file/tier/hedge-ms/lanes; positional filter drops values by equality; lanes CLI/env/config; system-file wins; hedge nonnegative int else2; estimate returns early. enqueue suffix first safe file/priority; positional filter drops values by equality; priority int(raw or0). drain suffix first safe batch/ceiling converts truthy int/float;forever membership. Unknown tokens ignored. Preserve raw argv branch execution order."
+  },
+  {
+    "token_id": "lanes/--refuse-billed",
+    "commands": [
+      "lanes"
+    ],
+    "spelling": "--refuse-billed",
+    "name": "refuse_billed",
+    "json_type": "boolean",
+    "required": false,
+    "default": false,
+    "cli_nargs": 0,
+    "cli_action": "store_true",
+    "help": "set-model first requires exact2or3 subsequent positional args. Independent branches, not exclusive, in order: probe,usage,reprobe,judge-eligibility(yes),catalog,learn,bakeoff,estimate,balance,economics,fallback,fallback-spend(since last safe default month),reasoning-map,propose,confirm,delegate,bulk,enqueue,drain,queue,purge,migrate-queue-db. drain suppresses summary. bakeoff/propose/confirm parse suffix after first flag dropping only --prefixed tokens; delegate joins non-- suffix tokens. bulk local first safe opts file/checkpoint/out/system/system-file/tier/hedge-ms/lanes; positional filter drops values by equality; lanes CLI/env/config; system-file wins; hedge nonnegative int else2; estimate returns early. enqueue suffix first safe file/priority; positional filter drops values by equality; priority int(raw or0). drain suffix first safe batch/ceiling converts truthy int/float;forever membership. Unknown tokens ignored. Preserve raw argv branch execution order.",
+    "compatibility_policy": "set-model first requires exact2or3 subsequent positional args. Independent branches, not exclusive, in order: probe,usage,reprobe,judge-eligibility(yes),catalog,learn,bakeoff,estimate,balance,economics,fallback,fallback-spend(since last safe default month),reasoning-map,propose,confirm,delegate,bulk,enqueue,drain,queue,purge,migrate-queue-db. drain suppresses summary. bakeoff/propose/confirm parse suffix after first flag dropping only --prefixed tokens; delegate joins non-- suffix tokens. bulk local first safe opts file/checkpoint/out/system/system-file/tier/hedge-ms/lanes; positional filter drops values by equality; lanes CLI/env/config; system-file wins; hedge nonnegative int else2; estimate returns early. enqueue suffix first safe file/priority; positional filter drops values by equality; priority int(raw or0). drain suffix first safe batch/ceiling converts truthy int/float;forever membership. Unknown tokens ignored. Preserve raw argv branch execution order."
+  },
+  {
+    "token_id": "lanes/--jsonl",
+    "commands": [
+      "lanes"
+    ],
+    "spelling": "--jsonl",
+    "name": "jsonl",
+    "json_type": "boolean",
+    "required": false,
+    "default": false,
+    "cli_nargs": 0,
+    "cli_action": "store_true",
+    "help": "set-model first requires exact2or3 subsequent positional args. Independent branches, not exclusive, in order: probe,usage,reprobe,judge-eligibility(yes),catalog,learn,bakeoff,estimate,balance,economics,fallback,fallback-spend(since last safe default month),reasoning-map,propose,confirm,delegate,bulk,enqueue,drain,queue,purge,migrate-queue-db. drain suppresses summary. bakeoff/propose/confirm parse suffix after first flag dropping only --prefixed tokens; delegate joins non-- suffix tokens. bulk local first safe opts file/checkpoint/out/system/system-file/tier/hedge-ms/lanes; positional filter drops values by equality; lanes CLI/env/config; system-file wins; hedge nonnegative int else2; estimate returns early. enqueue suffix first safe file/priority; positional filter drops values by equality; priority int(raw or0). drain suffix first safe batch/ceiling converts truthy int/float;forever membership. Unknown tokens ignored. Preserve raw argv branch execution order.",
+    "compatibility_policy": "set-model first requires exact2or3 subsequent positional args. Independent branches, not exclusive, in order: probe,usage,reprobe,judge-eligibility(yes),catalog,learn,bakeoff,estimate,balance,economics,fallback,fallback-spend(since last safe default month),reasoning-map,propose,confirm,delegate,bulk,enqueue,drain,queue,purge,migrate-queue-db. drain suppresses summary. bakeoff/propose/confirm parse suffix after first flag dropping only --prefixed tokens; delegate joins non-- suffix tokens. bulk local first safe opts file/checkpoint/out/system/system-file/tier/hedge-ms/lanes; positional filter drops values by equality; lanes CLI/env/config; system-file wins; hedge nonnegative int else2; estimate returns early. enqueue suffix first safe file/priority; positional filter drops values by equality; priority int(raw or0). drain suffix first safe batch/ceiling converts truthy int/float;forever membership. Unknown tokens ignored. Preserve raw argv branch execution order."
+  },
+  {
+    "token_id": "lanes/--force",
+    "commands": [
+      "lanes"
+    ],
+    "spelling": "--force",
+    "name": "force",
+    "json_type": "boolean",
+    "required": false,
+    "default": false,
+    "cli_nargs": 0,
+    "cli_action": "store_true",
+    "help": "set-model first requires exact2or3 subsequent positional args. Independent branches, not exclusive, in order: probe,usage,reprobe,judge-eligibility(yes),catalog,learn,bakeoff,estimate,balance,economics,fallback,fallback-spend(since last safe default month),reasoning-map,propose,confirm,delegate,bulk,enqueue,drain,queue,purge,migrate-queue-db. drain suppresses summary. bakeoff/propose/confirm parse suffix after first flag dropping only --prefixed tokens; delegate joins non-- suffix tokens. bulk local first safe opts file/checkpoint/out/system/system-file/tier/hedge-ms/lanes; positional filter drops values by equality; lanes CLI/env/config; system-file wins; hedge nonnegative int else2; estimate returns early. enqueue suffix first safe file/priority; positional filter drops values by equality; priority int(raw or0). drain suffix first safe batch/ceiling converts truthy int/float;forever membership. Unknown tokens ignored. Preserve raw argv branch execution order.",
+    "compatibility_policy": "set-model first requires exact2or3 subsequent positional args. Independent branches, not exclusive, in order: probe,usage,reprobe,judge-eligibility(yes),catalog,learn,bakeoff,estimate,balance,economics,fallback,fallback-spend(since last safe default month),reasoning-map,propose,confirm,delegate,bulk,enqueue,drain,queue,purge,migrate-queue-db. drain suppresses summary. bakeoff/propose/confirm parse suffix after first flag dropping only --prefixed tokens; delegate joins non-- suffix tokens. bulk local first safe opts file/checkpoint/out/system/system-file/tier/hedge-ms/lanes; positional filter drops values by equality; lanes CLI/env/config; system-file wins; hedge nonnegative int else2; estimate returns early. enqueue suffix first safe file/priority; positional filter drops values by equality; priority int(raw or0). drain suffix first safe batch/ceiling converts truthy int/float;forever membership. Unknown tokens ignored. Preserve raw argv branch execution order."
+  },
+  {
+    "token_id": "otel-ingest/--dry-run",
+    "commands": [
+      "otel-ingest"
+    ],
+    "spelling": "--dry-run",
+    "name": "dry_run",
+    "json_type": "boolean",
+    "required": false,
+    "default": false,
+    "cli_nargs": 0,
+    "cli_action": "store_true",
+    "help": "paths are all tokens not starting --, including --project value; paths[0] is ingestion path; first --project with following token else None; --dry-run presence; no path exit2",
+    "compatibility_policy": "paths are all tokens not starting --, including --project value; paths[0] is ingestion path; first --project with following token else None; --dry-run presence; no path exit2"
+  },
+  {
+    "token_id": "otel-ingest/--project",
+    "commands": [
+      "otel-ingest"
+    ],
+    "spelling": "--project",
+    "name": "project",
+    "json_type": "string",
+    "required": false,
+    "default": null,
+    "cli_nargs": 1,
+    "cli_action": "store",
+    "help": "paths are all tokens not starting --, including --project value; paths[0] is ingestion path; first --project with following token else None; --dry-run presence; no path exit2",
+    "compatibility_policy": "paths are all tokens not starting --, including --project value; paths[0] is ingestion path; first --project with following token else None; --dry-run presence; no path exit2"
+  },
+  {
+    "token_id": "tokens/--json",
+    "commands": [
+      "tokens"
+    ],
+    "spelling": "--json",
+    "name": "json",
+    "json_type": "boolean",
+    "required": false,
+    "default": false,
+    "cli_nargs": 0,
+    "cli_action": "store_true",
+    "help": "first token not starting - selects mode; calibrate branch else show; --json/--dry-run membership; other flags ignored",
+    "compatibility_policy": "first token not starting - selects mode; calibrate branch else show; --json/--dry-run membership; other flags ignored"
+  },
+  {
+    "token_id": "tokens/--dry-run",
+    "commands": [
+      "tokens"
+    ],
+    "spelling": "--dry-run",
+    "name": "dry_run",
+    "json_type": "boolean",
+    "required": false,
+    "default": false,
+    "cli_nargs": 0,
+    "cli_action": "store_true",
+    "help": "first token not starting - selects mode; calibrate branch else show; --json/--dry-run membership; other flags ignored",
+    "compatibility_policy": "first token not starting - selects mode; calibrate branch else show; --json/--dry-run membership; other flags ignored"
+  },
+  {
+    "token_id": "install-receipts/--host",
+    "commands": [
+      "install-receipts"
+    ],
+    "spelling": "--host",
+    "name": "host",
+    "json_type": "string",
+    "required": false,
+    "default": null,
+    "cli_nargs": 1,
+    "cli_action": "store",
+    "help": "--host first plus next; absent or missing uses default; --remove membership; claude-code/claude/cc aliases; codex informational branch; unknown host exit1; other tokens ignored",
+    "compatibility_policy": "--host first plus next; absent or missing uses default; --remove membership; claude-code/claude/cc aliases; codex informational branch; unknown host exit1; other tokens ignored"
+  },
+  {
+    "token_id": "install-receipts/--remove",
+    "commands": [
+      "install-receipts"
+    ],
+    "spelling": "--remove",
+    "name": "remove",
+    "json_type": "boolean",
+    "required": false,
+    "default": false,
+    "cli_nargs": 0,
+    "cli_action": "store_true",
+    "help": "--host first plus next; absent or missing uses default; --remove membership; claude-code/claude/cc aliases; codex informational branch; unknown host exit1; other tokens ignored",
+    "compatibility_policy": "--host first plus next; absent or missing uses default; --remove membership; claude-code/claude/cc aliases; codex informational branch; unknown host exit1; other tokens ignored"
+  },
+  {
+    "token_id": "receipt/--statusline",
+    "commands": [
+      "receipt"
+    ],
+    "spelling": "--statusline",
+    "name": "statusline",
+    "json_type": "boolean",
+    "required": false,
+    "default": false,
+    "cli_nargs": 0,
+    "cli_action": "store_true",
+    "help": "ordered --by-intent first then --json then --stop-hook then --precompact-hook then --sessionstart-hook then --statusline then --line; default scope --all wins --org first-plus-next else conversation org; by-intent window today before week before all, then first --since with next overrides; unknown ignored; lane-value refresh before branch except statusline",
+    "compatibility_policy": "ordered --by-intent first then --json then --stop-hook then --precompact-hook then --sessionstart-hook then --statusline then --line; default scope --all wins --org first-plus-next else conversation org; by-intent window today before week before all, then first --since with next overrides; unknown ignored; lane-value refresh before branch except statusline"
+  },
+  {
+    "token_id": "receipt/--by-intent",
+    "commands": [
+      "receipt"
+    ],
+    "spelling": "--by-intent",
+    "name": "by_intent",
+    "json_type": "boolean",
+    "required": false,
+    "default": false,
+    "cli_nargs": 0,
+    "cli_action": "store_true",
+    "help": "ordered --by-intent first then --json then --stop-hook then --precompact-hook then --sessionstart-hook then --statusline then --line; default scope --all wins --org first-plus-next else conversation org; by-intent window today before week before all, then first --since with next overrides; unknown ignored; lane-value refresh before branch except statusline",
+    "compatibility_policy": "ordered --by-intent first then --json then --stop-hook then --precompact-hook then --sessionstart-hook then --statusline then --line; default scope --all wins --org first-plus-next else conversation org; by-intent window today before week before all, then first --since with next overrides; unknown ignored; lane-value refresh before branch except statusline"
+  },
+  {
+    "token_id": "receipt/--json",
+    "commands": [
+      "receipt"
+    ],
+    "spelling": "--json",
+    "name": "json",
+    "json_type": "boolean",
+    "required": false,
+    "default": false,
+    "cli_nargs": 0,
+    "cli_action": "store_true",
+    "help": "ordered --by-intent first then --json then --stop-hook then --precompact-hook then --sessionstart-hook then --statusline then --line; default scope --all wins --org first-plus-next else conversation org; by-intent window today before week before all, then first --since with next overrides; unknown ignored; lane-value refresh before branch except statusline",
+    "compatibility_policy": "ordered --by-intent first then --json then --stop-hook then --precompact-hook then --sessionstart-hook then --statusline then --line; default scope --all wins --org first-plus-next else conversation org; by-intent window today before week before all, then first --since with next overrides; unknown ignored; lane-value refresh before branch except statusline"
+  },
+  {
+    "token_id": "receipt/--stop-hook",
+    "commands": [
+      "receipt"
+    ],
+    "spelling": "--stop-hook",
+    "name": "stop_hook",
+    "json_type": "boolean",
+    "required": false,
+    "default": false,
+    "cli_nargs": 0,
+    "cli_action": "store_true",
+    "help": "ordered --by-intent first then --json then --stop-hook then --precompact-hook then --sessionstart-hook then --statusline then --line; default scope --all wins --org first-plus-next else conversation org; by-intent window today before week before all, then first --since with next overrides; unknown ignored; lane-value refresh before branch except statusline",
+    "compatibility_policy": "ordered --by-intent first then --json then --stop-hook then --precompact-hook then --sessionstart-hook then --statusline then --line; default scope --all wins --org first-plus-next else conversation org; by-intent window today before week before all, then first --since with next overrides; unknown ignored; lane-value refresh before branch except statusline"
+  },
+  {
+    "token_id": "receipt/--precompact-hook",
+    "commands": [
+      "receipt"
+    ],
+    "spelling": "--precompact-hook",
+    "name": "precompact_hook",
+    "json_type": "boolean",
+    "required": false,
+    "default": false,
+    "cli_nargs": 0,
+    "cli_action": "store_true",
+    "help": "ordered --by-intent first then --json then --stop-hook then --precompact-hook then --sessionstart-hook then --statusline then --line; default scope --all wins --org first-plus-next else conversation org; by-intent window today before week before all, then first --since with next overrides; unknown ignored; lane-value refresh before branch except statusline",
+    "compatibility_policy": "ordered --by-intent first then --json then --stop-hook then --precompact-hook then --sessionstart-hook then --statusline then --line; default scope --all wins --org first-plus-next else conversation org; by-intent window today before week before all, then first --since with next overrides; unknown ignored; lane-value refresh before branch except statusline"
+  },
+  {
+    "token_id": "receipt/--sessionstart-hook",
+    "commands": [
+      "receipt"
+    ],
+    "spelling": "--sessionstart-hook",
+    "name": "sessionstart_hook",
+    "json_type": "boolean",
+    "required": false,
+    "default": false,
+    "cli_nargs": 0,
+    "cli_action": "store_true",
+    "help": "ordered --by-intent first then --json then --stop-hook then --precompact-hook then --sessionstart-hook then --statusline then --line; default scope --all wins --org first-plus-next else conversation org; by-intent window today before week before all, then first --since with next overrides; unknown ignored; lane-value refresh before branch except statusline",
+    "compatibility_policy": "ordered --by-intent first then --json then --stop-hook then --precompact-hook then --sessionstart-hook then --statusline then --line; default scope --all wins --org first-plus-next else conversation org; by-intent window today before week before all, then first --since with next overrides; unknown ignored; lane-value refresh before branch except statusline"
+  },
+  {
+    "token_id": "receipt/--line",
+    "commands": [
+      "receipt"
+    ],
+    "spelling": "--line",
+    "name": "line",
+    "json_type": "boolean",
+    "required": false,
+    "default": false,
+    "cli_nargs": 0,
+    "cli_action": "store_true",
+    "help": "ordered --by-intent first then --json then --stop-hook then --precompact-hook then --sessionstart-hook then --statusline then --line; default scope --all wins --org first-plus-next else conversation org; by-intent window today before week before all, then first --since with next overrides; unknown ignored; lane-value refresh before branch except statusline",
+    "compatibility_policy": "ordered --by-intent first then --json then --stop-hook then --precompact-hook then --sessionstart-hook then --statusline then --line; default scope --all wins --org first-plus-next else conversation org; by-intent window today before week before all, then first --since with next overrides; unknown ignored; lane-value refresh before branch except statusline"
+  },
+  {
+    "token_id": "receipt/--all",
+    "commands": [
+      "receipt"
+    ],
+    "spelling": "--all",
+    "name": "all",
+    "json_type": "boolean",
+    "required": false,
+    "default": false,
+    "cli_nargs": 0,
+    "cli_action": "store_true",
+    "help": "ordered --by-intent first then --json then --stop-hook then --precompact-hook then --sessionstart-hook then --statusline then --line; default scope --all wins --org first-plus-next else conversation org; by-intent window today before week before all, then first --since with next overrides; unknown ignored; lane-value refresh before branch except statusline",
+    "compatibility_policy": "ordered --by-intent first then --json then --stop-hook then --precompact-hook then --sessionstart-hook then --statusline then --line; default scope --all wins --org first-plus-next else conversation org; by-intent window today before week before all, then first --since with next overrides; unknown ignored; lane-value refresh before branch except statusline"
+  },
+  {
+    "token_id": "receipt/--org",
+    "commands": [
+      "receipt"
+    ],
+    "spelling": "--org",
+    "name": "org",
+    "json_type": "string",
+    "required": false,
+    "default": null,
+    "cli_nargs": 1,
+    "cli_action": "store",
+    "help": "ordered --by-intent first then --json then --stop-hook then --precompact-hook then --sessionstart-hook then --statusline then --line; default scope --all wins --org first-plus-next else conversation org; by-intent window today before week before all, then first --since with next overrides; unknown ignored; lane-value refresh before branch except statusline",
+    "compatibility_policy": "ordered --by-intent first then --json then --stop-hook then --precompact-hook then --sessionstart-hook then --statusline then --line; default scope --all wins --org first-plus-next else conversation org; by-intent window today before week before all, then first --since with next overrides; unknown ignored; lane-value refresh before branch except statusline"
+  },
+  {
+    "token_id": "receipt/--today",
+    "commands": [
+      "receipt"
+    ],
+    "spelling": "--today",
+    "name": "today",
+    "json_type": "boolean",
+    "required": false,
+    "default": false,
+    "cli_nargs": 0,
+    "cli_action": "store_true",
+    "help": "ordered --by-intent first then --json then --stop-hook then --precompact-hook then --sessionstart-hook then --statusline then --line; default scope --all wins --org first-plus-next else conversation org; by-intent window today before week before all, then first --since with next overrides; unknown ignored; lane-value refresh before branch except statusline",
+    "compatibility_policy": "ordered --by-intent first then --json then --stop-hook then --precompact-hook then --sessionstart-hook then --statusline then --line; default scope --all wins --org first-plus-next else conversation org; by-intent window today before week before all, then first --since with next overrides; unknown ignored; lane-value refresh before branch except statusline"
+  },
+  {
+    "token_id": "receipt/--week",
+    "commands": [
+      "receipt"
+    ],
+    "spelling": "--week",
+    "name": "week",
+    "json_type": "boolean",
+    "required": false,
+    "default": false,
+    "cli_nargs": 0,
+    "cli_action": "store_true",
+    "help": "ordered --by-intent first then --json then --stop-hook then --precompact-hook then --sessionstart-hook then --statusline then --line; default scope --all wins --org first-plus-next else conversation org; by-intent window today before week before all, then first --since with next overrides; unknown ignored; lane-value refresh before branch except statusline",
+    "compatibility_policy": "ordered --by-intent first then --json then --stop-hook then --precompact-hook then --sessionstart-hook then --statusline then --line; default scope --all wins --org first-plus-next else conversation org; by-intent window today before week before all, then first --since with next overrides; unknown ignored; lane-value refresh before branch except statusline"
+  },
+  {
+    "token_id": "receipt/--since",
+    "commands": [
+      "receipt"
+    ],
+    "spelling": "--since",
+    "name": "since",
+    "json_type": "string",
+    "required": false,
+    "default": null,
+    "cli_nargs": 1,
+    "cli_action": "store",
+    "help": "ordered --by-intent first then --json then --stop-hook then --precompact-hook then --sessionstart-hook then --statusline then --line; default scope --all wins --org first-plus-next else conversation org; by-intent window today before week before all, then first --since with next overrides; unknown ignored; lane-value refresh before branch except statusline",
+    "compatibility_policy": "ordered --by-intent first then --json then --stop-hook then --precompact-hook then --sessionstart-hook then --statusline then --line; default scope --all wins --org first-plus-next else conversation org; by-intent window today before week before all, then first --since with next overrides; unknown ignored; lane-value refresh before branch except statusline"
+  },
+  {
+    "token_id": "reliability/--run",
+    "commands": [
+      "reliability"
+    ],
+    "spelling": "--run",
+    "name": "run",
+    "json_type": "boolean",
+    "required": false,
+    "default": false,
+    "cli_nargs": 0,
+    "cli_action": "store_true",
+    "help": "--run/--json membership; json returns before remediate/notify; default estimate returns; run then --remediate/--notify membership; unknown ignored",
+    "compatibility_policy": "--run/--json membership; json returns before remediate/notify; default estimate returns; run then --remediate/--notify membership; unknown ignored"
+  },
+  {
+    "token_id": "reliability/--json",
+    "commands": [
+      "reliability"
+    ],
+    "spelling": "--json",
+    "name": "json",
+    "json_type": "boolean",
+    "required": false,
+    "default": false,
+    "cli_nargs": 0,
+    "cli_action": "store_true",
+    "help": "--run/--json membership; json returns before remediate/notify; default estimate returns; run then --remediate/--notify membership; unknown ignored",
+    "compatibility_policy": "--run/--json membership; json returns before remediate/notify; default estimate returns; run then --remediate/--notify membership; unknown ignored"
+  },
+  {
+    "token_id": "reliability/--remediate",
+    "commands": [
+      "reliability"
+    ],
+    "spelling": "--remediate",
+    "name": "remediate",
+    "json_type": "boolean",
+    "required": false,
+    "default": false,
+    "cli_nargs": 0,
+    "cli_action": "store_true",
+    "help": "--run/--json membership; json returns before remediate/notify; default estimate returns; run then --remediate/--notify membership; unknown ignored",
+    "compatibility_policy": "--run/--json membership; json returns before remediate/notify; default estimate returns; run then --remediate/--notify membership; unknown ignored"
+  },
+  {
+    "token_id": "reliability/--notify",
+    "commands": [
+      "reliability"
+    ],
+    "spelling": "--notify",
+    "name": "notify",
+    "json_type": "boolean",
+    "required": false,
+    "default": false,
+    "cli_nargs": 0,
+    "cli_action": "store_true",
+    "help": "--run/--json membership; json returns before remediate/notify; default estimate returns; run then --remediate/--notify membership; unknown ignored",
+    "compatibility_policy": "--run/--json membership; json returns before remediate/notify; default estimate returns; run then --remediate/--notify membership; unknown ignored"
+  },
+  {
+    "token_id": "remote/--ssh",
+    "commands": [
+      "remote"
+    ],
+    "spelling": "--ssh",
+    "name": "ssh",
+    "json_type": "string",
+    "required": false,
+    "default": null,
+    "cli_nargs": 1,
+    "cli_action": "store",
+    "help": "first token required subcommand onstart/verify/sync/sync-all; --home/--ssh/--project/--label first plus next safe else defaults; --from-git/--dry membership; verify requires ssh; sync requires ssh+project; unknown sub exit2; unknown options ignored",
+    "compatibility_policy": "first token required subcommand onstart/verify/sync/sync-all; --home/--ssh/--project/--label first plus next safe else defaults; --from-git/--dry membership; verify requires ssh; sync requires ssh+project; unknown sub exit2; unknown options ignored"
+  },
+  {
+    "token_id": "remote/--project",
+    "commands": [
+      "remote"
+    ],
+    "spelling": "--project",
+    "name": "project",
+    "json_type": "string",
+    "required": false,
+    "default": null,
+    "cli_nargs": 1,
+    "cli_action": "store",
+    "help": "first token required subcommand onstart/verify/sync/sync-all; --home/--ssh/--project/--label first plus next safe else defaults; --from-git/--dry membership; verify requires ssh; sync requires ssh+project; unknown sub exit2; unknown options ignored",
+    "compatibility_policy": "first token required subcommand onstart/verify/sync/sync-all; --home/--ssh/--project/--label first plus next safe else defaults; --from-git/--dry membership; verify requires ssh; sync requires ssh+project; unknown sub exit2; unknown options ignored"
+  },
+  {
+    "token_id": "remote/--label",
+    "commands": [
+      "remote"
+    ],
+    "spelling": "--label",
+    "name": "label",
+    "json_type": "string",
+    "required": false,
+    "default": null,
+    "cli_nargs": 1,
+    "cli_action": "store",
+    "help": "first token required subcommand onstart/verify/sync/sync-all; --home/--ssh/--project/--label first plus next safe else defaults; --from-git/--dry membership; verify requires ssh; sync requires ssh+project; unknown sub exit2; unknown options ignored",
+    "compatibility_policy": "first token required subcommand onstart/verify/sync/sync-all; --home/--ssh/--project/--label first plus next safe else defaults; --from-git/--dry membership; verify requires ssh; sync requires ssh+project; unknown sub exit2; unknown options ignored"
+  },
+  {
+    "token_id": "remote/--home",
+    "commands": [
+      "remote"
+    ],
+    "spelling": "--home",
+    "name": "home",
+    "json_type": "string",
+    "required": false,
+    "default": null,
+    "cli_nargs": 1,
+    "cli_action": "store",
+    "help": "first token required subcommand onstart/verify/sync/sync-all; --home/--ssh/--project/--label first plus next safe else defaults; --from-git/--dry membership; verify requires ssh; sync requires ssh+project; unknown sub exit2; unknown options ignored",
+    "compatibility_policy": "first token required subcommand onstart/verify/sync/sync-all; --home/--ssh/--project/--label first plus next safe else defaults; --from-git/--dry membership; verify requires ssh; sync requires ssh+project; unknown sub exit2; unknown options ignored"
+  },
+  {
+    "token_id": "remote/--dry",
+    "commands": [
+      "remote"
+    ],
+    "spelling": "--dry",
+    "name": "dry",
+    "json_type": "boolean",
+    "required": false,
+    "default": false,
+    "cli_nargs": 0,
+    "cli_action": "store_true",
+    "help": "first token required subcommand onstart/verify/sync/sync-all; --home/--ssh/--project/--label first plus next safe else defaults; --from-git/--dry membership; verify requires ssh; sync requires ssh+project; unknown sub exit2; unknown options ignored",
+    "compatibility_policy": "first token required subcommand onstart/verify/sync/sync-all; --home/--ssh/--project/--label first plus next safe else defaults; --from-git/--dry membership; verify requires ssh; sync requires ssh+project; unknown sub exit2; unknown options ignored"
+  },
+  {
+    "token_id": "remote/--from-git",
+    "commands": [
+      "remote"
+    ],
+    "spelling": "--from-git",
+    "name": "from_git",
+    "json_type": "boolean",
+    "required": false,
+    "default": false,
+    "cli_nargs": 0,
+    "cli_action": "store_true",
+    "help": "first token required subcommand onstart/verify/sync/sync-all; --home/--ssh/--project/--label first plus next safe else defaults; --from-git/--dry membership; verify requires ssh; sync requires ssh+project; unknown sub exit2; unknown options ignored",
+    "compatibility_policy": "first token required subcommand onstart/verify/sync/sync-all; --home/--ssh/--project/--label first plus next safe else defaults; --from-git/--dry membership; verify requires ssh; sync requires ssh+project; unknown sub exit2; unknown options ignored"
+  },
+  {
+    "token_id": "residency-gate/--posttooluse-hook",
+    "commands": [
+      "residency-gate"
+    ],
+    "spelling": "--posttooluse-hook",
+    "name": "posttooluse_hook",
+    "json_type": "boolean",
+    "required": false,
+    "default": false,
+    "cli_nargs": 0,
+    "cli_action": "store_true",
+    "help": "requires --posttooluse-hook membership; unknown argv ignored; stdin JSON; invalid input fail-open",
+    "compatibility_policy": "requires --posttooluse-hook membership; unknown argv ignored; stdin JSON; invalid input fail-open"
+  },
+  {
+    "token_id": "install-residency-gate/--uninstall",
+    "commands": [
+      "install-residency-gate"
+    ],
+    "spelling": "--uninstall",
+    "name": "uninstall",
+    "json_type": "boolean",
+    "required": false,
+    "default": false,
+    "cli_nargs": 0,
+    "cli_action": "store_true",
+    "help": "each argv must equal --uninstall; duplicates accepted; unknown token exit2",
+    "compatibility_policy": "each argv must equal --uninstall; duplicates accepted; unknown token exit2"
+  },
+  {
+    "token_id": "resources/--agentic",
+    "commands": [
+      "resources"
+    ],
+    "spelling": "--agentic",
+    "name": "agentic",
+    "json_type": "boolean",
+    "required": false,
+    "default": false,
+    "cli_nargs": 0,
+    "cli_action": "store_true",
+    "help": "first token default show; snapshot;sync(--dry);discover(--agentic/--run/--record); all other first tokens fall through show; unknown tokens ignored",
+    "compatibility_policy": "first token default show; snapshot;sync(--dry);discover(--agentic/--run/--record); all other first tokens fall through show; unknown tokens ignored"
+  },
+  {
+    "token_id": "resources/--dry",
+    "commands": [
+      "resources"
+    ],
+    "spelling": "--dry",
+    "name": "dry",
+    "json_type": "boolean",
+    "required": false,
+    "default": false,
+    "cli_nargs": 0,
+    "cli_action": "store_true",
+    "help": "first token default show; snapshot;sync(--dry);discover(--agentic/--run/--record); all other first tokens fall through show; unknown tokens ignored",
+    "compatibility_policy": "first token default show; snapshot;sync(--dry);discover(--agentic/--run/--record); all other first tokens fall through show; unknown tokens ignored"
+  },
+  {
+    "token_id": "resources/--run",
+    "commands": [
+      "resources"
+    ],
+    "spelling": "--run",
+    "name": "run",
+    "json_type": "boolean",
+    "required": false,
+    "default": false,
+    "cli_nargs": 0,
+    "cli_action": "store_true",
+    "help": "first token default show; snapshot;sync(--dry);discover(--agentic/--run/--record); all other first tokens fall through show; unknown tokens ignored",
+    "compatibility_policy": "first token default show; snapshot;sync(--dry);discover(--agentic/--run/--record); all other first tokens fall through show; unknown tokens ignored"
+  },
+  {
+    "token_id": "resources/--record",
+    "commands": [
+      "resources"
+    ],
+    "spelling": "--record",
+    "name": "record",
+    "json_type": "boolean",
+    "required": false,
+    "default": false,
+    "cli_nargs": 0,
+    "cli_action": "store_true",
+    "help": "first token default show; snapshot;sync(--dry);discover(--agentic/--run/--record); all other first tokens fall through show; unknown tokens ignored",
+    "compatibility_policy": "first token default show; snapshot;sync(--dry);discover(--agentic/--run/--record); all other first tokens fall through show; unknown tokens ignored"
+  },
+  {
+    "token_id": "run/--show",
+    "commands": [
+      "run"
+    ],
+    "spelling": "--show",
+    "name": "show",
+    "json_type": "boolean",
+    "required": false,
+    "default": false,
+    "cli_nargs": 0,
+    "cli_action": "store_true",
+    "help": "--show anywhere overrides child execution; strip first leading -- separator only; remaining raw argv goes child; empty exit2",
+    "compatibility_policy": "--show anywhere overrides child execution; strip first leading -- separator only; remaining raw argv goes child; empty exit2"
+  },
+  {
+    "token_id": "run/--",
+    "commands": [
+      "run"
+    ],
+    "spelling": "--",
+    "name": "",
+    "json_type": "separator",
+    "required": false,
+    "default": null,
+    "cli_nargs": 0,
+    "cli_action": "store",
+    "help": "--show anywhere overrides child execution; strip first leading -- separator only; remaining raw argv goes child; empty exit2",
+    "compatibility_policy": "--show anywhere overrides child execution; strip first leading -- separator only; remaining raw argv goes child; empty exit2"
+  },
+  {
+    "token_id": "saas/--dry",
+    "commands": [
+      "saas"
+    ],
+    "spelling": "--dry",
+    "name": "dry",
+    "json_type": "boolean",
+    "required": false,
+    "default": false,
+    "cli_nargs": 0,
+    "cli_action": "store_true",
+    "help": "first token default status; ping/test, sync(--if-due), push(--dry), reconcile, reattribute(--apply), audit, crosscheck/verify, link(--no-open),commands,pull(argv1 else team); unknown sub exit1; unknown options ignored",
+    "compatibility_policy": "first token default status; ping/test, sync(--if-due), push(--dry), reconcile, reattribute(--apply), audit, crosscheck/verify, link(--no-open),commands,pull(argv1 else team); unknown sub exit1; unknown options ignored"
+  },
+  {
+    "token_id": "saas/--apply",
+    "commands": [
+      "saas"
+    ],
+    "spelling": "--apply",
+    "name": "apply",
+    "json_type": "boolean",
+    "required": false,
+    "default": false,
+    "cli_nargs": 0,
+    "cli_action": "store_true",
+    "help": "first token default status; ping/test, sync(--if-due), push(--dry), reconcile, reattribute(--apply), audit, crosscheck/verify, link(--no-open),commands,pull(argv1 else team); unknown sub exit1; unknown options ignored",
+    "compatibility_policy": "first token default status; ping/test, sync(--if-due), push(--dry), reconcile, reattribute(--apply), audit, crosscheck/verify, link(--no-open),commands,pull(argv1 else team); unknown sub exit1; unknown options ignored"
+  },
+  {
+    "token_id": "saas/--if-due",
+    "commands": [
+      "saas"
+    ],
+    "spelling": "--if-due",
+    "name": "if_due",
+    "json_type": "boolean",
+    "required": false,
+    "default": false,
+    "cli_nargs": 0,
+    "cli_action": "store_true",
+    "help": "first token default status; ping/test, sync(--if-due), push(--dry), reconcile, reattribute(--apply), audit, crosscheck/verify, link(--no-open),commands,pull(argv1 else team); unknown sub exit1; unknown options ignored",
+    "compatibility_policy": "first token default status; ping/test, sync(--if-due), push(--dry), reconcile, reattribute(--apply), audit, crosscheck/verify, link(--no-open),commands,pull(argv1 else team); unknown sub exit1; unknown options ignored"
+  },
+  {
+    "token_id": "saas/--no-open",
+    "commands": [
+      "saas"
+    ],
+    "spelling": "--no-open",
+    "name": "no_open",
+    "json_type": "boolean",
+    "required": false,
+    "default": false,
+    "cli_nargs": 0,
+    "cli_action": "store_true",
+    "help": "first token default status; ping/test, sync(--if-due), push(--dry), reconcile, reattribute(--apply), audit, crosscheck/verify, link(--no-open),commands,pull(argv1 else team); unknown sub exit1; unknown options ignored",
+    "compatibility_policy": "first token default status; ping/test, sync(--if-due), push(--dry), reconcile, reattribute(--apply), audit, crosscheck/verify, link(--no-open),commands,pull(argv1 else team); unknown sub exit1; unknown options ignored"
+  },
+  {
+    "token_id": "scan/--days",
+    "commands": [
+      "scan"
+    ],
+    "spelling": "--days",
+    "name": "days",
+    "json_type": "integer",
+    "required": false,
+    "default": null,
+    "cli_nargs": 1,
+    "cli_action": "store",
+    "help": "--days repeated loop last valid value wins; invalid int exit2; trailing missing leaves prior/default; unknown ignored",
+    "compatibility_policy": "--days repeated loop last valid value wins; invalid int exit2; trailing missing leaves prior/default; unknown ignored"
+  },
+  {
+    "token_id": "schedule/--daily",
+    "commands": [
+      "schedule"
+    ],
+    "spelling": "--daily",
+    "name": "daily",
+    "json_type": "boolean",
+    "required": false,
+    "default": false,
+    "cli_nargs": 0,
+    "cli_action": "store_true",
+    "help": "--daily presence selects daily else hourly; --remove membership; unknown ignored",
+    "compatibility_policy": "--daily presence selects daily else hourly; --remove membership; unknown ignored"
+  },
+  {
+    "token_id": "schedule/--remove",
+    "commands": [
+      "schedule"
+    ],
+    "spelling": "--remove",
+    "name": "remove",
+    "json_type": "boolean",
+    "required": false,
+    "default": false,
+    "cli_nargs": 0,
+    "cli_action": "store_true",
+    "help": "--daily presence selects daily else hourly; --remove membership; unknown ignored",
+    "compatibility_policy": "--daily presence selects daily else hourly; --remove membership; unknown ignored"
+  },
+  {
+    "token_id": "init/--all",
+    "commands": [
+      "init"
+    ],
+    "spelling": "--all",
+    "name": "all",
+    "json_type": "boolean",
+    "required": false,
+    "default": false,
+    "cli_nargs": 0,
+    "cli_action": "store_true",
+    "help": "quick if any --quick/--yes/-y; --all/--connect/--local/--chat membership; unknown ignored",
+    "compatibility_policy": "quick if any --quick/--yes/-y; --all/--connect/--local/--chat membership; unknown ignored"
+  },
+  {
+    "token_id": "init/--connect",
+    "commands": [
+      "init"
+    ],
+    "spelling": "--connect",
+    "name": "connect",
+    "json_type": "boolean",
+    "required": false,
+    "default": false,
+    "cli_nargs": 0,
+    "cli_action": "store_true",
+    "help": "quick if any --quick/--yes/-y; --all/--connect/--local/--chat membership; unknown ignored",
+    "compatibility_policy": "quick if any --quick/--yes/-y; --all/--connect/--local/--chat membership; unknown ignored"
+  },
+  {
+    "token_id": "init/--chat",
+    "commands": [
+      "init"
+    ],
+    "spelling": "--chat",
+    "name": "chat",
+    "json_type": "boolean",
+    "required": false,
+    "default": false,
+    "cli_nargs": 0,
+    "cli_action": "store_true",
+    "help": "quick if any --quick/--yes/-y; --all/--connect/--local/--chat membership; unknown ignored",
+    "compatibility_policy": "quick if any --quick/--yes/-y; --all/--connect/--local/--chat membership; unknown ignored"
+  },
+  {
+    "token_id": "init/--local",
+    "commands": [
+      "init"
+    ],
+    "spelling": "--local",
+    "name": "local",
+    "json_type": "boolean",
+    "required": false,
+    "default": false,
+    "cli_nargs": 0,
+    "cli_action": "store_true",
+    "help": "quick if any --quick/--yes/-y; --all/--connect/--local/--chat membership; unknown ignored",
+    "compatibility_policy": "quick if any --quick/--yes/-y; --all/--connect/--local/--chat membership; unknown ignored"
+  },
+  {
+    "token_id": "init/--quick",
+    "commands": [
+      "init"
+    ],
+    "spelling": "--quick",
+    "name": "quick",
+    "json_type": "boolean",
+    "required": false,
+    "default": false,
+    "cli_nargs": 0,
+    "cli_action": "store_true",
+    "help": "quick if any --quick/--yes/-y; --all/--connect/--local/--chat membership; unknown ignored",
+    "compatibility_policy": "quick if any --quick/--yes/-y; --all/--connect/--local/--chat membership; unknown ignored"
+  },
+  {
+    "token_id": "init/--yes",
+    "commands": [
+      "init"
+    ],
+    "spelling": "--yes",
+    "name": "yes",
+    "json_type": "boolean",
+    "required": false,
+    "default": false,
+    "cli_nargs": 0,
+    "cli_action": "store_true",
+    "help": "quick if any --quick/--yes/-y; --all/--connect/--local/--chat membership; unknown ignored",
+    "compatibility_policy": "quick if any --quick/--yes/-y; --all/--connect/--local/--chat membership; unknown ignored"
+  },
+  {
+    "token_id": "init/-y",
+    "commands": [
+      "init"
+    ],
+    "spelling": "-y",
+    "name": "y",
+    "json_type": "boolean",
+    "required": false,
+    "default": false,
+    "cli_nargs": 0,
+    "cli_action": "store_true",
+    "help": "quick if any --quick/--yes/-y; --all/--connect/--local/--chat membership; unknown ignored",
+    "compatibility_policy": "quick if any --quick/--yes/-y; --all/--connect/--local/--chat membership; unknown ignored"
+  },
+  {
+    "token_id": "gate-host/--apply",
+    "commands": [
+      "gate-host"
+    ],
+    "spelling": "--apply",
+    "name": "apply",
+    "json_type": "boolean",
+    "required": false,
+    "default": false,
+    "cli_nargs": 0,
+    "cli_action": "store_true",
+    "help": "--apply membership; unknown ignored",
+    "compatibility_policy": "--apply membership; unknown ignored"
+  },
+  {
+    "token_id": "signal/--dry",
+    "commands": [
+      "signal"
+    ],
+    "spelling": "--dry",
+    "name": "dry",
+    "json_type": "boolean",
+    "required": false,
+    "default": false,
+    "cli_nargs": 0,
+    "cli_action": "store_true",
+    "help": "first push selects push with --dry membership; any other first token reports; unknown ignored",
+    "compatibility_policy": "first push selects push with --dry membership; any other first token reports; unknown ignored"
+  },
+  {
+    "token_id": "sources/--json",
+    "commands": [
+      "sources"
+    ],
+    "spelling": "--json",
+    "name": "json",
+    "json_type": "boolean",
+    "required": false,
+    "default": false,
+    "cli_nargs": 0,
+    "cli_action": "store_true",
+    "help": "--days repeated loop last valid value wins; invalid int exit2; trailing missing leaves prior/default; --json membership; unknown ignored",
+    "compatibility_policy": "--days repeated loop last valid value wins; invalid int exit2; trailing missing leaves prior/default; --json membership; unknown ignored"
+  },
+  {
+    "token_id": "sources/--days",
+    "commands": [
+      "sources"
+    ],
+    "spelling": "--days",
+    "name": "days",
+    "json_type": "integer",
+    "required": false,
+    "default": null,
+    "cli_nargs": 1,
+    "cli_action": "store",
+    "help": "--days repeated loop last valid value wins; invalid int exit2; trailing missing leaves prior/default; --json membership; unknown ignored",
+    "compatibility_policy": "--days repeated loop last valid value wins; invalid int exit2; trailing missing leaves prior/default; --json membership; unknown ignored"
+  },
+  {
+    "token_id": "tiers/--probe",
+    "commands": [
+      "tiers"
+    ],
+    "spelling": "--probe",
+    "name": "probe",
+    "json_type": "boolean",
+    "required": false,
+    "default": false,
+    "cli_nargs": 0,
+    "cli_action": "store_true",
+    "help": "--probe presence invokes probe before parsing and removes all --probe; first set len>=3 uses group/model-list raw; first show/list or no args report, trailing ignored; otherwise exit2",
+    "compatibility_policy": "--probe presence invokes probe before parsing and removes all --probe; first set len>=3 uses group/model-list raw; first show/list or no args report, trailing ignored; otherwise exit2"
+  },
+  {
+    "token_id": "token-caps/--scan",
+    "commands": [
+      "token-caps"
+    ],
+    "spelling": "--scan",
+    "name": "scan",
+    "json_type": "string",
+    "required": false,
+    "default": null,
+    "cli_nargs": 1,
+    "cli_action": "store",
+    "help": "--scan first occurrence plus next token without bounds guard (missing raises IndexError); --judge membership; unknown ignored",
+    "compatibility_policy": "--scan first occurrence plus next token without bounds guard (missing raises IndexError); --judge membership; unknown ignored"
+  },
+  {
+    "token_id": "token-caps/--judge",
+    "commands": [
+      "token-caps"
+    ],
+    "spelling": "--judge",
+    "name": "judge",
+    "json_type": "boolean",
+    "required": false,
+    "default": false,
+    "cli_nargs": 0,
+    "cli_action": "store_true",
+    "help": "--scan first occurrence plus next token without bounds guard (missing raises IndexError); --judge membership; unknown ignored",
+    "compatibility_policy": "--scan first occurrence plus next token without bounds guard (missing raises IndexError); --judge membership; unknown ignored"
+  },
+  {
+    "token_id": "trust/--since",
+    "commands": [
+      "trust"
+    ],
+    "spelling": "--since",
+    "name": "since",
+    "json_type": "string",
+    "required": false,
+    "default": null,
+    "cli_nargs": 1,
+    "cli_action": "store",
+    "help": "scan all --since with following token, last wins; unknown ignored",
+    "compatibility_policy": "scan all --since with following token, last wins; unknown ignored"
+  },
+  {
+    "token_id": "capguard/--pretooluse-hook",
+    "commands": [
+      "capguard"
+    ],
+    "spelling": "--pretooluse-hook",
+    "name": "pretooluse_hook",
+    "json_type": "boolean",
+    "required": false,
+    "default": false,
+    "cli_nargs": 0,
+    "cli_action": "store_true",
+    "help": "requires --pretooluse-hook membership; unknown argv ignored; stdin JSON; invalid input fail-open",
+    "compatibility_policy": "requires --pretooluse-hook membership; unknown argv ignored; stdin JSON; invalid input fail-open"
+  },
+  {
+    "token_id": "install-capguard/--uninstall",
+    "commands": [
+      "install-capguard"
+    ],
+    "spelling": "--uninstall",
+    "name": "uninstall",
+    "json_type": "boolean",
+    "required": false,
+    "default": false,
+    "cli_nargs": 0,
+    "cli_action": "store_true",
+    "help": "each argv must equal --uninstall; duplicates accepted; unknown token exit2",
+    "compatibility_policy": "each argv must equal --uninstall; duplicates accepted; unknown token exit2"
+  }
+]
