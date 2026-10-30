@@ -499,7 +499,7 @@
           },
           "src/spendguard/lane_value.py": {
             "max_cc": 20,
-            "mi": 42.880967725364876
+            "mi": 42.88096772536486
           },
           "src/spendguard/lanes.py": {
             "max_cc": 157,
@@ -859,7 +859,7 @@
           },
           "src/spendguard/token_caps.py": {
             "max_cc": 19,
-            "mi": 55.38819148712056
+            "mi": 55.38819148712055
           },
           "src/spendguard/trust.py": {
             "max_cc": 12,
@@ -1723,7 +1723,7 @@
           },
           "src/spendguard/token_caps.py": {
             "max_cc": 19,
-            "mi": 55.38819148712056
+            "mi": 55.38819148712055
           },
           "src/spendguard/trust.py": {
             "max_cc": 12,

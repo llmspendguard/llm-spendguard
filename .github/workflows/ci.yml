@@ -186,15 +186,25 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
+        id: python
         with:
           python-version: "3.12"
       - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+      - name: Cache resolved environment and tiktoken vocabulary
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: |
+            ${{ env.CI_TEST_VENV }}
+            ${{ env.TIKTOKEN_CACHE_DIR }}
+          key: ${{ env.CI_TEST_CACHE_REVISION }}-${{ runner.os }}-${{ runner.arch }}-${{ steps.python.outputs.python-version }}-${{ hashFiles('pyproject.toml', '.github/workflows/ci.yml') }}
       - name: Install the same gated verification environment
         run: |
           uv venv "$CI_TEST_VENV"
           echo "${PWD}/${CI_TEST_VENV}/bin" >> "$GITHUB_PATH"
           uv pip install --python "${CI_TEST_VENV}/bin/python" -e "$CI_TEST_EXTRAS" "$CI_PYDANTIC_FLOOR"
           "${CI_TEST_VENV}/bin/spendguard" install-hook --venv "$CI_TEST_VENV"
+      - name: Warm the tiktoken o200k cache (the offline suite can't download it)
+        run: python -c "import tiktoken; tiktoken.get_encoding('o200k_base'); print('o200k cached')"
       - name: Download both Python environments and complete evidence
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
