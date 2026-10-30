@@ -53,7 +53,8 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 # The catalog is authored runtime price and capability data, required in installed wheels.
-spendguard = ["model_catalog.json", "subscription_headroom_surfaces.json", "py.typed"]
+spendguard = ["model_catalog.json", "subscription_headroom_surfaces.json", "py.typed",
+              "distribution_build_wheels/*.whl"]
 
 [tool.setuptools.dynamic]
 # The version comes from ONE place — the src literal — read at build time so wheel metadata matches the code.

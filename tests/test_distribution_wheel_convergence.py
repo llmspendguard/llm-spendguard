@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 from contextlib import ExitStack
 from pathlib import Path
 import sys
+import tomllib
 from threading import Barrier, Lock, get_ident
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -170,9 +171,19 @@ def test_distribution_unreadable_worktree_metadata_is_unknown(tmp_path):
 def test_distribution_wheel_build_cache_and_version_cross_check(tmp_path):
     target = wheel_fixture_target(tmp_path)
     wheel_name = f"llm_spendguard-{WHEEL_FIXTURE_VERSION}-py3-none-any.whl"
+    convergence_project_manifest = Path(__file__).resolve().parents[1] / "pyproject.toml"
+    (tmp_path / convergence_project_manifest.name).write_bytes(convergence_project_manifest.read_bytes())
+    convergence_build_requirements = tomllib.loads(convergence_project_manifest.read_text())["build-system"]["requires"]
+    convergence_backend_install = [
+        "-m", "pip", "install", "--upgrade", "--no-index", "--find-links",
+        str(Path(distribution.__file__).with_name(distribution.DISTRIBUTION_BUILD_WHEELHOUSE_DIRECTORY)),
+        *convergence_build_requirements,
+    ]
 
     def fixture_build(command, **options):
         if command[1:] == list(distribution.DISTRIBUTION_PIP_PROBE_COMMAND):
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+        if command[1:] == convergence_backend_install:
             return SimpleNamespace(returncode=0, stdout="", stderr="")
         assert "--no-deps" in command and "--no-build-isolation" in command
         (tmp_path / "state" / distribution.DISTRIBUTION_WHEELS_DIRECTORY / wheel_name).touch()
@@ -185,6 +196,7 @@ def test_distribution_wheel_build_cache_and_version_cross_check(tmp_path):
     assert first == second
     assert [invocation.args[0][1:] for invocation in builder.call_args_list] == [
         list(distribution.DISTRIBUTION_PIP_PROBE_COMMAND),
+        convergence_backend_install,
         [*distribution.DISTRIBUTION_WHEEL_BUILD_COMMAND, "--wheel-dir", str(first.parent), str(tmp_path)],
     ]
 
