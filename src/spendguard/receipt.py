@@ -24,6 +24,8 @@ Cost: a local sqlite read + a small JSON read. Safe to emit always; it never spe
 """
 from __future__ import annotations
 
+from .capability_cli_parsing import registered_cli_option_token
+
 import datetime as _dt
 import json
 import logging
@@ -1618,20 +1620,20 @@ def _by_intent_report(args) -> int:
     from . import budget
     today, week, month = _windows()
     since, wlabel = month, "month-to-date"
-    if "--today" in args:
+    if registered_cli_option_token('receipt/--today') in args:
         since, wlabel = today, "today"
-    elif "--week" in args:
+    elif registered_cli_option_token('receipt/--week') in args:
         since, wlabel = week, "rolling 7d"
-    elif "--all" in args:
+    elif registered_cli_option_token('receipt/--all') in args:
         since, wlabel = None, "all time"
-    if "--since" in args and args.index("--since") + 1 < len(args):
-        since = args[args.index("--since") + 1]
+    if registered_cli_option_token('receipt/--since') in args and args.index(registered_cli_option_token('receipt/--since')) + 1 < len(args):
+        since = args[args.index(registered_cli_option_token('receipt/--since')) + 1]
         wlabel = "since " + since
     rows = budget.by_intent(since=since)
     items = sorted(rows.items(), key=lambda kv: -kv[1]["cost"])
     total = sum(v["cost"] for _, v in items)
     calls = sum(v["calls"] for _, v in items)
-    if "--json" in args:
+    if registered_cli_option_token('receipt/--json') in args:
         print(json.dumps({"window": wlabel, "since": since, "total_usd": total, "calls": calls,
                           "by_intent": dict(items)}, indent=2))
         return 0
@@ -1651,7 +1653,7 @@ def cli(args) -> int:
     --footer). This is what the Claude Code Stop hook runs to surface the tally in-chat; also handy to check the tally
     any time. `--by-intent` instead breaks billed LLM $ down by the forensic intent label."""
     args = list(args or [])
-    if "--statusline" not in args:                # the statusline path refreshes lazily inside _cached_tally_line (on a
+    if registered_cli_option_token('receipt/--statusline') not in args:                # the statusline path refreshes lazily inside _cached_tally_line (on a
         try:                                       # cache MISS only), so a cached repaint does NO refresh; every other
             from . import lane_value               # receipt path keeps refreshing up front exactly as before
             lane_value.refresh_lane_value_if_stale()
@@ -1668,14 +1670,14 @@ def cli(args) -> int:
         except Exception:
             return None
 
-    if "--by-intent" in args:        # a MANUAL breakdown — handled BEFORE the hook-safe try (a real error should
+    if registered_cli_option_token('receipt/--by-intent') in args:        # a MANUAL breakdown — handled BEFORE the hook-safe try (a real error should
         return _by_intent_report(args)   # surface here, not be swallowed into the silent return-0 a status line needs)
 
     try:
-        if "--json" in args:
+        if registered_cli_option_token('receipt/--json') in args:
             print(json.dumps({"tally": tally(), "tree": _est_tree(None)}, indent=2))
             return 0
-        if "--stop-hook" in args:
+        if registered_cli_option_token('receipt/--stop-hook') in args:
             # Claude Code Stop hook: `systemMessage` is the ONLY hook output the user sees — the global tally line,
             # PLUS, when the CURRENT session is bloated, the ready-to-paste EFFECTIVE /compact prompt to run.
             info = {}
@@ -1718,7 +1720,7 @@ def cli(args) -> int:
                 _output["hookSpecificOutput"] = {"hookEventName": "Stop", "additionalContext": _hook_context}
             print(json.dumps(_output))
             return 0
-        if "--precompact-hook" in args:
+        if registered_cli_option_token('receipt/--precompact-hook') in args:
             # Claude Code PreCompact cannot inject context. Record the event + digest for SessionStart(compact), then
             # emit only a schema-valid, silent acknowledgement.
             info = {}
@@ -1731,7 +1733,7 @@ def cli(args) -> int:
             compaction.record_precompact(info)
             print(json.dumps({"suppressOutput": True}))
             return 0
-        if "--sessionstart-hook" in args:
+        if registered_cli_option_token('receipt/--sessionstart-hook') in args:
             # Claude Code SessionStart(compact): measure post-context and re-inject the WHOLE digest that PreCompact
             # persisted. Other SessionStart sources receive no directive.
             info = {}
@@ -1747,7 +1749,7 @@ def cli(args) -> int:
                 print(json.dumps({"hookSpecificOutput": {"hookEventName": "SessionStart",
                     "additionalContext": "POST-COMPACTION PRESERVATION PINS — still in force:\n" + digest}}))
             return 0
-        if "--statusline" in args:
+        if registered_cli_option_token('receipt/--statusline') in args:
             # Claude Code statusLine: session JSON on stdin; prepend cwd · model · ctx% to the global one-line tally.
             info = {}
             if not sys.stdin.isatty():           # guard: never block when run manually in a terminal
@@ -1774,15 +1776,15 @@ def cli(args) -> int:
             _nudge = _compaction_nudge(info, str(_cfg.HOME))
             print((prefix + "  ·  " if prefix else "") + _cached_tally_line() + ("  ·  " + _nudge if _nudge else ""))
             return 0
-        if "--line" in args:                          # compact one-line global tally (scripting)
+        if registered_cli_option_token('receipt/--line') in args:                          # compact one-line global tally (scripting)
             print(render_line(tally()))
             return 0
         # the ORG → TEAM → PROJECT tree: --all = every org · --org X = one org · default = the connection's org,
         # falling back to ALL when that org has no attributed value (its taxonomy org may differ from the conn org).
-        scope = None if "--all" in args else (_arg("--org") if "--org" in args else _conv_org())
+        scope = None if registered_cli_option_token('receipt/--all') in args else (_arg(registered_cli_option_token('receipt/--org')) if registered_cli_option_token('receipt/--org') in args else _conv_org())
         if scope and not _est_tree(scope):
             scope = None
-        print(render_tree(scope_org=scope, project=None if "--all" in args else _cur_project()))
+        print(render_tree(scope_org=scope, project=None if registered_cli_option_token('receipt/--all') in args else _cur_project()))
         from . import claudecode as _cc_residency
         print("\nRESIDENCY (latest Claude Code session)")
         for _res_line in _cc_residency.residency_summary_lines():
@@ -1895,12 +1897,12 @@ def install_cli(args):
     """`spendguard install-receipts [--host claude-code|codex] [--remove]` — manage the always-on in-chat tally."""
     args = list(args or [])
     host = CLAUDE_CODE_SOURCE
-    if "--host" in args:
+    if registered_cli_option_token('install-receipts/--host') in args:
         try:
-            host = args[args.index("--host") + 1]
+            host = args[args.index(registered_cli_option_token('install-receipts/--host')) + 1]
         except IndexError:
             pass
-    remove = "--remove" in args
+    remove = registered_cli_option_token('install-receipts/--remove') in args
     if host in (CLAUDE_CODE_SOURCE, "claude", "cc"):
         return _install_claude_code(remove=remove)
     if host == CODEX_SOURCE:

@@ -13,6 +13,8 @@ spendguard has the two things needed to find it:
 This reports the prefix fraction (high fraction = cache it), the savings per 1000 calls, the big
 script-defined system prompts to cache, and per-provider setup. CLI: `spendguard cache-audit [--repo]`.
 """
+
+from .capability_cli_parsing import add_registered_cli_argument
 import ast, os, re, glob
 from . import callio, pricing
 from .submit import _count_tokens
@@ -199,7 +201,7 @@ def audit_cache_opportunities(repo=None):
 def main(argv=None):
     import argparse
     ap = argparse.ArgumentParser(prog="spendguard cache-audit")
-    ap.add_argument("--repo", help="repo to scan for big system prompts (default: cwd)")
+    add_registered_cli_argument(ap, 'cache-audit/cacheaudit.main/ap/--repo')
     a = ap.parse_args(argv)
     audit_cache_opportunities(a.repo)
     return 0

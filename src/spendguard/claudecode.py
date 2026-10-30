@@ -12,6 +12,8 @@ INCREMENTAL + idempotent (this is the "track what's analyzed, update only the ne
     totals, so the server upsert (keyed by row uid) stays correct as sessions grow.
 Cost ≈ pricing.realtime_cost(model, input+cache_create+cache_read, output, cached=cache_read). Project = cwd name.
 """
+
+from .capability_cli_parsing import registered_cli_option_token
 import os, json, glob, pathlib, datetime, hashlib, time
 
 from . import config, conv, pricing
@@ -1644,44 +1646,44 @@ def story(by="week", days=7, run=False):
 
 def main(argv=None):
     argv = argv or []
-    if "--rebuild" in argv:                        # re-bucket: clear the accumulator + watermarks, re-mine at repo level
+    if registered_cli_option_token('claude-code/--rebuild') in argv:                        # re-bucket: clear the accumulator + watermarks, re-mine at repo level
         st = config.load_state("claudecode", {"sessions": {}, "ledger": {}}); st["ledger"] = {}; st["sessions"] = {}; st["counted_ids"] = {}; _save_claudecode_state(st)
         print("claude-code: state reset — re-mining all transcripts with repo-level buckets + per-message-id dedup")
-        argv = [a for a in argv if a != "--rebuild"]
+        argv = [a for a in argv if a != registered_cli_option_token('claude-code/--rebuild')]
     sub = argv[0] if argv else "show"
     if sub == "sync":
-        print("claude-code sync:", sync(dry="--dry" in argv))
+        print("claude-code sync:", sync(dry=registered_cli_option_token('claude-code/--dry') in argv))
         return 0
     days = None
-    if "--days" in argv:
+    if registered_cli_option_token('claude-code/--days') in argv:
         try:
-            days = int(argv[argv.index("--days") + 1])
+            days = int(argv[argv.index(registered_cli_option_token('claude-code/--days')) + 1])
         except (ValueError, IndexError):
             pass
     by = "week"
-    if "--by" in argv:
+    if registered_cli_option_token('claude-code/--by') in argv:
         try:
-            by = argv[argv.index("--by") + 1]
+            by = argv[argv.index(registered_cli_option_token('claude-code/--by')) + 1]
         except IndexError:
             pass
     limit = None
-    if "--limit" in argv:
+    if registered_cli_option_token('claude-code/--limit') in argv:
         try:
-            limit = int(argv[argv.index("--limit") + 1])
+            limit = int(argv[argv.index(registered_cli_option_token('claude-code/--limit')) + 1])
         except (ValueError, IndexError):
             pass
     if sub == "ingest":                                 # per-turn rows → local spend_events ledger (queryable, idempotent)
-        return ingest_events(days=days, limit=limit, reset="--reset" in argv, dry="--dry" in argv)
+        return ingest_events(days=days, limit=limit, reset=registered_cli_option_token('claude-code/--reset') in argv, dry=registered_cli_option_token('claude-code/--dry') in argv)
     if sub in ("overflow", "billing-state", "billing"):  # CALCULATE billing_state from observable overage signals
-        return reconcile_billing_state(dry="--dry" in argv)
+        return reconcile_billing_state(dry=registered_cli_option_token('claude-code/--dry') in argv)
     if sub == "context":                                # compaction view: sustained-large-context conversations + $/turn
-        conv_id = argv[argv.index("--conv") + 1] if "--conv" in argv and argv.index("--conv") + 1 < len(argv) else None
+        conv_id = argv[argv.index(registered_cli_option_token('claude-code/--conv')) + 1] if registered_cli_option_token('claude-code/--conv') in argv and argv.index(registered_cli_option_token('claude-code/--conv')) + 1 < len(argv) else None
         return context_cmd(conv_id=conv_id, top=limit or 10)
     if sub in ("conversations", "convs"):               # unified per-conversation view, labeled by human sidebar title
         return conversations_cmd(top=limit or 15)
     if sub == "invoices":                               # ingest the REAL Anthropic charges (by-card CSV) as ground truth
-        csvp = argv[argv.index("--csv") + 1] if "--csv" in argv and argv.index("--csv") + 1 < len(argv) else None
-        ingest_invoices(csv_path=csvp, dry="--dry" in argv)
+        csvp = argv[argv.index(registered_cli_option_token('claude-code/--csv')) + 1] if registered_cli_option_token('claude-code/--csv') in argv and argv.index(registered_cli_option_token('claude-code/--csv')) + 1 < len(argv) else None
+        ingest_invoices(csv_path=csvp, dry=registered_cli_option_token('claude-code/--dry') in argv)
         return 0
     if sub == "attribute":                              # reconcile real invoice overage → conversations
         attribute_overage(top=limit or 12)
@@ -1690,9 +1692,9 @@ def main(argv=None):
         return overage_tally_cmd()
     if sub == "compact":                                # /compact helper: static snippet, or --tailor = agentic advisor
         from . import compaction
-        if "--tailor" in argv:
-            tp = (argv[argv.index("--transcript") + 1]
-                  if "--transcript" in argv and argv.index("--transcript") + 1 < len(argv) else None)
+        if registered_cli_option_token('claude-code/--tailor') in argv:
+            tp = (argv[argv.index(registered_cli_option_token('claude-code/--transcript')) + 1]
+                  if registered_cli_option_token('claude-code/--transcript') in argv and argv.index(registered_cli_option_token('claude-code/--transcript')) + 1 < len(argv) else None)
             if not tp:                                  # default to the CURRENT (newest) session transcript
                 fs = sorted(glob.glob(os.path.join(_projects_dir(), "**", "*.jsonl"), recursive=True),
                             key=lambda p: os.path.getmtime(p) if os.path.exists(p) else 0, reverse=True)
@@ -1700,14 +1702,14 @@ def main(argv=None):
             if not tp:
                 print("compact --tailor: no transcript found (pass --transcript PATH).")
             else:
-                compaction.agentic_advise(tp, run="--run" in argv)
+                compaction.agentic_advise(tp, run=registered_cli_option_token('claude-code/--run') in argv)
         else:
             print(compaction.compact_snippet())
         return 0
     if sub == "classify":                               # classify sessions into org→team×project (caged, est-first)
-        return classify(run="--run" in argv, days=days, recls="--reclassify" in argv)
+        return classify(run=registered_cli_option_token('claude-code/--run') in argv, days=days, recls=registered_cli_option_token('claude-code/--reclassify') in argv)
     if sub == "work":                                   # conversation-derived work rows, bucketed by period
         return show_claudecode_work(by=by, days=days)
     if sub == "story":                                  # caged narrative + private work-insights (estimate-first)
-        return story(by=by, days=days or 7, run="--run" in argv)
+        return story(by=by, days=days or 7, run=registered_cli_option_token('claude-code/--run') in argv)
     return show_claudecode_report(days=days)

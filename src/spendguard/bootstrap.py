@@ -12,6 +12,8 @@ then ESTIMATES the paid, caged (caps.meta) reasoning steps and — only with --r
 Free steps always run (idempotent). Paid steps are estimate-first and meta-capped. This is the answer to
 cold start: history → corpus → insights, repeatably.
 """
+
+from .capability_cli_parsing import add_registered_cli_argument
 import argparse
 from . import config
 
@@ -98,9 +100,9 @@ def bootstrap(repo=None, transcripts=None, run=False, cap=50):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="spendguard bootstrap")
-    ap.add_argument("--repo", help="repo to mine for intents (default: cwd)")
-    ap.add_argument("--transcripts", help="conversation transcript dir/file (default: ~/.claude/projects)")
-    ap.add_argument("--cap", type=int, default=50, help="call_io samples per (intent, model)")
-    ap.add_argument("--run", action="store_true", help="execute the paid reasoning steps (default: estimate only)")
+    add_registered_cli_argument(ap, 'bootstrap/bootstrap.main/ap/--repo')
+    add_registered_cli_argument(ap, 'bootstrap/bootstrap.main/ap/--transcripts')
+    add_registered_cli_argument(ap, 'bootstrap/bootstrap.main/ap/--cap', type=int)
+    add_registered_cli_argument(ap, 'bootstrap/bootstrap.main/ap/--run')
     a = ap.parse_args(argv)
     return bootstrap(repo=a.repo, transcripts=a.transcripts, run=a.run, cap=a.cap)

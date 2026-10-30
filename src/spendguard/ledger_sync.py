@@ -11,6 +11,8 @@ real-time spend isn't provider-visible without an Admin key, so it's shown local
 
 LEAK (provider > local) = the important signal. Local > provider = estimate-over-actual / double-count.
 """
+
+from .capability_cli_parsing import add_registered_cli_argument
 import argparse
 
 from . import config
@@ -933,7 +935,7 @@ class RealtimeSource:
 
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="spendguard reconcile-ledger")
-    ap.add_argument("--since", help="YYYY-MM-DD (default: start of this month)")
+    add_registered_cli_argument(ap, 'reconcile-ledger/ledger_sync.main/ap/--since')
     a = ap.parse_args(argv)
     sync(since=a.since)
     return 0

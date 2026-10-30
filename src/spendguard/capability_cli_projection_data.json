@@ -980,7 +980,8 @@
         "literal": [
           "calls",
           "spend_events"
-        ]
+        ],
+        "literal_container": "tuple"
       },
       "default": {
         "literal": "spend_events"
@@ -3257,7 +3258,8 @@
         "literal": [
           "build",
           "show"
-        ]
+        ],
+        "literal_container": "tuple"
       },
       "default": {
         "literal": "build"
@@ -5305,4 +5307,3 @@
     "evidence": "src/spendguard/workdone.py:207"
   }
 ]
-

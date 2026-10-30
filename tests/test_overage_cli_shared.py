@@ -29,7 +29,7 @@ try:
 finally:
     overage.current_overage_status = original
 
-registered = any(command == "overage" for _group, entries in cli._GROUPS for command, _help in entries)
+registered = "overage" in cli._all_commands()
 failures = []
 if len(seen) != 2:
     failures.append("CLI and MCP did not both call the shared function")

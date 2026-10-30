@@ -15,6 +15,8 @@ conversation. This module mines those to reconstruct what the live recorder coul
 All zero-spend. The LLM-judged reconstruction (ambiguous conversation/outcome) lives in advisor.py and
 is caged by caps.meta. CLI: `spendguard mine-history {intents,graph,git} [--repo PATH] [--apply]`.
 """
+
+from .capability_cli_parsing import add_registered_cli_argument
 import os, re, json, glob, subprocess
 from . import calls, learn
 from .ledger_writer import serialize_ledger_function
@@ -261,9 +263,9 @@ def mine_git(repo, apply=False, max_commits=400):
 def main(argv=None):
     import argparse
     ap = argparse.ArgumentParser(prog="spendguard mine-history")
-    ap.add_argument("op", choices=["intents", "graph", "git"])
-    ap.add_argument("--repo", default=os.getcwd(), help="repo to mine (default: cwd)")
-    ap.add_argument("--apply", action="store_true", help="write the result (default: report-only). No spend.")
+    add_registered_cli_argument(ap, 'mine-history/history.main/ap/op')
+    add_registered_cli_argument(ap, 'mine-history/history.main/ap/--repo', default=os.getcwd())
+    add_registered_cli_argument(ap, 'mine-history/history.main/ap/--apply')
     a = ap.parse_args(argv)
     if a.op == "intents":
         reconstruct_intents(a.repo, apply=a.apply)

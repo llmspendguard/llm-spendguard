@@ -1,6 +1,8 @@
 """Fleet convergence and fail-closed release attestation (no model calls)."""
 from __future__ import annotations
 
+from .capability_cli_parsing import add_registered_cli_argument
+
 import argparse
 import ast
 from datetime import datetime, timezone
@@ -937,11 +939,11 @@ def render_distribution_table(result):
 def parse_distribution_cli_arguments(argv=None):
     """Share the command grammar with startup's verify-only dispatch."""
     parser = argparse.ArgumentParser(prog="spendguard distribute")
-    parser.add_argument("--check", action="store_true")
-    parser.add_argument("--json", action="store_true")
-    parser.add_argument("--roots", nargs="+")
-    parser.add_argument("--dry-run", action="store_true")
-    parser.add_argument("--version")
+    add_registered_cli_argument(parser, 'distribute/distribution.parse_distribution_cli_arguments/parser/--check')
+    add_registered_cli_argument(parser, 'distribute/distribution.parse_distribution_cli_arguments/parser/--json')
+    add_registered_cli_argument(parser, 'distribute/distribution.parse_distribution_cli_arguments/parser/--roots')
+    add_registered_cli_argument(parser, 'distribute/distribution.parse_distribution_cli_arguments/parser/--dry-run')
+    add_registered_cli_argument(parser, 'distribute/distribution.parse_distribution_cli_arguments/parser/--version')
     return parser.parse_args(argv)
 
 

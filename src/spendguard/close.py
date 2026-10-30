@@ -8,6 +8,8 @@ its ledger against the truth rows this machine pushes. `--csv` writes the local 
 
 CLI: `spendguard close [--month YYYY-MM] [--csv PATH]`. Zero LLM spend.
 """
+
+from .capability_cli_parsing import add_registered_cli_argument
 import datetime
 
 
@@ -81,11 +83,9 @@ def main(argv=None):
     import sys, argparse
     ap = argparse.ArgumentParser(prog="spendguard close",
                                  description="monthly close, client view: provider-truth totals (+ leak line for the current month)")
-    ap.add_argument("--month", default=datetime.date.today().strftime("%Y-%m"), help="YYYY-MM (default: current)")
-    ap.add_argument("--csv", help="also write the close to this CSV path")
-    ap.add_argument("--account", action="store_true",
-                    help="ACCOUNT-level view: provider truth is account-wide; on a shared account each org's "
-                         "statement residual includes its siblings — this view shows the account axis whole")
+    add_registered_cli_argument(ap, 'close/close.main/ap/--month', default=datetime.date.today().strftime('%Y-%m'))
+    add_registered_cli_argument(ap, 'close/close.main/ap/--csv')
+    add_registered_cli_argument(ap, 'close/close.main/ap/--account')
     a = ap.parse_args(sys.argv[2:] if argv is None else argv)
     # PARSE IT, do not eyeball its shape. `len==7 and [4]=="-"` accepts '2024-ab' and '2024-99', which
     # then reach int() inside month_window and raise a bare ValueError from three frames down — or, for

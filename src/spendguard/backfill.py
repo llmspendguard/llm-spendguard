@@ -8,6 +8,8 @@ post-event conversation + script evolution. This solves cold start and enables t
 
 Exposed as: spendguard.backfill() (fn) · `spendguard backfill` (CLI) · a Claude skill (see SKILL.md).
 """
+
+from .capability_cli_parsing import add_registered_cli_argument
 import os, json
 from . import calls, learn, pricing
 
@@ -134,8 +136,8 @@ def load_intent_map(path):
 def main(argv=None):
     import argparse
     ap = argparse.ArgumentParser()
-    ap.add_argument("--intent-map", help="JSON {batch_id: intent}, or a dir of *_batch_id.json files")
-    ap.add_argument("--providers", default="openai,anthropic")
+    add_registered_cli_argument(ap, 'backfill/backfill.main/ap/--intent-map')
+    add_registered_cli_argument(ap, 'backfill/backfill.main/ap/--providers')
     a = ap.parse_args(argv)
     im = load_intent_map(a.intent_map) if a.intent_map else None
     print("Backfilling cost corpus from your batch ledgers (no spend)…")

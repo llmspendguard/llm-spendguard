@@ -9,6 +9,8 @@ TIER 2 (separate, caged + opt-in): an LLM pass synthesizes a day's raw activity 
   spendguard workdone               # this month, per day · project
   spendguard workdone --since 2026-06-01 --by week
 """
+
+from .capability_cli_parsing import add_registered_cli_argument
 import argparse, datetime, os, subprocess
 from collections import defaultdict
 
@@ -200,11 +202,11 @@ def summarize(since=None, run=False, model=None):
 
 def cmd(argv=None):
     ap = argparse.ArgumentParser(prog="spendguard workdone")
-    ap.add_argument("--since", help="YYYY-MM-DD (default: start of this month)")
-    ap.add_argument("--by", choices=["day", "week", "month"], default="day")
-    ap.add_argument("--push", action="store_true", help="push the work-done roll-up to the server")
-    ap.add_argument("--summarize", action="store_true", help="generate the caged per-project 'what was accomplished' summary (ESTIMATE-ONLY unless --run)")
-    ap.add_argument("--run", action="store_true", help="with --summarize: actually spend (caged by caps.meta)")
+    add_registered_cli_argument(ap, 'workdone/workdone.cmd/ap/--since')
+    add_registered_cli_argument(ap, 'workdone/workdone.cmd/ap/--by')
+    add_registered_cli_argument(ap, 'workdone/workdone.cmd/ap/--push')
+    add_registered_cli_argument(ap, 'workdone/workdone.cmd/ap/--summarize')
+    add_registered_cli_argument(ap, 'workdone/workdone.cmd/ap/--run')
     a = ap.parse_args(argv or [])
     if a.summarize:
         print("workdone summarize:", summarize(since=a.since, run=a.run))

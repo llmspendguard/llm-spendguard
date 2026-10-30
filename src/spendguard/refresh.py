@@ -10,6 +10,8 @@ Treat results as a flag-for-review, not gospel (an LLM can still misread a page)
   spendguard refresh-prices --write         # apply looked-up values + bump verified date
   spendguard refresh-prices --model claude-sonnet-4-6
 """
+
+from .capability_cli_parsing import add_registered_cli_argument
 import json, re, argparse
 from . import pricing, config
 
@@ -110,8 +112,8 @@ def main(argv=None):
     argparse may raise SystemExit for help or invalid arguments.
     """
     ap = argparse.ArgumentParser()
-    ap.add_argument("--model", default="claude-haiku-4-5", help="LLM to do the lookup (cheap is fine)")
-    ap.add_argument("--write", action="store_true", help="apply source-verified values to model_catalog.json")
+    add_registered_cli_argument(ap, 'refresh-prices/refresh.main/ap/--model')
+    add_registered_cli_argument(ap, 'refresh-prices/refresh.main/ap/--write')
     a = ap.parse_args(argv)
     key = config.api_key("ANTHROPIC_API_KEY")
     if not key:

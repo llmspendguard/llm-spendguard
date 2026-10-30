@@ -9,6 +9,8 @@ Zero spend: `record_reading` STAMPS what a run already produced; `reconstruct` r
 PAST run from the `calls` corpus — and marks the judge `unknown` (it was never stamped before receipts existed),
 never a guess. "Cannot tell" is not "clean."
 """
+
+from .capability_cli_parsing import add_registered_cli_argument
 import json
 import logging
 import sqlite3
@@ -347,19 +349,19 @@ def cmd(argv=None):
                                  description="Inspect the reproducible provenance of a judged number.")
     sub = ap.add_subparsers(dest="op", required=True)
     p_i = sub.add_parser("inspect", help="show a stored reading by id")
-    p_i.add_argument("reading_id")
+    add_registered_cli_argument(p_i, 'measurement/measurement.cmd/p_i/reading_id')
     p_l = sub.add_parser("list", help="list recent readings")
-    p_l.add_argument("--intent", default=None)
-    p_l.add_argument("--limit", type=int, default=25)
+    add_registered_cli_argument(p_l, 'measurement/measurement.cmd/p_l/--intent')
+    add_registered_cli_argument(p_l, 'measurement/measurement.cmd/p_l/--limit', type=int)
     p_r = sub.add_parser("reconstruct", help="best-effort reading for a PAST bakeoff intent (judge=unknown)")
-    p_r.add_argument("intent")
+    add_registered_cli_argument(p_r, 'measurement/measurement.cmd/p_r/intent')
     p_rr = sub.add_parser("rerun", help="re-run a reading's instrument (same judge/sample/rubric) for a comparable number")
-    p_rr.add_argument("reading_id")
-    p_rr.add_argument("--budget", type=float, default=None, help="spend up to this; OMIT for an estimate only (0 spend)")
-    p_rr.add_argument("--fresh", action="store_true", help="re-baseline on a FRESH sample (same judge, a new instrument)")
+    add_registered_cli_argument(p_rr, 'measurement/measurement.cmd/p_rr/reading_id')
+    add_registered_cli_argument(p_rr, 'measurement/measurement.cmd/p_rr/--budget', type=float)
+    add_registered_cli_argument(p_rr, 'measurement/measurement.cmd/p_rr/--fresh')
     p_c = sub.add_parser("compare", help="drift-flag: are two readings comparable (same instrument)? show the delta")
-    p_c.add_argument("baseline")
-    p_c.add_argument("candidate")
+    add_registered_cli_argument(p_c, 'measurement/measurement.cmd/p_c/baseline')
+    add_registered_cli_argument(p_c, 'measurement/measurement.cmd/p_c/candidate')
     a = ap.parse_args(argv)
     if a.op == "inspect":
         r = inspect(a.reading_id)

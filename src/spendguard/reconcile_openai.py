@@ -14,6 +14,8 @@ KEY ACCOUNTING RULES baked in:
   * billed = COMPLETED + CANCELLED batches (cancelled bills for completed requests!)
   * failed = $0 ; in_progress/finalizing = not yet metered (reported separately)
 """
+
+from .capability_cli_parsing import add_registered_cli_argument
 import json, argparse, urllib.request, urllib.error, datetime
 from collections import defaultdict
 
@@ -148,9 +150,9 @@ def day(b):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--since", help="YYYY-MM-DD (UTC) lower bound on batch creation")
-    ap.add_argument("--by-day", action="store_true")
-    ap.add_argument("--estimate", type=float, help="a pre-flight $ estimate to compare against actual")
+    add_registered_cli_argument(ap, 'reconcile/reconcile_openai.main/ap/--since')
+    add_registered_cli_argument(ap, 'reconcile/reconcile_openai.main/ap/--by-day')
+    add_registered_cli_argument(ap, 'reconcile/reconcile_openai.main/ap/--estimate', type=float)
     a = ap.parse_args()
 
     rows = fetch_batches(load_key(), since=a.since)     # page-bound the pull to the window (newest-first early-stop)

@@ -13,7 +13,7 @@
     ],
     "parser_kind": "argparse",
     "nested_grammar_summary": "",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [
       {
         "source_scope": "src/spendguard/distribution.py:937",
@@ -73,7 +73,7 @@
     ],
     "parser_kind": "manual argv",
     "nested_grammar_summary": "",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [],
     "manual_token_ids": [
       "doctor+status/--live"
@@ -92,7 +92,7 @@
     ],
     "parser_kind": "no flags parsed / inline positional grammar",
     "nested_grammar_summary": "",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [],
     "manual_token_ids": [],
     "takes_no_flags": true
@@ -109,7 +109,7 @@
     ],
     "parser_kind": "no flags parsed / inline positional grammar",
     "nested_grammar_summary": "",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [],
     "manual_token_ids": [],
     "takes_no_flags": true
@@ -126,7 +126,7 @@
     ],
     "parser_kind": "manual argv",
     "nested_grammar_summary": "",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [],
     "manual_token_ids": [
       "doctor+status/--live"
@@ -145,7 +145,7 @@
     ],
     "parser_kind": "argparse",
     "nested_grammar_summary": "",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [
       {
         "source_scope": "src/spendguard/delegate_router.py:642",
@@ -251,7 +251,7 @@
     ],
     "parser_kind": "argparse",
     "nested_grammar_summary": "build/show actions; inspect exact parser declaration below.",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [
       {
         "source_scope": "src/spendguard/manifest.py:286",
@@ -301,7 +301,7 @@
     ],
     "parser_kind": "argparse",
     "nested_grammar_summary": "",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [
       {
         "source_scope": "src/spendguard/cli.py:217",
@@ -356,7 +356,7 @@
     ],
     "parser_kind": "argparse",
     "nested_grammar_summary": "",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [
       {
         "source_scope": "src/spendguard/cli.py:287",
@@ -416,7 +416,7 @@
     ],
     "parser_kind": "argparse",
     "nested_grammar_summary": "",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [
       {
         "source_scope": "src/spendguard/cli.py:345",
@@ -481,7 +481,7 @@
     ],
     "parser_kind": "argparse",
     "nested_grammar_summary": "",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [
       {
         "source_scope": "src/spendguard/cli.py:184",
@@ -566,7 +566,7 @@
     ],
     "parser_kind": "argparse",
     "nested_grammar_summary": "",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [
       {
         "source_scope": "src/spendguard/content_compression_backfill.py:60",
@@ -611,7 +611,7 @@
     ],
     "parser_kind": "manual argv",
     "nested_grammar_summary": "",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [],
     "manual_token_ids": [
       "agent-spawn-gate/--pretooluse-hook"
@@ -630,7 +630,7 @@
     ],
     "parser_kind": "manual argv",
     "nested_grammar_summary": "",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [],
     "manual_token_ids": [
       "residency-gate/--posttooluse-hook"
@@ -649,7 +649,7 @@
     ],
     "parser_kind": "manual argv",
     "nested_grammar_summary": "",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [],
     "manual_token_ids": [
       "capguard/--pretooluse-hook"
@@ -668,7 +668,7 @@
     ],
     "parser_kind": "manual argv",
     "nested_grammar_summary": "",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [],
     "manual_token_ids": [
       "install-residency-gate/--uninstall"
@@ -687,7 +687,7 @@
     ],
     "parser_kind": "no flags parsed / inline positional grammar",
     "nested_grammar_summary": "No user flags parsed; argv ignored.",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [],
     "manual_token_ids": [],
     "takes_no_flags": true
@@ -704,7 +704,7 @@
     ],
     "parser_kind": "argparse",
     "nested_grammar_summary": "",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [
       {
         "source_scope": "src/spendguard/report.py:186",
@@ -757,7 +757,7 @@
     ],
     "parser_kind": "argparse",
     "nested_grammar_summary": "",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [
       {
         "source_scope": "src/spendguard/route_economics.py:265",
@@ -829,7 +829,7 @@
     ],
     "parser_kind": "argparse",
     "nested_grammar_summary": "",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [
       {
         "source_scope": "src/spendguard/route_realized.py:33",
@@ -891,7 +891,7 @@
     ],
     "parser_kind": "argparse",
     "nested_grammar_summary": "",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [
       {
         "source_scope": "src/spendguard/route_horizon.py:266",
@@ -959,7 +959,7 @@
     ],
     "parser_kind": "argparse",
     "nested_grammar_summary": "",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [
       {
         "source_scope": "src/spendguard/whole_job.py:483",
@@ -1024,7 +1024,7 @@
     ],
     "parser_kind": "manual argv",
     "nested_grammar_summary": "",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [],
     "manual_token_ids": [
       "focus-export/--out",
@@ -1048,7 +1048,7 @@
     ],
     "parser_kind": "manual argv",
     "nested_grammar_summary": "",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [],
     "manual_token_ids": [
       "otel-ingest/--dry-run",
@@ -1068,7 +1068,7 @@
     ],
     "parser_kind": "argparse",
     "nested_grammar_summary": "",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [
       {
         "source_scope": "src/spendguard/model_preflight.py:163",
@@ -1116,7 +1116,7 @@
     ],
     "parser_kind": "argparse",
     "nested_grammar_summary": "",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [
       {
         "source_scope": "src/spendguard/verify.py:153",
@@ -1159,7 +1159,7 @@
     ],
     "parser_kind": "manual argv",
     "nested_grammar_summary": "",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [],
     "manual_token_ids": [
       "keys-audit/--strict",
@@ -1180,7 +1180,7 @@
     ],
     "parser_kind": "mixed argparse/manual",
     "nested_grammar_summary": "all|openai|anthropic; all uses manual --since, provider modes own argparse parsers",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [
       {
         "source_scope": "src/spendguard/reconcile_openai.py:149",
@@ -1246,7 +1246,7 @@
     ],
     "parser_kind": "argparse",
     "nested_grammar_summary": "",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [
       {
         "source_scope": "src/spendguard/estimate.py:112",
@@ -1332,7 +1332,7 @@
     ],
     "parser_kind": "argparse",
     "nested_grammar_summary": "predict; show; pair; push; fetch; backtest",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [
       {
         "source_scope": "src/spendguard/calibrate.py:721",
@@ -1479,7 +1479,7 @@
     ],
     "parser_kind": "argparse",
     "nested_grammar_summary": "inspect <reading_id>; list; reconstruct <intent>; rerun <reading_id>; compare <baseline> <candidate>",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [
       {
         "source_scope": "src/spendguard/measurement.py:343",
@@ -1651,7 +1651,7 @@
     ],
     "parser_kind": "manual argv",
     "nested_grammar_summary": "",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [],
     "manual_token_ids": [
       "audit/--ci",
@@ -1672,7 +1672,7 @@
     ],
     "parser_kind": "manual argv",
     "nested_grammar_summary": "",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [],
     "manual_token_ids": [
       "token-caps/--scan",
@@ -1692,7 +1692,7 @@
     ],
     "parser_kind": "argparse",
     "nested_grammar_summary": "",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [
       {
         "source_scope": "src/spendguard/openai_batch_cli.py:26",
@@ -1798,7 +1798,7 @@
     ],
     "parser_kind": "argparse",
     "nested_grammar_summary": "",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [
       {
         "source_scope": "src/spendguard/openai_batch_cli.py:97",
@@ -1858,7 +1858,7 @@
     ],
     "parser_kind": "argparse",
     "nested_grammar_summary": "",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [
       {
         "source_scope": "src/spendguard/crossllm.py:413",
@@ -1956,7 +1956,7 @@
     ],
     "parser_kind": "argparse",
     "nested_grammar_summary": "",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [
       {
         "source_scope": "src/spendguard/comprehend.py:200",
@@ -2049,7 +2049,7 @@
     ],
     "parser_kind": "argparse",
     "nested_grammar_summary": "",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [
       {
         "source_scope": "src/spendguard/serve.py:156",
@@ -2097,7 +2097,7 @@
     ],
     "parser_kind": "argparse",
     "nested_grammar_summary": "",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [
       {
         "source_scope": "src/spendguard/mcp_server.py:1353",
@@ -2150,7 +2150,7 @@
     ],
     "parser_kind": "argparse",
     "nested_grammar_summary": "",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [
       {
         "source_scope": "src/spendguard/consumer_audit.py:410",
@@ -2207,7 +2207,7 @@
     ],
     "parser_kind": "manual argv",
     "nested_grammar_summary": "",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [],
     "manual_token_ids": [
       "deploy/--skip-consumer-verify",
@@ -2228,7 +2228,7 @@
     "handler_evidence": [],
     "parser_kind": "manual argv",
     "nested_grammar_summary": "deregister <python>; consumers; restart (--consumer ID|--stale|--all-supervised) [--apply]; stop --consumer ID; default summary; legacy --restart.",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [],
     "manual_token_ids": [
       "fleet/--restart",
@@ -2249,7 +2249,7 @@
     "handler_evidence": [],
     "parser_kind": "manual argv",
     "nested_grammar_summary": "",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [],
     "manual_token_ids": [
       "release/--json",
@@ -2270,7 +2270,7 @@
     ],
     "parser_kind": "argparse",
     "nested_grammar_summary": "",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [
       {
         "source_scope": "src/spendguard/bakeoff.py:375",
@@ -2363,7 +2363,7 @@
     ],
     "parser_kind": "argparse",
     "nested_grammar_summary": "",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [
       {
         "source_scope": "src/spendguard/stability.py:92",
@@ -2436,7 +2436,7 @@
     ],
     "parser_kind": "argparse",
     "nested_grammar_summary": "",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [
       {
         "source_scope": "src/spendguard/effort_titration.py:452",
@@ -2514,7 +2514,7 @@
     ],
     "parser_kind": "argparse",
     "nested_grammar_summary": "",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [
       {
         "source_scope": "src/spendguard/metadata_audit.py:118",
@@ -2550,7 +2550,7 @@
     "handler_evidence": [],
     "parser_kind": "no flags parsed / inline positional grammar",
     "nested_grammar_summary": "",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [],
     "manual_token_ids": [],
     "takes_no_flags": true
@@ -2567,7 +2567,7 @@
     ],
     "parser_kind": "manual argv",
     "nested_grammar_summary": "",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [],
     "manual_token_ids": [
       "estimate-literals/--judge"
@@ -2586,7 +2586,7 @@
     ],
     "parser_kind": "no flags parsed / inline positional grammar",
     "nested_grammar_summary": "",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [],
     "manual_token_ids": [],
     "takes_no_flags": true
@@ -2603,7 +2603,7 @@
     ],
     "parser_kind": "no flags parsed / inline positional grammar",
     "nested_grammar_summary": "",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [],
     "manual_token_ids": [],
     "takes_no_flags": true
@@ -2616,7 +2616,7 @@
     "handler_evidence": [],
     "parser_kind": "no flags parsed / inline positional grammar",
     "nested_grammar_summary": "",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [],
     "manual_token_ids": [],
     "takes_no_flags": true
@@ -2633,7 +2633,7 @@
     ],
     "parser_kind": "no flags parsed / inline positional grammar",
     "nested_grammar_summary": "",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [],
     "manual_token_ids": [],
     "takes_no_flags": true
@@ -2650,7 +2650,7 @@
     ],
     "parser_kind": "no flags parsed / inline positional grammar",
     "nested_grammar_summary": "Additional positional interpreter/venv paths accepted by setup.coverage.",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [],
     "manual_token_ids": [],
     "takes_no_flags": true
@@ -2663,7 +2663,7 @@
     "handler_evidence": [],
     "parser_kind": "no flags parsed / inline positional grammar",
     "nested_grammar_summary": "<signature> [current_max] [provider:model]",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [],
     "manual_token_ids": [],
     "takes_no_flags": true
@@ -2676,7 +2676,7 @@
     "handler_evidence": [],
     "parser_kind": "manual argv",
     "nested_grammar_summary": "",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [],
     "manual_token_ids": [
       "plan-queue/--watch",
@@ -2694,7 +2694,7 @@
     "handler_evidence": [],
     "parser_kind": "mixed argparse/manual",
     "nested_grammar_summary": "--id branch has structured parser; aggregate branch manually accepts --json",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [
       {
         "source_scope": "src/spendguard/cli.py:1012",
@@ -2742,7 +2742,7 @@
     ],
     "parser_kind": "no flags parsed / inline positional grammar",
     "nested_grammar_summary": "show/list; set <dotted.key> <value>",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [],
     "manual_token_ids": [],
     "takes_no_flags": true
@@ -2759,7 +2759,7 @@
     ],
     "parser_kind": "manual argv",
     "nested_grammar_summary": "",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [],
     "manual_token_ids": [
       "init/--all",
@@ -2786,7 +2786,7 @@
     ],
     "parser_kind": "argparse",
     "nested_grammar_summary": "",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [
       {
         "source_scope": "src/spendguard/setup.py:882",
@@ -2846,7 +2846,7 @@
     ],
     "parser_kind": "manual argv",
     "nested_grammar_summary": "",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [],
     "manual_token_ids": [
       "gate-host/--apply"
@@ -2865,7 +2865,7 @@
     ],
     "parser_kind": "manual argv",
     "nested_grammar_summary": "",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [],
     "manual_token_ids": [
       "install-agent-gate/--uninstall"
@@ -2884,7 +2884,7 @@
     ],
     "parser_kind": "manual argv",
     "nested_grammar_summary": "",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [],
     "manual_token_ids": [
       "install-capguard/--uninstall"
@@ -2903,7 +2903,7 @@
     ],
     "parser_kind": "manual argv",
     "nested_grammar_summary": "",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [],
     "manual_token_ids": [
       "schedule/--daily",
@@ -2923,7 +2923,7 @@
     ],
     "parser_kind": "argparse",
     "nested_grammar_summary": "",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [
       {
         "source_scope": "src/spendguard/setup.py:874",
@@ -2963,7 +2963,7 @@
     ],
     "parser_kind": "argparse",
     "nested_grammar_summary": "",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [
       {
         "source_scope": "src/spendguard/setup.py:374",
@@ -3015,7 +3015,7 @@
     ],
     "parser_kind": "manual argv",
     "nested_grammar_summary": "",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [],
     "manual_token_ids": [
       "install-receipts/--host",
@@ -3035,7 +3035,7 @@
     ],
     "parser_kind": "manual argv",
     "nested_grammar_summary": "",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [],
     "manual_token_ids": [
       "install-mcp/--remove"
@@ -3054,7 +3054,7 @@
     ],
     "parser_kind": "manual argv",
     "nested_grammar_summary": "onstart; verify; sync; sync-all",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [],
     "manual_token_ids": [
       "remote/--ssh",
@@ -3078,7 +3078,7 @@
     ],
     "parser_kind": "manual argv",
     "nested_grammar_summary": "status; ping/test; sync; push; reconcile; reattribute; audit; crosscheck/verify; link; commands; pull [team|org]",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [],
     "manual_token_ids": [
       "saas/--dry",
@@ -3100,7 +3100,7 @@
     ],
     "parser_kind": "manual argv",
     "nested_grammar_summary": "snapshot; sync; discover; show",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [],
     "manual_token_ids": [
       "resources/--agentic",
@@ -3122,7 +3122,7 @@
     ],
     "parser_kind": "no flags parsed / inline positional grammar",
     "nested_grammar_summary": "",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [],
     "manual_token_ids": [],
     "takes_no_flags": true
@@ -3139,7 +3139,7 @@
     ],
     "parser_kind": "argparse",
     "nested_grammar_summary": "",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [
       {
         "source_scope": "src/spendguard/calls.py:1082",
@@ -3176,7 +3176,7 @@
     ],
     "parser_kind": "manual argv",
     "nested_grammar_summary": "--by-intent selects its own report grammar; hook and statusline output modes; main report --org/--all. --footer and --flow mentioned by docstring are not parsed.",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [],
     "manual_token_ids": [
       "receipt/--statusline",
@@ -3206,7 +3206,7 @@
     ],
     "parser_kind": "argparse",
     "nested_grammar_summary": "",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [
       {
         "source_scope": "src/spendguard/backfill.py:134",
@@ -3249,7 +3249,7 @@
     ],
     "parser_kind": "argparse",
     "nested_grammar_summary": "",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [
       {
         "source_scope": "src/spendguard/advise.py:269",
@@ -3295,7 +3295,7 @@
     ],
     "parser_kind": "argparse",
     "nested_grammar_summary": "",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [
       {
         "source_scope": "src/spendguard/advisor.py:380",
@@ -3360,7 +3360,7 @@
     ],
     "parser_kind": "argparse",
     "nested_grammar_summary": "",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [
       {
         "source_scope": "src/spendguard/advisor.py:380",
@@ -3425,7 +3425,7 @@
     ],
     "parser_kind": "argparse",
     "nested_grammar_summary": "",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [
       {
         "source_scope": "src/spendguard/advisor.py:380",
@@ -3490,7 +3490,7 @@
     ],
     "parser_kind": "argparse",
     "nested_grammar_summary": "",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [
       {
         "source_scope": "src/spendguard/advisor.py:380",
@@ -3557,7 +3557,7 @@
     ],
     "parser_kind": "argparse",
     "nested_grammar_summary": "",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [
       {
         "source_scope": "src/spendguard/history.py:261",
@@ -3609,7 +3609,7 @@
     ],
     "parser_kind": "argparse",
     "nested_grammar_summary": "",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [
       {
         "source_scope": "src/spendguard/conv.py:1220",
@@ -3674,7 +3674,7 @@
     ],
     "parser_kind": "manual argv",
     "nested_grammar_summary": "",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [],
     "manual_token_ids": [
       "accounting/--run"
@@ -3693,7 +3693,7 @@
     ],
     "parser_kind": "manual argv",
     "nested_grammar_summary": "",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [],
     "manual_token_ids": [
       "signal/--dry"
@@ -3714,7 +3714,7 @@
     ],
     "parser_kind": "argparse",
     "nested_grammar_summary": "",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [
       {
         "source_scope": "src/spendguard/workdone.py:201",
@@ -3777,7 +3777,7 @@
     ],
     "parser_kind": "manual argv",
     "nested_grammar_summary": "sync; ingest; overflow/billing-state/billing; context; conversations/convs; invoices; attribute; overage/overage-tally; compact; classify; work; story; show",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [],
     "manual_token_ids": [
       "claude-code/--rebuild",
@@ -3803,7 +3803,7 @@
     "handler_evidence": [],
     "parser_kind": "manual argv",
     "nested_grammar_summary": "<model> plus pricing values",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [],
     "manual_token_ids": [
       "price/--provider",
@@ -3825,7 +3825,7 @@
     "handler_evidence": [],
     "parser_kind": "manual argv",
     "nested_grammar_summary": "",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [],
     "manual_token_ids": [
       "reprice/--model",
@@ -3841,7 +3841,7 @@
     "handler_evidence": [],
     "parser_kind": "manual argv",
     "nested_grammar_summary": "",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [],
     "manual_token_ids": [
       "quarantine/--since",
@@ -3863,7 +3863,7 @@
     ],
     "parser_kind": "manual argv",
     "nested_grammar_summary": "sync; classify; show",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [],
     "manual_token_ids": [
       "codex/--rebuild",
@@ -3886,7 +3886,7 @@
     ],
     "parser_kind": "manual argv",
     "nested_grammar_summary": "test; enable; disable; status; accept; push-taxonomy; discover; classify; loop; sync; work; story; show/list",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [],
     "manual_token_ids": [
       "chat/--days",
@@ -3916,7 +3916,7 @@
     ],
     "parser_kind": "manual argv",
     "nested_grammar_summary": "",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [],
     "manual_token_ids": [
       "lanevalue/--sync",
@@ -3938,7 +3938,7 @@
     ],
     "parser_kind": "argparse",
     "nested_grammar_summary": "",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [
       {
         "source_scope": "src/spendguard/callio.py:875",
@@ -3990,7 +3990,7 @@
     ],
     "parser_kind": "argparse",
     "nested_grammar_summary": "",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [
       {
         "source_scope": "src/spendguard/callio.py:846",
@@ -4033,7 +4033,7 @@
     "handler_evidence": [],
     "parser_kind": "argparse",
     "nested_grammar_summary": "",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [
       {
         "source_scope": "src/spendguard/cli.py:1278",
@@ -4076,7 +4076,7 @@
     "handler_evidence": [],
     "parser_kind": "argparse",
     "nested_grammar_summary": "",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [
       {
         "source_scope": "src/spendguard/cli.py:1301",
@@ -4126,7 +4126,7 @@
     ],
     "parser_kind": "argparse",
     "nested_grammar_summary": "",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [
       {
         "source_scope": "src/spendguard/review.py:162",
@@ -4173,7 +4173,7 @@
     ],
     "parser_kind": "argparse",
     "nested_grammar_summary": "",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [
       {
         "source_scope": "src/spendguard/cacheaudit.py:199",
@@ -4215,7 +4215,7 @@
     ],
     "parser_kind": "argparse",
     "nested_grammar_summary": "",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [
       {
         "source_scope": "src/spendguard/cachetest.py:199",
@@ -4275,7 +4275,7 @@
     ],
     "parser_kind": "argparse",
     "nested_grammar_summary": "",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [
       {
         "source_scope": "src/spendguard/brief.py:143",
@@ -4325,7 +4325,7 @@
     ],
     "parser_kind": "argparse",
     "nested_grammar_summary": "",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [
       {
         "source_scope": "src/spendguard/experiment.py:411",
@@ -4395,7 +4395,7 @@
     ],
     "parser_kind": "no flags parsed / inline positional grammar",
     "nested_grammar_summary": "show <model>; list",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [],
     "manual_token_ids": [],
     "takes_no_flags": true
@@ -4412,7 +4412,7 @@
     ],
     "parser_kind": "argparse",
     "nested_grammar_summary": "",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [
       {
         "source_scope": "src/spendguard/experiment.py:432",
@@ -4489,7 +4489,7 @@
     ],
     "parser_kind": "no flags parsed / inline positional grammar",
     "nested_grammar_summary": "",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [],
     "manual_token_ids": [],
     "takes_no_flags": true
@@ -4506,7 +4506,7 @@
     ],
     "parser_kind": "argparse",
     "nested_grammar_summary": "",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [
       {
         "source_scope": "src/spendguard/semcache.py:347",
@@ -4561,7 +4561,7 @@
     ],
     "parser_kind": "argparse",
     "nested_grammar_summary": "",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [
       {
         "source_scope": "src/spendguard/semcache.py:359",
@@ -4611,7 +4611,7 @@
     ],
     "parser_kind": "argparse",
     "nested_grammar_summary": "",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [
       {
         "source_scope": "src/spendguard/cascade.py:95",
@@ -4674,7 +4674,7 @@
     ],
     "parser_kind": "argparse",
     "nested_grammar_summary": "",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [
       {
         "source_scope": "src/spendguard/ledger_sync.py:934",
@@ -4716,7 +4716,7 @@
     ],
     "parser_kind": "manual argv",
     "nested_grammar_summary": "",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [],
     "manual_token_ids": [
       "trust/--since"
@@ -4733,7 +4733,7 @@
     "handler_evidence": [],
     "parser_kind": "no flags parsed / inline positional grammar",
     "nested_grammar_summary": "",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [],
     "manual_token_ids": [],
     "takes_no_flags": true
@@ -4750,7 +4750,7 @@
     ],
     "parser_kind": "argparse",
     "nested_grammar_summary": "",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [
       {
         "source_scope": "src/spendguard/bootstrap.py:99",
@@ -4805,7 +4805,7 @@
     ],
     "parser_kind": "no flags parsed / inline positional grammar",
     "nested_grammar_summary": "",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [],
     "manual_token_ids": [],
     "takes_no_flags": true
@@ -4822,7 +4822,7 @@
     ],
     "parser_kind": "argparse",
     "nested_grammar_summary": "",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [
       {
         "source_scope": "src/spendguard/realized.py:115",
@@ -4871,7 +4871,7 @@
     "handler_evidence": [],
     "parser_kind": "manual argv",
     "nested_grammar_summary": "",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [],
     "manual_token_ids": [
       "savings/--json"
@@ -4890,7 +4890,7 @@
     ],
     "parser_kind": "manual argv",
     "nested_grammar_summary": "",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [],
     "manual_token_ids": [
       "tokens/--json",
@@ -4910,7 +4910,7 @@
     ],
     "parser_kind": "argparse",
     "nested_grammar_summary": "",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [
       {
         "source_scope": "src/spendguard/prompts.py:238",
@@ -4973,7 +4973,7 @@
     ],
     "parser_kind": "argparse",
     "nested_grammar_summary": "",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [
       {
         "source_scope": "src/spendguard/close.py:80",
@@ -5026,7 +5026,7 @@
     ],
     "parser_kind": "argparse",
     "nested_grammar_summary": "",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [
       {
         "source_scope": "src/spendguard/truth.py:67",
@@ -5074,7 +5074,7 @@
     ],
     "parser_kind": "manual argv",
     "nested_grammar_summary": "",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [],
     "manual_token_ids": [
       "sources/--json",
@@ -5094,7 +5094,7 @@
     ],
     "parser_kind": "manual argv",
     "nested_grammar_summary": "",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [],
     "manual_token_ids": [
       "scan/--days"
@@ -5113,7 +5113,7 @@
     ],
     "parser_kind": "manual argv",
     "nested_grammar_summary": "[--show] [--] <external-command> [external arguments...]",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [],
     "manual_token_ids": [
       "run/--show",
@@ -5133,7 +5133,7 @@
     ],
     "parser_kind": "manual argv",
     "nested_grammar_summary": "set-model <lane> [tier] <model>; --bulk/--enqueue consume stdin or --file; --bakeoff <intent> <task>; --propose <intent> <primary>; --confirm <intent> <substitute>; --delegate <task>. Branches may combine; --drain suppresses final summary.",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [],
     "manual_token_ids": [
       "lanes/--drain",
@@ -5190,7 +5190,7 @@
     ],
     "parser_kind": "manual argv",
     "nested_grammar_summary": "",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [],
     "manual_token_ids": [
       "tiers/--probe"
@@ -5205,7 +5205,7 @@
     "handler_evidence": [],
     "parser_kind": "argparse",
     "nested_grammar_summary": "",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [
       {
         "source_scope": "src/spendguard/cli.py:1450",
@@ -5251,7 +5251,7 @@
     "handler_evidence": [],
     "parser_kind": "manual argv",
     "nested_grammar_summary": "",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [],
     "manual_token_ids": [
       "keys/--since"
@@ -5275,7 +5275,7 @@
     ],
     "parser_kind": "argparse",
     "nested_grammar_summary": "import <path> [--trust]; export [--out --min-conf --all]; list",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [
       {
         "source_scope": "src/spendguard/share.py:78",
@@ -5352,7 +5352,7 @@
     ],
     "parser_kind": "argparse",
     "nested_grammar_summary": "",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [
       {
         "source_scope": "src/spendguard/compare.py:14",
@@ -5415,7 +5415,7 @@
     ],
     "parser_kind": "no flags parsed / inline positional grammar",
     "nested_grammar_summary": "",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [],
     "manual_token_ids": [],
     "takes_no_flags": true
@@ -5432,7 +5432,7 @@
     ],
     "parser_kind": "no flags parsed / inline positional grammar",
     "nested_grammar_summary": "",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [],
     "manual_token_ids": [],
     "takes_no_flags": true
@@ -5449,7 +5449,7 @@
     ],
     "parser_kind": "argparse",
     "nested_grammar_summary": "",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [
       {
         "source_scope": "src/spendguard/sync_capabilities.py:213",
@@ -5494,7 +5494,7 @@
     ],
     "parser_kind": "manual argv",
     "nested_grammar_summary": "",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [],
     "manual_token_ids": [
       "balances/--cached"
@@ -5513,7 +5513,7 @@
     ],
     "parser_kind": "manual argv",
     "nested_grammar_summary": "",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [],
     "manual_token_ids": [
       "reliability/--run",
@@ -5535,7 +5535,7 @@
     ],
     "parser_kind": "argparse",
     "nested_grammar_summary": "",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [
       {
         "source_scope": "src/spendguard/cli.py:403",
@@ -5587,7 +5587,7 @@
     ],
     "parser_kind": "argparse",
     "nested_grammar_summary": "",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [
       {
         "source_scope": "src/spendguard/refresh.py:106",
@@ -5626,10 +5626,9 @@
     "handler_evidence": [],
     "parser_kind": "no flags parsed / inline positional grammar",
     "nested_grammar_summary": "",
-    "review_status": "whole_handler_body_read; exact declarations extracted; manual typed migration pending",
+    "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [],
     "manual_token_ids": [],
     "takes_no_flags": true
   }
 ]
-

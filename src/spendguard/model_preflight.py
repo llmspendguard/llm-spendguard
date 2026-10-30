@@ -17,6 +17,8 @@ Composes existing primitives — adapters.provider_for, adapters.metered_fallbac
 vendor_call.served_check / closest_served, pricing.realtime_cost — it re-implements none of them; it makes them a
 single pre-spend gate. Run it before any batch, and on a cadence (`spendguard verify` calls it)."""
 
+from .capability_cli_parsing import add_registered_cli_argument
+
 from . import adapters, config, gate, pricing, vendor_call
 
 
@@ -166,9 +168,8 @@ def cmd(argv=None):
     import argparse
     ap = argparse.ArgumentParser(prog="spendguard preflight",
                                  description="Resolve model ids against the live catalog + pricing BEFORE spending.")
-    ap.add_argument("models", nargs="*", help="model specs (vendor:model or bare); omit to check all CONFIGURED ids")
-    ap.add_argument("--no-correct", action="store_true",
-                    help="skip the tiny agentic call that names a stale id's current replacement (report stale only)")
+    add_registered_cli_argument(ap, 'preflight/model_preflight.cmd/ap/models')
+    add_registered_cli_argument(ap, 'preflight/model_preflight.cmd/ap/--no-correct')
     a = ap.parse_args(argv)
     specs = a.models or configured_specs()
     if not specs:

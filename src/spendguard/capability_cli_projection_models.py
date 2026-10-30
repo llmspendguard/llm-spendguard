@@ -36,7 +36,10 @@ def load_capability_cli_argument_projections() -> Mapping[str, CapabilityCliArgu
             declaration_id=record['declaration_id'],
             commands=tuple(record['commands']),
             names=tuple(record['names']),
-            literal_attributes=MappingProxyType({key: value['literal'] for key, value in attributes.items() if 'literal' in value}),
+            literal_attributes=MappingProxyType({
+                key: tuple(value['literal']) if value.get('literal_container') == 'tuple' else value['literal']
+                for key, value in attributes.items() if 'literal' in value
+            }),
             dynamic_attributes=MappingProxyType({key: value['expression'] for key, value in attributes.items() if 'expression' in value}),
             evidence=record['evidence'],
         )
@@ -56,4 +59,3 @@ def load_capability_cli_grammars() -> Mapping[str, Mapping[str, Any]]:
     """Load canonical command/alias topology and explicit no-flags contracts."""
     records = json.loads(files('spendguard').joinpath(CAPABILITY_CLI_GRAMMAR_RESOURCE).read_text(encoding='utf-8'))
     return MappingProxyType({record['command']: MappingProxyType(record) for record in records})
-

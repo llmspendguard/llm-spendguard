@@ -11,6 +11,8 @@ Default = non-empty AND (if the prompt looks like it wants JSON) it parses. Skip
 ineffective for the intent (the denylist). WORKLOAD spend (real intent → your caps). Per-model params
 (reasoning etc.) auto-applied via models.apply_call_params inside the caller.
 """
+
+from .capability_cli_parsing import add_registered_cli_argument
 import re
 from . import equivalence, models as M
 
@@ -95,11 +97,11 @@ def cascade(prompt, ladder, verify=None, intent=None, _caller=None):
 def cmd(argv=None):
     import argparse, sys
     ap = argparse.ArgumentParser(prog="spendguard cascade")
-    ap.add_argument("--ladder", required=True, help="cheap→strong, comma-separated (e.g. gpt-5-nano,gpt-5-mini,gpt-5.5)")
-    ap.add_argument("--prompt", help="prompt to route")
-    ap.add_argument("--prompt-file")
-    ap.add_argument("--intent", help="skip models known-ineffective for this intent")
-    ap.add_argument("--run", action="store_true", help="actually call (WORKLOAD spend). Else just shows the ladder.")
+    add_registered_cli_argument(ap, 'cascade/cascade.cmd/ap/--ladder')
+    add_registered_cli_argument(ap, 'cascade/cascade.cmd/ap/--prompt')
+    add_registered_cli_argument(ap, 'cascade/cascade.cmd/ap/--prompt-file')
+    add_registered_cli_argument(ap, 'cascade/cascade.cmd/ap/--intent')
+    add_registered_cli_argument(ap, 'cascade/cascade.cmd/ap/--run')
     a = ap.parse_args(list(sys.argv[2:] if argv is None else argv))
     ladder = [m.strip() for m in a.ladder.split(",") if m.strip()]
     usable = [m for m in ladder if not (a.intent and M.ineffective(m, a.intent))]

@@ -20,6 +20,8 @@ DISCIPLINES (inherited, non-negotiable):
     mid-corpus resumes instead of re-paying, and the per-file outputs are never held in a single copy.
   • ATTRIBUTED — every call is tagged with the caller's `intent`, so the spend records under the right job.
 """
+
+from .capability_cli_parsing import add_registered_cli_argument
 import glob as _glob
 import os
 import re
@@ -205,19 +207,17 @@ def cmd(argv=None):
     import sys
     argv = list(sys.argv[2:] if argv is None else argv)
     ap = argparse.ArgumentParser(prog="spendguard comprehend", description="fan a corpus across the $0 lanes")
-    ap.add_argument("patterns", nargs="+", help="files or globs to analyse (e.g. 'docs/**/*.md')")
-    ap.add_argument("--intent", required=True, help="job-type label the spend records under (attribution)")
-    ap.add_argument("--question", help="what to ask of each file (default: extract key points + gaps/risks)")
-    ap.add_argument("--run", action="store_true", help="actually fan across the lanes (default: zero-spend estimate)")
-    ap.add_argument("--budget-usd", type=float, help="refuse the run if the estimate ceiling exceeds this")
-    ap.add_argument("--refuse-billed", action="store_true",
-                    help="explicit $0-or-fail mode; default ensures success via a loud metered fallback if needed")
-    ap.add_argument("--lanes", help="confine the fan to these lanes, comma-separated (e.g. codex,gemini)")
-    ap.add_argument("--max-chars", type=int, default=_DEFAULT_MAX_CHARS,
-                    help=f"per-task evidence ceiling; larger files are chunked, never cut (default {_DEFAULT_MAX_CHARS})")
-    ap.add_argument("--model", help="pin the model (default: config.advisor_model)")
-    ap.add_argument("--checkpoint", help="resumable results jsonl (default: ~/.spendguard/comprehend/<intent>.jsonl)")
-    ap.add_argument("--out", help="also export the aggregated per-file results as JSON to this path")
+    add_registered_cli_argument(ap, 'comprehend/comprehend.cmd/ap/patterns')
+    add_registered_cli_argument(ap, 'comprehend/comprehend.cmd/ap/--intent')
+    add_registered_cli_argument(ap, 'comprehend/comprehend.cmd/ap/--question')
+    add_registered_cli_argument(ap, 'comprehend/comprehend.cmd/ap/--run')
+    add_registered_cli_argument(ap, 'comprehend/comprehend.cmd/ap/--budget-usd', type=float)
+    add_registered_cli_argument(ap, 'comprehend/comprehend.cmd/ap/--refuse-billed')
+    add_registered_cli_argument(ap, 'comprehend/comprehend.cmd/ap/--lanes')
+    add_registered_cli_argument(ap, 'comprehend/comprehend.cmd/ap/--max-chars', type=int, default=_DEFAULT_MAX_CHARS, help=f'per-task evidence ceiling; larger files are chunked, never cut (default {_DEFAULT_MAX_CHARS})')
+    add_registered_cli_argument(ap, 'comprehend/comprehend.cmd/ap/--model')
+    add_registered_cli_argument(ap, 'comprehend/comprehend.cmd/ap/--checkpoint')
+    add_registered_cli_argument(ap, 'comprehend/comprehend.cmd/ap/--out')
     a = ap.parse_args(argv)
     lanes = [x.strip() for x in a.lanes.split(",") if x.strip()] if a.lanes else None
     res = comprehend_corpus(a.patterns, intent=a.intent, question=a.question, model=a.model, run=a.run,

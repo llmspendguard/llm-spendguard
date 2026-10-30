@@ -12,6 +12,8 @@ unchanged sessions are skipped, a grown session is re-digested whole (sessions a
 FINAL `token_count` event's cumulative `total_token_usage` — so re-mining a growing session never double-counts.
 Cost = pricing.realtime_cost(model, input_tokens, output_tokens, cached_input_tokens). Project = cwd basename.
 """
+
+from .capability_cli_parsing import registered_cli_option_token
 import os, json, glob, pathlib, datetime
 
 from . import config, pricing
@@ -295,20 +297,20 @@ def show_codex_report(days=None):
 
 def main(argv=None):
     argv = argv or []
-    if "--rebuild" in argv:                        # re-bucket existing sessions after the git-root _codex_project_of_cwd change
+    if registered_cli_option_token('codex/--rebuild') in argv:                        # re-bucket existing sessions after the git-root _codex_project_of_cwd change
         st = config.load_state("codex", {"sessions": {}, "cls": {}}); st["sessions"] = {}; _save_state(st)
         print("codex: digest cache cleared — re-mining all sessions with repo-level (git-root) buckets")
-        argv = [a for a in argv if a != "--rebuild"]
+        argv = [a for a in argv if a != registered_cli_option_token('codex/--rebuild')]
     sub = argv[0] if argv else "show"
     if sub == "sync":
-        print("codex sync:", sync(dry="--dry" in argv))
+        print("codex sync:", sync(dry=registered_cli_option_token('codex/--dry') in argv))
         return 0
     days = None
-    if "--days" in argv:
+    if registered_cli_option_token('codex/--days') in argv:
         try:
-            days = int(argv[argv.index("--days") + 1])
+            days = int(argv[argv.index(registered_cli_option_token('codex/--days')) + 1])
         except (ValueError, IndexError):
             pass
     if sub == "classify":
-        return classify(run="--run" in argv, days=days, recls="--reclassify" in argv)
+        return classify(run=registered_cli_option_token('codex/--run') in argv, days=days, recls=registered_cli_option_token('codex/--reclassify') in argv)
     return show_codex_report(days=days)

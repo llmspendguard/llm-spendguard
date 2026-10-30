@@ -13,6 +13,8 @@ plan), with the verdict CONTENT-HASH cached (keyed by the evidence, not the sess
 repeated pattern is judged once across sessions. It must NOT become the
 thing it warns about: never a subagent/session spawn to make this judgement (the symgrep grep-classifier failure —
 166 cold sessions, $70/day). FAIL-OPEN always: a nudge that crashes the hook would be worse than silence."""
+
+from .capability_cli_parsing import registered_cli_option_token
 import hashlib
 import json
 import os
@@ -230,7 +232,7 @@ def evaluate_posttooluse(payload):
 
 def cmd(argv=None):
     args = list(argv or [])
-    if "--posttooluse-hook" not in args:
+    if registered_cli_option_token('residency-gate/--posttooluse-hook') not in args:
         print("usage: spendguard residency-gate --posttooluse-hook", file=sys.stderr)
         return 2
     try:
@@ -303,11 +305,11 @@ def install_residency_gate(settings_path=None, uninstall=False, executable=None)
 
 def install_residency_gate_cli(argv=None):
     args = list(argv or [])
-    unknown = [arg for arg in args if arg != "--uninstall"]
+    unknown = [arg for arg in args if arg != registered_cli_option_token('install-residency-gate/--uninstall')]
     if unknown:
         print("usage: spendguard install-residency-gate [--uninstall]", file=sys.stderr)
         return 2
-    action, backup = install_residency_gate(uninstall="--uninstall" in args)
+    action, backup = install_residency_gate(uninstall=registered_cli_option_token('install-residency-gate/--uninstall') in args)
     print(f"{action} spendguard PostToolUse residency nudge → {_res_settings_path()}"
           + (f"  ·  backup: {backup}" if backup else ""))
     return 0

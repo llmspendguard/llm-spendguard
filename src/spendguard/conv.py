@@ -16,6 +16,8 @@ Two stages:
 
 CLI: `spendguard mine-conv {index,synth} [--transcripts PATH] [--limit N] [--run]`.
 """
+
+from .capability_cli_parsing import add_registered_cli_argument, registered_cli_option_token
 import os, re, json, glob, hashlib, functools, datetime
 from . import config, calls, learn
 from .ledger_writer import best_effort_ledger_function, serialize_ledger_function
@@ -175,7 +177,7 @@ def attribute_usage(since="2026-06-01", tdir=None):
 
 
 def attribute_cmd(argv=None):
-    run = "--run" in (argv or [])
+    run = registered_cli_option_token('accounting/--run') in (argv or [])
     attribute_segments(run=run)              # run=False → print the estimate (no spend); --run → classify (caged)
     r = attribute_usage()
     print(f"usage→project by AGENTIC per-subconversation attribution (MTD): ${r['total']:.2f} · "
@@ -1220,12 +1222,12 @@ def _persist_conversation_synthesis_insights(text):
 def main(argv=None):
     import argparse
     ap = argparse.ArgumentParser(prog="spendguard mine-conv")
-    ap.add_argument("op", choices=["index", "synth"])
-    ap.add_argument("--transcripts", help="transcript file or dir (default: ~/.claude/projects)")
-    ap.add_argument("--apply", action="store_true", help="(index) write conversation_event nodes + edges")
-    ap.add_argument("--rebuild", action="store_true", help="(index) ignore cache, full re-scan")
-    ap.add_argument("--limit", type=int, default=40, help="(synth) max snippets to feed the reasoner")
-    ap.add_argument("--run", action="store_true", help="(synth) actually spend (default: estimate). Capped by caps.meta.")
+    add_registered_cli_argument(ap, 'mine-conv/conv.main/ap/op')
+    add_registered_cli_argument(ap, 'mine-conv/conv.main/ap/--transcripts')
+    add_registered_cli_argument(ap, 'mine-conv/conv.main/ap/--apply')
+    add_registered_cli_argument(ap, 'mine-conv/conv.main/ap/--rebuild')
+    add_registered_cli_argument(ap, 'mine-conv/conv.main/ap/--limit', type=int)
+    add_registered_cli_argument(ap, 'mine-conv/conv.main/ap/--run')
     a = ap.parse_args(argv)
     if a.op == "index":
         index_cmd(a.transcripts, apply=a.apply, rebuild=a.rebuild)

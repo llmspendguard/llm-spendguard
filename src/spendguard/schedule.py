@@ -2,6 +2,8 @@
 `spendguard schedule` wires the OS-native scheduler to run the roll-up on a cadence (snapshot GPU every run + push
 when due), and `schedule --remove` tears it down. macOS → launchd LaunchAgent; Linux → crontab; Windows → schtasks.
 Idempotent + removable. Same philosophy as `install-hook`: the package owns its own setup, zero extra deps."""
+
+from .capability_cli_parsing import registered_cli_option_token
 import sys
 import subprocess
 import pathlib
@@ -102,8 +104,8 @@ def _windows_schtasks(interval, remove):
 
 def main(argv=None):
     argv = list(argv or [])
-    interval = "daily" if "--daily" in argv else "hourly"
-    r = install_schedule(interval=interval, remove="--remove" in argv)
+    interval = "daily" if registered_cli_option_token('schedule/--daily') in argv else "hourly"
+    r = install_schedule(interval=interval, remove=registered_cli_option_token('schedule/--remove') in argv)
     print("spendguard schedule:", r)
     if r.get("error"):
         return 1

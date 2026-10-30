@@ -14,6 +14,8 @@ its own code. The docstring used to name a `scripts/…` path from a layout that
 so the one instruction here was the one thing guaranteed to fail. `-m` runs the same __main__ block
 with the package context the imports need.
 """
+
+from .capability_cli_parsing import registered_cli_option_token
 import os, re, sys, glob, json
 
 from .pricing import PRICING
@@ -160,8 +162,8 @@ def _cfg_advisor():
 
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else list(argv)
-    ci = "--ci" in argv
-    is_deep = "--deep" in argv
+    ci = registered_cli_option_token('audit/--ci') in argv
+    is_deep = registered_cli_option_token('audit/--deep') in argv
     hits = []
     scanned, skipped = [], []   # DENOMINATOR and EXCLUSIONS: "no hits in 0 files" is not a pass,
                                 # and a tree skipped in silence is a clean bill for unread code
@@ -226,9 +228,9 @@ def main(argv=None):
         # --deep asks the question the patterns cannot. It runs on the SAME files the scan cleared, because
         # those are precisely the ones a clean pattern result would otherwise close the book on.
         print(f"\n--deep: reading {len(scanned)} file(s) for prices in ANY form …")
-        deep_hits = deep(scanned, PRICING, run="--run" in argv)   # the WHOLE table; deep() chunks it to fit, never slices
+        deep_hits = deep(scanned, PRICING, run=registered_cli_option_token('audit/--run') in argv)   # the WHOLE table; deep() chunks it to fit, never slices
         if not deep_hits:
-            print("  no hardcoded price found by reading the code either." if "--run" in argv else "")
+            print("  no hardcoded price found by reading the code either." if registered_cli_option_token('audit/--run') in argv else "")
             return 0
         print(f"\nFOUND {len(deep_hits)} hardcoded price(s) the pattern scan could not see:\n")
         for fn, h in deep_hits:

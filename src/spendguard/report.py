@@ -10,6 +10,8 @@ ZERO paid calls (batch metadata + result GETs + vast.ai instance GETs only).
 Scope: BATCH spend both providers + GPU consumption from currently-visible vast.ai instances. Real-time LLM spend
 (e.g. Opus LOINC judge) needs an Admin key — noted in output; destroyed GPU instances aren't per-instance billed.
 """
+
+from .capability_cli_parsing import add_registered_cli_argument
 import sys, argparse, datetime
 from collections import defaultdict
 
@@ -185,12 +187,10 @@ def _install_watchdog(max_seconds):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--alert-threshold", type=float, help="ALERT if TODAY combined exceeds this $")
-    ap.add_argument("--email", action="store_true", help="also email the report (SMTP config required)")
-    ap.add_argument("--email-to", help="recipient override (else SPENDGUARD_EMAIL_TO / ~/.spendguard/email.json)")
-    ap.add_argument("--max-seconds", type=float,
-                    help="wall-clock watchdog: abort with a non-zero exit if the run exceeds this many seconds "
-                         "(guards a scheduled run against a hung/looping provider fetch)")
+    add_registered_cli_argument(ap, 'report/report.main/ap/--alert-threshold', type=float)
+    add_registered_cli_argument(ap, 'report/report.main/ap/--email')
+    add_registered_cli_argument(ap, 'report/report.main/ap/--email-to')
+    add_registered_cli_argument(ap, 'report/report.main/ap/--max-seconds', type=float)
     a = ap.parse_args()
 
     import io, contextlib

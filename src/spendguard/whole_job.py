@@ -33,6 +33,8 @@ CONTRACT
 
 Estimate-first, fail-closed on unknown cost, no silent loss, decisions are economics (not regex) — the doctrines apply.
 """
+
+from .capability_cli_parsing import add_registered_cli_argument
 from . import route_economics, config
 
 
@@ -489,13 +491,12 @@ def cmd(argv):
     import argparse
     import json
     ap = argparse.ArgumentParser(prog="spendguard submit-jobs")
-    ap.add_argument("jobs_file", nargs="?", help="jsonl, one job per line: {prompt, intent, id?, system?, schema?}")
-    ap.add_argument("--budget", type=float, default=None, help="budget_usd — estimate-first cap; REQUIRED to --execute")
-    ap.add_argument("--urgency", default="auto", choices=["auto", "realtime", "batch"])
-    ap.add_argument("--quality", action="store_true", help="best-value model pick per intent")
-    ap.add_argument("--execute", action="store_true", help="EXECUTE (default: plan + estimate only, $0)")
-    ap.add_argument("--collect", metavar="PENDING_JSONL", default=None,
-                    help="settle a prior run's durable batch handles (receipt.pending_path) instead of submitting")
+    add_registered_cli_argument(ap, 'submit-jobs/whole_job.cmd/ap/jobs_file')
+    add_registered_cli_argument(ap, 'submit-jobs/whole_job.cmd/ap/--budget', type=float)
+    add_registered_cli_argument(ap, 'submit-jobs/whole_job.cmd/ap/--urgency')
+    add_registered_cli_argument(ap, 'submit-jobs/whole_job.cmd/ap/--quality')
+    add_registered_cli_argument(ap, 'submit-jobs/whole_job.cmd/ap/--execute')
+    add_registered_cli_argument(ap, 'submit-jobs/whole_job.cmd/ap/--collect')
     a = ap.parse_args(argv)
     if a.collect:
         out = collect_jobs(load_pending(a.collect))

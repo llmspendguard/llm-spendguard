@@ -12,6 +12,8 @@ Wrap your call (no auto-hijack of the gate — explicit + safe):
     out = semcache.cached_call(lambda p: client_call(p), prompt, model, threshold=0.0)
 threshold=0.0 → exact-only (default, zero risk). >0 → also semantic. Returns the (possibly cached) text.
 """
+
+from .capability_cli_parsing import add_registered_cli_argument
 import sqlite3, struct, hashlib, threading, datetime
 from . import config
 from .ledger_fork_locks import new_fork_reset_ledger_state
@@ -347,10 +349,10 @@ def populate_jsonl(input_path, results_path, model=_SCOPE_ANY):
 def dedup_main(argv=None):
     import argparse
     ap = argparse.ArgumentParser(prog="spendguard dedup")
-    ap.add_argument("--input", required=True, help="batch .jsonl to dedup")
-    ap.add_argument("--out", required=True, help="write the unique requests here")
-    ap.add_argument("--map", help="write the id-grouping map here (json)")
-    ap.add_argument("--model", default=_SCOPE_ANY, help="cache scope (default * = any)")
+    add_registered_cli_argument(ap, 'dedup/semcache.dedup_main/ap/--input')
+    add_registered_cli_argument(ap, 'dedup/semcache.dedup_main/ap/--out')
+    add_registered_cli_argument(ap, 'dedup/semcache.dedup_main/ap/--map')
+    add_registered_cli_argument(ap, 'dedup/semcache.dedup_main/ap/--model', default=_SCOPE_ANY)
     a = ap.parse_args(argv)
     dedup_jsonl(a.input, a.out, model=a.model, map_path=a.map)
     return 0
@@ -359,9 +361,9 @@ def dedup_main(argv=None):
 def populate_main(argv=None):
     import argparse
     ap = argparse.ArgumentParser(prog="spendguard dedup-populate")
-    ap.add_argument("--input", required=True, help="the batch .jsonl that was submitted")
-    ap.add_argument("--results", required=True, help="the batch results .jsonl")
-    ap.add_argument("--model", default=_SCOPE_ANY)
+    add_registered_cli_argument(ap, 'dedup-populate/semcache.populate_main/ap/--input')
+    add_registered_cli_argument(ap, 'dedup-populate/semcache.populate_main/ap/--results')
+    add_registered_cli_argument(ap, 'dedup-populate/semcache.populate_main/ap/--model', default=_SCOPE_ANY)
     a = ap.parse_args(argv)
     populate_jsonl(a.input, a.results, model=a.model)
     return 0

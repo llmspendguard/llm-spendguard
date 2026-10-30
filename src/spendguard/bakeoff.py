@@ -13,6 +13,8 @@ otherwise, and the quality JUDGE is an LLM (never a keyword rule) — the same j
   bakeoff('code-review', candidates=['openai:gpt-5.5','deepseek:deepseek-v4-flash'], sample_n=5)  # estimate
   bakeoff('code-review', candidates=[...], sample_n=5, run=True, budget_usd=0.50)                 # measure
 """
+
+from .capability_cli_parsing import add_registered_cli_argument
 import json
 
 from . import calls, config, pricing, callio
@@ -377,23 +379,17 @@ def main(argv=None):
     import json
     ap = argparse.ArgumentParser(prog="spendguard bakeoff",
                                  description="Measure cost×quality for a slate of models on a sample of an intent's tasks.")
-    ap.add_argument("intent")
-    ap.add_argument("--candidates", required=True, help="comma-separated vendor:model slate to test")
-    ap.add_argument("--sample", type=int, default=5, help="how many recorded prompts to replay (default 5)")
-    ap.add_argument("--efforts", help="comma-separated reasoning ladder to sweep PER model, e.g. "
-                    "'minimal,low,medium,high' — finds the cheapest (model, effort) that holds quality. "
-                    "Omitted → one arm per model at its default effort.")
-    ap.add_argument("--run", action="store_true", help="actually spend (default: estimate only)")
-    ap.add_argument("--budget", type=float, help="refuse if the estimate exceeds this")
-    ap.add_argument("--requirement-aware", action="store_true",
-                    help="judge each output against the PROMPT'S OWN requirements, two-tier (screen -> opus adjudicator)")
-    ap.add_argument("--adjudicator", help="opus-tier adjudicator model for --requirement-aware (default config.advisor_adjudicator_model)")
-    ap.add_argument("--temperature", type=float, help="DETERMINISM: run each arm as a measurement at this temperature "
-                    "(e.g. 0) — one deterministic pass per arm instead of n replicates. FORCES the metered API (a $0 "
-                    "lane has no temperature channel). Omit to run at production settings on the $0 lane.")
-    ap.add_argument("--top-p", type=float, dest="top_p", help="DETERMINISM: nucleus top_p for the measurement (metered).")
-    ap.add_argument("--seed", type=int, help="DETERMINISM: sampling seed for the measurement (OpenAI-only; dropped on "
-                    "vendors without a seed param, recorded in gen_params_dropped).")
+    add_registered_cli_argument(ap, 'bakeoff/bakeoff.main/ap/intent')
+    add_registered_cli_argument(ap, 'bakeoff/bakeoff.main/ap/--candidates')
+    add_registered_cli_argument(ap, 'bakeoff/bakeoff.main/ap/--sample', type=int)
+    add_registered_cli_argument(ap, 'bakeoff/bakeoff.main/ap/--efforts')
+    add_registered_cli_argument(ap, 'bakeoff/bakeoff.main/ap/--run')
+    add_registered_cli_argument(ap, 'bakeoff/bakeoff.main/ap/--budget', type=float)
+    add_registered_cli_argument(ap, 'bakeoff/bakeoff.main/ap/--requirement-aware')
+    add_registered_cli_argument(ap, 'bakeoff/bakeoff.main/ap/--adjudicator')
+    add_registered_cli_argument(ap, 'bakeoff/bakeoff.main/ap/--temperature', type=float)
+    add_registered_cli_argument(ap, 'bakeoff/bakeoff.main/ap/--top-p', type=float)
+    add_registered_cli_argument(ap, 'bakeoff/bakeoff.main/ap/--seed', type=int)
     a = ap.parse_args(argv)
     r = bakeoff(a.intent, candidates=[c for c in a.candidates.split(",") if c.strip()],
                 sample_n=a.sample, run=a.run, budget_usd=a.budget,

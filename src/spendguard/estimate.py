@@ -20,6 +20,8 @@ TWO ways to supply the token model (get these from your tiny test, see runbook):
   python scripts/estimate_job.py --items 263000 --from-sample test_usage.jsonl \
          --packs 1,30 --cap-dollars 200
 """
+
+from .capability_cli_parsing import add_registered_cli_argument
 import json, math, argparse
 
 from . import models
@@ -111,18 +113,17 @@ def project(model, items, prefix, in_per, out_per, pack, mode, assume_cache):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--items", type=int, required=True, help="TOTAL items in the full job")
-    ap.add_argument("--prefix-tok", type=float, help="shared per-request prompt prefix tokens (system+instructions)")
-    ap.add_argument("--in-per-item", type=float, help="input tokens per item (excluding prefix)")
-    ap.add_argument("--out-per-item", type=float, help="output tokens per item")
-    ap.add_argument("--from-sample", help="JSONL of measured test requests: {n,in,out}")
-    ap.add_argument("--models", default="gpt-5.5,claude-opus-4-8")
-    ap.add_argument("--packs", default="1,30")
-    ap.add_argument("--mode", default="batch", choices=["batch", "realtime"])
-    ap.add_argument("--assume-cache", action="store_true", help="credit prompt-cache on the repeated prefix (only if prefix >= model min)")
-    ap.add_argument("--cap-dollars", type=float, help="flag any projection above this (sanity bound)")
-    ap.add_argument("--label", help="activity/intent — adds the LEARNED estimate from your history "
-                                    "(spendguard calibrate) next to this naive projection")
+    add_registered_cli_argument(ap, 'estimate/estimate.main/ap/--items', type=int)
+    add_registered_cli_argument(ap, 'estimate/estimate.main/ap/--prefix-tok', type=float)
+    add_registered_cli_argument(ap, 'estimate/estimate.main/ap/--in-per-item', type=float)
+    add_registered_cli_argument(ap, 'estimate/estimate.main/ap/--out-per-item', type=float)
+    add_registered_cli_argument(ap, 'estimate/estimate.main/ap/--from-sample')
+    add_registered_cli_argument(ap, 'estimate/estimate.main/ap/--models')
+    add_registered_cli_argument(ap, 'estimate/estimate.main/ap/--packs')
+    add_registered_cli_argument(ap, 'estimate/estimate.main/ap/--mode')
+    add_registered_cli_argument(ap, 'estimate/estimate.main/ap/--assume-cache')
+    add_registered_cli_argument(ap, 'estimate/estimate.main/ap/--cap-dollars', type=float)
+    add_registered_cli_argument(ap, 'estimate/estimate.main/ap/--label')
     a = ap.parse_args()
 
     if a.from_sample:

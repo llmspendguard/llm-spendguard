@@ -2,6 +2,8 @@
 so they always match the code. `config` shows resolved values + where each came from; `init`
 runs the interview and writes ~/.spendguard/config.json (+ email.json), leaving API keys to env.
 """
+
+from .capability_cli_parsing import add_registered_cli_argument, registered_cli_option_token
 import os, json
 from . import config, config_schema
 
@@ -375,8 +377,8 @@ def cmd_install_rule(argv=None):
     import argparse
     ap = argparse.ArgumentParser(prog="spendguard install-rule")
     g = ap.add_mutually_exclusive_group()
-    g.add_argument("--global", dest="glob_", action="store_true", help="write to ~/.claude/CLAUDE.md (all projects)")
-    g.add_argument("--project", help="project dir whose CLAUDE.md to write (default: current dir)")
+    add_registered_cli_argument(g, 'install-rule/setup.cmd_install_rule/g/--global')
+    add_registered_cli_argument(g, 'install-rule/setup.cmd_install_rule/g/--project')
     a = ap.parse_args(argv)
     return install_rule(a.project, glob_=a.glob_)
 
@@ -581,7 +583,7 @@ def cmd_coverage(argv=None):
 def cmd_gate_discovered_host(argv=None):
     """Offer or apply user-site gating for every discovered installation missing from the fleet registry."""
     from . import fleet
-    apply = "--apply" in (argv or [])
+    apply = registered_cli_option_token('gate-host/--apply') in (argv or [])
     audit = fleet.reconcile_registered_host_installations()
     failures = []
     for escape in audit["escapes"]:
@@ -874,7 +876,7 @@ def install_skills(dest=None):
 def cmd_install_skills(argv=None):
     import argparse
     ap = argparse.ArgumentParser(prog="spendguard install-skills")
-    ap.add_argument("--dest", help="skills dir (default: ~/.claude/skills)")
+    add_registered_cli_argument(ap, 'install-skills/setup.cmd_install_skills/ap/--dest')
     a = ap.parse_args(argv)
     return install_skills(a.dest)
 
@@ -882,14 +884,11 @@ def cmd_install_skills(argv=None):
 def cmd_install_hook(argv=None):
     import argparse
     ap = argparse.ArgumentParser(prog="spendguard install-hook")
-    ap.add_argument("--venv", help="path to the target virtualenv (e.g. ../slide-recon/.venv)")
-    ap.add_argument("--user", action="store_true", help="gate the per-USER site of the target python "
-                    "(covers `python3 …` from anywhere for that interpreter — the system-python bypass)")
-    ap.add_argument("--python", help="target interpreter for --user (default: current python). "
-                    "Use the system python you want to gate, e.g. /opt/homebrew/bin/python3 — "
-                    "writes a path-injecting usercustomize, NO pip, so it works on PEP668-managed pythons")
-    ap.add_argument("--uninstall", action="store_true", help="remove the gate hook")
-    ap.add_argument("--no-pkg", action="store_true", help="skip pip install (package already present)")
+    add_registered_cli_argument(ap, 'install-hook/setup.cmd_install_hook/ap/--venv')
+    add_registered_cli_argument(ap, 'install-hook/setup.cmd_install_hook/ap/--user')
+    add_registered_cli_argument(ap, 'install-hook/setup.cmd_install_hook/ap/--python')
+    add_registered_cli_argument(ap, 'install-hook/setup.cmd_install_hook/ap/--uninstall')
+    add_registered_cli_argument(ap, 'install-hook/setup.cmd_install_hook/ap/--no-pkg')
     a = ap.parse_args(argv)
     if not a.venv and not a.user and not a.python:
         ap.error("give --venv <path>, or --user [--python <interp>]")
@@ -1355,8 +1354,8 @@ def _setup_summary_card(keys_counts, lanes_st, wired):
 
 def cmd_init(argv=None):
     argv = list(argv or [])
-    quick = bool({"--quick", "--yes", "-y"} & set(argv))   # fast path: write defaults, zero prompts (CI/onboarding)
-    do_all = "--all" in argv                                # also WIRE the tools (gate/MCP/receipt/rule/skills)
+    quick = bool({registered_cli_option_token('init/--quick'), registered_cli_option_token('init/--yes'), registered_cli_option_token('init/-y')} & set(argv))   # fast path: write defaults, zero prompts (CI/onboarding)
+    do_all = registered_cli_option_token('init/--all') in argv                                # also WIRE the tools (gate/MCP/receipt/rule/skills)
     _mode = "  (--all --quick: full setup, no prompts)" if (quick and do_all) else \
             "  (--quick: writing defaults, no prompts)" if quick else \
             "  (--all: also wiring your tools)" if do_all else ""
@@ -1365,8 +1364,8 @@ def cmd_init(argv=None):
     print("  Optionally connect to a team/org dashboard (llmspendguard.com) to roll spend up across your team.")
     print("  This also auto-detects your $0 subscription lanes; add `--all` to wire the gate, MCP tools, in-chat "
           "receipt, assistant rule + slash-commands in one go (`--all --quick` = zero prompts).\n")
-    connect = "--connect" in argv
-    if not connect and "--local" not in argv and not quick:
+    connect = registered_cli_option_token('init/--connect') in argv
+    if not connect and registered_cli_option_token('init/--local') not in argv and not quick:
         try:
             connect = input("  Connect to a team/org now? (needs an org key from your admin; or use `spendguard saas link` later) [y/N]\n  > ").strip().lower() in ("y", "yes")
         except EOFError:
@@ -1387,7 +1386,7 @@ def cmd_init(argv=None):
             pass
     # Two ways to set caps: --chat (one caged LLM call parses your plain-English budgets) or the default
     # deterministic prompts. --chat falls back to prompts if no key / the call fails.
-    chat = "--chat" in (argv or [])
+    chat = registered_cli_option_token('init/--chat') in (argv or [])
     chat_set = False
     if chat:
         print("\n  Conversational setup (--chat):")

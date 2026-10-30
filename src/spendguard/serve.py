@@ -17,6 +17,8 @@ SECURITY. This endpoint SPENDS money and rides your gate/keys, so it is localhos
 network-exposed host REQUIRES a Bearer token (SPENDGUARD_SERVE_TOKEN) or it refuses to start — an open one is a
 spend-and-exfiltrate hole.
 """
+
+from .capability_cli_parsing import add_registered_cli_argument
 import json
 import os
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -158,8 +160,8 @@ def cmd(argv=None):
     import sys
     ap = argparse.ArgumentParser(prog="spendguard serve",
                                  description="Cross-LLM ask surface over localhost HTTP (POST /ask).")
-    ap.add_argument("--host", default=DEFAULT_HOST, help="bind host (default 127.0.0.1; a non-loopback host needs a token)")
-    ap.add_argument("--port", type=int, default=DEFAULT_PORT)
+    add_registered_cli_argument(ap, 'serve/serve.cmd/ap/--host', default=DEFAULT_HOST)
+    add_registered_cli_argument(ap, 'serve/serve.cmd/ap/--port', type=int, default=DEFAULT_PORT)
     a = ap.parse_args(argv)
     try:
         serve(host=a.host, port=a.port, token=os.environ.get("SPENDGUARD_SERVE_TOKEN"))

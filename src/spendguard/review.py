@@ -8,6 +8,8 @@ and the reconstructed quality. The reasoner judges smart-vs-wasteful and emits C
 insights — IF {task_class/regime/output_shape} THEN {action} BECAUSE {mechanism}, with a quality_basis —
 so each learning is reusable and (when scrubbed) shareable. Caged (spendguard:review), estimate-first.
 """
+
+from .capability_cli_parsing import add_registered_cli_argument
 from . import calls, callio, learn, config, pricing
 from .submit import _count_tokens
 
@@ -162,8 +164,8 @@ def _persist_review_insight(text):
 def main(argv=None):
     import argparse
     ap = argparse.ArgumentParser(prog="spendguard review")
-    ap.add_argument("--top", type=int, default=10, help="how many top-cost (intent,model) usages to audit")
-    ap.add_argument("--run", action="store_true", help="actually spend (default: estimate). Capped by caps.meta.")
+    add_registered_cli_argument(ap, 'review/review.main/ap/--top', type=int)
+    add_registered_cli_argument(ap, 'review/review.main/ap/--run')
     a = ap.parse_args(argv)
     review(run=a.run, top=a.top)
     return 0

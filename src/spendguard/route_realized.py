@@ -1,5 +1,7 @@
 """Read-only realized-routing history from the calls ledger. No calls, probes, or prices."""
 
+from .capability_cli_parsing import add_registered_cli_argument
+
 import argparse
 import json
 from pathlib import Path
@@ -32,11 +34,11 @@ def routing_summary(intent, *, since=None, as_of=None):
 
 def cmd(rest):
     ap = argparse.ArgumentParser(prog="spendguard route-realized")
-    ap.add_argument("--intent", required=True, help="exact calls.intent label")
-    ap.add_argument("--since", help="inclusive lower ts bound (ISO date/timestamp string)")
-    ap.add_argument("--as-of", dest="as_of", help="inclusive upper ts bound (ISO date/timestamp string)")
-    ap.add_argument("--limit", type=int, default=20, help="maximum recent samples (default 20)")
-    ap.add_argument("--json", action="store_true", help="emit the full report as JSON")
+    add_registered_cli_argument(ap, 'route-realized/route_realized.cmd/ap/--intent')
+    add_registered_cli_argument(ap, 'route-realized/route_realized.cmd/ap/--since')
+    add_registered_cli_argument(ap, 'route-realized/route_realized.cmd/ap/--as-of')
+    add_registered_cli_argument(ap, 'route-realized/route_realized.cmd/ap/--limit', type=int)
+    add_registered_cli_argument(ap, 'route-realized/route_realized.cmd/ap/--json')
     a = ap.parse_args(rest)
     report = route_realized_report(a.intent, since=a.since, as_of=a.as_of, limit=a.limit)
     if a.json:

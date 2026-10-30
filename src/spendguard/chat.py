@@ -16,6 +16,8 @@ digest cache (work/story/show never re-hit the network). Value + work are attrib
 so a multi-day conversation lands on the right days. Org+project are assigned AGENTICALLY (`chat classify`) — a
 caged LLM reads each conversation and picks the best (org, project) from your taxonomy; nothing hardcoded.
 """
+
+from .capability_cli_parsing import registered_cli_option_token
 import os, sys, json, sqlite3, hashlib, subprocess, urllib.request, urllib.error, pathlib, tempfile, datetime, time
 import collections
 
@@ -1073,15 +1075,15 @@ def main(argv=None):
     argv = list(argv or [])
     sub = argv[0] if argv else "show"
     days = None
-    if "--days" in argv:
+    if registered_cli_option_token('chat/--days') in argv:
         try:
-            days = int(argv[argv.index("--days") + 1])
+            days = int(argv[argv.index(registered_cli_option_token('chat/--days')) + 1])
         except (ValueError, IndexError):
             pass
     by = "week"
-    if "--by" in argv:
+    if registered_cli_option_token('chat/--by') in argv:
         try:
-            by = argv[argv.index("--by") + 1]
+            by = argv[argv.index(registered_cli_option_token('chat/--by')) + 1]
         except IndexError:
             pass
     if sub == "test":
@@ -1101,30 +1103,30 @@ def main(argv=None):
         return 0
     if sub == "discover":                                  # agentically PROPOSE the org→project taxonomy
         sample = None
-        if "--sample" in argv:
+        if registered_cli_option_token('chat/--sample') in argv:
             try:
-                sample = int(argv[argv.index("--sample") + 1])
+                sample = int(argv[argv.index(registered_cli_option_token('chat/--sample')) + 1])
             except (ValueError, IndexError):
                 pass
-        return discover_taxonomy(run="--run" in argv, days=days, sample=sample, apply="--no-apply" not in argv)
+        return discover_taxonomy(run=registered_cli_option_token('chat/--run') in argv, days=days, sample=sample, apply=registered_cli_option_token('chat/--no-apply') not in argv)
     if sub == "classify":
-        return classify_chat_allocations(run="--run" in argv, days=days, recls="--reclassify" in argv)
+        return classify_chat_allocations(run=registered_cli_option_token('chat/--run') in argv, days=days, recls=registered_cli_option_token('chat/--reclassify') in argv)
     if sub == "loop":                                      # one attribution-loop iteration (cron-friendly)
-        r = loop(run="--run" in argv, force_discover="--discover" in argv)
+        r = loop(run=registered_cli_option_token('chat/--run') in argv, force_discover=registered_cli_option_token('chat/--discover') in argv)
         if "skipped" in r:
             print("chat loop:", r["skipped"])
         return 1 if r.get("error") else 0
     if sub == "sync":
-        print("chat sync:", sync(dry="--dry" in argv))
+        print("chat sync:", sync(dry=registered_cli_option_token('chat/--dry') in argv))
         return 0
     if sub == "work":
         return show_chat_work(by=by, days=days)
     if sub == "story":
-        return story(by=by, days=days or 7, run="--run" in argv)
+        return story(by=by, days=days or 7, run=registered_cli_option_token('chat/--run') in argv)
     if sub in ("show", "list"):
-        if "--by-project" in argv:                         # project-first pivot (orthogonal dimension)
+        if registered_cli_option_token('chat/--by-project') in argv:                         # project-first pivot (orthogonal dimension)
             return show_by_project(days=days)
-        return show_chat_report(days=days, refresh="--no-refresh" not in argv)
+        return show_chat_report(days=days, refresh=registered_cli_option_token('chat/--no-refresh') not in argv)
     print("usage: spendguard chat {test|show|discover|classify|loop|work|story|sync|status|accept|push-taxonomy|"
           "enable|disable} [--by day|week|month|quarter] [--days N] [--run] [--reclassify] [--discover] [--sample N]")
     return 1

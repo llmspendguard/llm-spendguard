@@ -16,6 +16,8 @@ red. Run it on a cadence — it is the guarantee that lanes + metered + failover
 
 Nothing here is spent in the default ($0) mode; --probe makes one tiny real metered call per lane (~$0.0002 each)."""
 
+from .capability_cli_parsing import add_registered_cli_argument
+
 import time
 
 from . import config, gate
@@ -156,9 +158,7 @@ def cmd(argv=None):
     import argparse
     ap = argparse.ArgumentParser(prog="spendguard verify",
                                  description="Verify every money path (lanes, metered, failover, economics) is correct.")
-    ap.add_argument("--probe", action="store_true",
-                    help="also prove failover LIVE: force each lane down and confirm the call bills the metered API "
-                         "(one tiny real call per lane, ~$0.0002 each)")
+    add_registered_cli_argument(ap, 'verify/verify.cmd/ap/--probe')
     a = ap.parse_args(argv)
     verdict = verify_system(probe=a.probe)
     print(format_verify(verdict))

@@ -29,6 +29,8 @@ portable, self-contained surfaces (see serve.py). `handle(request)` is a pure fu
 dict|None) so the protocol is unit-tested without a live pipe. Read-only tools do NOT spend, so this server does
 not require the gate; a spending tool (bakeoff) will `require()` before it runs.
 """
+
+from .capability_cli_parsing import add_registered_cli_argument
 import json
 import logging
 import sys
@@ -1356,12 +1358,10 @@ def cmd(argv=None):
                                  description="spendguard's tools over MCP: the model-advisor plus read-only spend & "
                                              "compaction queries. Default stdio JSON-RPC; --http serves one WARM "
                                              "daemon sessions connect to. Register with `spendguard install-mcp`.")
-    ap.add_argument("--http", action="store_true",
-                    help="serve over HTTP (stdlib, POST /mcp) as one WARM daemon every session CONNECTS to via urllib, "
-                         "instead of spawning a stdio `spendguard mcp` per session.")
+    add_registered_cli_argument(ap, 'mcp/mcp_server.cmd/ap/--http')
     import os as _os
-    ap.add_argument("--host", default=_os.environ.get("SPENDGUARD_MCP_HOST", "127.0.0.1"))
-    ap.add_argument("--port", type=int, default=int(_os.environ.get("SPENDGUARD_MCP_PORT", "4913")))   # family: 4900 ccwatch · 4910 7thsense · 4911 symgrep · 4912 honestreview · 4913 spendguard
+    add_registered_cli_argument(ap, 'mcp/mcp_server.cmd/ap/--host', default=_os.environ.get('SPENDGUARD_MCP_HOST', '127.0.0.1'))
+    add_registered_cli_argument(ap, 'mcp/mcp_server.cmd/ap/--port', type=int, default=int(_os.environ.get('SPENDGUARD_MCP_PORT', '4913')))   # family: 4900 ccwatch · 4910 7thsense · 4911 symgrep · 4912 honestreview · 4913 spendguard
     args = ap.parse_args(argv)
     if args.http:
         # WARM SHARED DAEMON = SINGLETON (one per port): a second start detects the incumbent (flock) and exits 0, so a

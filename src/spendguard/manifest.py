@@ -1,6 +1,8 @@
 """Persisted inventory of every locally discovered spendguard surface."""
 from __future__ import annotations
 
+from .capability_cli_parsing import add_registered_cli_argument
+
 import argparse
 from datetime import datetime, timezone
 import importlib.metadata
@@ -286,9 +288,9 @@ def read_surface_manifest() -> dict:
 def manifest_command(argv=None) -> int:
     """Build or show the persisted complete surface inventory."""
     parser = argparse.ArgumentParser(prog="spendguard manifest")
-    parser.add_argument("action", nargs="?", choices=("build", "show"), default="build")
-    parser.add_argument("--json", action="store_true")
-    parser.add_argument("--roots", nargs="+")
+    add_registered_cli_argument(parser, 'manifest/manifest.manifest_command/parser/action')
+    add_registered_cli_argument(parser, 'manifest/manifest.manifest_command/parser/--json')
+    add_registered_cli_argument(parser, 'manifest/manifest.manifest_command/parser/--roots')
     arguments = parser.parse_args(argv)
     result = build_surface_manifest(roots=arguments.roots) if arguments.action == "build" else read_surface_manifest()
     if arguments.json:

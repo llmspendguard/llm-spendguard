@@ -12,6 +12,8 @@ Storage is BOUNDED: we keep at most `cap` samples per (intent, model) — enough
 confidence interval, not every request. Shares the spendguard db. Quality is written back by the caged
 judge (advisor.reconstruct_advisor_history). RLock — reentrant.
 """
+
+from .capability_cli_parsing import add_registered_cli_argument
 import json, threading, datetime
 import logging
 import traceback
@@ -849,9 +851,8 @@ def status_main(argv=None):
     capture is even ON. $0. Use it before `effort-titrate`/`bakeoff` to see which intents have replay bodies yet."""
     import argparse
     ap = argparse.ArgumentParser(prog="spendguard callio-status")
-    ap.add_argument("--intent", default=None, help="comma-separated intent substrings to filter to "
-                    "(e.g. 'warden,7thsense,refute,icd'); default = every intent")
-    ap.add_argument("--json", action="store_true", help="machine-readable rows")
+    add_registered_cli_argument(ap, 'callio-status/callio.status_main/ap/--intent')
+    add_registered_cli_argument(ap, 'callio-status/callio.status_main/ap/--json')
     a = ap.parse_args(argv)
     rows = status_rows(a.intent.split(",") if a.intent else None)
     if a.json:
@@ -875,9 +876,9 @@ def status_main(argv=None):
 def main(argv=None):
     import argparse
     ap = argparse.ArgumentParser(prog="spendguard fetch-io")
-    ap.add_argument("--cap", type=int, default=DEFAULT_CAP, help="max samples per (intent, model)")
-    ap.add_argument("--limit-batches", type=int, help="cap how many batches to download (smoke test)")
-    ap.add_argument("--link-only", action="store_true", help="skip recovery; just (re)link recovered calls to conversations")
+    add_registered_cli_argument(ap, 'fetch-io/callio.main/ap/--cap', type=int, default=DEFAULT_CAP)
+    add_registered_cli_argument(ap, 'fetch-io/callio.main/ap/--limit-batches', type=int)
+    add_registered_cli_argument(ap, 'fetch-io/callio.main/ap/--link-only')
     a = ap.parse_args(argv)
     if not a.link_only:
         print(f"fetch-io — recovering real prompt+output samples from providers (free; cap {a.cap}/intent+model)…")

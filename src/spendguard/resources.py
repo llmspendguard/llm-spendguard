@@ -7,6 +7,8 @@ label) alongside project/org/contributor.
 Push path mirrors the LLM roll-up: run `spendguard resources sync` from a repo and it pushes only the GPU spend
 whose label maps to THAT repo's project, via that repo's key → the right org. Read-only against vast.ai (free).
 """
+
+from .capability_cli_parsing import registered_cli_option_token
 import json
 import os
 import pathlib
@@ -934,16 +936,16 @@ def cmd(argv=None):
         print("resources snapshot:", record_instance_history())
         return 0
     if sub == "sync":
-        print("resources sync:", sync(dry="--dry" in argv))
+        print("resources sync:", sync(dry=registered_cli_option_token('resources/--dry') in argv))
         return 0
     if sub == "discover":                                  # mine transcripts → destroyed-box identity + attribution
-        if "--agentic" in argv:                            # LLM reads conversations (caged, estimate-first)
-            r = discover_agentic(run="--run" in argv, record="--record" in argv)
+        if registered_cli_option_token('resources/--agentic') in argv:                            # LLM reads conversations (caged, estimate-first)
+            r = discover_agentic(run=registered_cli_option_token('resources/--run') in argv, record=registered_cli_option_token('resources/--record') in argv)
             import collections as _c
             byp = _c.Counter((i.get("project") or "(unattributed)") for i in r.get("instances", []))
             print(f"agentic discover: {len(r.get('instances', []))} instances over {r['sessions']} sessions; by project {dict(byp)}; recorded {len(r.get('recorded', []))}")
         else:                                              # free deterministic identity scan
-            r = discover_instances(record="--record" in argv)
+            r = discover_instances(record=registered_cli_option_token('resources/--record') in argv)
             print(f"discover: by project {r['by_project']}; {len(r['uncaptured'])} uncaptured; recorded {len(r['recorded'])}")
         return 0
     # show: per-project attributed + the account reconcile gap

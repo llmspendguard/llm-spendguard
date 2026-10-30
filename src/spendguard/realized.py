@@ -11,6 +11,8 @@ before/after measurement, not an estimate), so the org dashboard's "≥ certain"
 Sync is INCREMENTAL and idempotent: state in ~/.spendguard/realized_state.json tracks the calls already
 counted per intent, so re-running never double-records. Zero LLM spend — pure corpus arithmetic.
 """
+
+from .capability_cli_parsing import add_registered_cli_argument
 import logging
 from pathlib import Path
 
@@ -116,9 +118,9 @@ def main(argv=None):
     import sys, argparse, json as _json
     ap = argparse.ArgumentParser(prog="spendguard realized",
                                  description="measured before/after $ per call around each insight's adoption (no counterfactuals)")
-    ap.add_argument("--intent", help="one intent only")
-    ap.add_argument("--json", action="store_true")
-    ap.add_argument("--sync", action="store_true", help="record NEW positive realized $ into the guarded pipeline (idempotent)")
+    add_registered_cli_argument(ap, 'realized/realized.main/ap/--intent')
+    add_registered_cli_argument(ap, 'realized/realized.main/ap/--json')
+    add_registered_cli_argument(ap, 'realized/realized.main/ap/--sync')
     a = ap.parse_args(sys.argv[2:] if argv is None else argv)
     rows = measure(intent=a.intent)
     if a.json:

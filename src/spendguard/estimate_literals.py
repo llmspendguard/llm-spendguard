@@ -24,6 +24,8 @@ This is the sibling of token_caps.py — same discipline, different subject (tha
 on a call, this one guards the PROVENANCE of a quoted price) — and it reuses that module's AST helpers
 rather than growing a second copy of them.
 """
+
+from .capability_cli_parsing import registered_cli_option_token
 import ast
 import pathlib
 
@@ -158,7 +160,7 @@ def cmd(argv=None):
         print("                a quote must come from a measured sample (estimate.fit_from_sample)")
     for s in res["unjudged"]:
         print(f"  unjudged      {s['file']}:{s['symbol']} {s['fn']}{tuple(s['literals'])}")
-    if "--judge" not in argv:
+    if registered_cli_option_token('estimate-literals/--judge') not in argv:
         return 1 if (res["unjudged"] or res["failed"]) else 0
 
     from . import verdict_ledger

@@ -7,6 +7,8 @@ can check it would have caught known-good decisions (pack it, Opus-cheaper, don'
 
 This is the evidence layer. The reasoning/LLM "learning advisor" (Layer 2) sits on top of this.
 """
+
+from .capability_cli_parsing import add_registered_cli_argument
 import argparse
 from pathlib import Path
 from . import config, ledger_read
@@ -268,8 +270,8 @@ def _print_unmeasured_for_intent(gaps):
 
 def main(argv=None):
     ap = argparse.ArgumentParser()
-    ap.add_argument("--intent")
-    ap.add_argument("--plan", help="the model you're about to use — shows the delta vs the recommendation")
-    ap.add_argument("--as-of", help="replay the advisor as of this date (YYYY-MM-DD) — backtest")
+    add_registered_cli_argument(ap, 'advise/advise.main/ap/--intent')
+    add_registered_cli_argument(ap, 'advise/advise.main/ap/--plan')
+    add_registered_cli_argument(ap, 'advise/advise.main/ap/--as-of')
     a = ap.parse_args(argv)
     return advise(intent=a.intent, plan=a.plan, as_of=a.as_of)

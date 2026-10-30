@@ -1,6 +1,8 @@
 """Deterministic, subprocess-isolated audit of workspace LLM consumers."""
 from __future__ import annotations
 
+from .capability_cli_parsing import add_registered_cli_argument
+
 import argparse
 import ast
 import json
@@ -409,10 +411,10 @@ def render_consumer_audit_table(result):
 
 def consumer_audit_command(argv=None, deployed_sha=None):
     parser = argparse.ArgumentParser(prog="spendguard consumer-audit")
-    parser.add_argument("--json", action="store_true")
-    parser.add_argument("--roots", nargs="+")
-    parser.add_argument("--dry-run", action="store_true")
-    parser.add_argument("--no-auto-arm", action="store_true")
+    add_registered_cli_argument(parser, 'consumer-audit/consumer_audit.consumer_audit_command/parser/--json')
+    add_registered_cli_argument(parser, 'consumer-audit/consumer_audit.consumer_audit_command/parser/--roots')
+    add_registered_cli_argument(parser, 'consumer-audit/consumer_audit.consumer_audit_command/parser/--dry-run')
+    add_registered_cli_argument(parser, 'consumer-audit/consumer_audit.consumer_audit_command/parser/--no-auto-arm')
     arguments = parser.parse_args(argv)
     if deployed_sha is None:
         from .release import green_pointer

@@ -9,6 +9,8 @@ model in a group), turning a silent misconfiguration into an error when someone 
 
 route_utility owns the ROUTING (rank_for_tier); this module owns the DECLARATION + validation + CLI.
 """
+
+from .capability_cli_parsing import registered_cli_option_token
 import time
 
 from . import config, lane_catalog, route_utility
@@ -141,8 +143,8 @@ def main(argv=None):
     """`spendguard tiers` — show + VALIDATE the bulk-lane routing groups; `tiers set <group> <model…>` declares one,
     refusing an unpriced model at the moment of declaration (the only moment anyone is watching)."""
     argv = list(argv or [])
-    probe = "--probe" in argv
-    argv = [a for a in argv if a != "--probe"]
+    probe = registered_cli_option_token('tiers/--probe') in argv
+    argv = [a for a in argv if a != registered_cli_option_token('tiers/--probe')]
     if probe:
         print("probing each enabled lane's CLI for its declared model ($0: a miss is an error row, never metered)…")
         reachability_probe(save=True)

@@ -25,6 +25,8 @@ so arithmetic is correct here; the QUALITY bar stays an LLM judgement elsewhere 
 hardcodes a price (pricing.py is the source) and degrades HONESTLY: a lane whose cap is not yet converged is not
 priced (no invented rate), and the recommendation falls to batch, said out loud in `why`.
 """
+
+from .capability_cli_parsing import add_registered_cli_argument
 import datetime
 
 from . import pricing
@@ -268,13 +270,13 @@ def cmd(argv):
     import argparse
     import json as _json
     ap = argparse.ArgumentParser(prog="spendguard route-cost")
-    ap.add_argument("intent", help="the job-type label the calls are tagged under")
-    ap.add_argument("--n", type=int, required=True, help="number of calls (tasks) in the job")
-    ap.add_argument("--in", dest="in_tok", type=int, default=None, help="input tokens per call (default: = --out)")
-    ap.add_argument("--out", dest="out_tok", type=int, default=None, help="output tokens per call (default: measured p90)")
-    ap.add_argument("--lane", default=None, help="force a lane (default: the first converged one)")
-    ap.add_argument("--batch-model", dest="batch_model", default=None, help="metered model for the batch leg (default: config advisor.batch_model)")
-    ap.add_argument("--json", action="store_true", help="emit the raw result as JSON")
+    add_registered_cli_argument(ap, 'route-cost/route_economics.cmd/ap/intent')
+    add_registered_cli_argument(ap, 'route-cost/route_economics.cmd/ap/--n', type=int)
+    add_registered_cli_argument(ap, 'route-cost/route_economics.cmd/ap/--in', type=int)
+    add_registered_cli_argument(ap, 'route-cost/route_economics.cmd/ap/--out', type=int)
+    add_registered_cli_argument(ap, 'route-cost/route_economics.cmd/ap/--lane')
+    add_registered_cli_argument(ap, 'route-cost/route_economics.cmd/ap/--batch-model')
+    add_registered_cli_argument(ap, 'route-cost/route_economics.cmd/ap/--json')
     a = ap.parse_args(argv)
     r = route_report(a.intent, a.n, in_tok=a.in_tok, out_tok=a.out_tok, lane=a.lane, batch_model=a.batch_model)
     if a.json:

@@ -12,6 +12,8 @@ report (verify the realized hit rate climbed).
 
 CLI: `spendguard cache-test [--script P | --from-intent X] [--model M] [--n 3] [--run]`.
 """
+
+from .capability_cli_parsing import add_registered_cli_argument
 import os, re
 from . import config, calls, pricing
 from .submit import _count_tokens
@@ -199,11 +201,11 @@ def cache_test(system, users, model=None, run=False):
 def main(argv=None):
     import argparse
     ap = argparse.ArgumentParser(prog="spendguard cache-test")
-    ap.add_argument("--script", help="extract the big system prompt from this .py to test")
-    ap.add_argument("--from-intent", help="use the common prefix of this intent's recovered prompts")
-    ap.add_argument("--model", help="model to test (default: advisor_judge_model)")
-    ap.add_argument("--n", type=int, default=3, help="calls to run (1 cold + n-1 warm)")
-    ap.add_argument("--run", action="store_true", help="actually call (default: estimate). Caged by caps.meta.")
+    add_registered_cli_argument(ap, 'cache-test/cachetest.main/ap/--script')
+    add_registered_cli_argument(ap, 'cache-test/cachetest.main/ap/--from-intent')
+    add_registered_cli_argument(ap, 'cache-test/cachetest.main/ap/--model')
+    add_registered_cli_argument(ap, 'cache-test/cachetest.main/ap/--n', type=int)
+    add_registered_cli_argument(ap, 'cache-test/cachetest.main/ap/--run')
     a = ap.parse_args(argv)
     # --n IS HONOURED IN EVERY BRANCH. users stayed None through the --script path, so the three-item
     # fallback list capped that run at 3 calls however large --n was: `--n 10` measured 1 cold + 2 warm and
