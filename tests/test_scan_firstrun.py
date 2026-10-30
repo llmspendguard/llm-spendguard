@@ -103,8 +103,9 @@ check("exit 0 with no keys and no config", rc == 0)
 check("--days validates its argument", scan.main(["--days", "abc"]) == 2)
 
 print("-- wired into the CLI as a first-class command --")
-from spendguard import cli
-check("`spendguard scan` dispatches", 'cmd == "scan"' in inspect.getsource(cli._dispatch))
+from _script_checks import cli_dispatch_preserves_owner_call
+check("`spendguard scan` dispatches",
+      cli_dispatch_preserves_owner_call("scan", "spendguard.scan:main", "rest"))
 
 print(f"\n{'[FAIL]' if failures else 'OK'} test_scan_firstrun: {failures} failure(s)")
 sys.exit(1 if failures else 0)

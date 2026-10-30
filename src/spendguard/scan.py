@@ -18,6 +18,8 @@ Designed to be the `uvx --from llm-spendguard spendguard scan` command: read-onl
 you don't own.
 """
 
+from .capability_cli_parsing import registered_cli_option_token
+
 
 def collect(days=None):
     """{source display name: {sessions, projects, models, days, total_usd, error}} — via the transcript PORT
@@ -125,7 +127,7 @@ def main(argv=None):
     argv = list(argv or [])
     days = None
     for i, a in enumerate(argv):
-        if a == "--days" and i + 1 < len(argv):
+        if a == registered_cli_option_token('scan/--days') and i + 1 < len(argv):
             try:
                 days = int(argv[i + 1])
             except ValueError:

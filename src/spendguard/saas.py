@@ -25,6 +25,8 @@ The HTTP contract the server repo will implement (versioned under {url}/v1); ide
     GET  /v1/insights?scope=team|org     -> {"abstracts": [...]}                       (pull pooled learnings)
 All requests send `Authorization: Bearer <api_key>` and `X-Spendguard-Client: <version>`.
 """
+
+from .capability_cli_parsing import registered_cli_option_token
 import json
 import math
 import numbers
@@ -1128,11 +1130,11 @@ def cmd(argv=None):
         except Exception as e:
             print(f"ping failed: {e}"); return 1
     if sub == "sync":                                 # respects cadence with --if-due (cron/report-safe)
-        r = sync(if_due="--if-due" in argv)
+        r = sync(if_due=registered_cli_option_token('saas/--if-due') in argv)
         print("sync:", r)
         return 0 if "skipped" not in r else 1
     if sub == "push":                                 # force a push now (ignores cadence); --dry = print payload, no send
-        if "--dry" in argv:
+        if registered_cli_option_token('saas/--dry') in argv:
             print(json.dumps(push_rollup(dry=True), indent=2)); return 0
         try:
             print("rollup:", push_rollup()); print("insights:", push_insights()); return 0
@@ -1150,9 +1152,9 @@ def cmd(argv=None):
         # another under-billed forever. The fix existed, was tested, was documented, and could not be run.
         # Dry by default, like every other mutation here: `--apply` to write.
         from . import budget
-        r = budget.reattribute_providers(apply="--apply" in argv)
+        r = budget.reattribute_providers(apply=registered_cli_option_token('saas/--apply') in argv)
         print(f"reattribute: {r}")
-        if not ("--apply" in argv):
+        if not (registered_cli_option_token('saas/--apply') in argv):
             print("  (dry run — nothing written. Re-run with --apply to correct the rows.)")
         return 0
     if sub == "audit":                                # triple-check completeness: every batch accounted (free)
@@ -1165,7 +1167,7 @@ def cmd(argv=None):
         print(_j.dumps(crosscheck(), indent=2))
         return 0
     if sub == "link":                                 # device-link: approve in browser → verified email = contributor
-        r = link(open_browser="--no-open" not in argv)
+        r = link(open_browser=registered_cli_option_token('saas/--no-open') not in argv)
         if "error" in r:
             print("link failed:", r["error"]); return 1
         return 0

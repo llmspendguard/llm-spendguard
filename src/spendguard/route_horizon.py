@@ -23,6 +23,8 @@ decision. NO FORECAST of unknown future work: the plan is the SUBMITTED set agai
 window's capacity + the reset grid). It degrades HONESTLY — an unpriced batch/realtime model or an unconverged lane is
 said out loud and the affected tokens are reported as `unpriced`, never invented at $0.
 """
+
+from .capability_cli_parsing import add_registered_cli_argument
 import datetime
 
 from . import pricing, route_economics
@@ -270,12 +272,12 @@ def cmd(argv):
     import argparse
     import json as _json
     ap = argparse.ArgumentParser(prog="spendguard route-horizon")
-    ap.add_argument("groups", nargs="+", help="intent:n[:urgent|deferrable] — e.g. loinc-map:5000 triage:50:urgent")
-    ap.add_argument("--in", dest="in_tok", type=int, default=None, help="input tokens per call (default: = --out)")
-    ap.add_argument("--out", dest="out_tok", type=int, default=None, help="output tokens per call (default: measured p90 per intent)")
-    ap.add_argument("--lane", default=None, help="force a lane (default: the first converged one)")
-    ap.add_argument("--batch-model", dest="batch_model", default=None, help="metered model for the batch leg (default: config advisor.batch_model)")
-    ap.add_argument("--json", action="store_true", help="emit the raw result as JSON")
+    add_registered_cli_argument(ap, 'route-horizon/route_horizon.cmd/ap/groups')
+    add_registered_cli_argument(ap, 'route-horizon/route_horizon.cmd/ap/--in', type=int)
+    add_registered_cli_argument(ap, 'route-horizon/route_horizon.cmd/ap/--out', type=int)
+    add_registered_cli_argument(ap, 'route-horizon/route_horizon.cmd/ap/--lane')
+    add_registered_cli_argument(ap, 'route-horizon/route_horizon.cmd/ap/--batch-model')
+    add_registered_cli_argument(ap, 'route-horizon/route_horizon.cmd/ap/--json')
     a = ap.parse_args(argv)
     parsed = []
     for spec in a.groups:

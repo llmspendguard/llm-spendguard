@@ -12,6 +12,8 @@ is the provider's own bill; everything else must reconcile to it, loudly, every 
 Free (provider GETs + one server GET). Run daily.
 """
 
+from .capability_cli_parsing import registered_cli_option_token
+
 from . import config
 
 WARN_FRAC = 0.15      # |recorded − truth| / truth beyond this → WARN
@@ -123,7 +125,7 @@ def cmd(argv=None):
     since = None
     if argv:
         for i, a in enumerate(argv):
-            if a == "--since" and i + 1 < len(argv):
+            if a == registered_cli_option_token('trust/--since') and i + 1 < len(argv):
                 since = argv[i + 1]
     r = trust_report(since=since)
     lv = r["ledger_verdict"]

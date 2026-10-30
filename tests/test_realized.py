@@ -92,8 +92,10 @@ r3 = realized.sync_to_guarded()
 record_script_check(fails, "later calls sync only the increment (5 × $0.06 = $0.30)", abs(r3["synced_usd"] - 0.30) < 1e-6)
 
 import inspect
-from spendguard import cli, report
-record_script_check(fails, "CLI wired: `spendguard realized`", '"realized"' in inspect.getsource(cli))
+from spendguard import report
+from _script_checks import cli_dispatch_preserves_owner_call
+record_script_check(fails, "CLI wired: `spendguard realized`",
+                    cli_dispatch_preserves_owner_call("realized", "spendguard.realized:main", "none"))
 record_script_check(fails, "report wired: realized sync + auto_fresh", "sync_to_guarded" in inspect.getsource(report.generate_report)
    and "auto_fresh" in inspect.getsource(report.generate_report))
 

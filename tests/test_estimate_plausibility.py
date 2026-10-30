@@ -113,8 +113,9 @@ check("and the exclusion block sits after the total, not before it",
 print("-- the operator view exposes the arithmetic instead of auto-repairing --")
 sus = budget.suspect_batches(DAY)
 check("the suspect row is listed with its token count", any(s["ts"] == ts for s in sus))
-from spendguard import cli
-check("`spendguard quarantine` is dispatched", 'cmd == "quarantine"' in inspect.getsource(cli._dispatch))
+from _script_checks import cli_dispatch_preserves_owner_call
+check("`spendguard quarantine` is dispatched",
+      cli_dispatch_preserves_owner_call("quarantine", "spendguard.cli:cli_core_quarantine", "context"))
 check("listing is READ-ONLY — it reports, it does not tag anything",
       budget.suspect_batches(DAY) is not None
       and len(budget.quarantined_since(DAY)) == len(q))

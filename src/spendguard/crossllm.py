@@ -28,6 +28,8 @@ Concurrency/rate limiting is automatic: every call routes through the dispatch g
     for text in r.answers:                          # only OK results; failures are never in here
         ...
 """
+
+from .capability_cli_parsing import add_registered_cli_argument
 from . import vendor_call, pricing, gate, config, calls
 
 # Named defaults (a value with a name, overridable per call) — never a literal at a call site.
@@ -418,21 +420,18 @@ def cmd(argv=None):
     import sys as _sys
     ap = argparse.ArgumentParser(prog="spendguard ask",
                                  description="Run one prompt across multiple LLMs; honest per-vendor coverage.")
-    ap.add_argument("prompt", nargs="?", help="the prompt text; omit to read from stdin")
-    ap.add_argument("--vendors", help="comma-separated vendor:model (e.g. "
-                                      "anthropic:claude-opus-4-8,openai:gpt-5.5,moonshot:kimi-k3,zai:glm-5.3); "
-                                      "omit to use config ask.default_vendors")
-    ap.add_argument("--n", type=int, default=None, help="use only this many of the vendors (the first N) — you pick the panel size")
-    ap.add_argument("--schema", help="path to a JSON Schema the answer must satisfy")
-    ap.add_argument("--system", help="system prompt")
-    ap.add_argument("--purpose", default="ask", help="intent tag for attribution in the ledger")
-    ap.add_argument("--deadline", type=float, default=None, help="per-vendor deadline seconds")
-    ap.add_argument("--budget", type=float, default=None, help="refuse if the estimated metered $ exceeds this")
-    ap.add_argument("--refuse-billed", action="store_true",
-                    help="explicit $0-or-fail mode; default ensures success and may use a loud metered fallback")
-    ap.add_argument("--mode", choices=["all", "first"], default="all")
-    ap.add_argument("--require", type=int, default=None, help="for --mode first: how many must answer")
-    ap.add_argument("--json", action="store_true", help="emit the honest machine-readable result")
+    add_registered_cli_argument(ap, 'ask/crossllm.cmd/ap/prompt')
+    add_registered_cli_argument(ap, 'ask/crossllm.cmd/ap/--vendors')
+    add_registered_cli_argument(ap, 'ask/crossllm.cmd/ap/--n', type=int)
+    add_registered_cli_argument(ap, 'ask/crossllm.cmd/ap/--schema')
+    add_registered_cli_argument(ap, 'ask/crossllm.cmd/ap/--system')
+    add_registered_cli_argument(ap, 'ask/crossllm.cmd/ap/--purpose')
+    add_registered_cli_argument(ap, 'ask/crossllm.cmd/ap/--deadline', type=float)
+    add_registered_cli_argument(ap, 'ask/crossllm.cmd/ap/--budget', type=float)
+    add_registered_cli_argument(ap, 'ask/crossllm.cmd/ap/--refuse-billed')
+    add_registered_cli_argument(ap, 'ask/crossllm.cmd/ap/--mode')
+    add_registered_cli_argument(ap, 'ask/crossllm.cmd/ap/--require', type=int)
+    add_registered_cli_argument(ap, 'ask/crossllm.cmd/ap/--json')
     a = ap.parse_args(argv)
     prompt = a.prompt if a.prompt is not None else _sys.stdin.read()
     if not (prompt or "").strip():

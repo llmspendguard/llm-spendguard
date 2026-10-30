@@ -8,6 +8,35 @@ from concurrent.futures import ThreadPoolExecutor
 from functools import partial
 
 
+def cli_dispatch_preserves_owner_call(command, handler_ref, invocation_policy, *, legacy_argv_prefix=None,
+                                     command_arguments=None):
+    """Execute the public CLI and verify its owning callable, arguments and return value."""
+    import sys
+    from unittest.mock import patch
+    from spendguard import cli
+
+    forwarded_rest = (["--dispatch-contract-option", "dispatch-contract-value"]
+                      if command_arguments is None else list(command_arguments))
+    forwarded_argv = [command, *forwarded_rest]
+    expected_result = object()
+    expected_arguments = {
+        "rest": (forwarded_rest,),
+        "none": (),
+        "command_prefix": (forwarded_argv,),
+        "context": (forwarded_rest, command, forwarded_argv),
+    }[invocation_policy]
+    module_name, attribute_name = handler_ref.split(":", 1)
+    original_argv = sys.argv[:]
+    try:
+        with patch(module_name + "." + attribute_name, return_value=expected_result) as owner_mock:
+            result = cli._dispatch(forwarded_argv)
+            owner_mock.assert_called_once_with(*expected_arguments)
+            argv_preserved = legacy_argv_prefix is None or sys.argv == [legacy_argv_prefix, *forwarded_rest]
+            return result is expected_result and argv_preserved
+    finally:
+        sys.argv = original_argv
+
+
 def record_script_check(failures, label, cond, extra="", *, prefix="  ",
                         detail_prefix="  — ", coerce_condition=False,
                         assert_condition=False, return_condition=False, counters=None,

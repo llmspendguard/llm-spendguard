@@ -17,6 +17,8 @@ estimate row honestly carries ListCost with NO InvoiceId, never a BilledCost it 
 
 No LLM, no network, read-only. `spendguard focus-export [--since DATE] [--until DATE] [--format json|csv] [--out F]`.
 """
+
+from .capability_cli_parsing import registered_cli_option_token
 import csv
 import io
 import json
@@ -157,9 +159,9 @@ def main(argv=None):
     argv = list(argv if argv is not None else sys.argv[1:])
     def _opt(name, default=None):
         return argv[argv.index(name) + 1] if name in argv and argv.index(name) + 1 < len(argv) else default
-    since, until = _opt("--since"), _opt("--until")
-    fmt = (_opt("--format", "json") or "json").lower()
-    out = _opt("--out")
+    since, until = _opt(registered_cli_option_token('focus-export/--since')), _opt(registered_cli_option_token('focus-export/--until'))
+    fmt = (_opt(registered_cli_option_token('focus-export/--format'), "json") or "json").lower()
+    out = _opt(registered_cli_option_token('focus-export/--out'))
 
     rows = export_rows(since=since, until=until)
     summ = reconciliation_summary(rows)

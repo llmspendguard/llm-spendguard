@@ -29,6 +29,8 @@ portable, self-contained surfaces (see serve.py). `handle(request)` is a pure fu
 dict|None) so the protocol is unit-tested without a live pipe. Read-only tools do NOT spend, so this server does
 not require the gate; a spending tool (bakeoff) will `require()` before it runs.
 """
+
+from .capability_cli_parsing import add_registered_cli_argument
 import json
 import logging
 import sys
@@ -85,7 +87,7 @@ def _mcp_http_request_ledger_lifetime(connection):
             observer.join()
 
 
-def _tool_ledger_read(args):
+def capability_ledger_read_operation(args: dict):
     """Read the local ledger through the bounded library; never open or migrate it."""
     from . import ledger_read, receipt
     from .ledger import USD_COLS
@@ -128,7 +130,7 @@ def _tool_ledger_read(args):
 
 # ── tool implementations (each returns a JSON-able dict; the dispatcher wraps it in MCP content) ──
 
-def _tool_advise(args):
+def capability_advise_operation(args: dict):
     """Cost×quality ranking for an intent, from the local `calls` corpus — wraps advise.ranked (the same
     computation the `advise` CLI prints), so the MCP answer and the CLI can never disagree."""
     from . import advise
@@ -170,13 +172,13 @@ def _catalogue():
     return sorted(out, key=lambda row: (row["provider"] or "~", row["model"]))
 
 
-def _tool_models(args):
+def capability_models_operation(args: dict):
     cat = _catalogue()
     return {"count": len(cat), "models": cat,
             "note": "curated + your verified prices. Untried models beyond this are enumerated + measured by a bakeoff."}
 
 
-def _tool_recommend(args):
+def capability_recommend_operation(args: dict):
     """Agentic top-K on the cost×quality frontier for an intent, with an intent-set quality bar. This tool
     SPENDS a small, meta-capped LLM synthesis, so it fails closed if the interpreter is not gated, estimates
     first, and refuses when the estimate exceeds `budget_usd`."""
@@ -196,7 +198,7 @@ def _tool_recommend(args):
         return advisor.recommend_models(intent=intent, k=k, quality_bar=qbar, run=True)
 
 
-def _tool_bakeoff(args):
+def capability_bakeoff_operation(args: dict):
     """Measure cost×quality for a candidate slate on a sample of an intent's tasks, so untried models earn a
     $/good. A bakeoff makes REAL, metered workload calls — so it fails closed if not gated, and (crucially) it
     only RUNS when the caller passes an explicit `budget_usd`; without one it returns the ESTIMATE only, never
@@ -223,7 +225,7 @@ def _tool_bakeoff(args):
     return _bk.bakeoff(run=True, budget_usd=float(budget), **kw)
 
 
-def _tool_stability(args):
+def capability_stability_operation(args: dict):
     """Measure a model/lane's RUN-TO-RUN variance at PRODUCTION settings — the stability question temperature=0 cannot
     answer. Runs `k` replicates of each prompt on its normal path (the $0 lane at the plan's own sampling, NOT forced
     metered), parses each reply's outcome (by `marker`, e.g. 'DECISION:', when given — a fixed shape, not a judgement),
@@ -276,7 +278,7 @@ def _vision_cache_paths(model, prompt, images, schema, system):
     return d, os.path.join(d, key + ".json")
 
 
-def _tool_vision(args):
+def capability_vision_operation(args: dict):
     """Run ONE metered VISION call (image(s) + prompt) through the governed adapter. The subscription lanes are
     text-only CLIs, so a vision request rides the metered API (executor='api'), pixel-priced, and is bounded by a
     per-call deadline so a hung request cannot wedge the tool. Estimate-first: with NO budget_usd it returns ONLY
@@ -377,7 +379,7 @@ def _cc_label(conv, titles):
     return titles.get(conv) or (conv or "?")[:40]
 
 
-def _tool_spend_overview(_args):
+def capability_spend_overview_operation(_args: dict):
     from pathlib import Path
     from . import config, ledger_read
     path = config.db_path()
@@ -404,12 +406,12 @@ def _tool_spend_overview(_args):
                           "top_intents_by_saving": _dec["by_intent"]}}
 
 
-def _tool_overage_status(_args):
+def capability_overage_status_operation(_args: dict):
     from . import overage
     return overage.current_overage_status()
 
 
-def _tool_top_conversations(args):
+def capability_top_conversations_operation(args: dict):
     import contextlib
     import io
     by = (args.get("by") or "est").lower()
@@ -429,7 +431,7 @@ def _tool_top_conversations(args):
                               for c, v, n, mx in (row.values for row in rows)]}
 
 
-def _tool_conversation_cost(args):
+def capability_conversation_cost_operation(args: dict):
     conv = str(args.get("conversation_id") or "").strip()
     if not conv:
         return {"error": "pass conversation_id (a transcript uuid — from spendguard_top_conversations)"}
@@ -441,7 +443,7 @@ def _tool_conversation_cost(args):
             "note": "est-value and overage are separate axes; overage here is the observable upper bound"}
 
 
-def _tool_compaction_candidates(args):
+def capability_compaction_candidates_operation(args: dict):
     import contextlib
     import io
     from . import claudecode, compaction
@@ -459,7 +461,7 @@ def _tool_compaction_candidates(args):
             "note": "for a tailored, conversation-specific decision run `spendguard claude-code compact --tailor` (gated)"}
 
 
-def _tool_dispatch_state(args):
+def capability_dispatch_state_operation(args: dict):
     from . import dispatch, lane_queue
     if args.get("id") is not None:
         return lane_queue.queue_row_status(args["id"])
@@ -472,7 +474,7 @@ def _tool_dispatch_state(args):
             **st}
 
 
-def _tool_config(_args):
+def capability_config_operation(_args: dict):
     import os
     from . import config, config_schema
     knobs = []
@@ -503,7 +505,7 @@ HEALTH_DEFAULT_TIMEOUT_S = 20
 
 
 # name → (description, JSON-Schema for arguments, handler)
-def _tool_health(args):
+def capability_health_operation(args: dict):
     from . import reliability
     run = args.get("run", HEALTH_DEFAULT_RUN)
     timeout_s = int(args.get("timeout_s") or HEALTH_DEFAULT_TIMEOUT_S)
@@ -560,7 +562,7 @@ def _tool_health(args):
                         "metered_up": met_up, "metered_total": len(res["metered"]), "down": down}}
 
 
-def _tool_savings(args):
+def capability_savings_operation(args: dict):
     from . import guard
     s = guard.saved_since()
     ds = guard.decisions_summary()
@@ -578,7 +580,7 @@ def _tool_savings(args):
             "shed": shed}
 
 
-def _tool_version(args):
+def capability_version_operation(args: dict):
     """Which spendguard COMMIT this server process is running, the green pointer it should be on, and whether it
     is STALE — the $0 signal behind 'always serve the latest with the best'. A git-SHA compare + a small file
     read; a stale server hands off to a fresh process on its next request (auto-respawn)."""
@@ -594,7 +596,7 @@ def _tool_version(args):
             "ledger_path": str(Path(config.db_path()).resolve())}
 
 
-def _tool_route_cost(args):
+def capability_route_cost_operation(args: dict):
     """TRUE-cost batch-vs-lane-vs-combo routing split for an intent at volume N — wraps route_economics.report (the
     same computation the `route-cost` CLI prints), so the MCP answer and the CLI can never disagree. $0."""
     from . import route_economics
@@ -602,14 +604,14 @@ def _tool_route_cost(args):
                                         lane=args.get("lane"), batch_model=args.get("batch_model"))
 
 
-def _tool_route_realized(args):
+def capability_route_realized_operation(args: dict):
     """REALIZED routing history from the calls ledger; read-only and $0, not a projection."""
     from . import route_realized
     return route_realized.route_realized_report(args["intent"], since=args.get("since"),
                                                   as_of=args.get("as_of"), limit=args.get("limit", 20))
 
 
-def _tool_route_horizon(args):
+def capability_route_horizon_operation(args: dict):
     """HORIZON plan (item C) for a whole job SET — allocate groups across lane / batch / metered-realtime over the
     plan's reset-window horizon, honouring each group's URGENCY and the SHARED lane budget. Wraps
     route_horizon.horizon_report (the same computation the `route-horizon` CLI prints), so MCP and CLI never disagree. $0."""
@@ -618,7 +620,7 @@ def _tool_route_horizon(args):
                                         batch_model=args.get("batch_model"), realtime_model=args.get("realtime_model"))
 
 
-def _tool_plan_queue(args):
+def capability_plan_queue_operation(args: dict):
     """The $0 PREDICTIVE planner + async BATCH-JOB tracker state — the MCP twin of `spendguard plan-queue`, wrapping
     the same queue_planner.tick() (forecast of which vendor is about to 429, which intents to OFFLOAD to the Batch API
     and how to chunk them, which to PACE) plus batch_tracker.status() (open/settled/failed async batch jobs). DECIDES
@@ -632,7 +634,7 @@ def _tool_plan_queue(args):
     return t
 
 
-def _tool_run_jobs(args):
+def capability_run_jobs_operation(args: dict):
     """The whole-job contract (whole_job): hand spendguard a SET of jobs + a GOAL and it plans (batch vs lane vs
     metered, capability-matched per schema), budget-gates, executes, and returns. SPEND-SAFE for an agent surface:
     with NO goal.budget_usd it returns the PLAN + estimate ONLY ($0, executed=False) — never an unbounded fan; pass
@@ -649,7 +651,7 @@ def _tool_run_jobs(args):
     return {"executed": True, **whole_job.run_jobs(jobs, goal)}
 
 
-def _tool_delegate(args):
+def capability_delegate_operation(args: dict):
     """Offload a SELF-CONTAINED subtask through the same two-hop engine as the delegate CLI."""
     from . import delegate_router
     task = args.get("task")
@@ -680,305 +682,76 @@ def _tool_delegate(args):
     return delegate_router.wait_for_delegate_job_handoff(job_id)
 
 
-def _tool_delegate_status(args):
+def capability_delegate_status_operation(args: dict):
     """Read durable status for an agentic delegate job."""
     from . import delegate_jobs
     return delegate_jobs.read_delegate_job(args.get("job_id"))
 
 
-def _tool_delegate_result(args):
+def capability_delegate_result_operation(args: dict):
     """Collect the complete durable result for an agentic delegate job."""
     from . import delegate_jobs
     return delegate_jobs.read_delegate_job_result(args.get("job_id"))
 
 
-_TOOLS = {
-    "spendguard_ledger_read": (
-        "Read-only bounded typed ledger reads. Oversize, timeout and missing schema are loud errors; "
-        "count returns the true total without materializing rows. No model calls.",
-        {"type": "object", "properties": {
-            "operation": {"type": "string", "enum": list(LEDGER_READ_OPERATIONS)},
-            "table": {"type": "string", "enum": ["calls", "spend_events"]},
-            "group_by": {"type": "array", "items": {"type": "string"}},
-            "event_id": {"type": "string"}, "since": {"type": "string"},
-            "conv": {"type": "string"}, "deadline_s": {"type": "number"},
-            "until": {"type": "string"}, "path": {"type": "string"}},
-         "additionalProperties": False},
-        _tool_ledger_read),
-    "spendguard_delegate": (
-        "Offloads a SELF-CONTAINED AGENTIC workspace-write subtask to another provider plan; it does NOT reroute the "
-        "calling agent's own turns. Dry-run is default; execute=true needs a trusted cwd. For a one-shot "
-        "classification/gate/doctrine verdict use the one-shot router or spendguard ask with an intent. Codex is ~5s "
-        "warm; >75s is cold codex exec only. Get model ids from advisor.lane_models/lanes --catalog, not guesses; "
-        "see README.md's routing cheat-sheet. Agentic execute returns inline only if it finishes within the handoff "
-        "window; otherwise it returns a job_id. Collect with spendguard_delegate_result; the detached run and its "
-        "durable result survive a dropped request.",
-        {"type": "object", "properties": {
-            "task": {"type": "string", "description": "the complete self-contained task"},
-            "files": {"type": "array", "items": {"type": "string"},
-                      "description": "optional supporting file paths; each is read in full"},
-            "intent": {"type": "string", "description": "optional attribution/cost-control intent"},
-            "provider": {"type": "string", "description": "configured plan or auto (default auto)"},
-            "cwd": {"type": "string", "description": "absolute trusted target repo path; required for execute=true agentic tasks"},
-            "execute": {"type": "boolean", "description": "run hop 2; default false (dry-run)"}},
-         "required": ["task"], "additionalProperties": False},
-        _tool_delegate),
-    "spendguard_delegate_status": (
-        "Read the durable state and metadata of a detached agentic delegate job by job_id. $0, read-only.",
-        {"type": "object", "properties": {"job_id": {"type": "string"}},
-         "required": ["job_id"], "additionalProperties": False},
-        _tool_delegate_status),
-    "spendguard_delegate_result": (
-        "Collect the complete persisted result of a detached agentic delegate job by job_id. $0, read-only.",
-        {"type": "object", "properties": {"job_id": {"type": "string"}},
-         "required": ["job_id"], "additionalProperties": False},
-        _tool_delegate_result),
-    "spendguard_version": (
-        "Which spendguard COMMIT this MCP server is running, the green pointer it should be on, and whether it is "
-        "STALE (a newer gate-green commit was deployed). $0 — a git-SHA compare. If stale, the server hands off to "
-        "a fresh process on its next request, so the tools self-heal to the latest code (see `spendguard deploy`).",
-        {"type": "object", "properties": {}, "additionalProperties": False},
-        _tool_version),
-    "spendguard_health": (
-        "Live reachability of every $0 subscription LANE + every metered PROVIDER, PLUS the exact FIX for anything "
-        "down (which login/quota/API to fix) — a fast, BOUNDED health check. Each probe is time-bounded (timeout_s) "
-        "so ONE hung endpoint cannot wedge the sweep. Lanes are $0; the metered pings cost ~a few $0.0001; the "
-        "remediation is agentic + CACHED (only a NEW failure costs). Returns per-resource {reachable, executor, "
-        "cost, latency, reason}, an `actions` list (issue/fix/command per down resource), and a summary. The result "
-        "is cached so a down lane also surfaces in the receipt/notifier. Includes doctor's cached ledger leak "
-        "status and age (unknown if absent); never pulls live billing. run=false → estimate only ($0).",
-        {"type": "object", "properties": {
-            "run": {"type": "boolean", "default": HEALTH_DEFAULT_RUN,
-                    "description": "actually probe; false = $0 estimate only"},
-            "remediate": {"type": "boolean", "description": "include the agentic FIX for each down resource (default true; cached)"},
-            "timeout_s": {"type": "integer", "default": HEALTH_DEFAULT_TIMEOUT_S,
-                          "description": "per-probe bound in seconds — a dead endpoint fails this fast"}},
-         "additionalProperties": False},
-        _tool_health),
-    "spendguard_savings": (
-        "What spendguard SAVED — the THIRD axis, kept SEPARATE from real-$ spend and est-value (never summed into "
-        "either). Returns certain (measured: cache / cascade / gate-block avoided-spend) + counterfactual (est: "
-        "best-value / advisor model swaps priced vs the counterfactual), broken out by source, plus the count of "
-        "decisions booked and the saving per intent. This is the value-proof for the routing spendguard did. $0.",
-        {"type": "object", "properties": {}, "additionalProperties": False},
-        _tool_savings),
-    "spendguard_route_cost": (
-        "TRUE-cost routing for a BULK job: for an intent at volume N, the $ of running it on a subscription LANE "
-        "(priced at its true MARGINAL cost, never $0), the metered BATCH API, or a min-cost COMBO — plus the "
-        "recommendation and a plain 'why'. Prices a $0 lane at its real amortized rate + reclaims capacity that would "
-        "expire unused; the batch leg is ~half realtime, cap-free. $0, arithmetic on measured economics "
-        "(lane_economics + pricing); degrades honestly when a lane cap is still estimating.",
-        {"type": "object", "properties": {
-            "intent": {"type": "string", "description": "the job-type label the calls are tagged under"},
-            "n": {"type": "integer", "description": "number of calls (tasks) in the job"},
-            "in_tok": {"type": "integer", "description": "input tokens per call (default: = out_tok)"},
-            "out_tok": {"type": "integer", "description": "output tokens per call (default: measured p90)"},
-            "lane": {"type": "string", "description": "force a lane (default: the first converged one)"},
-            "batch_model": {"type": "string", "description": "metered model for the batch leg (default: config advisor.batch_model)"}},
-         "required": ["intent", "n"], "additionalProperties": False},
-        _tool_route_cost),
-    "spendguard_route_realized": (
-        "REALIZED routing history from the calls ledger for an intent: $0 subscription lanes vs metered API, "
-        "billed cost, served-model drift, falloff reasons, and recent samples. $0 and read-only; unlike route_cost "
-        "and route_horizon, this reports actual stored history rather than projecting a hypothetical job.",
-        {"type": "object", "properties": {
-            "intent": {"type": "string", "description": "the exact calls.intent label"},
-            "since": {"type": "string", "description": "inclusive lower ts bound (ISO date/timestamp string)"},
-            "as_of": {"type": "string", "description": "inclusive upper ts bound (ISO date/timestamp string)"},
-            "limit": {"type": "integer", "description": "maximum recent sample rows (default 20)"}},
-         "required": ["intent"], "additionalProperties": False},
-        _tool_route_realized),
-    "spendguard_route_horizon": (
-        "HORIZON plan (item C) for a whole job SET: given groups [{intent, n, urgency?}], allocate each across the "
-        "subscription LANE (~free/waste capacity that would expire at reset reclaimed FIRST), the metered BATCH API, "
-        "and the metered REALTIME API over the plan's reset-window horizon — honouring caller-declared URGENCY (an "
-        "urgent group's overflow → fast realtime; a deferrable group's → cheap cap-free batch; default deferrable) and "
-        "the ONE SHARED, scarce lane budget (drawn URGENT-FIRST so groups never double-bank the free tokens). Returns a "
-        "per-group allocation + total $ + plain 'why'. $0, arithmetic on measured economics; no forecast of unknown "
-        "future work; degrades honestly (unpriced tokens said out loud, never invented at $0).",
-        {"type": "object", "properties": {
-            "groups": {"type": "array", "description": "the job groups to plan over the horizon",
-                       "items": {"type": "object", "properties": {
-                           "intent": {"type": "string", "description": "the job-type label the calls are tagged under"},
-                           "n": {"type": "integer", "description": "number of calls in the group"},
-                           "urgency": {"type": "string", "description": "urgent | deferrable (default deferrable)"},
-                           "in_tok": {"type": "integer"}, "out_tok": {"type": "integer"}},
-                           "required": ["intent", "n"]}},
-            "lane": {"type": "string", "description": "force a lane (default: the first converged one)"},
-            "batch_model": {"type": "string", "description": "metered model for the batch leg (default: config advisor.batch_model)"},
-            "realtime_model": {"type": "string", "description": "metered model for urgent overflow (default: config advisor.model)"}},
-         "required": ["groups"], "additionalProperties": False},
-        _tool_route_horizon),
-    "spendguard_plan_queue": (
-        "The $0 PREDICTIVE queue planner + async batch-job state (the MCP twin of `spendguard plan-queue`): a forecast "
-        "of which vendor is about to breach its tokens/minute ceiling (a 429 BEFORE it happens), which intents to "
-        "OFFLOAD to the Batch API and how to chunk them, which to PACE — PLUS the tracked batch jobs (open/settled/"
-        "failed). It DECIDES; the drain executes — so it never spends and never mutates the queue. $0, read-only.",
-        {"type": "object", "properties": {}, "additionalProperties": False},
-        _tool_plan_queue),
-    "spendguard_run_jobs": (
-        "The WHOLE-JOB contract — hand spendguard a SET of jobs + a GOAL and it decides the plan (batch vs lane vs "
-        "metered, capability-matched to each job's schema), enforces the budget, executes, and returns; you never "
-        "hand-tune metered_only/batch/lanes/model per call. SPEND-SAFE: with NO goal.budget_usd it returns the PLAN + "
-        "estimate ONLY ($0, executed=false) — never an unbounded fan; pass goal.budget_usd to EXECUTE (the budget is "
-        "the estimate-first cap — an over-estimate, or a group whose cost is unknown, is refused BEFORE any spend). "
-        "Returns {executed, results (ready, keyed by job id), pending (async batch handles — settle later), plan, "
-        "receipt {est_usd, ran, batch_failures, refused_code}}. Batch groups are async (~half cost, ~24h).",
-        {"type": "object", "properties": {
-            "jobs": {"type": "array", "description": "the job set", "items": {
-                "type": "object", "properties": {
-                    "prompt": {"type": "string", "description": "the task prompt"},
-                    "intent": {"type": "string", "description": "job-type label — the routing + attribution key (required)"},
-                    "id": {"type": "string", "description": "stable id to key the result by (default task-<i>)"},
-                    "system": {"type": "string", "description": "optional system prompt"},
-                    "schema": {"type": "object", "description": "optional JSON schema — a strict one auto-routes to an enforcing path"}},
-                "required": ["prompt", "intent"], "additionalProperties": False}},
-            "goal": {"type": "object", "description": "budget_usd (estimate-first cap; required to EXECUTE), urgency "
-                     "(auto|realtime|batch), quality_bar (best-value model pick when set)",
-                     "properties": {"budget_usd": {"type": "number"}, "urgency": {"type": "string"},
-                                    "quality_bar": {"type": "string"}},
-                     "additionalProperties": False}},
-         "required": ["jobs"], "additionalProperties": False},
-        _tool_run_jobs),
-    "spendguard_advise": (
-        "Rank the models you have ALREADY used for a job-type ('intent') by cost-effectiveness at the quality it "
-        "held: $/good-result where quality is labeled, else $/M output. Returns the ranked models, the pick, and "
-        "caveats. Data-driven from your own local ledger; $0, no spend.",
-        {"type": "object", "properties": {
-            "intent": {"type": "string", "description": "the job-type to rank for (e.g. 'loinc-typing'); omit for all intents"},
-            "plan": {"type": "string", "description": "a model you're about to use ('vendor:model' or bare) — shows the delta vs the pick"},
-            "as_of": {"type": "string", "description": "YYYY-MM-DD — replay the ranking as of a past date (backtest)"}},
-         "additionalProperties": False},
-        _tool_advise),
-    "spendguard_models": (
-        "List the actionable model catalogue spendguard knows: curated + your own verified prices, each with its "
-        "per-1M input/output rates and provider. $0.",
-        {"type": "object", "properties": {}, "additionalProperties": False},
-        _tool_models),
-    "spendguard_recommend": (
-        "Recommend the best K models for a job-type ('intent') on the cost×quality frontier: the reasoner infers "
-        "how much precision the job needs (or honors your quality_bar) and ranks the CHEAPEST models that MEET "
-        "that bar, each with the measured $/good. Ranks from your OWN evidence (a bakeoff adds untried models). "
-        "SPENDS a small, meta-capped LLM call — estimates first and refuses over budget_usd.",
-        {"type": "object", "properties": {
-            "intent": {"type": "string", "description": "the job-type to recommend models for"},
-            "k": {"type": "integer", "description": "how many models to return (default 5)"},
-            "quality_bar": {"type": "string", "description": "optional: force the bar — 'precision-critical' | 'balanced' | 'cost-first'"},
-            "budget_usd": {"type": "number", "description": "optional: refuse if the estimated LLM cost exceeds this"}},
-         "additionalProperties": False},
-        _tool_recommend),
-    "spendguard_bakeoff": (
-        "Measure cost×quality for a SLATE of candidate models on a sample of a job-type's ('intent') real tasks "
-        "— judges each output and RECORDS the result, so untried models earn a $/good and appear in "
-        "spendguard_advise / spendguard_recommend afterwards. Makes REAL metered calls (preferring $0 lanes): "
-        "with NO budget_usd it returns the ESTIMATE only; pass budget_usd to actually run (it refuses over it). "
-        "requirement_aware=true judges against the PROMPT'S OWN extracted criteria, two-tier (screen → opus).",
-        {"type": "object", "properties": {
-            "intent": {"type": "string", "description": "the job-type to bake off for"},
-            "candidates": {"type": "array", "items": {"type": "string"},
-                           "description": "the slate to test, as 'vendor:model' ids (spendguard_recommend suggests one)"},
-            "prompts": {"type": "array", "items": {"type": "string"},
-                        "description": "optional: representative tasks to replay; omit to auto-sample the intent's recorded prompts"},
-            "sample_n": {"type": "integer", "description": "how many recorded prompts to replay when auto-sampling (default 5)"},
-            "efforts": {"type": "array", "items": {"type": "string"},
-                        "description": "optional reasoning ladder to sweep PER model (['minimal','low','medium','high']) — the cheapest (model,effort) that holds"},
-            "requirement_aware": {"type": "boolean",
-                                  "description": "judge against the PROMPT'S OWN requirements, two-tier (screen → opus adjudicator)"},
-            "adjudicator_model": {"type": "string",
-                                  "description": "opus-tier adjudicator for requirement_aware (default config.advisor_adjudicator_model)"},
-            "temperature": {"type": "number", "description": "DETERMINISM: run each arm as a measurement at this temperature (e.g. 0) — one deterministic pass per arm, FORCES the metered API"},
-            "top_p": {"type": "number", "description": "DETERMINISM: nucleus top_p for the measurement (metered)"},
-            "seed": {"type": "integer", "description": "DETERMINISM: sampling seed (OpenAI-only; dropped+recorded on vendors without a seed param)"},
-            "budget_usd": {"type": "number", "description": "run only if the estimate fits this; OMIT to get just the estimate"}},
-         "additionalProperties": False},
-        _tool_bakeoff),
-    "spendguard_stability": (
-        "Measure a model/lane's RUN-TO-RUN variance at PRODUCTION settings (replicates) — the stability question "
-        "temperature=0 CANNOT answer (temp=0 measures 'which arm is better'; this measures 'is the shipped config "
-        "stable'). Runs k replicates of each prompt on its normal $0-lane path at the plan's own sampling, and reports "
-        "stable_frac, the flipped prompts, and the per-label between-run rate band. Spends subscription-plan usage ($0 "
-        "billed on a $0 lane). Pass `marker` (e.g. 'DECISION:') to score stability on the decision, not wording.",
-        {"type": "object", "properties": {
-            "model": {"type": "string", "description": "the model/lane to measure (e.g. gpt-6-luna)"},
-            "intent": {"type": "string", "description": "job-type whose recorded prompts to replay (or pass `prompts`)"},
-            "prompts": {"type": "array", "items": {"type": "string"}, "description": "explicit prompts to replay; overrides intent sampling"},
-            "sample_n": {"type": "integer", "description": "how many recorded prompts to replay when sampling the intent (default 5)"},
-            "k": {"type": "integer", "description": "replicates per prompt (default 5) — more tightens the variance estimate"},
-            "marker": {"type": "string", "description": "parse each reply's OUTCOME as the text after this marker (e.g. 'DECISION:') — scores stability on the decision label"},
-            "system": {"type": "string", "description": "optional system prompt sent with every replicate"}},
-         "additionalProperties": False},
-        _tool_stability),
-    "spendguard_vision": (
-        "Run ONE metered VISION call (image(s) + prompt) through spendguard's governed adapter. The subscription "
-        "lanes are text-only CLIs, so vision rides the metered API (executor='api'), pixel-priced and bounded by a "
-        "deadline. Estimate-first: with NO budget_usd it returns ONLY the estimate ($0); pass budget_usd to run "
-        "(refused over it). A dynamic-key MAP schema is refused before any spend (strict mode empties it to {} — "
-        "use an ARRAY of {key,value}); paid results are cached by request content, so an identical re-request is $0.",
-        {"type": "object", "properties": {
-            "model": {"type": "string", "description": "vision-capable model 'vendor:model' (e.g. 'openai:gpt-5-nano', 'gemini:gemini-3-flash')"},
-            "prompt": {"type": "string", "description": "the instruction — what to label/extract from the image(s)"},
-            "images": {"type": "array", "items": {"type": "string"},
-                       "description": "non-empty list of file paths (server-side) or data: URLs"},
-            "schema": {"type": "object", "description": "optional JSON Schema for structured output — use an ARRAY of {key,value}, NEVER a dynamic-key map"},
-            "system": {"type": "string", "description": "optional system instruction"},
-            "budget_usd": {"type": "number", "description": "run only if the estimate fits this; OMIT to get just the estimate (0 spend)"},
-            "max_out_tokens": {"type": "integer", "description": "optional output-token estimate for the pre-spend cost estimate"},
-            "no_cache": {"type": "boolean", "description": "force a fresh call instead of returning a cached identical result"},
-            "timeout_s": {"type": "integer", "description": "optional per-call deadline in seconds (default 120)"}},
-         "required": ["model", "prompt", "images"], "additionalProperties": False},
-        _tool_vision),
-    "spendguard_spend_overview": (
-        "The headline for THIS account: REAL $ out the door (subscription base + Claude Code overage + API "
-        "credits) shown SEPARATELY from est-value (plan-covered Claude Code usage, what it's worth at API "
-        "rates). The two axes are never summed. $0, read-only.",
-        {"type": "object", "properties": {}, "additionalProperties": False},
-        _tool_spend_overview),
-    "spendguard_overage_status": (
-        "Are we on PAID overage right now — i.e. the weekly subscription cap is hit and this account is billing "
-        "per-token — from observable transcript signals, plus reconciled real overage $ by month. $0, read-only.",
-        {"type": "object", "properties": {}, "additionalProperties": False},
-        _tool_overage_status),
-    "spendguard_top_conversations": (
-        "Rank Claude Code conversations by est-value (default) or by real overage $ (by='overage', reconciled to "
-        "invoices), each labeled with its sidebar title. Answers 'what used the tokens'. $0, read-only.",
-        {"type": "object", "properties": {
-            "by": {"type": "string", "enum": ["est", "overage"], "description": "'est' = plan-covered est-value (default); 'overage' = real paid overage $"},
-            "limit": {"type": "integer", "description": "how many to return (default 10)"}},
-         "additionalProperties": False},
-        _tool_top_conversations),
-    "spendguard_conversation_cost": (
-        "Cost of ONE conversation by its transcript id: plan-covered est-value + observed overage upper bound "
-        "(the two axes kept separate). Get ids from spendguard_top_conversations. $0, read-only.",
-        {"type": "object", "properties": {
-            "conversation_id": {"type": "string", "description": "the transcript uuid (conv_id) to price"}},
-         "required": ["conversation_id"], "additionalProperties": False},
-        _tool_conversation_cost),
-    "spendguard_compaction_candidates": (
-        "Open conversations that are expensive to keep alive — large re-read context billing every turn — with "
-        "the $/turn cost, what compacting would save, and the ready-to-paste effective /compact command. "
-        "Surfaces WHEN compacting a conversation is a good trade. $0, read-only.",
-        {"type": "object", "properties": {
-            "limit": {"type": "integer", "description": "how many candidates to return (default 10)"}},
-         "additionalProperties": False},
-        _tool_compaction_candidates),
-    "spendguard_dispatch_state": (
-        "Live ADMISSION + QUEUE + reasoning-cut state — 'is anything rate-limited / is the queue backing up / are we "
-        "burning money on reasoning cut mid-thought'. Returns the governor's per-key concurrency/rpm/tpm + in-flight/"
-        "waiting, the SELF-CALIBRATED per-vendor limits (learned from provider 429 + success headers), the durable "
-        "queue depth incl. PARKED (capacity backpressure), and the deadline-cancel counts (billed by the provider, "
-        "invisible to the local ledger). The same data the CLI `spendguard dispatch` prints (api/MCP/cli parity). $0.",
-        {"type": "object", "properties": {
-            "id": {"type": "integer", "description": "optional async queue row handle to query"}},
-         "additionalProperties": False},
-        _tool_dispatch_state),
-    "spendguard_config": (
-        "Every spendguard CONFIG knob (from config_schema — the single source that also drives the CLI `config` "
-        "command), with its CURRENT value, default, env var, kind and description. Secrets omitted. Read-only ($0) — "
-        "change one via the CLI `spendguard config set <section.key> <value>`. Closes the config-in-MCP parity gap.",
-        {"type": "object", "properties": {}, "additionalProperties": False},
-        _tool_config),
-}
+_tool_ledger_read = capability_ledger_read_operation
+_tool_delegate = capability_delegate_operation
+_tool_delegate_status = capability_delegate_status_operation
+_tool_delegate_result = capability_delegate_result_operation
+_tool_version = capability_version_operation
+_tool_health = capability_health_operation
+_tool_savings = capability_savings_operation
+_tool_route_cost = capability_route_cost_operation
+_tool_route_realized = capability_route_realized_operation
+_tool_route_horizon = capability_route_horizon_operation
+_tool_plan_queue = capability_plan_queue_operation
+_tool_run_jobs = capability_run_jobs_operation
+_tool_advise = capability_advise_operation
+_tool_models = capability_models_operation
+_tool_recommend = capability_recommend_operation
+_tool_bakeoff = capability_bakeoff_operation
+_tool_stability = capability_stability_operation
+_tool_vision = capability_vision_operation
+_tool_spend_overview = capability_spend_overview_operation
+_tool_overage_status = capability_overage_status_operation
+_tool_top_conversations = capability_top_conversations_operation
+_tool_conversation_cost = capability_conversation_cost_operation
+_tool_compaction_candidates = capability_compaction_candidates_operation
+_tool_dispatch_state = capability_dispatch_state_operation
+_tool_config = capability_config_operation
 
+
+def build_registry_mcp_tool_dispatch():
+    """Use canonical legacy contracts and additive capability variants."""
+    from .capability_registry import MCP_CONTRACTS, resolve_capability_callable
+    from .capability_surface_generation import build_generated_capability_tools
+
+    dispatch, coverage = build_generated_capability_tools()
+    for contract in MCP_CONTRACTS:
+        def invoke_legacy_contract(arguments, reference=contract.reference):
+            return resolve_capability_callable(reference)(arguments)
+        schema = {**contract.schema, "properties": {
+            name: {**declaration, "description": declaration.get("description") or
+                   f"{name}: {declaration.get('type', 'JSON')} argument for {contract.name}."}
+            for name, declaration in contract.schema.get("properties", {}).items()
+        }}
+        parameter_docs = "\n".join(
+            f"{name}: {declaration['description']}" for name, declaration in schema["properties"].items())
+        description = contract.description + ("\nArguments:\n" + parameter_docs if parameter_docs else "\nTakes no arguments.")
+        dispatch[contract.name] = (description, schema, invoke_legacy_contract)
+        for capability_id in contract.capability_ids:
+            coverage.setdefault(capability_id, []).append(contract.name)
+    return dispatch, coverage
+
+
+_TOOLS, CAPABILITY_MCP_COVERAGE = build_registry_mcp_tool_dispatch()
+CAPABILITY_MCP_TOOL_IDENTITIES = {
+    name: (capability_id, name)
+    for capability_id, names in CAPABILITY_MCP_COVERAGE.items() for name in names
+}
+CAPABILITY_MCP_DISPATCH = {
+    identity: _TOOLS[name][2] for name, identity in CAPABILITY_MCP_TOOL_IDENTITIES.items()
+}
 
 # ── JSON-RPC / MCP protocol ──
 
@@ -1075,6 +848,9 @@ def handle(req):
         if not entry:
             return _err(rid, -32602, f"unknown tool {name!r} — have: {', '.join(_TOOLS)}")
         _d, _s, fn = entry
+        identity = CAPABILITY_MCP_TOOL_IDENTITIES.get(name)
+        if identity is not None and name.startswith("capability_"):
+            fn = CAPABILITY_MCP_DISPATCH[identity]
         try:
             from .ledger_read import ledger_request_scope
             with ledger_request_scope():
@@ -1356,12 +1132,10 @@ def cmd(argv=None):
                                  description="spendguard's tools over MCP: the model-advisor plus read-only spend & "
                                              "compaction queries. Default stdio JSON-RPC; --http serves one WARM "
                                              "daemon sessions connect to. Register with `spendguard install-mcp`.")
-    ap.add_argument("--http", action="store_true",
-                    help="serve over HTTP (stdlib, POST /mcp) as one WARM daemon every session CONNECTS to via urllib, "
-                         "instead of spawning a stdio `spendguard mcp` per session.")
+    add_registered_cli_argument(ap, 'mcp/mcp_server.cmd/ap/--http')
     import os as _os
-    ap.add_argument("--host", default=_os.environ.get("SPENDGUARD_MCP_HOST", "127.0.0.1"))
-    ap.add_argument("--port", type=int, default=int(_os.environ.get("SPENDGUARD_MCP_PORT", "4913")))   # family: 4900 ccwatch · 4910 7thsense · 4911 symgrep · 4912 honestreview · 4913 spendguard
+    add_registered_cli_argument(ap, 'mcp/mcp_server.cmd/ap/--host', default=_os.environ.get('SPENDGUARD_MCP_HOST', '127.0.0.1'))
+    add_registered_cli_argument(ap, 'mcp/mcp_server.cmd/ap/--port', type=int, default=int(_os.environ.get('SPENDGUARD_MCP_PORT', '4913')))   # family: 4900 ccwatch · 4910 7thsense · 4911 symgrep · 4912 honestreview · 4913 spendguard
     args = ap.parse_args(argv)
     if args.http:
         # WARM SHARED DAEMON = SINGLETON (one per port): a second start detects the incumbent (flock) and exits 0, so a

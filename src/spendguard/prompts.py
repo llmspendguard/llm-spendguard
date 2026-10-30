@@ -11,6 +11,8 @@ snippet-based checks), never guessed; prices come from pricing.py only. Each fin
 next command to run. Zero LLM spend — pure corpus analysis.
 """
 
+from .capability_cli_parsing import add_registered_cli_argument
+
 MIN_CALLS = 5          # fewer samples than this → not judged (law of small numbers)
 LCP_MIN_CHARS = 60     # a shared prefix shorter than this isn't worth restructuring
 SPREAD_RATIO = 3.0     # p95(in_tok) ≥ 3× p50 → context varies wildly (stuffing suspect)
@@ -239,13 +241,11 @@ def main(argv=None):
     import sys, argparse, json as _json
     ap = argparse.ArgumentParser(prog="spendguard prompts",
                                  description="prompt-efficiency lint over the call corpus (zero spend); each finding carries its next A/B step")
-    ap.add_argument("--intent", help="lint one intent only")
-    ap.add_argument("--since", help="ISO date/ts lower bound")
-    ap.add_argument("--min-calls", type=int, default=MIN_CALLS)
-    ap.add_argument("--json", action="store_true", help="machine-readable output")
-    ap.add_argument("--judge-batchable", action="store_true",
-                    help="agentically judge batching candidates (packable job items vs latency-sensitive interactive) "
-                         "and emit `batch_savings` — SPENDS a small meta-caged call per candidate")
+    add_registered_cli_argument(ap, 'prompts/prompts.main/ap/--intent')
+    add_registered_cli_argument(ap, 'prompts/prompts.main/ap/--since')
+    add_registered_cli_argument(ap, 'prompts/prompts.main/ap/--min-calls', type=int, default=MIN_CALLS)
+    add_registered_cli_argument(ap, 'prompts/prompts.main/ap/--json')
+    add_registered_cli_argument(ap, 'prompts/prompts.main/ap/--judge-batchable')
     a = ap.parse_args(sys.argv[2:] if argv is None else argv)
     fs = lint(intent=a.intent, since=a.since, min_calls=a.min_calls, judge_batchable=a.judge_batchable)
     if a.json:

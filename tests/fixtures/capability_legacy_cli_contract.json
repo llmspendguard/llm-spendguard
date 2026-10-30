@@ -1,0 +1,1036 @@
+{
+  "source_revision": "f868f53574abf1ca5226423c2fabea75de004e86",
+  "source_path": "src/spendguard/cli.py",
+  "help_controls": [
+    "--help",
+    "-h",
+    "help",
+    "--commands"
+  ],
+  "legacy_dispatch_bindings": {
+    "--version": {
+      "handler_ref": "spendguard.cli:cli_core_version",
+      "invocation_policy": "context"
+    },
+    "-V": {
+      "handler_ref": "spendguard.cli:cli_core_version",
+      "invocation_policy": "context"
+    },
+    "accounting": {
+      "handler_ref": "spendguard.conv:attribute_cmd",
+      "invocation_policy": "rest"
+    },
+    "advise": {
+      "handler_ref": "spendguard.advise:main",
+      "invocation_policy": "rest"
+    },
+    "agent-spawn-gate": {
+      "handler_ref": "spendguard.agent_spawn_gate:cmd",
+      "invocation_policy": "rest"
+    },
+    "ask": {
+      "handler_ref": "spendguard.crossllm:cmd",
+      "invocation_policy": "rest"
+    },
+    "audit": {
+      "handler_ref": "spendguard.audit:main",
+      "invocation_policy": "none",
+      "legacy_argv_prefix": "audit"
+    },
+    "backfill": {
+      "handler_ref": "spendguard.backfill:main",
+      "invocation_policy": "rest"
+    },
+    "backtest": {
+      "handler_ref": "spendguard.advise:main",
+      "invocation_policy": "rest"
+    },
+    "bakeoff": {
+      "handler_ref": "spendguard.bakeoff:main",
+      "invocation_policy": "rest"
+    },
+    "balances": {
+      "handler_ref": "spendguard.balances:main",
+      "invocation_policy": "rest"
+    },
+    "batch-fetch": {
+      "handler_ref": "spendguard.openai_batch_cli:fetch_batch_output",
+      "invocation_policy": "rest"
+    },
+    "batch-submit": {
+      "handler_ref": "spendguard.openai_batch_cli:submit_batch_jsonl",
+      "invocation_policy": "rest"
+    },
+    "bootstrap": {
+      "handler_ref": "spendguard.bootstrap:main",
+      "invocation_policy": "rest"
+    },
+    "brief": {
+      "handler_ref": "spendguard.brief:main",
+      "invocation_policy": "rest"
+    },
+    "cache-audit": {
+      "handler_ref": "spendguard.cacheaudit:main",
+      "invocation_policy": "rest"
+    },
+    "cache-stats": {
+      "handler_ref": "spendguard.semcache:cmd",
+      "invocation_policy": "rest"
+    },
+    "cache-test": {
+      "handler_ref": "spendguard.cachetest:main",
+      "invocation_policy": "rest"
+    },
+    "cacheaudit": {
+      "handler_ref": "spendguard.cacheaudit:main",
+      "invocation_policy": "rest"
+    },
+    "cachetest": {
+      "handler_ref": "spendguard.cachetest:main",
+      "invocation_policy": "rest"
+    },
+    "calibrate": {
+      "handler_ref": "spendguard.calibrate:main",
+      "invocation_policy": "rest"
+    },
+    "callio-status": {
+      "handler_ref": "spendguard.callio:status_main",
+      "invocation_policy": "rest"
+    },
+    "calls": {
+      "handler_ref": "spendguard.calls:cmd_summary",
+      "invocation_policy": "rest"
+    },
+    "capguard": {
+      "handler_ref": "spendguard.weekly_cap_guard:cmd",
+      "invocation_policy": "rest"
+    },
+    "cascade": {
+      "handler_ref": "spendguard.cascade:cmd",
+      "invocation_policy": "rest"
+    },
+    "cc": {
+      "handler_ref": "spendguard.claudecode:main",
+      "invocation_policy": "rest"
+    },
+    "chat": {
+      "handler_ref": "spendguard.chat:main",
+      "invocation_policy": "rest"
+    },
+    "check-prices": {
+      "handler_ref": "spendguard.cli:cli_core_check_prices",
+      "invocation_policy": "context"
+    },
+    "claude-code": {
+      "handler_ref": "spendguard.claudecode:main",
+      "invocation_policy": "rest"
+    },
+    "claudecode": {
+      "handler_ref": "spendguard.claudecode:main",
+      "invocation_policy": "rest"
+    },
+    "close": {
+      "handler_ref": "spendguard.close:main",
+      "invocation_policy": "none"
+    },
+    "codex": {
+      "handler_ref": "spendguard.codex:main",
+      "invocation_policy": "rest"
+    },
+    "codex-gc": {
+      "handler_ref": "spendguard.cli:cli_core_codex_gc",
+      "invocation_policy": "context"
+    },
+    "codex-prune": {
+      "handler_ref": "spendguard.cli:cli_core_codex_gc",
+      "invocation_policy": "context"
+    },
+    "compare": {
+      "handler_ref": "spendguard.compare:main",
+      "invocation_policy": "rest"
+    },
+    "comprehend": {
+      "handler_ref": "spendguard.comprehend:cmd",
+      "invocation_policy": "rest"
+    },
+    "compress-content": {
+      "handler_ref": "spendguard.content_compression_backfill:content_compression_backfill_cli",
+      "invocation_policy": "rest"
+    },
+    "config": {
+      "handler_ref": "spendguard.setup:cmd_config",
+      "invocation_policy": "rest"
+    },
+    "consumer-audit": {
+      "handler_ref": "spendguard.consumer_audit:consumer_audit_command",
+      "invocation_policy": "rest"
+    },
+    "conv": {
+      "handler_ref": "spendguard.conv:main",
+      "invocation_policy": "rest"
+    },
+    "corpus-status": {
+      "handler_ref": "spendguard.callio:status_main",
+      "invocation_policy": "rest"
+    },
+    "coverage": {
+      "handler_ref": "spendguard.coverage:cmd",
+      "invocation_policy": "rest"
+    },
+    "cross-check": {
+      "handler_ref": "spendguard.cli:cli_core_cross_check",
+      "invocation_policy": "context"
+    },
+    "crosscheck": {
+      "handler_ref": "spendguard.cli:cli_core_cross_check",
+      "invocation_policy": "context"
+    },
+    "dedup": {
+      "handler_ref": "spendguard.semcache:dedup_main",
+      "invocation_policy": "rest"
+    },
+    "dedup-populate": {
+      "handler_ref": "spendguard.semcache:populate_main",
+      "invocation_policy": "rest"
+    },
+    "delegate": {
+      "handler_ref": "spendguard.delegate_router:delegate_cli",
+      "invocation_policy": "rest"
+    },
+    "deploy": {
+      "handler_ref": "spendguard.cli:cli_core_deploy",
+      "invocation_policy": "context"
+    },
+    "dispatch": {
+      "handler_ref": "spendguard.cli:cli_core_dispatch",
+      "invocation_policy": "context"
+    },
+    "distribute": {
+      "handler_ref": "spendguard.distribution:distribute_command",
+      "invocation_policy": "rest"
+    },
+    "doctor": {
+      "handler_ref": "spendguard.cli:cli_core_status",
+      "invocation_policy": "context"
+    },
+    "effort-titrate": {
+      "handler_ref": "spendguard.effort_titration:main",
+      "invocation_policy": "rest"
+    },
+    "embed-gc": {
+      "handler_ref": "spendguard.cli:cli_core_embed_gc",
+      "invocation_policy": "context"
+    },
+    "embed-prune": {
+      "handler_ref": "spendguard.cli:cli_core_embed_gc",
+      "invocation_policy": "context"
+    },
+    "estimate": {
+      "handler_ref": "spendguard.estimate:main",
+      "invocation_policy": "none",
+      "legacy_argv_prefix": "estimate"
+    },
+    "estimate-divergence": {
+      "handler_ref": "spendguard.estimate_divergence:cmd",
+      "invocation_policy": "rest"
+    },
+    "estimate-literals": {
+      "handler_ref": "spendguard.estimate_literals:cmd",
+      "invocation_policy": "rest"
+    },
+    "experiment": {
+      "handler_ref": "spendguard.experiment:main",
+      "invocation_policy": "rest"
+    },
+    "fetch-io": {
+      "handler_ref": "spendguard.callio:main",
+      "invocation_policy": "rest"
+    },
+    "fetchio": {
+      "handler_ref": "spendguard.callio:main",
+      "invocation_policy": "rest"
+    },
+    "fleet": {
+      "handler_ref": "spendguard.cli:cli_core_fleet",
+      "invocation_policy": "context"
+    },
+    "focus-export": {
+      "handler_ref": "spendguard.focus_export:main",
+      "invocation_policy": "rest"
+    },
+    "freshness": {
+      "handler_ref": "spendguard.cli:cli_core_check_prices",
+      "invocation_policy": "context"
+    },
+    "gate-coverage": {
+      "handler_ref": "spendguard.setup:cmd_coverage",
+      "invocation_policy": "rest"
+    },
+    "gate-host": {
+      "handler_ref": "spendguard.setup:cmd_gate_discovered_host",
+      "invocation_policy": "rest"
+    },
+    "gate-venv": {
+      "handler_ref": "spendguard.setup:cmd_install_hook",
+      "invocation_policy": "rest"
+    },
+    "health": {
+      "handler_ref": "spendguard.cli:cli_health_command",
+      "invocation_policy": "rest"
+    },
+    "history": {
+      "handler_ref": "spendguard.history:main",
+      "invocation_policy": "rest"
+    },
+    "init": {
+      "handler_ref": "spendguard.setup:cmd_init",
+      "invocation_policy": "rest"
+    },
+    "insights": {
+      "handler_ref": "spendguard.share:main",
+      "invocation_policy": "rest"
+    },
+    "install-agent-gate": {
+      "handler_ref": "spendguard.agent_spawn_gate:install_agent_gate_cli",
+      "invocation_policy": "rest"
+    },
+    "install-capguard": {
+      "handler_ref": "spendguard.weekly_cap_guard:install_weekly_cap_guard_cli",
+      "invocation_policy": "rest"
+    },
+    "install-hook": {
+      "handler_ref": "spendguard.setup:cmd_install_hook",
+      "invocation_policy": "rest"
+    },
+    "install-mcp": {
+      "handler_ref": "spendguard.cli:cli_core_install_mcp",
+      "invocation_policy": "context"
+    },
+    "install-receipts": {
+      "handler_ref": "spendguard.receipt:install_cli",
+      "invocation_policy": "rest"
+    },
+    "install-residency-gate": {
+      "handler_ref": "spendguard.residency_gate:install_residency_gate_cli",
+      "invocation_policy": "rest"
+    },
+    "install-rule": {
+      "handler_ref": "spendguard.setup:cmd_install_rule",
+      "invocation_policy": "rest"
+    },
+    "install-skills": {
+      "handler_ref": "spendguard.setup:cmd_install_skills",
+      "invocation_policy": "rest"
+    },
+    "keys": {
+      "handler_ref": "spendguard.cli:cli_core_keys",
+      "invocation_policy": "context"
+    },
+    "keys-audit": {
+      "handler_ref": "spendguard.keys_audit:cmd",
+      "invocation_policy": "rest"
+    },
+    "lane-leak-check": {
+      "handler_ref": "spendguard.cli:lane_leak_check_cli",
+      "invocation_policy": "rest"
+    },
+    "lane-value": {
+      "handler_ref": "spendguard.lane_value:main",
+      "invocation_policy": "rest"
+    },
+    "lanes": {
+      "handler_ref": "spendguard.lanes:main",
+      "invocation_policy": "rest"
+    },
+    "lanevalue": {
+      "handler_ref": "spendguard.lane_value:main",
+      "invocation_policy": "rest"
+    },
+    "leaks": {
+      "handler_ref": "spendguard.ledger_sync:main",
+      "invocation_policy": "rest"
+    },
+    "ledger-read": {
+      "handler_ref": "spendguard.cli:ledger_read_cli",
+      "invocation_policy": "rest"
+    },
+    "ledger-sync": {
+      "handler_ref": "spendguard.ledger_sync:main",
+      "invocation_policy": "rest"
+    },
+    "manifest": {
+      "handler_ref": "spendguard.manifest:manifest_command",
+      "invocation_policy": "rest"
+    },
+    "maxtokens": {
+      "handler_ref": "spendguard.cli:cli_core_maxtokens",
+      "invocation_policy": "context"
+    },
+    "mcp": {
+      "handler_ref": "spendguard.mcp_server:cmd",
+      "invocation_policy": "rest"
+    },
+    "measurement": {
+      "handler_ref": "spendguard.measurement:cmd",
+      "invocation_policy": "rest"
+    },
+    "metadata": {
+      "handler_ref": "spendguard.metadata_audit:main",
+      "invocation_policy": "rest"
+    },
+    "migrate": {
+      "handler_ref": "spendguard.cli:cli_core_migrate",
+      "invocation_policy": "context"
+    },
+    "mine": {
+      "handler_ref": "spendguard.advisor:main",
+      "invocation_policy": "command_prefix"
+    },
+    "mine-conv": {
+      "handler_ref": "spendguard.conv:main",
+      "invocation_policy": "rest"
+    },
+    "mine-history": {
+      "handler_ref": "spendguard.history:main",
+      "invocation_policy": "rest"
+    },
+    "models": {
+      "handler_ref": "spendguard.models:cmd",
+      "invocation_policy": "rest"
+    },
+    "off": {
+      "handler_ref": "spendguard.cli:cli_core_status",
+      "invocation_policy": "context"
+    },
+    "on": {
+      "handler_ref": "spendguard.cli:cli_core_status",
+      "invocation_policy": "context"
+    },
+    "optimize": {
+      "handler_ref": "spendguard.advisor:main",
+      "invocation_policy": "command_prefix"
+    },
+    "otel": {
+      "handler_ref": "spendguard.otel_ingest:main",
+      "invocation_policy": "rest"
+    },
+    "otel-ingest": {
+      "handler_ref": "spendguard.otel_ingest:main",
+      "invocation_policy": "rest"
+    },
+    "overage": {
+      "handler_ref": "spendguard.overage:overage_cli",
+      "invocation_policy": "rest"
+    },
+    "plan-queue": {
+      "handler_ref": "spendguard.cli:cli_core_plan_queue",
+      "invocation_policy": "context"
+    },
+    "preflight": {
+      "handler_ref": "spendguard.model_preflight:cmd",
+      "invocation_policy": "rest"
+    },
+    "price": {
+      "handler_ref": "spendguard.cli:cli_core_price",
+      "invocation_policy": "context"
+    },
+    "pricing": {
+      "handler_ref": "spendguard.pricing:main",
+      "invocation_policy": "none"
+    },
+    "promote": {
+      "handler_ref": "spendguard.experiment:promote_main",
+      "invocation_policy": "rest"
+    },
+    "prompts": {
+      "handler_ref": "spendguard.prompts:main",
+      "invocation_policy": "none"
+    },
+    "providers": {
+      "handler_ref": "spendguard.cli:cli_core_providers",
+      "invocation_policy": "context"
+    },
+    "quarantine": {
+      "handler_ref": "spendguard.cli:cli_core_quarantine",
+      "invocation_policy": "context"
+    },
+    "queue-manage": {
+      "handler_ref": "spendguard.cli:manage_lane_queue_cli",
+      "invocation_policy": "rest"
+    },
+    "realized": {
+      "handler_ref": "spendguard.realized:main",
+      "invocation_policy": "none"
+    },
+    "reap-orphans": {
+      "handler_ref": "spendguard.cli:reap_orphaned_warm_servers_cli",
+      "invocation_policy": "rest"
+    },
+    "receipt": {
+      "handler_ref": "spendguard.receipt:cli",
+      "invocation_policy": "rest"
+    },
+    "recommend": {
+      "handler_ref": "spendguard.advisor:main",
+      "invocation_policy": "command_prefix"
+    },
+    "reconcile": {
+      "handler_ref": "spendguard.cli:cli_core_reconcile",
+      "invocation_policy": "context"
+    },
+    "reconcile-ledger": {
+      "handler_ref": "spendguard.ledger_sync:main",
+      "invocation_policy": "rest"
+    },
+    "reconstruct": {
+      "handler_ref": "spendguard.advisor:main",
+      "invocation_policy": "command_prefix"
+    },
+    "refresh": {
+      "handler_ref": "spendguard.refresh:main",
+      "invocation_policy": "rest"
+    },
+    "refresh-prices": {
+      "handler_ref": "spendguard.refresh:main",
+      "invocation_policy": "rest"
+    },
+    "register-critical": {
+      "handler_ref": "spendguard.cli:cli_core_register_critical",
+      "invocation_policy": "context"
+    },
+    "release": {
+      "handler_ref": "spendguard.cli:cli_core_release",
+      "invocation_policy": "context"
+    },
+    "reliability": {
+      "handler_ref": "spendguard.reliability:main",
+      "invocation_policy": "rest"
+    },
+    "remote": {
+      "handler_ref": "spendguard.remote:cmd",
+      "invocation_policy": "rest"
+    },
+    "report": {
+      "handler_ref": "spendguard.report:main",
+      "invocation_policy": "none",
+      "legacy_argv_prefix": "report"
+    },
+    "reprice": {
+      "handler_ref": "spendguard.cli:cli_core_reprice",
+      "invocation_policy": "context"
+    },
+    "residency-gate": {
+      "handler_ref": "spendguard.residency_gate:cmd",
+      "invocation_policy": "rest"
+    },
+    "resources": {
+      "handler_ref": "spendguard.resources:cmd",
+      "invocation_policy": "rest"
+    },
+    "review": {
+      "handler_ref": "spendguard.review:main",
+      "invocation_policy": "rest"
+    },
+    "route-cost": {
+      "handler_ref": "spendguard.route_economics:cmd",
+      "invocation_policy": "rest"
+    },
+    "route-horizon": {
+      "handler_ref": "spendguard.route_horizon:cmd",
+      "invocation_policy": "rest"
+    },
+    "route-realized": {
+      "handler_ref": "spendguard.route_realized:cmd",
+      "invocation_policy": "rest"
+    },
+    "route_cost": {
+      "handler_ref": "spendguard.route_economics:cmd",
+      "invocation_policy": "rest"
+    },
+    "route_horizon": {
+      "handler_ref": "spendguard.route_horizon:cmd",
+      "invocation_policy": "rest"
+    },
+    "route_realized": {
+      "handler_ref": "spendguard.route_realized:cmd",
+      "invocation_policy": "rest"
+    },
+    "run": {
+      "handler_ref": "spendguard.runner:main",
+      "invocation_policy": "rest"
+    },
+    "run-jobs": {
+      "handler_ref": "spendguard.whole_job:cmd",
+      "invocation_policy": "rest"
+    },
+    "saas": {
+      "handler_ref": "spendguard.saas:cmd",
+      "invocation_policy": "rest"
+    },
+    "savings": {
+      "handler_ref": "spendguard.cli:cli_core_savings",
+      "invocation_policy": "context"
+    },
+    "scan": {
+      "handler_ref": "spendguard.scan:main",
+      "invocation_policy": "rest"
+    },
+    "schedule": {
+      "handler_ref": "spendguard.schedule:main",
+      "invocation_policy": "rest"
+    },
+    "semcache": {
+      "handler_ref": "spendguard.semcache:cmd",
+      "invocation_policy": "rest"
+    },
+    "serve": {
+      "handler_ref": "spendguard.serve:cmd",
+      "invocation_policy": "rest"
+    },
+    "signal": {
+      "handler_ref": "spendguard.signal:cmd",
+      "invocation_policy": "rest"
+    },
+    "sources": {
+      "handler_ref": "spendguard.sources:main",
+      "invocation_policy": "rest"
+    },
+    "stability": {
+      "handler_ref": "spendguard.stability:cmd",
+      "invocation_policy": "rest"
+    },
+    "status": {
+      "handler_ref": "spendguard.cli:cli_core_status",
+      "invocation_policy": "context"
+    },
+    "submit-jobs": {
+      "handler_ref": "spendguard.whole_job:cmd",
+      "invocation_policy": "rest"
+    },
+    "sync": {
+      "handler_ref": "spendguard.sync:main",
+      "invocation_policy": "rest"
+    },
+    "sync-capabilities": {
+      "handler_ref": "spendguard.sync_capabilities:cmd",
+      "invocation_policy": "rest"
+    },
+    "sync-catalog": {
+      "handler_ref": "spendguard.catalog:main",
+      "invocation_policy": "rest"
+    },
+    "sync-prices": {
+      "handler_ref": "spendguard.sync:main",
+      "invocation_policy": "rest"
+    },
+    "tag": {
+      "handler_ref": "spendguard.tag:cmd",
+      "invocation_policy": "rest"
+    },
+    "tiers": {
+      "handler_ref": "spendguard.tier_config:main",
+      "invocation_policy": "rest"
+    },
+    "token-caps": {
+      "handler_ref": "spendguard.token_caps:cmd",
+      "invocation_policy": "rest"
+    },
+    "tokens": {
+      "handler_ref": "spendguard.provider_tokens:cmd",
+      "invocation_policy": "rest"
+    },
+    "trust": {
+      "handler_ref": "spendguard.trust:cmd",
+      "invocation_policy": "rest"
+    },
+    "trust-check": {
+      "handler_ref": "spendguard.trust:cmd",
+      "invocation_policy": "rest"
+    },
+    "truth": {
+      "handler_ref": "spendguard.truth:main",
+      "invocation_policy": "none"
+    },
+    "validate": {
+      "handler_ref": "spendguard.validate:main",
+      "invocation_policy": "rest"
+    },
+    "verify": {
+      "handler_ref": "spendguard.verify:cmd",
+      "invocation_policy": "rest"
+    },
+    "version": {
+      "handler_ref": "spendguard.cli:cli_core_version",
+      "invocation_policy": "context"
+    },
+    "whole-job": {
+      "handler_ref": "spendguard.whole_job:cmd",
+      "invocation_policy": "rest"
+    },
+    "work": {
+      "handler_ref": "spendguard.workdone:cmd",
+      "invocation_policy": "rest"
+    },
+    "workdone": {
+      "handler_ref": "spendguard.workdone:cmd",
+      "invocation_policy": "rest"
+    }
+  },
+  "grouped_help_entries": [
+    {
+      "group": "start here",
+      "name": "scan",
+      "description": "what your local coding-agent work costs \u2014 no key, no network, 10s"
+    },
+    {
+      "group": "start here",
+      "name": "init",
+      "description": "one-command setup: caps + identity + auto-wire your $0 lanes (--all also wires gate/MCP/receipt/rule/skills)"
+    },
+    {
+      "group": "start here",
+      "name": "run",
+      "description": "`run -- <cmd>` gate ONE command; nothing written to your interpreter"
+    },
+    {
+      "group": "start here",
+      "name": "sources",
+      "description": "where can this machine spend? providers \u00b7 agent tools \u00b7 ungated venvs"
+    },
+    {
+      "group": "start here",
+      "name": "doctor",
+      "description": "is the gate enforcing HERE? keys, lanes, ledger status"
+    },
+    {
+      "group": "start here",
+      "name": "health",
+      "description": "bounded MCP health check of lanes and metered providers (--no-run = no probes; --json)"
+    },
+    {
+      "group": "start here",
+      "name": "ask",
+      "description": "run ONE prompt across many LLMs \u2014 honest per-vendor coverage, $0 lanes"
+    },
+    {
+      "group": "start here",
+      "name": "comprehend",
+      "description": "fan a CORPUS across the $0 lanes (doc-mining/gap-analysis) \u2014 NOT Claude sub-agents; estimate-first"
+    },
+    {
+      "group": "start here",
+      "name": "delegate",
+      "description": "classify then offload one self-contained task to another subscription plan; dry-run by default"
+    },
+    {
+      "group": "start here",
+      "name": "serve",
+      "description": "the ask surface over localhost HTTP \u2014 POST /ask from any tool/language"
+    },
+    {
+      "group": "start here",
+      "name": "mcp",
+      "description": "spendguard's tools over MCP (stdio): model-advisor + spend/compaction queries"
+    },
+    {
+      "group": "start here",
+      "name": "install-mcp",
+      "description": "register `spendguard mcp` in Claude Code (~/.claude.json); --remove to undo"
+    },
+    {
+      "group": "start here",
+      "name": "reap-orphans",
+      "description": "inspect or reap warm-lane servers whose marked owner is provably dead"
+    },
+    {
+      "group": "start here",
+      "name": "queue-manage",
+      "description": "reclaim, retire, purge, and conditionally drain the durable lane queue"
+    },
+    {
+      "group": "start here",
+      "name": "lane-leak-check",
+      "description": "detect protected subscription-lane or metered-provider leakage"
+    },
+    {
+      "group": "see the money",
+      "name": "ledger-read",
+      "description": "bounded read-only events, calls and exact counts; oversized reads fail loud"
+    },
+    {
+      "group": "see the money",
+      "name": "receipt",
+      "description": "running tally: today / 7d / month, two axes"
+    },
+    {
+      "group": "see the money",
+      "name": "report",
+      "description": "daily \u00b7 weekly \u00b7 monthly, per provider (+ leak alert)"
+    },
+    {
+      "group": "see the money",
+      "name": "reconcile",
+      "description": "`reconcile all|openai|anthropic` \u2014 ledger vs the provider's BILL"
+    },
+    {
+      "group": "see the money",
+      "name": "trust",
+      "description": "is what we recorded \u2248 what you were billed?"
+    },
+    {
+      "group": "see the money",
+      "name": "close",
+      "description": "monthly close: provider truth + residual, named"
+    },
+    {
+      "group": "see the money",
+      "name": "focus-export",
+      "description": "the ledger as FinOps FOCUS 1.2 rows (json|csv) for any FinOps stack"
+    },
+    {
+      "group": "see the money",
+      "name": "otel-ingest",
+      "description": "import an OTel GenAI trace (OpenLLMetry/Traceloop) \u2192 spend_events (idempotent)"
+    },
+    {
+      "group": "see the money",
+      "name": "keys",
+      "description": "spend per API key (which workspace/project key)"
+    },
+    {
+      "group": "see the money",
+      "name": "coverage",
+      "description": "which LLM-capable interpreters are NOT gated"
+    },
+    {
+      "group": "see the money",
+      "name": "overage",
+      "description": "is the subscription plan on paid per-token overage right now?"
+    },
+    {
+      "group": "spend less (measured, not guessed)",
+      "name": "advise",
+      "description": "cheapest config that HELD quality, per intent (the auto knob: reasoning='best-value')"
+    },
+    {
+      "group": "spend less (measured, not guessed)",
+      "name": "bakeoff",
+      "description": "measure cost\u00d7quality for a SLATE of untried models on an intent's tasks (feeds advise); --temperature/--seed for a deterministic A/B"
+    },
+    {
+      "group": "spend less (measured, not guessed)",
+      "name": "stability",
+      "description": "measure a model/lane's RUN-TO-RUN variance at production settings (replicates) \u2014 the stability question temp=0 can't answer"
+    },
+    {
+      "group": "spend less (measured, not guessed)",
+      "name": "effort-titrate",
+      "description": "learn the CHEAPEST reasoning effort that HOLDS quality, per (intent, model)"
+    },
+    {
+      "group": "spend less (measured, not guessed)",
+      "name": "calibrate",
+      "description": "learned estimator: your history corrects the naive $"
+    },
+    {
+      "group": "spend less (measured, not guessed)",
+      "name": "prompts",
+      "description": "lint the call corpus for prompt waste"
+    },
+    {
+      "group": "spend less (measured, not guessed)",
+      "name": "experiment",
+      "description": "A/B a cheaper config with graded output-equivalence"
+    },
+    {
+      "group": "spend less (measured, not guessed)",
+      "name": "maxtokens",
+      "description": "measured p99 bound for a call class (autotune's input)"
+    },
+    {
+      "group": "spend less (measured, not guessed)",
+      "name": "tokens",
+      "description": "per-provider token factors: `tokens calibrate` picks o200k\u2192native AGENTICALLY from call_io stats (--dry-run=$0)"
+    },
+    {
+      "group": "spend less (measured, not guessed)",
+      "name": "realized",
+      "description": "what the changes actually saved"
+    },
+    {
+      "group": "spend less (measured, not guessed)",
+      "name": "savings",
+      "description": "what spendguard SAVED \u2014 measured + counterfactual, by source (the 3rd axis, never summed)"
+    },
+    {
+      "group": "spend less (measured, not guessed)",
+      "name": "measurement",
+      "description": "receipts for a judged number: `measurement inspect|list|reconstruct` \u2014 the judge/sample/rubric behind it"
+    },
+    {
+      "group": "teams",
+      "name": "saas",
+      "description": "`saas link|sync|push|reconcile|reattribute` \u2014 org roll-up (opt-in)"
+    },
+    {
+      "group": "teams",
+      "name": "lanes",
+      "description": "subscription lanes: run meta prompts on your plan (+ `lanes set-model <lane> <model>`)"
+    },
+    {
+      "group": "teams",
+      "name": "tiers",
+      "description": "bulk-lane routing groups: show/validate + `tiers set <group> <model\u2026>`"
+    },
+    {
+      "group": "teams",
+      "name": "truth",
+      "description": "push provider-truth totals (owner only)"
+    },
+    {
+      "group": "setup & plumbing",
+      "name": "config",
+      "description": "`config` show all \u00b7 `config set <section.key> <value>`"
+    },
+    {
+      "group": "setup & plumbing",
+      "name": "install-hook",
+      "description": "gate EVERY process in a venv (opt-in; --uninstall removes)"
+    },
+    {
+      "group": "setup & plumbing",
+      "name": "gate-host",
+      "description": "offer/apply import-time gating to every discovered unregistered interpreter"
+    },
+    {
+      "group": "setup & plumbing",
+      "name": "install-agent-gate",
+      "description": "hard-route reroutable Agent/Task spawns off a near-cap hosting plan"
+    },
+    {
+      "group": "setup & plumbing",
+      "name": "install-capguard",
+      "description": "guard Claude subagent and raw codex-exec spawns at low weekly headroom"
+    },
+    {
+      "group": "setup & plumbing",
+      "name": "install-rule",
+      "description": "teach Claude/Cursor to route generated code through the gate"
+    },
+    {
+      "group": "setup & plumbing",
+      "name": "install-skills",
+      "description": "add the /spend, /spendguard-* slash commands"
+    },
+    {
+      "group": "setup & plumbing",
+      "name": "schedule",
+      "description": "OS-native daily sync (launchd / cron / schtasks)"
+    },
+    {
+      "group": "setup & plumbing",
+      "name": "sync-prices",
+      "description": "refresh the price breadth layer now"
+    },
+    {
+      "group": "setup & plumbing",
+      "name": "sync-catalog",
+      "description": "refresh the live model-catalog (validates model ids at dispatch)"
+    },
+    {
+      "group": "setup & plumbing",
+      "name": "sync-capabilities",
+      "description": "sync per-model capabilities (vision, response_schema, \u2026) + upper bounds from LiteLLM"
+    },
+    {
+      "group": "setup & plumbing",
+      "name": "balances",
+      "description": "per-vendor metered prepay balance (sunk-pool vs on-demand), for routing"
+    },
+    {
+      "group": "setup & plumbing",
+      "name": "reliability",
+      "description": "sweep every lane ($0) + metered provider (--run) for reachability; --remediate = agentic per-lane FIX (which login/quota/API to fix), cached; --notify = macOS notification on any red"
+    },
+    {
+      "group": "setup & plumbing",
+      "name": "preflight",
+      "description": "resolve model ids (served + priced; stale\u2192fix) BEFORE a batch \u2014 catches a bad id for $0"
+    },
+    {
+      "group": "setup & plumbing",
+      "name": "verify",
+      "description": "self-check every money path: model ids \u00b7 failover map \u00b7 keys \u00b7 economics (--probe = live)"
+    },
+    {
+      "group": "setup & plumbing",
+      "name": "keys-audit",
+      "description": "scan repo .env files for a provider key that would SHADOW the keys.env SSOT (the stale-shadow 401 doctor can't see)"
+    },
+    {
+      "group": "setup & plumbing",
+      "name": "consumer-audit",
+      "description": "prove every workspace LLM consumer is gated and on the deployed sha; safely arm fixable venvs"
+    },
+    {
+      "group": "setup & plumbing",
+      "name": "distribute",
+      "description": "converge every local surface and attest the deployed release; --check verifies without mutation"
+    },
+    {
+      "group": "setup & plumbing",
+      "name": "manifest",
+      "description": "build or show the persisted complete inventory of gated surfaces"
+    },
+    {
+      "group": "setup & plumbing",
+      "name": "deploy",
+      "description": "run the full gate, then promote committed HEAD \u2192 green pointer (running MCP servers roll onto latest+best)"
+    },
+    {
+      "group": "setup & plumbing",
+      "name": "release",
+      "description": "show release status, then converge and attest the fleet (--check verifies only; --json)"
+    },
+    {
+      "group": "setup & plumbing",
+      "name": "fleet",
+      "description": "tracked consumers and deployments (--restart, --json, or deregister <python_executable>)"
+    },
+    {
+      "group": "setup & plumbing",
+      "name": "pricing",
+      "description": "print the canonical price table"
+    },
+    {
+      "group": "setup & plumbing",
+      "name": "audit",
+      "description": "fail CI if any code hardcodes a disagreeing price"
+    },
+    {
+      "group": "setup & plumbing",
+      "name": "token-caps",
+      "description": "list every hardcoded output-token cap; --judge rules on the unjudged ones"
+    },
+    {
+      "group": "setup & plumbing",
+      "name": "metadata",
+      "description": "model-metadata backbone health: LiteLLM cache + measured-cap drift"
+    },
+    {
+      "group": "setup & plumbing",
+      "name": "estimate-divergence",
+      "description": "judge every recorded quote against the actual bill; fails on ungrounded ones"
+    },
+    {
+      "group": "setup & plumbing",
+      "name": "estimate-literals",
+      "description": "every cost call fed literal token counts; --judge rules quote vs probe"
+    },
+    {
+      "group": "setup & plumbing",
+      "name": "migrate",
+      "description": "rebuild spend_events from charges (exact Decimal); proves \u03a3 preserved"
+    }
+  ]
+}

@@ -4,6 +4,8 @@ the spend." Per (project · intent · model): cost (from batch billing) + qualit
 
 Build: `spendguard signal` (preview) / `spendguard signal push` (→ /v1/signal, this repo's project, via its key).
 """
+
+from .capability_cli_parsing import registered_cli_option_token
 import datetime
 
 
@@ -142,7 +144,7 @@ def push_signal(dry=False):
 def cmd(argv=None):
     argv = argv or []
     if argv and argv[0] == "push":
-        print("signal push:", push_signal(dry="--dry" in argv))
+        print("signal push:", push_signal(dry=registered_cli_option_token('signal/--dry') in argv))
         return 0
     rows = sorted(build_signals(), key=lambda r: -r["cost_micros"])
     print("efficiency signal (per project · intent · model):")

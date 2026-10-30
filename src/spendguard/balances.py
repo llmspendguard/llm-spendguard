@@ -20,6 +20,8 @@ cadence and by `spendguard balances`. The agentic read is cached per (vendor, ra
 never re-pays for the extraction. Billed axis: the balance FETCH is $0 (a GET); the one-time read per refresh is
 a few tenths of a cent of metered LLM, recorded under intent spendguard:balance-read.
 """
+
+from .capability_cli_parsing import registered_cli_option_token
 import os
 import json
 import hashlib
@@ -300,7 +302,7 @@ def all_balances(refresh=False):
 def main(argv=None):
     """`spendguard balances` — show available metered credit per vendor, split sunk-pool vs on-demand."""
     import sys
-    fresh = not (argv and "--cached" in argv)
+    fresh = not (argv and registered_cli_option_token('balances/--cached') in argv)
     print("Reading per-vendor metered balances (endpoint GET = $0; the field-read is a tiny cached LLM call)…")
     rows = all_balances(refresh=fresh)
     print(f"\n  {'vendor':10} {'available':>14}  {'kind':10} {'source':10} expiry")

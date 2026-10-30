@@ -1,0 +1,780 @@
+[
+  {
+    "name": "spendguard_ledger_read",
+    "description": "Read-only bounded typed ledger reads. Oversize, timeout and missing schema are loud errors; count returns the true total without materializing rows. No model calls.",
+    "schema": {
+      "type": "object",
+      "properties": {
+        "operation": {
+          "type": "string",
+          "enum": [
+            "events",
+            "event",
+            "calls",
+            "count",
+            "aggregate",
+            "recorded-call-total",
+            "conversation-spend-since",
+            "metrics"
+          ]
+        },
+        "table": {
+          "type": "string",
+          "enum": [
+            "calls",
+            "spend_events"
+          ]
+        },
+        "group_by": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "event_id": {
+          "type": "string"
+        },
+        "since": {
+          "type": "string"
+        },
+        "conv": {
+          "type": "string"
+        },
+        "deadline_s": {
+          "type": "number"
+        },
+        "until": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "reference": "spendguard.mcp_server:_tool_ledger_read",
+    "capability_ids": [
+      "C009"
+    ]
+  },
+  {
+    "name": "spendguard_delegate",
+    "description": "Offloads a SELF-CONTAINED AGENTIC workspace-write subtask to another provider plan; it does NOT reroute the calling agent's own turns. Dry-run is default; execute=true needs a trusted cwd. For a one-shot classification/gate/doctrine verdict use the one-shot router or spendguard ask with an intent. Codex is ~5s warm; >75s is cold codex exec only. Get model ids from advisor.lane_models/lanes --catalog, not guesses; see README.md's routing cheat-sheet. Agentic execute returns inline only if it finishes within the handoff window; otherwise it returns a job_id. Collect with spendguard_delegate_result; the detached run and its durable result survive a dropped request.",
+    "schema": {
+      "type": "object",
+      "properties": {
+        "task": {
+          "type": "string",
+          "description": "the complete self-contained task"
+        },
+        "files": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "optional supporting file paths; each is read in full"
+        },
+        "intent": {
+          "type": "string",
+          "description": "optional attribution/cost-control intent"
+        },
+        "provider": {
+          "type": "string",
+          "description": "configured plan or auto (default auto)"
+        },
+        "cwd": {
+          "type": "string",
+          "description": "absolute trusted target repo path; required for execute=true agentic tasks"
+        },
+        "execute": {
+          "type": "boolean",
+          "description": "run hop 2; default false (dry-run)"
+        }
+      },
+      "required": [
+        "task"
+      ],
+      "additionalProperties": false
+    },
+    "reference": "spendguard.mcp_server:_tool_delegate",
+    "capability_ids": [
+      "C157"
+    ]
+  },
+  {
+    "name": "spendguard_delegate_status",
+    "description": "Read the durable state and metadata of a detached agentic delegate job by job_id. $0, read-only.",
+    "schema": {
+      "type": "object",
+      "properties": {
+        "job_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "job_id"
+      ],
+      "additionalProperties": false
+    },
+    "reference": "spendguard.mcp_server:_tool_delegate_status",
+    "capability_ids": [
+      "C158"
+    ]
+  },
+  {
+    "name": "spendguard_delegate_result",
+    "description": "Collect the complete persisted result of a detached agentic delegate job by job_id. $0, read-only.",
+    "schema": {
+      "type": "object",
+      "properties": {
+        "job_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "job_id"
+      ],
+      "additionalProperties": false
+    },
+    "reference": "spendguard.mcp_server:_tool_delegate_result",
+    "capability_ids": [
+      "C159"
+    ]
+  },
+  {
+    "name": "spendguard_version",
+    "description": "Which spendguard COMMIT this MCP server is running, the green pointer it should be on, and whether it is STALE (a newer gate-green commit was deployed). $0 \u2014 a git-SHA compare. If stale, the server hands off to a fresh process on its next request, so the tools self-heal to the latest code (see `spendguard deploy`).",
+    "schema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "reference": "spendguard.mcp_server:_tool_version",
+    "capability_ids": [
+      "C239"
+    ]
+  },
+  {
+    "name": "spendguard_health",
+    "description": "Live reachability of every $0 subscription LANE + every metered PROVIDER, PLUS the exact FIX for anything down (which login/quota/API to fix) \u2014 a fast, BOUNDED health check. Each probe is time-bounded (timeout_s) so ONE hung endpoint cannot wedge the sweep. Lanes are $0; the metered pings cost ~a few $0.0001; the remediation is agentic + CACHED (only a NEW failure costs). Returns per-resource {reachable, executor, cost, latency, reason}, an `actions` list (issue/fix/command per down resource), and a summary. The result is cached so a down lane also surfaces in the receipt/notifier. Includes doctor's cached ledger leak status and age (unknown if absent); never pulls live billing. run=false \u2192 estimate only ($0).",
+    "schema": {
+      "type": "object",
+      "properties": {
+        "run": {
+          "type": "boolean",
+          "default": true,
+          "description": "actually probe; false = $0 estimate only"
+        },
+        "remediate": {
+          "type": "boolean",
+          "description": "include the agentic FIX for each down resource (default true; cached)"
+        },
+        "timeout_s": {
+          "type": "integer",
+          "default": 20,
+          "description": "per-probe bound in seconds \u2014 a dead endpoint fails this fast"
+        }
+      },
+      "additionalProperties": false
+    },
+    "reference": "spendguard.mcp_server:_tool_health",
+    "capability_ids": [
+      "C108",
+      "C248"
+    ]
+  },
+  {
+    "name": "spendguard_savings",
+    "description": "What spendguard SAVED \u2014 the THIRD axis, kept SEPARATE from real-$ spend and est-value (never summed into either). Returns certain (measured: cache / cascade / gate-block avoided-spend) + counterfactual (est: best-value / advisor model swaps priced vs the counterfactual), broken out by source, plus the count of decisions booked and the saving per intent. This is the value-proof for the routing spendguard did. $0.",
+    "schema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "reference": "spendguard.mcp_server:_tool_savings",
+    "capability_ids": [
+      "C093"
+    ]
+  },
+  {
+    "name": "spendguard_route_cost",
+    "description": "TRUE-cost routing for a BULK job: for an intent at volume N, the $ of running it on a subscription LANE (priced at its true MARGINAL cost, never $0), the metered BATCH API, or a min-cost COMBO \u2014 plus the recommendation and a plain 'why'. Prices a $0 lane at its real amortized rate + reclaims capacity that would expire unused; the batch leg is ~half realtime, cap-free. $0, arithmetic on measured economics (lane_economics + pricing); degrades honestly when a lane cap is still estimating.",
+    "schema": {
+      "type": "object",
+      "properties": {
+        "intent": {
+          "type": "string",
+          "description": "the job-type label the calls are tagged under"
+        },
+        "n": {
+          "type": "integer",
+          "description": "number of calls (tasks) in the job"
+        },
+        "in_tok": {
+          "type": "integer",
+          "description": "input tokens per call (default: = out_tok)"
+        },
+        "out_tok": {
+          "type": "integer",
+          "description": "output tokens per call (default: measured p90)"
+        },
+        "lane": {
+          "type": "string",
+          "description": "force a lane (default: the first converged one)"
+        },
+        "batch_model": {
+          "type": "string",
+          "description": "metered model for the batch leg (default: config advisor.batch_model)"
+        }
+      },
+      "required": [
+        "intent",
+        "n"
+      ],
+      "additionalProperties": false
+    },
+    "reference": "spendguard.mcp_server:_tool_route_cost",
+    "capability_ids": [
+      "C017"
+    ]
+  },
+  {
+    "name": "spendguard_route_realized",
+    "description": "REALIZED routing history from the calls ledger for an intent: $0 subscription lanes vs metered API, billed cost, served-model drift, falloff reasons, and recent samples. $0 and read-only; unlike route_cost and route_horizon, this reports actual stored history rather than projecting a hypothetical job.",
+    "schema": {
+      "type": "object",
+      "properties": {
+        "intent": {
+          "type": "string",
+          "description": "the exact calls.intent label"
+        },
+        "since": {
+          "type": "string",
+          "description": "inclusive lower ts bound (ISO date/timestamp string)"
+        },
+        "as_of": {
+          "type": "string",
+          "description": "inclusive upper ts bound (ISO date/timestamp string)"
+        },
+        "limit": {
+          "type": "integer",
+          "description": "maximum recent sample rows (default 20)"
+        }
+      },
+      "required": [
+        "intent"
+      ],
+      "additionalProperties": false
+    },
+    "reference": "spendguard.mcp_server:_tool_route_realized",
+    "capability_ids": [
+      "C018"
+    ]
+  },
+  {
+    "name": "spendguard_route_horizon",
+    "description": "HORIZON plan (item C) for a whole job SET: given groups [{intent, n, urgency?}], allocate each across the subscription LANE (~free/waste capacity that would expire at reset reclaimed FIRST), the metered BATCH API, and the metered REALTIME API over the plan's reset-window horizon \u2014 honouring caller-declared URGENCY (an urgent group's overflow \u2192 fast realtime; a deferrable group's \u2192 cheap cap-free batch; default deferrable) and the ONE SHARED, scarce lane budget (drawn URGENT-FIRST so groups never double-bank the free tokens). Returns a per-group allocation + total $ + plain 'why'. $0, arithmetic on measured economics; no forecast of unknown future work; degrades honestly (unpriced tokens said out loud, never invented at $0).",
+    "schema": {
+      "type": "object",
+      "properties": {
+        "groups": {
+          "type": "array",
+          "description": "the job groups to plan over the horizon",
+          "items": {
+            "type": "object",
+            "properties": {
+              "intent": {
+                "type": "string",
+                "description": "the job-type label the calls are tagged under"
+              },
+              "n": {
+                "type": "integer",
+                "description": "number of calls in the group"
+              },
+              "urgency": {
+                "type": "string",
+                "description": "urgent | deferrable (default deferrable)"
+              },
+              "in_tok": {
+                "type": "integer"
+              },
+              "out_tok": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "intent",
+              "n"
+            ]
+          }
+        },
+        "lane": {
+          "type": "string",
+          "description": "force a lane (default: the first converged one)"
+        },
+        "batch_model": {
+          "type": "string",
+          "description": "metered model for the batch leg (default: config advisor.batch_model)"
+        },
+        "realtime_model": {
+          "type": "string",
+          "description": "metered model for urgent overflow (default: config advisor.model)"
+        }
+      },
+      "required": [
+        "groups"
+      ],
+      "additionalProperties": false
+    },
+    "reference": "spendguard.mcp_server:_tool_route_horizon",
+    "capability_ids": [
+      "C019",
+      "C249"
+    ]
+  },
+  {
+    "name": "spendguard_plan_queue",
+    "description": "The $0 PREDICTIVE queue planner + async batch-job state (the MCP twin of `spendguard plan-queue`): a forecast of which vendor is about to breach its tokens/minute ceiling (a 429 BEFORE it happens), which intents to OFFLOAD to the Batch API and how to chunk them, which to PACE \u2014 PLUS the tracked batch jobs (open/settled/failed). It DECIDES; the drain executes \u2014 so it never spends and never mutates the queue. $0, read-only.",
+    "schema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "reference": "spendguard.mcp_server:_tool_plan_queue",
+    "capability_ids": [
+      "C224"
+    ]
+  },
+  {
+    "name": "spendguard_run_jobs",
+    "description": "The WHOLE-JOB contract \u2014 hand spendguard a SET of jobs + a GOAL and it decides the plan (batch vs lane vs metered, capability-matched to each job's schema), enforces the budget, executes, and returns; you never hand-tune metered_only/batch/lanes/model per call. SPEND-SAFE: with NO goal.budget_usd it returns the PLAN + estimate ONLY ($0, executed=false) \u2014 never an unbounded fan; pass goal.budget_usd to EXECUTE (the budget is the estimate-first cap \u2014 an over-estimate, or a group whose cost is unknown, is refused BEFORE any spend). Returns {executed, results (ready, keyed by job id), pending (async batch handles \u2014 settle later), plan, receipt {est_usd, ran, batch_failures, refused_code}}. Batch groups are async (~half cost, ~24h).",
+    "schema": {
+      "type": "object",
+      "properties": {
+        "jobs": {
+          "type": "array",
+          "description": "the job set",
+          "items": {
+            "type": "object",
+            "properties": {
+              "prompt": {
+                "type": "string",
+                "description": "the task prompt"
+              },
+              "intent": {
+                "type": "string",
+                "description": "job-type label \u2014 the routing + attribution key (required)"
+              },
+              "id": {
+                "type": "string",
+                "description": "stable id to key the result by (default task-<i>)"
+              },
+              "system": {
+                "type": "string",
+                "description": "optional system prompt"
+              },
+              "schema": {
+                "type": "object",
+                "description": "optional JSON schema \u2014 a strict one auto-routes to an enforcing path"
+              }
+            },
+            "required": [
+              "prompt",
+              "intent"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "goal": {
+          "type": "object",
+          "description": "budget_usd (estimate-first cap; required to EXECUTE), urgency (auto|realtime|batch), quality_bar (best-value model pick when set)",
+          "properties": {
+            "budget_usd": {
+              "type": "number"
+            },
+            "urgency": {
+              "type": "string"
+            },
+            "quality_bar": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "jobs"
+      ],
+      "additionalProperties": false
+    },
+    "reference": "spendguard.mcp_server:_tool_run_jobs",
+    "capability_ids": [
+      "C237"
+    ]
+  },
+  {
+    "name": "spendguard_advise",
+    "description": "Rank the models you have ALREADY used for a job-type ('intent') by cost-effectiveness at the quality it held: $/good-result where quality is labeled, else $/M output. Returns the ranked models, the pick, and caveats. Data-driven from your own local ledger; $0, no spend.",
+    "schema": {
+      "type": "object",
+      "properties": {
+        "intent": {
+          "type": "string",
+          "description": "the job-type to rank for (e.g. 'loinc-typing'); omit for all intents"
+        },
+        "plan": {
+          "type": "string",
+          "description": "a model you're about to use ('vendor:model' or bare) \u2014 shows the delta vs the pick"
+        },
+        "as_of": {
+          "type": "string",
+          "description": "YYYY-MM-DD \u2014 replay the ranking as of a past date (backtest)"
+        }
+      },
+      "additionalProperties": false
+    },
+    "reference": "spendguard.mcp_server:_tool_advise",
+    "capability_ids": [
+      "C062"
+    ]
+  },
+  {
+    "name": "spendguard_models",
+    "description": "List the actionable model catalogue spendguard knows: curated + your own verified prices, each with its per-1M input/output rates and provider. $0.",
+    "schema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "reference": "spendguard.mcp_server:_tool_models",
+    "capability_ids": [
+      "C241",
+      "C271"
+    ]
+  },
+  {
+    "name": "spendguard_recommend",
+    "description": "Recommend the best K models for a job-type ('intent') on the cost\u00d7quality frontier: the reasoner infers how much precision the job needs (or honors your quality_bar) and ranks the CHEAPEST models that MEET that bar, each with the measured $/good. Ranks from your OWN evidence (a bakeoff adds untried models). SPENDS a small, meta-capped LLM call \u2014 estimates first and refuses over budget_usd.",
+    "schema": {
+      "type": "object",
+      "properties": {
+        "intent": {
+          "type": "string",
+          "description": "the job-type to recommend models for"
+        },
+        "k": {
+          "type": "integer",
+          "description": "how many models to return (default 5)"
+        },
+        "quality_bar": {
+          "type": "string",
+          "description": "optional: force the bar \u2014 'precision-critical' | 'balanced' | 'cost-first'"
+        },
+        "budget_usd": {
+          "type": "number",
+          "description": "optional: refuse if the estimated LLM cost exceeds this"
+        }
+      },
+      "additionalProperties": false
+    },
+    "reference": "spendguard.mcp_server:_tool_recommend",
+    "capability_ids": [
+      "C066",
+      "C247"
+    ]
+  },
+  {
+    "name": "spendguard_bakeoff",
+    "description": "Measure cost\u00d7quality for a SLATE of candidate models on a sample of a job-type's ('intent') real tasks \u2014 judges each output and RECORDS the result, so untried models earn a $/good and appear in spendguard_advise / spendguard_recommend afterwards. Makes REAL metered calls (preferring $0 lanes): with NO budget_usd it returns the ESTIMATE only; pass budget_usd to actually run (it refuses over it). requirement_aware=true judges against the PROMPT'S OWN extracted criteria, two-tier (screen \u2192 opus).",
+    "schema": {
+      "type": "object",
+      "properties": {
+        "intent": {
+          "type": "string",
+          "description": "the job-type to bake off for"
+        },
+        "candidates": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "the slate to test, as 'vendor:model' ids (spendguard_recommend suggests one)"
+        },
+        "prompts": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "optional: representative tasks to replay; omit to auto-sample the intent's recorded prompts"
+        },
+        "sample_n": {
+          "type": "integer",
+          "description": "how many recorded prompts to replay when auto-sampling (default 5)"
+        },
+        "efforts": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "optional reasoning ladder to sweep PER model (['minimal','low','medium','high']) \u2014 the cheapest (model,effort) that holds"
+        },
+        "requirement_aware": {
+          "type": "boolean",
+          "description": "judge against the PROMPT'S OWN requirements, two-tier (screen \u2192 opus adjudicator)"
+        },
+        "adjudicator_model": {
+          "type": "string",
+          "description": "opus-tier adjudicator for requirement_aware (default config.advisor_adjudicator_model)"
+        },
+        "temperature": {
+          "type": "number",
+          "description": "DETERMINISM: run each arm as a measurement at this temperature (e.g. 0) \u2014 one deterministic pass per arm, FORCES the metered API"
+        },
+        "top_p": {
+          "type": "number",
+          "description": "DETERMINISM: nucleus top_p for the measurement (metered)"
+        },
+        "seed": {
+          "type": "integer",
+          "description": "DETERMINISM: sampling seed (OpenAI-only; dropped+recorded on vendors without a seed param)"
+        },
+        "budget_usd": {
+          "type": "number",
+          "description": "run only if the estimate fits this; OMIT to get just the estimate"
+        }
+      },
+      "additionalProperties": false
+    },
+    "reference": "spendguard.mcp_server:_tool_bakeoff",
+    "capability_ids": [
+      "C037",
+      "C250"
+    ]
+  },
+  {
+    "name": "spendguard_stability",
+    "description": "Measure a model/lane's RUN-TO-RUN variance at PRODUCTION settings (replicates) \u2014 the stability question temperature=0 CANNOT answer (temp=0 measures 'which arm is better'; this measures 'is the shipped config stable'). Runs k replicates of each prompt on its normal $0-lane path at the plan's own sampling, and reports stable_frac, the flipped prompts, and the per-label between-run rate band. Spends subscription-plan usage ($0 billed on a $0 lane). Pass `marker` (e.g. 'DECISION:') to score stability on the decision, not wording.",
+    "schema": {
+      "type": "object",
+      "properties": {
+        "model": {
+          "type": "string",
+          "description": "the model/lane to measure (e.g. gpt-6-luna)"
+        },
+        "intent": {
+          "type": "string",
+          "description": "job-type whose recorded prompts to replay (or pass `prompts`)"
+        },
+        "prompts": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "explicit prompts to replay; overrides intent sampling"
+        },
+        "sample_n": {
+          "type": "integer",
+          "description": "how many recorded prompts to replay when sampling the intent (default 5)"
+        },
+        "k": {
+          "type": "integer",
+          "description": "replicates per prompt (default 5) \u2014 more tightens the variance estimate"
+        },
+        "marker": {
+          "type": "string",
+          "description": "parse each reply's OUTCOME as the text after this marker (e.g. 'DECISION:') \u2014 scores stability on the decision label"
+        },
+        "system": {
+          "type": "string",
+          "description": "optional system prompt sent with every replicate"
+        }
+      },
+      "additionalProperties": false
+    },
+    "reference": "spendguard.mcp_server:_tool_stability",
+    "capability_ids": [
+      "C038"
+    ]
+  },
+  {
+    "name": "spendguard_vision",
+    "description": "Run ONE metered VISION call (image(s) + prompt) through spendguard's governed adapter. The subscription lanes are text-only CLIs, so vision rides the metered API (executor='api'), pixel-priced and bounded by a deadline. Estimate-first: with NO budget_usd it returns ONLY the estimate ($0); pass budget_usd to run (refused over it). A dynamic-key MAP schema is refused before any spend (strict mode empties it to {} \u2014 use an ARRAY of {key,value}); paid results are cached by request content, so an identical re-request is $0.",
+    "schema": {
+      "type": "object",
+      "properties": {
+        "model": {
+          "type": "string",
+          "description": "vision-capable model 'vendor:model' (e.g. 'openai:gpt-5-nano', 'gemini:gemini-3-flash')"
+        },
+        "prompt": {
+          "type": "string",
+          "description": "the instruction \u2014 what to label/extract from the image(s)"
+        },
+        "images": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "non-empty list of file paths (server-side) or data: URLs"
+        },
+        "schema": {
+          "type": "object",
+          "description": "optional JSON Schema for structured output \u2014 use an ARRAY of {key,value}, NEVER a dynamic-key map"
+        },
+        "system": {
+          "type": "string",
+          "description": "optional system instruction"
+        },
+        "budget_usd": {
+          "type": "number",
+          "description": "run only if the estimate fits this; OMIT to get just the estimate (0 spend)"
+        },
+        "max_out_tokens": {
+          "type": "integer",
+          "description": "optional output-token estimate for the pre-spend cost estimate"
+        },
+        "no_cache": {
+          "type": "boolean",
+          "description": "force a fresh call instead of returning a cached identical result"
+        },
+        "timeout_s": {
+          "type": "integer",
+          "description": "optional per-call deadline in seconds (default 120)"
+        }
+      },
+      "required": [
+        "model",
+        "prompt",
+        "images"
+      ],
+      "additionalProperties": false
+    },
+    "reference": "spendguard.mcp_server:_tool_vision",
+    "capability_ids": [
+      "C242",
+      "C246"
+    ]
+  },
+  {
+    "name": "spendguard_spend_overview",
+    "description": "The headline for THIS account: REAL $ out the door (subscription base + Claude Code overage + API credits) shown SEPARATELY from est-value (plan-covered Claude Code usage, what it's worth at API rates). The two axes are never summed. $0, read-only.",
+    "schema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "reference": "spendguard.mcp_server:_tool_spend_overview",
+    "capability_ids": [
+      "C243"
+    ]
+  },
+  {
+    "name": "spendguard_overage_status",
+    "description": "Are we on PAID overage right now \u2014 i.e. the weekly subscription cap is hit and this account is billing per-token \u2014 from observable transcript signals, plus reconciled real overage $ by month. $0, read-only.",
+    "schema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "reference": "spendguard.mcp_server:_tool_overage_status",
+    "capability_ids": [
+      "C015"
+    ]
+  },
+  {
+    "name": "spendguard_top_conversations",
+    "description": "Rank Claude Code conversations by est-value (default) or by real overage $ (by='overage', reconciled to invoices), each labeled with its sidebar title. Answers 'what used the tokens'. $0, read-only.",
+    "schema": {
+      "type": "object",
+      "properties": {
+        "by": {
+          "type": "string",
+          "enum": [
+            "est",
+            "overage"
+          ],
+          "description": "'est' = plan-covered est-value (default); 'overage' = real paid overage $"
+        },
+        "limit": {
+          "type": "integer",
+          "description": "how many to return (default 10)"
+        }
+      },
+      "additionalProperties": false
+    },
+    "reference": "spendguard.mcp_server:_tool_top_conversations",
+    "capability_ids": [
+      "C173"
+    ]
+  },
+  {
+    "name": "spendguard_conversation_cost",
+    "description": "Cost of ONE conversation by its transcript id: plan-covered est-value + observed overage upper bound (the two axes kept separate). Get ids from spendguard_top_conversations. $0, read-only.",
+    "schema": {
+      "type": "object",
+      "properties": {
+        "conversation_id": {
+          "type": "string",
+          "description": "the transcript uuid (conv_id) to price"
+        }
+      },
+      "required": [
+        "conversation_id"
+      ],
+      "additionalProperties": false
+    },
+    "reference": "spendguard.mcp_server:_tool_conversation_cost",
+    "capability_ids": [
+      "C244"
+    ]
+  },
+  {
+    "name": "spendguard_compaction_candidates",
+    "description": "Open conversations that are expensive to keep alive \u2014 large re-read context billing every turn \u2014 with the $/turn cost, what compacting would save, and the ready-to-paste effective /compact command. Surfaces WHEN compacting a conversation is a good trade. $0, read-only.",
+    "schema": {
+      "type": "object",
+      "properties": {
+        "limit": {
+          "type": "integer",
+          "description": "how many candidates to return (default 10)"
+        }
+      },
+      "additionalProperties": false
+    },
+    "reference": "spendguard.mcp_server:_tool_compaction_candidates",
+    "capability_ids": [
+      "C245"
+    ]
+  },
+  {
+    "name": "spendguard_dispatch_state",
+    "description": "Live ADMISSION + QUEUE + reasoning-cut state \u2014 'is anything rate-limited / is the queue backing up / are we burning money on reasoning cut mid-thought'. Returns the governor's per-key concurrency/rpm/tpm + in-flight/waiting, the SELF-CALIBRATED per-vendor limits (learned from provider 429 + success headers), the durable queue depth incl. PARKED (capacity backpressure), and the deadline-cancel counts (billed by the provider, invisible to the local ledger). The same data the CLI `spendguard dispatch` prints (api/MCP/cli parity). $0.",
+    "schema": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "integer",
+          "description": "optional async queue row handle to query"
+        }
+      },
+      "additionalProperties": false
+    },
+    "reference": "spendguard.mcp_server:_tool_dispatch_state",
+    "capability_ids": [
+      "C223"
+    ]
+  },
+  {
+    "name": "spendguard_config",
+    "description": "Every spendguard CONFIG knob (from config_schema \u2014 the single source that also drives the CLI `config` command), with its CURRENT value, default, env var, kind and description. Secrets omitted. Read-only ($0) \u2014 change one via the CLI `spendguard config set <section.key> <value>`. Closes the config-in-MCP parity gap.",
+    "schema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "reference": "spendguard.mcp_server:_tool_config",
+    "capability_ids": [
+      "C147"
+    ]
+  }
+]

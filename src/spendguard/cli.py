@@ -9,6 +9,8 @@
   spendguard audit [--ci]
   spendguard pricing                      # print the canonical table
 """
+
+from .capability_cli_parsing import add_registered_cli_argument, registered_cli_option_token
 import sys
 
 _DEPLOY_HOME_ENVIRONMENT_KEY = "SPENDGUARD_HOME"
@@ -72,113 +74,22 @@ def _deploy_succeeded_verdict(release_record):
     print(f"🟢 DEPLOY SUCCEEDED — promoted {release_record['short']} ({release_record['describe']})")
     return 0
 
-# The command surface, grouped the way you'd actually use it. The module docstring used to be the entire help —
-# 10 of 60+ commands — printed for `--help`, `help`, `--version` AND every typo, always exiting 1.
-# `_all_commands()` cross-checks this table against the real dispatch, so help can't silently drift from code.
-_GROUPS = [
-    ("start here", [
-        ("scan", "what your local coding-agent work costs — no key, no network, 10s"),
-        ("init", "one-command setup: caps + identity + auto-wire your $0 lanes (--all also wires gate/MCP/receipt/rule/skills)"),
-        ("run", "`run -- <cmd>` gate ONE command; nothing written to your interpreter"),
-        ("sources", "where can this machine spend? providers · agent tools · ungated venvs"),
-        ("doctor", "is the gate enforcing HERE? keys, lanes, ledger status"),
-        ("health", "bounded MCP health check of lanes and metered providers (--no-run = no probes; --json)"),
-        ("ask", "run ONE prompt across many LLMs — honest per-vendor coverage, $0 lanes"),
-        ("comprehend", "fan a CORPUS across the $0 lanes (doc-mining/gap-analysis) — NOT Claude sub-agents; estimate-first"),
-        ("delegate", "classify then offload one self-contained task to another subscription plan; dry-run by default"),
-        ("serve", "the ask surface over localhost HTTP — POST /ask from any tool/language"),
-        ("mcp", "spendguard's tools over MCP (stdio): model-advisor + spend/compaction queries"),
-        ("install-mcp", "register `spendguard mcp` in Claude Code (~/.claude.json); --remove to undo"),
-        ("reap-orphans", "inspect or reap warm-lane servers whose marked owner is provably dead"),
-        ("queue-manage", "reclaim, retire, purge, and conditionally drain the durable lane queue"),
-        ("lane-leak-check", "detect protected subscription-lane or metered-provider leakage"),
-    ]),
-    ("see the money", [
-        ("ledger-read", "bounded read-only events, calls and exact counts; oversized reads fail loud"),
-        ("receipt", "running tally: today / 7d / month, two axes"),
-        ("report", "daily · weekly · monthly, per provider (+ leak alert)"),
-        ("reconcile", "`reconcile all|openai|anthropic` — ledger vs the provider's BILL"),
-        ("trust", "is what we recorded ≈ what you were billed?"),
-        ("close", "monthly close: provider truth + residual, named"),
-        ("focus-export", "the ledger as FinOps FOCUS 1.2 rows (json|csv) for any FinOps stack"),
-        ("otel-ingest", "import an OTel GenAI trace (OpenLLMetry/Traceloop) → spend_events (idempotent)"),
-        ("keys", "spend per API key (which workspace/project key)"),
-        ("coverage", "which LLM-capable interpreters are NOT gated"),
-        ("overage", "is the subscription plan on paid per-token overage right now?"),
-    ]),
-    ("spend less (measured, not guessed)", [
-        ("advise", "cheapest config that HELD quality, per intent (the auto knob: reasoning='best-value')"),
-        ("bakeoff", "measure cost×quality for a SLATE of untried models on an intent's tasks (feeds advise); --temperature/--seed for a deterministic A/B"),
-        ("stability", "measure a model/lane's RUN-TO-RUN variance at production settings (replicates) — the stability question temp=0 can't answer"),
-        ("effort-titrate", "learn the CHEAPEST reasoning effort that HOLDS quality, per (intent, model)"),
-        ("calibrate", "learned estimator: your history corrects the naive $"),
-        ("prompts", "lint the call corpus for prompt waste"),
-        ("experiment", "A/B a cheaper config with graded output-equivalence"),
-        ("maxtokens", "measured p99 bound for a call class (autotune's input)"),
-        ("tokens", "per-provider token factors: `tokens calibrate` picks o200k→native AGENTICALLY from call_io stats (--dry-run=$0)"),
-        ("realized", "what the changes actually saved"),
-        ("savings", "what spendguard SAVED — measured + counterfactual, by source (the 3rd axis, never summed)"),
-        ("measurement", "receipts for a judged number: `measurement inspect|list|reconstruct` — the judge/sample/rubric behind it"),
-    ]),
-    ("teams", [
-        ("saas", "`saas link|sync|push|reconcile|reattribute` — org roll-up (opt-in)"),
-        ("lanes", "subscription lanes: run meta prompts on your plan (+ `lanes set-model <lane> <model>`)"),
-        ("tiers", "bulk-lane routing groups: show/validate + `tiers set <group> <model…>`"),
-        ("truth", "push provider-truth totals (owner only)"),
-    ]),
-    ("setup & plumbing", [
-        ("config", "`config` show all · `config set <section.key> <value>`"),
-        ("install-hook", "gate EVERY process in a venv (opt-in; --uninstall removes)"),
-        ("gate-host", "offer/apply import-time gating to every discovered unregistered interpreter"),
-        ("install-agent-gate", "hard-route reroutable Agent/Task spawns off a near-cap hosting plan"),
-        ("install-capguard", "guard Claude subagent and raw codex-exec spawns at low weekly headroom"),
-        ("install-rule", "teach Claude/Cursor to route generated code through the gate"),
-        ("install-skills", "add the /spend, /spendguard-* slash commands"),
-        ("schedule", "OS-native daily sync (launchd / cron / schtasks)"),
-        ("sync-prices", "refresh the price breadth layer now"),
-        ("sync-catalog", "refresh the live model-catalog (validates model ids at dispatch)"),
-        ("sync-capabilities", "sync per-model capabilities (vision, response_schema, …) + upper bounds from LiteLLM"),
-        ("balances", "per-vendor metered prepay balance (sunk-pool vs on-demand), for routing"),
-        ("reliability", "sweep every lane ($0) + metered provider (--run) for reachability; --remediate = agentic per-lane FIX (which login/quota/API to fix), cached; --notify = macOS notification on any red"),
-        ("preflight", "resolve model ids (served + priced; stale→fix) BEFORE a batch — catches a bad id for $0"),
-        ("verify", "self-check every money path: model ids · failover map · keys · economics (--probe = live)"),
-        ("keys-audit", "scan repo .env files for a provider key that would SHADOW the keys.env SSOT (the stale-shadow 401 doctor can't see)"),
-        ("consumer-audit", "prove every workspace LLM consumer is gated and on the deployed sha; safely arm fixable venvs"),
-        ("distribute", "converge every local surface and attest the deployed release; --check verifies without mutation"),
-        ("manifest", "build or show the persisted complete inventory of gated surfaces"),
-        ("manifest", "build/show the persisted complete inventory of gated surfaces"),
-        ("deploy", "run the full gate, then promote committed HEAD → green pointer (running MCP servers roll onto latest+best)"),
-        ("release", "show release status, then converge and attest the fleet (--check verifies only; --json)"),
-        ("fleet", "tracked consumers and deployments (--restart, --json, or deregister <python_executable>)"),
-        ("pricing", "print the canonical price table"),
-        ("audit", "fail CI if any code hardcodes a disagreeing price"),
-        ("token-caps", "list every hardcoded output-token cap; --judge rules on the unjudged ones"),
-        ("metadata", "model-metadata backbone health: LiteLLM cache + measured-cap drift"),
-        ("estimate-divergence", "judge every recorded quote against the actual bill; fails on ungrounded ones"),
-        ("estimate-literals", "every cost call fed literal token counts; --judge rules quote vs probe"),
-        ("migrate", "rebuild spend_events from charges (exact Decimal); proves Σ preserved"),
-    ]),
-]
+# Discovery and help share the registry's command topology and parameter schemas.
 
 
 def _all_commands():
-    return sorted({c for _g, items in _GROUPS for c, _d in items})
+    from .capability_registry import CLI_COMMAND_GRAMMARS
+    from .capability_cli_callable_generation import registered_callable_cli_commands
+
+    return sorted({spelling for contract in CLI_COMMAND_GRAMMARS.values()
+                   for spelling in (contract["command"], *contract["aliases"])}
+                  | set(registered_callable_cli_commands()))
 
 
 def help_text():
-    out = ["spendguard — know what an LLM job will cost before you run it, and prove your ledger matches the bill.",
-           "",
-           "quickstart:  pip install llm-spendguard[all]  &&  spendguard init --all",
-           "             (auto-detects your $0 subscription lanes + wires the gate, MCP tools, receipt & slash-commands)",
-           "", "usage: spendguard <command> [args]    ·    spendguard --version", ""]
-    for group, items in _GROUPS:
-        out.append(f"{group}:")
-        for cmd, desc in items:
-            out.append(f"  {cmd:<15} {desc}")
-        out.append("")
-    out += ["Not listed here: the deeper surface (bootstrap, insights, compare, experiment internals, tag, …).",
-            "Full reference: https://docs.llmspendguard.com/CLI/  ·  every setting: `spendguard config`"]
-    return "\n".join(out)
+    from .capability_cli_help_generation import render_capability_cli_grouped_help
+
+    return render_capability_cli_grouped_help().rstrip()
 
 
 def ledger_read_cli(argv):
@@ -187,16 +98,16 @@ def ledger_read_cli(argv):
     import json
     from .mcp_server import LEDGER_READ_OPERATIONS, _tool_ledger_read
     parser = argparse.ArgumentParser(prog="spendguard ledger-read")
-    parser.add_argument("operation", choices=LEDGER_READ_OPERATIONS)
-    parser.add_argument("--table", choices=("calls", "spend_events"), default="spend_events")
-    parser.add_argument("--event-id")
-    parser.add_argument("--since")
-    parser.add_argument("--until")
-    parser.add_argument("--path")
-    parser.add_argument("--group-by", nargs="+")
-    parser.add_argument("--conv")
-    parser.add_argument("--deadline-s", type=float)
-    parser.add_argument("--json", action="store_true", help="JSON output (also the default)")
+    add_registered_cli_argument(parser, 'ledger-read/cli.ledger_read_cli/parser/operation', choices=LEDGER_READ_OPERATIONS)
+    add_registered_cli_argument(parser, 'ledger-read/cli.ledger_read_cli/parser/--table')
+    add_registered_cli_argument(parser, 'ledger-read/cli.ledger_read_cli/parser/--event-id')
+    add_registered_cli_argument(parser, 'ledger-read/cli.ledger_read_cli/parser/--since')
+    add_registered_cli_argument(parser, 'ledger-read/cli.ledger_read_cli/parser/--until')
+    add_registered_cli_argument(parser, 'ledger-read/cli.ledger_read_cli/parser/--path')
+    add_registered_cli_argument(parser, 'ledger-read/cli.ledger_read_cli/parser/--group-by')
+    add_registered_cli_argument(parser, 'ledger-read/cli.ledger_read_cli/parser/--conv')
+    add_registered_cli_argument(parser, 'ledger-read/cli.ledger_read_cli/parser/--deadline-s', type=float)
+    add_registered_cli_argument(parser, 'ledger-read/cli.ledger_read_cli/parser/--json')
     args = vars(parser.parse_args(argv))
     if args["operation"] == "event" and not args["event_id"]:
         parser.error("event requires --event-id")
@@ -227,10 +138,10 @@ def reap_orphaned_warm_servers_cli(argv):
     from .warm_stdio_daemon import reap_orphaned_warm_servers
 
     parser = argparse.ArgumentParser(prog="spendguard reap-orphans")
-    parser.add_argument("--execute", action="store_true", help="reap provably-dead marked servers (default: dry-run)")
-    parser.add_argument("--lane", metavar="LABEL", help="restrict the scan to one warm-lane label")
-    parser.add_argument("--json", action="store_true", help="emit one machine-readable JSON object")
-    parser.add_argument("--bounded-log", metavar="PATH", help=argparse.SUPPRESS)
+    add_registered_cli_argument(parser, 'reap-orphans/cli.reap_orphaned_warm_servers_cli/parser/--execute')
+    add_registered_cli_argument(parser, 'reap-orphans/cli.reap_orphaned_warm_servers_cli/parser/--lane')
+    add_registered_cli_argument(parser, 'reap-orphans/cli.reap_orphaned_warm_servers_cli/parser/--json')
+    add_registered_cli_argument(parser, 'reap-orphans/cli.reap_orphaned_warm_servers_cli/parser/--bounded-log', help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
     report = reap_orphaned_warm_servers(lane=args.lane, execute=args.execute)
     marked = report.get("marked", [])
@@ -291,11 +202,11 @@ def manage_lane_queue_cli(argv):
     from .lane_queue import manage_queue_tick
 
     parser = argparse.ArgumentParser(prog="spendguard queue-manage")
-    parser.add_argument("--execute", action="store_true", help="apply cleanup and bounded processing (default: dry-run)")
-    parser.add_argument("--json", action="store_true", help="emit one machine-readable JSON object")
-    parser.add_argument("--no-process", action="store_true", help="clean only; never start the bounded drain")
-    parser.add_argument("--stale-days", type=float, metavar="DAYS", help="override advisor.queue_stale_days")
-    parser.add_argument("--bounded-log", metavar="PATH", help=argparse.SUPPRESS)
+    add_registered_cli_argument(parser, 'queue-manage/cli.manage_lane_queue_cli/parser/--execute')
+    add_registered_cli_argument(parser, 'queue-manage/cli.manage_lane_queue_cli/parser/--json')
+    add_registered_cli_argument(parser, 'queue-manage/cli.manage_lane_queue_cli/parser/--no-process')
+    add_registered_cli_argument(parser, 'queue-manage/cli.manage_lane_queue_cli/parser/--stale-days', type=float)
+    add_registered_cli_argument(parser, 'queue-manage/cli.manage_lane_queue_cli/parser/--bounded-log', help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
     report = manage_queue_tick(execute=args.execute, process=not args.no_process, stale_days=args.stale_days)
     rendered = json.dumps(report, sort_keys=True)
@@ -345,21 +256,33 @@ def load_protected_lane_tripwire_module():
 def lane_leak_check_cli(argv):
     """Run the existing protected-lane tripwire and preserve every terminal status."""
     import argparse
-    import contextlib
-    import io
-    from . import config, lane_catalog
 
     parser = argparse.ArgumentParser(prog="spendguard lane-leak-check")
-    parser.add_argument("--protect-executor")
-    parser.add_argument("--protect-provider")
-    parser.add_argument("--hours", type=float)
-    parser.add_argument("--min-other-calls", type=int)
-    parser.add_argument("--ledger-path")
-    parser.add_argument("--bounded-log", metavar="PATH", help=argparse.SUPPRESS)
+    add_registered_cli_argument(parser, 'lane-leak-check/cli.lane_leak_check_cli/parser/--protect-executor')
+    add_registered_cli_argument(parser, 'lane-leak-check/cli.lane_leak_check_cli/parser/--protect-provider')
+    add_registered_cli_argument(parser, 'lane-leak-check/cli.lane_leak_check_cli/parser/--hours', type=float)
+    add_registered_cli_argument(parser, 'lane-leak-check/cli.lane_leak_check_cli/parser/--min-other-calls', type=int)
+    add_registered_cli_argument(parser, 'lane-leak-check/cli.lane_leak_check_cli/parser/--ledger-path')
+    add_registered_cli_argument(parser, 'lane-leak-check/cli.lane_leak_check_cli/parser/--bounded-log', help=argparse.SUPPRESS)
     arguments = parser.parse_args(argv)
     if bool(arguments.protect_executor) != bool(arguments.protect_provider):
         parser.error("--protect-executor and --protect-provider must be supplied together")
 
+    return check_protected_lane_leaks(**vars(arguments))
+
+
+def check_protected_lane_leaks(*, protect_executor: str | None = None,
+                               protect_provider: str | None = None, hours: float | None = None,
+                               min_other_calls: int | None = None, ledger_path: str | None = None,
+                               bounded_log: str | None = None) -> int:
+    """Run the existing protected-lane tripwire with its complete terminal precedence."""
+    import contextlib
+    import io
+    from types import SimpleNamespace
+    from . import config, lane_catalog
+    arguments = SimpleNamespace(protect_executor=protect_executor, protect_provider=protect_provider,
+                                hours=hours, min_other_calls=min_other_calls, ledger_path=ledger_path,
+                                bounded_log=bounded_log)
     tripwire_module = load_protected_lane_tripwire_module()
     if arguments.protect_executor:
         protected_targets = ((arguments.protect_executor, arguments.protect_provider),)
@@ -407,12 +330,9 @@ def cli_health_command(argv):
     from . import mcp_server
 
     parser = argparse.ArgumentParser(prog="spendguard health")
-    parser.add_argument("--run", action=argparse.BooleanOptionalAction,
-                        default=mcp_server.HEALTH_DEFAULT_RUN,
-                        help="probe endpoints (MCP default); --no-run = estimate only, no probes")
-    parser.add_argument("--timeout_s", type=int, default=mcp_server.HEALTH_DEFAULT_TIMEOUT_S,
-                        help="per-endpoint fail-fast bound in seconds (same default as MCP)")
-    parser.add_argument("--json", action="store_true", help="emit the raw MCP health result")
+    add_registered_cli_argument(parser, 'health/cli.cli_health_command/parser/--run', action=argparse.BooleanOptionalAction, default=mcp_server.HEALTH_DEFAULT_RUN)
+    add_registered_cli_argument(parser, 'health/cli.cli_health_command/parser/--timeout_s', type=int, default=mcp_server.HEALTH_DEFAULT_TIMEOUT_S)
+    add_registered_cli_argument(parser, 'health/cli.cli_health_command/parser/--json')
     arguments = parser.parse_args(argv)
     try:
         result = mcp_server._tool_health({"run": arguments.run, "timeout_s": arguments.timeout_s})
@@ -475,16 +395,9 @@ def _dispatch(argv=None):
         print(help_text())
         return 0
     if any(arg in ("--help", "-h") for arg in rest):
-        descriptions = {command: description for _group, items in _GROUPS for command, description in items}
-        option_hint = (
-            "\n\noptions: --no-gate --allow-dirty --no-restart --no-refresh --skip-consumer-verify "
-            "--no-auto-arm --dry-run" if cmd == "deploy"
-            else "\n\noptions: --json --roots ROOT [ROOT ...] --dry-run --no-auto-arm"
-            if cmd == "consumer-audit"
-            else "\n\noptions: --check --json --roots ROOT [ROOT ...] --dry-run" if cmd == "distribute"
-            else "\n\noptions: --check --json --dry-run" if cmd == "release" else ""
-        )
-        print(f"usage: spendguard {cmd} [args]\n\n{descriptions.get(cmd, 'spendguard command')}{option_hint}")
+        from .capability_cli_help_generation import render_capability_cli_help
+
+        print(render_capability_cli_help(cmd), end="")
         return 0
     # Verify-only distribution must reach attestation before gate hydration: even
     # gate installation registers this process in the persistent fleet database.
@@ -507,73 +420,23 @@ def _dispatch(argv=None):
                       "gate/MCP/receipt/rule/skills); plain `spendguard init` is config-only. Works standalone.\n")
         except Exception:
             pass
-    if cmd in ("status", "on", "off", "doctor"):
+    from .capability_cli_dispatch_generation import invoke_registered_cli_command
+    matched, result = invoke_registered_cli_command(cmd, rest, argv)
+    if matched:
+        return result
+    import difflib
+    near = difflib.get_close_matches(cmd, _all_commands(), n=3, cutoff=0.55)
+    print(f"unknown command {cmd!r}" + (f" — did you mean: {', '.join(near)}?" if near else ""), file=sys.stderr)
+    print("`spendguard --help` lists every command.", file=sys.stderr)
+    return 2
+
+
+def cli_core_status(rest, cmd, argv):
         from . import gate
-        return gate._cli(cmd, live="--live" in rest)   # doctor --live forces the full provider pull
-    if cmd == "delegate":
-        from . import delegate_router
-        return delegate_router.delegate_cli(rest)
-    if cmd == "manifest":
-        from .manifest import manifest_command
-        return manifest_command(rest)
-    if cmd == "reap-orphans":
-        return reap_orphaned_warm_servers_cli(rest)
-    if cmd == "queue-manage":
-        return manage_lane_queue_cli(rest)
-    if cmd == "lane-leak-check":
-        return lane_leak_check_cli(rest)
-    if cmd == "ledger-read":
-        return ledger_read_cli(rest)
-    if cmd == "compress-content":
-        from .content_compression_backfill import content_compression_backfill_cli
-        return content_compression_backfill_cli(rest)
-    if cmd == "agent-spawn-gate":
-        from . import agent_spawn_gate
-        return agent_spawn_gate.cmd(rest)
-    if cmd == "residency-gate":                           # PostToolUse context-residency NUDGE (warns, never blocks)
-        from . import residency_gate
-        return residency_gate.cmd(rest)
-    if cmd == "capguard":
-        from . import weekly_cap_guard
-        return weekly_cap_guard.cmd(rest)
-    if cmd == "install-residency-gate":
-        from . import residency_gate
-        return residency_gate.install_residency_gate_cli(rest)
-    if cmd == "overage":
-        from . import overage
-        return overage.overage_cli(rest)
-    if cmd == "report":
-        from . import report
-        sys.argv = ["report"] + rest
-        return report.main()
-    if cmd in ("route-cost", "route_cost"):           # $0: TRUE-cost batch-vs-lane-vs-combo split for an intent at volume N
-        from . import route_economics
-        return route_economics.cmd(rest)
-    if cmd in ("route-realized", "route_realized"):   # $0: realized history from calls, not a routing projection
-        from . import route_realized
-        return route_realized.cmd(rest)
-    if cmd in ("route-horizon", "route_horizon"):     # $0 (C): horizon plan for a job SET — urgency + the shared lane budget
-        from . import route_horizon
-        return route_horizon.cmd(rest)
-    if cmd in ("submit-jobs", "run-jobs", "whole-job"):   # #2 whole-job: hand a job SET + a GOAL; plan ($0) / --execute
-        from . import whole_job
-        return whole_job.cmd(rest)
-    if cmd == "focus-export":                         # ledger → FinOps FOCUS 1.2 rows (json|csv), read-only, $0
-        from . import focus_export
-        return focus_export.main(rest)
-    if cmd in ("otel-ingest", "otel"):                # OTel GenAI trace → spend_events (import; idempotent; $0)
-        from . import otel_ingest
-        return otel_ingest.main(rest)
-    if cmd == "preflight":                            # $0: resolve model ids (served + priced + stale→fix) BEFORE a batch
-        from . import model_preflight
-        return model_preflight.cmd(rest)
-    if cmd == "verify":                               # forensic self-check: model ids · failover map · keys · economics (+--probe)
-        from . import verify
-        return verify.cmd(rest)
-    if cmd == "keys-audit":                           # $0 static scan: a repo .env provider key that would SHADOW keys.env
-        from . import keys_audit                       #   at load_dotenv() time — the stale-shadow 401 doctor cannot see
-        return keys_audit.cmd(rest)
-    if cmd == "reconcile":
+        return gate._cli(cmd, live=registered_cli_option_token('doctor+status/--live') in rest)   # doctor --live forces the full provider pull
+
+
+def cli_core_reconcile(rest, cmd, argv):
         _PROV = {"openai", "anthropic", "all"}
         # A bare `spendguard reconcile` defaults to openai. But a FLAG in the first slot (e.g. `--since 2026-08-01`)
         # is NOT a provider — consuming it as `sub` silently ate the flag AND still ran openai; treat it as an
@@ -590,8 +453,8 @@ def _dispatch(argv=None):
         if sub == "all":                                  # unified view: every spend source through the one loop
             from . import reconcile
             _since = None                                 # honor --since here too: it was parsed into prov_args but
-            if "--since" in prov_args:                    # never passed on, so `reconcile all --since DATE` silently
-                _i = prov_args.index("--since")           # reported the DEFAULT window instead of the requested one
+            if registered_cli_option_token('reconcile/--since') in prov_args:                    # never passed on, so `reconcile all --since DATE` silently
+                _i = prov_args.index(registered_cli_option_token('reconcile/--since'))           # reported the DEFAULT window instead of the requested one
                 _since = prov_args[_i + 1] if _i + 1 < len(prov_args) else None
             reconcile.report(since=_since)
             return 0
@@ -605,55 +468,9 @@ def _dispatch(argv=None):
         except RuntimeError as e:                          # e.g. a missing provider key — clean one-line exit, no traceback
             print(e)
             return 1
-    if cmd == "estimate":
-        # explicit submodule import: `from . import estimate` returns pricing.estimate (the function
-        # __init__ re-exports), which shadows the submodule and broke this dispatch silently
-        from .estimate import main as estimate_main
-        sys.argv = ["estimate"] + rest
-        return estimate_main()
-    if cmd == "calibrate":                            # learned estimator over the captured corpus (zero spend)
-        from . import calibrate
-        return calibrate.main(rest)
-    if cmd == "measurement":                          # receipts for a judged number — inspect/list/reconstruct ($0)
-        from . import measurement
-        return measurement.cmd(rest)
-    if cmd == "audit":
-        from . import audit as a
-        sys.argv = ["audit"] + rest
-        return a.main()
-    if cmd == "token-caps":
-        from . import token_caps
-        return token_caps.cmd(rest)
-    if cmd == "batch-submit":                         # GATED OpenAI Batch-API submit (estimate/submit) for a prepared .jsonl
-        from . import openai_batch_cli
-        return openai_batch_cli.submit_batch_jsonl(rest)
-    if cmd == "batch-fetch":                          # poll a batch; download its output .jsonl when completed
-        from . import openai_batch_cli
-        return openai_batch_cli.fetch_batch_output(rest)
-    if cmd == "ask":                                  # cross-LLM query surface — one prompt across models, honestly
-        from . import crossllm
-        return crossllm.cmd(rest)
-    if cmd == "comprehend":                           # fan a CORPUS across the $0 lanes (doc-mining / gap-analysis)
-        from . import comprehend as _comprehend       # instead of Claude-only sub-agents; estimate-first + gated
-        return _comprehend.cmd(rest)
-    if cmd == "serve":                                # the same cross-LLM ask surface over localhost HTTP
-        from . import serve as _serve
-        return _serve.cmd(rest)
-    if cmd == "mcp":                                  # the model-advisor over MCP (stdio) — for any MCP client
-        from . import mcp_server
-        return mcp_server.cmd(rest)
-    if cmd == "consumer-audit":
-        from .consumer_audit import consumer_audit_command
-        return consumer_audit_command(rest)
-    if cmd == "distribute":
-        from .distribution import distribute_command
-        return distribute_command(rest)
-    if cmd == "deploy":
-        # Promote the current HEAD to the GREEN POINTER so already-running MCP servers roll onto the latest code —
-        # but ONLY when it is COMMITTED and the full gate passes, so "green" (blue/green) == "green" (suite + ruff
-        # + name gate). Running servers hand off at a safe point (between requests). --no-gate trusts a just-run
-        # gate; --allow-dirty promotes an uncommitted tree deliberately (discouraged — the pointer then names code
-        # no commit captures). This is the write path; `spendguard release` is the read-only status.
+
+
+def cli_core_deploy(rest, cmd, argv):
         import pathlib as _pl
         from . import config as _config
         from . import release as _rel
@@ -674,7 +491,7 @@ def _dispatch(argv=None):
                   "    --no-auto-arm  audit consumers without arming safely-fixable venvs\n"
                   "    --dry-run      show which safely-fixable venvs would be armed; write no hooks")
             return 0
-        _no_gate, _allow_dirty = ("--no-gate" in r), ("--allow-dirty" in r)
+        _no_gate, _allow_dirty = (registered_cli_option_token('deploy/--no-gate') in r), (registered_cli_option_token('deploy/--allow-dirty') in r)
         if _rel._tracked_dirty() and not _allow_dirty:
             print("deploy: the working tree has uncommitted changes to tracked files — commit first (the green "
                   "pointer must name committed code), or pass --allow-dirty deliberately.", file=sys.stderr)
@@ -708,10 +525,10 @@ def _dispatch(argv=None):
                 return _deploy_failed_verdict(f"green-pointer promotion failed: {exc}")
         print(f"deploy: 🟢 promoted {rec['short']} ({rec['describe']}) → green pointer  [{rec['gate']}]")
         print("        already-running MCP servers serve it on their next request (they hand off between requests).")
-        if "--skip-consumer-verify" not in r:
+        if registered_cli_option_token('deploy/--skip-consumer-verify') not in r:
             from .consumer_audit import audit_consumer_workspaces, render_consumer_audit_table
             _consumer_result = audit_consumer_workspaces(
-                rec["sha"], auto_arm="--no-auto-arm" not in r, dry_run="--dry-run" in r,
+                rec["sha"], auto_arm=registered_cli_option_token('deploy/--no-auto-arm') not in r, dry_run=registered_cli_option_token('deploy/--dry-run') in r,
             )
             print(render_consumer_audit_table(_consumer_result))
             if _consumer_result["remaining_gaps"]:
@@ -730,7 +547,7 @@ def _dispatch(argv=None):
         # (measured 2026-10-10: pre-fix daemons false-fired the codex toast for days). Restart the launchd-MANAGED
         # stale consumers now (they respawn onto latest); WARN loudly about any that are NOT supervised (never kill a
         # process we cannot bring back). `--no-restart` skips this.
-        if "--no-restart" not in r:
+        if registered_cli_option_token('deploy/--no-restart') not in r:
             _fr = _fleet.restart_stale(apply=True)
             for _x in _fr.get("restarted", []):
                 print(f"deploy: fleet — {_x.get('action')} {_x.get('launchd_label')} (pid {_x.get('pid')})")
@@ -750,7 +567,7 @@ def _dispatch(argv=None):
                 print("deploy: fleet — all tracked consumers already on the green commit.")
             if _fr.get(_fleet.FLEET_RESTART_FAILURE_KEY):
                 return _deploy_failed_verdict("one or more supervised consumer restarts could not be requested")
-        _refresh_deployments = "--no-refresh" not in r
+        _refresh_deployments = registered_cli_option_token('deploy/--no-refresh') not in r
         _host_install_audit = _fleet.reconcile_registered_host_installations()
         _host_escape_count = len(_host_install_audit["escapes"])
         _host_install_failures = []
@@ -788,13 +605,15 @@ def _dispatch(argv=None):
                 "one or more host installations remain escaped or registered deployments remain stale or unreachable"
             )
         from .distribution import render_distribution_table
-        _distribution = _rel.converge_deployed_release(dry_run="--dry-run" in r)
+        _distribution = _rel.converge_deployed_release(dry_run=registered_cli_option_token('deploy/--dry-run') in r)
         print(render_distribution_table(_distribution))
         if _distribution["exit_code"]:
             print("🔴 DEPLOY INCOMPLETE — pointer promoted; distribution has named stragglers", file=sys.stderr)
             return _distribution["exit_code"]
         return _deploy_succeeded_verdict(rec)
-    if cmd == "fleet":                                # the running spendguard consumers + which are STALE vs green
+
+
+def cli_core_fleet(rest, cmd, argv):
         import json as _json
         from . import fleet as _fleet
         if rest and rest[0] == "deregister":
@@ -808,7 +627,7 @@ def _dispatch(argv=None):
 
             consumers = _fleet.running_consumers(prune=False)
             green_sha = (_release.green_pointer() or {}).get("sha") or "—"
-            if "--json" in rest:
+            if registered_cli_option_token('fleet/--json') in rest:
                 print(_json.dumps(consumers, indent=2, default=str))
                 return 0
             for consumer in consumers:
@@ -819,36 +638,36 @@ def _dispatch(argv=None):
                       f"liveness={consumer.get('liveness')} classification={consumer.get('classification')}")
             return 0
         if rest and rest[0] == "restart":
-            selections = sum(flag in rest for flag in ("--consumer", "--stale", "--all-supervised"))
+            selections = sum(flag in rest for flag in (registered_cli_option_token('fleet/--consumer'), registered_cli_option_token('fleet/--stale'), registered_cli_option_token('fleet/--all-supervised')))
             if selections != 1:
                 print("usage: spendguard fleet restart [--consumer <id> | --stale | --all-supervised] [--apply]",
                       file=sys.stderr)
                 return 2
             selected_consumer = None
-            if "--consumer" in rest:
-                selected_index = rest.index("--consumer")
+            if registered_cli_option_token('fleet/--consumer') in rest:
+                selected_index = rest.index(registered_cli_option_token('fleet/--consumer'))
                 if selected_index + 1 >= len(rest):
                     print("fleet restart: --consumer requires an id", file=sys.stderr)
                     return 2
                 selected_consumer = rest[selected_index + 1]
-            result = _fleet.restart_stale(apply="--apply" in rest, consumer_id=selected_consumer,
-                                          all_supervised="--all-supervised" in rest)
+            result = _fleet.restart_stale(apply=registered_cli_option_token('fleet/--apply') in rest, consumer_id=selected_consumer,
+                                          all_supervised=registered_cli_option_token('fleet/--all-supervised') in rest)
             print(_json.dumps(result, indent=2))
             return 1 if result.get(_fleet.FLEET_RESTART_FAILURE_KEY) else 0
         if rest and rest[0] == "stop":
-            if "--consumer" not in rest or rest.index("--consumer") + 1 >= len(rest):
+            if registered_cli_option_token('fleet/--consumer') not in rest or rest.index(registered_cli_option_token('fleet/--consumer')) + 1 >= len(rest):
                 print("usage: spendguard fleet stop --consumer <id>", file=sys.stderr)
                 return 2
-            selected_consumer = rest[rest.index("--consumer") + 1]
+            selected_consumer = rest[rest.index(registered_cli_option_token('fleet/--consumer')) + 1]
             result = _fleet.stop_supervised_consumer(selected_consumer, apply=True)
             print(_json.dumps(result, indent=2))
             return 0 if result.get("ok") else 1
-        if "--restart" in rest:
-            res = _fleet.restart_stale(apply="--dry-run" not in rest)
+        if registered_cli_option_token('fleet/--restart') in rest:
+            res = _fleet.restart_stale(apply=registered_cli_option_token('fleet/--dry-run') not in rest)
             print(_json.dumps(res, indent=2))
             return 0
         summ = _fleet.fleet_summary()
-        if "--json" in rest:
+        if registered_cli_option_token('fleet/--json') in rest:
             print(_json.dumps(summ, indent=2, default=str))
             return 0
         print(f"spendguard fleet — green pointer {summ['green']}; {summ['n']} live consumer(s), {summ['stale']} STALE")
@@ -859,12 +678,14 @@ def _dispatch(argv=None):
         if summ["stale"]:
             print("  → `spendguard fleet --restart` restarts the launchd-managed stale ones; others need a manual restart.")
         return 0
-    if cmd == "release":                              # release completion ends with fleet convergence/attestation
+
+
+def cli_core_release(rest, cmd, argv):
         import json as _json
         from . import release as _rel
         st = _rel.release_status()
-        attestation = _rel.converge_deployed_release(check="--check" in rest, dry_run="--dry-run" in rest)
-        if "--json" in rest:
+        attestation = _rel.converge_deployed_release(check=registered_cli_option_token('release/--check') in rest, dry_run=registered_cli_option_token('release/--dry-run') in rest)
+        if registered_cli_option_token('release/--json') in rest:
             print(_json.dumps({**st, "distribution": attestation}, indent=2, default=str))
             return attestation["exit_code"]
         s, g = st.get("served") or {}, st.get("green") or {}
@@ -877,21 +698,9 @@ def _dispatch(argv=None):
         from .distribution import render_distribution_table
         print(render_distribution_table(attestation))
         return attestation["exit_code"]
-    if cmd == "bakeoff":                              # measure cost×quality for a slate on a sample (fills untried models)
-        from . import bakeoff
-        return bakeoff.main(rest)
-    if cmd == "stability":                            # run-to-run variance at production settings (replicates) — stability, not A/B
-        from . import stability
-        return stability.cmd(rest)
-    if cmd == "effort-titrate":                       # learn the cheapest reasoning effort that holds quality per (intent,model)
-        from . import effort_titration
-        return effort_titration.main(rest)
-    if cmd == "metadata":                             # model-metadata backbone health + measured-cap drift audit
-        from . import metadata_audit
-        return metadata_audit.main(rest)
-    if cmd == "migrate":
-        # THE clear, runnable migration: rebuild spend_events from charges under the exact-Decimal schema,
-        # prove Σ is preserved to the last digit. Non-destructive (whole-file snapshot + old table renamed aside).
+
+
+def cli_core_migrate(rest, cmd, argv):
         from . import migrate_charges
         import json as _json
         stats = migrate_charges.run_cutover()
@@ -906,27 +715,16 @@ def _dispatch(argv=None):
             print("REFUSED to trust: Σ charges != Σ spend_events. Investigate before removing charges.")
             return 1
         return 0
-    if cmd == "estimate-literals":
-        from . import estimate_literals
-        return estimate_literals.cmd(rest)
-    if cmd == "estimate-divergence":
-        from . import estimate_divergence
-        return estimate_divergence.cmd(rest)
-    if cmd == "pricing":
-        from . import pricing as p
-        return p.main()
-    if cmd == "providers":
+
+
+def cli_core_providers(rest, cmd, argv):
         from . import pricing as p
         for prov, models in sorted(p.providers().items()):
             print(f"{prov} ({len(models)}): {', '.join(sorted(models))}")
         return 0
-    if cmd == "coverage":                               # which LLM-calling venvs aren't gated (ungated realtime sources)
-        from . import coverage
-        return coverage.cmd(rest)
-    if cmd == "gate-coverage":                          # per-INTERPRETER gate check across every python on the machine
-        from . import setup
-        return setup.cmd_coverage(rest)
-    if cmd == "maxtokens":                              # data-driven max_tokens bound for a call-class sig
+
+
+def cli_core_maxtokens(rest, cmd, argv):
         from . import bulkgate
         if not rest:
             print("usage: spendguard maxtokens <sig> [current_max] [provider:model]   (sig from a TRUNCATED warning, "
@@ -951,12 +749,14 @@ def _dispatch(argv=None):
         if mt.get("warn"):
             print(f"  ⚠ {mt['warn']}")
         return 0
-    if cmd == "plan-queue":                             # the $0 PREDICTIVE PLANNER view (C): forecast + offload plan.
+
+
+def cli_core_plan_queue(rest, cmd, argv):
         from . import queue_planner                      # $0, NO execution — decides; the executor (drain) acts on it.
-        if "--watch" in rest:                            # CONTINUOUS ~1s look-ahead (Ash: "periodic say every second")
+        if registered_cli_option_token('plan-queue/--watch') in rest:                            # CONTINUOUS ~1s look-ahead (Ash: "periodic say every second")
             import time as _tw
-            _iv = next((rest[i + 1] for i, a in enumerate(rest) if a == "--interval" and i + 1 < len(rest)), None)
-            _tk = next((rest[i + 1] for i, a in enumerate(rest) if a == "--ticks" and i + 1 < len(rest)), None)
+            _iv = next((rest[i + 1] for i, a in enumerate(rest) if a == registered_cli_option_token('plan-queue/--interval') and i + 1 < len(rest)), None)
+            _tk = next((rest[i + 1] for i, a in enumerate(rest) if a == registered_cli_option_token('plan-queue/--ticks') and i + 1 < len(rest)), None)
 
             def _observe(tk):
                 fc = tk.get("forecast") or {}
@@ -983,7 +783,7 @@ def _dispatch(argv=None):
             t["batch_jobs"] = batch_tracker.status()
         except Exception:
             t["batch_jobs"] = {}
-        if "--json" in rest:
+        if registered_cli_option_token('plan-queue/--json') in rest:
             import json as _json
             print(_json.dumps(t, indent=2, default=str))
             return 0
@@ -1009,20 +809,22 @@ def _dispatch(argv=None):
                   "polls these; expired/failed fall over to realtime" % (bs.get("open", 0), bs.get("failing", 0),
                   bs.get("settled", 0), bs.get("failed", 0), bs.get("total", 0)))
         return 0
-    if cmd == "dispatch":                               # live ADMISSION + QUEUE + reasoning-cut state — the parity view
+
+
+def cli_core_dispatch(rest, cmd, argv):
         from . import dispatch, lane_queue               # (same dispatch.admission_state() the MCP tool returns)
-        if "--id" in rest:
+        if registered_cli_option_token('dispatch/--id') in rest:
             import argparse as _argparse
             import json as _json
             parser = _argparse.ArgumentParser(prog="spendguard dispatch")
-            parser.add_argument("--id", required=True, type=int)
-            parser.add_argument("--json", action="store_true")
+            add_registered_cli_argument(parser, 'dispatch/cli._dispatch/parser/--id', type=int)
+            add_registered_cli_argument(parser, 'dispatch/cli._dispatch/parser/--json')
             parsed = parser.parse_args(rest)
             status = lane_queue.queue_row_status(parsed.id)
             print(_json.dumps(status, indent=2 if parsed.json else None, default=str))
             return 0
         st = dispatch.admission_state()
-        if "--json" in rest:
+        if registered_cli_option_token('dispatch/--json') in rest:
             import json as _json
             print(_json.dumps(st, indent=2, default=str))
             return 0
@@ -1066,88 +868,14 @@ def _dispatch(argv=None):
             for k, n in uf.items():
                 print("  %-26s x%s" % (k, n))
         return 0
-    if cmd == "config":
-        from . import setup
-        return setup.cmd_config(rest)
-    if cmd == "init":
-        from . import setup
-        return setup.cmd_init(rest)
-    if cmd in ("install-hook", "gate-venv"):          # gate every process in another venv (other repos)
-        from . import setup
-        return setup.cmd_install_hook(rest)
-    if cmd == "gate-host":
-        from . import setup
-        return setup.cmd_gate_discovered_host(rest)
-    if cmd == "install-agent-gate":
-        from . import agent_spawn_gate
-        return agent_spawn_gate.install_agent_gate_cli(rest)
-    if cmd == "install-capguard":
-        from . import weekly_cap_guard
-        return weekly_cap_guard.install_weekly_cap_guard_cli(rest)
-    if cmd == "schedule":                             # install the OS-native scheduler (launchd/cron/schtasks)
-        from . import schedule
-        return schedule.main(rest)
-    if cmd == "install-skills":                       # deploy the / slash-commands into ~/.claude/skills
-        from . import setup
-        return setup.cmd_install_skills(rest)
-    if cmd == "install-rule":                          # drop the spendguard usage rule into a CLAUDE.md
-        from . import setup
-        return setup.cmd_install_rule(rest)
-    if cmd == "install-receipts":                      # surface the always-on tally in a host (claude-code|codex)
-        from . import receipt
-        return receipt.install_cli(rest)
-    if cmd == "install-mcp":                            # register the MCP server in the client config (~/.claude.json)
+
+
+def cli_core_install_mcp(rest, cmd, argv):
         from . import mcp_server
-        return mcp_server.register_client(remove="--remove" in rest)
-    if cmd == "remote":                                # enforce the gate on remote/distributed compute (vast.ai)
-        from . import remote
-        return remote.cmd(rest)
-    if cmd == "saas":                                  # team/org roll-up client seam (→ future server repo)
-        from . import saas
-        return saas.cmd(rest)
-    if cmd == "resources":                             # non-LLM compute (vast.ai GPU) → same org/team/project model
-        from . import resources
-        return resources.cmd(rest)
-    if cmd == "tag":                                   # re-assign a project tag (fix cwd-fallback mistags)
-        from . import tag
-        return tag.cmd(rest)
-    if cmd == "calls":
-        from . import calls
-        return calls.cmd_summary(rest)
-    if cmd == "receipt":                               # running tally (today/7d/month) → stdout; for the in-chat hook
-        from . import receipt
-        return receipt.cli(rest)
-    if cmd == "backfill":
-        from . import backfill
-        return backfill.main(rest)
-    if cmd in ("advise", "backtest"):   # backtest = advise --as-of <date>
-        from . import advise
-        return advise.main(rest)
-    if cmd in ("optimize", "mine", "reconstruct", "recommend"):   # Layer 2 — estimate-only unless --run
-        from . import advisor
-        return advisor.main([cmd] + rest)
-    if cmd in ("mine-history", "history"):           # deterministic post-event mining + graph enrichment (no spend)
-        from . import history
-        return history.main(rest)
-    if cmd in ("mine-conv", "conv"):                  # conversation mining: index (no spend) + synth (caged)
-        from . import conv
-        return conv.main(rest)
-    if cmd == "accounting":                            # match actual provider USAGE → project via conversations
-        from . import conv
-        return conv.attribute_cmd(rest)
-    if cmd == "signal":                                # efficiency signal (cost+quality+waste+reco) → server
-        from . import signal
-        return signal.cmd(rest)
-    if cmd in ("workdone", "work"):                    # work-done CONTEXT for spend (git + batch intents) → server
-        from . import workdone
-        return workdone.cmd(rest)
-    if cmd in ("claude-code", "claudecode", "cc"):     # mine ~/.claude transcripts → CC spend + work (incremental)
-        from . import claudecode
-        return claudecode.main(rest)
-    if cmd == "price":
-        # Supply a VERIFIED price for a model spendguard cannot price. A --source is mandatory: spendguard
-        # never invents a rate (an invented glm-5.2 stub once under-priced a model ~40%), so provenance is
-        # the price of entry.
+        return mcp_server.register_client(remove=registered_cli_option_token('install-mcp/--remove') in rest)
+
+
+def cli_core_price(rest, cmd, argv):
         from . import pricing as _pr
         r = list(rest)
         if not r or r[0].startswith("-"):
@@ -1159,11 +887,11 @@ def _dispatch(argv=None):
         from .cli_arguments import cli_option_value_after
         try:
             path, entry = _pr.set_price(
-                model, cli_option_value_after(r, "--provider"), cli_option_value_after(r, "--in"),
-                cli_option_value_after(r, "--out"), cli_option_value_after(r, "--source", ""),
-                batch_in=cli_option_value_after(r, "--batch-in"), batch_out=cli_option_value_after(r, "--batch-out"),
-                cached_in=cli_option_value_after(r, "--cached-in"),
-                verified=cli_option_value_after(r, "--verified"))
+                model, cli_option_value_after(r, registered_cli_option_token('price/--provider')), cli_option_value_after(r, registered_cli_option_token('price/--in')),
+                cli_option_value_after(r, registered_cli_option_token('price/--out')), cli_option_value_after(r, registered_cli_option_token('price/--source'), ""),
+                batch_in=cli_option_value_after(r, registered_cli_option_token('price/--batch-in')), batch_out=cli_option_value_after(r, registered_cli_option_token('price/--batch-out')),
+                cached_in=cli_option_value_after(r, registered_cli_option_token('price/--cached-in')),
+                verified=cli_option_value_after(r, registered_cli_option_token('price/--verified')))
         except ValueError as e:
             print(f"refused: {e}")
             return 2
@@ -1173,15 +901,13 @@ def _dispatch(argv=None):
         print("  can be re-costed with `spendguard reprice --model %s`." % model)
         return 0
 
-    if cmd == "reprice":
-        # Retroactively price ledger rows recorded 'unpriced' that a rate NOW resolves for (a model priced after the
-        # fact, or a provider ambiguity since corrected). DRY-RUN by default; --apply commits through the ledger's
-        # OWN audited update()/adjust() (never raw SQL), and snapshots the ledger first. --model scopes to one model.
+
+def cli_core_reprice(rest, cmd, argv):
         from . import budget as _bud, config as _cfg
         r = list(rest)
 
         from .cli_arguments import cli_option_value_after
-        _model, _apply = cli_option_value_after(r, "--model"), ("--apply" in r)
+        _model, _apply = cli_option_value_after(r, registered_cli_option_token('reprice/--model')), (registered_cli_option_token('reprice/--apply') in r)
         if _apply:                                         # consistent snapshot BEFORE any write (integrity first)
             import sqlite3 as _sq
             import time as _t
@@ -1208,27 +934,25 @@ def _dispatch(argv=None):
               + ("." if _apply else " — pass --apply to commit (audited; a closed period gets a delta)."))
         return 0
 
-    if cmd == "quarantine":
-        # Repair for estimates already in the ledger that the plausibility rail now catches at record time.
-        # Operator-driven ON PURPOSE: the request count behind an old batch row is not always recoverable, and
-        # a repair that guessed it would repeat the bug it is repairing.
+
+def cli_core_quarantine(rest, cmd, argv):
         from . import budget, pricing, config as _cfg
         rest_l = list(rest)
-        _si = rest_l.index("--since") if "--since" in rest_l else -1   # `--since` as the LAST arg (no value) indexed
+        _si = rest_l.index(registered_cli_option_token('quarantine/--since')) if registered_cli_option_token('quarantine/--since') in rest_l else -1   # `--since` as the LAST arg (no value) indexed
         since = rest_l[_si + 1] if 0 <= _si < len(rest_l) - 1 else _cfg.month_start_utc()   # past the end → IndexError
-        if "--ts" in rest_l or "--row" in rest_l:
+        if registered_cli_option_token('quarantine/--ts') in rest_l or registered_cli_option_token('quarantine/--row') in rest_l:
             # BOUNDS-CHECKED. `--row` as the FINAL argument indexed past the end and raised a bare
             # IndexError out of the CLI — a traceback where a usage message belongs, on the command that
             # EDITS THE LEDGER. _opt returns None for a flag given without a value, so the missing-target
             # check below can report it as the user error it is.
             from .cli_arguments import cli_option_value_after
-            reason = cli_option_value_after(rest_l, "--reason") or "impossible estimate"
-            _row = cli_option_value_after(rest_l, "--row")
+            reason = cli_option_value_after(rest_l, registered_cli_option_token('quarantine/--reason')) or "impossible estimate"
+            _row = cli_option_value_after(rest_l, registered_cli_option_token('quarantine/--row'))
             try:
                 row = int(_row) if _row is not None else None
             except ValueError:
                 print(f"quarantine: --row must be a rowid (got {_row!r})"); return 2
-            ts = cli_option_value_after(rest_l, "--ts")
+            ts = cli_option_value_after(rest_l, registered_cli_option_token('quarantine/--ts'))
             if row is None and ts is None:
                 print("quarantine: --row <rowid> or --ts <timestamp> is required "
                       "(the flag was given without a value)"); return 2
@@ -1260,27 +984,13 @@ def _dispatch(argv=None):
               "\n     a worse bug than the one being repaired.)")
         return 0
 
-    if cmd == "codex":                                 # mine ~/.codex sessions → Codex est-value (channel=codex)
-        from . import codex
-        return codex.main(rest)
-    if cmd == "chat":                                  # OPT-IN claude.ai chat adapter (session API, on-device, macOS)
-        from . import chat
-        return chat.main(rest)
-    if cmd in ("lanevalue", "lane-value"):             # price subscription lanes with NO session miner (gemini/zai)
-        from . import lane_value                        # → est-value, from the calls ledger (mirrors `codex`)
-        return lane_value.main(rest)
-    if cmd in ("fetch-io", "fetchio"):                # recover real prompt+output samples from providers (free)
-        from . import callio
-        return callio.main(rest)
-    if cmd in ("callio-status", "corpus-status"):     # how full is the replay corpus per intent (before a sweep) — $0
-        from . import callio
-        return callio.status_main(rest)
-    if cmd in ("codex-gc", "codex-prune"):            # prune codex CLI's shell-snapshot residue (dry-run default) — $0
+
+def cli_core_codex_gc(rest, cmd, argv):
         from . import codex_exec
         import argparse as _agc
         _p = _agc.ArgumentParser(prog="spendguard codex-gc")
-        _p.add_argument("--max-age-days", type=float, default=7.0, help="prune shell snapshots older than this (default 7)")
-        _p.add_argument("--apply", action="store_true", help="actually delete (default: dry-run report)")
+        add_registered_cli_argument(_p, 'codex-gc/cli._dispatch/_p/--max-age-days', type=float)
+        add_registered_cli_argument(_p, 'codex-gc/cli._dispatch/_p/--apply')
         _a = _p.parse_args(rest)
         r = codex_exec.gc_shell_snapshots(max_age_days=_a.max_age_days, apply=_a.apply)
         _mb = r["bytes"] / 1e6
@@ -1298,16 +1008,15 @@ def _dispatch(argv=None):
                   f"Recent snapshots are never touched.")
             print("  Opt-in periodic cleanup: schedule `spendguard codex-gc --apply` (launchd/cron or `spendguard schedule`).")
         return 0
-    if cmd in ("embed-gc", "embed-prune"):            # prune cold embed resume checkpoints (dry-run default) — $0
+
+
+def cli_core_embed_gc(rest, cmd, argv):
         from . import adapters as _aegc
         import argparse as _aeg
         _p = _aeg.ArgumentParser(prog="spendguard embed-gc")
-        _p.add_argument("--max-age-days", type=float, default=None,
-                        help="prune checkpoints older than this (default: safety.embed_checkpoint_max_age_days, 7)")
-        _p.add_argument("--max-total-gb", type=float, default=None,
-                        help="disk cap for checkpoints that survive the age bound; oldest-first eviction over it "
-                             "(default: safety.embed_checkpoint_max_gb, 5)")
-        _p.add_argument("--apply", action="store_true", help="actually delete (default: dry-run report)")
+        add_registered_cli_argument(_p, 'embed-gc/cli._dispatch/_p/--max-age-days', type=float)
+        add_registered_cli_argument(_p, 'embed-gc/cli._dispatch/_p/--max-total-gb', type=float)
+        add_registered_cli_argument(_p, 'embed-gc/cli._dispatch/_p/--apply')
         _a = _p.parse_args(rest)
         r = _aegc.gc_embed_checkpoints(max_age_days=_a.max_age_days, max_total_gb=_a.max_total_gb, apply=_a.apply)
         _gb = r["bytes"] / (1024 ** 3)
@@ -1327,46 +1036,9 @@ def _dispatch(argv=None):
                   f"A re-run of a corpus whose checkpoint is still here re-pays nothing, so recent ones are kept.")
             print("  embed() also prunes on create, so this is for a manual sweep / a one-off backlog.")
         return 0
-    if cmd == "review":                               # practice audit (smart-vs-wasteful) — caged, estimate-first
-        from . import review
-        return review.main(rest)
-    if cmd in ("cache-audit", "cacheaudit"):          # find prompt-caching savings (no spend)
-        from . import cacheaudit
-        return cacheaudit.main(rest)
-    if cmd in ("cache-test", "cachetest"):            # empirically prove caching engages (caged, estimate-first)
-        from . import cachetest
-        return cachetest.main(rest)
-    if cmd == "brief":                                # "this is what we need to do" → confirm-or-correct plan
-        from . import brief
-        return brief.main(rest)
-    if cmd == "experiment":                           # A/B efficiency lab: cost↓ + same-output (caged, estimate-first)
-        from . import experiment
-        return experiment.main(rest)
-    if cmd == "models":                               # per-model learnings/profiles (auto-applied on every call)
-        from . import models
-        return models.cmd(rest)
-    if cmd == "promote":                              # run a winning config on a chunk + KEEP output (workload)
-        from . import experiment
-        return experiment.promote_main(rest)
-    if cmd in ("cache-stats", "semcache"):            # semantic response cache stats (opt-in cost saver)
-        from . import semcache
-        return semcache.cmd(rest)
-    if cmd == "dedup":                                # collapse a batch jsonl (within-batch + already-cached)
-        from . import semcache
-        return semcache.dedup_main(rest)
-    if cmd == "dedup-populate":                       # seed the cache from completed results → free re-runs
-        from . import semcache
-        return semcache.populate_main(rest)
-    if cmd == "cascade":                              # cost-aware routing: cheap→verify→escalate (workload)
-        from . import cascade
-        return cascade.cmd(rest)
-    if cmd in ("reconcile-ledger", "ledger-sync", "leaks"):   # local ledger vs provider billing → find leaks
-        from . import ledger_sync
-        return ledger_sync.main(rest)
-    if cmd in ("trust", "trust-check"):               # provider billing vs recorded — the daily double-count guard
-        from . import trust
-        return trust.cmd(rest)
-    if cmd in ("cross-check", "crosscheck"):          # free price drift check vs OpenRouter's public JSON
+
+
+def cli_core_cross_check(rest, cmd, argv):
         from . import pricing as p
         try:
             rows, matched, total = p.cross_check_openrouter()
@@ -1381,19 +1053,12 @@ def _dispatch(argv=None):
         if not rows:
             print("  (no overlapping models — your table is mostly frontier models OpenRouter doesn't list.)")
         return 0
-    if cmd == "bootstrap":                            # cold-start: mine all history → corpus + insights
-        from . import bootstrap
-        return bootstrap.main(rest)
-    if cmd == "validate":                             # living insights — re-check learnings vs current corpus
-        from . import validate
-        return validate.main(rest)
-    if cmd == "realized":                             # measured before/after $ per call around insight adoptions
-        from . import realized
-        return realized.main()
-    if cmd == "savings":                              # the 3rd axis: what spendguard SAVED (measured + counterfactual)
+
+
+def cli_core_savings(rest, cmd, argv):
         from . import guard as _g
         s, ds, shed = _g.saved_since(), _g.decisions_summary(), _g.shed_summary()
-        if "--json" in rest:
+        if registered_cli_option_token('savings/--json') in rest:
             import json as _j
             print(_j.dumps({"saved": s, "decisions": ds, "shed": shed}, indent=2, default=str))
             return 0
@@ -1420,40 +1085,15 @@ def _dispatch(argv=None):
                 print(f"    {str(r['from_lane'])[:14]:14} → {str(r['to_lane'])[:14]:14} {r['class']:9} "
                       f"{r['n']:>4} sheds  {route_value}")
         return 0
-    if cmd == "tokens":                               # per-provider token factors: `tokens show` / `tokens calibrate` ($0)
-        from . import provider_tokens
-        return provider_tokens.cmd(rest)
-    if cmd == "prompts":                              # prompt-efficiency lint over the call corpus (zero spend)
-        from . import prompts
-        return prompts.main()
-    if cmd == "close":                                # monthly close, client view (provider-truth totals + leak line)
-        from . import close
-        return close.main()
-    if cmd == "truth":                                # per-day provider-truth totals; --push syncs (keys stay local)
-        from . import truth
-        return truth.main()
-    if cmd == "sources":                              # where CAN this machine spend: providers · agent tools ·
-        from . import sources                         # interpreters. One discovery, free, never reads your code.
-        return sources.main(rest)
-    if cmd == "scan":                                 # THE FIRST RUN: local transcripts only — no key, no network,
-        from . import scan                            # no LLM, no writes outside SPENDGUARD_HOME. Safe via uvx.
-        return scan.main(rest)
-    if cmd == "run":                                  # gate ONE command via the child's PYTHONPATH (no site-packages
-        from . import runner                          # write, nothing persists) — the DEFAULT way to gate since 0.8
-        return runner.main(rest)
-    if cmd == "lanes":                                # subscription-lane activation status (+ --probe live check)
-        from . import lanes
-        return lanes.main(rest)
-    if cmd == "tiers":                                # bulk-lane routing GROUPS: show/validate + `tiers set …`
-        from . import tier_config
-        return tier_config.main(rest)
-    if cmd == "register-critical":                    # a CONSUMER (e.g. warden) pins its no-substitution vendor-critical intents
+
+
+def cli_core_register_critical(rest, cmd, argv):
         import argparse
         from . import lane_balance
         ap = argparse.ArgumentParser(prog="spendguard register-critical")
-        ap.add_argument("patterns", nargs="*", help="intent patterns to pin (no-substitution), e.g. warden:card_faithful*")
-        ap.add_argument("--source", help="who is registering these (e.g. warden) — recorded so doctor attributes them")
-        ap.add_argument("--list", action="store_true", help="show the current pins + who registered each")
+        add_registered_cli_argument(ap, 'register-critical/cli._dispatch/ap/patterns')
+        add_registered_cli_argument(ap, 'register-critical/cli._dispatch/ap/--source')
+        add_registered_cli_argument(ap, 'register-critical/cli._dispatch/ap/--list')
         a = ap.parse_args(rest)
         cov = (lane_balance.bandit_list_coverage() or {}).get("bandit_denylist", {})
         if a.list or not a.patterns:
@@ -1468,11 +1108,13 @@ def _dispatch(argv=None):
         print(f"registered {len(a.patterns)} pin(s){(' from ' + a.source) if a.source else ''} → "
               f"advisor.bandit_denylist ({len(merged)} total, deduped)")
         return 0
-    if cmd == "keys":                                 # per-KEY spend (which workspace/project key) — local-only
+
+
+def cli_core_keys(rest, cmd, argv):
         from . import budget, config as _c
         since = None
         for i, a in enumerate(rest):
-            if a == "--since" and i + 1 < len(rest):
+            if a == registered_cli_option_token('keys/--since') and i + 1 < len(rest):
                 since = rest[i + 1]
         # `_dt` is the stdlib datetime module imported two lines up; `_dt.config` does not exist, so this
         # raised AttributeError every time --since was omitted — the DEFAULT path of the command.
@@ -1487,33 +1129,9 @@ def _dispatch(argv=None):
             print(f"  {prov:<11}{fp:<16}${v['cost']:>10.2f}  {v['calls']:>6} calls{note}")
         print("  (fingerprint = sha256[:8]:last4 of the serving key — local-only, never pushed)")
         return 0
-    if cmd == "insights":                             # list / export(scrubbed) / import community learnings
-        from . import share
-        return share.main(rest)
-    if cmd == "compare":
-        from . import compare
-        return compare.main(rest)
-    if cmd in ("sync-prices", "sync"):
-        from . import sync
-        return sync.main(rest)
-    if cmd == "sync-catalog":
-        from . import catalog
-        return catalog.main(rest)
-    if cmd == "sync-capabilities":
-        from . import sync_capabilities
-        return sync_capabilities.cmd(rest)
-    if cmd == "balances":
-        from . import balances
-        return balances.main(rest)
-    if cmd == "reliability":
-        from . import reliability
-        return reliability.main(rest)
-    if cmd == "health":
-        return cli_health_command(rest)
-    if cmd in ("refresh-prices", "refresh"):
-        from . import refresh
-        return refresh.main(rest)
-    if cmd in ("check-prices", "freshness"):
+
+
+def cli_core_check_prices(rest, cmd, argv):
         from . import pricing as p
         v, days, stale = p.freshness()
         flag = f"  ⚠️ STALE (>{p.STALE_AFTER_DAYS}d) — re-verify against the source below" if stale else "  (fresh)"
@@ -1535,9 +1153,9 @@ def _dispatch(argv=None):
         except Exception:
             pass                                          # a capability-audit hiccup never fails the price-freshness view
         return 2 if stale else 0
-    # An explicit help request EXITS 0 and prints the real, grouped surface. Before this, `--help`, `-h`, `help`,
-    # `--version` and a typo all printed the same 9-line module docstring — 10 of 60+ commands — and exited 1.
-    if cmd in ("--version", "-V", "version"):
+
+
+def cli_core_version(rest, cmd, argv):
         from . import __version__, release as _rel
         _s = _rel.served_sha()
         _tag = (f" ({_s['describe']})" + ("  [dirty]" if _s.get("dirty") else "")) if _s else ""
@@ -1547,11 +1165,8 @@ def _dispatch(argv=None):
             print(f"  ⚠ STALE vs green pointer {_g.get('short')} — `spendguard deploy` promotes; "
                   "MCP servers roll onto it on their next request. `spendguard release` for detail.")
         return 0
-    import difflib
-    near = difflib.get_close_matches(cmd, _all_commands(), n=3, cutoff=0.55)
-    print(f"unknown command {cmd!r}" + (f" — did you mean: {', '.join(near)}?" if near else ""), file=sys.stderr)
-    print("`spendguard --help` lists every command.", file=sys.stderr)
-    return 2
+
+
 
 
 if __name__ == "__main__":

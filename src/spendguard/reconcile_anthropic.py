@@ -13,6 +13,8 @@ Opus judge running via ThreadPool) are NOT captured — that needs an Admin API 
 
   python scripts/reconcile_anthropic_spend.py [--since YYYY-MM-DD] [--by-day]
 """
+
+from .capability_cli_parsing import add_registered_cli_argument
 import os, json, argparse, socket
 
 from . import pricing
@@ -176,7 +178,7 @@ def cost_by_day(since=None):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--since")
+    add_registered_cli_argument(ap, 'reconcile/reconcile_anthropic.main/ap/--since')
     ap.add_argument("--by-day", action="store_true")
     a = ap.parse_args()
     by_day, by_model = cost_by_day(a.since)

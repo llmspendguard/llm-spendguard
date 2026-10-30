@@ -34,6 +34,8 @@ Personalization: the local corpus IS this user's work; predictions carry user+pr
 axis can aggregate server-side (the SaaS key is org-scoped) — a follow-on, not faked here.
 CLI: spendguard calibrate {predict,show,pair,backtest}
 """
+
+from .capability_cli_parsing import add_registered_cli_argument
 import json
 import os
 import sqlite3
@@ -727,21 +729,21 @@ def main(argv=None):
                     "correcting the naive tokens×price estimate (zero LLM spend)")
     sub = ap.add_subparsers(dest="cmd", required=True)
     pr = sub.add_parser("predict", help="estimate a planned job from history")
-    pr.add_argument("--label", required=True, help="the activity/intent (matches calls.context intent)")
-    pr.add_argument("--n", type=int, default=1, help="number of requests")
-    pr.add_argument("--model", required=True)
-    pr.add_argument("--transport", default="batch", choices=["batch", "realtime"])
-    pr.add_argument("--in-tokens", type=float, help="estimated input tokens PER REQUEST")
-    pr.add_argument("--out-max", type=float, help="max_tokens you will set PER REQUEST")
-    pr.add_argument("--json", action="store_true")
+    add_registered_cli_argument(pr, 'calibrate/calibrate.main/pr/--label')
+    add_registered_cli_argument(pr, 'calibrate/calibrate.main/pr/--n', type=int)
+    add_registered_cli_argument(pr, 'calibrate/calibrate.main/pr/--model')
+    add_registered_cli_argument(pr, 'calibrate/calibrate.main/pr/--transport')
+    add_registered_cli_argument(pr, 'calibrate/calibrate.main/pr/--in-tokens', type=float)
+    add_registered_cli_argument(pr, 'calibrate/calibrate.main/pr/--out-max', type=float)
+    add_registered_cli_argument(pr, 'calibrate/calibrate.main/pr/--json')
     sh = sub.add_parser("show", help="what has been learned + at what confidence")
-    sh.add_argument("--label")
+    add_registered_cli_argument(sh, 'calibrate/calibrate.main/sh/--label')
     sub.add_parser("pair", help="join logged predictions to captured actuals (idempotent)")
     sub.add_parser("push", help="share this install's calibration STATISTICS with the org (visibility-gated)")
     sub.add_parser("fetch", help="pull the org aggregate — the org's experience becomes your prior")
     bt = sub.add_parser("backtest", help="held-out MAPE, learned vs naive — the ship gate")
-    bt.add_argument("--json", action="store_true")
-    bt.add_argument("--min-cell", type=int, default=MIN_CELL_BACKTEST)
+    add_registered_cli_argument(bt, 'calibrate/calibrate.main/bt/--json')
+    add_registered_cli_argument(bt, 'calibrate/calibrate.main/bt/--min-cell', type=int, default=MIN_CELL_BACKTEST)
     a = ap.parse_args(sys.argv[2:] if argv is None else argv)
 
     if a.cmd == "predict":

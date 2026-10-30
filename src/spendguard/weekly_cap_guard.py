@@ -1,4 +1,6 @@
 """Fast, offline PreToolUse guard for Claude Code weekly-cap spawn leaks."""
+
+from .capability_cli_parsing import registered_cli_option_token
 import datetime
 import json
 import os
@@ -167,7 +169,7 @@ def weekly_cap_guard_pretooluse(payload):
 
 
 def cmd(argv=None):
-    if "--pretooluse-hook" not in list(argv or []):
+    if registered_cli_option_token('capguard/--pretooluse-hook') not in list(argv or []):
         print("usage: spendguard capguard --pretooluse-hook", file=sys.stderr)
         return 2
     try:
@@ -243,10 +245,10 @@ def install_weekly_cap_guard(settings_path=None, uninstall=False, executable=Non
 
 def install_weekly_cap_guard_cli(argv=None):
     args = list(argv or [])
-    if any(arg != "--uninstall" for arg in args):
+    if any(arg != registered_cli_option_token('install-capguard/--uninstall') for arg in args):
         print("usage: spendguard install-capguard [--uninstall]", file=sys.stderr)
         return 2
-    action, backup = install_weekly_cap_guard(uninstall="--uninstall" in args)
+    action, backup = install_weekly_cap_guard(uninstall=registered_cli_option_token('install-capguard/--uninstall') in args)
     print(f"{action} spendguard weekly-cap guard → {_weekly_cap_guard_settings_path()}"
           + (f"  ·  backup: {backup}" if backup else ""))
     return 0

@@ -13,6 +13,8 @@ llm.usage.total_cost) the cost is RECONSTRUCTED from the tokens via pricing.real
 records UNPRICED (tokens kept, $ unknown) rather than a silent $0. IDEMPOTENT on the span id, so re-ingesting a
 trace file never double-counts. No LLM, no network. `spendguard otel-ingest <file.json> [--project P] [--dry-run]`.
 """
+
+from .capability_cli_parsing import registered_cli_option_token
 import datetime
 import json
 import sys
@@ -178,9 +180,9 @@ def ingest(doc, project=None, dry_run=False):
 def main(argv=None):
     argv = list(argv if argv is not None else sys.argv[1:])
     paths = [a for a in argv if not a.startswith("--")]
-    dry = "--dry-run" in argv
-    project = (argv[argv.index("--project") + 1]
-               if "--project" in argv and argv.index("--project") + 1 < len(argv) else None)
+    dry = registered_cli_option_token('otel-ingest/--dry-run') in argv
+    project = (argv[argv.index(registered_cli_option_token('otel-ingest/--project')) + 1]
+               if registered_cli_option_token('otel-ingest/--project') in argv and argv.index(registered_cli_option_token('otel-ingest/--project')) + 1 < len(argv) else None)
     if not paths:
         sys.stderr.write("usage: spendguard otel-ingest <trace.json> [--project P] [--dry-run]\n")
         return 2

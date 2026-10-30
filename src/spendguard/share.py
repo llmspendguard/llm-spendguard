@@ -13,6 +13,8 @@ community) that must be locally corroborated by `validate` before the advisor le
 
 CLI: `spendguard insights {list,export,import}`.
 """
+
+from .capability_cli_parsing import add_registered_cli_argument
 import json
 from . import learn
 
@@ -75,13 +77,23 @@ def _shareable(min_conf, require_active):
     return out
 
 
+SHARE_EXPORT_MIN_CONFIDENCE = 0.6
+
+
 def cmd_export(argv):
     import argparse
     ap = argparse.ArgumentParser(prog="spendguard insights export")
-    ap.add_argument("--out", help="write scrubbed JSON here (default: just preview)")
-    ap.add_argument("--min-conf", type=float, default=0.6)
-    ap.add_argument("--all", action="store_true", help="include non-active (else only corroborated 'active')")
+    add_registered_cli_argument(ap, 'insights/share.cmd_export/ap/--out')
+    add_registered_cli_argument(ap, 'insights/share.cmd_export/ap/--min-conf', type=float)
+    add_registered_cli_argument(ap, 'insights/share.cmd_export/ap/--all')
     a = ap.parse_args(argv)
+    return export_scrubbed_insights(**vars(a))
+
+
+def export_scrubbed_insights(*, out: str | None = None, min_conf: float = SHARE_EXPORT_MIN_CONFIDENCE, all: bool = False) -> int:
+    """Execute the existing cmd_export operation with typed inputs; surface schemas document the contract."""
+    from types import SimpleNamespace
+    a = SimpleNamespace(out=out, min_conf=min_conf, all=all)
     recs = _shareable(a.min_conf, require_active=not a.all)
     print(f"insights export — {len(recs)} shareable rule(s) (conf≥{a.min_conf}"
           f"{', active only' if not a.all else ''}). PREVIEW of EXACTLY what would leave:\n")
@@ -102,12 +114,22 @@ def cmd_export(argv):
     return 0
 
 
+SHARE_IMPORT_TRUST_CEILING = 0.4
+
+
 def cmd_import(argv):
     import argparse
     ap = argparse.ArgumentParser(prog="spendguard insights import")
-    ap.add_argument("path", help="a spendguard.shared.v1 JSON (file you trust)")
-    ap.add_argument("--trust", type=float, default=0.4, help="cap imported confidence (low-trust prior)")
+    add_registered_cli_argument(ap, 'insights/share.cmd_import/ap/path')
+    add_registered_cli_argument(ap, 'insights/share.cmd_import/ap/--trust', type=float)
     a = ap.parse_args(argv)
+    return import_community_insights(**vars(a))
+
+
+def import_community_insights(path: str, *, trust: float = SHARE_IMPORT_TRUST_CEILING) -> int:
+    """Execute the existing cmd_import operation with typed inputs; surface schemas document the contract."""
+    from types import SimpleNamespace
+    a = SimpleNamespace(path=path, trust=trust)
     with open(a.path) as _fh:                                  # closed deterministically (was a leaked handle)
         data = json.load(_fh)
     recs = data.get("insights", []) if isinstance(data, dict) else data

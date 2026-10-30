@@ -7,18 +7,20 @@ metered by the gate. Opt-in.
       --models gpt-5.5,claude-opus-4-8,gemini-flash-latest,deepseek-chat,qwen-max
   spendguard compare --prompt-file p.txt --models ... --max-tokens 800 --show
 """
+
+from .capability_cli_parsing import add_registered_cli_argument
 import argparse
 from . import adapters
 
 
 def main(argv=None):
     ap = argparse.ArgumentParser()
-    ap.add_argument("--prompt")
-    ap.add_argument("--prompt-file")
-    ap.add_argument("--models", required=True, help="comma-separated; 'provider:model' to force a provider")
-    ap.add_argument("--max-tokens", type=int, default=512)
-    ap.add_argument("--system")
-    ap.add_argument("--show", action="store_true", help="print each model's full output")
+    add_registered_cli_argument(ap, 'compare/compare.main/ap/--prompt')
+    add_registered_cli_argument(ap, 'compare/compare.main/ap/--prompt-file')
+    add_registered_cli_argument(ap, 'compare/compare.main/ap/--models')
+    add_registered_cli_argument(ap, 'compare/compare.main/ap/--max-tokens', type=int)
+    add_registered_cli_argument(ap, 'compare/compare.main/ap/--system')
+    add_registered_cli_argument(ap, 'compare/compare.main/ap/--show')
     a = ap.parse_args(argv)
 
     # A MISSING --prompt-file IS A USAGE ERROR, NOT A TRACEBACK. And the handle is closed.

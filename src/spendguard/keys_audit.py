@@ -5,6 +5,8 @@ interpreter's os.environ, so a bare CLI never runs the app's `load_dotenv()` and
 uncommented provider key that WOULD shadow the (possibly rotated) keys.env key at runtime — the warden 401. This reads
 the FILES directly and flags the latent shadow before it bites. Read-only, $0, last-4 only.
 """
+
+from .capability_cli_parsing import registered_cli_option_token
 import json
 
 from . import config
@@ -50,9 +52,15 @@ def cmd(rest):
               "    --strict  exit non-zero on a dup too, not only on a differing (shadowing) key\n"
               "    --json    machine-readable findings (last-4 only)")
         return 0
-    strict = "--strict" in rest
-    as_json = "--json" in rest
+    strict = registered_cli_option_token('keys-audit/--strict') in rest
+    as_json = registered_cli_option_token('keys-audit/--json') in rest
     paths = [a for a in rest if not a.startswith("-")] or ["."]
+    return audit_provider_key_shadows(paths, strict=strict, as_json=as_json)
+
+
+def audit_provider_key_shadows(paths: list[str] | None = None, *, strict: bool = False, as_json: bool = False) -> int:
+    """Run the existing key-shadow report and preserve strict failure semantics."""
+    paths = paths or ["."]
     scanned = config._dotenv_scan_files(paths)            # the ONE walk; the report re-walks the same set internally
     findings = config.dotenv_key_shadow_report(paths)
     if as_json:

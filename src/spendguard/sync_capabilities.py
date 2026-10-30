@@ -14,6 +14,8 @@ A model LiteLLM does not cover is LEFT ABSENT (never a guessed flag → the visi
 caller's model). $0 — a local dataset read (no LLM, no network of its own). The whole-file write goes through
 config.update_json (atomic + backups), so the SSOT catalog is never truncated.
 """
+
+from .capability_cli_parsing import add_registered_cli_argument
 import argparse
 import datetime
 import sys
@@ -215,9 +217,8 @@ def cmd(argv=None):
     and upper bounds from LiteLLM into the catalog. argv: optional list (default sys.argv[1:]); flags: --dry-run
     (report coverage, write nothing). Returns 0. Prints a one-line summary. LiteLLM-sourced, $0, no LLM."""
     a = argparse.ArgumentParser(prog="spendguard sync-capabilities")
-    a.add_argument("--dry-run", action="store_true", help="report what would change; write nothing")
-    a.add_argument("--audit", action="store_true",
-                   help="report catalog COMPLETENESS vs LiteLLM (coverage + uncovered + models to consider adding); write nothing")
+    add_registered_cli_argument(a, 'sync-capabilities/sync_capabilities.cmd/a/--dry-run')
+    add_registered_cli_argument(a, 'sync-capabilities/sync_capabilities.cmd/a/--audit')
     args = a.parse_args(sys.argv[1:] if argv is None else argv)
     if args.audit:
         r = audit_catalog_completeness()

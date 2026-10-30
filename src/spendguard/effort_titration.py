@@ -23,6 +23,8 @@ prompt is recorded BY IDENTITY (its index, persisted) so the loss is durable and
 the sample. Every meta call is deadline-bounded and every prompt size-bounded so nothing can wedge or OOM the run;
 the early-stop and the cap are logged. Estimate-first, meta-capped.
 """
+
+from .capability_cli_parsing import add_registered_cli_argument
 import datetime
 import json
 import sys
@@ -453,15 +455,14 @@ def main(argv=None):
     import argparse
     ap = argparse.ArgumentParser(prog="spendguard effort-titrate",
                                  description="Learn the cheapest reasoning effort that holds quality per (intent, model).")
-    ap.add_argument("intent")
-    ap.add_argument("--model", help="model to titrate (default: the intent's most-used model)")
-    ap.add_argument("--efforts", help="comma-separated ladder to A/B (default: minimal,low,medium,high)")
-    ap.add_argument("--sample", type=int, default=_MAX_SAMPLE, help="max prompts per effort (default %d)" % _MAX_SAMPLE)
-    ap.add_argument("--run", action="store_true", help="actually spend (default: estimate only)")
-    ap.add_argument("--budget", type=float, help="refuse if the pilot estimate exceeds this")
-    ap.add_argument("--requirement-aware", action="store_true",
-                    help="score with the two-tier REQUIREMENT judge (screen -> opus adjudicator) vs the prompt's own criteria")
-    ap.add_argument("--adjudicator", help="opus-tier adjudicator model for --requirement-aware (default config.advisor_adjudicator_model)")
+    add_registered_cli_argument(ap, 'effort-titrate/effort_titration.main/ap/intent')
+    add_registered_cli_argument(ap, 'effort-titrate/effort_titration.main/ap/--model')
+    add_registered_cli_argument(ap, 'effort-titrate/effort_titration.main/ap/--efforts')
+    add_registered_cli_argument(ap, 'effort-titrate/effort_titration.main/ap/--sample', type=int, default=_MAX_SAMPLE, help='max prompts per effort (default %d)' % _MAX_SAMPLE)
+    add_registered_cli_argument(ap, 'effort-titrate/effort_titration.main/ap/--run')
+    add_registered_cli_argument(ap, 'effort-titrate/effort_titration.main/ap/--budget', type=float)
+    add_registered_cli_argument(ap, 'effort-titrate/effort_titration.main/ap/--requirement-aware')
+    add_registered_cli_argument(ap, 'effort-titrate/effort_titration.main/ap/--adjudicator')
     a = ap.parse_args(argv)
     r = titrate(a.intent, model=a.model, sample_n=a.sample, run=a.run, budget_usd=a.budget,
                 efforts=[e for e in (a.efforts or "").split(",") if e.strip()] or None,

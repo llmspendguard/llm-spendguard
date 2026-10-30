@@ -4,6 +4,8 @@ This cannot reroute the hosting coding agent's own conversational turns. It hand
 different provider plan. Meaning (task kind and provider suitability) is decided by the classifier model; source
 code contains no keyword router. Provider/model choices are derived from advisor.lane_models and lane_registry.
 """
+
+from .capability_cli_parsing import add_registered_cli_argument
 import importlib
 import hashlib
 import json
@@ -654,20 +656,18 @@ def delegate_cli(argv=None):
                 "adapters.call(..., reasoning='best-value', intent=...). Name an intent, not a guessed model id;\n"
                 "see README.md's routing cheat-sheet. Codex is ~5s warm; >75s is cold `codex exec` only."),
         formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("task", nargs="?", help="complete, self-contained task to classify and delegate")
-    parser.add_argument("--files", help="comma-separated supporting files; every file is read in full")
-    parser.add_argument("--intent", help="attribution/cost-control intent (default: spendguard:delegate-task)")
-    parser.add_argument("--provider", default="auto",
-                        help="configured plan to use, or auto for agentic selection among ready lanes (default: auto)")
-    parser.add_argument("--estimate", action="store_true", help="force dry-run even when --yes is also present")
-    parser.add_argument("--yes", action="store_true", help="execute hop 2 after classification and estimate")
-    parser.add_argument("--timeout", type=float, help="optional execution timeout in seconds")
-    parser.add_argument("--cwd", default=os.getcwd(),
-                        help="trusted target repo for agentic workspace-write tasks (default: current shell cwd)")
+    add_registered_cli_argument(parser, 'delegate/delegate_router.delegate_cli/parser/task')
+    add_registered_cli_argument(parser, 'delegate/delegate_router.delegate_cli/parser/--files')
+    add_registered_cli_argument(parser, 'delegate/delegate_router.delegate_cli/parser/--intent')
+    add_registered_cli_argument(parser, 'delegate/delegate_router.delegate_cli/parser/--provider')
+    add_registered_cli_argument(parser, 'delegate/delegate_router.delegate_cli/parser/--estimate')
+    add_registered_cli_argument(parser, 'delegate/delegate_router.delegate_cli/parser/--yes')
+    add_registered_cli_argument(parser, 'delegate/delegate_router.delegate_cli/parser/--timeout', type=float)
+    add_registered_cli_argument(parser, 'delegate/delegate_router.delegate_cli/parser/--cwd', default=os.getcwd())
     lookup = parser.add_mutually_exclusive_group()
-    lookup.add_argument("--collect", metavar="JOB_ID", help="print the durable terminal result for a delegate job")
-    lookup.add_argument("--status", metavar="JOB_ID", help="print durable delegate job status")
-    lookup.add_argument("--recover", metavar="EXECUTION_ID", help="recover complete raw result, stderr and exit code")
+    add_registered_cli_argument(lookup, 'delegate/delegate_router.delegate_cli/lookup/--collect')
+    add_registered_cli_argument(lookup, 'delegate/delegate_router.delegate_cli/lookup/--status')
+    add_registered_cli_argument(lookup, 'delegate/delegate_router.delegate_cli/lookup/--recover')
     args = parser.parse_args(argv)
     if args.recover:
         from .execution_journal import recover_durable_execution

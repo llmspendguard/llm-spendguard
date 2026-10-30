@@ -19,6 +19,8 @@ priced at what the metered API would have charged; $0 billed, because a flat-fee
 """
 from __future__ import annotations
 
+from .capability_cli_parsing import registered_cli_option_token
+
 import datetime as _dt
 import json
 import time
@@ -224,8 +226,8 @@ def main(argv=None) -> int:
     the refresh command the stale-receipt caption points at for these lanes (mirrors `spendguard codex`).
     `--sync` pushes the plan value to the server (billed=false, channel=<lane>); `--sync --dry` shows what would go."""
     argv = list(argv or [])
-    if "--sync" in argv:
-        r = sync(dry="--dry" in argv)
+    if registered_cli_option_token('lanevalue/--sync') in argv:
+        r = sync(dry=registered_cli_option_token('lanevalue/--dry') in argv)
         if r.get("skipped"):
             print(f"lanevalue --sync skipped: {r['skipped']}")
         elif "day_totals" in r:                           # --dry: the rows, not pushed

@@ -34,6 +34,8 @@ that is new, or whose value changed, has no verdict — and an unjudged cap FAIL
 passing quietly. That is the whole point: to reintroduce this defect you would have to add a cap AND get a
 model to certify it harmless AND commit the certificate. It cannot happen by forgetting.
 """
+
+from .capability_cli_parsing import registered_cli_option_token
 import ast
 import pathlib
 
@@ -233,10 +235,15 @@ def cmd(argv=None):
     """`spendguard token-caps [--judge] [--scan DIR]` — list caps, or judge the unjudged ones and record."""
     import sys
     argv = list(sys.argv[2:] if argv is None else argv)
-    repo_root = pathlib.Path(__file__).resolve().parents[2]
     scan = None
-    if "--scan" in argv:
-        scan = argv[argv.index("--scan") + 1]
+    if registered_cli_option_token('token-caps/--scan') in argv:
+        scan = argv[argv.index(registered_cli_option_token('token-caps/--scan')) + 1]
+    return review_output_token_caps(judge="--judge" in argv, scan=scan)
+
+
+def review_output_token_caps(*, judge: bool = False, scan: str | None = None) -> int:
+    """Run the existing coverage scan and optional durable adjudication."""
+    repo_root = pathlib.Path(__file__).resolve().parents[2]
     res = unjudged_and_content(repo_root, scan)
     # unjudged_and_content returns cleared/failed/stale/unjudged/total (NOT 'harmless' — that stale key crashed this
     # summary before it could even list, let alone judge).
@@ -249,7 +256,7 @@ def cmd(argv=None):
         print(f"  stale        {s} — a recorded verdict no longer matches the code; re-judge")
     for s in res["unjudged"]:
         print(f"  unjudged     {s['file']}:{s['symbol']} {s['kwarg']}={s['value']} ({s['kind']})")
-    if "--judge" not in argv:
+    if not judge:
         if res["unjudged"]:
             print("\nrun with --judge to have a model rule on the unjudged ones (they FAIL the test until then)")
         return 1 if (res["unjudged"] or res["failed"]) else 0

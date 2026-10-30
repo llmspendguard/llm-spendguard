@@ -1,0 +1,835 @@
+{
+  "status": {
+    "handler_ref": "spendguard.cli:cli_core_status",
+    "invocation_policy": "context",
+    "source_evidence": "src/spendguard/cli.py:409"
+  },
+  "on": {
+    "handler_ref": "spendguard.cli:cli_core_status",
+    "invocation_policy": "context",
+    "source_evidence": "src/spendguard/cli.py:409"
+  },
+  "off": {
+    "handler_ref": "spendguard.cli:cli_core_status",
+    "invocation_policy": "context",
+    "source_evidence": "src/spendguard/cli.py:409"
+  },
+  "doctor": {
+    "handler_ref": "spendguard.cli:cli_core_status",
+    "invocation_policy": "context",
+    "source_evidence": "src/spendguard/cli.py:409"
+  },
+  "delegate": {
+    "handler_ref": "spendguard.delegate_router:delegate_cli",
+    "invocation_policy": "rest",
+    "source_evidence": "src/spendguard/cli.py:412"
+  },
+  "manifest": {
+    "handler_ref": "spendguard.manifest:manifest_command",
+    "invocation_policy": "rest",
+    "source_evidence": "src/spendguard/cli.py:415"
+  },
+  "reap-orphans": {
+    "handler_ref": "spendguard.cli:reap_orphaned_warm_servers_cli",
+    "invocation_policy": "rest",
+    "source_evidence": "src/spendguard/cli.py:418"
+  },
+  "queue-manage": {
+    "handler_ref": "spendguard.cli:manage_lane_queue_cli",
+    "invocation_policy": "rest",
+    "source_evidence": "src/spendguard/cli.py:420"
+  },
+  "lane-leak-check": {
+    "handler_ref": "spendguard.cli:lane_leak_check_cli",
+    "invocation_policy": "rest",
+    "source_evidence": "src/spendguard/cli.py:422"
+  },
+  "ledger-read": {
+    "handler_ref": "spendguard.cli:ledger_read_cli",
+    "invocation_policy": "rest",
+    "source_evidence": "src/spendguard/cli.py:424"
+  },
+  "compress-content": {
+    "handler_ref": "spendguard.content_compression_backfill:content_compression_backfill_cli",
+    "invocation_policy": "rest",
+    "source_evidence": "src/spendguard/cli.py:426"
+  },
+  "agent-spawn-gate": {
+    "handler_ref": "spendguard.agent_spawn_gate:cmd",
+    "invocation_policy": "rest",
+    "source_evidence": "src/spendguard/cli.py:429"
+  },
+  "residency-gate": {
+    "handler_ref": "spendguard.residency_gate:cmd",
+    "invocation_policy": "rest",
+    "source_evidence": "src/spendguard/cli.py:432"
+  },
+  "capguard": {
+    "handler_ref": "spendguard.weekly_cap_guard:cmd",
+    "invocation_policy": "rest",
+    "source_evidence": "src/spendguard/cli.py:435"
+  },
+  "install-residency-gate": {
+    "handler_ref": "spendguard.residency_gate:install_residency_gate_cli",
+    "invocation_policy": "rest",
+    "source_evidence": "src/spendguard/cli.py:438"
+  },
+  "overage": {
+    "handler_ref": "spendguard.overage:overage_cli",
+    "invocation_policy": "rest",
+    "source_evidence": "src/spendguard/cli.py:441"
+  },
+  "report": {
+    "handler_ref": "spendguard.report:main",
+    "invocation_policy": "none",
+    "source_evidence": "src/spendguard/cli.py:444",
+    "legacy_argv_prefix": "report"
+  },
+  "route-cost": {
+    "handler_ref": "spendguard.route_economics:cmd",
+    "invocation_policy": "rest",
+    "source_evidence": "src/spendguard/cli.py:448"
+  },
+  "route_cost": {
+    "handler_ref": "spendguard.route_economics:cmd",
+    "invocation_policy": "rest",
+    "source_evidence": "src/spendguard/cli.py:448"
+  },
+  "route-realized": {
+    "handler_ref": "spendguard.route_realized:cmd",
+    "invocation_policy": "rest",
+    "source_evidence": "src/spendguard/cli.py:451"
+  },
+  "route_realized": {
+    "handler_ref": "spendguard.route_realized:cmd",
+    "invocation_policy": "rest",
+    "source_evidence": "src/spendguard/cli.py:451"
+  },
+  "route-horizon": {
+    "handler_ref": "spendguard.route_horizon:cmd",
+    "invocation_policy": "rest",
+    "source_evidence": "src/spendguard/cli.py:454"
+  },
+  "route_horizon": {
+    "handler_ref": "spendguard.route_horizon:cmd",
+    "invocation_policy": "rest",
+    "source_evidence": "src/spendguard/cli.py:454"
+  },
+  "submit-jobs": {
+    "handler_ref": "spendguard.whole_job:cmd",
+    "invocation_policy": "rest",
+    "source_evidence": "src/spendguard/cli.py:457"
+  },
+  "run-jobs": {
+    "handler_ref": "spendguard.whole_job:cmd",
+    "invocation_policy": "rest",
+    "source_evidence": "src/spendguard/cli.py:457"
+  },
+  "whole-job": {
+    "handler_ref": "spendguard.whole_job:cmd",
+    "invocation_policy": "rest",
+    "source_evidence": "src/spendguard/cli.py:457"
+  },
+  "focus-export": {
+    "handler_ref": "spendguard.focus_export:main",
+    "invocation_policy": "rest",
+    "source_evidence": "src/spendguard/cli.py:460"
+  },
+  "otel-ingest": {
+    "handler_ref": "spendguard.otel_ingest:main",
+    "invocation_policy": "rest",
+    "source_evidence": "src/spendguard/cli.py:463"
+  },
+  "otel": {
+    "handler_ref": "spendguard.otel_ingest:main",
+    "invocation_policy": "rest",
+    "source_evidence": "src/spendguard/cli.py:463"
+  },
+  "preflight": {
+    "handler_ref": "spendguard.model_preflight:cmd",
+    "invocation_policy": "rest",
+    "source_evidence": "src/spendguard/cli.py:466"
+  },
+  "verify": {
+    "handler_ref": "spendguard.verify:cmd",
+    "invocation_policy": "rest",
+    "source_evidence": "src/spendguard/cli.py:469"
+  },
+  "keys-audit": {
+    "handler_ref": "spendguard.keys_audit:cmd",
+    "invocation_policy": "rest",
+    "source_evidence": "src/spendguard/cli.py:472"
+  },
+  "reconcile": {
+    "handler_ref": "spendguard.cli:cli_core_reconcile",
+    "invocation_policy": "context",
+    "source_evidence": "src/spendguard/cli.py:475"
+  },
+  "estimate": {
+    "handler_ref": "spendguard.estimate:main",
+    "invocation_policy": "none",
+    "source_evidence": "src/spendguard/cli.py:507",
+    "legacy_argv_prefix": "estimate"
+  },
+  "calibrate": {
+    "handler_ref": "spendguard.calibrate:main",
+    "invocation_policy": "rest",
+    "source_evidence": "src/spendguard/cli.py:513"
+  },
+  "measurement": {
+    "handler_ref": "spendguard.measurement:cmd",
+    "invocation_policy": "rest",
+    "source_evidence": "src/spendguard/cli.py:516"
+  },
+  "audit": {
+    "handler_ref": "spendguard.audit:main",
+    "invocation_policy": "none",
+    "source_evidence": "src/spendguard/cli.py:519",
+    "legacy_argv_prefix": "audit"
+  },
+  "token-caps": {
+    "handler_ref": "spendguard.token_caps:cmd",
+    "invocation_policy": "rest",
+    "source_evidence": "src/spendguard/cli.py:523"
+  },
+  "batch-submit": {
+    "handler_ref": "spendguard.openai_batch_cli:submit_batch_jsonl",
+    "invocation_policy": "rest",
+    "source_evidence": "src/spendguard/cli.py:526"
+  },
+  "batch-fetch": {
+    "handler_ref": "spendguard.openai_batch_cli:fetch_batch_output",
+    "invocation_policy": "rest",
+    "source_evidence": "src/spendguard/cli.py:529"
+  },
+  "ask": {
+    "handler_ref": "spendguard.crossllm:cmd",
+    "invocation_policy": "rest",
+    "source_evidence": "src/spendguard/cli.py:532"
+  },
+  "comprehend": {
+    "handler_ref": "spendguard.comprehend:cmd",
+    "invocation_policy": "rest",
+    "source_evidence": "src/spendguard/cli.py:535"
+  },
+  "serve": {
+    "handler_ref": "spendguard.serve:cmd",
+    "invocation_policy": "rest",
+    "source_evidence": "src/spendguard/cli.py:538"
+  },
+  "mcp": {
+    "handler_ref": "spendguard.mcp_server:cmd",
+    "invocation_policy": "rest",
+    "source_evidence": "src/spendguard/cli.py:541"
+  },
+  "consumer-audit": {
+    "handler_ref": "spendguard.consumer_audit:consumer_audit_command",
+    "invocation_policy": "rest",
+    "source_evidence": "src/spendguard/cli.py:544"
+  },
+  "distribute": {
+    "handler_ref": "spendguard.distribution:distribute_command",
+    "invocation_policy": "rest",
+    "source_evidence": "src/spendguard/cli.py:547"
+  },
+  "deploy": {
+    "handler_ref": "spendguard.cli:cli_core_deploy",
+    "invocation_policy": "context",
+    "source_evidence": "src/spendguard/cli.py:550"
+  },
+  "fleet": {
+    "handler_ref": "spendguard.cli:cli_core_fleet",
+    "invocation_policy": "context",
+    "source_evidence": "src/spendguard/cli.py:696"
+  },
+  "release": {
+    "handler_ref": "spendguard.cli:cli_core_release",
+    "invocation_policy": "context",
+    "source_evidence": "src/spendguard/cli.py:761"
+  },
+  "bakeoff": {
+    "handler_ref": "spendguard.bakeoff:main",
+    "invocation_policy": "rest",
+    "source_evidence": "src/spendguard/cli.py:779"
+  },
+  "stability": {
+    "handler_ref": "spendguard.stability:cmd",
+    "invocation_policy": "rest",
+    "source_evidence": "src/spendguard/cli.py:782"
+  },
+  "effort-titrate": {
+    "handler_ref": "spendguard.effort_titration:main",
+    "invocation_policy": "rest",
+    "source_evidence": "src/spendguard/cli.py:785"
+  },
+  "metadata": {
+    "handler_ref": "spendguard.metadata_audit:main",
+    "invocation_policy": "rest",
+    "source_evidence": "src/spendguard/cli.py:788"
+  },
+  "migrate": {
+    "handler_ref": "spendguard.cli:cli_core_migrate",
+    "invocation_policy": "context",
+    "source_evidence": "src/spendguard/cli.py:791"
+  },
+  "estimate-literals": {
+    "handler_ref": "spendguard.estimate_literals:cmd",
+    "invocation_policy": "rest",
+    "source_evidence": "src/spendguard/cli.py:808"
+  },
+  "estimate-divergence": {
+    "handler_ref": "spendguard.estimate_divergence:cmd",
+    "invocation_policy": "rest",
+    "source_evidence": "src/spendguard/cli.py:811"
+  },
+  "pricing": {
+    "handler_ref": "spendguard.pricing:main",
+    "invocation_policy": "none",
+    "source_evidence": "src/spendguard/cli.py:814"
+  },
+  "providers": {
+    "handler_ref": "spendguard.cli:cli_core_providers",
+    "invocation_policy": "context",
+    "source_evidence": "src/spendguard/cli.py:817"
+  },
+  "coverage": {
+    "handler_ref": "spendguard.coverage:cmd",
+    "invocation_policy": "rest",
+    "source_evidence": "src/spendguard/cli.py:822"
+  },
+  "gate-coverage": {
+    "handler_ref": "spendguard.setup:cmd_coverage",
+    "invocation_policy": "rest",
+    "source_evidence": "src/spendguard/cli.py:825"
+  },
+  "maxtokens": {
+    "handler_ref": "spendguard.cli:cli_core_maxtokens",
+    "invocation_policy": "context",
+    "source_evidence": "src/spendguard/cli.py:828"
+  },
+  "plan-queue": {
+    "handler_ref": "spendguard.cli:cli_core_plan_queue",
+    "invocation_policy": "context",
+    "source_evidence": "src/spendguard/cli.py:853"
+  },
+  "dispatch": {
+    "handler_ref": "spendguard.cli:cli_core_dispatch",
+    "invocation_policy": "context",
+    "source_evidence": "src/spendguard/cli.py:911"
+  },
+  "config": {
+    "handler_ref": "spendguard.setup:cmd_config",
+    "invocation_policy": "rest",
+    "source_evidence": "src/spendguard/cli.py:968"
+  },
+  "init": {
+    "handler_ref": "spendguard.setup:cmd_init",
+    "invocation_policy": "rest",
+    "source_evidence": "src/spendguard/cli.py:971"
+  },
+  "install-hook": {
+    "handler_ref": "spendguard.setup:cmd_install_hook",
+    "invocation_policy": "rest",
+    "source_evidence": "src/spendguard/cli.py:974"
+  },
+  "gate-venv": {
+    "handler_ref": "spendguard.setup:cmd_install_hook",
+    "invocation_policy": "rest",
+    "source_evidence": "src/spendguard/cli.py:974"
+  },
+  "gate-host": {
+    "handler_ref": "spendguard.setup:cmd_gate_discovered_host",
+    "invocation_policy": "rest",
+    "source_evidence": "src/spendguard/cli.py:977"
+  },
+  "install-agent-gate": {
+    "handler_ref": "spendguard.agent_spawn_gate:install_agent_gate_cli",
+    "invocation_policy": "rest",
+    "source_evidence": "src/spendguard/cli.py:980"
+  },
+  "install-capguard": {
+    "handler_ref": "spendguard.weekly_cap_guard:install_weekly_cap_guard_cli",
+    "invocation_policy": "rest",
+    "source_evidence": "src/spendguard/cli.py:983"
+  },
+  "schedule": {
+    "handler_ref": "spendguard.schedule:main",
+    "invocation_policy": "rest",
+    "source_evidence": "src/spendguard/cli.py:986"
+  },
+  "install-skills": {
+    "handler_ref": "spendguard.setup:cmd_install_skills",
+    "invocation_policy": "rest",
+    "source_evidence": "src/spendguard/cli.py:989"
+  },
+  "install-rule": {
+    "handler_ref": "spendguard.setup:cmd_install_rule",
+    "invocation_policy": "rest",
+    "source_evidence": "src/spendguard/cli.py:992"
+  },
+  "install-receipts": {
+    "handler_ref": "spendguard.receipt:install_cli",
+    "invocation_policy": "rest",
+    "source_evidence": "src/spendguard/cli.py:995"
+  },
+  "install-mcp": {
+    "handler_ref": "spendguard.cli:cli_core_install_mcp",
+    "invocation_policy": "context",
+    "source_evidence": "src/spendguard/cli.py:998"
+  },
+  "remote": {
+    "handler_ref": "spendguard.remote:cmd",
+    "invocation_policy": "rest",
+    "source_evidence": "src/spendguard/cli.py:1001"
+  },
+  "saas": {
+    "handler_ref": "spendguard.saas:cmd",
+    "invocation_policy": "rest",
+    "source_evidence": "src/spendguard/cli.py:1004"
+  },
+  "resources": {
+    "handler_ref": "spendguard.resources:cmd",
+    "invocation_policy": "rest",
+    "source_evidence": "src/spendguard/cli.py:1007"
+  },
+  "tag": {
+    "handler_ref": "spendguard.tag:cmd",
+    "invocation_policy": "rest",
+    "source_evidence": "src/spendguard/cli.py:1010"
+  },
+  "calls": {
+    "handler_ref": "spendguard.calls:cmd_summary",
+    "invocation_policy": "rest",
+    "source_evidence": "src/spendguard/cli.py:1013"
+  },
+  "receipt": {
+    "handler_ref": "spendguard.receipt:cli",
+    "invocation_policy": "rest",
+    "source_evidence": "src/spendguard/cli.py:1016"
+  },
+  "backfill": {
+    "handler_ref": "spendguard.backfill:main",
+    "invocation_policy": "rest",
+    "source_evidence": "src/spendguard/cli.py:1019"
+  },
+  "advise": {
+    "handler_ref": "spendguard.advise:main",
+    "invocation_policy": "rest",
+    "source_evidence": "src/spendguard/cli.py:1022"
+  },
+  "backtest": {
+    "handler_ref": "spendguard.advise:main",
+    "invocation_policy": "rest",
+    "source_evidence": "src/spendguard/cli.py:1022"
+  },
+  "optimize": {
+    "handler_ref": "spendguard.advisor:main",
+    "invocation_policy": "command_prefix",
+    "source_evidence": "src/spendguard/cli.py:1025"
+  },
+  "mine": {
+    "handler_ref": "spendguard.advisor:main",
+    "invocation_policy": "command_prefix",
+    "source_evidence": "src/spendguard/cli.py:1025"
+  },
+  "reconstruct": {
+    "handler_ref": "spendguard.advisor:main",
+    "invocation_policy": "command_prefix",
+    "source_evidence": "src/spendguard/cli.py:1025"
+  },
+  "recommend": {
+    "handler_ref": "spendguard.advisor:main",
+    "invocation_policy": "command_prefix",
+    "source_evidence": "src/spendguard/cli.py:1025"
+  },
+  "mine-history": {
+    "handler_ref": "spendguard.history:main",
+    "invocation_policy": "rest",
+    "source_evidence": "src/spendguard/cli.py:1028"
+  },
+  "history": {
+    "handler_ref": "spendguard.history:main",
+    "invocation_policy": "rest",
+    "source_evidence": "src/spendguard/cli.py:1028"
+  },
+  "mine-conv": {
+    "handler_ref": "spendguard.conv:main",
+    "invocation_policy": "rest",
+    "source_evidence": "src/spendguard/cli.py:1031"
+  },
+  "conv": {
+    "handler_ref": "spendguard.conv:main",
+    "invocation_policy": "rest",
+    "source_evidence": "src/spendguard/cli.py:1031"
+  },
+  "accounting": {
+    "handler_ref": "spendguard.conv:attribute_cmd",
+    "invocation_policy": "rest",
+    "source_evidence": "src/spendguard/cli.py:1034"
+  },
+  "signal": {
+    "handler_ref": "spendguard.signal:cmd",
+    "invocation_policy": "rest",
+    "source_evidence": "src/spendguard/cli.py:1037"
+  },
+  "workdone": {
+    "handler_ref": "spendguard.workdone:cmd",
+    "invocation_policy": "rest",
+    "source_evidence": "src/spendguard/cli.py:1040"
+  },
+  "work": {
+    "handler_ref": "spendguard.workdone:cmd",
+    "invocation_policy": "rest",
+    "source_evidence": "src/spendguard/cli.py:1040"
+  },
+  "claude-code": {
+    "handler_ref": "spendguard.claudecode:main",
+    "invocation_policy": "rest",
+    "source_evidence": "src/spendguard/cli.py:1043"
+  },
+  "claudecode": {
+    "handler_ref": "spendguard.claudecode:main",
+    "invocation_policy": "rest",
+    "source_evidence": "src/spendguard/cli.py:1043"
+  },
+  "cc": {
+    "handler_ref": "spendguard.claudecode:main",
+    "invocation_policy": "rest",
+    "source_evidence": "src/spendguard/cli.py:1043"
+  },
+  "price": {
+    "handler_ref": "spendguard.cli:cli_core_price",
+    "invocation_policy": "context",
+    "source_evidence": "src/spendguard/cli.py:1046"
+  },
+  "reprice": {
+    "handler_ref": "spendguard.cli:cli_core_reprice",
+    "invocation_policy": "context",
+    "source_evidence": "src/spendguard/cli.py:1075"
+  },
+  "quarantine": {
+    "handler_ref": "spendguard.cli:cli_core_quarantine",
+    "invocation_policy": "context",
+    "source_evidence": "src/spendguard/cli.py:1110"
+  },
+  "codex": {
+    "handler_ref": "spendguard.codex:main",
+    "invocation_policy": "rest",
+    "source_evidence": "src/spendguard/cli.py:1162"
+  },
+  "chat": {
+    "handler_ref": "spendguard.chat:main",
+    "invocation_policy": "rest",
+    "source_evidence": "src/spendguard/cli.py:1165"
+  },
+  "lanevalue": {
+    "handler_ref": "spendguard.lane_value:main",
+    "invocation_policy": "rest",
+    "source_evidence": "src/spendguard/cli.py:1168"
+  },
+  "lane-value": {
+    "handler_ref": "spendguard.lane_value:main",
+    "invocation_policy": "rest",
+    "source_evidence": "src/spendguard/cli.py:1168"
+  },
+  "fetch-io": {
+    "handler_ref": "spendguard.callio:main",
+    "invocation_policy": "rest",
+    "source_evidence": "src/spendguard/cli.py:1171"
+  },
+  "fetchio": {
+    "handler_ref": "spendguard.callio:main",
+    "invocation_policy": "rest",
+    "source_evidence": "src/spendguard/cli.py:1171"
+  },
+  "callio-status": {
+    "handler_ref": "spendguard.callio:status_main",
+    "invocation_policy": "rest",
+    "source_evidence": "src/spendguard/cli.py:1174"
+  },
+  "corpus-status": {
+    "handler_ref": "spendguard.callio:status_main",
+    "invocation_policy": "rest",
+    "source_evidence": "src/spendguard/cli.py:1174"
+  },
+  "codex-gc": {
+    "handler_ref": "spendguard.cli:cli_core_codex_gc",
+    "invocation_policy": "context",
+    "source_evidence": "src/spendguard/cli.py:1177"
+  },
+  "codex-prune": {
+    "handler_ref": "spendguard.cli:cli_core_codex_gc",
+    "invocation_policy": "context",
+    "source_evidence": "src/spendguard/cli.py:1177"
+  },
+  "embed-gc": {
+    "handler_ref": "spendguard.cli:cli_core_embed_gc",
+    "invocation_policy": "context",
+    "source_evidence": "src/spendguard/cli.py:1200"
+  },
+  "embed-prune": {
+    "handler_ref": "spendguard.cli:cli_core_embed_gc",
+    "invocation_policy": "context",
+    "source_evidence": "src/spendguard/cli.py:1200"
+  },
+  "review": {
+    "handler_ref": "spendguard.review:main",
+    "invocation_policy": "rest",
+    "source_evidence": "src/spendguard/cli.py:1226"
+  },
+  "cache-audit": {
+    "handler_ref": "spendguard.cacheaudit:main",
+    "invocation_policy": "rest",
+    "source_evidence": "src/spendguard/cli.py:1229"
+  },
+  "cacheaudit": {
+    "handler_ref": "spendguard.cacheaudit:main",
+    "invocation_policy": "rest",
+    "source_evidence": "src/spendguard/cli.py:1229"
+  },
+  "cache-test": {
+    "handler_ref": "spendguard.cachetest:main",
+    "invocation_policy": "rest",
+    "source_evidence": "src/spendguard/cli.py:1232"
+  },
+  "cachetest": {
+    "handler_ref": "spendguard.cachetest:main",
+    "invocation_policy": "rest",
+    "source_evidence": "src/spendguard/cli.py:1232"
+  },
+  "brief": {
+    "handler_ref": "spendguard.brief:main",
+    "invocation_policy": "rest",
+    "source_evidence": "src/spendguard/cli.py:1235"
+  },
+  "experiment": {
+    "handler_ref": "spendguard.experiment:main",
+    "invocation_policy": "rest",
+    "source_evidence": "src/spendguard/cli.py:1238"
+  },
+  "models": {
+    "handler_ref": "spendguard.models:cmd",
+    "invocation_policy": "rest",
+    "source_evidence": "src/spendguard/cli.py:1241"
+  },
+  "promote": {
+    "handler_ref": "spendguard.experiment:promote_main",
+    "invocation_policy": "rest",
+    "source_evidence": "src/spendguard/cli.py:1244"
+  },
+  "cache-stats": {
+    "handler_ref": "spendguard.semcache:cmd",
+    "invocation_policy": "rest",
+    "source_evidence": "src/spendguard/cli.py:1247"
+  },
+  "semcache": {
+    "handler_ref": "spendguard.semcache:cmd",
+    "invocation_policy": "rest",
+    "source_evidence": "src/spendguard/cli.py:1247"
+  },
+  "dedup": {
+    "handler_ref": "spendguard.semcache:dedup_main",
+    "invocation_policy": "rest",
+    "source_evidence": "src/spendguard/cli.py:1250"
+  },
+  "dedup-populate": {
+    "handler_ref": "spendguard.semcache:populate_main",
+    "invocation_policy": "rest",
+    "source_evidence": "src/spendguard/cli.py:1253"
+  },
+  "cascade": {
+    "handler_ref": "spendguard.cascade:cmd",
+    "invocation_policy": "rest",
+    "source_evidence": "src/spendguard/cli.py:1256"
+  },
+  "reconcile-ledger": {
+    "handler_ref": "spendguard.ledger_sync:main",
+    "invocation_policy": "rest",
+    "source_evidence": "src/spendguard/cli.py:1259"
+  },
+  "ledger-sync": {
+    "handler_ref": "spendguard.ledger_sync:main",
+    "invocation_policy": "rest",
+    "source_evidence": "src/spendguard/cli.py:1259"
+  },
+  "leaks": {
+    "handler_ref": "spendguard.ledger_sync:main",
+    "invocation_policy": "rest",
+    "source_evidence": "src/spendguard/cli.py:1259"
+  },
+  "trust": {
+    "handler_ref": "spendguard.trust:cmd",
+    "invocation_policy": "rest",
+    "source_evidence": "src/spendguard/cli.py:1262"
+  },
+  "trust-check": {
+    "handler_ref": "spendguard.trust:cmd",
+    "invocation_policy": "rest",
+    "source_evidence": "src/spendguard/cli.py:1262"
+  },
+  "cross-check": {
+    "handler_ref": "spendguard.cli:cli_core_cross_check",
+    "invocation_policy": "context",
+    "source_evidence": "src/spendguard/cli.py:1265"
+  },
+  "crosscheck": {
+    "handler_ref": "spendguard.cli:cli_core_cross_check",
+    "invocation_policy": "context",
+    "source_evidence": "src/spendguard/cli.py:1265"
+  },
+  "bootstrap": {
+    "handler_ref": "spendguard.bootstrap:main",
+    "invocation_policy": "rest",
+    "source_evidence": "src/spendguard/cli.py:1280"
+  },
+  "validate": {
+    "handler_ref": "spendguard.validate:main",
+    "invocation_policy": "rest",
+    "source_evidence": "src/spendguard/cli.py:1283"
+  },
+  "realized": {
+    "handler_ref": "spendguard.realized:main",
+    "invocation_policy": "none",
+    "source_evidence": "src/spendguard/cli.py:1286"
+  },
+  "savings": {
+    "handler_ref": "spendguard.cli:cli_core_savings",
+    "invocation_policy": "context",
+    "source_evidence": "src/spendguard/cli.py:1289"
+  },
+  "tokens": {
+    "handler_ref": "spendguard.provider_tokens:cmd",
+    "invocation_policy": "rest",
+    "source_evidence": "src/spendguard/cli.py:1319"
+  },
+  "prompts": {
+    "handler_ref": "spendguard.prompts:main",
+    "invocation_policy": "none",
+    "source_evidence": "src/spendguard/cli.py:1322"
+  },
+  "close": {
+    "handler_ref": "spendguard.close:main",
+    "invocation_policy": "none",
+    "source_evidence": "src/spendguard/cli.py:1325"
+  },
+  "truth": {
+    "handler_ref": "spendguard.truth:main",
+    "invocation_policy": "none",
+    "source_evidence": "src/spendguard/cli.py:1328"
+  },
+  "sources": {
+    "handler_ref": "spendguard.sources:main",
+    "invocation_policy": "rest",
+    "source_evidence": "src/spendguard/cli.py:1331"
+  },
+  "scan": {
+    "handler_ref": "spendguard.scan:main",
+    "invocation_policy": "rest",
+    "source_evidence": "src/spendguard/cli.py:1334"
+  },
+  "run": {
+    "handler_ref": "spendguard.runner:main",
+    "invocation_policy": "rest",
+    "source_evidence": "src/spendguard/cli.py:1337"
+  },
+  "lanes": {
+    "handler_ref": "spendguard.lanes:main",
+    "invocation_policy": "rest",
+    "source_evidence": "src/spendguard/cli.py:1340"
+  },
+  "tiers": {
+    "handler_ref": "spendguard.tier_config:main",
+    "invocation_policy": "rest",
+    "source_evidence": "src/spendguard/cli.py:1343"
+  },
+  "register-critical": {
+    "handler_ref": "spendguard.cli:cli_core_register_critical",
+    "invocation_policy": "context",
+    "source_evidence": "src/spendguard/cli.py:1346"
+  },
+  "keys": {
+    "handler_ref": "spendguard.cli:cli_core_keys",
+    "invocation_policy": "context",
+    "source_evidence": "src/spendguard/cli.py:1367"
+  },
+  "insights": {
+    "handler_ref": "spendguard.share:main",
+    "invocation_policy": "rest",
+    "source_evidence": "src/spendguard/cli.py:1386"
+  },
+  "compare": {
+    "handler_ref": "spendguard.compare:main",
+    "invocation_policy": "rest",
+    "source_evidence": "src/spendguard/cli.py:1389"
+  },
+  "sync-prices": {
+    "handler_ref": "spendguard.sync:main",
+    "invocation_policy": "rest",
+    "source_evidence": "src/spendguard/cli.py:1392"
+  },
+  "sync": {
+    "handler_ref": "spendguard.sync:main",
+    "invocation_policy": "rest",
+    "source_evidence": "src/spendguard/cli.py:1392"
+  },
+  "sync-catalog": {
+    "handler_ref": "spendguard.catalog:main",
+    "invocation_policy": "rest",
+    "source_evidence": "src/spendguard/cli.py:1395"
+  },
+  "sync-capabilities": {
+    "handler_ref": "spendguard.sync_capabilities:cmd",
+    "invocation_policy": "rest",
+    "source_evidence": "src/spendguard/cli.py:1398"
+  },
+  "balances": {
+    "handler_ref": "spendguard.balances:main",
+    "invocation_policy": "rest",
+    "source_evidence": "src/spendguard/cli.py:1401"
+  },
+  "reliability": {
+    "handler_ref": "spendguard.reliability:main",
+    "invocation_policy": "rest",
+    "source_evidence": "src/spendguard/cli.py:1404"
+  },
+  "health": {
+    "handler_ref": "spendguard.cli:cli_health_command",
+    "invocation_policy": "rest",
+    "source_evidence": "src/spendguard/cli.py:1407"
+  },
+  "refresh-prices": {
+    "handler_ref": "spendguard.refresh:main",
+    "invocation_policy": "rest",
+    "source_evidence": "src/spendguard/cli.py:1409"
+  },
+  "refresh": {
+    "handler_ref": "spendguard.refresh:main",
+    "invocation_policy": "rest",
+    "source_evidence": "src/spendguard/cli.py:1409"
+  },
+  "check-prices": {
+    "handler_ref": "spendguard.cli:cli_core_check_prices",
+    "invocation_policy": "context",
+    "source_evidence": "src/spendguard/cli.py:1412"
+  },
+  "freshness": {
+    "handler_ref": "spendguard.cli:cli_core_check_prices",
+    "invocation_policy": "context",
+    "source_evidence": "src/spendguard/cli.py:1412"
+  },
+  "--version": {
+    "handler_ref": "spendguard.cli:cli_core_version",
+    "invocation_policy": "context",
+    "source_evidence": "src/spendguard/cli.py:1436"
+  },
+  "-V": {
+    "handler_ref": "spendguard.cli:cli_core_version",
+    "invocation_policy": "context",
+    "source_evidence": "src/spendguard/cli.py:1436"
+  },
+  "version": {
+    "handler_ref": "spendguard.cli:cli_core_version",
+    "invocation_policy": "context",
+    "source_evidence": "src/spendguard/cli.py:1436"
+  }
+}

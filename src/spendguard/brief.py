@@ -9,6 +9,8 @@ from the task text when history is thin.
 
   spendguard brief --task "re-type the new RXNORM drug codes into baseconcepts"
 """
+
+from .capability_cli_parsing import add_registered_cli_argument
 import re
 import argparse
 
@@ -142,9 +144,9 @@ def _llm_refine(task, intent):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="spendguard brief")
-    ap.add_argument("--task", required=True, help="what you want to do, in a sentence")
-    ap.add_argument("--intent", help="force an intent (else matched/proposed)")
-    ap.add_argument("--llm", action="store_true", help="also infer fields with the caged reasoner (small spend)")
+    add_registered_cli_argument(ap, 'brief/brief.main/ap/--task')
+    add_registered_cli_argument(ap, 'brief/brief.main/ap/--intent')
+    add_registered_cli_argument(ap, 'brief/brief.main/ap/--llm')
     a = ap.parse_args(argv)
     brief(a.task, intent=a.intent, run_llm=a.llm)
     return 0

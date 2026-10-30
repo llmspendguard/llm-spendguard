@@ -10,6 +10,8 @@ That powers cost-per-GOOD-result per intent (`spendguard calls`) and, later, an 
 Shares the SQLite db with budget (config.db_path()), table `calls`. RLock — reentrant (record/query
 hold it and call _calls_db() which re-acquires).
 """
+
+from .capability_cli_parsing import add_registered_cli_argument
 import os, datetime, threading, hashlib, inspect, contextlib, uuid
 import logging
 from decimal import Decimal, localcontext
@@ -1082,7 +1084,7 @@ def tested_recently(intent, model=None, days=14, kinds=("realtime",)):
 def cmd_summary(argv=None):
     import argparse
     ap = argparse.ArgumentParser()
-    ap.add_argument("--intent")
+    add_registered_cli_argument(ap, 'calls/calls.cmd_summary/ap/--intent')
     a = ap.parse_args(argv)
     if not call_recording_consent_enabled():
         print("call logging is OFF — enable with `spendguard init` (calls.enabled) or SPENDGUARD_CALLS=1.")

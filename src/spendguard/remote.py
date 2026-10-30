@@ -14,6 +14,8 @@ provisioned, so remote LLM scripts can spend silently. This makes remote gating 
 The principle: gate at PROVISION, verify before SPEND, sync before TEARDOWN — enforcement moves from "remembered
 per script" to structural-by-construction. `spendguard remote {onstart|verify|sync}`.
 """
+
+from .capability_cli_parsing import registered_cli_option_token
 import json
 import shlex
 import subprocess
@@ -207,26 +209,26 @@ def cmd(argv=None):
         return argv[argv.index(flag) + 1] if flag in argv and argv.index(flag) + 1 < len(argv) else default
 
     if sub == "onstart":
-        print(onstart_snippet(home=_opt("--home", _DEFAULT_HOME), from_git="--from-git" in argv))
+        print(onstart_snippet(home=_opt(registered_cli_option_token('remote/--home'), _DEFAULT_HOME), from_git=registered_cli_option_token('remote/--from-git') in argv))
         return 0
     if sub == "verify":
-        ssh = _opt("--ssh")
+        ssh = _opt(registered_cli_option_token('remote/--ssh'))
         if not ssh:
             print("usage: spendguard remote verify --ssh '<ssh prefix>'"); return 2
         ok, detail = verify_remote_enforcement(ssh)
         print(f"[spendguard remote] {ssh.split()[-1] if ssh else ''}: {detail}")
         return 0 if ok else 1                     # non-zero → fail-closed: the orchestrator aborts the launch
     if sub == "sync":
-        ssh = _opt("--ssh"); project = _opt("--project")
+        ssh = _opt(registered_cli_option_token('remote/--ssh')); project = _opt(registered_cli_option_token('remote/--project'))
         if not ssh or not project:
             print("usage: spendguard remote sync --ssh '<ssh prefix>' --project <name> [--label X] [--home P]")
             return 2
-        res = sync(ssh, project, label=_opt("--label"), home=_opt("--home", _DEFAULT_HOME))
+        res = sync(ssh, project, label=_opt(registered_cli_option_token('remote/--label')), home=_opt(registered_cli_option_token('remote/--home'), _DEFAULT_HOME))
         print(f"[spendguard remote] sync {res.get('label')}: {res.get('rows', 0)} rows · "
               f"${res.get('usd', 0):.2f} → project {project}" + (f"  ({res['error']})" if res.get("error") else ""))
         return 0
     if sub == "sync-all":                                 # SWEEP every live box → local (the at-source path)
-        res = sync_all(dry="--dry" in argv, home=_opt("--home", _DEFAULT_HOME))
+        res = sync_all(dry=registered_cli_option_token('remote/--dry') in argv, home=_opt(registered_cli_option_token('remote/--home'), _DEFAULT_HOME))
         synced = sum(1 for r in res if r.get("rows"))
         usd = round(sum(r.get("usd") or 0 for r in res), 2)
         errs = [r for r in res if r.get("error")]

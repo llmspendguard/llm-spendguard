@@ -1,4 +1,6 @@
 """Resumable, bounded-memory compression backfill for local retained content."""
+
+from .capability_cli_parsing import add_registered_cli_argument
 import argparse
 
 from . import config
@@ -59,8 +61,8 @@ def compress_retained_content_database(database_path=None, *, batch_rows=CONTENT
 
 def content_compression_backfill_cli(argv=None):
     parser = argparse.ArgumentParser(prog="spendguard compress-content")
-    parser.add_argument("--run", action="store_true", help="write one bounded, resumable batch per table")
-    parser.add_argument("--batch-rows", type=int, default=CONTENT_BACKFILL_BATCH_ROWS)
+    add_registered_cli_argument(parser, 'compress-content/content_compression_backfill.content_compression_backfill_cli/parser/--run')
+    add_registered_cli_argument(parser, 'compress-content/content_compression_backfill.content_compression_backfill_cli/parser/--batch-rows', type=int, default=CONTENT_BACKFILL_BATCH_ROWS)
     arguments = parser.parse_args(argv)
     if not arguments.run:
         print("estimate only: no rows changed; pass --run to compress one bounded batch per table")

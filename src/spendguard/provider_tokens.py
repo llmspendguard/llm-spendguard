@@ -28,6 +28,8 @@ FAIL-OPEN: token estimation must never break a call. tiktoken absent → a per-p
 (median, the last-resort fallback), then CHARS_PER_TOKEN_DEFAULT. Every path returns an int. A DELIBERATE stop
 (spend refusal / dispatch deadline / a locked accounting period) is the one thing NOT swallowed — it propagates.
 """
+
+from .capability_cli_parsing import registered_cli_option_token
 import json
 import statistics
 import threading
@@ -409,10 +411,10 @@ def cmd(argv=None):
     """`spendguard tokens [show|calibrate]` — inspect or refresh the per-provider token factors."""
     import json as _json
     argv = list(argv or [])
-    do_json = "--json" in argv
+    do_json = registered_cli_option_token('tokens/--json') in argv
     sub = next((a for a in argv if not a.startswith("-")), "show")
     if sub == "calibrate":
-        dry = "--dry-run" in argv
+        dry = registered_cli_option_token('tokens/--dry-run') in argv
         r = calibrate(store=not dry, model=None)
         if do_json:
             print(_json.dumps(r, indent=2)); return 0

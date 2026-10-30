@@ -1,4 +1,6 @@
 """PreToolUse gate that routes avoidable Agent/Task work off a near-cap hosting plan."""
+
+from .capability_cli_parsing import registered_cli_option_token
 import hashlib
 import json
 import os
@@ -141,7 +143,7 @@ def evaluate_pretooluse(payload):
 
 def cmd(argv=None):
     args = list(argv or [])
-    if "--pretooluse-hook" not in args:
+    if registered_cli_option_token('agent-spawn-gate/--pretooluse-hook') not in args:
         print("usage: spendguard agent-spawn-gate --pretooluse-hook", file=sys.stderr)
         return 2
     try:
@@ -220,11 +222,11 @@ def install_agent_gate(settings_path=None, uninstall=False, executable=None):
 
 def install_agent_gate_cli(argv=None):
     args = list(argv or [])
-    unknown = [arg for arg in args if arg != "--uninstall"]
+    unknown = [arg for arg in args if arg != registered_cli_option_token('install-agent-gate/--uninstall')]
     if unknown:
         print("usage: spendguard install-agent-gate [--uninstall]", file=sys.stderr)
         return 2
-    action, backup = install_agent_gate(uninstall="--uninstall" in args)
+    action, backup = install_agent_gate(uninstall=registered_cli_option_token('install-agent-gate/--uninstall') in args)
     print(f"{action} spendguard Agent/Task gate → {_settings_path()}"
           + (f"  ·  backup: {backup}" if backup else ""))
     return 0

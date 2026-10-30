@@ -84,9 +84,9 @@ record_script_check(fails, "custom judge called via mode=custom:", equivalence.g
 record_script_check(fails, "custom judge score clamped to 0..1",
    equivalence.grade("a", "a", mode="custom:myjudge.score") == (1.0, "custom"))
 
-import inspect
-from spendguard import cli
-record_script_check(fails, "CLI wired: `spendguard prompts`", '"prompts"' in inspect.getsource(cli))
+from _script_checks import cli_dispatch_preserves_owner_call
+record_script_check(fails, "CLI wired: `spendguard prompts`",
+                    cli_dispatch_preserves_owner_call("prompts", "spendguard.prompts:main", "none"))
 
 print(("[OK]" if not fails else "[FAIL]") + " prompt-lint: %d failure(s)" % len(fails))
 sys.exit(1 if fails else 0)

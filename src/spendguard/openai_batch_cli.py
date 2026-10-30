@@ -17,6 +17,8 @@ submit.build_chat_batch_jsonl (task → per-model envelope) + submit.guarded_sub
 submit); fetch polls batches.retrieve and, on completion, downloads the output (and any error file) so failures
 stay visible. Nothing hardcoded: tasks/jsonl, system, model, cap, avg-out, max-out, batch id, out path are args.
 """
+
+from .capability_cli_parsing import add_registered_cli_argument
 import argparse
 import os
 import sys
@@ -26,24 +28,18 @@ import time
 def submit_batch_jsonl(rest):
     ap = argparse.ArgumentParser(prog="spendguard batch-submit")
     src = ap.add_mutually_exclusive_group(required=True)
-    src.add_argument("--tasks", help='tasks .jsonl — each line {"custom_id": <id>, "content": <user text>}; '
-                     "spendguard builds the per-model request envelope (RECOMMENDED — the caller never hand-rolls a body, "
-                     "so a model-wrong param like max_tokens-vs-max_completion_tokens can't reach the API)")
-    src.add_argument("--jsonl", help="a PRE-BUILT request .jsonl (legacy — you own each body's per-model params)")
-    ap.add_argument("--model", required=True)
-    ap.add_argument("--system", help="shared system instruction, sent once per request (--tasks mode)")
-    ap.add_argument("--system-file", help="read the shared system instruction from this file (--tasks mode; wins over --system)")
-    ap.add_argument("--max-out", type=int, default=None,
-                    help="output-token ceiling per request (--tasks mode); default = a reasoning-safe floor so reasoning "
-                         "can't empty the reply")
-    ap.add_argument("--cap", type=float, default=None, help="refuse if projected $ exceeds this (0 = no spend)")
-    ap.add_argument("--avg-out", type=float, default=None,
-                    help="measured avg output tokens/item for the estimate (else the per-request ceiling is used)")
-    ap.add_argument("--endpoint", default="/v1/chat/completions")
-    ap.add_argument("--dry-run", action="store_true", help="estimate + cap check only, no submit ($0, no API call)")
-    ap.add_argument("--intent", default=None, help="tag this batch's spend with a job-type intent (e.g. "
-                    "symgrep-block-index) — else it attributes to '(none)', exactly like an untagged realtime call")
-    ap.add_argument("--chain", default=None, help="optional chain id linking this batch to a larger job")
+    add_registered_cli_argument(src, 'batch-submit/openai_batch_cli.submit_batch_jsonl/src/--tasks')
+    add_registered_cli_argument(src, 'batch-submit/openai_batch_cli.submit_batch_jsonl/src/--jsonl')
+    add_registered_cli_argument(ap, 'batch-submit/openai_batch_cli.submit_batch_jsonl/ap/--model')
+    add_registered_cli_argument(ap, 'batch-submit/openai_batch_cli.submit_batch_jsonl/ap/--system')
+    add_registered_cli_argument(ap, 'batch-submit/openai_batch_cli.submit_batch_jsonl/ap/--system-file')
+    add_registered_cli_argument(ap, 'batch-submit/openai_batch_cli.submit_batch_jsonl/ap/--max-out', type=int)
+    add_registered_cli_argument(ap, 'batch-submit/openai_batch_cli.submit_batch_jsonl/ap/--cap', type=float)
+    add_registered_cli_argument(ap, 'batch-submit/openai_batch_cli.submit_batch_jsonl/ap/--avg-out', type=float)
+    add_registered_cli_argument(ap, 'batch-submit/openai_batch_cli.submit_batch_jsonl/ap/--endpoint')
+    add_registered_cli_argument(ap, 'batch-submit/openai_batch_cli.submit_batch_jsonl/ap/--dry-run')
+    add_registered_cli_argument(ap, 'batch-submit/openai_batch_cli.submit_batch_jsonl/ap/--intent')
+    add_registered_cli_argument(ap, 'batch-submit/openai_batch_cli.submit_batch_jsonl/ap/--chain')
     a = ap.parse_args(rest)
     from . import submit, calls
     _built = None
@@ -96,13 +92,19 @@ def _write_preserving(path, text, force):
 
 def fetch_batch_output(rest):
     ap = argparse.ArgumentParser(prog="spendguard batch-fetch")
-    ap.add_argument("--batch-id", required=True)
-    ap.add_argument("--out", required=True, help="write the completed batch's output .jsonl here")
-    ap.add_argument("--force", action="store_true", help="keep an existing --out/.errors as .bak_<ts>, then write")
-    ap.add_argument("--intent", default=None, help="tag any spend from this fetch with the batch's job-type intent "
-                    "(the download itself is a $0 GET; this keeps attribution consistent with the submit)")
-    ap.add_argument("--chain", default=None, help="optional chain id linking this fetch to a larger job")
+    add_registered_cli_argument(ap, 'batch-fetch/openai_batch_cli.fetch_batch_output/ap/--batch-id')
+    add_registered_cli_argument(ap, 'batch-fetch/openai_batch_cli.fetch_batch_output/ap/--out')
+    add_registered_cli_argument(ap, 'batch-fetch/openai_batch_cli.fetch_batch_output/ap/--force')
+    add_registered_cli_argument(ap, 'batch-fetch/openai_batch_cli.fetch_batch_output/ap/--intent')
+    add_registered_cli_argument(ap, 'batch-fetch/openai_batch_cli.fetch_batch_output/ap/--chain')
     a = ap.parse_args(rest)
+    return download_completed_batch_output(**vars(a))
+
+
+def download_completed_batch_output(*, batch_id: str, out: str, force: bool = False, intent: str | None = None, chain: str | None = None) -> int:
+    """Execute the existing fetch_batch_output operation with typed inputs; surface schemas document the contract."""
+    from types import SimpleNamespace
+    a = SimpleNamespace(batch_id=batch_id, out=out, force=force, intent=intent, chain=chain)
     from openai import OpenAI
     from .submit import _api_key
     from . import calls

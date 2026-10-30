@@ -14,6 +14,8 @@ SEPARATE meta budget (config.meta_cap, default $2/day) and is excluded from the 
 The model for each role is configurable (see config.advisor_model / advisor_judge_model). The
 estimate path makes ZERO paid calls — it only counts tokens and prices via pricing.py.
 """
+
+from .capability_cli_parsing import add_registered_cli_argument
 import json
 from . import calls, learn, config, pricing
 from .submit import _count_tokens
@@ -380,12 +382,12 @@ def _meta_spent():
 def main(argv=None):
     import argparse
     ap = argparse.ArgumentParser(prog="spendguard")
-    ap.add_argument("op", choices=["reconstruct", "mine", "optimize", "recommend"])
-    ap.add_argument("--intent")
-    ap.add_argument("--plan", help="(optimize) the model you're about to use")
-    ap.add_argument("--per", type=int, default=15, help="(reconstruct) samples to judge per (intent,model)")
-    ap.add_argument("--limit", type=int, help="(reconstruct) overall cap on samples to judge")
-    ap.add_argument("--run", action="store_true", help="actually spend (default: estimate only). Capped by caps.meta.")
+    add_registered_cli_argument(ap, 'mine+optimize+recommend+reconstruct/advisor.main/ap/op')
+    add_registered_cli_argument(ap, 'mine+optimize+recommend+reconstruct/advisor.main/ap/--intent')
+    add_registered_cli_argument(ap, 'mine+optimize+recommend+reconstruct/advisor.main/ap/--plan')
+    add_registered_cli_argument(ap, 'mine+optimize+recommend+reconstruct/advisor.main/ap/--per', type=int)
+    add_registered_cli_argument(ap, 'mine+optimize+recommend+reconstruct/advisor.main/ap/--limit', type=int)
+    add_registered_cli_argument(ap, 'mine+optimize+recommend+reconstruct/advisor.main/ap/--run')
     a = ap.parse_args(argv)
     if a.op == "reconstruct":
         reconstruct_advisor_history(run=a.run, per=a.per, limit=a.limit)

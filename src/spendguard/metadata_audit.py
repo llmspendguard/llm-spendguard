@@ -23,6 +23,8 @@ judgement), so it is code, not an LLM call. It reports UNKNOWN separately from O
     spendguard metadata --sync     # refresh the LiteLLM cache first, then report
     from spendguard import metadata_audit; r = metadata_audit.backbone_health()   # {ok, cache, drift, ...}
 """
+
+from .capability_cli_parsing import add_registered_cli_argument
 import argparse
 
 from . import pricing, sync, vendor_call
@@ -117,7 +119,7 @@ def backbone_health():
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description="Model-metadata backbone health + measured-cap drift audit.")
-    ap.add_argument("--sync", action="store_true", help="refresh the LiteLLM limits cache before auditing")
+    add_registered_cli_argument(ap, 'metadata/metadata_audit.main/ap/--sync')
     a = ap.parse_args(argv)
     if a.sync:
         try:

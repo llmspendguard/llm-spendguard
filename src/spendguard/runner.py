@@ -18,6 +18,8 @@ PYTHONPATH and exec the command. Properties that matter:
 The bootstrap file is generated locally from this module (never downloaded) and `spendguard run --show` prints its
 exact contents, so a reviewer can read every byte that will execute.
 """
+
+from .capability_cli_parsing import registered_cli_option_token
 import os
 import sys
 
@@ -89,11 +91,11 @@ def _near_miss(cmd):
 
 def main(argv=None):
     argv = list(argv or [])
-    if "--show" in argv:                  # reviewability: print the exact bytes that will execute
+    if registered_cli_option_token('run/--show') in argv:                  # reviewability: print the exact bytes that will execute
         print(f"# {bootstrap_dir()}/sitecustomize.py")
         print(_BOOTSTRAP)
         return 0
-    if argv and argv[0] == "--":
+    if argv and argv[0] == registered_cli_option_token('run/--'):
         argv = argv[1:]
     if not argv:
         print("usage: spendguard run -- <command> [args...]\n"

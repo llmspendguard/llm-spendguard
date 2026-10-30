@@ -15,6 +15,8 @@ Variants (compose freely, iterate to converge):
 The baseline cost is computed from the stored sample (no spend); only the variants make calls.
 CLI: `spendguard experiment --intent X [--model M]... [--instruction "..."]... [--n 20] [--run]`.
 """
+
+from .capability_cli_parsing import add_registered_cli_argument
 import json
 from . import callio, calls, config, pricing
 from .submit import _count_tokens
@@ -414,15 +416,13 @@ def main(argv=None):
     on --help / a usage error, and an experiment() exception (config/pricing/provider/equivalence) propagates."""
     import argparse
     ap = argparse.ArgumentParser(prog="spendguard experiment")
-    ap.add_argument("--intent", required=True)
-    ap.add_argument("--model", action="append", help="a cheaper model variant to test (repeatable)")
-    ap.add_argument("--instruction", action="append", help="an output-format instruction variant (repeatable)")
-    ap.add_argument("--n", type=int, default=20, help="samples to test per variant")
-    ap.add_argument("--reconsider", action="store_true", help="also test models previously marked ineffective")
-    ap.add_argument("--semantic", help="judge tier: embed | rubric | custom:<module.fn> (your own callable "
-                    "(ref,out)->0..1 — wrap promptfoo assertions or any domain check). For PROSE outputs: a caged semantic "
-                    "equivalence tier (embed=embedding cosine, rubric=LLM judge) — costs extra, meta-capped")
-    ap.add_argument("--run", action="store_true", help="actually call (default: estimate). Caged by caps.meta.")
+    add_registered_cli_argument(ap, 'experiment/experiment.main/ap/--intent')
+    add_registered_cli_argument(ap, 'experiment/experiment.main/ap/--model')
+    add_registered_cli_argument(ap, 'experiment/experiment.main/ap/--instruction')
+    add_registered_cli_argument(ap, 'experiment/experiment.main/ap/--n', type=int)
+    add_registered_cli_argument(ap, 'experiment/experiment.main/ap/--reconsider')
+    add_registered_cli_argument(ap, 'experiment/experiment.main/ap/--semantic')
+    add_registered_cli_argument(ap, 'experiment/experiment.main/ap/--run')
     a = ap.parse_args(argv)
     experiment(a.intent, models=a.model, instructions=a.instruction, n=a.n, run=a.run,
                reconsider=a.reconsider, mode=a.semantic or "auto")
@@ -436,14 +436,14 @@ def promote_main(argv=None):
     usage error, and a promote()/provider/file/config exception propagates."""
     import argparse
     ap = argparse.ArgumentParser(prog="spendguard promote")
-    ap.add_argument("--intent", required=True)
-    ap.add_argument("--model", required=True, help="the winning model")
-    ap.add_argument("--instruction", help="the winning output-format instruction (optional)")
-    ap.add_argument("--input", help="chunk to process (batch .jsonl / {prompt} jsonl / plain text)")
-    ap.add_argument("--out", help="where to write kept outputs (jsonl) — realtime mode")
-    ap.add_argument("--n", type=int, help="cap inputs")
-    ap.add_argument("--batch", action="store_true", help="use the Batch API (50%% off, async) for large chunks")
-    ap.add_argument("--run", action="store_true", help="actually produce+keep (default: estimate). WORKLOAD spend.")
+    add_registered_cli_argument(ap, 'promote/experiment.promote_main/ap/--intent')
+    add_registered_cli_argument(ap, 'promote/experiment.promote_main/ap/--model')
+    add_registered_cli_argument(ap, 'promote/experiment.promote_main/ap/--instruction')
+    add_registered_cli_argument(ap, 'promote/experiment.promote_main/ap/--input')
+    add_registered_cli_argument(ap, 'promote/experiment.promote_main/ap/--out')
+    add_registered_cli_argument(ap, 'promote/experiment.promote_main/ap/--n', type=int)
+    add_registered_cli_argument(ap, 'promote/experiment.promote_main/ap/--batch')
+    add_registered_cli_argument(ap, 'promote/experiment.promote_main/ap/--run')
     a = ap.parse_args(argv)
     promote(a.intent, a.model, instruction=a.instruction or "", input=a.input, out=a.out, n=a.n,
             run=a.run, batch=a.batch)

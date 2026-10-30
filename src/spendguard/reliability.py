@@ -10,6 +10,8 @@ the live catalog at dispatch, so a rotated id is caught, not sent blind.
 ESTIMATE-FIRST (the spend protocol): sweep(run=False) returns the plan + a $ estimate and spends NOTHING;
 sweep(run=True) executes and returns the reachability matrix — per resource {reachable, executor, cost, reason}.
 """
+
+from .capability_cli_parsing import registered_cli_option_token
 import hashlib
 import json
 import logging
@@ -733,8 +735,8 @@ def _notify_macos(title, message):
 
 def main(argv=None):
     argv = list(argv or [])
-    run = "--run" in argv
-    if "--json" in argv:                                 # machine-readable status of every lane + metered provider
+    run = registered_cli_option_token('reliability/--run') in argv
+    if registered_cli_option_token('reliability/--json') in argv:                                 # machine-readable status of every lane + metered provider
         import json as _json
         print(_json.dumps(sweep(run=run), indent=2))
         return 0
@@ -761,7 +763,7 @@ def main(argv=None):
     print(f"\n  {sum(1 for d in res['lanes'].values() if d['reachable'])}/{len(res['lanes'])} lanes reachable + "
           f"{n_ok}/{len(res['metered'])} metered raw keys verified.")
     acts = None
-    if "--remediate" in argv:                            # tell the user EXACTLY what to fix for each down resource
+    if registered_cli_option_token('reliability/--remediate') in argv:                            # tell the user EXACTLY what to fix for each down resource
         acts = remediate(res)                            # agentic + cached — $0 when all healthy, only pays for NEW failures
         if not acts:
             print("\n  ✅ ALL HEALTHY — no action needed.")
@@ -771,7 +773,7 @@ def main(argv=None):
                 print(f"    [{a['kind']}] {a['resource']}: {a.get('issue')}")
                 print(f"        → {a.get('fix')}" + (f"    ·    run: {a['command']}" if a.get("command") else ""))
     _persist_health(res, acts)                           # cache the result so the RECEIPT + notifier read it for $0 later
-    if "--notify" in argv:                               # macOS push on any red (for the SCHEDULED, headless run)
+    if registered_cli_option_token('reliability/--notify') in argv:                               # macOS push on any red (for the SCHEDULED, headless run)
         reds = health_reds()
         if reds:
             _notify_macos("spendguard: %d lane/API down" % len(reds),

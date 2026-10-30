@@ -11,6 +11,8 @@ Reuses the report's fetchers verbatim (openai_by_day / anth.cost_by_day / gpu_by
 code, and truth here is definitionally the same numbers the report prints. Zero LLM spend (usage/cost
 APIs are free). CLI: `spendguard truth [--push]` — preview first, push is explicit; the push follows the
 tolerant contract (a server without /v1/truth yet → a friendly skip, never an error)."""
+
+from .capability_cli_parsing import add_registered_cli_argument
 import datetime
 
 
@@ -68,8 +70,8 @@ def main(argv=None):
     import sys, argparse
     ap = argparse.ArgumentParser(prog="spendguard truth",
                                  description="per-day provider-truth totals (keys stay local); --push syncs them to the org server")
-    ap.add_argument("--since", help="YYYY-MM-DD (default: 35 days back)")
-    ap.add_argument("--push", action="store_true", help="push to the org server (default: preview only)")
+    add_registered_cli_argument(ap, 'truth/truth.main/ap/--since')
+    add_registered_cli_argument(ap, 'truth/truth.main/ap/--push')
     a = ap.parse_args(sys.argv[2:] if argv is None else argv)
     rs = rows(a.since)
     total = sum(r["usd"] for r in rs)

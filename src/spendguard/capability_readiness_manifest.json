@@ -1,0 +1,16 @@
+{
+  "revision": 1,
+  "items": [
+    {"id":"surface-parity","description":"Every capability is exposed on CLI, API and MCP except declared deliberate absences.","gate":"spendguard.capability_readiness_gates:run_capability_script_readiness_gate","arguments":{"scripts":["tests/test_capability_surface_parity_guard.py"]}},
+    {"id":"help-non-trivial","description":"Every CLI command exposes real flags or its explicit no-flags declaration.","gate":"spendguard.capability_readiness_gates:run_capability_script_readiness_gate","arguments":{"scripts":["tests/test_capability_cli_help_guard.py"]}},
+    {"id":"docs-present","description":"Generated API reference and parameter contracts match the current registry.","gate":"spendguard.capability_readiness_gates:run_capability_script_readiness_gate","arguments":{"scripts":["tests/test_capability_documentation_guard.py"]}},
+    {"id":"no-release-on-red-ci","description":"Release promotion fails closed when CI is red or unknown.","gate":"spendguard.capability_readiness_gates:run_capability_script_readiness_gate","arguments":{"scripts":["tests/test_release_green_pointer.py"]}},
+    {"id":"env-parity-in-verification","description":"Current source passes required checks in independent clean environments.","gate":"spendguard.capability_readiness_gates:assess_capability_environment_evidence","arguments":{"patterns":["src/spendguard/**/*.py","src/spendguard/capability*.json","src/spendguard/capability*.jsonl","scripts/test/*.py","tests/**/*.py","pyproject.toml"],"required_checks":["ruff","name-uniqueness","surface-suites","offline-audit"]}},
+    {"id":"money-correctness","description":"Money scale, exact ledger arithmetic and global receipt allocation remain correct.","gate":"spendguard.capability_readiness_gates:run_capability_script_readiness_gate","arguments":{"scripts":["tests/test_money_scale.py","tests/test_ledger_money_is_exact_decimal.py","tests/test_receipt_global_dollar_allocation.py"]}},
+    {"id":"openssf-scorecard","description":"OpenSSF Scorecard mapping.","gate":null,"reason":"UNREVIEWED: external standard mapping is deferred by the task.","standard":"https://scorecard.dev/"},
+    {"id":"openssf-best-practices","description":"OpenSSF Best Practices Badge mapping.","gate":null,"reason":"UNREVIEWED: external standard mapping is deferred by the task.","standard":"https://www.bestpractices.dev/"},
+    {"id":"pypa-packaging","description":"PyPA packaging standards mapping.","gate":null,"reason":"UNREVIEWED: external standard mapping is deferred by the task.","standard":"https://packaging.python.org/"},
+    {"id":"clig-guidelines","description":"Command Line Interface Guidelines mapping.","gate":null,"reason":"UNREVIEWED: external standard mapping is deferred by the task.","standard":"https://clig.dev/"},
+    {"id":"diataxis","description":"Diátaxis documentation framework mapping.","gate":null,"reason":"UNREVIEWED: external standard mapping is deferred by the task.","standard":"https://diataxis.fr/"}
+  ]
+}

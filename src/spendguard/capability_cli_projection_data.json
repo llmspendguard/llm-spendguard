@@ -1,0 +1,5309 @@
+[
+  {
+    "declaration_id": "advise/advise.main/ap/--intent",
+    "commands": [
+      "advise"
+    ],
+    "names": [
+      "--intent"
+    ],
+    "attributes": {},
+    "evidence": "src/spendguard/advise.py:271"
+  },
+  {
+    "declaration_id": "advise/advise.main/ap/--plan",
+    "commands": [
+      "advise"
+    ],
+    "names": [
+      "--plan"
+    ],
+    "attributes": {
+      "help": {
+        "literal": "the model you're about to use \u2014 shows the delta vs the recommendation"
+      }
+    },
+    "evidence": "src/spendguard/advise.py:272"
+  },
+  {
+    "declaration_id": "advise/advise.main/ap/--as-of",
+    "commands": [
+      "advise"
+    ],
+    "names": [
+      "--as-of"
+    ],
+    "attributes": {
+      "help": {
+        "literal": "replay the advisor as of this date (YYYY-MM-DD) \u2014 backtest"
+      }
+    },
+    "evidence": "src/spendguard/advise.py:273"
+  },
+  {
+    "declaration_id": "mine+optimize+recommend+reconstruct/advisor.main/ap/op",
+    "commands": [
+      "mine",
+      "optimize",
+      "recommend",
+      "reconstruct"
+    ],
+    "names": [
+      "op"
+    ],
+    "attributes": {
+      "choices": {
+        "literal": [
+          "reconstruct",
+          "mine",
+          "optimize",
+          "recommend"
+        ]
+      }
+    },
+    "evidence": "src/spendguard/advisor.py:383"
+  },
+  {
+    "declaration_id": "mine+optimize+recommend+reconstruct/advisor.main/ap/--intent",
+    "commands": [
+      "mine",
+      "optimize",
+      "recommend",
+      "reconstruct"
+    ],
+    "names": [
+      "--intent"
+    ],
+    "attributes": {},
+    "evidence": "src/spendguard/advisor.py:384"
+  },
+  {
+    "declaration_id": "mine+optimize+recommend+reconstruct/advisor.main/ap/--plan",
+    "commands": [
+      "mine",
+      "optimize",
+      "recommend",
+      "reconstruct"
+    ],
+    "names": [
+      "--plan"
+    ],
+    "attributes": {
+      "help": {
+        "literal": "(optimize) the model you're about to use"
+      }
+    },
+    "evidence": "src/spendguard/advisor.py:385"
+  },
+  {
+    "declaration_id": "mine+optimize+recommend+reconstruct/advisor.main/ap/--per",
+    "commands": [
+      "mine",
+      "optimize",
+      "recommend",
+      "reconstruct"
+    ],
+    "names": [
+      "--per"
+    ],
+    "attributes": {
+      "type": {
+        "expression": "int"
+      },
+      "default": {
+        "literal": 15
+      },
+      "help": {
+        "literal": "(reconstruct) samples to judge per (intent,model)"
+      }
+    },
+    "evidence": "src/spendguard/advisor.py:386"
+  },
+  {
+    "declaration_id": "mine+optimize+recommend+reconstruct/advisor.main/ap/--limit",
+    "commands": [
+      "mine",
+      "optimize",
+      "recommend",
+      "reconstruct"
+    ],
+    "names": [
+      "--limit"
+    ],
+    "attributes": {
+      "type": {
+        "expression": "int"
+      },
+      "help": {
+        "literal": "(reconstruct) overall cap on samples to judge"
+      }
+    },
+    "evidence": "src/spendguard/advisor.py:387"
+  },
+  {
+    "declaration_id": "mine+optimize+recommend+reconstruct/advisor.main/ap/--run",
+    "commands": [
+      "mine",
+      "optimize",
+      "recommend",
+      "reconstruct"
+    ],
+    "names": [
+      "--run"
+    ],
+    "attributes": {
+      "action": {
+        "literal": "store_true"
+      },
+      "help": {
+        "literal": "actually spend (default: estimate only). Capped by caps.meta."
+      }
+    },
+    "evidence": "src/spendguard/advisor.py:388"
+  },
+  {
+    "declaration_id": "backfill/backfill.main/ap/--intent-map",
+    "commands": [
+      "backfill"
+    ],
+    "names": [
+      "--intent-map"
+    ],
+    "attributes": {
+      "help": {
+        "literal": "JSON {batch_id: intent}, or a dir of *_batch_id.json files"
+      }
+    },
+    "evidence": "src/spendguard/backfill.py:137"
+  },
+  {
+    "declaration_id": "backfill/backfill.main/ap/--providers",
+    "commands": [
+      "backfill"
+    ],
+    "names": [
+      "--providers"
+    ],
+    "attributes": {
+      "default": {
+        "literal": "openai,anthropic"
+      }
+    },
+    "evidence": "src/spendguard/backfill.py:138"
+  },
+  {
+    "declaration_id": "bakeoff/bakeoff.main/ap/intent",
+    "commands": [
+      "bakeoff"
+    ],
+    "names": [
+      "intent"
+    ],
+    "attributes": {},
+    "evidence": "src/spendguard/bakeoff.py:380"
+  },
+  {
+    "declaration_id": "bakeoff/bakeoff.main/ap/--candidates",
+    "commands": [
+      "bakeoff"
+    ],
+    "names": [
+      "--candidates"
+    ],
+    "attributes": {
+      "required": {
+        "literal": true
+      },
+      "help": {
+        "literal": "comma-separated vendor:model slate to test"
+      }
+    },
+    "evidence": "src/spendguard/bakeoff.py:381"
+  },
+  {
+    "declaration_id": "bakeoff/bakeoff.main/ap/--sample",
+    "commands": [
+      "bakeoff"
+    ],
+    "names": [
+      "--sample"
+    ],
+    "attributes": {
+      "type": {
+        "expression": "int"
+      },
+      "default": {
+        "literal": 5
+      },
+      "help": {
+        "literal": "how many recorded prompts to replay (default 5)"
+      }
+    },
+    "evidence": "src/spendguard/bakeoff.py:382"
+  },
+  {
+    "declaration_id": "bakeoff/bakeoff.main/ap/--efforts",
+    "commands": [
+      "bakeoff"
+    ],
+    "names": [
+      "--efforts"
+    ],
+    "attributes": {
+      "help": {
+        "literal": "comma-separated reasoning ladder to sweep PER model, e.g. 'minimal,low,medium,high' \u2014 finds the cheapest (model, effort) that holds quality. Omitted \u2192 one arm per model at its default effort."
+      }
+    },
+    "evidence": "src/spendguard/bakeoff.py:383"
+  },
+  {
+    "declaration_id": "bakeoff/bakeoff.main/ap/--run",
+    "commands": [
+      "bakeoff"
+    ],
+    "names": [
+      "--run"
+    ],
+    "attributes": {
+      "action": {
+        "literal": "store_true"
+      },
+      "help": {
+        "literal": "actually spend (default: estimate only)"
+      }
+    },
+    "evidence": "src/spendguard/bakeoff.py:386"
+  },
+  {
+    "declaration_id": "bakeoff/bakeoff.main/ap/--budget",
+    "commands": [
+      "bakeoff"
+    ],
+    "names": [
+      "--budget"
+    ],
+    "attributes": {
+      "type": {
+        "expression": "float"
+      },
+      "help": {
+        "literal": "refuse if the estimate exceeds this"
+      }
+    },
+    "evidence": "src/spendguard/bakeoff.py:387"
+  },
+  {
+    "declaration_id": "bakeoff/bakeoff.main/ap/--requirement-aware",
+    "commands": [
+      "bakeoff"
+    ],
+    "names": [
+      "--requirement-aware"
+    ],
+    "attributes": {
+      "action": {
+        "literal": "store_true"
+      },
+      "help": {
+        "literal": "judge each output against the PROMPT'S OWN requirements, two-tier (screen -> opus adjudicator)"
+      }
+    },
+    "evidence": "src/spendguard/bakeoff.py:388"
+  },
+  {
+    "declaration_id": "bakeoff/bakeoff.main/ap/--adjudicator",
+    "commands": [
+      "bakeoff"
+    ],
+    "names": [
+      "--adjudicator"
+    ],
+    "attributes": {
+      "help": {
+        "literal": "opus-tier adjudicator model for --requirement-aware (default config.advisor_adjudicator_model)"
+      }
+    },
+    "evidence": "src/spendguard/bakeoff.py:390"
+  },
+  {
+    "declaration_id": "bakeoff/bakeoff.main/ap/--temperature",
+    "commands": [
+      "bakeoff"
+    ],
+    "names": [
+      "--temperature"
+    ],
+    "attributes": {
+      "type": {
+        "expression": "float"
+      },
+      "help": {
+        "literal": "DETERMINISM: run each arm as a measurement at this temperature (e.g. 0) \u2014 one deterministic pass per arm instead of n replicates. FORCES the metered API (a $0 lane has no temperature channel). Omit to run at production settings on the $0 lane."
+      }
+    },
+    "evidence": "src/spendguard/bakeoff.py:391"
+  },
+  {
+    "declaration_id": "bakeoff/bakeoff.main/ap/--top-p",
+    "commands": [
+      "bakeoff"
+    ],
+    "names": [
+      "--top-p"
+    ],
+    "attributes": {
+      "type": {
+        "expression": "float"
+      },
+      "dest": {
+        "literal": "top_p"
+      },
+      "help": {
+        "literal": "DETERMINISM: nucleus top_p for the measurement (metered)."
+      }
+    },
+    "evidence": "src/spendguard/bakeoff.py:394"
+  },
+  {
+    "declaration_id": "bakeoff/bakeoff.main/ap/--seed",
+    "commands": [
+      "bakeoff"
+    ],
+    "names": [
+      "--seed"
+    ],
+    "attributes": {
+      "type": {
+        "expression": "int"
+      },
+      "help": {
+        "literal": "DETERMINISM: sampling seed for the measurement (OpenAI-only; dropped on vendors without a seed param, recorded in gen_params_dropped)."
+      }
+    },
+    "evidence": "src/spendguard/bakeoff.py:395"
+  },
+  {
+    "declaration_id": "bootstrap/bootstrap.main/ap/--repo",
+    "commands": [
+      "bootstrap"
+    ],
+    "names": [
+      "--repo"
+    ],
+    "attributes": {
+      "help": {
+        "literal": "repo to mine for intents (default: cwd)"
+      }
+    },
+    "evidence": "src/spendguard/bootstrap.py:101"
+  },
+  {
+    "declaration_id": "bootstrap/bootstrap.main/ap/--transcripts",
+    "commands": [
+      "bootstrap"
+    ],
+    "names": [
+      "--transcripts"
+    ],
+    "attributes": {
+      "help": {
+        "literal": "conversation transcript dir/file (default: ~/.claude/projects)"
+      }
+    },
+    "evidence": "src/spendguard/bootstrap.py:102"
+  },
+  {
+    "declaration_id": "bootstrap/bootstrap.main/ap/--cap",
+    "commands": [
+      "bootstrap"
+    ],
+    "names": [
+      "--cap"
+    ],
+    "attributes": {
+      "type": {
+        "expression": "int"
+      },
+      "default": {
+        "literal": 50
+      },
+      "help": {
+        "literal": "call_io samples per (intent, model)"
+      }
+    },
+    "evidence": "src/spendguard/bootstrap.py:103"
+  },
+  {
+    "declaration_id": "bootstrap/bootstrap.main/ap/--run",
+    "commands": [
+      "bootstrap"
+    ],
+    "names": [
+      "--run"
+    ],
+    "attributes": {
+      "action": {
+        "literal": "store_true"
+      },
+      "help": {
+        "literal": "execute the paid reasoning steps (default: estimate only)"
+      }
+    },
+    "evidence": "src/spendguard/bootstrap.py:104"
+  },
+  {
+    "declaration_id": "brief/brief.main/ap/--task",
+    "commands": [
+      "brief"
+    ],
+    "names": [
+      "--task"
+    ],
+    "attributes": {
+      "required": {
+        "literal": true
+      },
+      "help": {
+        "literal": "what you want to do, in a sentence"
+      }
+    },
+    "evidence": "src/spendguard/brief.py:145"
+  },
+  {
+    "declaration_id": "brief/brief.main/ap/--intent",
+    "commands": [
+      "brief"
+    ],
+    "names": [
+      "--intent"
+    ],
+    "attributes": {
+      "help": {
+        "literal": "force an intent (else matched/proposed)"
+      }
+    },
+    "evidence": "src/spendguard/brief.py:146"
+  },
+  {
+    "declaration_id": "brief/brief.main/ap/--llm",
+    "commands": [
+      "brief"
+    ],
+    "names": [
+      "--llm"
+    ],
+    "attributes": {
+      "action": {
+        "literal": "store_true"
+      },
+      "help": {
+        "literal": "also infer fields with the caged reasoner (small spend)"
+      }
+    },
+    "evidence": "src/spendguard/brief.py:147"
+  },
+  {
+    "declaration_id": "cache-audit/cacheaudit.main/ap/--repo",
+    "commands": [
+      "cache-audit"
+    ],
+    "names": [
+      "--repo"
+    ],
+    "attributes": {
+      "help": {
+        "literal": "repo to scan for big system prompts (default: cwd)"
+      }
+    },
+    "evidence": "src/spendguard/cacheaudit.py:202"
+  },
+  {
+    "declaration_id": "cache-test/cachetest.main/ap/--script",
+    "commands": [
+      "cache-test"
+    ],
+    "names": [
+      "--script"
+    ],
+    "attributes": {
+      "help": {
+        "literal": "extract the big system prompt from this .py to test"
+      }
+    },
+    "evidence": "src/spendguard/cachetest.py:202"
+  },
+  {
+    "declaration_id": "cache-test/cachetest.main/ap/--from-intent",
+    "commands": [
+      "cache-test"
+    ],
+    "names": [
+      "--from-intent"
+    ],
+    "attributes": {
+      "help": {
+        "literal": "use the common prefix of this intent's recovered prompts"
+      }
+    },
+    "evidence": "src/spendguard/cachetest.py:203"
+  },
+  {
+    "declaration_id": "cache-test/cachetest.main/ap/--model",
+    "commands": [
+      "cache-test"
+    ],
+    "names": [
+      "--model"
+    ],
+    "attributes": {
+      "help": {
+        "literal": "model to test (default: advisor_judge_model)"
+      }
+    },
+    "evidence": "src/spendguard/cachetest.py:204"
+  },
+  {
+    "declaration_id": "cache-test/cachetest.main/ap/--n",
+    "commands": [
+      "cache-test"
+    ],
+    "names": [
+      "--n"
+    ],
+    "attributes": {
+      "type": {
+        "expression": "int"
+      },
+      "default": {
+        "literal": 3
+      },
+      "help": {
+        "literal": "calls to run (1 cold + n-1 warm)"
+      }
+    },
+    "evidence": "src/spendguard/cachetest.py:205"
+  },
+  {
+    "declaration_id": "cache-test/cachetest.main/ap/--run",
+    "commands": [
+      "cache-test"
+    ],
+    "names": [
+      "--run"
+    ],
+    "attributes": {
+      "action": {
+        "literal": "store_true"
+      },
+      "help": {
+        "literal": "actually call (default: estimate). Caged by caps.meta."
+      }
+    },
+    "evidence": "src/spendguard/cachetest.py:206"
+  },
+  {
+    "declaration_id": "calibrate/calibrate.main/pr/--label",
+    "commands": [
+      "calibrate"
+    ],
+    "names": [
+      "--label"
+    ],
+    "attributes": {
+      "required": {
+        "literal": true
+      },
+      "help": {
+        "literal": "the activity/intent (matches calls.context intent)"
+      }
+    },
+    "evidence": "src/spendguard/calibrate.py:730"
+  },
+  {
+    "declaration_id": "calibrate/calibrate.main/pr/--n",
+    "commands": [
+      "calibrate"
+    ],
+    "names": [
+      "--n"
+    ],
+    "attributes": {
+      "type": {
+        "expression": "int"
+      },
+      "default": {
+        "literal": 1
+      },
+      "help": {
+        "literal": "number of requests"
+      }
+    },
+    "evidence": "src/spendguard/calibrate.py:731"
+  },
+  {
+    "declaration_id": "calibrate/calibrate.main/pr/--model",
+    "commands": [
+      "calibrate"
+    ],
+    "names": [
+      "--model"
+    ],
+    "attributes": {
+      "required": {
+        "literal": true
+      }
+    },
+    "evidence": "src/spendguard/calibrate.py:732"
+  },
+  {
+    "declaration_id": "calibrate/calibrate.main/pr/--transport",
+    "commands": [
+      "calibrate"
+    ],
+    "names": [
+      "--transport"
+    ],
+    "attributes": {
+      "default": {
+        "literal": "batch"
+      },
+      "choices": {
+        "literal": [
+          "batch",
+          "realtime"
+        ]
+      }
+    },
+    "evidence": "src/spendguard/calibrate.py:733"
+  },
+  {
+    "declaration_id": "calibrate/calibrate.main/pr/--in-tokens",
+    "commands": [
+      "calibrate"
+    ],
+    "names": [
+      "--in-tokens"
+    ],
+    "attributes": {
+      "type": {
+        "expression": "float"
+      },
+      "help": {
+        "literal": "estimated input tokens PER REQUEST"
+      }
+    },
+    "evidence": "src/spendguard/calibrate.py:734"
+  },
+  {
+    "declaration_id": "calibrate/calibrate.main/pr/--out-max",
+    "commands": [
+      "calibrate"
+    ],
+    "names": [
+      "--out-max"
+    ],
+    "attributes": {
+      "type": {
+        "expression": "float"
+      },
+      "help": {
+        "literal": "max_tokens you will set PER REQUEST"
+      }
+    },
+    "evidence": "src/spendguard/calibrate.py:735"
+  },
+  {
+    "declaration_id": "calibrate/calibrate.main/pr/--json",
+    "commands": [
+      "calibrate"
+    ],
+    "names": [
+      "--json"
+    ],
+    "attributes": {
+      "action": {
+        "literal": "store_true"
+      }
+    },
+    "evidence": "src/spendguard/calibrate.py:736"
+  },
+  {
+    "declaration_id": "calibrate/calibrate.main/sh/--label",
+    "commands": [
+      "calibrate"
+    ],
+    "names": [
+      "--label"
+    ],
+    "attributes": {},
+    "evidence": "src/spendguard/calibrate.py:738"
+  },
+  {
+    "declaration_id": "calibrate/calibrate.main/bt/--json",
+    "commands": [
+      "calibrate"
+    ],
+    "names": [
+      "--json"
+    ],
+    "attributes": {
+      "action": {
+        "literal": "store_true"
+      }
+    },
+    "evidence": "src/spendguard/calibrate.py:743"
+  },
+  {
+    "declaration_id": "calibrate/calibrate.main/bt/--min-cell",
+    "commands": [
+      "calibrate"
+    ],
+    "names": [
+      "--min-cell"
+    ],
+    "attributes": {
+      "type": {
+        "expression": "int"
+      },
+      "default": {
+        "expression": "MIN_CELL_BACKTEST"
+      }
+    },
+    "evidence": "src/spendguard/calibrate.py:744"
+  },
+  {
+    "declaration_id": "callio-status/callio.status_main/ap/--intent",
+    "commands": [
+      "callio-status"
+    ],
+    "names": [
+      "--intent"
+    ],
+    "attributes": {
+      "default": {
+        "literal": null
+      },
+      "help": {
+        "literal": "comma-separated intent substrings to filter to (e.g. 'warden,7thsense,refute,icd'); default = every intent"
+      }
+    },
+    "evidence": "src/spendguard/callio.py:852"
+  },
+  {
+    "declaration_id": "callio-status/callio.status_main/ap/--json",
+    "commands": [
+      "callio-status"
+    ],
+    "names": [
+      "--json"
+    ],
+    "attributes": {
+      "action": {
+        "literal": "store_true"
+      },
+      "help": {
+        "literal": "machine-readable rows"
+      }
+    },
+    "evidence": "src/spendguard/callio.py:854"
+  },
+  {
+    "declaration_id": "fetch-io/callio.main/ap/--cap",
+    "commands": [
+      "fetch-io"
+    ],
+    "names": [
+      "--cap"
+    ],
+    "attributes": {
+      "type": {
+        "expression": "int"
+      },
+      "default": {
+        "expression": "DEFAULT_CAP"
+      },
+      "help": {
+        "literal": "max samples per (intent, model)"
+      }
+    },
+    "evidence": "src/spendguard/callio.py:878"
+  },
+  {
+    "declaration_id": "fetch-io/callio.main/ap/--limit-batches",
+    "commands": [
+      "fetch-io"
+    ],
+    "names": [
+      "--limit-batches"
+    ],
+    "attributes": {
+      "type": {
+        "expression": "int"
+      },
+      "help": {
+        "literal": "cap how many batches to download (smoke test)"
+      }
+    },
+    "evidence": "src/spendguard/callio.py:879"
+  },
+  {
+    "declaration_id": "fetch-io/callio.main/ap/--link-only",
+    "commands": [
+      "fetch-io"
+    ],
+    "names": [
+      "--link-only"
+    ],
+    "attributes": {
+      "action": {
+        "literal": "store_true"
+      },
+      "help": {
+        "literal": "skip recovery; just (re)link recovered calls to conversations"
+      }
+    },
+    "evidence": "src/spendguard/callio.py:880"
+  },
+  {
+    "declaration_id": "calls/calls.cmd_summary/ap/--intent",
+    "commands": [
+      "calls"
+    ],
+    "names": [
+      "--intent"
+    ],
+    "attributes": {},
+    "evidence": "src/spendguard/calls.py:1085"
+  },
+  {
+    "declaration_id": "cascade/cascade.cmd/ap/--ladder",
+    "commands": [
+      "cascade"
+    ],
+    "names": [
+      "--ladder"
+    ],
+    "attributes": {
+      "required": {
+        "literal": true
+      },
+      "help": {
+        "literal": "cheap\u2192strong, comma-separated (e.g. gpt-5-nano,gpt-5-mini,gpt-5.5)"
+      }
+    },
+    "evidence": "src/spendguard/cascade.py:98"
+  },
+  {
+    "declaration_id": "cascade/cascade.cmd/ap/--prompt",
+    "commands": [
+      "cascade"
+    ],
+    "names": [
+      "--prompt"
+    ],
+    "attributes": {
+      "help": {
+        "literal": "prompt to route"
+      }
+    },
+    "evidence": "src/spendguard/cascade.py:99"
+  },
+  {
+    "declaration_id": "cascade/cascade.cmd/ap/--prompt-file",
+    "commands": [
+      "cascade"
+    ],
+    "names": [
+      "--prompt-file"
+    ],
+    "attributes": {},
+    "evidence": "src/spendguard/cascade.py:100"
+  },
+  {
+    "declaration_id": "cascade/cascade.cmd/ap/--intent",
+    "commands": [
+      "cascade"
+    ],
+    "names": [
+      "--intent"
+    ],
+    "attributes": {
+      "help": {
+        "literal": "skip models known-ineffective for this intent"
+      }
+    },
+    "evidence": "src/spendguard/cascade.py:101"
+  },
+  {
+    "declaration_id": "cascade/cascade.cmd/ap/--run",
+    "commands": [
+      "cascade"
+    ],
+    "names": [
+      "--run"
+    ],
+    "attributes": {
+      "action": {
+        "literal": "store_true"
+      },
+      "help": {
+        "literal": "actually call (WORKLOAD spend). Else just shows the ladder."
+      }
+    },
+    "evidence": "src/spendguard/cascade.py:102"
+  },
+  {
+    "declaration_id": "ledger-read/cli.ledger_read_cli/parser/operation",
+    "commands": [
+      "ledger-read"
+    ],
+    "names": [
+      "operation"
+    ],
+    "attributes": {
+      "choices": {
+        "expression": "LEDGER_READ_OPERATIONS"
+      }
+    },
+    "evidence": "src/spendguard/cli.py:190"
+  },
+  {
+    "declaration_id": "ledger-read/cli.ledger_read_cli/parser/--table",
+    "commands": [
+      "ledger-read"
+    ],
+    "names": [
+      "--table"
+    ],
+    "attributes": {
+      "choices": {
+        "literal": [
+          "calls",
+          "spend_events"
+        ],
+        "literal_container": "tuple"
+      },
+      "default": {
+        "literal": "spend_events"
+      }
+    },
+    "evidence": "src/spendguard/cli.py:191"
+  },
+  {
+    "declaration_id": "ledger-read/cli.ledger_read_cli/parser/--event-id",
+    "commands": [
+      "ledger-read"
+    ],
+    "names": [
+      "--event-id"
+    ],
+    "attributes": {},
+    "evidence": "src/spendguard/cli.py:192"
+  },
+  {
+    "declaration_id": "ledger-read/cli.ledger_read_cli/parser/--since",
+    "commands": [
+      "ledger-read"
+    ],
+    "names": [
+      "--since"
+    ],
+    "attributes": {},
+    "evidence": "src/spendguard/cli.py:193"
+  },
+  {
+    "declaration_id": "ledger-read/cli.ledger_read_cli/parser/--until",
+    "commands": [
+      "ledger-read"
+    ],
+    "names": [
+      "--until"
+    ],
+    "attributes": {},
+    "evidence": "src/spendguard/cli.py:194"
+  },
+  {
+    "declaration_id": "ledger-read/cli.ledger_read_cli/parser/--path",
+    "commands": [
+      "ledger-read"
+    ],
+    "names": [
+      "--path"
+    ],
+    "attributes": {},
+    "evidence": "src/spendguard/cli.py:195"
+  },
+  {
+    "declaration_id": "ledger-read/cli.ledger_read_cli/parser/--group-by",
+    "commands": [
+      "ledger-read"
+    ],
+    "names": [
+      "--group-by"
+    ],
+    "attributes": {
+      "nargs": {
+        "literal": "+"
+      }
+    },
+    "evidence": "src/spendguard/cli.py:196"
+  },
+  {
+    "declaration_id": "ledger-read/cli.ledger_read_cli/parser/--conv",
+    "commands": [
+      "ledger-read"
+    ],
+    "names": [
+      "--conv"
+    ],
+    "attributes": {},
+    "evidence": "src/spendguard/cli.py:197"
+  },
+  {
+    "declaration_id": "ledger-read/cli.ledger_read_cli/parser/--deadline-s",
+    "commands": [
+      "ledger-read"
+    ],
+    "names": [
+      "--deadline-s"
+    ],
+    "attributes": {
+      "type": {
+        "expression": "float"
+      }
+    },
+    "evidence": "src/spendguard/cli.py:198"
+  },
+  {
+    "declaration_id": "ledger-read/cli.ledger_read_cli/parser/--json",
+    "commands": [
+      "ledger-read"
+    ],
+    "names": [
+      "--json"
+    ],
+    "attributes": {
+      "action": {
+        "literal": "store_true"
+      },
+      "help": {
+        "literal": "JSON output (also the default)"
+      }
+    },
+    "evidence": "src/spendguard/cli.py:199"
+  },
+  {
+    "declaration_id": "reap-orphans/cli.reap_orphaned_warm_servers_cli/parser/--execute",
+    "commands": [
+      "reap-orphans"
+    ],
+    "names": [
+      "--execute"
+    ],
+    "attributes": {
+      "action": {
+        "literal": "store_true"
+      },
+      "help": {
+        "literal": "reap provably-dead marked servers (default: dry-run)"
+      }
+    },
+    "evidence": "src/spendguard/cli.py:230"
+  },
+  {
+    "declaration_id": "reap-orphans/cli.reap_orphaned_warm_servers_cli/parser/--lane",
+    "commands": [
+      "reap-orphans"
+    ],
+    "names": [
+      "--lane"
+    ],
+    "attributes": {
+      "metavar": {
+        "literal": "LABEL"
+      },
+      "help": {
+        "literal": "restrict the scan to one warm-lane label"
+      }
+    },
+    "evidence": "src/spendguard/cli.py:231"
+  },
+  {
+    "declaration_id": "reap-orphans/cli.reap_orphaned_warm_servers_cli/parser/--json",
+    "commands": [
+      "reap-orphans"
+    ],
+    "names": [
+      "--json"
+    ],
+    "attributes": {
+      "action": {
+        "literal": "store_true"
+      },
+      "help": {
+        "literal": "emit one machine-readable JSON object"
+      }
+    },
+    "evidence": "src/spendguard/cli.py:232"
+  },
+  {
+    "declaration_id": "reap-orphans/cli.reap_orphaned_warm_servers_cli/parser/--bounded-log",
+    "commands": [
+      "reap-orphans"
+    ],
+    "names": [
+      "--bounded-log"
+    ],
+    "attributes": {
+      "metavar": {
+        "literal": "PATH"
+      },
+      "help": {
+        "expression": "argparse.SUPPRESS"
+      }
+    },
+    "evidence": "src/spendguard/cli.py:233"
+  },
+  {
+    "declaration_id": "queue-manage/cli.manage_lane_queue_cli/parser/--execute",
+    "commands": [
+      "queue-manage"
+    ],
+    "names": [
+      "--execute"
+    ],
+    "attributes": {
+      "action": {
+        "literal": "store_true"
+      },
+      "help": {
+        "literal": "apply cleanup and bounded processing (default: dry-run)"
+      }
+    },
+    "evidence": "src/spendguard/cli.py:294"
+  },
+  {
+    "declaration_id": "queue-manage/cli.manage_lane_queue_cli/parser/--json",
+    "commands": [
+      "queue-manage"
+    ],
+    "names": [
+      "--json"
+    ],
+    "attributes": {
+      "action": {
+        "literal": "store_true"
+      },
+      "help": {
+        "literal": "emit one machine-readable JSON object"
+      }
+    },
+    "evidence": "src/spendguard/cli.py:295"
+  },
+  {
+    "declaration_id": "queue-manage/cli.manage_lane_queue_cli/parser/--no-process",
+    "commands": [
+      "queue-manage"
+    ],
+    "names": [
+      "--no-process"
+    ],
+    "attributes": {
+      "action": {
+        "literal": "store_true"
+      },
+      "help": {
+        "literal": "clean only; never start the bounded drain"
+      }
+    },
+    "evidence": "src/spendguard/cli.py:296"
+  },
+  {
+    "declaration_id": "queue-manage/cli.manage_lane_queue_cli/parser/--stale-days",
+    "commands": [
+      "queue-manage"
+    ],
+    "names": [
+      "--stale-days"
+    ],
+    "attributes": {
+      "type": {
+        "expression": "float"
+      },
+      "metavar": {
+        "literal": "DAYS"
+      },
+      "help": {
+        "literal": "override advisor.queue_stale_days"
+      }
+    },
+    "evidence": "src/spendguard/cli.py:297"
+  },
+  {
+    "declaration_id": "queue-manage/cli.manage_lane_queue_cli/parser/--bounded-log",
+    "commands": [
+      "queue-manage"
+    ],
+    "names": [
+      "--bounded-log"
+    ],
+    "attributes": {
+      "metavar": {
+        "literal": "PATH"
+      },
+      "help": {
+        "expression": "argparse.SUPPRESS"
+      }
+    },
+    "evidence": "src/spendguard/cli.py:298"
+  },
+  {
+    "declaration_id": "lane-leak-check/cli.lane_leak_check_cli/parser/--protect-executor",
+    "commands": [
+      "lane-leak-check"
+    ],
+    "names": [
+      "--protect-executor"
+    ],
+    "attributes": {},
+    "evidence": "src/spendguard/cli.py:353"
+  },
+  {
+    "declaration_id": "lane-leak-check/cli.lane_leak_check_cli/parser/--protect-provider",
+    "commands": [
+      "lane-leak-check"
+    ],
+    "names": [
+      "--protect-provider"
+    ],
+    "attributes": {},
+    "evidence": "src/spendguard/cli.py:354"
+  },
+  {
+    "declaration_id": "lane-leak-check/cli.lane_leak_check_cli/parser/--hours",
+    "commands": [
+      "lane-leak-check"
+    ],
+    "names": [
+      "--hours"
+    ],
+    "attributes": {
+      "type": {
+        "expression": "float"
+      }
+    },
+    "evidence": "src/spendguard/cli.py:355"
+  },
+  {
+    "declaration_id": "lane-leak-check/cli.lane_leak_check_cli/parser/--min-other-calls",
+    "commands": [
+      "lane-leak-check"
+    ],
+    "names": [
+      "--min-other-calls"
+    ],
+    "attributes": {
+      "type": {
+        "expression": "int"
+      }
+    },
+    "evidence": "src/spendguard/cli.py:356"
+  },
+  {
+    "declaration_id": "lane-leak-check/cli.lane_leak_check_cli/parser/--ledger-path",
+    "commands": [
+      "lane-leak-check"
+    ],
+    "names": [
+      "--ledger-path"
+    ],
+    "attributes": {},
+    "evidence": "src/spendguard/cli.py:357"
+  },
+  {
+    "declaration_id": "lane-leak-check/cli.lane_leak_check_cli/parser/--bounded-log",
+    "commands": [
+      "lane-leak-check"
+    ],
+    "names": [
+      "--bounded-log"
+    ],
+    "attributes": {
+      "metavar": {
+        "literal": "PATH"
+      },
+      "help": {
+        "expression": "argparse.SUPPRESS"
+      }
+    },
+    "evidence": "src/spendguard/cli.py:358"
+  },
+  {
+    "declaration_id": "health/cli.cli_health_command/parser/--run",
+    "commands": [
+      "health"
+    ],
+    "names": [
+      "--run"
+    ],
+    "attributes": {
+      "action": {
+        "expression": "argparse.BooleanOptionalAction"
+      },
+      "default": {
+        "expression": "mcp_server.HEALTH_DEFAULT_RUN"
+      },
+      "help": {
+        "literal": "probe endpoints (MCP default); --no-run = estimate only, no probes"
+      }
+    },
+    "evidence": "src/spendguard/cli.py:410"
+  },
+  {
+    "declaration_id": "health/cli.cli_health_command/parser/--timeout_s",
+    "commands": [
+      "health"
+    ],
+    "names": [
+      "--timeout_s"
+    ],
+    "attributes": {
+      "type": {
+        "expression": "int"
+      },
+      "default": {
+        "expression": "mcp_server.HEALTH_DEFAULT_TIMEOUT_S"
+      },
+      "help": {
+        "literal": "per-endpoint fail-fast bound in seconds (same default as MCP)"
+      }
+    },
+    "evidence": "src/spendguard/cli.py:413"
+  },
+  {
+    "declaration_id": "health/cli.cli_health_command/parser/--json",
+    "commands": [
+      "health"
+    ],
+    "names": [
+      "--json"
+    ],
+    "attributes": {
+      "action": {
+        "literal": "store_true"
+      },
+      "help": {
+        "literal": "emit the raw MCP health result"
+      }
+    },
+    "evidence": "src/spendguard/cli.py:415"
+  },
+  {
+    "declaration_id": "codex-gc/cli._dispatch/_p/--max-age-days",
+    "commands": [
+      "codex-gc"
+    ],
+    "names": [
+      "--max-age-days"
+    ],
+    "attributes": {
+      "type": {
+        "expression": "float"
+      },
+      "default": {
+        "literal": 7.0
+      },
+      "help": {
+        "literal": "prune shell snapshots older than this (default 7)"
+      }
+    },
+    "evidence": "src/spendguard/cli.py:1282"
+  },
+  {
+    "declaration_id": "codex-gc/cli._dispatch/_p/--apply",
+    "commands": [
+      "codex-gc"
+    ],
+    "names": [
+      "--apply"
+    ],
+    "attributes": {
+      "action": {
+        "literal": "store_true"
+      },
+      "help": {
+        "literal": "actually delete (default: dry-run report)"
+      }
+    },
+    "evidence": "src/spendguard/cli.py:1283"
+  },
+  {
+    "declaration_id": "embed-gc/cli._dispatch/_p/--max-age-days",
+    "commands": [
+      "embed-gc"
+    ],
+    "names": [
+      "--max-age-days"
+    ],
+    "attributes": {
+      "type": {
+        "expression": "float"
+      },
+      "default": {
+        "literal": null
+      },
+      "help": {
+        "literal": "prune checkpoints older than this (default: safety.embed_checkpoint_max_age_days, 7)"
+      }
+    },
+    "evidence": "src/spendguard/cli.py:1305"
+  },
+  {
+    "declaration_id": "embed-gc/cli._dispatch/_p/--max-total-gb",
+    "commands": [
+      "embed-gc"
+    ],
+    "names": [
+      "--max-total-gb"
+    ],
+    "attributes": {
+      "type": {
+        "expression": "float"
+      },
+      "default": {
+        "literal": null
+      },
+      "help": {
+        "literal": "disk cap for checkpoints that survive the age bound; oldest-first eviction over it (default: safety.embed_checkpoint_max_gb, 5)"
+      }
+    },
+    "evidence": "src/spendguard/cli.py:1307"
+  },
+  {
+    "declaration_id": "embed-gc/cli._dispatch/_p/--apply",
+    "commands": [
+      "embed-gc"
+    ],
+    "names": [
+      "--apply"
+    ],
+    "attributes": {
+      "action": {
+        "literal": "store_true"
+      },
+      "help": {
+        "literal": "actually delete (default: dry-run report)"
+      }
+    },
+    "evidence": "src/spendguard/cli.py:1310"
+  },
+  {
+    "declaration_id": "register-critical/cli._dispatch/ap/patterns",
+    "commands": [
+      "register-critical"
+    ],
+    "names": [
+      "patterns"
+    ],
+    "attributes": {
+      "nargs": {
+        "literal": "*"
+      },
+      "help": {
+        "literal": "intent patterns to pin (no-substitution), e.g. warden:card_faithful*"
+      }
+    },
+    "evidence": "src/spendguard/cli.py:1454"
+  },
+  {
+    "declaration_id": "register-critical/cli._dispatch/ap/--source",
+    "commands": [
+      "register-critical"
+    ],
+    "names": [
+      "--source"
+    ],
+    "attributes": {
+      "help": {
+        "literal": "who is registering these (e.g. warden) \u2014 recorded so doctor attributes them"
+      }
+    },
+    "evidence": "src/spendguard/cli.py:1455"
+  },
+  {
+    "declaration_id": "register-critical/cli._dispatch/ap/--list",
+    "commands": [
+      "register-critical"
+    ],
+    "names": [
+      "--list"
+    ],
+    "attributes": {
+      "action": {
+        "literal": "store_true"
+      },
+      "help": {
+        "literal": "show the current pins + who registered each"
+      }
+    },
+    "evidence": "src/spendguard/cli.py:1456"
+  },
+  {
+    "declaration_id": "dispatch/cli._dispatch/parser/--id",
+    "commands": [
+      "dispatch"
+    ],
+    "names": [
+      "--id"
+    ],
+    "attributes": {
+      "required": {
+        "literal": true
+      },
+      "type": {
+        "expression": "int"
+      }
+    },
+    "evidence": "src/spendguard/cli.py:1018"
+  },
+  {
+    "declaration_id": "dispatch/cli._dispatch/parser/--json",
+    "commands": [
+      "dispatch"
+    ],
+    "names": [
+      "--json"
+    ],
+    "attributes": {
+      "action": {
+        "literal": "store_true"
+      }
+    },
+    "evidence": "src/spendguard/cli.py:1019"
+  },
+  {
+    "declaration_id": "close/close.main/ap/--month",
+    "commands": [
+      "close"
+    ],
+    "names": [
+      "--month"
+    ],
+    "attributes": {
+      "default": {
+        "expression": "datetime.date.today().strftime('%Y-%m')"
+      },
+      "help": {
+        "literal": "YYYY-MM (default: current)"
+      }
+    },
+    "evidence": "src/spendguard/close.py:84"
+  },
+  {
+    "declaration_id": "close/close.main/ap/--csv",
+    "commands": [
+      "close"
+    ],
+    "names": [
+      "--csv"
+    ],
+    "attributes": {
+      "help": {
+        "literal": "also write the close to this CSV path"
+      }
+    },
+    "evidence": "src/spendguard/close.py:85"
+  },
+  {
+    "declaration_id": "close/close.main/ap/--account",
+    "commands": [
+      "close"
+    ],
+    "names": [
+      "--account"
+    ],
+    "attributes": {
+      "action": {
+        "literal": "store_true"
+      },
+      "help": {
+        "literal": "ACCOUNT-level view: provider truth is account-wide; on a shared account each org's statement residual includes its siblings \u2014 this view shows the account axis whole"
+      }
+    },
+    "evidence": "src/spendguard/close.py:86"
+  },
+  {
+    "declaration_id": "compare/compare.main/ap/--prompt",
+    "commands": [
+      "compare"
+    ],
+    "names": [
+      "--prompt"
+    ],
+    "attributes": {},
+    "evidence": "src/spendguard/compare.py:16"
+  },
+  {
+    "declaration_id": "compare/compare.main/ap/--prompt-file",
+    "commands": [
+      "compare"
+    ],
+    "names": [
+      "--prompt-file"
+    ],
+    "attributes": {},
+    "evidence": "src/spendguard/compare.py:17"
+  },
+  {
+    "declaration_id": "compare/compare.main/ap/--models",
+    "commands": [
+      "compare"
+    ],
+    "names": [
+      "--models"
+    ],
+    "attributes": {
+      "required": {
+        "literal": true
+      },
+      "help": {
+        "literal": "comma-separated; 'provider:model' to force a provider"
+      }
+    },
+    "evidence": "src/spendguard/compare.py:18"
+  },
+  {
+    "declaration_id": "compare/compare.main/ap/--max-tokens",
+    "commands": [
+      "compare"
+    ],
+    "names": [
+      "--max-tokens"
+    ],
+    "attributes": {
+      "type": {
+        "expression": "int"
+      },
+      "default": {
+        "literal": 512
+      }
+    },
+    "evidence": "src/spendguard/compare.py:19"
+  },
+  {
+    "declaration_id": "compare/compare.main/ap/--system",
+    "commands": [
+      "compare"
+    ],
+    "names": [
+      "--system"
+    ],
+    "attributes": {},
+    "evidence": "src/spendguard/compare.py:20"
+  },
+  {
+    "declaration_id": "compare/compare.main/ap/--show",
+    "commands": [
+      "compare"
+    ],
+    "names": [
+      "--show"
+    ],
+    "attributes": {
+      "action": {
+        "literal": "store_true"
+      },
+      "help": {
+        "literal": "print each model's full output"
+      }
+    },
+    "evidence": "src/spendguard/compare.py:21"
+  },
+  {
+    "declaration_id": "comprehend/comprehend.cmd/ap/patterns",
+    "commands": [
+      "comprehend"
+    ],
+    "names": [
+      "patterns"
+    ],
+    "attributes": {
+      "nargs": {
+        "literal": "+"
+      },
+      "help": {
+        "literal": "files or globs to analyse (e.g. 'docs/**/*.md')"
+      }
+    },
+    "evidence": "src/spendguard/comprehend.py:208"
+  },
+  {
+    "declaration_id": "comprehend/comprehend.cmd/ap/--intent",
+    "commands": [
+      "comprehend"
+    ],
+    "names": [
+      "--intent"
+    ],
+    "attributes": {
+      "required": {
+        "literal": true
+      },
+      "help": {
+        "literal": "job-type label the spend records under (attribution)"
+      }
+    },
+    "evidence": "src/spendguard/comprehend.py:209"
+  },
+  {
+    "declaration_id": "comprehend/comprehend.cmd/ap/--question",
+    "commands": [
+      "comprehend"
+    ],
+    "names": [
+      "--question"
+    ],
+    "attributes": {
+      "help": {
+        "literal": "what to ask of each file (default: extract key points + gaps/risks)"
+      }
+    },
+    "evidence": "src/spendguard/comprehend.py:210"
+  },
+  {
+    "declaration_id": "comprehend/comprehend.cmd/ap/--run",
+    "commands": [
+      "comprehend"
+    ],
+    "names": [
+      "--run"
+    ],
+    "attributes": {
+      "action": {
+        "literal": "store_true"
+      },
+      "help": {
+        "literal": "actually fan across the lanes (default: zero-spend estimate)"
+      }
+    },
+    "evidence": "src/spendguard/comprehend.py:211"
+  },
+  {
+    "declaration_id": "comprehend/comprehend.cmd/ap/--budget-usd",
+    "commands": [
+      "comprehend"
+    ],
+    "names": [
+      "--budget-usd"
+    ],
+    "attributes": {
+      "type": {
+        "expression": "float"
+      },
+      "help": {
+        "literal": "refuse the run if the estimate ceiling exceeds this"
+      }
+    },
+    "evidence": "src/spendguard/comprehend.py:212"
+  },
+  {
+    "declaration_id": "comprehend/comprehend.cmd/ap/--refuse-billed",
+    "commands": [
+      "comprehend"
+    ],
+    "names": [
+      "--refuse-billed"
+    ],
+    "attributes": {
+      "action": {
+        "literal": "store_true"
+      },
+      "help": {
+        "literal": "explicit $0-or-fail mode; default ensures success via a loud metered fallback if needed"
+      }
+    },
+    "evidence": "src/spendguard/comprehend.py:213"
+  },
+  {
+    "declaration_id": "comprehend/comprehend.cmd/ap/--lanes",
+    "commands": [
+      "comprehend"
+    ],
+    "names": [
+      "--lanes"
+    ],
+    "attributes": {
+      "help": {
+        "literal": "confine the fan to these lanes, comma-separated (e.g. codex,gemini)"
+      }
+    },
+    "evidence": "src/spendguard/comprehend.py:215"
+  },
+  {
+    "declaration_id": "comprehend/comprehend.cmd/ap/--max-chars",
+    "commands": [
+      "comprehend"
+    ],
+    "names": [
+      "--max-chars"
+    ],
+    "attributes": {
+      "type": {
+        "expression": "int"
+      },
+      "default": {
+        "expression": "_DEFAULT_MAX_CHARS"
+      },
+      "help": {
+        "expression": "f'per-task evidence ceiling; larger files are chunked, never cut (default {_DEFAULT_MAX_CHARS})'"
+      }
+    },
+    "evidence": "src/spendguard/comprehend.py:216"
+  },
+  {
+    "declaration_id": "comprehend/comprehend.cmd/ap/--model",
+    "commands": [
+      "comprehend"
+    ],
+    "names": [
+      "--model"
+    ],
+    "attributes": {
+      "help": {
+        "literal": "pin the model (default: config.advisor_model)"
+      }
+    },
+    "evidence": "src/spendguard/comprehend.py:218"
+  },
+  {
+    "declaration_id": "comprehend/comprehend.cmd/ap/--checkpoint",
+    "commands": [
+      "comprehend"
+    ],
+    "names": [
+      "--checkpoint"
+    ],
+    "attributes": {
+      "help": {
+        "literal": "resumable results jsonl (default: ~/.spendguard/comprehend/<intent>.jsonl)"
+      }
+    },
+    "evidence": "src/spendguard/comprehend.py:219"
+  },
+  {
+    "declaration_id": "comprehend/comprehend.cmd/ap/--out",
+    "commands": [
+      "comprehend"
+    ],
+    "names": [
+      "--out"
+    ],
+    "attributes": {
+      "help": {
+        "literal": "also export the aggregated per-file results as JSON to this path"
+      }
+    },
+    "evidence": "src/spendguard/comprehend.py:220"
+  },
+  {
+    "declaration_id": "consumer-audit/consumer_audit.consumer_audit_command/parser/--json",
+    "commands": [
+      "consumer-audit"
+    ],
+    "names": [
+      "--json"
+    ],
+    "attributes": {
+      "action": {
+        "literal": "store_true"
+      }
+    },
+    "evidence": "src/spendguard/consumer_audit.py:412"
+  },
+  {
+    "declaration_id": "consumer-audit/consumer_audit.consumer_audit_command/parser/--roots",
+    "commands": [
+      "consumer-audit"
+    ],
+    "names": [
+      "--roots"
+    ],
+    "attributes": {
+      "nargs": {
+        "literal": "+"
+      }
+    },
+    "evidence": "src/spendguard/consumer_audit.py:413"
+  },
+  {
+    "declaration_id": "consumer-audit/consumer_audit.consumer_audit_command/parser/--dry-run",
+    "commands": [
+      "consumer-audit"
+    ],
+    "names": [
+      "--dry-run"
+    ],
+    "attributes": {
+      "action": {
+        "literal": "store_true"
+      }
+    },
+    "evidence": "src/spendguard/consumer_audit.py:414"
+  },
+  {
+    "declaration_id": "consumer-audit/consumer_audit.consumer_audit_command/parser/--no-auto-arm",
+    "commands": [
+      "consumer-audit"
+    ],
+    "names": [
+      "--no-auto-arm"
+    ],
+    "attributes": {
+      "action": {
+        "literal": "store_true"
+      }
+    },
+    "evidence": "src/spendguard/consumer_audit.py:415"
+  },
+  {
+    "declaration_id": "compress-content/content_compression_backfill.content_compression_backfill_cli/parser/--run",
+    "commands": [
+      "compress-content"
+    ],
+    "names": [
+      "--run"
+    ],
+    "attributes": {
+      "action": {
+        "literal": "store_true"
+      },
+      "help": {
+        "literal": "write one bounded, resumable batch per table"
+      }
+    },
+    "evidence": "src/spendguard/content_compression_backfill.py:62"
+  },
+  {
+    "declaration_id": "compress-content/content_compression_backfill.content_compression_backfill_cli/parser/--batch-rows",
+    "commands": [
+      "compress-content"
+    ],
+    "names": [
+      "--batch-rows"
+    ],
+    "attributes": {
+      "type": {
+        "expression": "int"
+      },
+      "default": {
+        "expression": "CONTENT_BACKFILL_BATCH_ROWS"
+      }
+    },
+    "evidence": "src/spendguard/content_compression_backfill.py:63"
+  },
+  {
+    "declaration_id": "mine-conv/conv.main/ap/op",
+    "commands": [
+      "mine-conv"
+    ],
+    "names": [
+      "op"
+    ],
+    "attributes": {
+      "choices": {
+        "literal": [
+          "index",
+          "synth"
+        ]
+      }
+    },
+    "evidence": "src/spendguard/conv.py:1223"
+  },
+  {
+    "declaration_id": "mine-conv/conv.main/ap/--transcripts",
+    "commands": [
+      "mine-conv"
+    ],
+    "names": [
+      "--transcripts"
+    ],
+    "attributes": {
+      "help": {
+        "literal": "transcript file or dir (default: ~/.claude/projects)"
+      }
+    },
+    "evidence": "src/spendguard/conv.py:1224"
+  },
+  {
+    "declaration_id": "mine-conv/conv.main/ap/--apply",
+    "commands": [
+      "mine-conv"
+    ],
+    "names": [
+      "--apply"
+    ],
+    "attributes": {
+      "action": {
+        "literal": "store_true"
+      },
+      "help": {
+        "literal": "(index) write conversation_event nodes + edges"
+      }
+    },
+    "evidence": "src/spendguard/conv.py:1225"
+  },
+  {
+    "declaration_id": "mine-conv/conv.main/ap/--rebuild",
+    "commands": [
+      "mine-conv"
+    ],
+    "names": [
+      "--rebuild"
+    ],
+    "attributes": {
+      "action": {
+        "literal": "store_true"
+      },
+      "help": {
+        "literal": "(index) ignore cache, full re-scan"
+      }
+    },
+    "evidence": "src/spendguard/conv.py:1226"
+  },
+  {
+    "declaration_id": "mine-conv/conv.main/ap/--limit",
+    "commands": [
+      "mine-conv"
+    ],
+    "names": [
+      "--limit"
+    ],
+    "attributes": {
+      "type": {
+        "expression": "int"
+      },
+      "default": {
+        "literal": 40
+      },
+      "help": {
+        "literal": "(synth) max snippets to feed the reasoner"
+      }
+    },
+    "evidence": "src/spendguard/conv.py:1227"
+  },
+  {
+    "declaration_id": "mine-conv/conv.main/ap/--run",
+    "commands": [
+      "mine-conv"
+    ],
+    "names": [
+      "--run"
+    ],
+    "attributes": {
+      "action": {
+        "literal": "store_true"
+      },
+      "help": {
+        "literal": "(synth) actually spend (default: estimate). Capped by caps.meta."
+      }
+    },
+    "evidence": "src/spendguard/conv.py:1228"
+  },
+  {
+    "declaration_id": "ask/crossllm.cmd/ap/prompt",
+    "commands": [
+      "ask"
+    ],
+    "names": [
+      "prompt"
+    ],
+    "attributes": {
+      "nargs": {
+        "literal": "?"
+      },
+      "help": {
+        "literal": "the prompt text; omit to read from stdin"
+      }
+    },
+    "evidence": "src/spendguard/crossllm.py:421"
+  },
+  {
+    "declaration_id": "ask/crossllm.cmd/ap/--vendors",
+    "commands": [
+      "ask"
+    ],
+    "names": [
+      "--vendors"
+    ],
+    "attributes": {
+      "help": {
+        "literal": "comma-separated vendor:model (e.g. anthropic:claude-opus-4-8,openai:gpt-5.5,moonshot:kimi-k3,zai:glm-5.3); omit to use config ask.default_vendors"
+      }
+    },
+    "evidence": "src/spendguard/crossllm.py:422"
+  },
+  {
+    "declaration_id": "ask/crossllm.cmd/ap/--n",
+    "commands": [
+      "ask"
+    ],
+    "names": [
+      "--n"
+    ],
+    "attributes": {
+      "type": {
+        "expression": "int"
+      },
+      "default": {
+        "literal": null
+      },
+      "help": {
+        "literal": "use only this many of the vendors (the first N) \u2014 you pick the panel size"
+      }
+    },
+    "evidence": "src/spendguard/crossllm.py:425"
+  },
+  {
+    "declaration_id": "ask/crossllm.cmd/ap/--schema",
+    "commands": [
+      "ask"
+    ],
+    "names": [
+      "--schema"
+    ],
+    "attributes": {
+      "help": {
+        "literal": "path to a JSON Schema the answer must satisfy"
+      }
+    },
+    "evidence": "src/spendguard/crossllm.py:426"
+  },
+  {
+    "declaration_id": "ask/crossllm.cmd/ap/--system",
+    "commands": [
+      "ask"
+    ],
+    "names": [
+      "--system"
+    ],
+    "attributes": {
+      "help": {
+        "literal": "system prompt"
+      }
+    },
+    "evidence": "src/spendguard/crossllm.py:427"
+  },
+  {
+    "declaration_id": "ask/crossllm.cmd/ap/--purpose",
+    "commands": [
+      "ask"
+    ],
+    "names": [
+      "--purpose"
+    ],
+    "attributes": {
+      "default": {
+        "literal": "ask"
+      },
+      "help": {
+        "literal": "intent tag for attribution in the ledger"
+      }
+    },
+    "evidence": "src/spendguard/crossllm.py:428"
+  },
+  {
+    "declaration_id": "ask/crossllm.cmd/ap/--deadline",
+    "commands": [
+      "ask"
+    ],
+    "names": [
+      "--deadline"
+    ],
+    "attributes": {
+      "type": {
+        "expression": "float"
+      },
+      "default": {
+        "literal": null
+      },
+      "help": {
+        "literal": "per-vendor deadline seconds"
+      }
+    },
+    "evidence": "src/spendguard/crossllm.py:429"
+  },
+  {
+    "declaration_id": "ask/crossllm.cmd/ap/--budget",
+    "commands": [
+      "ask"
+    ],
+    "names": [
+      "--budget"
+    ],
+    "attributes": {
+      "type": {
+        "expression": "float"
+      },
+      "default": {
+        "literal": null
+      },
+      "help": {
+        "literal": "refuse if the estimated metered $ exceeds this"
+      }
+    },
+    "evidence": "src/spendguard/crossllm.py:430"
+  },
+  {
+    "declaration_id": "ask/crossllm.cmd/ap/--refuse-billed",
+    "commands": [
+      "ask"
+    ],
+    "names": [
+      "--refuse-billed"
+    ],
+    "attributes": {
+      "action": {
+        "literal": "store_true"
+      },
+      "help": {
+        "literal": "explicit $0-or-fail mode; default ensures success and may use a loud metered fallback"
+      }
+    },
+    "evidence": "src/spendguard/crossllm.py:431"
+  },
+  {
+    "declaration_id": "ask/crossllm.cmd/ap/--mode",
+    "commands": [
+      "ask"
+    ],
+    "names": [
+      "--mode"
+    ],
+    "attributes": {
+      "choices": {
+        "literal": [
+          "all",
+          "first"
+        ]
+      },
+      "default": {
+        "literal": "all"
+      }
+    },
+    "evidence": "src/spendguard/crossllm.py:433"
+  },
+  {
+    "declaration_id": "ask/crossllm.cmd/ap/--require",
+    "commands": [
+      "ask"
+    ],
+    "names": [
+      "--require"
+    ],
+    "attributes": {
+      "type": {
+        "expression": "int"
+      },
+      "default": {
+        "literal": null
+      },
+      "help": {
+        "literal": "for --mode first: how many must answer"
+      }
+    },
+    "evidence": "src/spendguard/crossllm.py:434"
+  },
+  {
+    "declaration_id": "ask/crossllm.cmd/ap/--json",
+    "commands": [
+      "ask"
+    ],
+    "names": [
+      "--json"
+    ],
+    "attributes": {
+      "action": {
+        "literal": "store_true"
+      },
+      "help": {
+        "literal": "emit the honest machine-readable result"
+      }
+    },
+    "evidence": "src/spendguard/crossllm.py:435"
+  },
+  {
+    "declaration_id": "delegate/delegate_router.delegate_cli/parser/task",
+    "commands": [
+      "delegate"
+    ],
+    "names": [
+      "task"
+    ],
+    "attributes": {
+      "nargs": {
+        "literal": "?"
+      },
+      "help": {
+        "literal": "complete, self-contained task to classify and delegate"
+      }
+    },
+    "evidence": "src/spendguard/delegate_router.py:657"
+  },
+  {
+    "declaration_id": "delegate/delegate_router.delegate_cli/parser/--files",
+    "commands": [
+      "delegate"
+    ],
+    "names": [
+      "--files"
+    ],
+    "attributes": {
+      "help": {
+        "literal": "comma-separated supporting files; every file is read in full"
+      }
+    },
+    "evidence": "src/spendguard/delegate_router.py:658"
+  },
+  {
+    "declaration_id": "delegate/delegate_router.delegate_cli/parser/--intent",
+    "commands": [
+      "delegate"
+    ],
+    "names": [
+      "--intent"
+    ],
+    "attributes": {
+      "help": {
+        "literal": "attribution/cost-control intent (default: spendguard:delegate-task)"
+      }
+    },
+    "evidence": "src/spendguard/delegate_router.py:659"
+  },
+  {
+    "declaration_id": "delegate/delegate_router.delegate_cli/parser/--provider",
+    "commands": [
+      "delegate"
+    ],
+    "names": [
+      "--provider"
+    ],
+    "attributes": {
+      "default": {
+        "literal": "auto"
+      },
+      "help": {
+        "literal": "configured plan to use, or auto for agentic selection among ready lanes (default: auto)"
+      }
+    },
+    "evidence": "src/spendguard/delegate_router.py:660"
+  },
+  {
+    "declaration_id": "delegate/delegate_router.delegate_cli/parser/--estimate",
+    "commands": [
+      "delegate"
+    ],
+    "names": [
+      "--estimate"
+    ],
+    "attributes": {
+      "action": {
+        "literal": "store_true"
+      },
+      "help": {
+        "literal": "force dry-run even when --yes is also present"
+      }
+    },
+    "evidence": "src/spendguard/delegate_router.py:662"
+  },
+  {
+    "declaration_id": "delegate/delegate_router.delegate_cli/parser/--yes",
+    "commands": [
+      "delegate"
+    ],
+    "names": [
+      "--yes"
+    ],
+    "attributes": {
+      "action": {
+        "literal": "store_true"
+      },
+      "help": {
+        "literal": "execute hop 2 after classification and estimate"
+      }
+    },
+    "evidence": "src/spendguard/delegate_router.py:663"
+  },
+  {
+    "declaration_id": "delegate/delegate_router.delegate_cli/parser/--timeout",
+    "commands": [
+      "delegate"
+    ],
+    "names": [
+      "--timeout"
+    ],
+    "attributes": {
+      "type": {
+        "expression": "float"
+      },
+      "help": {
+        "literal": "optional execution timeout in seconds"
+      }
+    },
+    "evidence": "src/spendguard/delegate_router.py:664"
+  },
+  {
+    "declaration_id": "delegate/delegate_router.delegate_cli/parser/--cwd",
+    "commands": [
+      "delegate"
+    ],
+    "names": [
+      "--cwd"
+    ],
+    "attributes": {
+      "default": {
+        "expression": "os.getcwd()"
+      },
+      "help": {
+        "literal": "trusted target repo for agentic workspace-write tasks (default: current shell cwd)"
+      }
+    },
+    "evidence": "src/spendguard/delegate_router.py:665"
+  },
+  {
+    "declaration_id": "delegate/delegate_router.delegate_cli/lookup/--collect",
+    "commands": [
+      "delegate"
+    ],
+    "names": [
+      "--collect"
+    ],
+    "attributes": {
+      "metavar": {
+        "literal": "JOB_ID"
+      },
+      "help": {
+        "literal": "print the durable terminal result for a delegate job"
+      }
+    },
+    "evidence": "src/spendguard/delegate_router.py:668"
+  },
+  {
+    "declaration_id": "delegate/delegate_router.delegate_cli/lookup/--status",
+    "commands": [
+      "delegate"
+    ],
+    "names": [
+      "--status"
+    ],
+    "attributes": {
+      "metavar": {
+        "literal": "JOB_ID"
+      },
+      "help": {
+        "literal": "print durable delegate job status"
+      }
+    },
+    "evidence": "src/spendguard/delegate_router.py:669"
+  },
+  {
+    "declaration_id": "delegate/delegate_router.delegate_cli/lookup/--recover",
+    "commands": [
+      "delegate"
+    ],
+    "names": [
+      "--recover"
+    ],
+    "attributes": {
+      "metavar": {
+        "literal": "EXECUTION_ID"
+      },
+      "help": {
+        "literal": "recover complete raw result, stderr and exit code"
+      }
+    },
+    "evidence": "src/spendguard/delegate_router.py:670"
+  },
+  {
+    "declaration_id": "distribute/distribution.parse_distribution_cli_arguments/parser/--check",
+    "commands": [
+      "distribute"
+    ],
+    "names": [
+      "--check"
+    ],
+    "attributes": {
+      "action": {
+        "literal": "store_true"
+      }
+    },
+    "evidence": "src/spendguard/distribution.py:940"
+  },
+  {
+    "declaration_id": "distribute/distribution.parse_distribution_cli_arguments/parser/--json",
+    "commands": [
+      "distribute"
+    ],
+    "names": [
+      "--json"
+    ],
+    "attributes": {
+      "action": {
+        "literal": "store_true"
+      }
+    },
+    "evidence": "src/spendguard/distribution.py:941"
+  },
+  {
+    "declaration_id": "distribute/distribution.parse_distribution_cli_arguments/parser/--roots",
+    "commands": [
+      "distribute"
+    ],
+    "names": [
+      "--roots"
+    ],
+    "attributes": {
+      "nargs": {
+        "literal": "+"
+      }
+    },
+    "evidence": "src/spendguard/distribution.py:942"
+  },
+  {
+    "declaration_id": "distribute/distribution.parse_distribution_cli_arguments/parser/--dry-run",
+    "commands": [
+      "distribute"
+    ],
+    "names": [
+      "--dry-run"
+    ],
+    "attributes": {
+      "action": {
+        "literal": "store_true"
+      }
+    },
+    "evidence": "src/spendguard/distribution.py:943"
+  },
+  {
+    "declaration_id": "distribute/distribution.parse_distribution_cli_arguments/parser/--version",
+    "commands": [
+      "distribute"
+    ],
+    "names": [
+      "--version"
+    ],
+    "attributes": {},
+    "evidence": "src/spendguard/distribution.py:944"
+  },
+  {
+    "declaration_id": "effort-titrate/effort_titration.main/ap/intent",
+    "commands": [
+      "effort-titrate"
+    ],
+    "names": [
+      "intent"
+    ],
+    "attributes": {},
+    "evidence": "src/spendguard/effort_titration.py:456"
+  },
+  {
+    "declaration_id": "effort-titrate/effort_titration.main/ap/--model",
+    "commands": [
+      "effort-titrate"
+    ],
+    "names": [
+      "--model"
+    ],
+    "attributes": {
+      "help": {
+        "literal": "model to titrate (default: the intent's most-used model)"
+      }
+    },
+    "evidence": "src/spendguard/effort_titration.py:457"
+  },
+  {
+    "declaration_id": "effort-titrate/effort_titration.main/ap/--efforts",
+    "commands": [
+      "effort-titrate"
+    ],
+    "names": [
+      "--efforts"
+    ],
+    "attributes": {
+      "help": {
+        "literal": "comma-separated ladder to A/B (default: minimal,low,medium,high)"
+      }
+    },
+    "evidence": "src/spendguard/effort_titration.py:458"
+  },
+  {
+    "declaration_id": "effort-titrate/effort_titration.main/ap/--sample",
+    "commands": [
+      "effort-titrate"
+    ],
+    "names": [
+      "--sample"
+    ],
+    "attributes": {
+      "type": {
+        "expression": "int"
+      },
+      "default": {
+        "expression": "_MAX_SAMPLE"
+      },
+      "help": {
+        "expression": "'max prompts per effort (default %d)' % _MAX_SAMPLE"
+      }
+    },
+    "evidence": "src/spendguard/effort_titration.py:459"
+  },
+  {
+    "declaration_id": "effort-titrate/effort_titration.main/ap/--run",
+    "commands": [
+      "effort-titrate"
+    ],
+    "names": [
+      "--run"
+    ],
+    "attributes": {
+      "action": {
+        "literal": "store_true"
+      },
+      "help": {
+        "literal": "actually spend (default: estimate only)"
+      }
+    },
+    "evidence": "src/spendguard/effort_titration.py:460"
+  },
+  {
+    "declaration_id": "effort-titrate/effort_titration.main/ap/--budget",
+    "commands": [
+      "effort-titrate"
+    ],
+    "names": [
+      "--budget"
+    ],
+    "attributes": {
+      "type": {
+        "expression": "float"
+      },
+      "help": {
+        "literal": "refuse if the pilot estimate exceeds this"
+      }
+    },
+    "evidence": "src/spendguard/effort_titration.py:461"
+  },
+  {
+    "declaration_id": "effort-titrate/effort_titration.main/ap/--requirement-aware",
+    "commands": [
+      "effort-titrate"
+    ],
+    "names": [
+      "--requirement-aware"
+    ],
+    "attributes": {
+      "action": {
+        "literal": "store_true"
+      },
+      "help": {
+        "literal": "score with the two-tier REQUIREMENT judge (screen -> opus adjudicator) vs the prompt's own criteria"
+      }
+    },
+    "evidence": "src/spendguard/effort_titration.py:462"
+  },
+  {
+    "declaration_id": "effort-titrate/effort_titration.main/ap/--adjudicator",
+    "commands": [
+      "effort-titrate"
+    ],
+    "names": [
+      "--adjudicator"
+    ],
+    "attributes": {
+      "help": {
+        "literal": "opus-tier adjudicator model for --requirement-aware (default config.advisor_adjudicator_model)"
+      }
+    },
+    "evidence": "src/spendguard/effort_titration.py:464"
+  },
+  {
+    "declaration_id": "estimate/estimate.main/ap/--items",
+    "commands": [
+      "estimate"
+    ],
+    "names": [
+      "--items"
+    ],
+    "attributes": {
+      "type": {
+        "expression": "int"
+      },
+      "required": {
+        "literal": true
+      },
+      "help": {
+        "literal": "TOTAL items in the full job"
+      }
+    },
+    "evidence": "src/spendguard/estimate.py:114"
+  },
+  {
+    "declaration_id": "estimate/estimate.main/ap/--prefix-tok",
+    "commands": [
+      "estimate"
+    ],
+    "names": [
+      "--prefix-tok"
+    ],
+    "attributes": {
+      "type": {
+        "expression": "float"
+      },
+      "help": {
+        "literal": "shared per-request prompt prefix tokens (system+instructions)"
+      }
+    },
+    "evidence": "src/spendguard/estimate.py:115"
+  },
+  {
+    "declaration_id": "estimate/estimate.main/ap/--in-per-item",
+    "commands": [
+      "estimate"
+    ],
+    "names": [
+      "--in-per-item"
+    ],
+    "attributes": {
+      "type": {
+        "expression": "float"
+      },
+      "help": {
+        "literal": "input tokens per item (excluding prefix)"
+      }
+    },
+    "evidence": "src/spendguard/estimate.py:116"
+  },
+  {
+    "declaration_id": "estimate/estimate.main/ap/--out-per-item",
+    "commands": [
+      "estimate"
+    ],
+    "names": [
+      "--out-per-item"
+    ],
+    "attributes": {
+      "type": {
+        "expression": "float"
+      },
+      "help": {
+        "literal": "output tokens per item"
+      }
+    },
+    "evidence": "src/spendguard/estimate.py:117"
+  },
+  {
+    "declaration_id": "estimate/estimate.main/ap/--from-sample",
+    "commands": [
+      "estimate"
+    ],
+    "names": [
+      "--from-sample"
+    ],
+    "attributes": {
+      "help": {
+        "literal": "JSONL of measured test requests: {n,in,out}"
+      }
+    },
+    "evidence": "src/spendguard/estimate.py:118"
+  },
+  {
+    "declaration_id": "estimate/estimate.main/ap/--models",
+    "commands": [
+      "estimate"
+    ],
+    "names": [
+      "--models"
+    ],
+    "attributes": {
+      "default": {
+        "literal": "gpt-5.5,claude-opus-4-8"
+      }
+    },
+    "evidence": "src/spendguard/estimate.py:119"
+  },
+  {
+    "declaration_id": "estimate/estimate.main/ap/--packs",
+    "commands": [
+      "estimate"
+    ],
+    "names": [
+      "--packs"
+    ],
+    "attributes": {
+      "default": {
+        "literal": "1,30"
+      }
+    },
+    "evidence": "src/spendguard/estimate.py:120"
+  },
+  {
+    "declaration_id": "estimate/estimate.main/ap/--mode",
+    "commands": [
+      "estimate"
+    ],
+    "names": [
+      "--mode"
+    ],
+    "attributes": {
+      "default": {
+        "literal": "batch"
+      },
+      "choices": {
+        "literal": [
+          "batch",
+          "realtime"
+        ]
+      }
+    },
+    "evidence": "src/spendguard/estimate.py:121"
+  },
+  {
+    "declaration_id": "estimate/estimate.main/ap/--assume-cache",
+    "commands": [
+      "estimate"
+    ],
+    "names": [
+      "--assume-cache"
+    ],
+    "attributes": {
+      "action": {
+        "literal": "store_true"
+      },
+      "help": {
+        "literal": "credit prompt-cache on the repeated prefix (only if prefix >= model min)"
+      }
+    },
+    "evidence": "src/spendguard/estimate.py:122"
+  },
+  {
+    "declaration_id": "estimate/estimate.main/ap/--cap-dollars",
+    "commands": [
+      "estimate"
+    ],
+    "names": [
+      "--cap-dollars"
+    ],
+    "attributes": {
+      "type": {
+        "expression": "float"
+      },
+      "help": {
+        "literal": "flag any projection above this (sanity bound)"
+      }
+    },
+    "evidence": "src/spendguard/estimate.py:123"
+  },
+  {
+    "declaration_id": "estimate/estimate.main/ap/--label",
+    "commands": [
+      "estimate"
+    ],
+    "names": [
+      "--label"
+    ],
+    "attributes": {
+      "help": {
+        "literal": "activity/intent \u2014 adds the LEARNED estimate from your history (spendguard calibrate) next to this naive projection"
+      }
+    },
+    "evidence": "src/spendguard/estimate.py:124"
+  },
+  {
+    "declaration_id": "experiment/experiment.main/ap/--intent",
+    "commands": [
+      "experiment"
+    ],
+    "names": [
+      "--intent"
+    ],
+    "attributes": {
+      "required": {
+        "literal": true
+      }
+    },
+    "evidence": "src/spendguard/experiment.py:417"
+  },
+  {
+    "declaration_id": "experiment/experiment.main/ap/--model",
+    "commands": [
+      "experiment"
+    ],
+    "names": [
+      "--model"
+    ],
+    "attributes": {
+      "action": {
+        "literal": "append"
+      },
+      "help": {
+        "literal": "a cheaper model variant to test (repeatable)"
+      }
+    },
+    "evidence": "src/spendguard/experiment.py:418"
+  },
+  {
+    "declaration_id": "experiment/experiment.main/ap/--instruction",
+    "commands": [
+      "experiment"
+    ],
+    "names": [
+      "--instruction"
+    ],
+    "attributes": {
+      "action": {
+        "literal": "append"
+      },
+      "help": {
+        "literal": "an output-format instruction variant (repeatable)"
+      }
+    },
+    "evidence": "src/spendguard/experiment.py:419"
+  },
+  {
+    "declaration_id": "experiment/experiment.main/ap/--n",
+    "commands": [
+      "experiment"
+    ],
+    "names": [
+      "--n"
+    ],
+    "attributes": {
+      "type": {
+        "expression": "int"
+      },
+      "default": {
+        "literal": 20
+      },
+      "help": {
+        "literal": "samples to test per variant"
+      }
+    },
+    "evidence": "src/spendguard/experiment.py:420"
+  },
+  {
+    "declaration_id": "experiment/experiment.main/ap/--reconsider",
+    "commands": [
+      "experiment"
+    ],
+    "names": [
+      "--reconsider"
+    ],
+    "attributes": {
+      "action": {
+        "literal": "store_true"
+      },
+      "help": {
+        "literal": "also test models previously marked ineffective"
+      }
+    },
+    "evidence": "src/spendguard/experiment.py:421"
+  },
+  {
+    "declaration_id": "experiment/experiment.main/ap/--semantic",
+    "commands": [
+      "experiment"
+    ],
+    "names": [
+      "--semantic"
+    ],
+    "attributes": {
+      "help": {
+        "literal": "judge tier: embed | rubric | custom:<module.fn> (your own callable (ref,out)->0..1 \u2014 wrap promptfoo assertions or any domain check). For PROSE outputs: a caged semantic equivalence tier (embed=embedding cosine, rubric=LLM judge) \u2014 costs extra, meta-capped"
+      }
+    },
+    "evidence": "src/spendguard/experiment.py:422"
+  },
+  {
+    "declaration_id": "experiment/experiment.main/ap/--run",
+    "commands": [
+      "experiment"
+    ],
+    "names": [
+      "--run"
+    ],
+    "attributes": {
+      "action": {
+        "literal": "store_true"
+      },
+      "help": {
+        "literal": "actually call (default: estimate). Caged by caps.meta."
+      }
+    },
+    "evidence": "src/spendguard/experiment.py:425"
+  },
+  {
+    "declaration_id": "promote/experiment.promote_main/ap/--intent",
+    "commands": [
+      "promote"
+    ],
+    "names": [
+      "--intent"
+    ],
+    "attributes": {
+      "required": {
+        "literal": true
+      }
+    },
+    "evidence": "src/spendguard/experiment.py:439"
+  },
+  {
+    "declaration_id": "promote/experiment.promote_main/ap/--model",
+    "commands": [
+      "promote"
+    ],
+    "names": [
+      "--model"
+    ],
+    "attributes": {
+      "required": {
+        "literal": true
+      },
+      "help": {
+        "literal": "the winning model"
+      }
+    },
+    "evidence": "src/spendguard/experiment.py:440"
+  },
+  {
+    "declaration_id": "promote/experiment.promote_main/ap/--instruction",
+    "commands": [
+      "promote"
+    ],
+    "names": [
+      "--instruction"
+    ],
+    "attributes": {
+      "help": {
+        "literal": "the winning output-format instruction (optional)"
+      }
+    },
+    "evidence": "src/spendguard/experiment.py:441"
+  },
+  {
+    "declaration_id": "promote/experiment.promote_main/ap/--input",
+    "commands": [
+      "promote"
+    ],
+    "names": [
+      "--input"
+    ],
+    "attributes": {
+      "help": {
+        "literal": "chunk to process (batch .jsonl / {prompt} jsonl / plain text)"
+      }
+    },
+    "evidence": "src/spendguard/experiment.py:442"
+  },
+  {
+    "declaration_id": "promote/experiment.promote_main/ap/--out",
+    "commands": [
+      "promote"
+    ],
+    "names": [
+      "--out"
+    ],
+    "attributes": {
+      "help": {
+        "literal": "where to write kept outputs (jsonl) \u2014 realtime mode"
+      }
+    },
+    "evidence": "src/spendguard/experiment.py:443"
+  },
+  {
+    "declaration_id": "promote/experiment.promote_main/ap/--n",
+    "commands": [
+      "promote"
+    ],
+    "names": [
+      "--n"
+    ],
+    "attributes": {
+      "type": {
+        "expression": "int"
+      },
+      "help": {
+        "literal": "cap inputs"
+      }
+    },
+    "evidence": "src/spendguard/experiment.py:444"
+  },
+  {
+    "declaration_id": "promote/experiment.promote_main/ap/--batch",
+    "commands": [
+      "promote"
+    ],
+    "names": [
+      "--batch"
+    ],
+    "attributes": {
+      "action": {
+        "literal": "store_true"
+      },
+      "help": {
+        "literal": "use the Batch API (50%% off, async) for large chunks"
+      }
+    },
+    "evidence": "src/spendguard/experiment.py:445"
+  },
+  {
+    "declaration_id": "promote/experiment.promote_main/ap/--run",
+    "commands": [
+      "promote"
+    ],
+    "names": [
+      "--run"
+    ],
+    "attributes": {
+      "action": {
+        "literal": "store_true"
+      },
+      "help": {
+        "literal": "actually produce+keep (default: estimate). WORKLOAD spend."
+      }
+    },
+    "evidence": "src/spendguard/experiment.py:446"
+  },
+  {
+    "declaration_id": "mine-history/history.main/ap/op",
+    "commands": [
+      "mine-history"
+    ],
+    "names": [
+      "op"
+    ],
+    "attributes": {
+      "choices": {
+        "literal": [
+          "intents",
+          "graph",
+          "git"
+        ]
+      }
+    },
+    "evidence": "src/spendguard/history.py:264"
+  },
+  {
+    "declaration_id": "mine-history/history.main/ap/--repo",
+    "commands": [
+      "mine-history"
+    ],
+    "names": [
+      "--repo"
+    ],
+    "attributes": {
+      "default": {
+        "expression": "os.getcwd()"
+      },
+      "help": {
+        "literal": "repo to mine (default: cwd)"
+      }
+    },
+    "evidence": "src/spendguard/history.py:265"
+  },
+  {
+    "declaration_id": "mine-history/history.main/ap/--apply",
+    "commands": [
+      "mine-history"
+    ],
+    "names": [
+      "--apply"
+    ],
+    "attributes": {
+      "action": {
+        "literal": "store_true"
+      },
+      "help": {
+        "literal": "write the result (default: report-only). No spend."
+      }
+    },
+    "evidence": "src/spendguard/history.py:266"
+  },
+  {
+    "declaration_id": "reconcile-ledger/ledger_sync.main/ap/--since",
+    "commands": [
+      "reconcile-ledger"
+    ],
+    "names": [
+      "--since"
+    ],
+    "attributes": {
+      "help": {
+        "literal": "YYYY-MM-DD (default: start of this month)"
+      }
+    },
+    "evidence": "src/spendguard/ledger_sync.py:936"
+  },
+  {
+    "declaration_id": "manifest/manifest.manifest_command/parser/action",
+    "commands": [
+      "manifest"
+    ],
+    "names": [
+      "action"
+    ],
+    "attributes": {
+      "nargs": {
+        "literal": "?"
+      },
+      "choices": {
+        "literal": [
+          "build",
+          "show"
+        ],
+        "literal_container": "tuple"
+      },
+      "default": {
+        "literal": "build"
+      }
+    },
+    "evidence": "src/spendguard/manifest.py:289"
+  },
+  {
+    "declaration_id": "manifest/manifest.manifest_command/parser/--json",
+    "commands": [
+      "manifest"
+    ],
+    "names": [
+      "--json"
+    ],
+    "attributes": {
+      "action": {
+        "literal": "store_true"
+      }
+    },
+    "evidence": "src/spendguard/manifest.py:290"
+  },
+  {
+    "declaration_id": "manifest/manifest.manifest_command/parser/--roots",
+    "commands": [
+      "manifest"
+    ],
+    "names": [
+      "--roots"
+    ],
+    "attributes": {
+      "nargs": {
+        "literal": "+"
+      }
+    },
+    "evidence": "src/spendguard/manifest.py:291"
+  },
+  {
+    "declaration_id": "mcp/mcp_server.cmd/ap/--http",
+    "commands": [
+      "mcp"
+    ],
+    "names": [
+      "--http"
+    ],
+    "attributes": {
+      "action": {
+        "literal": "store_true"
+      },
+      "help": {
+        "literal": "serve over HTTP (stdlib, POST /mcp) as one WARM daemon every session CONNECTS to via urllib, instead of spawning a stdio `spendguard mcp` per session."
+      }
+    },
+    "evidence": "src/spendguard/mcp_server.py:1359"
+  },
+  {
+    "declaration_id": "mcp/mcp_server.cmd/ap/--host",
+    "commands": [
+      "mcp"
+    ],
+    "names": [
+      "--host"
+    ],
+    "attributes": {
+      "default": {
+        "expression": "_os.environ.get('SPENDGUARD_MCP_HOST', '127.0.0.1')"
+      }
+    },
+    "evidence": "src/spendguard/mcp_server.py:1363"
+  },
+  {
+    "declaration_id": "mcp/mcp_server.cmd/ap/--port",
+    "commands": [
+      "mcp"
+    ],
+    "names": [
+      "--port"
+    ],
+    "attributes": {
+      "type": {
+        "expression": "int"
+      },
+      "default": {
+        "expression": "int(_os.environ.get('SPENDGUARD_MCP_PORT', '4913'))"
+      }
+    },
+    "evidence": "src/spendguard/mcp_server.py:1364"
+  },
+  {
+    "declaration_id": "measurement/measurement.cmd/p_i/reading_id",
+    "commands": [
+      "measurement"
+    ],
+    "names": [
+      "reading_id"
+    ],
+    "attributes": {},
+    "evidence": "src/spendguard/measurement.py:350"
+  },
+  {
+    "declaration_id": "measurement/measurement.cmd/p_l/--intent",
+    "commands": [
+      "measurement"
+    ],
+    "names": [
+      "--intent"
+    ],
+    "attributes": {
+      "default": {
+        "literal": null
+      }
+    },
+    "evidence": "src/spendguard/measurement.py:352"
+  },
+  {
+    "declaration_id": "measurement/measurement.cmd/p_l/--limit",
+    "commands": [
+      "measurement"
+    ],
+    "names": [
+      "--limit"
+    ],
+    "attributes": {
+      "type": {
+        "expression": "int"
+      },
+      "default": {
+        "literal": 25
+      }
+    },
+    "evidence": "src/spendguard/measurement.py:353"
+  },
+  {
+    "declaration_id": "measurement/measurement.cmd/p_r/intent",
+    "commands": [
+      "measurement"
+    ],
+    "names": [
+      "intent"
+    ],
+    "attributes": {},
+    "evidence": "src/spendguard/measurement.py:355"
+  },
+  {
+    "declaration_id": "measurement/measurement.cmd/p_rr/reading_id",
+    "commands": [
+      "measurement"
+    ],
+    "names": [
+      "reading_id"
+    ],
+    "attributes": {},
+    "evidence": "src/spendguard/measurement.py:357"
+  },
+  {
+    "declaration_id": "measurement/measurement.cmd/p_rr/--budget",
+    "commands": [
+      "measurement"
+    ],
+    "names": [
+      "--budget"
+    ],
+    "attributes": {
+      "type": {
+        "expression": "float"
+      },
+      "default": {
+        "literal": null
+      },
+      "help": {
+        "literal": "spend up to this; OMIT for an estimate only (0 spend)"
+      }
+    },
+    "evidence": "src/spendguard/measurement.py:358"
+  },
+  {
+    "declaration_id": "measurement/measurement.cmd/p_rr/--fresh",
+    "commands": [
+      "measurement"
+    ],
+    "names": [
+      "--fresh"
+    ],
+    "attributes": {
+      "action": {
+        "literal": "store_true"
+      },
+      "help": {
+        "literal": "re-baseline on a FRESH sample (same judge, a new instrument)"
+      }
+    },
+    "evidence": "src/spendguard/measurement.py:359"
+  },
+  {
+    "declaration_id": "measurement/measurement.cmd/p_c/baseline",
+    "commands": [
+      "measurement"
+    ],
+    "names": [
+      "baseline"
+    ],
+    "attributes": {},
+    "evidence": "src/spendguard/measurement.py:361"
+  },
+  {
+    "declaration_id": "measurement/measurement.cmd/p_c/candidate",
+    "commands": [
+      "measurement"
+    ],
+    "names": [
+      "candidate"
+    ],
+    "attributes": {},
+    "evidence": "src/spendguard/measurement.py:362"
+  },
+  {
+    "declaration_id": "metadata/metadata_audit.main/ap/--sync",
+    "commands": [
+      "metadata"
+    ],
+    "names": [
+      "--sync"
+    ],
+    "attributes": {
+      "action": {
+        "literal": "store_true"
+      },
+      "help": {
+        "literal": "refresh the LiteLLM limits cache before auditing"
+      }
+    },
+    "evidence": "src/spendguard/metadata_audit.py:120"
+  },
+  {
+    "declaration_id": "preflight/model_preflight.cmd/ap/models",
+    "commands": [
+      "preflight"
+    ],
+    "names": [
+      "models"
+    ],
+    "attributes": {
+      "nargs": {
+        "literal": "*"
+      },
+      "help": {
+        "literal": "model specs (vendor:model or bare); omit to check all CONFIGURED ids"
+      }
+    },
+    "evidence": "src/spendguard/model_preflight.py:169"
+  },
+  {
+    "declaration_id": "preflight/model_preflight.cmd/ap/--no-correct",
+    "commands": [
+      "preflight"
+    ],
+    "names": [
+      "--no-correct"
+    ],
+    "attributes": {
+      "action": {
+        "literal": "store_true"
+      },
+      "help": {
+        "literal": "skip the tiny agentic call that names a stale id's current replacement (report stale only)"
+      }
+    },
+    "evidence": "src/spendguard/model_preflight.py:170"
+  },
+  {
+    "declaration_id": "batch-submit/openai_batch_cli.submit_batch_jsonl/src/--tasks",
+    "commands": [
+      "batch-submit"
+    ],
+    "names": [
+      "--tasks"
+    ],
+    "attributes": {
+      "help": {
+        "literal": "tasks .jsonl \u2014 each line {\"custom_id\": <id>, \"content\": <user text>}; spendguard builds the per-model request envelope (RECOMMENDED \u2014 the caller never hand-rolls a body, so a model-wrong param like max_tokens-vs-max_completion_tokens can't reach the API)"
+      }
+    },
+    "evidence": "src/spendguard/openai_batch_cli.py:29"
+  },
+  {
+    "declaration_id": "batch-submit/openai_batch_cli.submit_batch_jsonl/src/--jsonl",
+    "commands": [
+      "batch-submit"
+    ],
+    "names": [
+      "--jsonl"
+    ],
+    "attributes": {
+      "help": {
+        "literal": "a PRE-BUILT request .jsonl (legacy \u2014 you own each body's per-model params)"
+      }
+    },
+    "evidence": "src/spendguard/openai_batch_cli.py:32"
+  },
+  {
+    "declaration_id": "batch-submit/openai_batch_cli.submit_batch_jsonl/ap/--model",
+    "commands": [
+      "batch-submit"
+    ],
+    "names": [
+      "--model"
+    ],
+    "attributes": {
+      "required": {
+        "literal": true
+      }
+    },
+    "evidence": "src/spendguard/openai_batch_cli.py:33"
+  },
+  {
+    "declaration_id": "batch-submit/openai_batch_cli.submit_batch_jsonl/ap/--system",
+    "commands": [
+      "batch-submit"
+    ],
+    "names": [
+      "--system"
+    ],
+    "attributes": {
+      "help": {
+        "literal": "shared system instruction, sent once per request (--tasks mode)"
+      }
+    },
+    "evidence": "src/spendguard/openai_batch_cli.py:34"
+  },
+  {
+    "declaration_id": "batch-submit/openai_batch_cli.submit_batch_jsonl/ap/--system-file",
+    "commands": [
+      "batch-submit"
+    ],
+    "names": [
+      "--system-file"
+    ],
+    "attributes": {
+      "help": {
+        "literal": "read the shared system instruction from this file (--tasks mode; wins over --system)"
+      }
+    },
+    "evidence": "src/spendguard/openai_batch_cli.py:35"
+  },
+  {
+    "declaration_id": "batch-submit/openai_batch_cli.submit_batch_jsonl/ap/--max-out",
+    "commands": [
+      "batch-submit"
+    ],
+    "names": [
+      "--max-out"
+    ],
+    "attributes": {
+      "type": {
+        "expression": "int"
+      },
+      "default": {
+        "literal": null
+      },
+      "help": {
+        "literal": "output-token ceiling per request (--tasks mode); default = a reasoning-safe floor so reasoning can't empty the reply"
+      }
+    },
+    "evidence": "src/spendguard/openai_batch_cli.py:36"
+  },
+  {
+    "declaration_id": "batch-submit/openai_batch_cli.submit_batch_jsonl/ap/--cap",
+    "commands": [
+      "batch-submit"
+    ],
+    "names": [
+      "--cap"
+    ],
+    "attributes": {
+      "type": {
+        "expression": "float"
+      },
+      "default": {
+        "literal": null
+      },
+      "help": {
+        "literal": "refuse if projected $ exceeds this (0 = no spend)"
+      }
+    },
+    "evidence": "src/spendguard/openai_batch_cli.py:39"
+  },
+  {
+    "declaration_id": "batch-submit/openai_batch_cli.submit_batch_jsonl/ap/--avg-out",
+    "commands": [
+      "batch-submit"
+    ],
+    "names": [
+      "--avg-out"
+    ],
+    "attributes": {
+      "type": {
+        "expression": "float"
+      },
+      "default": {
+        "literal": null
+      },
+      "help": {
+        "literal": "measured avg output tokens/item for the estimate (else the per-request ceiling is used)"
+      }
+    },
+    "evidence": "src/spendguard/openai_batch_cli.py:40"
+  },
+  {
+    "declaration_id": "batch-submit/openai_batch_cli.submit_batch_jsonl/ap/--endpoint",
+    "commands": [
+      "batch-submit"
+    ],
+    "names": [
+      "--endpoint"
+    ],
+    "attributes": {
+      "default": {
+        "literal": "/v1/chat/completions"
+      }
+    },
+    "evidence": "src/spendguard/openai_batch_cli.py:42"
+  },
+  {
+    "declaration_id": "batch-submit/openai_batch_cli.submit_batch_jsonl/ap/--dry-run",
+    "commands": [
+      "batch-submit"
+    ],
+    "names": [
+      "--dry-run"
+    ],
+    "attributes": {
+      "action": {
+        "literal": "store_true"
+      },
+      "help": {
+        "literal": "estimate + cap check only, no submit ($0, no API call)"
+      }
+    },
+    "evidence": "src/spendguard/openai_batch_cli.py:43"
+  },
+  {
+    "declaration_id": "batch-submit/openai_batch_cli.submit_batch_jsonl/ap/--intent",
+    "commands": [
+      "batch-submit"
+    ],
+    "names": [
+      "--intent"
+    ],
+    "attributes": {
+      "default": {
+        "literal": null
+      },
+      "help": {
+        "literal": "tag this batch's spend with a job-type intent (e.g. symgrep-block-index) \u2014 else it attributes to '(none)', exactly like an untagged realtime call"
+      }
+    },
+    "evidence": "src/spendguard/openai_batch_cli.py:44"
+  },
+  {
+    "declaration_id": "batch-submit/openai_batch_cli.submit_batch_jsonl/ap/--chain",
+    "commands": [
+      "batch-submit"
+    ],
+    "names": [
+      "--chain"
+    ],
+    "attributes": {
+      "default": {
+        "literal": null
+      },
+      "help": {
+        "literal": "optional chain id linking this batch to a larger job"
+      }
+    },
+    "evidence": "src/spendguard/openai_batch_cli.py:46"
+  },
+  {
+    "declaration_id": "batch-fetch/openai_batch_cli.fetch_batch_output/ap/--batch-id",
+    "commands": [
+      "batch-fetch"
+    ],
+    "names": [
+      "--batch-id"
+    ],
+    "attributes": {
+      "required": {
+        "literal": true
+      }
+    },
+    "evidence": "src/spendguard/openai_batch_cli.py:99"
+  },
+  {
+    "declaration_id": "batch-fetch/openai_batch_cli.fetch_batch_output/ap/--out",
+    "commands": [
+      "batch-fetch"
+    ],
+    "names": [
+      "--out"
+    ],
+    "attributes": {
+      "required": {
+        "literal": true
+      },
+      "help": {
+        "literal": "write the completed batch's output .jsonl here"
+      }
+    },
+    "evidence": "src/spendguard/openai_batch_cli.py:100"
+  },
+  {
+    "declaration_id": "batch-fetch/openai_batch_cli.fetch_batch_output/ap/--force",
+    "commands": [
+      "batch-fetch"
+    ],
+    "names": [
+      "--force"
+    ],
+    "attributes": {
+      "action": {
+        "literal": "store_true"
+      },
+      "help": {
+        "literal": "keep an existing --out/.errors as .bak_<ts>, then write"
+      }
+    },
+    "evidence": "src/spendguard/openai_batch_cli.py:101"
+  },
+  {
+    "declaration_id": "batch-fetch/openai_batch_cli.fetch_batch_output/ap/--intent",
+    "commands": [
+      "batch-fetch"
+    ],
+    "names": [
+      "--intent"
+    ],
+    "attributes": {
+      "default": {
+        "literal": null
+      },
+      "help": {
+        "literal": "tag any spend from this fetch with the batch's job-type intent (the download itself is a $0 GET; this keeps attribution consistent with the submit)"
+      }
+    },
+    "evidence": "src/spendguard/openai_batch_cli.py:102"
+  },
+  {
+    "declaration_id": "batch-fetch/openai_batch_cli.fetch_batch_output/ap/--chain",
+    "commands": [
+      "batch-fetch"
+    ],
+    "names": [
+      "--chain"
+    ],
+    "attributes": {
+      "default": {
+        "literal": null
+      },
+      "help": {
+        "literal": "optional chain id linking this fetch to a larger job"
+      }
+    },
+    "evidence": "src/spendguard/openai_batch_cli.py:104"
+  },
+  {
+    "declaration_id": "prompts/prompts.main/ap/--intent",
+    "commands": [
+      "prompts"
+    ],
+    "names": [
+      "--intent"
+    ],
+    "attributes": {
+      "help": {
+        "literal": "lint one intent only"
+      }
+    },
+    "evidence": "src/spendguard/prompts.py:242"
+  },
+  {
+    "declaration_id": "prompts/prompts.main/ap/--since",
+    "commands": [
+      "prompts"
+    ],
+    "names": [
+      "--since"
+    ],
+    "attributes": {
+      "help": {
+        "literal": "ISO date/ts lower bound"
+      }
+    },
+    "evidence": "src/spendguard/prompts.py:243"
+  },
+  {
+    "declaration_id": "prompts/prompts.main/ap/--min-calls",
+    "commands": [
+      "prompts"
+    ],
+    "names": [
+      "--min-calls"
+    ],
+    "attributes": {
+      "type": {
+        "expression": "int"
+      },
+      "default": {
+        "expression": "MIN_CALLS"
+      }
+    },
+    "evidence": "src/spendguard/prompts.py:244"
+  },
+  {
+    "declaration_id": "prompts/prompts.main/ap/--json",
+    "commands": [
+      "prompts"
+    ],
+    "names": [
+      "--json"
+    ],
+    "attributes": {
+      "action": {
+        "literal": "store_true"
+      },
+      "help": {
+        "literal": "machine-readable output"
+      }
+    },
+    "evidence": "src/spendguard/prompts.py:245"
+  },
+  {
+    "declaration_id": "prompts/prompts.main/ap/--judge-batchable",
+    "commands": [
+      "prompts"
+    ],
+    "names": [
+      "--judge-batchable"
+    ],
+    "attributes": {
+      "action": {
+        "literal": "store_true"
+      },
+      "help": {
+        "literal": "agentically judge batching candidates (packable job items vs latency-sensitive interactive) and emit `batch_savings` \u2014 SPENDS a small meta-caged call per candidate"
+      }
+    },
+    "evidence": "src/spendguard/prompts.py:246"
+  },
+  {
+    "declaration_id": "realized/realized.main/ap/--intent",
+    "commands": [
+      "realized"
+    ],
+    "names": [
+      "--intent"
+    ],
+    "attributes": {
+      "help": {
+        "literal": "one intent only"
+      }
+    },
+    "evidence": "src/spendguard/realized.py:119"
+  },
+  {
+    "declaration_id": "realized/realized.main/ap/--json",
+    "commands": [
+      "realized"
+    ],
+    "names": [
+      "--json"
+    ],
+    "attributes": {
+      "action": {
+        "literal": "store_true"
+      }
+    },
+    "evidence": "src/spendguard/realized.py:120"
+  },
+  {
+    "declaration_id": "realized/realized.main/ap/--sync",
+    "commands": [
+      "realized"
+    ],
+    "names": [
+      "--sync"
+    ],
+    "attributes": {
+      "action": {
+        "literal": "store_true"
+      },
+      "help": {
+        "literal": "record NEW positive realized $ into the guarded pipeline (idempotent)"
+      }
+    },
+    "evidence": "src/spendguard/realized.py:121"
+  },
+  {
+    "declaration_id": "reconcile/reconcile_anthropic.main/ap/--since",
+    "commands": [
+      "reconcile"
+    ],
+    "names": [
+      "--since"
+    ],
+    "attributes": {},
+    "evidence": "src/spendguard/reconcile_anthropic.py:179"
+  },
+  {
+    "declaration_id": "reconcile/reconcile_openai.main/ap/--since",
+    "commands": [
+      "reconcile"
+    ],
+    "names": [
+      "--since"
+    ],
+    "attributes": {
+      "help": {
+        "literal": "YYYY-MM-DD (UTC) lower bound on batch creation"
+      }
+    },
+    "evidence": "src/spendguard/reconcile_openai.py:151"
+  },
+  {
+    "declaration_id": "reconcile/reconcile_openai.main/ap/--by-day",
+    "commands": [
+      "reconcile"
+    ],
+    "names": [
+      "--by-day"
+    ],
+    "attributes": {
+      "action": {
+        "literal": "store_true"
+      }
+    },
+    "evidence": "src/spendguard/reconcile_openai.py:152"
+  },
+  {
+    "declaration_id": "reconcile/reconcile_openai.main/ap/--estimate",
+    "commands": [
+      "reconcile"
+    ],
+    "names": [
+      "--estimate"
+    ],
+    "attributes": {
+      "type": {
+        "expression": "float"
+      },
+      "help": {
+        "literal": "a pre-flight $ estimate to compare against actual"
+      }
+    },
+    "evidence": "src/spendguard/reconcile_openai.py:153"
+  },
+  {
+    "declaration_id": "refresh-prices/refresh.main/ap/--model",
+    "commands": [
+      "refresh-prices"
+    ],
+    "names": [
+      "--model"
+    ],
+    "attributes": {
+      "default": {
+        "literal": "claude-haiku-4-5"
+      },
+      "help": {
+        "literal": "LLM to do the lookup (cheap is fine)"
+      }
+    },
+    "evidence": "src/spendguard/refresh.py:113"
+  },
+  {
+    "declaration_id": "refresh-prices/refresh.main/ap/--write",
+    "commands": [
+      "refresh-prices"
+    ],
+    "names": [
+      "--write"
+    ],
+    "attributes": {
+      "action": {
+        "literal": "store_true"
+      },
+      "help": {
+        "literal": "apply source-verified values to model_catalog.json"
+      }
+    },
+    "evidence": "src/spendguard/refresh.py:114"
+  },
+  {
+    "declaration_id": "report/report.main/ap/--alert-threshold",
+    "commands": [
+      "report"
+    ],
+    "names": [
+      "--alert-threshold"
+    ],
+    "attributes": {
+      "type": {
+        "expression": "float"
+      },
+      "help": {
+        "literal": "ALERT if TODAY combined exceeds this $"
+      }
+    },
+    "evidence": "src/spendguard/report.py:188"
+  },
+  {
+    "declaration_id": "report/report.main/ap/--email",
+    "commands": [
+      "report"
+    ],
+    "names": [
+      "--email"
+    ],
+    "attributes": {
+      "action": {
+        "literal": "store_true"
+      },
+      "help": {
+        "literal": "also email the report (SMTP config required)"
+      }
+    },
+    "evidence": "src/spendguard/report.py:189"
+  },
+  {
+    "declaration_id": "report/report.main/ap/--email-to",
+    "commands": [
+      "report"
+    ],
+    "names": [
+      "--email-to"
+    ],
+    "attributes": {
+      "help": {
+        "literal": "recipient override (else SPENDGUARD_EMAIL_TO / ~/.spendguard/email.json)"
+      }
+    },
+    "evidence": "src/spendguard/report.py:190"
+  },
+  {
+    "declaration_id": "report/report.main/ap/--max-seconds",
+    "commands": [
+      "report"
+    ],
+    "names": [
+      "--max-seconds"
+    ],
+    "attributes": {
+      "type": {
+        "expression": "float"
+      },
+      "help": {
+        "literal": "wall-clock watchdog: abort with a non-zero exit if the run exceeds this many seconds (guards a scheduled run against a hung/looping provider fetch)"
+      }
+    },
+    "evidence": "src/spendguard/report.py:191"
+  },
+  {
+    "declaration_id": "review/review.main/ap/--top",
+    "commands": [
+      "review"
+    ],
+    "names": [
+      "--top"
+    ],
+    "attributes": {
+      "type": {
+        "expression": "int"
+      },
+      "default": {
+        "literal": 10
+      },
+      "help": {
+        "literal": "how many top-cost (intent,model) usages to audit"
+      }
+    },
+    "evidence": "src/spendguard/review.py:165"
+  },
+  {
+    "declaration_id": "review/review.main/ap/--run",
+    "commands": [
+      "review"
+    ],
+    "names": [
+      "--run"
+    ],
+    "attributes": {
+      "action": {
+        "literal": "store_true"
+      },
+      "help": {
+        "literal": "actually spend (default: estimate). Capped by caps.meta."
+      }
+    },
+    "evidence": "src/spendguard/review.py:166"
+  },
+  {
+    "declaration_id": "route-cost/route_economics.cmd/ap/intent",
+    "commands": [
+      "route-cost"
+    ],
+    "names": [
+      "intent"
+    ],
+    "attributes": {
+      "help": {
+        "literal": "the job-type label the calls are tagged under"
+      }
+    },
+    "evidence": "src/spendguard/route_economics.py:271"
+  },
+  {
+    "declaration_id": "route-cost/route_economics.cmd/ap/--n",
+    "commands": [
+      "route-cost"
+    ],
+    "names": [
+      "--n"
+    ],
+    "attributes": {
+      "type": {
+        "expression": "int"
+      },
+      "required": {
+        "literal": true
+      },
+      "help": {
+        "literal": "number of calls (tasks) in the job"
+      }
+    },
+    "evidence": "src/spendguard/route_economics.py:272"
+  },
+  {
+    "declaration_id": "route-cost/route_economics.cmd/ap/--in",
+    "commands": [
+      "route-cost"
+    ],
+    "names": [
+      "--in"
+    ],
+    "attributes": {
+      "dest": {
+        "literal": "in_tok"
+      },
+      "type": {
+        "expression": "int"
+      },
+      "default": {
+        "literal": null
+      },
+      "help": {
+        "literal": "input tokens per call (default: = --out)"
+      }
+    },
+    "evidence": "src/spendguard/route_economics.py:273"
+  },
+  {
+    "declaration_id": "route-cost/route_economics.cmd/ap/--out",
+    "commands": [
+      "route-cost"
+    ],
+    "names": [
+      "--out"
+    ],
+    "attributes": {
+      "dest": {
+        "literal": "out_tok"
+      },
+      "type": {
+        "expression": "int"
+      },
+      "default": {
+        "literal": null
+      },
+      "help": {
+        "literal": "output tokens per call (default: measured p90)"
+      }
+    },
+    "evidence": "src/spendguard/route_economics.py:274"
+  },
+  {
+    "declaration_id": "route-cost/route_economics.cmd/ap/--lane",
+    "commands": [
+      "route-cost"
+    ],
+    "names": [
+      "--lane"
+    ],
+    "attributes": {
+      "default": {
+        "literal": null
+      },
+      "help": {
+        "literal": "force a lane (default: the first converged one)"
+      }
+    },
+    "evidence": "src/spendguard/route_economics.py:275"
+  },
+  {
+    "declaration_id": "route-cost/route_economics.cmd/ap/--batch-model",
+    "commands": [
+      "route-cost"
+    ],
+    "names": [
+      "--batch-model"
+    ],
+    "attributes": {
+      "dest": {
+        "literal": "batch_model"
+      },
+      "default": {
+        "literal": null
+      },
+      "help": {
+        "literal": "metered model for the batch leg (default: config advisor.batch_model)"
+      }
+    },
+    "evidence": "src/spendguard/route_economics.py:276"
+  },
+  {
+    "declaration_id": "route-cost/route_economics.cmd/ap/--json",
+    "commands": [
+      "route-cost"
+    ],
+    "names": [
+      "--json"
+    ],
+    "attributes": {
+      "action": {
+        "literal": "store_true"
+      },
+      "help": {
+        "literal": "emit the raw result as JSON"
+      }
+    },
+    "evidence": "src/spendguard/route_economics.py:277"
+  },
+  {
+    "declaration_id": "route-horizon/route_horizon.cmd/ap/groups",
+    "commands": [
+      "route-horizon"
+    ],
+    "names": [
+      "groups"
+    ],
+    "attributes": {
+      "nargs": {
+        "literal": "+"
+      },
+      "help": {
+        "literal": "intent:n[:urgent|deferrable] \u2014 e.g. loinc-map:5000 triage:50:urgent"
+      }
+    },
+    "evidence": "src/spendguard/route_horizon.py:273"
+  },
+  {
+    "declaration_id": "route-horizon/route_horizon.cmd/ap/--in",
+    "commands": [
+      "route-horizon"
+    ],
+    "names": [
+      "--in"
+    ],
+    "attributes": {
+      "dest": {
+        "literal": "in_tok"
+      },
+      "type": {
+        "expression": "int"
+      },
+      "default": {
+        "literal": null
+      },
+      "help": {
+        "literal": "input tokens per call (default: = --out)"
+      }
+    },
+    "evidence": "src/spendguard/route_horizon.py:274"
+  },
+  {
+    "declaration_id": "route-horizon/route_horizon.cmd/ap/--out",
+    "commands": [
+      "route-horizon"
+    ],
+    "names": [
+      "--out"
+    ],
+    "attributes": {
+      "dest": {
+        "literal": "out_tok"
+      },
+      "type": {
+        "expression": "int"
+      },
+      "default": {
+        "literal": null
+      },
+      "help": {
+        "literal": "output tokens per call (default: measured p90 per intent)"
+      }
+    },
+    "evidence": "src/spendguard/route_horizon.py:275"
+  },
+  {
+    "declaration_id": "route-horizon/route_horizon.cmd/ap/--lane",
+    "commands": [
+      "route-horizon"
+    ],
+    "names": [
+      "--lane"
+    ],
+    "attributes": {
+      "default": {
+        "literal": null
+      },
+      "help": {
+        "literal": "force a lane (default: the first converged one)"
+      }
+    },
+    "evidence": "src/spendguard/route_horizon.py:276"
+  },
+  {
+    "declaration_id": "route-horizon/route_horizon.cmd/ap/--batch-model",
+    "commands": [
+      "route-horizon"
+    ],
+    "names": [
+      "--batch-model"
+    ],
+    "attributes": {
+      "dest": {
+        "literal": "batch_model"
+      },
+      "default": {
+        "literal": null
+      },
+      "help": {
+        "literal": "metered model for the batch leg (default: config advisor.batch_model)"
+      }
+    },
+    "evidence": "src/spendguard/route_horizon.py:277"
+  },
+  {
+    "declaration_id": "route-horizon/route_horizon.cmd/ap/--json",
+    "commands": [
+      "route-horizon"
+    ],
+    "names": [
+      "--json"
+    ],
+    "attributes": {
+      "action": {
+        "literal": "store_true"
+      },
+      "help": {
+        "literal": "emit the raw result as JSON"
+      }
+    },
+    "evidence": "src/spendguard/route_horizon.py:278"
+  },
+  {
+    "declaration_id": "route-realized/route_realized.cmd/ap/--intent",
+    "commands": [
+      "route-realized"
+    ],
+    "names": [
+      "--intent"
+    ],
+    "attributes": {
+      "required": {
+        "literal": true
+      },
+      "help": {
+        "literal": "exact calls.intent label"
+      }
+    },
+    "evidence": "src/spendguard/route_realized.py:35"
+  },
+  {
+    "declaration_id": "route-realized/route_realized.cmd/ap/--since",
+    "commands": [
+      "route-realized"
+    ],
+    "names": [
+      "--since"
+    ],
+    "attributes": {
+      "help": {
+        "literal": "inclusive lower ts bound (ISO date/timestamp string)"
+      }
+    },
+    "evidence": "src/spendguard/route_realized.py:36"
+  },
+  {
+    "declaration_id": "route-realized/route_realized.cmd/ap/--as-of",
+    "commands": [
+      "route-realized"
+    ],
+    "names": [
+      "--as-of"
+    ],
+    "attributes": {
+      "dest": {
+        "literal": "as_of"
+      },
+      "help": {
+        "literal": "inclusive upper ts bound (ISO date/timestamp string)"
+      }
+    },
+    "evidence": "src/spendguard/route_realized.py:37"
+  },
+  {
+    "declaration_id": "route-realized/route_realized.cmd/ap/--limit",
+    "commands": [
+      "route-realized"
+    ],
+    "names": [
+      "--limit"
+    ],
+    "attributes": {
+      "type": {
+        "expression": "int"
+      },
+      "default": {
+        "literal": 20
+      },
+      "help": {
+        "literal": "maximum recent samples (default 20)"
+      }
+    },
+    "evidence": "src/spendguard/route_realized.py:38"
+  },
+  {
+    "declaration_id": "route-realized/route_realized.cmd/ap/--json",
+    "commands": [
+      "route-realized"
+    ],
+    "names": [
+      "--json"
+    ],
+    "attributes": {
+      "action": {
+        "literal": "store_true"
+      },
+      "help": {
+        "literal": "emit the full report as JSON"
+      }
+    },
+    "evidence": "src/spendguard/route_realized.py:39"
+  },
+  {
+    "declaration_id": "dedup/semcache.dedup_main/ap/--input",
+    "commands": [
+      "dedup"
+    ],
+    "names": [
+      "--input"
+    ],
+    "attributes": {
+      "required": {
+        "literal": true
+      },
+      "help": {
+        "literal": "batch .jsonl to dedup"
+      }
+    },
+    "evidence": "src/spendguard/semcache.py:350"
+  },
+  {
+    "declaration_id": "dedup/semcache.dedup_main/ap/--out",
+    "commands": [
+      "dedup"
+    ],
+    "names": [
+      "--out"
+    ],
+    "attributes": {
+      "required": {
+        "literal": true
+      },
+      "help": {
+        "literal": "write the unique requests here"
+      }
+    },
+    "evidence": "src/spendguard/semcache.py:351"
+  },
+  {
+    "declaration_id": "dedup/semcache.dedup_main/ap/--map",
+    "commands": [
+      "dedup"
+    ],
+    "names": [
+      "--map"
+    ],
+    "attributes": {
+      "help": {
+        "literal": "write the id-grouping map here (json)"
+      }
+    },
+    "evidence": "src/spendguard/semcache.py:352"
+  },
+  {
+    "declaration_id": "dedup/semcache.dedup_main/ap/--model",
+    "commands": [
+      "dedup"
+    ],
+    "names": [
+      "--model"
+    ],
+    "attributes": {
+      "default": {
+        "expression": "_SCOPE_ANY"
+      },
+      "help": {
+        "literal": "cache scope (default * = any)"
+      }
+    },
+    "evidence": "src/spendguard/semcache.py:353"
+  },
+  {
+    "declaration_id": "dedup-populate/semcache.populate_main/ap/--input",
+    "commands": [
+      "dedup-populate"
+    ],
+    "names": [
+      "--input"
+    ],
+    "attributes": {
+      "required": {
+        "literal": true
+      },
+      "help": {
+        "literal": "the batch .jsonl that was submitted"
+      }
+    },
+    "evidence": "src/spendguard/semcache.py:362"
+  },
+  {
+    "declaration_id": "dedup-populate/semcache.populate_main/ap/--results",
+    "commands": [
+      "dedup-populate"
+    ],
+    "names": [
+      "--results"
+    ],
+    "attributes": {
+      "required": {
+        "literal": true
+      },
+      "help": {
+        "literal": "the batch results .jsonl"
+      }
+    },
+    "evidence": "src/spendguard/semcache.py:363"
+  },
+  {
+    "declaration_id": "dedup-populate/semcache.populate_main/ap/--model",
+    "commands": [
+      "dedup-populate"
+    ],
+    "names": [
+      "--model"
+    ],
+    "attributes": {
+      "default": {
+        "expression": "_SCOPE_ANY"
+      }
+    },
+    "evidence": "src/spendguard/semcache.py:364"
+  },
+  {
+    "declaration_id": "serve/serve.cmd/ap/--host",
+    "commands": [
+      "serve"
+    ],
+    "names": [
+      "--host"
+    ],
+    "attributes": {
+      "default": {
+        "expression": "DEFAULT_HOST"
+      },
+      "help": {
+        "literal": "bind host (default 127.0.0.1; a non-loopback host needs a token)"
+      }
+    },
+    "evidence": "src/spendguard/serve.py:161"
+  },
+  {
+    "declaration_id": "serve/serve.cmd/ap/--port",
+    "commands": [
+      "serve"
+    ],
+    "names": [
+      "--port"
+    ],
+    "attributes": {
+      "type": {
+        "expression": "int"
+      },
+      "default": {
+        "expression": "DEFAULT_PORT"
+      }
+    },
+    "evidence": "src/spendguard/serve.py:162"
+  },
+  {
+    "declaration_id": "install-rule/setup.cmd_install_rule/g/--global",
+    "commands": [
+      "install-rule"
+    ],
+    "names": [
+      "--global"
+    ],
+    "attributes": {
+      "dest": {
+        "literal": "glob_"
+      },
+      "action": {
+        "literal": "store_true"
+      },
+      "help": {
+        "literal": "write to ~/.claude/CLAUDE.md (all projects)"
+      }
+    },
+    "evidence": "src/spendguard/setup.py:378"
+  },
+  {
+    "declaration_id": "install-rule/setup.cmd_install_rule/g/--project",
+    "commands": [
+      "install-rule"
+    ],
+    "names": [
+      "--project"
+    ],
+    "attributes": {
+      "help": {
+        "literal": "project dir whose CLAUDE.md to write (default: current dir)"
+      }
+    },
+    "evidence": "src/spendguard/setup.py:379"
+  },
+  {
+    "declaration_id": "install-skills/setup.cmd_install_skills/ap/--dest",
+    "commands": [
+      "install-skills"
+    ],
+    "names": [
+      "--dest"
+    ],
+    "attributes": {
+      "help": {
+        "literal": "skills dir (default: ~/.claude/skills)"
+      }
+    },
+    "evidence": "src/spendguard/setup.py:877"
+  },
+  {
+    "declaration_id": "install-hook/setup.cmd_install_hook/ap/--venv",
+    "commands": [
+      "install-hook"
+    ],
+    "names": [
+      "--venv"
+    ],
+    "attributes": {
+      "help": {
+        "literal": "path to the target virtualenv (e.g. ../slide-recon/.venv)"
+      }
+    },
+    "evidence": "src/spendguard/setup.py:885"
+  },
+  {
+    "declaration_id": "install-hook/setup.cmd_install_hook/ap/--user",
+    "commands": [
+      "install-hook"
+    ],
+    "names": [
+      "--user"
+    ],
+    "attributes": {
+      "action": {
+        "literal": "store_true"
+      },
+      "help": {
+        "literal": "gate the per-USER site of the target python (covers `python3 \u2026` from anywhere for that interpreter \u2014 the system-python bypass)"
+      }
+    },
+    "evidence": "src/spendguard/setup.py:886"
+  },
+  {
+    "declaration_id": "install-hook/setup.cmd_install_hook/ap/--python",
+    "commands": [
+      "install-hook"
+    ],
+    "names": [
+      "--python"
+    ],
+    "attributes": {
+      "help": {
+        "literal": "target interpreter for --user (default: current python). Use the system python you want to gate, e.g. /opt/homebrew/bin/python3 \u2014 writes a path-injecting usercustomize, NO pip, so it works on PEP668-managed pythons"
+      }
+    },
+    "evidence": "src/spendguard/setup.py:888"
+  },
+  {
+    "declaration_id": "install-hook/setup.cmd_install_hook/ap/--uninstall",
+    "commands": [
+      "install-hook"
+    ],
+    "names": [
+      "--uninstall"
+    ],
+    "attributes": {
+      "action": {
+        "literal": "store_true"
+      },
+      "help": {
+        "literal": "remove the gate hook"
+      }
+    },
+    "evidence": "src/spendguard/setup.py:891"
+  },
+  {
+    "declaration_id": "install-hook/setup.cmd_install_hook/ap/--no-pkg",
+    "commands": [
+      "install-hook"
+    ],
+    "names": [
+      "--no-pkg"
+    ],
+    "attributes": {
+      "action": {
+        "literal": "store_true"
+      },
+      "help": {
+        "literal": "skip pip install (package already present)"
+      }
+    },
+    "evidence": "src/spendguard/setup.py:892"
+  },
+  {
+    "declaration_id": "insights/share.cmd_export/ap/--out",
+    "commands": [
+      "insights"
+    ],
+    "names": [
+      "--out"
+    ],
+    "attributes": {
+      "help": {
+        "literal": "write scrubbed JSON here (default: just preview)"
+      }
+    },
+    "evidence": "src/spendguard/share.py:81"
+  },
+  {
+    "declaration_id": "insights/share.cmd_export/ap/--min-conf",
+    "commands": [
+      "insights"
+    ],
+    "names": [
+      "--min-conf"
+    ],
+    "attributes": {
+      "type": {
+        "expression": "float"
+      },
+      "default": {
+        "literal": 0.6
+      }
+    },
+    "evidence": "src/spendguard/share.py:82"
+  },
+  {
+    "declaration_id": "insights/share.cmd_export/ap/--all",
+    "commands": [
+      "insights"
+    ],
+    "names": [
+      "--all"
+    ],
+    "attributes": {
+      "action": {
+        "literal": "store_true"
+      },
+      "help": {
+        "literal": "include non-active (else only corroborated 'active')"
+      }
+    },
+    "evidence": "src/spendguard/share.py:83"
+  },
+  {
+    "declaration_id": "insights/share.cmd_import/ap/path",
+    "commands": [
+      "insights"
+    ],
+    "names": [
+      "path"
+    ],
+    "attributes": {
+      "help": {
+        "literal": "a spendguard.shared.v1 JSON (file you trust)"
+      }
+    },
+    "evidence": "src/spendguard/share.py:108"
+  },
+  {
+    "declaration_id": "insights/share.cmd_import/ap/--trust",
+    "commands": [
+      "insights"
+    ],
+    "names": [
+      "--trust"
+    ],
+    "attributes": {
+      "type": {
+        "expression": "float"
+      },
+      "default": {
+        "literal": 0.4
+      },
+      "help": {
+        "literal": "cap imported confidence (low-trust prior)"
+      }
+    },
+    "evidence": "src/spendguard/share.py:109"
+  },
+  {
+    "declaration_id": "stability/stability.cmd/ap/intent",
+    "commands": [
+      "stability"
+    ],
+    "names": [
+      "intent"
+    ],
+    "attributes": {
+      "help": {
+        "literal": "the job-type whose recorded prompts to replay, or '-' to read prompts from stdin"
+      }
+    },
+    "evidence": "src/spendguard/stability.py:103"
+  },
+  {
+    "declaration_id": "stability/stability.cmd/ap/--model",
+    "commands": [
+      "stability"
+    ],
+    "names": [
+      "--model"
+    ],
+    "attributes": {
+      "required": {
+        "literal": true
+      },
+      "help": {
+        "literal": "the model/lane to measure (e.g. gpt-6-luna)"
+      }
+    },
+    "evidence": "src/spendguard/stability.py:104"
+  },
+  {
+    "declaration_id": "stability/stability.cmd/ap/--k",
+    "commands": [
+      "stability"
+    ],
+    "names": [
+      "--k"
+    ],
+    "attributes": {
+      "type": {
+        "expression": "int"
+      },
+      "default": {
+        "expression": "DEFAULT_REPLICATES"
+      },
+      "help": {
+        "expression": "f'replicates per prompt (default {DEFAULT_REPLICATES})'"
+      }
+    },
+    "evidence": "src/spendguard/stability.py:105"
+  },
+  {
+    "declaration_id": "stability/stability.cmd/ap/--sample",
+    "commands": [
+      "stability"
+    ],
+    "names": [
+      "--sample"
+    ],
+    "attributes": {
+      "type": {
+        "expression": "int"
+      },
+      "default": {
+        "literal": 5
+      },
+      "help": {
+        "literal": "how many recorded prompts to replay when sampling the intent (default 5)"
+      }
+    },
+    "evidence": "src/spendguard/stability.py:106"
+  },
+  {
+    "declaration_id": "stability/stability.cmd/ap/--prompts-file",
+    "commands": [
+      "stability"
+    ],
+    "names": [
+      "--prompts-file"
+    ],
+    "attributes": {
+      "help": {
+        "literal": "read prompts one-per-line from this file instead of sampling the intent"
+      }
+    },
+    "evidence": "src/spendguard/stability.py:107"
+  },
+  {
+    "declaration_id": "stability/stability.cmd/ap/--marker",
+    "commands": [
+      "stability"
+    ],
+    "names": [
+      "--marker"
+    ],
+    "attributes": {
+      "help": {
+        "literal": "parse each reply's OUTCOME as the text after this marker (e.g. 'DECISION:') \u2014 scores stability on the decision label, not incidental wording"
+      }
+    },
+    "evidence": "src/spendguard/stability.py:108"
+  },
+  {
+    "declaration_id": "stability/stability.cmd/ap/--system",
+    "commands": [
+      "stability"
+    ],
+    "names": [
+      "--system"
+    ],
+    "attributes": {
+      "help": {
+        "literal": "optional system prompt sent with every replicate"
+      }
+    },
+    "evidence": "src/spendguard/stability.py:110"
+  },
+  {
+    "declaration_id": "sync-capabilities/sync_capabilities.cmd/a/--dry-run",
+    "commands": [
+      "sync-capabilities"
+    ],
+    "names": [
+      "--dry-run"
+    ],
+    "attributes": {
+      "action": {
+        "literal": "store_true"
+      },
+      "help": {
+        "literal": "report what would change; write nothing"
+      }
+    },
+    "evidence": "src/spendguard/sync_capabilities.py:218"
+  },
+  {
+    "declaration_id": "sync-capabilities/sync_capabilities.cmd/a/--audit",
+    "commands": [
+      "sync-capabilities"
+    ],
+    "names": [
+      "--audit"
+    ],
+    "attributes": {
+      "action": {
+        "literal": "store_true"
+      },
+      "help": {
+        "literal": "report catalog COMPLETENESS vs LiteLLM (coverage + uncovered + models to consider adding); write nothing"
+      }
+    },
+    "evidence": "src/spendguard/sync_capabilities.py:219"
+  },
+  {
+    "declaration_id": "truth/truth.main/ap/--since",
+    "commands": [
+      "truth"
+    ],
+    "names": [
+      "--since"
+    ],
+    "attributes": {
+      "help": {
+        "literal": "YYYY-MM-DD (default: 35 days back)"
+      }
+    },
+    "evidence": "src/spendguard/truth.py:71"
+  },
+  {
+    "declaration_id": "truth/truth.main/ap/--push",
+    "commands": [
+      "truth"
+    ],
+    "names": [
+      "--push"
+    ],
+    "attributes": {
+      "action": {
+        "literal": "store_true"
+      },
+      "help": {
+        "literal": "push to the org server (default: preview only)"
+      }
+    },
+    "evidence": "src/spendguard/truth.py:72"
+  },
+  {
+    "declaration_id": "verify/verify.cmd/ap/--probe",
+    "commands": [
+      "verify"
+    ],
+    "names": [
+      "--probe"
+    ],
+    "attributes": {
+      "action": {
+        "literal": "store_true"
+      },
+      "help": {
+        "literal": "also prove failover LIVE: force each lane down and confirm the call bills the metered API (one tiny real call per lane, ~$0.0002 each)"
+      }
+    },
+    "evidence": "src/spendguard/verify.py:159"
+  },
+  {
+    "declaration_id": "submit-jobs/whole_job.cmd/ap/jobs_file",
+    "commands": [
+      "submit-jobs"
+    ],
+    "names": [
+      "jobs_file"
+    ],
+    "attributes": {
+      "nargs": {
+        "literal": "?"
+      },
+      "help": {
+        "literal": "jsonl, one job per line: {prompt, intent, id?, system?, schema?}"
+      }
+    },
+    "evidence": "src/spendguard/whole_job.py:492"
+  },
+  {
+    "declaration_id": "submit-jobs/whole_job.cmd/ap/--budget",
+    "commands": [
+      "submit-jobs"
+    ],
+    "names": [
+      "--budget"
+    ],
+    "attributes": {
+      "type": {
+        "expression": "float"
+      },
+      "default": {
+        "literal": null
+      },
+      "help": {
+        "literal": "budget_usd \u2014 estimate-first cap; REQUIRED to --execute"
+      }
+    },
+    "evidence": "src/spendguard/whole_job.py:493"
+  },
+  {
+    "declaration_id": "submit-jobs/whole_job.cmd/ap/--urgency",
+    "commands": [
+      "submit-jobs"
+    ],
+    "names": [
+      "--urgency"
+    ],
+    "attributes": {
+      "default": {
+        "literal": "auto"
+      },
+      "choices": {
+        "literal": [
+          "auto",
+          "realtime",
+          "batch"
+        ]
+      }
+    },
+    "evidence": "src/spendguard/whole_job.py:494"
+  },
+  {
+    "declaration_id": "submit-jobs/whole_job.cmd/ap/--quality",
+    "commands": [
+      "submit-jobs"
+    ],
+    "names": [
+      "--quality"
+    ],
+    "attributes": {
+      "action": {
+        "literal": "store_true"
+      },
+      "help": {
+        "literal": "best-value model pick per intent"
+      }
+    },
+    "evidence": "src/spendguard/whole_job.py:495"
+  },
+  {
+    "declaration_id": "submit-jobs/whole_job.cmd/ap/--execute",
+    "commands": [
+      "submit-jobs"
+    ],
+    "names": [
+      "--execute"
+    ],
+    "attributes": {
+      "action": {
+        "literal": "store_true"
+      },
+      "help": {
+        "literal": "EXECUTE (default: plan + estimate only, $0)"
+      }
+    },
+    "evidence": "src/spendguard/whole_job.py:496"
+  },
+  {
+    "declaration_id": "submit-jobs/whole_job.cmd/ap/--collect",
+    "commands": [
+      "submit-jobs"
+    ],
+    "names": [
+      "--collect"
+    ],
+    "attributes": {
+      "metavar": {
+        "literal": "PENDING_JSONL"
+      },
+      "default": {
+        "literal": null
+      },
+      "help": {
+        "literal": "settle a prior run's durable batch handles (receipt.pending_path) instead of submitting"
+      }
+    },
+    "evidence": "src/spendguard/whole_job.py:497"
+  },
+  {
+    "declaration_id": "workdone/workdone.cmd/ap/--since",
+    "commands": [
+      "workdone"
+    ],
+    "names": [
+      "--since"
+    ],
+    "attributes": {
+      "help": {
+        "literal": "YYYY-MM-DD (default: start of this month)"
+      }
+    },
+    "evidence": "src/spendguard/workdone.py:203"
+  },
+  {
+    "declaration_id": "workdone/workdone.cmd/ap/--by",
+    "commands": [
+      "workdone"
+    ],
+    "names": [
+      "--by"
+    ],
+    "attributes": {
+      "choices": {
+        "literal": [
+          "day",
+          "week",
+          "month"
+        ]
+      },
+      "default": {
+        "literal": "day"
+      }
+    },
+    "evidence": "src/spendguard/workdone.py:204"
+  },
+  {
+    "declaration_id": "workdone/workdone.cmd/ap/--push",
+    "commands": [
+      "workdone"
+    ],
+    "names": [
+      "--push"
+    ],
+    "attributes": {
+      "action": {
+        "literal": "store_true"
+      },
+      "help": {
+        "literal": "push the work-done roll-up to the server"
+      }
+    },
+    "evidence": "src/spendguard/workdone.py:205"
+  },
+  {
+    "declaration_id": "workdone/workdone.cmd/ap/--summarize",
+    "commands": [
+      "workdone"
+    ],
+    "names": [
+      "--summarize"
+    ],
+    "attributes": {
+      "action": {
+        "literal": "store_true"
+      },
+      "help": {
+        "literal": "generate the caged per-project 'what was accomplished' summary (ESTIMATE-ONLY unless --run)"
+      }
+    },
+    "evidence": "src/spendguard/workdone.py:206"
+  },
+  {
+    "declaration_id": "workdone/workdone.cmd/ap/--run",
+    "commands": [
+      "workdone"
+    ],
+    "names": [
+      "--run"
+    ],
+    "attributes": {
+      "action": {
+        "literal": "store_true"
+      },
+      "help": {
+        "literal": "with --summarize: actually spend (caged by caps.meta)"
+      }
+    },
+    "evidence": "src/spendguard/workdone.py:207"
+  }
+]

@@ -13,6 +13,8 @@ By construction this measures PRODUCTION: it sets no determinism knobs and does 
 rides its normal path (the $0 lane where available) at production sampling. $0 billed on a $0 lane; records nothing
 (pure measurement). The replicate count k is the caller's — more replicates tighten the estimate of the spread.
 """
+
+from .capability_cli_parsing import add_registered_cli_argument
 from . import adapters
 
 DEFAULT_REPLICATES = 5          # enough to SEE a spread; the caller raises it to tighten the estimate
@@ -100,14 +102,13 @@ def cmd(argv=None):
     import sys as _sys
     ap = argparse.ArgumentParser(prog="spendguard stability",
                                  description="Measure a model/lane's run-to-run variance at PRODUCTION settings (replicates).")
-    ap.add_argument("intent", help="the job-type whose recorded prompts to replay, or '-' to read prompts from stdin")
-    ap.add_argument("--model", required=True, help="the model/lane to measure (e.g. gpt-6-luna)")
-    ap.add_argument("--k", type=int, default=DEFAULT_REPLICATES, help=f"replicates per prompt (default {DEFAULT_REPLICATES})")
-    ap.add_argument("--sample", type=int, default=5, help="how many recorded prompts to replay when sampling the intent (default 5)")
-    ap.add_argument("--prompts-file", help="read prompts one-per-line from this file instead of sampling the intent")
-    ap.add_argument("--marker", help="parse each reply's OUTCOME as the text after this marker (e.g. 'DECISION:') — "
-                    "scores stability on the decision label, not incidental wording")
-    ap.add_argument("--system", help="optional system prompt sent with every replicate")
+    add_registered_cli_argument(ap, 'stability/stability.cmd/ap/intent')
+    add_registered_cli_argument(ap, 'stability/stability.cmd/ap/--model')
+    add_registered_cli_argument(ap, 'stability/stability.cmd/ap/--k', type=int, default=DEFAULT_REPLICATES, help=f'replicates per prompt (default {DEFAULT_REPLICATES})')
+    add_registered_cli_argument(ap, 'stability/stability.cmd/ap/--sample', type=int)
+    add_registered_cli_argument(ap, 'stability/stability.cmd/ap/--prompts-file')
+    add_registered_cli_argument(ap, 'stability/stability.cmd/ap/--marker')
+    add_registered_cli_argument(ap, 'stability/stability.cmd/ap/--system')
     a = ap.parse_args(argv)
     if a.intent == "-" or a.prompts_file:
         src = open(a.prompts_file) if a.prompts_file else _sys.stdin

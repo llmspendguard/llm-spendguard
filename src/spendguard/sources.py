@@ -32,6 +32,8 @@ entry point (the same group the GPU adapters use) and ride `scan` / `sources` wi
 Fail-open per adapter, exactly like gpu_port: a broken source warns once and is skipped — it can never break
 the others or the command.
 """
+
+from .capability_cli_parsing import registered_cli_option_token
 import sys
 
 CLAUDE_CODE_SOURCE = "claude-code"
@@ -249,13 +251,13 @@ def main(argv=None):
     argv = list(argv or [])
     days = None
     for i, a in enumerate(argv):
-        if a == "--days" and i + 1 < len(argv):
+        if a == registered_cli_option_token('sources/--days') and i + 1 < len(argv):
             try:
                 days = int(argv[i + 1])
             except ValueError:
                 print("--days takes a number, e.g. --days 30")
                 return 2
-    if "--json" in argv:
+    if registered_cli_option_token('sources/--json') in argv:
         import json
         d = discover_sources(days=days)
         d["providers"] = [{k: v for k, v in p.items()} for p in d["providers"]]   # keys are never included
