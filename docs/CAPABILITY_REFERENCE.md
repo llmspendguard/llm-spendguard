@@ -32,7 +32,7 @@ Each absence below carries the registry's reviewed reason.
 | C006 | Inspect and optionally reap orphaned warm subscription servers | reap-orphans | spendguard.warm_stdio_daemon.reap_orphaned_warm_servers(lane=None, execute=True) | ABSENT (DELIBERATE): Reaping host server processes requires lifecycle ownership outside the request transport. | [spendguard.warm_stdio_daemon:reap_orphaned_warm_servers](#core-13eed6da6c5f694b78a2450a016e89830b74d6b236fae2c75a79720eadcf0aad) |
 | C007 | Recover, archive and optionally process stale lane queue work | queue-manage | spendguard.lane_queue.manage_queue_tick(execute=False, process=True, stale_days=None) | ABSENT (DELIBERATE): Recovering and processing stale worker queues belongs to the host queue operator. | [spendguard.lane_queue:manage_queue_tick](#core-bf32bcd9f460e8fe104df07d2d2a1e9b23e87edb5790ea8a49ea53e72b965601) |
 | C008 | Verify protected executor work did not leak to other providers | lane-leak-check | capability_lane_leak_check_cli_check_protected_lane_leaks | capability_lane_leak_check_cli_check_protected_lane_leaks | [spendguard.cli:check_protected_lane_leaks](#core-29db913bfc41ec2562dc18efb968d68668abb2867310880dd6413e4b16a58ad0) |
-| C009 | Read typed ledger records, aggregates and counts | ledger-read | spendguard.ledger_read.read_spend_events(since=None, until=None, where=None, category_column=None, limit=None, path=None); spendguard.ledger_read.read_spend_aggregates(group_by=('provider', 'day'), since=None, until=None, path=None); spendguard.ledger_read.read_recent_calls(since=None, until=None, where=None, limit=None, path=None); spendguard.ledger_read.read_filtered_ledger_count(table=LEDGER_EVENTS_TABLE, since=None, until=None, where=None, path=None); spendguard.ledger_read.read_recorded_call_total(path=None, *, time_budget=DEFAULT_LEDGER_READ_TIME_BUDGET_S); spendguard.ledger_read.read_spend_events(since=None, until=None, where=None, category_column=None, limit=None, path=None); spendguard.ledger_read.read_ledger_event(event_id, path=None); spendguard.ledger_read.read_conversation_spend_since(since, conv, *, deadline_s=config.LEDGER_QUERY_DEADLINE_S); spendguard.ledger_read.ledger_read_metrics() | spendguard_ledger_read(operation, table, group_by, event_id, since, conv, deadline_s, until, path) | [spendguard.ledger_read:read_spend_events](#core-b398bf40107dab1cea7744cd16ecc001901f0ea2385d41431cf38cbafa101fe2); [spendguard.ledger_read:read_spend_aggregates](#core-ddf77ddf36904d1ca7c1735445f192f7c2f647a660bd13f978c0364b9cff0d48); [spendguard.ledger_read:read_recent_calls](#core-2aaec9a980a22b3c742f76f114200ed3f1bc7fffa4229dbc846a0dcd9a15239b); [spendguard.ledger_read:read_filtered_ledger_count](#core-d3ffae247de77b97c78a30abd46b08799555e210d078955e0f674d8ac2dd3d0b); [spendguard.ledger_read:read_recorded_call_total](#core-ae84997608ea7521682713af895e129c5dd07123dc9f987873cbf01bf8e5401c); [spendguard.ledger_read:read_ledger_event](#core-fae328bd5129e10d684c1478adb8482ce57569324c91915aa2019a90f6fceb0f); [spendguard.ledger_read:read_conversation_spend_since](#core-f7572ae4d0cf3263a4263a25b1433bf400c30ee5648cf3950f9ae8160057701c); [spendguard.ledger_read:ledger_read_metrics](#core-a0a020bdbbce41054d34d973da5805386f95fe519d5a0e87d8361b0b2db5fe92) |
+| C009 | Read typed ledger records, aggregates and counts | ledger-read | spendguard.ledger_read.read_spend_events(since=None, until=None, where=None, category_column=None, limit=None, path=None); spendguard.ledger_read.read_spend_aggregates(group_by=('provider', 'day'), since=None, until=None, path=None); spendguard.ledger_read.read_recent_calls(since=None, until=None, where=None, limit=None, path=None); spendguard.ledger_read.read_filtered_ledger_count(table=LEDGER_EVENTS_TABLE, since=None, until=None, where=None, path=None); spendguard.ledger_read.read_recorded_call_total(path=None, *, time_budget=DEFAULT_LEDGER_READ_TIME_BUDGET_S); spendguard.ledger_read.read_spend_events(since=None, until=None, where=None, category_column=None, limit=None, path=None); spendguard.ledger_read.read_ledger_event(event_id, path=None); spendguard.ledger_read.read_conversation_spend_since(since, conv, *, deadline_s=config.LEDGER_QUERY_DEADLINE_S); spendguard.ledger_read.ledger_read_metrics(); spendguard.budget.spent_since; spendguard.ledger_read.read_spend_since | spendguard_ledger_read(operation, table, group_by, event_id, since, conv, deadline_s, until, path) | [spendguard.ledger_read:read_spend_events](#core-b398bf40107dab1cea7744cd16ecc001901f0ea2385d41431cf38cbafa101fe2); [spendguard.ledger_read:read_spend_aggregates](#core-ddf77ddf36904d1ca7c1735445f192f7c2f647a660bd13f978c0364b9cff0d48); [spendguard.ledger_read:read_recent_calls](#core-2aaec9a980a22b3c742f76f114200ed3f1bc7fffa4229dbc846a0dcd9a15239b); [spendguard.ledger_read:read_filtered_ledger_count](#core-d3ffae247de77b97c78a30abd46b08799555e210d078955e0f674d8ac2dd3d0b); [spendguard.ledger_read:read_recorded_call_total](#core-ae84997608ea7521682713af895e129c5dd07123dc9f987873cbf01bf8e5401c); [spendguard.ledger_read:read_ledger_event](#core-fae328bd5129e10d684c1478adb8482ce57569324c91915aa2019a90f6fceb0f); [spendguard.ledger_read:read_conversation_spend_since](#core-f7572ae4d0cf3263a4263a25b1433bf400c30ee5648cf3950f9ae8160057701c); [spendguard.ledger_read:ledger_read_metrics](#core-a0a020bdbbce41054d34d973da5805386f95fe519d5a0e87d8361b0b2db5fe92); [spendguard.budget:spent_since](#core-29d7d8dee922197176e01c2f6ae85f9faef9b53bd9733d95b4d77e1bae448ddf); [spendguard.ledger_read:read_spend_since](#core-b079f527d01361bb8ce7f9e8d40fe51060c0c336bfaf942993a32f2402d051a7) |
 | C010 | Backfill compression of retained database content | compress-content | spendguard.content_compression_backfill.compress_retained_content_database(database_path=None, *, batch_rows=CONTENT_BACKFILL_BATCH_ROWS) | ABSENT (DELIBERATE): Retained database compression is local storage maintenance, independent of user spending operations. | [spendguard.content_compression_backfill:compress_retained_content_database](#core-b6899eaf3192e427fae63d2b256c722cfbaa391c5bc743d47f714837417fec5b) |
 | C011 | Evaluate an agent-spawn PreToolUse payload | agent-spawn-gate | spendguard.agent_spawn_gate.evaluate_pretooluse(payload) | ABSENT (DELIBERATE): PreToolUse hook payload evaluation belongs to the assistant lifecycle protocol. | [spendguard.agent_spawn_gate:evaluate_pretooluse](#core-f77c7da4899f31a23ea0dc3cff1e702a0414db79bbc295d14a244803469d2998) |
 | C012 | Evaluate a context-residency PostToolUse payload | residency-gate | spendguard.residency_gate.evaluate_posttooluse(payload) | ABSENT (DELIBERATE): PostToolUse residency evaluation belongs to the assistant lifecycle protocol. | [spendguard.residency_gate:evaluate_posttooluse](#core-1e34c5a25669c09195934019309d0e1b75878c7f70c56bb9ad41934abc466ce5) |
@@ -3047,6 +3047,35 @@ SQL. Filter to one `model` (e.g. 'glm-5.2') or sweep every unpriced model.
 
 Returns: `Any`
 
+<a id="core-29d7d8dee922197176e01c2f6ae85f9faef9b53bd9733d95b4d77e1bae448ddf"></a>
+
+### `spendguard.budget:spent_since`
+
+Source: `src/spendguard/budget.py:787`
+
+Gate-recorded workload $ since `day` — the LLM cap's number, now read from spend_events via the single
+`_COUNTABLE` filter (batch+realtime, excluding meta / reconciliation / voided-impossible / reconstructed).
+`deadline_s` optionally bounds this aggregate by a relative wall-clock duration; expiry raises
+LedgerQueryDeadline rather than returning an incomplete spend value.
+Optionally SCOPE to a `project` (repo) and/or `conv` (conversation) — the receipt uses this to show what is
+relevant to the current repo/conversation, not a global sum.
+
+Repointed onto spend_events (the money-of-record). This is LLM-only by construction: GPU/remote spend has
+its OWN cap (resources.compute_exceeded) and is no longer lumped into the LLM total as the old
+countable_charges view did (charges carried no remote rows, so the live number is unchanged).
+
+CLI DELIBERATE variant restriction: In-process budget aggregate; command consumers use existing ledger-read aggregate operations.
+
+| Parameter | Type | Required | Default | Contract |
+| --- | --- | --- | --- | --- |
+| day | Any | yes | required | Inclusive earliest workload spend timestamp or day. |
+| project | Any | no | None | Optional repository project scope. |
+| conv | Any | no | None | Optional conversation scope. |
+| deadline_s | Any | no | config.LEDGER_QUERY_DEADLINE_S | Relative aggregate deadline; expiry raises LedgerQueryDeadline. |
+| read_only | Any | no | False | Force the bounded snapshot even for an initialized owner; consumers snapshot automatically. |
+
+Returns: `Any`
+
 <a id="core-5abbb770d9b0ed78ddc275faefaab001dc08d7bfc372b69907b34ecc25bb0ecf"></a>
 
 ### `spendguard.budget:suspect_batches`
@@ -5636,6 +5665,28 @@ Read bounded spend events using validated columns and inclusive day bounds.
 | category_column | Any | no | None | USD category column whose non-null events are selected. |
 | limit | Any | no | None | Maximum rows; omission uses the ledger read row cap. |
 | path | Any | no | None | Ledger database path; omission uses the configured ledger. |
+
+Returns: `Any`
+
+<a id="core-b079f527d01361bb8ce7f9e8d40fe51060c0c336bfaf942993a32f2402d051a7"></a>
+
+### `spendguard.ledger_read:read_spend_since`
+
+Source: `src/spendguard/ledger_read.py:835`
+
+Return complete countable workload spend from a bounded read-only snapshot.
+
+Optional project and conversation scopes retain budget.spent_since semantics;
+no write-ledger initialization or migration is performed.
+
+CLI DELIBERATE variant restriction: In-process budget aggregate; command consumers use existing ledger-read aggregate operations.
+
+| Parameter | Type | Required | Default | Contract |
+| --- | --- | --- | --- | --- |
+| since | Any | yes | required | Inclusive earliest workload spend timestamp or day. |
+| project | Any | no | None | Optional repository project scope. |
+| conv | Any | no | None | Optional conversation scope. |
+| deadline_s | Any | no | config.LEDGER_QUERY_DEADLINE_S | Relative aggregate deadline; expiry raises LedgerQueryDeadline. |
 
 Returns: `Any`
 

@@ -13,7 +13,7 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
     os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="spendguard-mcp-")
     os.execv(sys.executable, [sys.executable] + sys.argv)
 
-from spendguard import mcp_server, advise, calls
+from spendguard import mcp_server, advise, calls, ledger
 
 fails = []
 
@@ -33,6 +33,7 @@ def rpc(method, params=None, rid=1, notification=False):
 
 
 # seed a small corpus so the advise tool has something to rank (one intent, cost + quality labels)
+ledger.SpendLedger()  # Report fixture owns its schema; consumer reads never initialize it.
 calls.insert("openai", "gpt-5.5", "batch", 1.0, in_tok=100_000, out_tok=200_000,
              ts="2026-06-10T10:00:00", intent="loinc-typing", quality="good", quality_conf=0.95)
 calls.insert("anthropic", "claude-opus-4-8", "batch", 6.0, in_tok=50_000, out_tok=100_000,
