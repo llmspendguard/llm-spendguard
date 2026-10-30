@@ -1,5 +1,18 @@
 [
   {
+    "command": "version",
+    "aliases": [],
+    "dispatch_evidence": "src/spendguard/capability_cli_dispatch_bindings.json",
+    "core_bindings": ["spendguard.release:release_status"],
+    "handler_evidence": [],
+    "parser_kind": "no flags parsed / inline positional grammar",
+    "nested_grammar_summary": "",
+    "review_status": "Existing version dispatch binding takes no flags",
+    "parser_graphs": [],
+    "manual_token_ids": [],
+    "takes_no_flags": true
+  },
+  {
     "command": "distribute",
     "aliases": [],
     "dispatch_evidence": "src/spendguard/cli.py:491",

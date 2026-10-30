@@ -105,6 +105,8 @@ class CapabilityCallableVariant:
     argument_mapping: bool = False
     surface_restrictions: tuple[tuple[str, str], ...] = ()
     result_serializer: str | None = None
+    cli_names: tuple[str, ...] = ()
+    cli_result_is_exit_code: bool = False
 
 
 @dataclass(frozen=True)
@@ -209,6 +211,8 @@ def load_capability_registry() -> tuple[Capability, ...]:
                 argument_mapping=variant.get("argument_mapping", False),
                 surface_restrictions=tuple(variant.get("surface_restrictions", {}).items()),
                 result_serializer=variant.get("result_serializer"),
+                cli_names=tuple(variant.get("cli_names", ())),
+                cli_result_is_exit_code=variant.get("cli_result_is_exit_code", False),
             ) for variant in declaration.get("variants", [])),
         ))
     return tuple(capabilities)

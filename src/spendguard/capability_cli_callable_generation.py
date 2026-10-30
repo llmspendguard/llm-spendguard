@@ -15,11 +15,12 @@ def registered_callable_cli_commands():
         if not exposure.present:
             continue
         for variant in capability.variants:
-            command = capability_variant_export_name(capability, variant).replace('_', '-')
-            if command in exposure.names:
-                if command in commands:
-                    raise ValueError(f'Duplicate generated CLI command: {command}')
-                commands[command] = (capability, variant)
+            names = variant.cli_names or (capability_variant_export_name(capability, variant).replace('_', '-'),)
+            for command in names:
+                if command in exposure.names:
+                    if command in commands:
+                        raise ValueError(f'Duplicate generated CLI command: {command}')
+                    commands[command] = (capability, variant)
     return commands
 
 
@@ -74,5 +75,12 @@ def invoke_callable_cli_command(command, rest):
             if duplicate:
                 parser.error(f'Duplicate arguments in keyword object: {sorted(duplicate)}')
             arguments.update(additional)
+    if variant.cli_result_is_exit_code:
+        from .capability_surface_generation import invoke_capability_tool_variant
+
+        result = invoke_capability_tool_variant(variant, arguments)
+        if not isinstance(result, int) or isinstance(result, bool):
+            raise TypeError('Registered CLI exit-code result must be an integer')
+        return True, result
     print(json.dumps(capture_capability_tool_call(variant, arguments), ensure_ascii=False))
     return True, 0

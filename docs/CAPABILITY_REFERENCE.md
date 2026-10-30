@@ -176,7 +176,7 @@ Each absence below carries the registry's reviewed reason.
 | C150 | List registered serving consumers | fleet | spendguard.fleet.running_consumers(prune=True) | capability_fleet__2_fleet_running_consumers | [spendguard.fleet:running_consumers](#core-fe4c9387a10d770272001a14ffd07bde4a526d55666a93d146a776dad512f343) |
 | C151 | Inspect or restart selected supervised consumers | fleet | spendguard.fleet.restart_stale(apply=False, consumer_id=None, all_supervised=False) | ABSENT (DELIBERATE): Restarting supervised consumers belongs to external host process supervision. | [spendguard.fleet:restart_stale](#core-09b69dcbd2f4b678c431485c83c989e895508d30bbc61146b4a152dd8f0d04d9) |
 | C152 | Stop one supervised consumer | fleet | spendguard.fleet.stop_supervised_consumer(consumer_id, apply=False) | ABSENT (DELIBERATE): Stopping supervised consumers belongs to external host process supervision. | [spendguard.fleet:stop_supervised_consumer](#core-8eeae857b1177d8b3c25e670f78964984534875106c330ced5eb9b845f29421c) |
-| C153 | Read fleet freshness and release alignment | fleet; | spendguard.fleet.fleet_summary() | capability_fleet__5_fleet_fleet_summary | [spendguard.fleet:fleet_summary](#core-cd1911edba24790145b56a748ab1b86d73a60a24125b3e29adc009fd900562cc) |
+| C153 | Read fleet freshness and release alignment | fleet | spendguard.fleet.fleet_summary() | capability_fleet__5_fleet_fleet_summary | [spendguard.fleet:fleet_summary](#core-cd1911edba24790145b56a748ab1b86d73a60a24125b3e29adc009fd900562cc) |
 | C154 | Build a monthly provider-truth close view | close | spendguard.close.build_close(month) | capability_close__1_close_build_close | [spendguard.close:build_close](#core-a350a430c63f60cbf0ddae9db08b70771c58070731dfae38f71415809bbed5ff) |
 | C155 | Export a monthly close statement as CSV | close | spendguard.close.to_csv(stmt); spendguard.close.build_close(month) | ABSENT (DELIBERATE): Writing a monthly-close CSV is an operator file-export workflow. | [spendguard.close:to_csv](#core-918699d20ffd15e30ea3a5cb7ff89a957a927370f557b853cfdeadf30e61a8dd); [spendguard.close:build_close](#core-a350a430c63f60cbf0ddae9db08b70771c58070731dfae38f71415809bbed5ff) |
 | C156 | Read shared provider account reconciliation axis | close | spendguard.ledger_sync.leak_line(since=None); spendguard.close.month_window(month) | capability_close__3_ledger_sync_leak_line; capability_close__3_close_month_window | [spendguard.ledger_sync:leak_line](#core-9362401b412b1b805c125045e4ee7d7de9c47aaf0ced3ddfadb9def5512f1657); [spendguard.close:month_window](#core-61b64bd3142812e6d1c7cd900e7c9cce0d613d092b3b21c46109bec455b7dedb) |
@@ -221,7 +221,7 @@ Each absence below carries the registry's reviewed reason.
 | C195 | Synchronize browser-chat usage to the organization | chat | spendguard.chat.sync(dry=False) | capability_chat__12_chat_sync | [spendguard.chat:sync](#core-2c89d5fdec60f47c99adb513a0c4ce721f925f6e2b5ac80ea1b4719e34b29d0e) |
 | C196 | Read browser-chat completed-work rollup | chat | spendguard.chat.show_chat_work(by='week', days=None) | capability_chat__13_chat_show_chat_work | [spendguard.chat:show_chat_work](#core-7168401015ccf497937c0cda76c566ba395f0e34655a8034d626303a49df45ad) |
 | C197 | Summarize browser-chat completed-work narrative | chat | spendguard.chat.story(by='week', days=7, run=False) | capability_chat__14_chat_story | [spendguard.chat:story](#core-380f107d8ba37dcb03f45c076a554751f9f7f7909849806e43f430bf553fb39b) |
-| C198 | Read subscription-lane activation and readiness | lanes; | spendguard.lanes.lanes_status() | capability_lanes__1_lanes_lanes_status | [spendguard.lanes:lanes_status](#core-8711ae3ddefdf7a4350d173765a59eb738e52d33fb78555109372dba51d538f3) |
+| C198 | Read subscription-lane activation and readiness | lanes | spendguard.lanes.lanes_status() | capability_lanes__1_lanes_lanes_status | [spendguard.lanes:lanes_status](#core-8711ae3ddefdf7a4350d173765a59eb738e52d33fb78555109372dba51d538f3) |
 | C199 | Declare a validated subscription lane model assignment | lanes | capability_lanes__2_lanes_set_declared_lane_model | capability_lanes__2_lanes_set_declared_lane_model | [spendguard.lanes:set_declared_lane_model](#core-811b8693fb88d34de4deae4d4b4a7d34e9fbf23935f0bbcfee1ac4fd75c329ea) |
 | C200 | Probe enabled subscription lanes with bounded prompts | lanes | spendguard.lanes.probe(timeout_s=None) | capability_lanes__3_lanes_probe | [spendguard.lanes:probe](#core-317bb746f8055d1dc99b6fd2169415945c0c310f3b748914813412bbb923b31c) |
 | C201 | Read subscription quota headroom and measured quota cost | lanes | spendguard.lanes.lane_headroom(do_fetch=True) | capability_lanes__4_lanes_lane_headroom | [spendguard.lanes:lane_headroom](#core-b15e1d895b15d4e6bb8080223cf5e798a27d3fae56cedd57b391cbd1d7f84f8c) |
@@ -249,15 +249,15 @@ Each absence below carries the registry's reviewed reason.
 | C223 | Read aggregate admission and execution queue state | dispatch | spendguard.dispatch.admission_state(); spendguard.lane_queue.queue_row_status(row_id, archive_path=None) | spendguard_dispatch_state(id) | [spendguard.dispatch:admission_state](#core-ca799ffcbf23d86f2e0e5171395b3d2252b3dce0e8e23ba688b8eb3064f69f32); [spendguard.lane_queue:queue_row_status](#core-227ce4e2f1a86c6683cfcafec5ac3eae3fd6fbe34a6170d06407c63b8fbaac95) |
 | C224 | Read the next admission queue plan | plan-queue | spendguard.queue_planner.tick(avg_call_tokens=NOMINAL_CALL_TOKENS, pending_by_intent=None); spendguard.batch_tracker.status() | spendguard_plan_queue() | [spendguard.queue_planner:tick](#core-82fea51d1aebe63a6af678794ebf08e958692b87b88ef9b13e15a0cee4c944c3); [spendguard.batch_tracker:status](#core-be53ce2abbc8feb169b28c9cfc604e5cef3d13d962cf106aa4f4e6b62b60a219) |
 | C225 | Watch queue plans at a bounded or continuous cadence | plan-queue | spendguard.queue_planner.plan_loop(interval_s=None, iterations=None, on_tick=None, avg_call_tokens=NOMINAL_CALL_TOKENS, stop_event=None) | ABSENT (DELIBERATE): A continuous queue watcher owns a host process; tools expose finite planning snapshots. | [spendguard.queue_planner:plan_loop](#core-0e359380813e4fec8c4f012774068f7f81c1a53af3fab16bc5131e124bce7c61) |
-| C226 | Read split real-dollar and subscription-value receipt | receipt; | spendguard.receipt.tally(project=None, conv=None); spendguard.receipt.render_tree(scope_org=None, project=None) | capability_receipt__1_receipt_tally; capability_receipt__1_receipt_render_tree | [spendguard.receipt:tally](#core-e3f1e34ed8684336ce6523bbbb51bedf56966a1b4c4815fb631f2c570be97679); [spendguard.receipt:render_tree](#core-ff54ec28ea4b2901430b56b4dcc44c02cbf19c0454e73e405abb3dbdc2ea8b8e) |
+| C226 | Read split real-dollar and subscription-value receipt | receipt | spendguard.receipt.tally(project=None, conv=None); spendguard.receipt.render_tree(scope_org=None, project=None) | capability_receipt__1_receipt_tally; capability_receipt__1_receipt_render_tree | [spendguard.receipt:tally](#core-e3f1e34ed8684336ce6523bbbb51bedf56966a1b4c4815fb631f2c570be97679); [spendguard.receipt:render_tree](#core-ff54ec28ea4b2901430b56b4dcc44c02cbf19c0454e73e405abb3dbdc2ea8b8e) |
 | C227 | Read receipt allocation by intent | receipt | capability_receipt__2_receipt_render_intent_spend_receipt | capability_receipt__2_receipt_render_intent_spend_receipt | [spendguard.receipt:render_intent_spend_receipt](#core-0cbeb93f39616435a0c6cf5f1ece04e7331ded7d461ce5f85094fa7d8cf94e70) |
 | C228 | Render compact receipt statusline | receipt | spendguard.receipt.render_line(t: Optional[dict]=None) | ABSENT (DELIBERATE): Terminal statusline rendering belongs to the shell integration protocol. | [spendguard.receipt:render_line](#core-59169e5e8683ddee91c773df8afb0828295e3011c3a6084091168cadceddab39) |
 | C229 | Emit receipt through an assistant lifecycle hook | receipt | ABSENT (DELIBERATE): Lifecycle-hook output belongs to the assistant client event protocol. | ABSENT (DELIBERATE): Receipt lifecycle-hook output belongs to the assistant client event protocol. |  |
 | C230 | Read provider token-count calibration factors | tokens | spendguard.provider_tokens.factor(provider) | capability_tokens__1_provider_tokens_factor | [spendguard.provider_tokens:factor](#core-24e8ac9b590f22a563af6fb66741cd40c5d1200be1a8cbba7068737b2a3d1c33) |
 | C231 | Calibrate provider token-count estimates | tokens | spendguard.provider_tokens.calibrate(store=True, model=None) | capability_tokens__2_provider_tokens_calibrate | [spendguard.provider_tokens:calibrate](#core-24c4d357d8ae8c8de17790907e11a4e3ac5c86bc3e8d0be04f8fcff15152ccd3) |
-| C232 | Recover provider batch prompt/output samples | fetch-io; | spendguard.callio.fetch_history(cap=DEFAULT_CAP, sample_n=None, limit_batches=None) | capability_fetch_io__1_callio_fetch_history | [spendguard.callio:fetch_history](#core-b09ec82c7d4e35675d6110f99587223c10127ce7fb94d874e8de8a83953177e3) |
+| C232 | Recover provider batch prompt/output samples | fetch-io | spendguard.callio.fetch_history(cap=DEFAULT_CAP, sample_n=None, limit_batches=None) | capability_fetch_io__1_callio_fetch_history | [spendguard.callio:fetch_history](#core-b09ec82c7d4e35675d6110f99587223c10127ce7fb94d874e8de8a83953177e3) |
 | C233 | Link recovered samples to transcript conversations | fetch-io | spendguard.callio.link_conversations(tdir=None, turns=10) | capability_fetch_io__2_callio_link_conversations | [spendguard.callio:link_conversations](#core-2cca63d5198d65f5b17141dde17b7944d7ee0a7ed97b2e12b56ec541690804b6) |
-| C234 | Inspect suspicious ledger charges | quarantine; | spendguard.budget.suspect_batches(since) | capability_quarantine__1_budget_suspect_batches | [spendguard.budget:suspect_batches](#core-5abbb770d9b0ed78ddc275faefaab001dc08d7bfc372b69907b34ecc25bb0ecf) |
+| C234 | Inspect suspicious ledger charges | quarantine | spendguard.budget.suspect_batches(since) | capability_quarantine__1_budget_suspect_batches | [spendguard.budget:suspect_batches](#core-5abbb770d9b0ed78ddc275faefaab001dc08d7bfc372b69907b34ecc25bb0ecf) |
 | C235 | Quarantine a selected impossible ledger charge | quarantine | spendguard.budget.quarantine_charge(ts=None, reason='', row=None) | capability_quarantine__2_budget_quarantine_charge | [spendguard.budget:quarantine_charge](#core-3e8b82031ed5205f9685a5d0e4b5fdd69e918060a897a412fd566d552dc3bd3b) |
 | C236 | Plan a whole job set under budget and urgency | submit-jobs | spendguard.whole_job.plan_jobs(jobs, goal=None) | capability_submit_jobs__1_whole_job_plan_jobs | [spendguard.whole_job:plan_jobs](#core-d7560e6b5b5de16891610f1e872d4bba7bf03cb2eecce87c830ffaeef12f7923) |
 | C237 | Execute a whole job set under the same planner | run-jobs | spendguard.whole_job.run_jobs(jobs, goal=None, checkpoint=None); spendguard.whole_job.plan_jobs(jobs, goal=None) | spendguard_run_jobs(jobs, goal) | [spendguard.whole_job:run_jobs](#core-fe7c6b7700ca6245e820f73a7eb1103c0fba6eaa7e00702ff590826091f48951); [spendguard.whole_job:plan_jobs](#core-d7560e6b5b5de16891610f1e872d4bba7bf03cb2eecce87c830ffaeef12f7923) |
@@ -302,8 +302,9 @@ Each absence below carries the registry's reviewed reason.
 | C276 | Register custom provider and inspect resolved provider or base model | ABSENT (DELIBERATE): Runtime provider registration is application integration; provider discovery is covered by catalog surfaces. | spendguard.adapters.register_provider(name, base_url, key_env, prefixes, kind='openai', sdk_import=None); spendguard.adapters.provider_for(model); spendguard.adapters.provider_base_model(provider); governing inputs: name,base_url,key_env,prefixes,kind,sdk_import;model;provider | ABSENT (DELIBERATE): Runtime provider registration is application integration; provider discovery is covered by catalog surfaces. | [spendguard.adapters:register_provider](#core-801cff9bffeebfdc73456e17a8e6031b400b92ce8fdbeff9626c693203fa28a3); [spendguard.adapters:provider_for](#core-b1e49d4dd77e13f8b8c082eaaf9a0a6bbf79f2afb88b83736f3521281e779aca); [spendguard.adapters:provider_base_model](#core-0fcfc826d0da102e10c7b5ee25c322302cb4a4efcf17280371a4196275c8750c) |
 | C277 | Interpret response truncation from finish reason and output cap | ABSENT (DELIBERATE): In-process response interpretation is consumed by wrappers; no separate user workflow is needed. | spendguard.is_truncated; governing inputs: finish_reason,out_tok,max_tokens | ABSENT (DELIBERATE): In-process response interpretation is consumed by wrappers; no separate user workflow is needed. | [spendguard:is_truncated](#core-e4f73e0b02341949055b5b7a2808cdefa24c6001630e267bfb996b97803790f0) |
 | C278 | Record a quality outcome for a recorded call | capability-record-quality-feedback-spendguard-feedback | spendguard.feedback(call_id, ok=True, source="explicit", confidence=None) | capability_record_quality_feedback_spendguard_feedback | [spendguard:feedback](#core-f808d412b970120f1f3895bf185b3b418f36529625c8f29a2bfdd4c184e42a2f) |
+| C279 | Assess versioned project readiness with fail-closed evidence and coverage | selfcheck | capability_readiness_selfcheck_capability_readiness_assess_capability_readiness; capability_readiness_selfcheck_capability_readiness_run_capability_selfcheck | capability_readiness_selfcheck_capability_readiness_assess_capability_readiness; capability_readiness_selfcheck_capability_readiness_run_capability_selfcheck | [spendguard.capability_readiness:assess_capability_readiness](#core-338ee42e079697612ca024dd53e80591dc88fba822e615dfb983a69793a6e9d5); [spendguard.capability_readiness:run_capability_selfcheck](#core-af3c9425d056c61cb4885c201af073c5d2d56a68f9bd8f7356a7276f2f9c647a) |
 
-Counts: ABSENT 79; DELIBERATE 79; PRESENT 755
+Counts: ABSENT 79; DELIBERATE 79; PRESENT 758
 
 ## Capability parameter contracts
 
@@ -2079,6 +2080,16 @@ Callable variants preserve each exact existing source signature, annotation (Any
 
 Takes no parameters.
 
+### C279: Assess versioned project readiness with fail-closed evidence and coverage
+
+New readiness capability; CLI exit status is declared on its callable variant. API and MCP expose the structured assessment and printable selfcheck contracts.
+
+| Parameter | Type | Required | Default | Contract |
+| --- | --- | --- | --- | --- |
+| repo_root | str \| None | no | None | Repository checkout whose deterministic readiness gates and source fingerprint are assessed; omitted uses the current working directory. |
+| environment_report | str \| None | no | None | Path to independently produced clean-environment verification evidence; absent evidence remains UNREVIEWED. |
+| json_output | bool | no | False | Print the complete structured readiness report instead of the human-readable checklist; does not alter readiness or exit status. |
+
 ## Programmatic core contracts
 
 <a id="core-a03c9815845a6ed20a964a37c103c6b63fe691be8ac9e6050aa38130f17c9db5"></a>
@@ -3321,6 +3332,37 @@ Per (intent, model): calls, $ total, %good, and cost-per-good-result.
 | intent | Any | no | None | Per (intent, model): calls, $ total, %good, and cost-per-good-result. |
 
 Returns: `Any`
+
+<a id="core-338ee42e079697612ca024dd53e80591dc88fba822e615dfb983a69793a6e9d5"></a>
+
+### `spendguard.capability_readiness:assess_capability_readiness`
+
+Source: `src/spendguard/capability_readiness.py`
+
+Run every declared readiness gate and return revision, coverage, ready and item evidence. Missing or unavailable evidence is UNREVIEWED; ready requires every item PASS.
+
+| Parameter | Type | Required | Default | Contract |
+| --- | --- | --- | --- | --- |
+| repo_root | str \| None | no | None | Repository checkout whose deterministic readiness gates and source fingerprint are assessed; omitted uses the current working directory. |
+| environment_report | str \| None | no | None | Path to independently produced clean-environment verification evidence; absent evidence remains UNREVIEWED. |
+
+Returns: `dict`
+
+<a id="core-af3c9425d056c61cb4885c201af073c5d2d56a68f9bd8f7356a7276f2f9c647a"></a>
+
+### `spendguard.capability_readiness:run_capability_selfcheck`
+
+Source: `src/spendguard/capability_readiness.py`
+
+Print every readiness outcome and coverage. Return zero only when every item passes; failing or UNREVIEWED items and malformed manifests return nonzero.
+
+| Parameter | Type | Required | Default | Contract |
+| --- | --- | --- | --- | --- |
+| repo_root | str \| None | no | None | Repository checkout whose deterministic readiness gates and source fingerprint are assessed; omitted uses the current working directory. |
+| environment_report | str \| None | no | None | Path to independently produced clean-environment verification evidence; absent evidence remains UNREVIEWED. |
+| json_output | bool | no | False | Print the complete structured readiness report instead of the human-readable checklist; does not alter readiness or exit status. |
+
+Returns: `int`
 
 <a id="core-d1f1430b4b40ae43360370c6cb3729c5405c102e811d6aa21c14cc1e9a7a96a6"></a>
 

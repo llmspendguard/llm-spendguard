@@ -56,6 +56,7 @@ where = ["src"]
 spendguard = ["model_catalog.json", "subscription_headroom_surfaces.json", "py.typed",
               "capability_registry_data.jsonl",
               "capability_mcp_contracts.json", "capability_cli_projection_data.json",
+              "capability_readiness_manifest.json", "capability_cli_dispatch_bindings.json",
               "capability_cli_manual_schema_data.json", "capability_cli_grammar_data.json",
               "distribution_build_wheels/*.whl"]
 
