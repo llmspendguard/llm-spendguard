@@ -7,6 +7,7 @@ from contextlib import redirect_stdout
 from io import StringIO
 
 from spendguard import cli
+from spendguard._version import __version__ as CLI_VERSION_CONTRACT_VALUE
 from spendguard.capability_cli_help_generation import build_capability_cli_help_root
 from spendguard.capability_registry import CLI_COMMAND_BINDINGS, CLI_COMMAND_GRAMMARS
 
@@ -75,7 +76,23 @@ def assert_capability_cli_help_is_complete(dispatch=cli._dispatch):
     assert not failures, '\n'.join(failures)
 
 
+def assert_registered_cli_version_aliases_preserve_output():
+    """Exercise every SSOT spelling bound to the version implementation."""
+    version_aliases = {
+        name for name, binding in CLI_COMMAND_BINDINGS.items()
+        if binding.handler_ref == cli.__name__ + ':' + cli.cli_core_version.__name__
+    }
+    assert version_aliases, 'The version handler must have registered spellings'
+    assert any(name.startswith('--') for name in version_aliases), version_aliases
+    for spelling in version_aliases:
+        output = StringIO()
+        with redirect_stdout(output):
+            assert cli._dispatch([spelling]) == 0, spelling
+        assert CLI_VERSION_CONTRACT_VALUE in output.getvalue().split(), (spelling, output.getvalue())
+
+
 if __name__ == '__main__':
     assert_capability_legacy_cli_contract_is_preserved()
     assert_capability_cli_help_is_complete()
+    assert_registered_cli_version_aliases_preserve_output()
     print('CLI help guard: every actual command exposes flags or its no-flags declaration')
