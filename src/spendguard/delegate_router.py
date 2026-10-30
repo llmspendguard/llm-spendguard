@@ -10,6 +10,8 @@ import importlib
 import hashlib
 import json
 import os
+import subprocess
+import sys
 import threading
 import time
 from pathlib import Path
@@ -48,6 +50,8 @@ DELEGATE_ROUTE_MAIN_THREAD = "main-thread"
 DELEGATE_CLASSIFIER_CACHE_FILENAME = "delegate-route-verdicts.json"
 DELEGATE_CLASSIFIER_PLAN_VERSION = "delegate-route-v2"
 DELEGATE_INCREMENTAL_SUBSCRIPTION_USD = 0.0
+DELEGATE_WORKER_REQUEST_FILENAME = "delegate-request.json"
+DELEGATE_WORKER_MODULE = "spendguard.delegate_worker"
 DELEGATE_CLI_RESULT_MAX_LINES = 10
 DELEGATE_EXECUTION_RESULT_MAX_LINES = DELEGATE_CLI_RESULT_MAX_LINES - 1
 DELEGATE_TOOL_DEGRADED_MARKER = "DEGRADED_TOOL_ENVELOPE"
@@ -428,7 +432,7 @@ def _worktree_changed_files(cwd, before_dirty):
     return sorted(p for p in after_dirty if p not in before_dirty)
 
 
-def _route_agentic(plan, prompt, model, timeout, cwd):
+def _route_agentic(plan, prompt, model, timeout, cwd, warm=False):
     """Run a self-contained AGENTIC subtask in a trusted workspace, using workspace-write where supported.
 
     This is not the one-shot verdict/classification path: use
@@ -455,7 +459,7 @@ def _route_agentic(plan, prompt, model, timeout, cwd):
             kwargs["timeout"] = float(config._cfg_get("delegate", "agentic_timeout_s", AGENTIC_DELEGATE_TIMEOUT_S)
                                       or AGENTIC_DELEGATE_TIMEOUT_S)
         kwargs["recycle_on_timeout"] = config.codex_daemon_admission_settings()["recycle_on_timeout"]
-        kwargs["delegate_context"] = True
+        kwargs["delegate_context"] = not warm
         prompt = prompt + _WORKTREE_AUTHOR_CONSTRAINTS    # bake the sandbox/git/hook contract into what codex actually receives
     return _invoke_recoverable_delegate(lambda: module.run_prompt(prompt, **kwargs),
                                         plan=plan, model=model, cwd=cwd)
@@ -521,13 +525,14 @@ def _assemble_delegate_execution_result(execution, *, result, classification, es
 
 
 def _run_delegate_job_to_completion(job_id, plan, prompt, model, timeout, cwd, dirty_before, *,
-                                    result, classification, estimate, intent):
+                                    result, classification, estimate, intent, warm=False):
     """Run and durably settle a detached delegate using only executor-owned state."""
     from . import delegate_jobs, execution_journal
     try:
         execution_id = delegate_jobs.read_delegate_job(job_id)["execution_id"]
         with execution_journal.durable_execution_scope(execution_id):
-            execution = _route_agentic(plan, prompt, model, timeout, cwd)
+            execution = (_route_agentic(plan, prompt, model, timeout, cwd, warm=True) if warm else
+                         _route_agentic(plan, prompt, model, timeout, cwd))
         completed = _assemble_delegate_execution_result(
             execution, result=result, classification=classification, estimate=estimate, intent=intent,
             changed_files=_worktree_changed_files(cwd, dirty_before))
@@ -545,8 +550,9 @@ def _run_delegate_job_to_completion(job_id, plan, prompt, model, timeout, cwd, d
                                           terminal_reason=reason, error=str(exc))
 
 
-def start_delegate_job(task, files=None, intent=None, provider="auto", cwd=None, timeout=None):
-    """Prepare and start one daemon delegate job, returning without awaiting execution."""
+def start_delegate_job(task, files=None, intent=None, provider="auto", cwd=None, timeout=None,
+                       detached=False, warm=False):
+    """Prepare a governed job and start its host thread or independent CLI worker."""
     from . import delegate_jobs
     intent = intent or DEFAULT_DELEGATE_INTENT
     prepared = delegate_task(task, files=files, intent=intent, provider=provider, execute=False, cwd=cwd)
@@ -559,14 +565,45 @@ def start_delegate_job(task, files=None, intent=None, provider="auto", cwd=None,
     job_id = delegate_jobs.create_delegate_job(
         kind=classification["kind"], task_fingerprint=fingerprint, cwd=cwd,
         provider=estimate["plan"], intent=intent, dirty_before=dirty_before, model=estimate["model"])
+    worker_args = (job_id, estimate["plan"], task + _whole_file_evidence(files), estimate["model"], timeout, cwd,
+                   sorted(dirty_before))
+    worker_kwargs = {"result": prepared, "classification": classification, "estimate": estimate, "intent": intent}
+    if warm:
+        worker_kwargs["warm"] = True
+    if detached:
+        try:
+            _launch_detached_delegate_worker(job_id, worker_args, worker_kwargs)
+        except Exception as error:
+            delegate_jobs.finish_delegate_job(job_id, state="failed", terminal_reason="delegate-worker-start-failed",
+                                              error=str(error))
+            raise
+        return {"job_id": job_id, "state": "running"}
     worker = threading.Thread(
         target=_run_delegate_job_to_completion,
-        args=(job_id, estimate["plan"], task + _whole_file_evidence(files), estimate["model"], timeout, cwd,
-              dirty_before),
-        kwargs={"result": prepared, "classification": classification, "estimate": estimate, "intent": intent},
+        args=worker_args,
+        kwargs=worker_kwargs,
         name=f"spendguard-delegate-{job_id}", daemon=True)
     worker.start()
     return {"job_id": job_id, "state": "running"}
+
+
+def _launch_detached_delegate_worker(job_id, worker_args, worker_kwargs):
+    """Give the established executor an independent lifetime and durable transport."""
+    from . import delegate_jobs, execution_journal
+    execution_id = delegate_jobs.read_delegate_job(job_id)["execution_id"]
+    paths = execution_journal.durable_execution_payload_paths(execution_id)
+    request_path = paths["envelope"].parent / DELEGATE_WORKER_REQUEST_FILENAME
+    config.update_json(request_path, lambda previous: {"args": worker_args, "kwargs": worker_kwargs},
+                       reason="persist governed detached delegate request", required=True)
+    environment = os.environ.copy()
+    environment["SPENDGUARD_HOME"] = os.fspath(config.HOME)
+    source_root = os.fspath(Path(__file__).resolve().parent.parent)
+    environment["PYTHONPATH"] = os.pathsep.join(filter(None, (source_root, environment.get("PYTHONPATH"))))
+    with paths["stderr"].open("ab") as diagnostics:
+        worker = subprocess.Popen([sys.executable, "-m", DELEGATE_WORKER_MODULE, os.fspath(request_path)],
+                                  env=environment, stdin=subprocess.DEVNULL, stdout=diagnostics,
+                                  stderr=diagnostics, start_new_session=True, close_fds=True)
+    execution_journal.adopt_durable_execution_owner(execution_id, pid=worker.pid)
 
 
 def wait_for_delegate_job_handoff(job_id):
@@ -575,17 +612,15 @@ def wait_for_delegate_job_handoff(job_id):
     deadline = time.monotonic() + DELEGATE_HANDOFF_AFTER_S
     while time.monotonic() < deadline:
         status = delegate_jobs.read_delegate_job(job_id)
-        if status.get("state") == "done":
-            return delegate_jobs.read_delegate_job_result(job_id)
-        if status.get("state") == "failed":
+        if status.get("state") in delegate_jobs.DELEGATE_JOB_TERMINAL_STATES:
             return delegate_jobs.read_delegate_job_result(job_id)
         time.sleep(min(DELEGATE_HANDOFF_POLL_S, max(0, deadline - time.monotonic())))
-    return {"status": "running", "job_id": job_id,
+    return {"state": "running", "status": "running", "job_id": job_id,
             "collect_with": f"spendguard delegate --collect {job_id}",
             "note": "agentic run exceeds the inline window; it is still running detached — collect by job_id."}
 
 
-def delegate_task(task, files=None, intent=None, provider="auto", execute=False, timeout=None, cwd=None):
+def delegate_task(task, files=None, intent=None, provider="auto", execute=False, timeout=None, cwd=None, warm=False):
     """Classify, estimate, and optionally execute one self-contained AGENTIC workspace-write subtask.
 
     Default is zero-execution dry-run; execution requires a trusted absolute ``cwd`` and has a 1,800-second default
@@ -634,7 +669,8 @@ def delegate_task(task, files=None, intent=None, provider="auto", execute=False,
             plan=estimate["plan"], model=estimate["model"], cwd=cwd)
     else:
         _dirty_before = _worktree_state(cwd)[1]            # pre-existing dirt, so changed_files is ONLY the agent's edits
-        execution = _route_agentic(estimate["plan"], prompt, estimate["model"], timeout, cwd)
+        execution = (_route_agentic(estimate["plan"], prompt, estimate["model"], timeout, cwd, warm=True)
+                     if warm else _route_agentic(estimate["plan"], prompt, estimate["model"], timeout, cwd))
         changed_files = _worktree_changed_files(cwd, _dirty_before)   # the authed caller stages THESE → commit → push → PR
     return _assemble_delegate_execution_result(
         execution, result=result, classification=classification, estimate=estimate, intent=intent,
@@ -662,53 +698,70 @@ def delegate_cli(argv=None):
     add_registered_cli_argument(parser, 'delegate/delegate_router.delegate_cli/parser/--provider')
     add_registered_cli_argument(parser, 'delegate/delegate_router.delegate_cli/parser/--estimate')
     add_registered_cli_argument(parser, 'delegate/delegate_router.delegate_cli/parser/--yes')
+    add_registered_cli_argument(parser, 'delegate/delegate_router.delegate_cli/parser/--warm')
+    add_registered_cli_argument(parser, 'delegate/delegate_router.delegate_cli/parser/--wait')
+    add_registered_cli_argument(parser, 'delegate/delegate_router.delegate_cli/parser/--timeout-s', type=float)
+    add_registered_cli_argument(parser, 'delegate/delegate_router.delegate_cli/parser/--mixed-stream')
     add_registered_cli_argument(parser, 'delegate/delegate_router.delegate_cli/parser/--timeout', type=float)
     add_registered_cli_argument(parser, 'delegate/delegate_router.delegate_cli/parser/--cwd', default=os.getcwd())
     lookup = parser.add_mutually_exclusive_group()
     add_registered_cli_argument(lookup, 'delegate/delegate_router.delegate_cli/lookup/--collect')
     add_registered_cli_argument(lookup, 'delegate/delegate_router.delegate_cli/lookup/--status')
     add_registered_cli_argument(lookup, 'delegate/delegate_router.delegate_cli/lookup/--recover')
+    add_registered_cli_argument(lookup, 'delegate/delegate_router.delegate_cli/lookup/--cancel')
+    add_registered_cli_argument(lookup, 'delegate/delegate_router.delegate_cli/lookup/--kill')
     args = parser.parse_args(argv)
+    diagnostic_stream = sys.stdout if args.mixed_stream else sys.stderr
+    if args.timeout_s is not None and not args.wait:
+        parser.error('--timeout-s requires --wait')
+    if args.wait and not args.collect:
+        parser.error('--wait requires --collect JOB_ID')
+    if args.cancel or args.kill:
+        from . import delegate_jobs
+        result = delegate_jobs.cancel_delegate_job(args.cancel or args.kill, force=bool(args.kill))
+        print(json.dumps(result, indent=2, sort_keys=True))
+        return 2 if result.get('error') else 0
     if args.recover:
         from .execution_journal import recover_durable_execution
         print(json.dumps(recover_durable_execution(args.recover), indent=2, sort_keys=True))
         return 0
     if args.collect or args.status:
         from . import delegate_jobs
-        result = (delegate_jobs.read_delegate_job_result(args.collect) if args.collect
+        result = (delegate_jobs.wait_for_delegate_job(args.collect, timeout=args.timeout_s) if args.collect and args.wait
+                  else delegate_jobs.read_delegate_job_result(args.collect) if args.collect
                   else delegate_jobs.read_delegate_job(args.status))
         print(json.dumps(result, indent=2, sort_keys=True))
         return 2 if isinstance(result, dict) and result.get("error") else 0
     if not args.task:
-        parser.error("task is required unless --collect, --status or --recover is supplied")
+        parser.error("task is required unless --collect, --status, --recover or --cancel/--kill is supplied")
     release_warning = _delegate_release_state_warning()
     if release_warning:
-        print(release_warning)
+        print(release_warning, file=diagnostic_stream)
     files = [p for p in (args.files or "").split(",") if p]
     if args.yes and not args.estimate:
         classification = classify_task(args.task, files=files, provider=args.provider)
         if classification.get("kind") == "agentic":
             started = start_delegate_job(args.task, files=files, intent=args.intent, provider=args.provider,
-                                         cwd=args.cwd, timeout=args.timeout)
+                                         cwd=args.cwd, timeout=args.timeout, warm=args.warm, detached=True)
             result = (wait_for_delegate_job_handoff(started["job_id"])
                       if started.get("state") == "running" else started)
         else:
             result = delegate_task(args.task, files=files, intent=args.intent, provider=args.provider,
-                                   execute=True, timeout=args.timeout, cwd=args.cwd)
+                                   execute=True, timeout=args.timeout, cwd=args.cwd, warm=args.warm)
     else:
         result = delegate_task(args.task, files=files, intent=args.intent, provider=args.provider,
-                               execute=False, timeout=args.timeout, cwd=args.cwd)
+                               execute=False, timeout=args.timeout, cwd=args.cwd, warm=args.warm)
     classification = result.get("classification") or {}
     estimate = result.get("estimate") or {}
     if result["status"] != "executed":
         print(f"classification: {classification.get('kind', 'error')}"
               f"{(' → ' + str(classification.get('provider'))) if classification.get('provider') else ''}"
-              f" — {classification.get('why') or classification.get('error', '')}")
+              f" — {classification.get('why') or classification.get('error', '')}", file=diagnostic_stream)
     if result["status"] == "estimate" and estimate and not estimate.get("error"):
         saved = (f"~${estimate['saved_overage_usd']:.4f}" if estimate.get("saved_overage_usd") is not None
                  else "unavailable (no measured ledger rate)")
         print(f"route: {estimate['plan']} ({estimate['model']})  ::  real API $0.0000  ::  "
-              f"est-value ${estimate['est_value_usd']:.4f} on plan  ::  saved {saved} vs Claude overage")
+              f"est-value ${estimate['est_value_usd']:.4f} on plan  ::  saved {saved} vs Claude overage", file=diagnostic_stream)
     if result["status"] == "executed":
         print(result["execution"]["text"])
         receipt = result["receipt"]
@@ -717,16 +770,16 @@ def delegate_cli(argv=None):
         real_total = receipt["real_api_usd"] + receipt["subscription_usd"]
         print(f"Real ${real_total:.4f} = ${receipt['real_api_usd']:.4f} codex API/overage + "
               f"${receipt['subscription_usd']:.4f} Subscription ({receipt['plan']})  ::  "
-              f"Est sub value ${receipt['est_value_usd']:.4f}  ::  Saved vs Anthropic-overage {saved}")
+              f"Est sub value ${receipt['est_value_usd']:.4f}  ::  Saved vs Anthropic-overage {saved}", file=diagnostic_stream)
     elif result["status"] in ("refused", "error"):
         execution = result.get("execution")
         execution_error = execution.get("error") if isinstance(execution, dict) else None
         reason = result.get("reason")
         detail = (result.get("why") or execution_error or estimate.get("error") or classification.get("error")
                   or "delegation failed without a result")
-        print(f"delegate {result['status']}: {reason + ': ' if reason else ''}{detail}")
+        print(f"delegate {result['status']}: {reason + ': ' if reason else ''}{detail}", file=diagnostic_stream)
         if _delegate_result_selected_codex(result, args.provider):
-            print(_codex_governed_route_unavailable_message())
+            print(_codex_governed_route_unavailable_message(), file=diagnostic_stream)
     elif result["status"] == "running":
         print(json.dumps(result, indent=2, sort_keys=True))
     return 0 if result["status"] in ("estimate", "executed", "running") else 2

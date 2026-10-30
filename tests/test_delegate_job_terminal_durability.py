@@ -24,7 +24,7 @@ def reproduce_delegate_job_terminal_immutable():
     first_payload = {"status": "executed", "execution": {"text": "original complete output"}}
     delegate_jobs.finish_delegate_job(terminal_job, state="done", result_payload=first_payload)
     delegate_jobs.finish_delegate_job(terminal_job, state="failed", result_payload={"error": "late finalizer"})
-    assert delegate_jobs.read_delegate_job_result(terminal_job) == first_payload
+    assert delegate_jobs.read_delegate_job_result(terminal_job) == {**first_payload, "state": "done"}
 
 
 def reproduce_delegate_job_dead_owner_terminal(journal_completed=False):

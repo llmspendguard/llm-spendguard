@@ -316,12 +316,16 @@ def append_durable_execution_evidence(execution_id, *, stdout=None, stderr=None,
 
 
 @_protect_durable_execution_io
-def terminalize_durable_execution(execution_id, state, *, root=None, **payload):
+def terminalize_durable_execution(execution_id, state, *, root=None, expected_process_identity=None, **payload):
     """The sole terminal-write seam, serialized across owner and detached observer."""
     if state not in EXECUTION_TERMINAL_STATES:
         raise ValueError(f"invalid execution terminal state: {state}")
     with _locked_durable_execution(execution_id, root) as directory:
         record = json.loads((directory / EXECUTION_STATE_FILENAME).read_text())
+        if expected_process_identity is not None:
+            identity = tuple(record.get(key) for key in ("owner_pid", "owner_birth", "child_pid", "child_birth"))
+            if identity != expected_process_identity:
+                return record
         captured_exit = payload.get("exit_code", record.get("exit_code"))
         authoritative_completion = (state != "lost" and
                                     (captured_exit is not None or payload.get("result") is not None
@@ -378,6 +382,24 @@ def bind_durable_execution_child(execution_id, pid):
         _write_durable_execution_state(directory, record)
 
 
+@_protect_durable_execution_io
+def adopt_durable_execution_owner(execution_id, pid=None):
+    """Transfer executor ownership to the independently launched worker."""
+    import psutil
+    try:
+        owner = psutil.Process(pid)
+        owner_birth = owner.create_time()
+    except psutil.NoSuchProcess:
+        return
+    with _locked_durable_execution(execution_id) as directory:
+        record = json.loads((directory / EXECUTION_STATE_FILENAME).read_text())
+        record["owner_pid"] = owner.pid
+        record["owner_birth"] = owner_birth
+        record["worker_pid"] = owner.pid
+        record["worker_birth"] = owner_birth
+        _write_durable_execution_state(directory, record)
+
+
 def _durable_execution_has_live_process(record):
     if _durable_execution_owner_alive(record):
         return True
@@ -405,7 +427,9 @@ def recover_durable_execution(execution_id, *, root=None):
     with _locked_durable_execution(execution_id, root):
         record = json.loads((directory / EXECUTION_STATE_FILENAME).read_text())
     if record["state"] == "running" and not _durable_execution_has_live_process(record):
-        record = terminalize_durable_execution(execution_id, "lost", root=root)
+        identity = tuple(record.get(key) for key in ("owner_pid", "owner_birth", "child_pid", "child_birth"))
+        record = terminalize_durable_execution(execution_id, "lost", root=root,
+                                               expected_process_identity=identity)
     elif record["state"] in EXECUTION_TERMINAL_STATES:
         # Repair an interrupted event-to-state projection from the authoritative end.
         record = terminalize_durable_execution(execution_id, record["state"], root=root)

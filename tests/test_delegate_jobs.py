@@ -45,7 +45,7 @@ delegate_jobs.finish_delegate_job(job_id, state="done", result_payload=payload)
 check_delegate_job_contract("finished row reports done", delegate_jobs.read_delegate_job(job_id)["state"] == "done")
 check_delegate_job_contract(
     "whole changed-files list and full receipt survive roundtrip",
-    delegate_jobs.read_delegate_job_result(job_id) == payload)
+    delegate_jobs.read_delegate_job_result(job_id) == {**payload, "state": "done"})
 
 print("-- scalar terminal payload remains collectible through the CLI --")
 scalar_delegate_result_payload = "complete scalar delegate result"
@@ -93,7 +93,7 @@ finally:
 check_delegate_job_contract(
     "start returned a handle and separate post-return read sees worker result",
     worker_job["state"] == "running"
-    and delegate_jobs.read_delegate_job_result(worker_job["job_id"]) == thread_payload)
+    and delegate_jobs.read_delegate_job_result(worker_job["job_id"]) == {**thread_payload, "state": "done"})
 
 print("-- stale running rows fail closed instead of remaining perpetual --")
 stale_job_id = delegate_jobs.create_delegate_job(
@@ -130,7 +130,7 @@ fast_job_id = delegate_jobs.create_delegate_job(
 delegate_jobs.finish_delegate_job(fast_job_id, state="done", result_payload=payload)
 check_delegate_job_contract(
     "fast completion returns unchanged inline shape",
-    delegate_router.wait_for_delegate_job_handoff(fast_job_id) == payload)
+    delegate_router.wait_for_delegate_job_handoff(fast_job_id) == {**payload, "state": "done"})
 slow_job_id = delegate_jobs.create_delegate_job(
     kind="agentic", task_fingerprint="slow-fingerprint", cwd=os.getcwd(),
     provider="fixture-provider", intent="fixture-intent", dirty_before=set())
@@ -142,7 +142,7 @@ check_delegate_job_contract(
 delegate_jobs.finish_delegate_job(slow_job_id, state="done", result_payload=thread_payload)
 check_delegate_job_contract(
     "MCP result collector returns the later terminal payload",
-    mcp_server._tool_delegate_result({"job_id": slow_job_id}) == thread_payload)
+    mcp_server._tool_delegate_result({"job_id": slow_job_id}) == {**thread_payload, "state": "done"})
 delegate_router.DELEGATE_HANDOFF_AFTER_S = original_handoff
 delegate_router.DELEGATE_HANDOFF_POLL_S = original_poll
 

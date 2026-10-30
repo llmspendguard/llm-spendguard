@@ -11,6 +11,7 @@ import json
 import os
 import sqlite3
 import sys
+import time
 import uuid
 from pathlib import Path
 
@@ -30,6 +31,9 @@ DELEGATE_JOB_STORE_UNREADABLE_REASON = "store-unreadable"
 DELEGATE_JOB_DEFAULT_RETENTION_S = 604800
 DELEGATE_JOB_DEFAULT_STALENESS_MARGIN_S = 60
 DELEGATE_JOB_DEFAULT_CODEX_TIMEOUT_S = 1800
+DELEGATE_JOB_WAIT_POLL_DEFAULT_S = 0.1
+DELEGATE_JOB_CANCEL_GRACE_DEFAULT_S = 5.0
+DELEGATE_JOB_CANCEL_REASON = "operator-cancelled"
 DELEGATE_JOBS_RETENTION_S = float(config._cfg_get(
     "delegate", "jobs_retention_s", DELEGATE_JOB_DEFAULT_RETENTION_S) or DELEGATE_JOB_DEFAULT_RETENTION_S)
 DELEGATE_JOB_STALENESS_MARGIN_S = float(config._cfg_get(
@@ -190,7 +194,7 @@ def read_delegate_job(job_id):
     except DelegateJobStoreUnreadable:
         print(f"[spendguard] delegate_jobs.read_delegate_job: store unreadable while looking for job "
               f"{job_id}; state is indeterminate", file=sys.stderr, flush=True)
-        return {"state": "indeterminate", "job_id": job_id,
+        return {"state": "indeterminate", "status": "indeterminate", "job_id": job_id,
                 "terminal_reason": DELEGATE_JOB_STORE_UNREADABLE_REASON}
     if row is None:
         return {"error": "not-found", "job_id": job_id}
@@ -204,6 +208,7 @@ def read_delegate_job(job_id):
             and _delegate_running_is_stale(result["updated_ts"])):
         result["state"] = DELEGATE_JOB_FAILED_STATE
         result["terminal_reason"] = DELEGATE_JOB_RESTART_REASON
+    result["status"] = result["state"]
     return result
 
 
@@ -214,7 +219,7 @@ def read_delegate_job_result(job_id):
     except DelegateJobStoreUnreadable:
         print(f"[spendguard] delegate_jobs.read_delegate_job_result: store unreadable while looking for job "
               f"{job_id}; status is indeterminate", file=sys.stderr, flush=True)
-        return {"status": "indeterminate", "job_id": job_id,
+        return {"state": "indeterminate", "status": "indeterminate", "job_id": job_id,
                 "terminal_reason": DELEGATE_JOB_STORE_UNREADABLE_REASON}
     if row is None:
         return {"error": "not-found", "job_id": job_id}
@@ -223,14 +228,92 @@ def read_delegate_job_result(job_id):
         row = _delegate_job_row(job_id)
     if row["state"] == DELEGATE_JOB_RUNNING_STATE:
         if _delegate_running_is_stale(row["updated_ts"]):
-            return {"status": DELEGATE_JOB_FAILED_STATE, "job_id": job_id,
+            return {"state": DELEGATE_JOB_FAILED_STATE, "status": DELEGATE_JOB_FAILED_STATE, "job_id": job_id,
                     "terminal_reason": DELEGATE_JOB_RESTART_REASON}
-        return {"status": DELEGATE_JOB_RUNNING_STATE, "job_id": job_id,
+        return {"state": DELEGATE_JOB_RUNNING_STATE, "status": DELEGATE_JOB_RUNNING_STATE, "job_id": job_id,
                 "terminal_reason": None}
     if row["result_payload"] is not None:
-        return json.loads(row["result_payload"])
-    return {"status": row["state"], "job_id": job_id,
+        payload = json.loads(row["result_payload"])
+        return {**payload, "state": row["state"]} if isinstance(payload, dict) else payload
+    return {"state": row["state"], "status": row["state"], "job_id": job_id,
             "terminal_reason": row["terminal_reason"], "error": row["error"]}
+
+
+def wait_for_delegate_job(job_id, timeout=None):
+    """Block on the durable terminal signal, returning a running handle on deadline.
+
+    The database and journal are the notification channel across process exits;
+    no caller-owned thread or pipe is needed to observe completion.
+    """
+    if timeout is not None and timeout < 0:
+        raise ValueError("delegate wait timeout must be nonnegative")
+    deadline = None if timeout is None else time.monotonic() + timeout
+    interval = float(config._cfg_get("delegate", "wait_poll_s", DELEGATE_JOB_WAIT_POLL_DEFAULT_S))
+    if interval <= 0:
+        raise ValueError("delegate.wait_poll_s must be positive")
+    while True:
+        status = read_delegate_job(job_id)
+        if status.get("state") != DELEGATE_JOB_RUNNING_STATE:
+            return read_delegate_job_result(job_id) if status.get("state") in DELEGATE_JOB_TERMINAL_STATES else status
+        remaining = None if deadline is None else deadline - time.monotonic()
+        if remaining is not None and remaining <= 0:
+            return {**read_delegate_job_result(job_id), "wait_timed_out": True}
+        time.sleep(interval if remaining is None else min(interval, remaining))
+
+
+def cancel_delegate_job(job_id, force=False):
+    """Cancel only identity-verified processes owned by this governed dispatch.
+
+    Claim the journal terminal before signalling so executor/observer races cannot
+    overwrite an operator cancellation. A shared MCP host is never signalled.
+    """
+    import psutil
+    from . import execution_journal
+    status = read_delegate_job(job_id)
+    if status.get("state") != DELEGATE_JOB_RUNNING_STATE:
+        return read_delegate_job_result(job_id) if status.get("state") in DELEGATE_JOB_TERMINAL_STATES else status
+    execution_id = status.get("execution_id")
+    if not execution_id:
+        return {**status, "error": "delegate cancellation requires durable process identity"}
+    execution = execution_journal.recover_durable_execution(execution_id)
+    if execution["state"] != DELEGATE_JOB_RUNNING_STATE:
+        return read_delegate_job_result(job_id)
+    processes = {}
+    for identity in ("child", "worker"):
+        pid, birth = execution.get(f"{identity}_pid"), execution.get(f"{identity}_birth")
+        if pid is None:
+            continue
+        try:
+            process = psutil.Process(pid)
+            if process.create_time() != birth or process.status() == psutil.STATUS_ZOMBIE:
+                continue
+            for descendant in process.children(recursive=True):
+                processes[descendant.pid] = descendant
+            processes[pid] = process
+        except psutil.NoSuchProcess:
+            continue
+    if not processes:
+        return {**status, "error": "delegate process identity is not yet available; retry cancellation"}
+    terminal = execution_journal.terminalize_durable_execution(execution_id, DELEGATE_JOB_KILLED_STATE)
+    if terminal["state"] != DELEGATE_JOB_KILLED_STATE:
+        return read_delegate_job_result(job_id)
+    grace = float(config._cfg_get("delegate", "cancel_grace_s", DELEGATE_JOB_CANCEL_GRACE_DEFAULT_S))
+    try:
+        for process in processes.values():
+            try:
+                process.kill() if force else process.terminate()
+            except psutil.NoSuchProcess:
+                pass
+        _, alive = psutil.wait_procs(list(processes.values()), timeout=grace)
+        for process in alive:
+            process.kill()
+        _, surviving = psutil.wait_procs(alive, timeout=grace)
+    except psutil.Error as error:
+        return {**status, "error": f"delegate termination failed: {error}"}
+    if surviving:
+        return {**status, "error": "delegate termination unconfirmed"}
+    finish_delegate_job(job_id, state=DELEGATE_JOB_KILLED_STATE, terminal_reason=DELEGATE_JOB_CANCEL_REASON)
+    return read_delegate_job_result(job_id)
 
 
 def find_inflight_delegate_job(task_fingerprint, cwd):
