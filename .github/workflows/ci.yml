@@ -4,6 +4,9 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
 env:
   CI_TEST_VENV: .venv
   CI_TEST_CACHE_REVISION: gate-env-v1
@@ -14,6 +17,11 @@ env:
   CI_GATE_ARTIFACT_PREFIX: coverage
   CI_GATE_ARTIFACT_ROOT: coverage-artifacts
   CI_GATE_COVERAGE_INVENTORY: gate-coverage-manifest.json
+  CI_READINESS_ARTIFACT_PREFIX: readiness-environment
+  CI_READINESS_EVIDENCE_ROOT: readiness-evidence
+  CI_READINESS_ENVIRONMENT_REPORT: readiness-environments.json
+  CI_READINESS_INSTALL_REPORT: readiness-installation.json
+  CI_OFFLINE_PROXY: http://127.0.0.1:9
   # Warm with network before the runner's dead proxy is enabled; subprocesses inherit this cache.
   TIKTOKEN_CACHE_DIR: ${{ github.workspace }}/.tiktoken-cache
 
@@ -23,8 +31,8 @@ jobs:
     outputs:
       shards: ${{ steps.plan.outputs.shards }}
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
         with:
           python-version: "3.11"
       - id: plan
@@ -40,17 +48,17 @@ jobs:
     env:
       SPENDGUARD_GATE_SHARD_INDEX: ${{ matrix.shard-index }}
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
         id: python
         with:
           python-version: ${{ matrix.python-version }}
-      - uses: astral-sh/setup-uv@v10.3.2
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           enable-cache: true
           cache-dependency-glob: pyproject.toml
       - name: Cache resolved environment and tiktoken vocabulary
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: |
             ${{ env.CI_TEST_VENV }}
@@ -66,6 +74,7 @@ jobs:
           # deterministic — a backtracking resolve once pulled pydantic 1.x and broke `import anthropic` (httpx2.Timeout).
           # Refresh the editable install even on a cache hit, so checkout metadata always matches the current tree.
           uv pip install --python "${CI_TEST_VENV}/bin/python" -e "$CI_TEST_EXTRAS" "$CI_PYDANTIC_FLOOR"
+          "${CI_TEST_VENV}/bin/spendguard" install-hook --venv "$CI_TEST_VENV"
       - name: Provision the declared build backend for offline consumers
         run: |
           # The install-hook regression creates a consumer with --system-site-packages. A venv created by this
@@ -92,7 +101,7 @@ jobs:
       - name: Snapshot every coverage input before transport
         run: python tests/_gate_shard_plan.py snapshot-coverage --directory "$GITHUB_WORKSPACE" --inventory-name "$CI_GATE_COVERAGE_INVENTORY"
       - name: Upload complete shard coverage and case report
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: ${{ env.CI_GATE_ARTIFACT_PREFIX }}-${{ matrix.python-version }}-${{ matrix.shard-index }}
           include-hidden-files: true
@@ -111,31 +120,33 @@ jobs:
       matrix:
         python-version: ["3.11", "3.12"]
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
         id: python
         with:
           python-version: ${{ matrix.python-version }}
-      - uses: astral-sh/setup-uv@v10.3.2
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           enable-cache: true
           cache-dependency-glob: pyproject.toml
       - name: Cache resolved environment and tiktoken vocabulary
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: |
             ${{ env.CI_TEST_VENV }}
             ${{ env.TIKTOKEN_CACHE_DIR }}
           key: ${{ env.CI_TEST_CACHE_REVISION }}-${{ runner.os }}-${{ runner.arch }}-${{ steps.python.outputs.python-version }}-${{ hashFiles('pyproject.toml', '.github/workflows/ci.yml') }}
-      - name: Install the same coverage environment
+      - name: Install the same coverage environment freshly for independent evidence
         run: |
-          if [ ! -x "${CI_TEST_VENV}/bin/python" ]; then
-            uv venv --python "${{ steps.python.outputs.python-path }}" "$CI_TEST_VENV"
-          fi
+          uv venv --clear --python "${{ steps.python.outputs.python-path }}" "$CI_TEST_VENV"
           echo "${PWD}/${CI_TEST_VENV}/bin" >> "$GITHUB_PATH"
           uv pip install --python "${CI_TEST_VENV}/bin/python" -e "$CI_TEST_EXTRAS" "$CI_PYDANTIC_FLOOR"
+          "${CI_TEST_VENV}/bin/python" -c 'import json, os, pathlib, sys; pathlib.Path(os.environ["CI_READINESS_INSTALL_REPORT"]).write_text(json.dumps({"interpreter": sys.executable, "clean": True, "installation_exit_code": 0}))'
+          "${CI_TEST_VENV}/bin/spendguard" install-hook --venv "$CI_TEST_VENV"
+      - name: Verify the same interpreter enforces spend governance
+        run: spendguard doctor
       - name: Download every shard for this Python version
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           pattern: ${{ env.CI_GATE_ARTIFACT_PREFIX }}-${{ matrix.python-version }}-*
           path: ${{ env.CI_GATE_ARTIFACT_ROOT }}
@@ -150,3 +161,57 @@ jobs:
           # by design; the core is where correctness must be proven. Measured locally: package ~70%, core ~81%.
           coverage report --fail-under=40
           coverage report --fail-under=78 --include="*/gate.py,*/guard.py,*/budget.py,*/reconcile.py,*/ledger_sync.py,*/pricing.py,*/attribution.py,*/adapters.py,*/tag.py,*/backfill.py,*/deid.py,*/litellm_adapter.py,*/bedrock_adapter.py"
+      - name: Record complete clean-environment readiness evidence (offline)
+        env:
+          HTTP_PROXY: ${{ env.CI_OFFLINE_PROXY }}
+          HTTPS_PROXY: ${{ env.CI_OFFLINE_PROXY }}
+          ALL_PROXY: ${{ env.CI_OFFLINE_PROXY }}
+          http_proxy: ${{ env.CI_OFFLINE_PROXY }}
+          https_proxy: ${{ env.CI_OFFLINE_PROXY }}
+          all_proxy: ${{ env.CI_OFFLINE_PROXY }}
+          NO_PROXY: ""
+          no_proxy: ""
+          PIP_NO_INDEX: "1"
+        run: python scripts/test/readiness_environment_evidence.py record --clean-install-report "$CI_READINESS_INSTALL_REPORT" --output "$CI_READINESS_EVIDENCE_ROOT"
+      - name: Upload complete readiness logs and hashes
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: ${{ env.CI_READINESS_ARTIFACT_PREFIX }}-${{ matrix.python-version }}
+          path: ${{ env.CI_READINESS_EVIDENCE_ROOT }}
+          if-no-files-found: error
+
+  readiness:
+    needs: coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+      - name: Install the same gated verification environment
+        run: |
+          uv venv "$CI_TEST_VENV"
+          echo "${PWD}/${CI_TEST_VENV}/bin" >> "$GITHUB_PATH"
+          uv pip install --python "${CI_TEST_VENV}/bin/python" -e "$CI_TEST_EXTRAS" "$CI_PYDANTIC_FLOOR"
+          "${CI_TEST_VENV}/bin/spendguard" install-hook --venv "$CI_TEST_VENV"
+      - name: Download both Python environments and complete evidence
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          pattern: ${{ env.CI_READINESS_ARTIFACT_PREFIX }}-*
+          path: ${{ env.CI_READINESS_EVIDENCE_ROOT }}
+          merge-multiple: false
+      - name: Verify artifact integrity and merge environment evidence
+        run: python scripts/test/readiness_environment_evidence.py merge --input "$CI_READINESS_EVIDENCE_ROOT" --output "$CI_READINESS_ENVIRONMENT_REPORT"
+      - name: Blocking offline capability readiness gate
+        env:
+          HTTP_PROXY: ${{ env.CI_OFFLINE_PROXY }}
+          HTTPS_PROXY: ${{ env.CI_OFFLINE_PROXY }}
+          ALL_PROXY: ${{ env.CI_OFFLINE_PROXY }}
+          http_proxy: ${{ env.CI_OFFLINE_PROXY }}
+          https_proxy: ${{ env.CI_OFFLINE_PROXY }}
+          all_proxy: ${{ env.CI_OFFLINE_PROXY }}
+          NO_PROXY: ""
+          no_proxy: ""
+          PIP_NO_INDEX: "1"
+        run: spendguard selfcheck --environment-report "$CI_READINESS_ENVIRONMENT_REPORT"
