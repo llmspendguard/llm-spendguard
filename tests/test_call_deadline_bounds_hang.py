@@ -3,12 +3,12 @@
 The SDK's httpx timeout is per-read, so a long high-reasoning body that trickles evades it and blocks the caller
 indefinitely. adapters._call_once now runs each completion through a wall-clock-bounded worker (_bounded_create):
 on timeout it closes the client (cancelling the request) and returns a clean deadline error instead of hanging.
-Pins:
-  · a create() that sleeps far past timeout_s → _call_once RETURNS within ~timeout_s (not the full sleep), with an
+Pins on a controlled worker timeline (no real sleeps or wall-clock margins):
+  · a create() pending far past timeout_s → _call_once joins and closes AT timeout_s, with an
     error, and the client was CLOSED (request cancelled → billing stops)
   · a fast create() → returns normally with EXACT usage (no streaming, no token-count guess, no cost regression)
 """
-import os, sys, tempfile, time, types
+import os, sys, tempfile, types
 if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
     os.environ["SPENDGUARD_TEST_ISOLATED"] = "1"
     os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="spendguard-test-")
@@ -20,6 +20,13 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
 
 import openai
 from spendguard import adapters, config, vendor_call
+from deadline_test_timeline import AdapterDeadlineTimeline
+
+DEADLINE_BOUND_S = 1.0  # Synthetic deadline; independent of host scheduling.
+PROVIDER_PENDING_S = DEADLINE_BOUND_S * 10
+FAST_CALL_BOUND_S = PROVIDER_PENDING_S * 3
+_timeline = AdapterDeadlineTimeline()
+adapters.threading = _timeline.thread_facade(adapters.threading)
 
 _fails = []
 def check(label, cond):
@@ -33,13 +40,12 @@ _CLOSED = {"v": False}
 
 
 class _FakeClient:
-    """Stands in for the OpenAI SDK client: its chat.completions.create sleeps `_DELAY` before returning a normal
-    completion, and .close() records that the request was cancelled."""
+    """SDK double: completion yields to a controlled timeline; close records cancellation."""
     def __init__(self, **_kw):
         pass
 
     def _create(self, **_kw):
-        time.sleep(_DELAY["v"])
+        _timeline.provider_delay(_DELAY["v"])
         return types.SimpleNamespace(
             choices=[types.SimpleNamespace(message=types.SimpleNamespace(content="ok"), finish_reason="stop")],
             usage=types.SimpleNamespace(prompt_tokens=5, completion_tokens=3))
@@ -49,6 +55,7 @@ class _FakeClient:
         return types.SimpleNamespace(completions=types.SimpleNamespace(create=self._create))
 
     def close(self):
+        _timeline.client_closed()
         _CLOSED["v"] = True
 
 
@@ -56,13 +63,13 @@ openai.OpenAI = lambda **kw: _FakeClient()                 # every _call_once cl
 config.api_key = lambda name: "sk-fake"                    # a truthy key so _call_once reaches the client
 vendor_call.served_check = lambda prov, raw: "unchecked"   # skip the live-catalog preflight (no network in the test)
 
-print("-- a create() that hangs 10s is bounded at timeout_s=1 (returns fast, error, client closed) --")
-_DELAY["v"] = 10.0
+print("-- a synthetic pending create is torn down exactly at its deadline --")
+_DELAY["v"] = PROVIDER_PENDING_S
 _CLOSED["v"] = False
-t0 = time.time()
-r = adapters._call_once("openai:gpt-5.5", "hi", max_tokens=100, timeout_s=1)
-elapsed = time.time() - t0
-check("returned within ~timeout_s, not the 10s hang", elapsed < 4.0)
+t0 = _timeline.now
+r = adapters._call_once("openai:gpt-5.5", "hi", max_tokens=100, timeout_s=DEADLINE_BOUND_S)
+check("worker joined exactly at the deadline", _timeline.joins == [DEADLINE_BOUND_S])
+check("client closed exactly at the deadline", _timeline.closed_at == [t0 + DEADLINE_BOUND_S])
 check("returned an error (did not hang, did not fabricate a result)", bool(r.get("error")))
 check("the error is a deadline", "deadline" in (r.get("error") or "").lower() or r.get("error_type") == "_CallDeadline")
 check("the client was CLOSED (in-flight request cancelled → billing stops)", _CLOSED["v"] is True)
@@ -71,7 +78,7 @@ check("no text was invented for the timed-out call", not r.get("text"))
 print("-- a fast create() returns normally with EXACT usage (no cost regression) --")
 _DELAY["v"] = 0.0
 _CLOSED["v"] = False
-r2 = adapters._call_once("openai:gpt-5.5", "hi", max_tokens=100, timeout_s=30)
+r2 = adapters._call_once("openai:gpt-5.5", "hi", max_tokens=100, timeout_s=FAST_CALL_BOUND_S)
 check("fast call succeeded", r2.get("error") is None and r2.get("text") == "ok")
 check("usage is exact (from the completion, not a guess)", r2.get("in_tok") == 5 and r2.get("out_tok") == 3)
 check("a fast call did NOT close the client", _CLOSED["v"] is False)
@@ -93,7 +100,7 @@ class _FakeAnthStream:
         return False
 
     def get_final_message(self):
-        time.sleep(_DELAY["v"])
+        _timeline.provider_delay(_DELAY["v"])
         return types.SimpleNamespace(
             content=[types.SimpleNamespace(type="text", text="ok")],
             usage=types.SimpleNamespace(input_tokens=5, output_tokens=3), stop_reason="end_turn")
@@ -108,19 +115,22 @@ class _FakeAnthropic:
         return types.SimpleNamespace(stream=lambda **kw: _FakeAnthStream())
 
     def close(self):
+        _timeline.client_closed()
         _CLOSED["v"] = True
 
 
 anthropic.Anthropic = lambda **kw: _FakeAnthropic()
-_DELAY["v"] = 10.0
+_DELAY["v"] = PROVIDER_PENDING_S
 _CLOSED["v"] = False
-t0 = time.time()
-ra = adapters._call_once("anthropic:claude-opus-4-8", "hi", max_tokens=100, timeout_s=1)
-check("anthropic hang bounded within ~timeout_s", (time.time() - t0) < 4.0 and bool(ra.get("error")))
+t0 = _timeline.now
+ra = adapters._call_once("anthropic:claude-opus-4-8", "hi", max_tokens=100, timeout_s=DEADLINE_BOUND_S)
+check("anthropic hang joins and closes exactly at deadline",
+      _timeline.joins[-1] == DEADLINE_BOUND_S and _timeline.closed_at[-1] == t0 + DEADLINE_BOUND_S)
+check("anthropic returns a deadline error", ra.get("error_type") == "_CallDeadline")
 check("anthropic client closed on the deadline", _CLOSED["v"] is True)
 _DELAY["v"] = 0.0
 _CLOSED["v"] = False
-ra2 = adapters._call_once("anthropic:claude-opus-4-8", "hi", max_tokens=100, timeout_s=30)
+ra2 = adapters._call_once("anthropic:claude-opus-4-8", "hi", max_tokens=100, timeout_s=FAST_CALL_BOUND_S)
 check("fast anthropic call succeeds with exact usage", ra2.get("error") is None and ra2.get("text") == "ok"
       and ra2.get("in_tok") == 5 and ra2.get("out_tok") == 3)
 

@@ -7,6 +7,7 @@ import subprocess
 import sys
 import time
 import tempfile
+from types import SimpleNamespace
 from pathlib import Path
 
 import pytest
@@ -24,9 +25,24 @@ DURABLE_REPRO_CHILD_WAIT_S = 30
 DURABLE_REPRO_LIFECYCLE_TARGET = "lifecycle"
 
 
+def install_controlled_durable_observer_spawn(monkeypatch):
+    """Remove detached interpreter startup latency from these offline unit tests."""
+    def prepare_controlled_durable_observer(command, **kwargs):
+        if command[1:3] != ["-m", execution_journal.__name__]:
+            return subprocess.Popen(command, **kwargs)
+        observer_directory = Path(command[4]) / command[3]
+        (observer_directory / execution_journal.EXECUTION_OBSERVER_READY_FILENAME).touch()
+        return SimpleNamespace(poll=lambda: None)
+
+    monkeypatch.setattr(execution_journal, "subprocess", SimpleNamespace(
+        **{name: getattr(subprocess, name) for name in dir(subprocess)
+           if not name.startswith("__") and name != "Popen"}, Popen=prepare_controlled_durable_observer))
+
+
 def test_envelope_failure_after_output_preserves_complete_delegate_evidence(tmp_path, monkeypatch):
     if execution_journal is not None:
         monkeypatch.setattr(execution_journal, "durable_execution_store_root", lambda: tmp_path)
+        install_controlled_durable_observer_spawn(monkeypatch)
     monkeypatch.setattr(codex_exec, "_bin", lambda: sys.executable)
     monkeypatch.setattr(codex_exec.config if hasattr(codex_exec, "config") else
                         __import__("spendguard.config", fromlist=["config"]),
@@ -92,19 +108,29 @@ def test_killed_delegate_owner_gets_one_terminal_and_normal_completion_is_once(t
         return
     monkeypatch.setattr(execution_journal, "durable_execution_store_root", lambda: tmp_path)
     monkeypatch.setenv("SPENDGUARD_EXECUTION_WATCH_INTERVAL_S", str(DURABLE_REPRO_POLL_S))
-    child = subprocess.Popen([sys.executable, "-c", "import sys,time; time.sleep(float(sys.argv[1]))",
-                              str(DURABLE_REPRO_CHILD_WAIT_S)])
+    # Pipe ownership, rather than a sleep, keeps the owner alive until this test
+    # explicitly kills it even when CI pauses the parent for an arbitrary time.
+    child = subprocess.Popen([sys.executable, "-c", "import sys; sys.stdin.read()"], stdin=subprocess.PIPE)
     try:
+        # Exercise the observer below in this process on a controlled next poll.
+        install_controlled_durable_observer_spawn(monkeypatch)
         dispatch_id = execution_journal.begin_durable_execution({"owner_pid": child.pid})
-        child.kill()
-        child.wait(timeout=DURABLE_REPRO_WATCH_BOUND_S)
+
+        observer_polls = []
+
+        def advance_durable_owner_death(interval):
+            observer_polls.append(interval)
+            assert len(observer_polls) == 1, "observer failed to terminalize a dead owner on its next poll"
+            child.kill()
+            child.wait()
+
+        monkeypatch.setattr(execution_journal, "time", SimpleNamespace(
+            **{name: getattr(time, name) for name in dir(time)
+               if not name.startswith("__") and name != "sleep"}, sleep=advance_durable_owner_death))
+        execution_journal._observe_durable_execution(dispatch_id, tmp_path, DURABLE_REPRO_POLL_S)
+        assert observer_polls == [DURABLE_REPRO_POLL_S]
         event_path = tmp_path / dispatch_id / execution_journal.EXECUTION_EVENTS_FILENAME
-        deadline = time.monotonic() + DURABLE_REPRO_WATCH_BOUND_S
-        while time.monotonic() < deadline:
-            events = [json.loads(line) for line in event_path.read_text().splitlines()]
-            if any(row["phase"] == "end" for row in events):
-                break
-            time.sleep(DURABLE_REPRO_POLL_S)
+        events = [json.loads(line) for line in event_path.read_text().splitlines()]
         assert sum(row["phase"] == "start" for row in events) == 1
         assert sum(row["phase"] == "end" for row in events) == 1
         assert execution_journal.recover_durable_execution(dispatch_id)["state"] == "lost"
@@ -127,6 +153,7 @@ def test_killed_delegate_owner_gets_one_terminal_and_normal_completion_is_once(t
         if child.poll() is None:
             child.kill()
             child.wait(timeout=DURABLE_REPRO_WATCH_BOUND_S)
+        child.stdin.close()
 
 
 if __name__ == "__main__":
