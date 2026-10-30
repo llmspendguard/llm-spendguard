@@ -9,12 +9,18 @@ from spendguard.architectural_fitness import (
     measure_architectural_complexity,
     measure_architectural_duplication,
     run_architectural_fitness_gate,
+    select_architectural_interpreter_baseline,
 )
 
 ARCHITECTURAL_FIXTURE_CORE = "fixture_foundation"
 ARCHITECTURAL_FIXTURE_APPLICATION = "fixture_application"
 ARCHITECTURAL_FIXTURE_CLEAN_CORE = "def fixture_foundation_identity(value: int) -> int:\n    return value\n"
 ARCHITECTURAL_FIXTURE_CLEAN_APPLICATION = "def fixture_application_identity(value: str) -> str:\n    return value\n"
+ARCHITECTURAL_FIXTURE_NESTED_COMPLEXITY = "\n".join((
+    "def fixture_foundation_identity(value: int) -> int:",
+    "    def fixture_nested_branch(argument):", "        if argument:",
+    "            return argument", "        return 0", "    return fixture_nested_branch(value)",
+)) + "\n"
 ARCHITECTURAL_FIXTURE_MI_REGRESSION = "\n".join((
     "def fixture_foundation_identity(value: int) -> int:",
     "    value = value + value", "    value = value * value",
@@ -55,10 +61,7 @@ def test_architectural_violation_red_then_restored_green(tmp_path, architectural
     settings["recorded_cyclic_edges"] = []
     settings["dead_allowlist"] = []
     settings["type_scope"] = [core.relative_to(tmp_path).as_posix()]
-    settings["complexity"] = {
-        "files": measure_architectural_complexity(tmp_path, settings),
-        "new_file_limits": settings["complexity"]["new_file_limits"],
-    }
+    select_architectural_interpreter_baseline(settings)["files"] = measure_architectural_complexity(tmp_path, settings)
     settings["duplication"] = measure_architectural_duplication(tmp_path, settings)
     (package / "architectural_fitness_baseline.json").write_text(json.dumps(settings))
     context = {"repo_root": tmp_path}
@@ -74,15 +77,37 @@ def test_architectural_violation_red_then_restored_green(tmp_path, architectural
     application.write_text(ARCHITECTURAL_FIXTURE_CLEAN_APPLICATION)
     restored = run_architectural_fitness_gate(context=context, invariant=architectural_invariant)
     assert restored.status == "PASS", restored
+    if architectural_invariant == "layers":
+        core.write_text("import spendguard\n" + ARCHITECTURAL_FIXTURE_CLEAN_CORE)
+        assert run_architectural_fitness_gate(context=context, invariant=architectural_invariant).status == "FAIL"
+        core.write_text(ARCHITECTURAL_FIXTURE_CLEAN_CORE)
+        assert run_architectural_fitness_gate(context=context, invariant=architectural_invariant).status == "PASS"
     if architectural_invariant == "complexity":
+        core.write_text(ARCHITECTURAL_FIXTURE_NESTED_COMPLEXITY)
+        nested_metrics = measure_architectural_complexity(tmp_path, settings)[core.relative_to(tmp_path).as_posix()]
+        nested_baseline = select_architectural_interpreter_baseline(settings)["files"][core.relative_to(tmp_path).as_posix()]
+        assert nested_metrics["max_cc"] > nested_baseline["max_cc"]
+        assert run_architectural_fitness_gate(context=context, invariant=architectural_invariant).status == "FAIL"
+        core.write_text(ARCHITECTURAL_FIXTURE_CLEAN_CORE)
+        assert run_architectural_fitness_gate(context=context, invariant=architectural_invariant).status == "PASS"
         core.write_text(ARCHITECTURAL_FIXTURE_MI_REGRESSION)
         mi_metrics = measure_architectural_complexity(tmp_path, settings)[core.relative_to(tmp_path).as_posix()]
-        mi_baseline = settings["complexity"]["files"][core.relative_to(tmp_path).as_posix()]
+        mi_baseline = select_architectural_interpreter_baseline(settings)["files"][core.relative_to(tmp_path).as_posix()]
         assert mi_metrics["max_cc"] == mi_baseline["max_cc"]
         assert mi_metrics["mi"] < mi_baseline["mi"]
         assert run_architectural_fitness_gate(context=context, invariant=architectural_invariant).status == "FAIL"
         core.write_text(ARCHITECTURAL_FIXTURE_CLEAN_CORE)
         assert run_architectural_fitness_gate(context=context, invariant=architectural_invariant).status == "PASS"
+        unreviewed_source = package / "fixture_unreviewed_source.py"
+        unreviewed_source.write_text(ARCHITECTURAL_FIXTURE_CLEAN_CORE)
+        assert run_architectural_fitness_gate(context=context, invariant=architectural_invariant).status == "FAIL"
+        unreviewed_source.unlink()
+        assert run_architectural_fitness_gate(context=context, invariant=architectural_invariant).status == "PASS"
+        settings["complexity"]["interpreters"] = {}
+        (package / "architectural_fitness_baseline.json").write_text(json.dumps(settings))
+        unsupported = run_architectural_fitness_gate(context=context, invariant=architectural_invariant)
+        assert unsupported.status == "FAIL"
+        assert "No reviewed architectural complexity baseline" in unsupported.detail
 
 
 if __name__ == "__main__":

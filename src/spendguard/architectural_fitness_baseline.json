@@ -61,863 +61,1728 @@
   ],
   "type_scope_reason": "Existing annotated immutable CLI data model passes mypy with normal diagnostics. Follow-imports skip isolates this explicitly recorded surface; it does not claim typing of transitive application imports or full-package coverage.",
   "complexity": {
-    "files": {
-      "src/spendguard/__init__.py": {
-        "max_cc": 7,
-        "mi": 69.9898864455406
-      },
-      "src/spendguard/__main__.py": {
-        "max_cc": 0,
-        "mi": 100.0
-      },
-      "src/spendguard/_version.py": {
-        "max_cc": 0,
-        "mi": 100.0
-      },
-      "src/spendguard/adapters.py": {
-        "max_cc": 247,
-        "mi": 0.0
-      },
-      "src/spendguard/advise.py": {
-        "max_cc": 40,
-        "mi": 44.43638545378985
-      },
-      "src/spendguard/advisor.py": {
-        "max_cc": 16,
-        "mi": 38.51178040983324
-      },
-      "src/spendguard/agent_spawn_gate.py": {
-        "max_cc": 23,
-        "mi": 25.313654305147914
-      },
-      "src/spendguard/anomaly.py": {
-        "max_cc": 7,
-        "mi": 71.02439595935184
-      },
-      "src/spendguard/antigravity_exec.py": {
-        "max_cc": 18,
-        "mi": 50.48267079784406
-      },
-      "src/spendguard/architectural_fitness.py": {
-        "max_cc": 28,
-        "mi": 22.299457819866202
-      },
-      "src/spendguard/attribution.py": {
-        "max_cc": 26,
-        "mi": 58.04126694582299
-      },
-      "src/spendguard/audit.py": {
-        "max_cc": 19,
-        "mi": 58.43745075341389
-      },
-      "src/spendguard/backfill.py": {
-        "max_cc": 11,
-        "mi": 61.588119443987694
-      },
-      "src/spendguard/bakeoff.py": {
-        "max_cc": 70,
-        "mi": 37.37718121692871
-      },
-      "src/spendguard/balances.py": {
-        "max_cc": 17,
-        "mi": 44.30921065898892
-      },
-      "src/spendguard/batch_tracker.py": {
-        "max_cc": 37,
-        "mi": 30.431804375621986
-      },
-      "src/spendguard/bedrock_adapter.py": {
-        "max_cc": 11,
-        "mi": 70.88212201841873
-      },
-      "src/spendguard/best_value.py": {
-        "max_cc": 27,
-        "mi": 52.868440332551494
-      },
-      "src/spendguard/bootstrap.py": {
-        "max_cc": 13,
-        "mi": 72.02971239415386
-      },
-      "src/spendguard/brief.py": {
-        "max_cc": 18,
-        "mi": 54.67631828897556
-      },
-      "src/spendguard/budget.py": {
-        "max_cc": 35,
-        "mi": 0.0
-      },
-      "src/spendguard/bulk_resilience.py": {
-        "max_cc": 14,
-        "mi": 52.61899109664354
-      },
-      "src/spendguard/bulkgate.py": {
-        "max_cc": 35,
-        "mi": 5.594718570362755
-      },
-      "src/spendguard/cacheaudit.py": {
-        "max_cc": 14,
-        "mi": 50.42783901471761
-      },
-      "src/spendguard/cachetest.py": {
-        "max_cc": 33,
-        "mi": 51.39788798944255
-      },
-      "src/spendguard/calibrate.py": {
-        "max_cc": 24,
-        "mi": 12.468441018546837
-      },
-      "src/spendguard/callio.py": {
-        "max_cc": 42,
-        "mi": 7.223110308092494
-      },
-      "src/spendguard/calls.py": {
-        "max_cc": 69,
-        "mi": 6.504533204651048
-      },
-      "src/spendguard/capability_cli_callable_generation.py": {
-        "max_cc": 13,
-        "mi": 37.58336861905931
-      },
-      "src/spendguard/capability_cli_dispatch_generation.py": {
-        "max_cc": 8,
-        "mi": 53.97046924166878
-      },
-      "src/spendguard/capability_cli_help_generation.py": {
-        "max_cc": 22,
-        "mi": 36.093111638350656
-      },
-      "src/spendguard/capability_cli_parsing.py": {
-        "max_cc": 2,
-        "mi": 91.83827677759479
-      },
-      "src/spendguard/capability_cli_projection_models.py": {
-        "max_cc": 8,
-        "mi": 46.85612602890927
-      },
-      "src/spendguard/capability_documentation.py": {
-        "max_cc": 15,
-        "mi": 38.378263955416635
-      },
-      "src/spendguard/capability_readiness.py": {
-        "max_cc": 14,
-        "mi": 43.465096414953436
-      },
-      "src/spendguard/capability_readiness_gates.py": {
-        "max_cc": 14,
-        "mi": 47.38754686040469
-      },
-      "src/spendguard/capability_registry.py": {
-        "max_cc": 7,
-        "mi": 49.31401479219315
-      },
-      "src/spendguard/capability_surface_generation.py": {
-        "max_cc": 18,
-        "mi": 21.647400062518287
-      },
-      "src/spendguard/cascade.py": {
-        "max_cc": 25,
-        "mi": 59.17462817490093
-      },
-      "src/spendguard/catalog.py": {
-        "max_cc": 21,
-        "mi": 50.238695321746754
-      },
-      "src/spendguard/catalog_price_authoring.py": {
-        "max_cc": 27,
-        "mi": 45.32940101337756
-      },
-      "src/spendguard/chat.py": {
-        "max_cc": 49,
-        "mi": 0.0
-      },
-      "src/spendguard/claudecode.py": {
-        "max_cc": 51,
-        "mi": 0.0
-      },
-      "src/spendguard/cli.py": {
-        "max_cc": 38,
-        "mi": 0.0
-      },
-      "src/spendguard/cli_arguments.py": {
-        "max_cc": 3,
-        "mi": 71.93900342409701
-      },
-      "src/spendguard/close.py": {
-        "max_cc": 13,
-        "mi": 58.5433270588104
-      },
-      "src/spendguard/codex.py": {
-        "max_cc": 29,
-        "mi": 30.558800631498286
-      },
-      "src/spendguard/codex_broker_owner.py": {
-        "max_cc": 3,
-        "mi": 44.03143459396765
-      },
-      "src/spendguard/codex_daemon.py": {
-        "max_cc": 44,
-        "mi": 9.250773621857721
-      },
-      "src/spendguard/codex_daemon_broker.py": {
-        "max_cc": 17,
-        "mi": 21.026037017456613
-      },
-      "src/spendguard/codex_exec.py": {
-        "max_cc": 17,
-        "mi": 19.534603646990497
-      },
-      "src/spendguard/compaction.py": {
-        "max_cc": 18,
-        "mi": 33.75318788170465
-      },
-      "src/spendguard/compare.py": {
-        "max_cc": 27,
-        "mi": 69.39536668279646
-      },
-      "src/spendguard/comprehend.py": {
-        "max_cc": 22,
-        "mi": 50.727161149870575
-      },
-      "src/spendguard/config.py": {
-        "max_cc": 23,
-        "mi": 0.0
-      },
-      "src/spendguard/config_schema.py": {
-        "max_cc": 2,
-        "mi": 74.84839778755519
-      },
-      "src/spendguard/consumer_audit.py": {
-        "max_cc": 42,
-        "mi": 7.788017310654354
-      },
-      "src/spendguard/content_compression.py": {
-        "max_cc": 5,
-        "mi": 56.53456645354608
-      },
-      "src/spendguard/content_compression_backfill.py": {
-        "max_cc": 6,
-        "mi": 50.23900143419558
-      },
-      "src/spendguard/content_retention.py": {
-        "max_cc": 8,
-        "mi": 54.53311488559375
-      },
-      "src/spendguard/content_tokens.py": {
-        "max_cc": 17,
-        "mi": 39.62361733337912
-      },
-      "src/spendguard/conv.py": {
-        "max_cc": 38,
-        "mi": 0.0
-      },
-      "src/spendguard/cost_integrity.py": {
-        "max_cc": 19,
-        "mi": 51.73449640078443
-      },
-      "src/spendguard/coverage.py": {
-        "max_cc": 16,
-        "mi": 44.427822068294915
-      },
-      "src/spendguard/crossllm.py": {
-        "max_cc": 27,
-        "mi": 38.22041457736147
-      },
-      "src/spendguard/deid.py": {
-        "max_cc": 11,
-        "mi": 61.206448796592674
-      },
-      "src/spendguard/delegate_jobs.py": {
-        "max_cc": 11,
-        "mi": 32.990085603863996
-      },
-      "src/spendguard/delegate_router.py": {
-        "max_cc": 37,
-        "mi": 2.9929123617153315
-      },
-      "src/spendguard/disk_guard.py": {
-        "max_cc": 5,
-        "mi": 83.52736160445481
-      },
-      "src/spendguard/dispatch.py": {
-        "max_cc": 23,
-        "mi": 0.0
-      },
-      "src/spendguard/distribution.py": {
-        "max_cc": 76,
-        "mi": 0.0
-      },
-      "src/spendguard/distribution_daemon.py": {
-        "max_cc": 20,
-        "mi": 37.674605747396626
-      },
-      "src/spendguard/effort_titration.py": {
-        "max_cc": 34,
-        "mi": 32.6940631176573
-      },
-      "src/spendguard/emit.py": {
-        "max_cc": 11,
-        "mi": 57.44704323569343
-      },
-      "src/spendguard/equivalence.py": {
-        "max_cc": 12,
-        "mi": 59.64239033958754
-      },
-      "src/spendguard/escalation_ladder.py": {
-        "max_cc": 12,
-        "mi": 61.13344146053853
-      },
-      "src/spendguard/estimate.py": {
-        "max_cc": 32,
-        "mi": 50.506173527922066
-      },
-      "src/spendguard/estimate_divergence.py": {
-        "max_cc": 12,
-        "mi": 69.00470814762058
-      },
-      "src/spendguard/estimate_literals.py": {
-        "max_cc": 20,
-        "mi": 61.17881979232424
-      },
-      "src/spendguard/execution_journal.py": {
-        "max_cc": 20,
-        "mi": 15.984776146268782
-      },
-      "src/spendguard/expected_output.py": {
-        "max_cc": 24,
-        "mi": 58.90544946287266
-      },
-      "src/spendguard/experiment.py": {
-        "max_cc": 32,
-        "mi": 35.098998371583306
-      },
-      "src/spendguard/external_standard_readiness.py": {
-        "max_cc": 77,
-        "mi": 18.093123319957947
-      },
-      "src/spendguard/fleet.py": {
-        "max_cc": 26,
-        "mi": 0.0
-      },
-      "src/spendguard/focus_export.py": {
-        "max_cc": 23,
-        "mi": 58.40270188659878
-      },
-      "src/spendguard/gate.py": {
-        "max_cc": 127,
-        "mi": 0.0
-      },
-      "src/spendguard/gpu_port.py": {
-        "max_cc": 23,
-        "mi": 48.25303760308668
-      },
-      "src/spendguard/guard.py": {
-        "max_cc": 14,
-        "mi": 31.76708361776414
-      },
-      "src/spendguard/history.py": {
-        "max_cc": 20,
-        "mi": 39.278100741257006
-      },
-      "src/spendguard/http_capture.py": {
-        "max_cc": 18,
-        "mi": 45.68247390578454
-      },
-      "src/spendguard/intent_model_prior.py": {
-        "max_cc": 19,
-        "mi": 57.89839645759348
-      },
-      "src/spendguard/item_ledger.py": {
-        "max_cc": 10,
-        "mi": 56.33061665308085
-      },
-      "src/spendguard/job_fingerprint.py": {
-        "max_cc": 11,
-        "mi": 65.19280790945399
-      },
-      "src/spendguard/keys_audit.py": {
-        "max_cc": 9,
-        "mi": 69.40525509641849
-      },
-      "src/spendguard/kimi_daemon.py": {
-        "max_cc": 30,
-        "mi": 53.46804979520682
-      },
-      "src/spendguard/kimi_exec.py": {
-        "max_cc": 24,
-        "mi": 44.95088065727963
-      },
-      "src/spendguard/lambda_adapter.py": {
-        "max_cc": 13,
-        "mi": 74.8997143705544
-      },
-      "src/spendguard/lane_balance.py": {
-        "max_cc": 117,
-        "mi": 0.0
-      },
-      "src/spendguard/lane_bandit.py": {
-        "max_cc": 17,
-        "mi": 34.82740812892309
-      },
-      "src/spendguard/lane_catalog.py": {
-        "max_cc": 10,
-        "mi": 54.23789137695661
-      },
-      "src/spendguard/lane_economics.py": {
-        "max_cc": 28,
-        "mi": 24.950450138602857
-      },
-      "src/spendguard/lane_eligibility.py": {
-        "max_cc": 8,
-        "mi": 63.97364202920713
-      },
-      "src/spendguard/lane_queue.py": {
-        "max_cc": 56,
-        "mi": 0.0
-      },
-      "src/spendguard/lane_quota.py": {
-        "max_cc": 9,
-        "mi": 75.27243660509514
-      },
-      "src/spendguard/lane_quota_cost.py": {
-        "max_cc": 21,
-        "mi": 31.86878938805318
-      },
-      "src/spendguard/lane_recovery.py": {
-        "max_cc": 12,
-        "mi": 49.05184957405596
-      },
-      "src/spendguard/lane_registry.py": {
-        "max_cc": 2,
-        "mi": 88.70953110460482
-      },
-      "src/spendguard/lane_servability.py": {
-        "max_cc": 15,
-        "mi": 42.483868661843154
-      },
-      "src/spendguard/lane_value.py": {
-        "max_cc": 20,
-        "mi": 42.880967725364876
-      },
-      "src/spendguard/lanes.py": {
-        "max_cc": 157,
-        "mi": 2.095677617495714
-      },
-      "src/spendguard/launchd_labels.py": {
-        "max_cc": 0,
-        "mi": 100.0
-      },
-      "src/spendguard/learn.py": {
-        "max_cc": 8,
-        "mi": 62.359954013078486
-      },
-      "src/spendguard/ledger.py": {
-        "max_cc": 49,
-        "mi": 0.0
-      },
-      "src/spendguard/ledger_deadletter.py": {
-        "max_cc": 24,
-        "mi": 29.928244183948888
-      },
-      "src/spendguard/ledger_deadline_polling.py": {
-        "max_cc": 3,
-        "mi": 85.66475876502862
-      },
-      "src/spendguard/ledger_fork_locks.py": {
-        "max_cc": 2,
-        "mi": 100.0
-      },
-      "src/spendguard/ledger_read.py": {
-        "max_cc": 27,
-        "mi": 0.0
-      },
-      "src/spendguard/ledger_request_cursor.py": {
-        "max_cc": 34,
-        "mi": 29.635702005503575
-      },
-      "src/spendguard/ledger_schema_migrations.py": {
-        "max_cc": 2,
-        "mi": 83.39741664222444
-      },
-      "src/spendguard/ledger_sync.py": {
-        "max_cc": 56,
-        "mi": 6.955544664201972
-      },
-      "src/spendguard/ledger_wal_maintenance.py": {
-        "max_cc": 10,
-        "mi": 55.74793093791554
-      },
-      "src/spendguard/ledger_writer.py": {
-        "max_cc": 18,
-        "mi": 24.736594780297587
-      },
-      "src/spendguard/litellm_adapter.py": {
-        "max_cc": 16,
-        "mi": 66.76088145475661
-      },
-      "src/spendguard/llm_files.py": {
-        "max_cc": 6,
-        "mi": 75.39097658823836
-      },
-      "src/spendguard/manifest.py": {
-        "max_cc": 23,
-        "mi": 29.865845273530482
-      },
-      "src/spendguard/mcp_fd_lifecycle.py": {
-        "max_cc": 14,
-        "mi": 36.04521807685376
-      },
-      "src/spendguard/mcp_server.py": {
-        "max_cc": 26,
-        "mi": 7.141417127958235
-      },
-      "src/spendguard/measurement.py": {
-        "max_cc": 19,
-        "mi": 36.18241532204339
-      },
-      "src/spendguard/metadata_audit.py": {
-        "max_cc": 18,
-        "mi": 57.378150229145675
-      },
-      "src/spendguard/migrate_charges.py": {
-        "max_cc": 32,
-        "mi": 60.949161846824126
-      },
-      "src/spendguard/modal_adapter.py": {
-        "max_cc": 9,
-        "mi": 70.70362044668978
-      },
-      "src/spendguard/model_catalog.py": {
-        "max_cc": 42,
-        "mi": 19.565472475180556
-      },
-      "src/spendguard/model_preflight.py": {
-        "max_cc": 18,
-        "mi": 57.84597250759811
-      },
-      "src/spendguard/models.py": {
-        "max_cc": 13,
-        "mi": 39.025561587411524
-      },
-      "src/spendguard/money_scale.py": {
-        "max_cc": 8,
-        "mi": 66.35068211769804
-      },
-      "src/spendguard/notify.py": {
-        "max_cc": 9,
-        "mi": 62.365455196795004
-      },
-      "src/spendguard/openai_batch_cli.py": {
-        "max_cc": 11,
-        "mi": 63.31893735110742
-      },
-      "src/spendguard/otel_ingest.py": {
-        "max_cc": 15,
-        "mi": 47.8920231927494
-      },
-      "src/spendguard/output_contract.py": {
-        "max_cc": 74,
-        "mi": 27.696371885958474
-      },
-      "src/spendguard/overage.py": {
-        "max_cc": 19,
-        "mi": 58.07724950175383
-      },
-      "src/spendguard/plan_admission.py": {
-        "max_cc": 20,
-        "mi": 52.01011956259717
-      },
-      "src/spendguard/pricing.py": {
-        "max_cc": 23,
-        "mi": 26.09609973405903
-      },
-      "src/spendguard/prompts.py": {
-        "max_cc": 69,
-        "mi": 42.1937791045013
-      },
-      "src/spendguard/provider_kit.py": {
-        "max_cc": 8,
-        "mi": 71.42390592091552
-      },
-      "src/spendguard/provider_plugins.py": {
-        "max_cc": 7,
-        "mi": 85.68059769720976
-      },
-      "src/spendguard/provider_tokens.py": {
-        "max_cc": 23,
-        "mi": 36.69155733755533
-      },
-      "src/spendguard/queue_planner.py": {
-        "max_cc": 22,
-        "mi": 45.710623967324935
-      },
-      "src/spendguard/realized.py": {
-        "max_cc": 16,
-        "mi": 59.47712586910378
-      },
-      "src/spendguard/realtime_oracle.py": {
-        "max_cc": 15,
-        "mi": 51.57809686307217
-      },
-      "src/spendguard/reasoning_equivalence.py": {
-        "max_cc": 18,
-        "mi": 46.47025113759904
-      },
-      "src/spendguard/receipt.py": {
-        "max_cc": 53,
-        "mi": 0.0
-      },
-      "src/spendguard/reconcile.py": {
-        "max_cc": 23,
-        "mi": 50.033651319260244
-      },
-      "src/spendguard/reconcile_anthropic.py": {
-        "max_cc": 13,
-        "mi": 56.902275325635486
-      },
-      "src/spendguard/reconcile_calls.py": {
-        "max_cc": 8,
-        "mi": 70.31522668360425
-      },
-      "src/spendguard/reconcile_estimate_stage.py": {
-        "max_cc": 14,
-        "mi": 50.333814925778796
-      },
-      "src/spendguard/reconcile_gap_ownership.py": {
-        "max_cc": 12,
-        "mi": 61.94786319237164
-      },
-      "src/spendguard/reconcile_maintenance_owner.py": {
-        "max_cc": 8,
-        "mi": 46.58232138616767
-      },
-      "src/spendguard/reconcile_openai.py": {
-        "max_cc": 24,
-        "mi": 53.821868942173104
-      },
-      "src/spendguard/refresh.py": {
-        "max_cc": 8,
-        "mi": 62.13286272494166
-      },
-      "src/spendguard/release.py": {
-        "max_cc": 13,
-        "mi": 55.98988472290109
-      },
-      "src/spendguard/reliability.py": {
-        "max_cc": 24,
-        "mi": 17.7048922886874
-      },
-      "src/spendguard/remote.py": {
-        "max_cc": 26,
-        "mi": 49.869055626025805
-      },
-      "src/spendguard/report.py": {
-        "max_cc": 33,
-        "mi": 38.13763319970016
-      },
-      "src/spendguard/requirement_judge.py": {
-        "max_cc": 10,
-        "mi": 66.56730370721212
-      },
-      "src/spendguard/residency_gate.py": {
-        "max_cc": 25,
-        "mi": 35.09598410966133
-      },
-      "src/spendguard/resource_state.py": {
-        "max_cc": 14,
-        "mi": 54.671288944145104
-      },
-      "src/spendguard/resources.py": {
-        "max_cc": 45,
-        "mi": 0.0
-      },
-      "src/spendguard/review.py": {
-        "max_cc": 12,
-        "mi": 49.0267487779889
-      },
-      "src/spendguard/route_economics.py": {
-        "max_cc": 29,
-        "mi": 39.53850196386189
-      },
-      "src/spendguard/route_horizon.py": {
-        "max_cc": 47,
-        "mi": 34.35506439931096
-      },
-      "src/spendguard/route_realized.py": {
-        "max_cc": 4,
-        "mi": 65.52491089544914
-      },
-      "src/spendguard/route_utility.py": {
-        "max_cc": 44,
-        "mi": 38.97136073734599
-      },
-      "src/spendguard/routing_audit.py": {
-        "max_cc": 14,
-        "mi": 36.06718623737245
-      },
-      "src/spendguard/runner.py": {
-        "max_cc": 9,
-        "mi": 70.08133675855753
-      },
-      "src/spendguard/runpod_adapter.py": {
-        "max_cc": 22,
-        "mi": 68.37130155170505
-      },
-      "src/spendguard/saas.py": {
-        "max_cc": 39,
-        "mi": 0.0
-      },
-      "src/spendguard/scan.py": {
-        "max_cc": 24,
-        "mi": 60.44379628718127
-      },
-      "src/spendguard/schedule.py": {
-        "max_cc": 14,
-        "mi": 59.72374201899231
-      },
-      "src/spendguard/schema_indexes.py": {
-        "max_cc": 14,
-        "mi": 44.054449735692515
-      },
-      "src/spendguard/semcache.py": {
-        "max_cc": 16,
-        "mi": 40.03484486801787
-      },
-      "src/spendguard/serve.py": {
-        "max_cc": 10,
-        "mi": 54.771829894576925
-      },
-      "src/spendguard/setup.py": {
-        "max_cc": 47,
-        "mi": 0.0
-      },
-      "src/spendguard/share.py": {
-        "max_cc": 10,
-        "mi": 57.064145261941704
-      },
-      "src/spendguard/signal.py": {
-        "max_cc": 22,
-        "mi": 52.382591807655835
-      },
-      "src/spendguard/source_compact.py": {
-        "max_cc": 16,
-        "mi": 64.0542185418841
-      },
-      "src/spendguard/sources.py": {
-        "max_cc": 23,
-        "mi": 45.305263949266305
-      },
-      "src/spendguard/stability.py": {
-        "max_cc": 31,
-        "mi": 63.60816196785601
-      },
-      "src/spendguard/storm_coalescer.py": {
-        "max_cc": 24,
-        "mi": 33.5630615814814
-      },
-      "src/spendguard/storm_route.py": {
-        "max_cc": 11,
-        "mi": 60.94003876928755
-      },
-      "src/spendguard/storm_submit.py": {
-        "max_cc": 8,
-        "mi": 57.58697740496773
-      },
-      "src/spendguard/submit.py": {
-        "max_cc": 26,
-        "mi": 25.357478823244634
-      },
-      "src/spendguard/subscription_exec.py": {
-        "max_cc": 26,
-        "mi": 52.549214777873864
-      },
-      "src/spendguard/subscription_headroom_surfaces.py": {
-        "max_cc": 9,
-        "mi": 47.012727758606715
-      },
-      "src/spendguard/sync.py": {
-        "max_cc": 20,
-        "mi": 50.999943394196876
-      },
-      "src/spendguard/sync_capabilities.py": {
-        "max_cc": 18,
-        "mi": 49.370334797050255
-      },
-      "src/spendguard/tag.py": {
-        "max_cc": 7,
-        "mi": 67.18510085275686
-      },
-      "src/spendguard/tier_config.py": {
-        "max_cc": 40,
-        "mi": 46.65539030471832
-      },
-      "src/spendguard/token_caps.py": {
-        "max_cc": 19,
-        "mi": 55.38819148712056
-      },
-      "src/spendguard/trust.py": {
-        "max_cc": 12,
-        "mi": 59.8805925070759
-      },
-      "src/spendguard/truth.py": {
-        "max_cc": 8,
-        "mi": 70.66515507498384
-      },
-      "src/spendguard/ui.py": {
-        "max_cc": 5,
-        "mi": 87.58974875656337
-      },
-      "src/spendguard/validate.py": {
-        "max_cc": 18,
-        "mi": 51.86366926798887
-      },
-      "src/spendguard/vendor_call.py": {
-        "max_cc": 43,
-        "mi": 5.548913231913586
-      },
-      "src/spendguard/verdict_ledger.py": {
-        "max_cc": 11,
-        "mi": 80.04986247715179
-      },
-      "src/spendguard/verify.py": {
-        "max_cc": 21,
-        "mi": 58.70752966938513
-      },
-      "src/spendguard/vertex_adapter.py": {
-        "max_cc": 10,
-        "mi": 54.93503788965597
-      },
-      "src/spendguard/warm_stdio_daemon.py": {
-        "max_cc": 15,
-        "mi": 23.962226863883735
-      },
-      "src/spendguard/weekly_cap_guard.py": {
-        "max_cc": 23,
-        "mi": 26.06034807848355
-      },
-      "src/spendguard/whole_job.py": {
-        "max_cc": 27,
-        "mi": 25.64598378308811
-      },
-      "src/spendguard/work_integrity.py": {
-        "max_cc": 9,
-        "mi": 75.54347430315269
-      },
-      "src/spendguard/workdone.py": {
-        "max_cc": 10,
-        "mi": 44.66581389826934
-      },
-      "src/spendguard/xp_rate_window.py": {
-        "max_cc": 15,
-        "mi": 61.8753803545072
-      },
-      "src/spendguard/zai_exec.py": {
-        "max_cc": 22,
-        "mi": 59.845459267185056
+    "justification": "Radon 6.0.1 counts logical lines through the running Python tokenizer. Measured __init__.py MI parameters on identical source: Python 3.11 LLOC90 versus Python3.12 LLOC91, with identical volume120.40465370320703/CC15/comments54.0. Independently measured per-minor baselines avoid false regressions; unsupported versions and new source files fail closed pending explicit measured review.",
+    "interpreters": {
+      "3.11": {
+        "files": {
+          "src/spendguard/__init__.py": {
+            "max_cc": 7,
+            "mi": 69.9898864455406
+          },
+          "src/spendguard/__main__.py": {
+            "max_cc": 0,
+            "mi": 100.0
+          },
+          "src/spendguard/_version.py": {
+            "max_cc": 0,
+            "mi": 100.0
+          },
+          "src/spendguard/adapters.py": {
+            "max_cc": 247,
+            "mi": 0.0
+          },
+          "src/spendguard/advise.py": {
+            "max_cc": 40,
+            "mi": 44.43638545378985
+          },
+          "src/spendguard/advisor.py": {
+            "max_cc": 16,
+            "mi": 38.51178040983324
+          },
+          "src/spendguard/agent_spawn_gate.py": {
+            "max_cc": 23,
+            "mi": 25.313654305147914
+          },
+          "src/spendguard/anomaly.py": {
+            "max_cc": 7,
+            "mi": 71.02439595935184
+          },
+          "src/spendguard/antigravity_exec.py": {
+            "max_cc": 18,
+            "mi": 50.48267079784406
+          },
+          "src/spendguard/architectural_fitness.py": {
+            "max_cc": 31,
+            "mi": 20.935514428828085
+          },
+          "src/spendguard/attribution.py": {
+            "max_cc": 26,
+            "mi": 58.04126694582299
+          },
+          "src/spendguard/audit.py": {
+            "max_cc": 19,
+            "mi": 58.43745075341389
+          },
+          "src/spendguard/backfill.py": {
+            "max_cc": 11,
+            "mi": 61.588119443987694
+          },
+          "src/spendguard/bakeoff.py": {
+            "max_cc": 70,
+            "mi": 37.37718121692871
+          },
+          "src/spendguard/balances.py": {
+            "max_cc": 17,
+            "mi": 44.30921065898892
+          },
+          "src/spendguard/batch_tracker.py": {
+            "max_cc": 37,
+            "mi": 30.431804375621986
+          },
+          "src/spendguard/bedrock_adapter.py": {
+            "max_cc": 11,
+            "mi": 70.88212201841873
+          },
+          "src/spendguard/best_value.py": {
+            "max_cc": 27,
+            "mi": 52.868440332551494
+          },
+          "src/spendguard/bootstrap.py": {
+            "max_cc": 13,
+            "mi": 72.02971239415386
+          },
+          "src/spendguard/brief.py": {
+            "max_cc": 18,
+            "mi": 54.67631828897556
+          },
+          "src/spendguard/budget.py": {
+            "max_cc": 35,
+            "mi": 0.0
+          },
+          "src/spendguard/bulk_resilience.py": {
+            "max_cc": 14,
+            "mi": 52.61899109664354
+          },
+          "src/spendguard/bulkgate.py": {
+            "max_cc": 35,
+            "mi": 5.594718570362755
+          },
+          "src/spendguard/cacheaudit.py": {
+            "max_cc": 14,
+            "mi": 50.42783901471761
+          },
+          "src/spendguard/cachetest.py": {
+            "max_cc": 33,
+            "mi": 51.39788798944255
+          },
+          "src/spendguard/calibrate.py": {
+            "max_cc": 24,
+            "mi": 12.468441018546837
+          },
+          "src/spendguard/callio.py": {
+            "max_cc": 42,
+            "mi": 7.223110308092494
+          },
+          "src/spendguard/calls.py": {
+            "max_cc": 69,
+            "mi": 6.504533204651048
+          },
+          "src/spendguard/capability_cli_callable_generation.py": {
+            "max_cc": 13,
+            "mi": 37.58336861905931
+          },
+          "src/spendguard/capability_cli_dispatch_generation.py": {
+            "max_cc": 8,
+            "mi": 53.97046924166878
+          },
+          "src/spendguard/capability_cli_help_generation.py": {
+            "max_cc": 22,
+            "mi": 36.093111638350656
+          },
+          "src/spendguard/capability_cli_parsing.py": {
+            "max_cc": 2,
+            "mi": 91.83827677759479
+          },
+          "src/spendguard/capability_cli_projection_models.py": {
+            "max_cc": 8,
+            "mi": 46.85612602890927
+          },
+          "src/spendguard/capability_documentation.py": {
+            "max_cc": 15,
+            "mi": 38.378263955416635
+          },
+          "src/spendguard/capability_readiness.py": {
+            "max_cc": 14,
+            "mi": 43.465096414953436
+          },
+          "src/spendguard/capability_readiness_gates.py": {
+            "max_cc": 14,
+            "mi": 47.38754686040469
+          },
+          "src/spendguard/capability_registry.py": {
+            "max_cc": 7,
+            "mi": 49.31401479219315
+          },
+          "src/spendguard/capability_surface_generation.py": {
+            "max_cc": 18,
+            "mi": 21.647400062518287
+          },
+          "src/spendguard/cascade.py": {
+            "max_cc": 25,
+            "mi": 59.17462817490093
+          },
+          "src/spendguard/catalog.py": {
+            "max_cc": 21,
+            "mi": 50.238695321746754
+          },
+          "src/spendguard/catalog_price_authoring.py": {
+            "max_cc": 27,
+            "mi": 45.32940101337756
+          },
+          "src/spendguard/chat.py": {
+            "max_cc": 49,
+            "mi": 0.0
+          },
+          "src/spendguard/claudecode.py": {
+            "max_cc": 51,
+            "mi": 0.0
+          },
+          "src/spendguard/cli.py": {
+            "max_cc": 38,
+            "mi": 0.0
+          },
+          "src/spendguard/cli_arguments.py": {
+            "max_cc": 3,
+            "mi": 71.93900342409701
+          },
+          "src/spendguard/close.py": {
+            "max_cc": 13,
+            "mi": 58.5433270588104
+          },
+          "src/spendguard/codex.py": {
+            "max_cc": 29,
+            "mi": 30.558800631498286
+          },
+          "src/spendguard/codex_broker_owner.py": {
+            "max_cc": 3,
+            "mi": 44.03143459396765
+          },
+          "src/spendguard/codex_daemon.py": {
+            "max_cc": 44,
+            "mi": 9.250773621857721
+          },
+          "src/spendguard/codex_daemon_broker.py": {
+            "max_cc": 17,
+            "mi": 21.026037017456613
+          },
+          "src/spendguard/codex_exec.py": {
+            "max_cc": 17,
+            "mi": 19.534603646990497
+          },
+          "src/spendguard/compaction.py": {
+            "max_cc": 18,
+            "mi": 33.75318788170465
+          },
+          "src/spendguard/compare.py": {
+            "max_cc": 27,
+            "mi": 69.39536668279646
+          },
+          "src/spendguard/comprehend.py": {
+            "max_cc": 22,
+            "mi": 50.727161149870575
+          },
+          "src/spendguard/config.py": {
+            "max_cc": 23,
+            "mi": 0.0
+          },
+          "src/spendguard/config_schema.py": {
+            "max_cc": 2,
+            "mi": 74.84839778755519
+          },
+          "src/spendguard/consumer_audit.py": {
+            "max_cc": 42,
+            "mi": 7.788017310654354
+          },
+          "src/spendguard/content_compression.py": {
+            "max_cc": 5,
+            "mi": 56.53456645354608
+          },
+          "src/spendguard/content_compression_backfill.py": {
+            "max_cc": 6,
+            "mi": 50.23900143419558
+          },
+          "src/spendguard/content_retention.py": {
+            "max_cc": 8,
+            "mi": 54.53311488559375
+          },
+          "src/spendguard/content_tokens.py": {
+            "max_cc": 17,
+            "mi": 39.62361733337912
+          },
+          "src/spendguard/conv.py": {
+            "max_cc": 38,
+            "mi": 0.0
+          },
+          "src/spendguard/cost_integrity.py": {
+            "max_cc": 19,
+            "mi": 51.73449640078443
+          },
+          "src/spendguard/coverage.py": {
+            "max_cc": 16,
+            "mi": 44.427822068294915
+          },
+          "src/spendguard/crossllm.py": {
+            "max_cc": 27,
+            "mi": 38.22041457736147
+          },
+          "src/spendguard/deid.py": {
+            "max_cc": 11,
+            "mi": 61.206448796592674
+          },
+          "src/spendguard/delegate_jobs.py": {
+            "max_cc": 11,
+            "mi": 32.990085603863996
+          },
+          "src/spendguard/delegate_router.py": {
+            "max_cc": 37,
+            "mi": 2.9929123617153315
+          },
+          "src/spendguard/disk_guard.py": {
+            "max_cc": 5,
+            "mi": 83.52736160445481
+          },
+          "src/spendguard/dispatch.py": {
+            "max_cc": 23,
+            "mi": 0.0
+          },
+          "src/spendguard/distribution.py": {
+            "max_cc": 76,
+            "mi": 0.0
+          },
+          "src/spendguard/distribution_daemon.py": {
+            "max_cc": 20,
+            "mi": 37.674605747396626
+          },
+          "src/spendguard/effort_titration.py": {
+            "max_cc": 34,
+            "mi": 32.6940631176573
+          },
+          "src/spendguard/emit.py": {
+            "max_cc": 11,
+            "mi": 57.44704323569343
+          },
+          "src/spendguard/equivalence.py": {
+            "max_cc": 12,
+            "mi": 59.64239033958754
+          },
+          "src/spendguard/escalation_ladder.py": {
+            "max_cc": 12,
+            "mi": 61.13344146053853
+          },
+          "src/spendguard/estimate.py": {
+            "max_cc": 32,
+            "mi": 50.506173527922066
+          },
+          "src/spendguard/estimate_divergence.py": {
+            "max_cc": 12,
+            "mi": 69.00470814762058
+          },
+          "src/spendguard/estimate_literals.py": {
+            "max_cc": 20,
+            "mi": 61.17881979232424
+          },
+          "src/spendguard/execution_journal.py": {
+            "max_cc": 20,
+            "mi": 15.984776146268782
+          },
+          "src/spendguard/expected_output.py": {
+            "max_cc": 24,
+            "mi": 58.90544946287266
+          },
+          "src/spendguard/experiment.py": {
+            "max_cc": 32,
+            "mi": 35.098998371583306
+          },
+          "src/spendguard/external_standard_readiness.py": {
+            "max_cc": 77,
+            "mi": 18.093123319957947
+          },
+          "src/spendguard/fleet.py": {
+            "max_cc": 26,
+            "mi": 0.0
+          },
+          "src/spendguard/focus_export.py": {
+            "max_cc": 23,
+            "mi": 58.40270188659878
+          },
+          "src/spendguard/gate.py": {
+            "max_cc": 127,
+            "mi": 0.0
+          },
+          "src/spendguard/gpu_port.py": {
+            "max_cc": 23,
+            "mi": 48.25303760308668
+          },
+          "src/spendguard/guard.py": {
+            "max_cc": 14,
+            "mi": 31.76708361776414
+          },
+          "src/spendguard/history.py": {
+            "max_cc": 20,
+            "mi": 39.278100741257006
+          },
+          "src/spendguard/http_capture.py": {
+            "max_cc": 18,
+            "mi": 45.68247390578454
+          },
+          "src/spendguard/intent_model_prior.py": {
+            "max_cc": 19,
+            "mi": 57.89839645759348
+          },
+          "src/spendguard/item_ledger.py": {
+            "max_cc": 10,
+            "mi": 56.33061665308085
+          },
+          "src/spendguard/job_fingerprint.py": {
+            "max_cc": 11,
+            "mi": 65.19280790945399
+          },
+          "src/spendguard/keys_audit.py": {
+            "max_cc": 9,
+            "mi": 69.40525509641849
+          },
+          "src/spendguard/kimi_daemon.py": {
+            "max_cc": 30,
+            "mi": 53.46804979520682
+          },
+          "src/spendguard/kimi_exec.py": {
+            "max_cc": 24,
+            "mi": 44.95088065727963
+          },
+          "src/spendguard/lambda_adapter.py": {
+            "max_cc": 13,
+            "mi": 74.8997143705544
+          },
+          "src/spendguard/lane_balance.py": {
+            "max_cc": 117,
+            "mi": 0.0
+          },
+          "src/spendguard/lane_bandit.py": {
+            "max_cc": 17,
+            "mi": 34.82740812892309
+          },
+          "src/spendguard/lane_catalog.py": {
+            "max_cc": 10,
+            "mi": 54.23789137695661
+          },
+          "src/spendguard/lane_economics.py": {
+            "max_cc": 28,
+            "mi": 24.950450138602857
+          },
+          "src/spendguard/lane_eligibility.py": {
+            "max_cc": 8,
+            "mi": 63.97364202920713
+          },
+          "src/spendguard/lane_queue.py": {
+            "max_cc": 56,
+            "mi": 0.0
+          },
+          "src/spendguard/lane_quota.py": {
+            "max_cc": 9,
+            "mi": 75.27243660509514
+          },
+          "src/spendguard/lane_quota_cost.py": {
+            "max_cc": 21,
+            "mi": 31.86878938805318
+          },
+          "src/spendguard/lane_recovery.py": {
+            "max_cc": 12,
+            "mi": 49.05184957405596
+          },
+          "src/spendguard/lane_registry.py": {
+            "max_cc": 2,
+            "mi": 88.70953110460482
+          },
+          "src/spendguard/lane_servability.py": {
+            "max_cc": 15,
+            "mi": 42.483868661843154
+          },
+          "src/spendguard/lane_value.py": {
+            "max_cc": 20,
+            "mi": 42.880967725364876
+          },
+          "src/spendguard/lanes.py": {
+            "max_cc": 157,
+            "mi": 2.095677617495714
+          },
+          "src/spendguard/launchd_labels.py": {
+            "max_cc": 0,
+            "mi": 100.0
+          },
+          "src/spendguard/learn.py": {
+            "max_cc": 8,
+            "mi": 62.359954013078486
+          },
+          "src/spendguard/ledger.py": {
+            "max_cc": 49,
+            "mi": 0.0
+          },
+          "src/spendguard/ledger_deadletter.py": {
+            "max_cc": 24,
+            "mi": 29.928244183948888
+          },
+          "src/spendguard/ledger_deadline_polling.py": {
+            "max_cc": 3,
+            "mi": 85.66475876502862
+          },
+          "src/spendguard/ledger_fork_locks.py": {
+            "max_cc": 2,
+            "mi": 100.0
+          },
+          "src/spendguard/ledger_read.py": {
+            "max_cc": 27,
+            "mi": 0.0
+          },
+          "src/spendguard/ledger_request_cursor.py": {
+            "max_cc": 34,
+            "mi": 29.635702005503575
+          },
+          "src/spendguard/ledger_schema_migrations.py": {
+            "max_cc": 2,
+            "mi": 83.39741664222444
+          },
+          "src/spendguard/ledger_sync.py": {
+            "max_cc": 56,
+            "mi": 6.955544664201972
+          },
+          "src/spendguard/ledger_wal_maintenance.py": {
+            "max_cc": 10,
+            "mi": 55.74793093791554
+          },
+          "src/spendguard/ledger_writer.py": {
+            "max_cc": 18,
+            "mi": 24.736594780297587
+          },
+          "src/spendguard/litellm_adapter.py": {
+            "max_cc": 16,
+            "mi": 66.76088145475661
+          },
+          "src/spendguard/llm_files.py": {
+            "max_cc": 6,
+            "mi": 75.39097658823836
+          },
+          "src/spendguard/manifest.py": {
+            "max_cc": 23,
+            "mi": 29.865845273530482
+          },
+          "src/spendguard/mcp_fd_lifecycle.py": {
+            "max_cc": 14,
+            "mi": 36.04521807685376
+          },
+          "src/spendguard/mcp_server.py": {
+            "max_cc": 26,
+            "mi": 7.141417127958235
+          },
+          "src/spendguard/measurement.py": {
+            "max_cc": 19,
+            "mi": 36.18241532204339
+          },
+          "src/spendguard/metadata_audit.py": {
+            "max_cc": 18,
+            "mi": 57.378150229145675
+          },
+          "src/spendguard/migrate_charges.py": {
+            "max_cc": 32,
+            "mi": 60.949161846824126
+          },
+          "src/spendguard/modal_adapter.py": {
+            "max_cc": 9,
+            "mi": 70.70362044668978
+          },
+          "src/spendguard/model_catalog.py": {
+            "max_cc": 42,
+            "mi": 19.565472475180556
+          },
+          "src/spendguard/model_preflight.py": {
+            "max_cc": 18,
+            "mi": 57.84597250759811
+          },
+          "src/spendguard/models.py": {
+            "max_cc": 13,
+            "mi": 39.025561587411524
+          },
+          "src/spendguard/money_scale.py": {
+            "max_cc": 8,
+            "mi": 66.35068211769804
+          },
+          "src/spendguard/notify.py": {
+            "max_cc": 9,
+            "mi": 62.365455196795004
+          },
+          "src/spendguard/openai_batch_cli.py": {
+            "max_cc": 11,
+            "mi": 63.31893735110742
+          },
+          "src/spendguard/otel_ingest.py": {
+            "max_cc": 15,
+            "mi": 47.8920231927494
+          },
+          "src/spendguard/output_contract.py": {
+            "max_cc": 74,
+            "mi": 27.696371885958474
+          },
+          "src/spendguard/overage.py": {
+            "max_cc": 19,
+            "mi": 58.07724950175383
+          },
+          "src/spendguard/plan_admission.py": {
+            "max_cc": 20,
+            "mi": 52.01011956259717
+          },
+          "src/spendguard/pricing.py": {
+            "max_cc": 23,
+            "mi": 26.09609973405903
+          },
+          "src/spendguard/prompts.py": {
+            "max_cc": 69,
+            "mi": 42.1937791045013
+          },
+          "src/spendguard/provider_kit.py": {
+            "max_cc": 8,
+            "mi": 71.42390592091552
+          },
+          "src/spendguard/provider_plugins.py": {
+            "max_cc": 7,
+            "mi": 85.68059769720976
+          },
+          "src/spendguard/provider_tokens.py": {
+            "max_cc": 23,
+            "mi": 36.69155733755533
+          },
+          "src/spendguard/queue_planner.py": {
+            "max_cc": 22,
+            "mi": 45.710623967324935
+          },
+          "src/spendguard/realized.py": {
+            "max_cc": 16,
+            "mi": 59.47712586910378
+          },
+          "src/spendguard/realtime_oracle.py": {
+            "max_cc": 15,
+            "mi": 51.57809686307217
+          },
+          "src/spendguard/reasoning_equivalence.py": {
+            "max_cc": 18,
+            "mi": 46.47025113759904
+          },
+          "src/spendguard/receipt.py": {
+            "max_cc": 53,
+            "mi": 0.0
+          },
+          "src/spendguard/reconcile.py": {
+            "max_cc": 23,
+            "mi": 50.033651319260244
+          },
+          "src/spendguard/reconcile_anthropic.py": {
+            "max_cc": 13,
+            "mi": 56.902275325635486
+          },
+          "src/spendguard/reconcile_calls.py": {
+            "max_cc": 8,
+            "mi": 70.31522668360425
+          },
+          "src/spendguard/reconcile_estimate_stage.py": {
+            "max_cc": 14,
+            "mi": 50.333814925778796
+          },
+          "src/spendguard/reconcile_gap_ownership.py": {
+            "max_cc": 12,
+            "mi": 61.94786319237164
+          },
+          "src/spendguard/reconcile_maintenance_owner.py": {
+            "max_cc": 8,
+            "mi": 46.58232138616767
+          },
+          "src/spendguard/reconcile_openai.py": {
+            "max_cc": 24,
+            "mi": 53.821868942173104
+          },
+          "src/spendguard/refresh.py": {
+            "max_cc": 8,
+            "mi": 62.13286272494166
+          },
+          "src/spendguard/release.py": {
+            "max_cc": 13,
+            "mi": 55.98988472290109
+          },
+          "src/spendguard/reliability.py": {
+            "max_cc": 24,
+            "mi": 17.7048922886874
+          },
+          "src/spendguard/remote.py": {
+            "max_cc": 26,
+            "mi": 49.869055626025805
+          },
+          "src/spendguard/report.py": {
+            "max_cc": 33,
+            "mi": 38.13763319970016
+          },
+          "src/spendguard/requirement_judge.py": {
+            "max_cc": 10,
+            "mi": 66.56730370721212
+          },
+          "src/spendguard/residency_gate.py": {
+            "max_cc": 25,
+            "mi": 35.09598410966133
+          },
+          "src/spendguard/resource_state.py": {
+            "max_cc": 14,
+            "mi": 54.671288944145104
+          },
+          "src/spendguard/resources.py": {
+            "max_cc": 45,
+            "mi": 0.0
+          },
+          "src/spendguard/review.py": {
+            "max_cc": 12,
+            "mi": 49.0267487779889
+          },
+          "src/spendguard/route_economics.py": {
+            "max_cc": 29,
+            "mi": 39.53850196386189
+          },
+          "src/spendguard/route_horizon.py": {
+            "max_cc": 47,
+            "mi": 34.35506439931096
+          },
+          "src/spendguard/route_realized.py": {
+            "max_cc": 4,
+            "mi": 65.52491089544914
+          },
+          "src/spendguard/route_utility.py": {
+            "max_cc": 44,
+            "mi": 38.97136073734599
+          },
+          "src/spendguard/routing_audit.py": {
+            "max_cc": 14,
+            "mi": 36.06718623737245
+          },
+          "src/spendguard/runner.py": {
+            "max_cc": 9,
+            "mi": 70.08133675855753
+          },
+          "src/spendguard/runpod_adapter.py": {
+            "max_cc": 22,
+            "mi": 68.37130155170505
+          },
+          "src/spendguard/saas.py": {
+            "max_cc": 39,
+            "mi": 0.0
+          },
+          "src/spendguard/scan.py": {
+            "max_cc": 24,
+            "mi": 60.44379628718127
+          },
+          "src/spendguard/schedule.py": {
+            "max_cc": 14,
+            "mi": 59.72374201899231
+          },
+          "src/spendguard/schema_indexes.py": {
+            "max_cc": 14,
+            "mi": 44.054449735692515
+          },
+          "src/spendguard/semcache.py": {
+            "max_cc": 16,
+            "mi": 40.03484486801787
+          },
+          "src/spendguard/serve.py": {
+            "max_cc": 10,
+            "mi": 54.771829894576925
+          },
+          "src/spendguard/setup.py": {
+            "max_cc": 47,
+            "mi": 0.0
+          },
+          "src/spendguard/share.py": {
+            "max_cc": 10,
+            "mi": 57.064145261941704
+          },
+          "src/spendguard/signal.py": {
+            "max_cc": 22,
+            "mi": 52.382591807655835
+          },
+          "src/spendguard/source_compact.py": {
+            "max_cc": 16,
+            "mi": 64.0542185418841
+          },
+          "src/spendguard/sources.py": {
+            "max_cc": 23,
+            "mi": 45.305263949266305
+          },
+          "src/spendguard/stability.py": {
+            "max_cc": 31,
+            "mi": 63.60816196785601
+          },
+          "src/spendguard/storm_coalescer.py": {
+            "max_cc": 24,
+            "mi": 33.5630615814814
+          },
+          "src/spendguard/storm_route.py": {
+            "max_cc": 11,
+            "mi": 60.94003876928755
+          },
+          "src/spendguard/storm_submit.py": {
+            "max_cc": 31,
+            "mi": 57.58697740496773
+          },
+          "src/spendguard/submit.py": {
+            "max_cc": 26,
+            "mi": 25.357478823244634
+          },
+          "src/spendguard/subscription_exec.py": {
+            "max_cc": 26,
+            "mi": 52.549214777873864
+          },
+          "src/spendguard/subscription_headroom_surfaces.py": {
+            "max_cc": 9,
+            "mi": 47.012727758606715
+          },
+          "src/spendguard/sync.py": {
+            "max_cc": 20,
+            "mi": 50.999943394196876
+          },
+          "src/spendguard/sync_capabilities.py": {
+            "max_cc": 18,
+            "mi": 49.370334797050255
+          },
+          "src/spendguard/tag.py": {
+            "max_cc": 7,
+            "mi": 67.18510085275686
+          },
+          "src/spendguard/tier_config.py": {
+            "max_cc": 40,
+            "mi": 46.65539030471832
+          },
+          "src/spendguard/token_caps.py": {
+            "max_cc": 19,
+            "mi": 55.38819148712056
+          },
+          "src/spendguard/trust.py": {
+            "max_cc": 12,
+            "mi": 59.8805925070759
+          },
+          "src/spendguard/truth.py": {
+            "max_cc": 8,
+            "mi": 70.66515507498384
+          },
+          "src/spendguard/ui.py": {
+            "max_cc": 5,
+            "mi": 87.58974875656337
+          },
+          "src/spendguard/validate.py": {
+            "max_cc": 18,
+            "mi": 51.86366926798887
+          },
+          "src/spendguard/vendor_call.py": {
+            "max_cc": 43,
+            "mi": 5.548913231913586
+          },
+          "src/spendguard/verdict_ledger.py": {
+            "max_cc": 11,
+            "mi": 80.04986247715179
+          },
+          "src/spendguard/verify.py": {
+            "max_cc": 21,
+            "mi": 58.70752966938513
+          },
+          "src/spendguard/vertex_adapter.py": {
+            "max_cc": 10,
+            "mi": 54.93503788965597
+          },
+          "src/spendguard/warm_stdio_daemon.py": {
+            "max_cc": 15,
+            "mi": 23.962226863883735
+          },
+          "src/spendguard/weekly_cap_guard.py": {
+            "max_cc": 23,
+            "mi": 26.06034807848355
+          },
+          "src/spendguard/whole_job.py": {
+            "max_cc": 27,
+            "mi": 25.64598378308811
+          },
+          "src/spendguard/work_integrity.py": {
+            "max_cc": 9,
+            "mi": 75.54347430315269
+          },
+          "src/spendguard/workdone.py": {
+            "max_cc": 10,
+            "mi": 44.66581389826934
+          },
+          "src/spendguard/xp_rate_window.py": {
+            "max_cc": 15,
+            "mi": 61.8753803545072
+          },
+          "src/spendguard/zai_exec.py": {
+            "max_cc": 22,
+            "mi": 59.845459267185056
+          }
+        },
+        "measured_extremes": {
+          "max_cc": 247,
+          "mi": 0.0
+        }
+      },
+      "3.12": {
+        "files": {
+          "src/spendguard/__init__.py": {
+            "max_cc": 7,
+            "mi": 69.88520378693086
+          },
+          "src/spendguard/__main__.py": {
+            "max_cc": 0,
+            "mi": 100.0
+          },
+          "src/spendguard/_version.py": {
+            "max_cc": 0,
+            "mi": 100.0
+          },
+          "src/spendguard/adapters.py": {
+            "max_cc": 247,
+            "mi": 0.0
+          },
+          "src/spendguard/advise.py": {
+            "max_cc": 40,
+            "mi": 44.15356790816129
+          },
+          "src/spendguard/advisor.py": {
+            "max_cc": 16,
+            "mi": 37.89617927553358
+          },
+          "src/spendguard/agent_spawn_gate.py": {
+            "max_cc": 23,
+            "mi": 25.264440250522718
+          },
+          "src/spendguard/anomaly.py": {
+            "max_cc": 7,
+            "mi": 70.79046594533779
+          },
+          "src/spendguard/antigravity_exec.py": {
+            "max_cc": 18,
+            "mi": 50.48267079784406
+          },
+          "src/spendguard/architectural_fitness.py": {
+            "max_cc": 31,
+            "mi": 20.935514428828085
+          },
+          "src/spendguard/attribution.py": {
+            "max_cc": 26,
+            "mi": 57.823471510010044
+          },
+          "src/spendguard/audit.py": {
+            "max_cc": 19,
+            "mi": 58.2145302516331
+          },
+          "src/spendguard/backfill.py": {
+            "max_cc": 11,
+            "mi": 61.31350067360952
+          },
+          "src/spendguard/bakeoff.py": {
+            "max_cc": 70,
+            "mi": 37.25114364783685
+          },
+          "src/spendguard/balances.py": {
+            "max_cc": 17,
+            "mi": 44.12875407505603
+          },
+          "src/spendguard/batch_tracker.py": {
+            "max_cc": 37,
+            "mi": 30.431804375621986
+          },
+          "src/spendguard/bedrock_adapter.py": {
+            "max_cc": 11,
+            "mi": 70.88212201841873
+          },
+          "src/spendguard/best_value.py": {
+            "max_cc": 27,
+            "mi": 52.868440332551494
+          },
+          "src/spendguard/bootstrap.py": {
+            "max_cc": 13,
+            "mi": 71.50326117268723
+          },
+          "src/spendguard/brief.py": {
+            "max_cc": 18,
+            "mi": 54.32862112933992
+          },
+          "src/spendguard/budget.py": {
+            "max_cc": 35,
+            "mi": 0.0
+          },
+          "src/spendguard/bulk_resilience.py": {
+            "max_cc": 14,
+            "mi": 52.61899109664354
+          },
+          "src/spendguard/bulkgate.py": {
+            "max_cc": 35,
+            "mi": 5.535784108388101
+          },
+          "src/spendguard/cacheaudit.py": {
+            "max_cc": 14,
+            "mi": 50.16647942664449
+          },
+          "src/spendguard/cachetest.py": {
+            "max_cc": 33,
+            "mi": 50.84226846972301
+          },
+          "src/spendguard/calibrate.py": {
+            "max_cc": 24,
+            "mi": 12.26506252737109
+          },
+          "src/spendguard/callio.py": {
+            "max_cc": 42,
+            "mi": 7.154831207414027
+          },
+          "src/spendguard/calls.py": {
+            "max_cc": 69,
+            "mi": 6.446412260327203
+          },
+          "src/spendguard/capability_cli_callable_generation.py": {
+            "max_cc": 13,
+            "mi": 37.58336861905931
+          },
+          "src/spendguard/capability_cli_dispatch_generation.py": {
+            "max_cc": 8,
+            "mi": 53.97046924166878
+          },
+          "src/spendguard/capability_cli_help_generation.py": {
+            "max_cc": 22,
+            "mi": 36.021068065227524
+          },
+          "src/spendguard/capability_cli_parsing.py": {
+            "max_cc": 2,
+            "mi": 91.83827677759479
+          },
+          "src/spendguard/capability_cli_projection_models.py": {
+            "max_cc": 8,
+            "mi": 46.85612602890927
+          },
+          "src/spendguard/capability_documentation.py": {
+            "max_cc": 15,
+            "mi": 38.378263955416635
+          },
+          "src/spendguard/capability_readiness.py": {
+            "max_cc": 14,
+            "mi": 43.465096414953436
+          },
+          "src/spendguard/capability_readiness_gates.py": {
+            "max_cc": 14,
+            "mi": 47.38754686040469
+          },
+          "src/spendguard/capability_registry.py": {
+            "max_cc": 7,
+            "mi": 49.31401479219315
+          },
+          "src/spendguard/capability_surface_generation.py": {
+            "max_cc": 18,
+            "mi": 21.647400062518287
+          },
+          "src/spendguard/cascade.py": {
+            "max_cc": 25,
+            "mi": 58.95170767312015
+          },
+          "src/spendguard/catalog.py": {
+            "max_cc": 21,
+            "mi": 50.13737153011441
+          },
+          "src/spendguard/catalog_price_authoring.py": {
+            "max_cc": 27,
+            "mi": 45.32940101337756
+          },
+          "src/spendguard/chat.py": {
+            "max_cc": 49,
+            "mi": 0.0
+          },
+          "src/spendguard/claudecode.py": {
+            "max_cc": 51,
+            "mi": 0.0
+          },
+          "src/spendguard/cli.py": {
+            "max_cc": 38,
+            "mi": 0.0
+          },
+          "src/spendguard/cli_arguments.py": {
+            "max_cc": 3,
+            "mi": 71.93900342409701
+          },
+          "src/spendguard/close.py": {
+            "max_cc": 13,
+            "mi": 57.98036833856071
+          },
+          "src/spendguard/codex.py": {
+            "max_cc": 29,
+            "mi": 30.45411797288853
+          },
+          "src/spendguard/codex_broker_owner.py": {
+            "max_cc": 3,
+            "mi": 44.03143459396765
+          },
+          "src/spendguard/codex_daemon.py": {
+            "max_cc": 44,
+            "mi": 9.250773621857721
+          },
+          "src/spendguard/codex_daemon_broker.py": {
+            "max_cc": 17,
+            "mi": 21.026037017456613
+          },
+          "src/spendguard/codex_exec.py": {
+            "max_cc": 17,
+            "mi": 19.518395457903484
+          },
+          "src/spendguard/compaction.py": {
+            "max_cc": 18,
+            "mi": 33.63501149430825
+          },
+          "src/spendguard/compare.py": {
+            "max_cc": 27,
+            "mi": 68.0064916641366
+          },
+          "src/spendguard/comprehend.py": {
+            "max_cc": 22,
+            "mi": 50.618889294699414
+          },
+          "src/spendguard/config.py": {
+            "max_cc": 23,
+            "mi": 0.0
+          },
+          "src/spendguard/config_schema.py": {
+            "max_cc": 2,
+            "mi": 74.84839778755519
+          },
+          "src/spendguard/consumer_audit.py": {
+            "max_cc": 42,
+            "mi": 7.788017310654354
+          },
+          "src/spendguard/content_compression.py": {
+            "max_cc": 5,
+            "mi": 56.53456645354608
+          },
+          "src/spendguard/content_compression_backfill.py": {
+            "max_cc": 6,
+            "mi": 50.23900143419558
+          },
+          "src/spendguard/content_retention.py": {
+            "max_cc": 8,
+            "mi": 54.53311488559375
+          },
+          "src/spendguard/content_tokens.py": {
+            "max_cc": 17,
+            "mi": 39.62361733337912
+          },
+          "src/spendguard/conv.py": {
+            "max_cc": 38,
+            "mi": 0.0
+          },
+          "src/spendguard/cost_integrity.py": {
+            "max_cc": 19,
+            "mi": 51.486263399156854
+          },
+          "src/spendguard/coverage.py": {
+            "max_cc": 16,
+            "mi": 44.427822068294915
+          },
+          "src/spendguard/crossllm.py": {
+            "max_cc": 27,
+            "mi": 38.080579061310864
+          },
+          "src/spendguard/deid.py": {
+            "max_cc": 11,
+            "mi": 61.11579083959757
+          },
+          "src/spendguard/delegate_jobs.py": {
+            "max_cc": 11,
+            "mi": 32.990085603863996
+          },
+          "src/spendguard/delegate_router.py": {
+            "max_cc": 37,
+            "mi": 2.92031672517836
+          },
+          "src/spendguard/disk_guard.py": {
+            "max_cc": 5,
+            "mi": 83.52736160445481
+          },
+          "src/spendguard/dispatch.py": {
+            "max_cc": 23,
+            "mi": 0.0
+          },
+          "src/spendguard/distribution.py": {
+            "max_cc": 76,
+            "mi": 0.0
+          },
+          "src/spendguard/distribution_daemon.py": {
+            "max_cc": 20,
+            "mi": 37.674605747396626
+          },
+          "src/spendguard/effort_titration.py": {
+            "max_cc": 34,
+            "mi": 32.6940631176573
+          },
+          "src/spendguard/emit.py": {
+            "max_cc": 11,
+            "mi": 57.44704323569343
+          },
+          "src/spendguard/equivalence.py": {
+            "max_cc": 12,
+            "mi": 59.64239033958754
+          },
+          "src/spendguard/escalation_ladder.py": {
+            "max_cc": 12,
+            "mi": 61.13344146053853
+          },
+          "src/spendguard/estimate.py": {
+            "max_cc": 32,
+            "mi": 49.83716499642146
+          },
+          "src/spendguard/estimate_divergence.py": {
+            "max_cc": 12,
+            "mi": 69.00470814762058
+          },
+          "src/spendguard/estimate_literals.py": {
+            "max_cc": 20,
+            "mi": 61.17881979232424
+          },
+          "src/spendguard/execution_journal.py": {
+            "max_cc": 20,
+            "mi": 15.984776146268782
+          },
+          "src/spendguard/expected_output.py": {
+            "max_cc": 24,
+            "mi": 58.80727569095695
+          },
+          "src/spendguard/experiment.py": {
+            "max_cc": 32,
+            "mi": 34.65440375053294
+          },
+          "src/spendguard/external_standard_readiness.py": {
+            "max_cc": 77,
+            "mi": 18.093123319957947
+          },
+          "src/spendguard/fleet.py": {
+            "max_cc": 26,
+            "mi": 0.0
+          },
+          "src/spendguard/focus_export.py": {
+            "max_cc": 23,
+            "mi": 58.40270188659878
+          },
+          "src/spendguard/gate.py": {
+            "max_cc": 127,
+            "mi": 0.0
+          },
+          "src/spendguard/gpu_port.py": {
+            "max_cc": 23,
+            "mi": 48.14949904015014
+          },
+          "src/spendguard/guard.py": {
+            "max_cc": 14,
+            "mi": 31.76708361776414
+          },
+          "src/spendguard/history.py": {
+            "max_cc": 20,
+            "mi": 39.189145306363805
+          },
+          "src/spendguard/http_capture.py": {
+            "max_cc": 18,
+            "mi": 45.68247390578454
+          },
+          "src/spendguard/intent_model_prior.py": {
+            "max_cc": 19,
+            "mi": 57.81187819225719
+          },
+          "src/spendguard/item_ledger.py": {
+            "max_cc": 10,
+            "mi": 56.09668663906682
+          },
+          "src/spendguard/job_fingerprint.py": {
+            "max_cc": 11,
+            "mi": 64.89203076752639
+          },
+          "src/spendguard/keys_audit.py": {
+            "max_cc": 9,
+            "mi": 69.40525509641849
+          },
+          "src/spendguard/kimi_daemon.py": {
+            "max_cc": 30,
+            "mi": 53.46804979520682
+          },
+          "src/spendguard/kimi_exec.py": {
+            "max_cc": 24,
+            "mi": 44.95088065727963
+          },
+          "src/spendguard/lambda_adapter.py": {
+            "max_cc": 13,
+            "mi": 74.8997143705544
+          },
+          "src/spendguard/lane_balance.py": {
+            "max_cc": 117,
+            "mi": 0.0
+          },
+          "src/spendguard/lane_bandit.py": {
+            "max_cc": 17,
+            "mi": 34.76687319956633
+          },
+          "src/spendguard/lane_catalog.py": {
+            "max_cc": 10,
+            "mi": 53.91888197068367
+          },
+          "src/spendguard/lane_economics.py": {
+            "max_cc": 28,
+            "mi": 24.64482091758812
+          },
+          "src/spendguard/lane_eligibility.py": {
+            "max_cc": 8,
+            "mi": 63.750721527426336
+          },
+          "src/spendguard/lane_queue.py": {
+            "max_cc": 56,
+            "mi": 0.0
+          },
+          "src/spendguard/lane_quota.py": {
+            "max_cc": 9,
+            "mi": 75.27243660509514
+          },
+          "src/spendguard/lane_quota_cost.py": {
+            "max_cc": 21,
+            "mi": 31.603773947651447
+          },
+          "src/spendguard/lane_recovery.py": {
+            "max_cc": 12,
+            "mi": 49.05184957405596
+          },
+          "src/spendguard/lane_registry.py": {
+            "max_cc": 2,
+            "mi": 88.70953110460482
+          },
+          "src/spendguard/lane_servability.py": {
+            "max_cc": 15,
+            "mi": 42.483868661843154
+          },
+          "src/spendguard/lane_value.py": {
+            "max_cc": 20,
+            "mi": 42.741304003644
+          },
+          "src/spendguard/lanes.py": {
+            "max_cc": 157,
+            "mi": 1.8189477197081199
+          },
+          "src/spendguard/launchd_labels.py": {
+            "max_cc": 0,
+            "mi": 100.0
+          },
+          "src/spendguard/learn.py": {
+            "max_cc": 8,
+            "mi": 62.359954013078486
+          },
+          "src/spendguard/ledger.py": {
+            "max_cc": 49,
+            "mi": 0.0
+          },
+          "src/spendguard/ledger_deadletter.py": {
+            "max_cc": 24,
+            "mi": 29.928244183948888
+          },
+          "src/spendguard/ledger_deadline_polling.py": {
+            "max_cc": 3,
+            "mi": 85.66475876502862
+          },
+          "src/spendguard/ledger_fork_locks.py": {
+            "max_cc": 2,
+            "mi": 100.0
+          },
+          "src/spendguard/ledger_read.py": {
+            "max_cc": 27,
+            "mi": 0.0
+          },
+          "src/spendguard/ledger_request_cursor.py": {
+            "max_cc": 34,
+            "mi": 29.635702005503575
+          },
+          "src/spendguard/ledger_schema_migrations.py": {
+            "max_cc": 2,
+            "mi": 83.39741664222444
+          },
+          "src/spendguard/ledger_sync.py": {
+            "max_cc": 56,
+            "mi": 6.657024289766525
+          },
+          "src/spendguard/ledger_wal_maintenance.py": {
+            "max_cc": 10,
+            "mi": 55.74793093791554
+          },
+          "src/spendguard/ledger_writer.py": {
+            "max_cc": 18,
+            "mi": 24.736594780297587
+          },
+          "src/spendguard/litellm_adapter.py": {
+            "max_cc": 16,
+            "mi": 66.76088145475661
+          },
+          "src/spendguard/llm_files.py": {
+            "max_cc": 6,
+            "mi": 75.16805608645757
+          },
+          "src/spendguard/manifest.py": {
+            "max_cc": 23,
+            "mi": 29.865845273530482
+          },
+          "src/spendguard/mcp_fd_lifecycle.py": {
+            "max_cc": 14,
+            "mi": 36.04521807685376
+          },
+          "src/spendguard/mcp_server.py": {
+            "max_cc": 26,
+            "mi": 7.0930201685008685
+          },
+          "src/spendguard/measurement.py": {
+            "max_cc": 19,
+            "mi": 36.18241532204339
+          },
+          "src/spendguard/metadata_audit.py": {
+            "max_cc": 18,
+            "mi": 56.87500451564511
+          },
+          "src/spendguard/migrate_charges.py": {
+            "max_cc": 32,
+            "mi": 60.949161846824126
+          },
+          "src/spendguard/modal_adapter.py": {
+            "max_cc": 9,
+            "mi": 70.70362044668978
+          },
+          "src/spendguard/model_catalog.py": {
+            "max_cc": 42,
+            "mi": 19.565472475180556
+          },
+          "src/spendguard/model_preflight.py": {
+            "max_cc": 18,
+            "mi": 57.68807411563296
+          },
+          "src/spendguard/models.py": {
+            "max_cc": 13,
+            "mi": 38.92704751900301
+          },
+          "src/spendguard/money_scale.py": {
+            "max_cc": 8,
+            "mi": 66.35068211769804
+          },
+          "src/spendguard/notify.py": {
+            "max_cc": 9,
+            "mi": 62.365455196795004
+          },
+          "src/spendguard/openai_batch_cli.py": {
+            "max_cc": 11,
+            "mi": 63.046946874326494
+          },
+          "src/spendguard/otel_ingest.py": {
+            "max_cc": 15,
+            "mi": 47.8920231927494
+          },
+          "src/spendguard/output_contract.py": {
+            "max_cc": 74,
+            "mi": 27.66223244645354
+          },
+          "src/spendguard/overage.py": {
+            "max_cc": 19,
+            "mi": 57.98659154475873
+          },
+          "src/spendguard/plan_admission.py": {
+            "max_cc": 20,
+            "mi": 52.01011956259717
+          },
+          "src/spendguard/pricing.py": {
+            "max_cc": 23,
+            "mi": 26.032446521176176
+          },
+          "src/spendguard/prompts.py": {
+            "max_cc": 69,
+            "mi": 42.140705104566536
+          },
+          "src/spendguard/provider_kit.py": {
+            "max_cc": 8,
+            "mi": 71.42390592091552
+          },
+          "src/spendguard/provider_plugins.py": {
+            "max_cc": 7,
+            "mi": 85.68059769720976
+          },
+          "src/spendguard/provider_tokens.py": {
+            "max_cc": 23,
+            "mi": 36.626221325416864
+          },
+          "src/spendguard/queue_planner.py": {
+            "max_cc": 22,
+            "mi": 45.61682434748873
+          },
+          "src/spendguard/realized.py": {
+            "max_cc": 16,
+            "mi": 59.09429866379758
+          },
+          "src/spendguard/realtime_oracle.py": {
+            "max_cc": 15,
+            "mi": 51.4356327617239
+          },
+          "src/spendguard/reasoning_equivalence.py": {
+            "max_cc": 18,
+            "mi": 46.335870385043656
+          },
+          "src/spendguard/receipt.py": {
+            "max_cc": 53,
+            "mi": 0.0
+          },
+          "src/spendguard/reconcile.py": {
+            "max_cc": 23,
+            "mi": 49.70880746525215
+          },
+          "src/spendguard/reconcile_anthropic.py": {
+            "max_cc": 13,
+            "mi": 56.6985323288053
+          },
+          "src/spendguard/reconcile_calls.py": {
+            "max_cc": 8,
+            "mi": 70.31522668360425
+          },
+          "src/spendguard/reconcile_estimate_stage.py": {
+            "max_cc": 14,
+            "mi": 50.333814925778796
+          },
+          "src/spendguard/reconcile_gap_ownership.py": {
+            "max_cc": 12,
+            "mi": 61.94786319237164
+          },
+          "src/spendguard/reconcile_maintenance_owner.py": {
+            "max_cc": 8,
+            "mi": 46.58232138616767
+          },
+          "src/spendguard/reconcile_openai.py": {
+            "max_cc": 24,
+            "mi": 53.323138835469095
+          },
+          "src/spendguard/refresh.py": {
+            "max_cc": 8,
+            "mi": 62.02818006633191
+          },
+          "src/spendguard/release.py": {
+            "max_cc": 13,
+            "mi": 55.98988472290109
+          },
+          "src/spendguard/reliability.py": {
+            "max_cc": 24,
+            "mi": 17.650601686181226
+          },
+          "src/spendguard/remote.py": {
+            "max_cc": 26,
+            "mi": 49.680205169070675
+          },
+          "src/spendguard/report.py": {
+            "max_cc": 33,
+            "mi": 37.83363864079121
+          },
+          "src/spendguard/requirement_judge.py": {
+            "max_cc": 10,
+            "mi": 66.56730370721212
+          },
+          "src/spendguard/residency_gate.py": {
+            "max_cc": 25,
+            "mi": 35.01501195681278
+          },
+          "src/spendguard/resource_state.py": {
+            "max_cc": 14,
+            "mi": 54.671288944145104
+          },
+          "src/spendguard/resources.py": {
+            "max_cc": 45,
+            "mi": 0.0
+          },
+          "src/spendguard/review.py": {
+            "max_cc": 12,
+            "mi": 48.64262788372663
+          },
+          "src/spendguard/route_economics.py": {
+            "max_cc": 29,
+            "mi": 39.53850196386189
+          },
+          "src/spendguard/route_horizon.py": {
+            "max_cc": 47,
+            "mi": 34.35506439931096
+          },
+          "src/spendguard/route_realized.py": {
+            "max_cc": 4,
+            "mi": 64.7666115595946
+          },
+          "src/spendguard/route_utility.py": {
+            "max_cc": 44,
+            "mi": 38.634981583543684
+          },
+          "src/spendguard/routing_audit.py": {
+            "max_cc": 14,
+            "mi": 36.06718623737245
+          },
+          "src/spendguard/runner.py": {
+            "max_cc": 9,
+            "mi": 70.08133675855753
+          },
+          "src/spendguard/runpod_adapter.py": {
+            "max_cc": 22,
+            "mi": 68.37130155170505
+          },
+          "src/spendguard/saas.py": {
+            "max_cc": 39,
+            "mi": 0.0
+          },
+          "src/spendguard/scan.py": {
+            "max_cc": 24,
+            "mi": 59.74907896321292
+          },
+          "src/spendguard/schedule.py": {
+            "max_cc": 14,
+            "mi": 59.72374201899231
+          },
+          "src/spendguard/schema_indexes.py": {
+            "max_cc": 14,
+            "mi": 44.054449735692515
+          },
+          "src/spendguard/semcache.py": {
+            "max_cc": 16,
+            "mi": 39.92532128737611
+          },
+          "src/spendguard/serve.py": {
+            "max_cc": 10,
+            "mi": 54.771829894576925
+          },
+          "src/spendguard/setup.py": {
+            "max_cc": 47,
+            "mi": 0.0
+          },
+          "src/spendguard/share.py": {
+            "max_cc": 10,
+            "mi": 56.81372493182233
+          },
+          "src/spendguard/signal.py": {
+            "max_cc": 22,
+            "mi": 51.96146984645848
+          },
+          "src/spendguard/source_compact.py": {
+            "max_cc": 16,
+            "mi": 64.0542185418841
+          },
+          "src/spendguard/sources.py": {
+            "max_cc": 23,
+            "mi": 45.156848106424626
+          },
+          "src/spendguard/stability.py": {
+            "max_cc": 31,
+            "mi": 63.498638387214235
+          },
+          "src/spendguard/storm_coalescer.py": {
+            "max_cc": 24,
+            "mi": 33.5630615814814
+          },
+          "src/spendguard/storm_route.py": {
+            "max_cc": 11,
+            "mi": 60.94003876928755
+          },
+          "src/spendguard/storm_submit.py": {
+            "max_cc": 31,
+            "mi": 57.58697740496773
+          },
+          "src/spendguard/submit.py": {
+            "max_cc": 26,
+            "mi": 25.144578083593554
+          },
+          "src/spendguard/subscription_exec.py": {
+            "max_cc": 26,
+            "mi": 52.549214777873864
+          },
+          "src/spendguard/subscription_headroom_surfaces.py": {
+            "max_cc": 9,
+            "mi": 47.012727758606715
+          },
+          "src/spendguard/sync.py": {
+            "max_cc": 20,
+            "mi": 50.891671539025715
+          },
+          "src/spendguard/sync_capabilities.py": {
+            "max_cc": 18,
+            "mi": 49.31444269268742
+          },
+          "src/spendguard/tag.py": {
+            "max_cc": 7,
+            "mi": 67.03821908557403
+          },
+          "src/spendguard/tier_config.py": {
+            "max_cc": 40,
+            "mi": 46.42709771081143
+          },
+          "src/spendguard/token_caps.py": {
+            "max_cc": 19,
+            "mi": 55.38819148712056
+          },
+          "src/spendguard/trust.py": {
+            "max_cc": 12,
+            "mi": 59.413814148064276
+          },
+          "src/spendguard/truth.py": {
+            "max_cc": 8,
+            "mi": 70.36437793305625
+          },
+          "src/spendguard/ui.py": {
+            "max_cc": 5,
+            "mi": 87.01541023409189
+          },
+          "src/spendguard/validate.py": {
+            "max_cc": 18,
+            "mi": 51.629739253974826
+          },
+          "src/spendguard/vendor_call.py": {
+            "max_cc": 43,
+            "mi": 5.443208545770559
+          },
+          "src/spendguard/verdict_ledger.py": {
+            "max_cc": 11,
+            "mi": 80.04986247715179
+          },
+          "src/spendguard/verify.py": {
+            "max_cc": 21,
+            "mi": 57.97842506914812
+          },
+          "src/spendguard/vertex_adapter.py": {
+            "max_cc": 10,
+            "mi": 54.93503788965597
+          },
+          "src/spendguard/warm_stdio_daemon.py": {
+            "max_cc": 15,
+            "mi": 23.962226863883735
+          },
+          "src/spendguard/weekly_cap_guard.py": {
+            "max_cc": 23,
+            "mi": 25.828706117665153
+          },
+          "src/spendguard/whole_job.py": {
+            "max_cc": 27,
+            "mi": 25.64598378308811
+          },
+          "src/spendguard/work_integrity.py": {
+            "max_cc": 9,
+            "mi": 75.54347430315269
+          },
+          "src/spendguard/workdone.py": {
+            "max_cc": 10,
+            "mi": 44.66581389826934
+          },
+          "src/spendguard/xp_rate_window.py": {
+            "max_cc": 15,
+            "mi": 61.8753803545072
+          },
+          "src/spendguard/zai_exec.py": {
+            "max_cc": 22,
+            "mi": 59.845459267185056
+          }
+        },
+        "measured_extremes": {
+          "max_cc": 247,
+          "mi": 0.0
+        }
       }
-    },
-    "new_file_limits": {
-      "max_cc": 247,
-      "mi": 0.0
     }
   },
   "duplication": {

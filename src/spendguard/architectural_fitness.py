@@ -98,18 +98,27 @@ def find_architectural_import_cycles(edges):
 
 def measure_architectural_complexity(root, settings):
     """Measure radon CC maxima and MI per file, rather than inventing grade bars."""
-    from radon.complexity import cc_visit
+    from radon.complexity import add_inner_blocks, cc_visit
     from radon.metrics import mi_visit
 
     measurements = {}
     for path, _ in collect_architectural_source_units(root, settings).values():
         source = path.read_text()
-        blocks = cc_visit(source)
+        blocks = add_inner_blocks(cc_visit(source))
         measurements[path.relative_to(root).as_posix()] = {
             "max_cc": max((block.complexity for block in blocks), default=0),
             "mi": mi_visit(source, multi=True),
         }
     return measurements
+
+
+def select_architectural_interpreter_baseline(settings):
+    """Require measurements from this exact Python minor tokenizer version."""
+    interpreter = ".".join(map(str, sys.version_info[:2]))
+    recorded = settings["complexity"]["interpreters"].get(interpreter)
+    if recorded is None:
+        raise ValueError(f"No reviewed architectural complexity baseline for Python {interpreter}")
+    return recorded
 
 
 def measure_architectural_duplication(root, settings):
@@ -163,6 +172,9 @@ def run_architectural_fitness_gate(*, context, invariant):
                 applications = set(edges) - foundations - {settings["package"]}
                 if not foundations <= set(edges) or not applications:
                     raise ValueError("Layer contract scope is missing a declared foundation or application layer")
+                for foundation in sorted(foundations):
+                    violations.extend(f"Foundation {foundation} imports package module {target}"
+                                      for target in sorted(edges[foundation]))
                 configuration = "\n".join((
                     "[importlinter]", f"root_package = {settings['package']}",
                     "[importlinter:contract:architectural-foundations]",
@@ -186,12 +198,15 @@ def run_architectural_fitness_gate(*, context, invariant):
                     violations.append(detail)
         elif invariant == "complexity":
             current = measure_architectural_complexity(root, settings)
-            recorded = settings["complexity"]
+            recorded = select_architectural_interpreter_baseline(settings)
             for name, metrics in current.items():
-                baseline = recorded["files"].get(name, recorded["new_file_limits"])
+                baseline = recorded["files"].get(name)
+                if baseline is None:
+                    violations.append(f"{name}: new source file needs an explicit reviewed measured complexity baseline")
+                    continue
                 if metrics["max_cc"] > baseline["max_cc"] or metrics["mi"] < baseline["mi"]:
                     violations.append(f"{name}: {metrics} regresses {baseline}")
-            detail = f"Radon per-file ratchet: {len(current)} files; measured worst CC {recorded['new_file_limits']['max_cc']}, MI {recorded['new_file_limits']['mi']}"
+            detail = f"Radon per-file ratchet: {len(current)} files; measured worst CC {recorded['measured_extremes']['max_cc']}, MI {recorded['measured_extremes']['mi']}; new files require explicit measured review"
         elif invariant == "duplication":
             current = measure_architectural_duplication(root, settings)
             baseline = settings["duplication"]
