@@ -118,11 +118,15 @@ def render_capability_readiness_definition():
             continue
         lines.extend([f"- [ ] **{item.id}** — {item.description}",
                       f"  Gate: `{item.gate}`; inputs: `{json.dumps(item.arguments, sort_keys=True)}`.", ""])
-    lines.extend(["## External standards — UNREVIEWED", "",
-                  "These mappings are intentionally unreviewed stubs. They keep selfcheck red until reviewed and assigned gates.", ""])
+    lines.extend(["## External standards — reviewed offline subsets", "",
+                  "PASS covers the declared offline subset, not certification or an external badge. Reviewed N/A checks remain tracked below.", ""])
     for item in items:
         if item.standard is not None:
-            lines.extend([f"- [ ] [{item.description}]({item.standard}) — {item.reason}", ""])
+            lines.extend([f"- [ ] [{item.description}]({item.standard}) — {item.reason}",
+                          f"  Gate: `{item.gate}`."])
+            for check in item.arguments.get("reviews", []):
+                lines.append(f"  - **{check['id']}** ({check['disposition']}): {check['reason']} Tracking: {check['tracking']}.")
+            lines.append("")
     return "\n".join(lines)
 
 
@@ -138,4 +142,3 @@ def run_capability_selfcheck(*, repo_root=None, environment_report=None, json_ou
         }
     print(json.dumps(report, indent=2) if json_output else render_capability_readiness_report(report))
     return READINESS_SUCCESS_EXIT if report["ready"] else READINESS_INCOMPLETE_EXIT
-

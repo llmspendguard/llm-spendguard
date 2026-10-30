@@ -1,0 +1,9 @@
+# External readiness follow-up
+
+`spendguard selfcheck` enforces only the reviewed offline subsets recorded in the capability readiness manifest. A green result is not an OpenSSF badge, Scorecard score, PyPI publication or usability certification.
+
+- **Scorecard:** maintainers must run the current Scorecard runner against the public repository and review its complete result, including live GitHub settings, history, OSV findings and dependency ecosystems outside Actions. Record that result before claiming a score; branch protections, reviews, maintained status, fuzzing, release signatures, dependency update tooling, contributors, packaging, SAST, webhook and badge state remain external checks. The offline binary exception is maintained in [WAIVERS](WAIVERS.md). A scheduled informational runner is future work; it is not part of the blocking offline path.
+- **Best Practices Passing:** maintainers complete the [official questionnaire](https://www.bestpractices.dev/en/criteria/0), supplying URLs and human attestations for the entire Passing criteria. Existing documents are evidence of presence, not proof of process quality, expertise or effectiveness.
+- **PyPA:** release maintainers validate publication and acceptance against the target index during release. Offline builds cannot verify authentication, upload or live index policy.
+- **clig.dev:** CLI maintainers conduct task-based terminal usability review, including interaction, cancellation, recovery and output suitability. Deterministic help/version/error tests cover their explicitly named behavior only.
+- **Diátaxis:** documentation maintainers review the existing guided index quickstart with new readers, and assess quadrant quality and navigation. Presence and discoverability are machine checked; instructional effectiveness remains a reader judgement.
