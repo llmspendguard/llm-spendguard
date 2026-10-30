@@ -87,9 +87,9 @@ def _all_commands():
 
 
 def help_text():
-    from .capability_cli_help_generation import render_capability_cli_help
+    from .capability_cli_help_generation import render_capability_cli_grouped_help
 
-    return render_capability_cli_help().rstrip()
+    return render_capability_cli_grouped_help().rstrip()
 
 
 def ledger_read_cli(argv):

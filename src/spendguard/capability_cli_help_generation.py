@@ -5,6 +5,41 @@ import argparse
 import ast
 from typing import Any
 
+CAPABILITY_CLI_GROUPED_INTRO = (
+    'spendguard — know what an LLM job will cost before you run it, and prove your ledger matches the bill.',
+    '',
+    'quickstart:  pip install llm-spendguard[all]  &&  spendguard init --all',
+    '             (auto-detects your $0 subscription lanes + wires the gate, MCP tools, receipt & slash-commands)',
+    '', 'usage: spendguard <command> [args]    ·    spendguard --version', '',
+)
+CAPABILITY_CLI_GROUPED_FOOTER = (
+    'Not listed here: the deeper surface (bootstrap, insights, compare, experiment internals, tag, …).',
+    'Full reference: https://docs.llmspendguard.com/CLI/  ·  every setting: `spendguard config`',
+)
+CAPABILITY_CLI_GROUPED_COMMAND_WIDTH = 15
+
+
+def render_capability_cli_grouped_help() -> str:
+    """Keep the legacy overview while deriving its command entries from the registry."""
+    from .capability_registry import CLI_COMMAND_GRAMMARS
+
+    entries = sorted(
+        (entry for contract in CLI_COMMAND_GRAMMARS.values()
+         for entry in contract.get('help_entries', ())),
+        key=lambda entry: (entry['group_order'], entry['entry_order']),
+    )
+    lines = list(CAPABILITY_CLI_GROUPED_INTRO)
+    previous_group = None
+    for entry in entries:
+        if entry['group'] != previous_group:
+            if previous_group is not None:
+                lines.append('')
+            lines.append(entry['group'] + ':')
+            previous_group = entry['group']
+        lines.append(f"  {entry['name']:<{CAPABILITY_CLI_GROUPED_COMMAND_WIDTH}} {entry['description']}")
+    lines.extend(('', *CAPABILITY_CLI_GROUPED_FOOTER))
+    return '\n'.join(lines)
+
 
 def cli_projection_documented_value(record: dict[str, Any]) -> Any:
     """Decode display metadata without evaluating source or importing handlers."""

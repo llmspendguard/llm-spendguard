@@ -96,7 +96,9 @@ check("missing binary → 127 (shell convention), not a traceback",
 print("-- the CLI exposes it, and a missing prerequisite is ONE clean line (not a traceback) --")
 from spendguard import cli
 import inspect
-check("`spendguard run` is dispatched", 'cmd == "run"' in inspect.getsource(cli._dispatch))
+from _script_checks import cli_dispatch_preserves_owner_call
+check("`spendguard run` is dispatched",
+      cli_dispatch_preserves_owner_call("run", "spendguard.runner:main", "rest"))
 check("main() wraps dispatch and catches RuntimeError (the KeyMissing base)",
       "except RuntimeError" in inspect.getsource(cli.main) and "_dispatch" in inspect.getsource(cli.main))
 check("main() survives a broken pipe (`spendguard report | head`)",

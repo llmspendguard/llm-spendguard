@@ -41,9 +41,9 @@ def _404(m, p, payload=None):
 saas._request = _404
 record_script_check(fails, "server without /v1/truth → friendly skip, no raise", "skipped" in truth.push_truth(since="2026-07-01"))
 
-import inspect
-from spendguard import cli
-record_script_check(fails, "CLI wired: `spendguard truth`", '"truth"' in inspect.getsource(cli))
+from _script_checks import cli_dispatch_preserves_owner_call
+record_script_check(fails, "CLI wired: `spendguard truth`",
+                    cli_dispatch_preserves_owner_call("truth", "spendguard.truth:main", "none"))
 
 print(("[OK]" if not fails else "[FAIL]") + " truth-sync: %d failure(s)" % len(fails))
 sys.exit(1 if fails else 0)

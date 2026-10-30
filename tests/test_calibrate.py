@@ -144,7 +144,9 @@ import inspect
 import importlib
 from spendguard import cli, report, advise
 naive_est = importlib.import_module("spendguard.estimate")   # __init__ exports estimate() the function
-record_script_check(fails, "CLI wired: `spendguard calibrate`", '"calibrate"' in inspect.getsource(cli))
+from _script_checks import cli_dispatch_preserves_owner_call
+record_script_check(fails, "CLI wired: `spendguard calibrate`",
+                    cli_dispatch_preserves_owner_call("calibrate", "spendguard.calibrate:main", "rest"))
 record_script_check(fails, "report auto-pairs predictions each run", "calibrate" in inspect.getsource(report.generate_report))
 record_script_check(fails, "advise surfaces calibration confidence", "summary_lines" in inspect.getsource(advise.advise))
 record_script_check(fails, "naive `spendguard estimate --label` prints the learned correction",

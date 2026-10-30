@@ -3,7 +3,9 @@
     "command": "version",
     "aliases": [],
     "dispatch_evidence": "src/spendguard/capability_cli_dispatch_bindings.json",
-    "core_bindings": ["spendguard.release:release_status"],
+    "core_bindings": [
+      "spendguard.release:release_status"
+    ],
     "handler_evidence": [],
     "parser_kind": "no flags parsed / inline positional grammar",
     "nested_grammar_summary": "",
@@ -72,7 +74,16 @@
       }
     ],
     "manual_token_ids": [],
-    "takes_no_flags": false
+    "takes_no_flags": false,
+    "help_entries": [
+      {
+        "group": "setup & plumbing",
+        "description": "converge every local surface and attest the deployed release; --check verifies without mutation",
+        "group_order": 4,
+        "entry_order": 17,
+        "name": "distribute"
+      }
+    ]
   },
   {
     "command": "status",
@@ -144,7 +155,16 @@
     "manual_token_ids": [
       "doctor+status/--live"
     ],
-    "takes_no_flags": false
+    "takes_no_flags": false,
+    "help_entries": [
+      {
+        "group": "start here",
+        "description": "is the gate enforcing HERE? keys, lanes, ledger status",
+        "group_order": 0,
+        "entry_order": 4,
+        "name": "doctor"
+      }
+    ]
   },
   {
     "command": "delegate",
@@ -250,7 +270,16 @@
       }
     ],
     "manual_token_ids": [],
-    "takes_no_flags": false
+    "takes_no_flags": false,
+    "help_entries": [
+      {
+        "group": "start here",
+        "description": "classify then offload one self-contained task to another subscription plan; dry-run by default",
+        "group_order": 0,
+        "entry_order": 8,
+        "name": "delegate"
+      }
+    ]
   },
   {
     "command": "manifest",
@@ -300,7 +329,16 @@
       }
     ],
     "manual_token_ids": [],
-    "takes_no_flags": false
+    "takes_no_flags": false,
+    "help_entries": [
+      {
+        "group": "setup & plumbing",
+        "description": "build or show the persisted complete inventory of gated surfaces",
+        "group_order": 4,
+        "entry_order": 18,
+        "name": "manifest"
+      }
+    ]
   },
   {
     "command": "reap-orphans",
@@ -355,7 +393,16 @@
       }
     ],
     "manual_token_ids": [],
-    "takes_no_flags": false
+    "takes_no_flags": false,
+    "help_entries": [
+      {
+        "group": "start here",
+        "description": "inspect or reap warm-lane servers whose marked owner is provably dead",
+        "group_order": 0,
+        "entry_order": 12,
+        "name": "reap-orphans"
+      }
+    ]
   },
   {
     "command": "queue-manage",
@@ -415,7 +462,16 @@
       }
     ],
     "manual_token_ids": [],
-    "takes_no_flags": false
+    "takes_no_flags": false,
+    "help_entries": [
+      {
+        "group": "start here",
+        "description": "reclaim, retire, purge, and conditionally drain the durable lane queue",
+        "group_order": 0,
+        "entry_order": 13,
+        "name": "queue-manage"
+      }
+    ]
   },
   {
     "command": "lane-leak-check",
@@ -480,7 +536,16 @@
       }
     ],
     "manual_token_ids": [],
-    "takes_no_flags": false
+    "takes_no_flags": false,
+    "help_entries": [
+      {
+        "group": "start here",
+        "description": "detect protected subscription-lane or metered-provider leakage",
+        "group_order": 0,
+        "entry_order": 14,
+        "name": "lane-leak-check"
+      }
+    ]
   },
   {
     "command": "ledger-read",
@@ -565,7 +630,16 @@
       }
     ],
     "manual_token_ids": [],
-    "takes_no_flags": false
+    "takes_no_flags": false,
+    "help_entries": [
+      {
+        "group": "see the money",
+        "description": "bounded read-only events, calls and exact counts; oversized reads fail loud",
+        "group_order": 1,
+        "entry_order": 0,
+        "name": "ledger-read"
+      }
+    ]
   },
   {
     "command": "compress-content",
@@ -703,7 +777,16 @@
     "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [],
     "manual_token_ids": [],
-    "takes_no_flags": true
+    "takes_no_flags": true,
+    "help_entries": [
+      {
+        "group": "see the money",
+        "description": "is the subscription plan on paid per-token overage right now?",
+        "group_order": 1,
+        "entry_order": 10,
+        "name": "overage"
+      }
+    ]
   },
   {
     "command": "report",
@@ -754,7 +837,16 @@
       }
     ],
     "manual_token_ids": [],
-    "takes_no_flags": false
+    "takes_no_flags": false,
+    "help_entries": [
+      {
+        "group": "see the money",
+        "description": "daily \u00b7 weekly \u00b7 monthly, per provider (+ leak alert)",
+        "group_order": 1,
+        "entry_order": 2,
+        "name": "report"
+      }
+    ]
   },
   {
     "command": "route-cost",
@@ -1045,7 +1137,16 @@
       "focus-export/--until",
       "focus-export/--format"
     ],
-    "takes_no_flags": false
+    "takes_no_flags": false,
+    "help_entries": [
+      {
+        "group": "see the money",
+        "description": "the ledger as FinOps FOCUS 1.2 rows (json|csv) for any FinOps stack",
+        "group_order": 1,
+        "entry_order": 6,
+        "name": "focus-export"
+      }
+    ]
   },
   {
     "command": "otel-ingest",
@@ -1067,7 +1168,16 @@
       "otel-ingest/--dry-run",
       "otel-ingest/--project"
     ],
-    "takes_no_flags": false
+    "takes_no_flags": false,
+    "help_entries": [
+      {
+        "group": "see the money",
+        "description": "import an OTel GenAI trace (OpenLLMetry/Traceloop) \u2192 spend_events (idempotent)",
+        "group_order": 1,
+        "entry_order": 7,
+        "name": "otel-ingest"
+      }
+    ]
   },
   {
     "command": "preflight",
@@ -1115,7 +1225,16 @@
       }
     ],
     "manual_token_ids": [],
-    "takes_no_flags": false
+    "takes_no_flags": false,
+    "help_entries": [
+      {
+        "group": "setup & plumbing",
+        "description": "resolve model ids (served + priced; stale\u2192fix) BEFORE a batch \u2014 catches a bad id for $0",
+        "group_order": 4,
+        "entry_order": 13,
+        "name": "preflight"
+      }
+    ]
   },
   {
     "command": "verify",
@@ -1158,7 +1277,16 @@
       }
     ],
     "manual_token_ids": [],
-    "takes_no_flags": false
+    "takes_no_flags": false,
+    "help_entries": [
+      {
+        "group": "setup & plumbing",
+        "description": "self-check every money path: model ids \u00b7 failover map \u00b7 keys \u00b7 economics (--probe = live)",
+        "group_order": 4,
+        "entry_order": 14,
+        "name": "verify"
+      }
+    ]
   },
   {
     "command": "keys-audit",
@@ -1178,7 +1306,16 @@
       "keys-audit/--strict",
       "keys-audit/--json"
     ],
-    "takes_no_flags": false
+    "takes_no_flags": false,
+    "help_entries": [
+      {
+        "group": "setup & plumbing",
+        "description": "scan repo .env files for a provider key that would SHADOW the keys.env SSOT (the stale-shadow 401 doctor can't see)",
+        "group_order": 4,
+        "entry_order": 15,
+        "name": "keys-audit"
+      }
+    ]
   },
   {
     "command": "reconcile",
@@ -1245,7 +1382,16 @@
     "manual_token_ids": [
       "reconcile/--since"
     ],
-    "takes_no_flags": false
+    "takes_no_flags": false,
+    "help_entries": [
+      {
+        "group": "see the money",
+        "description": "`reconcile all|openai|anthropic` \u2014 ledger vs the provider's BILL",
+        "group_order": 1,
+        "entry_order": 3,
+        "name": "reconcile"
+      }
+    ]
   },
   {
     "command": "estimate",
@@ -1478,7 +1624,16 @@
       }
     ],
     "manual_token_ids": [],
-    "takes_no_flags": false
+    "takes_no_flags": false,
+    "help_entries": [
+      {
+        "group": "spend less (measured, not guessed)",
+        "description": "learned estimator: your history corrects the naive $",
+        "group_order": 2,
+        "entry_order": 4,
+        "name": "calibrate"
+      }
+    ]
   },
   {
     "command": "measurement",
@@ -1650,7 +1805,16 @@
       }
     ],
     "manual_token_ids": [],
-    "takes_no_flags": false
+    "takes_no_flags": false,
+    "help_entries": [
+      {
+        "group": "spend less (measured, not guessed)",
+        "description": "receipts for a judged number: `measurement inspect|list|reconstruct` \u2014 the judge/sample/rubric behind it",
+        "group_order": 2,
+        "entry_order": 11,
+        "name": "measurement"
+      }
+    ]
   },
   {
     "command": "audit",
@@ -1671,7 +1835,16 @@
       "audit/--deep",
       "audit/--run"
     ],
-    "takes_no_flags": false
+    "takes_no_flags": false,
+    "help_entries": [
+      {
+        "group": "setup & plumbing",
+        "description": "fail CI if any code hardcodes a disagreeing price",
+        "group_order": 4,
+        "entry_order": 24,
+        "name": "audit"
+      }
+    ]
   },
   {
     "command": "token-caps",
@@ -1691,7 +1864,16 @@
       "token-caps/--scan",
       "token-caps/--judge"
     ],
-    "takes_no_flags": false
+    "takes_no_flags": false,
+    "help_entries": [
+      {
+        "group": "setup & plumbing",
+        "description": "list every hardcoded output-token cap; --judge rules on the unjudged ones",
+        "group_order": 4,
+        "entry_order": 25,
+        "name": "token-caps"
+      }
+    ]
   },
   {
     "command": "batch-submit",
@@ -1955,7 +2137,16 @@
       }
     ],
     "manual_token_ids": [],
-    "takes_no_flags": false
+    "takes_no_flags": false,
+    "help_entries": [
+      {
+        "group": "start here",
+        "description": "run ONE prompt across many LLMs \u2014 honest per-vendor coverage, $0 lanes",
+        "group_order": 0,
+        "entry_order": 6,
+        "name": "ask"
+      }
+    ]
   },
   {
     "command": "comprehend",
@@ -2048,7 +2239,16 @@
       }
     ],
     "manual_token_ids": [],
-    "takes_no_flags": false
+    "takes_no_flags": false,
+    "help_entries": [
+      {
+        "group": "start here",
+        "description": "fan a CORPUS across the $0 lanes (doc-mining/gap-analysis) \u2014 NOT Claude sub-agents; estimate-first",
+        "group_order": 0,
+        "entry_order": 7,
+        "name": "comprehend"
+      }
+    ]
   },
   {
     "command": "serve",
@@ -2096,7 +2296,16 @@
       }
     ],
     "manual_token_ids": [],
-    "takes_no_flags": false
+    "takes_no_flags": false,
+    "help_entries": [
+      {
+        "group": "start here",
+        "description": "the ask surface over localhost HTTP \u2014 POST /ask from any tool/language",
+        "group_order": 0,
+        "entry_order": 9,
+        "name": "serve"
+      }
+    ]
   },
   {
     "command": "mcp",
@@ -2149,7 +2358,16 @@
       }
     ],
     "manual_token_ids": [],
-    "takes_no_flags": false
+    "takes_no_flags": false,
+    "help_entries": [
+      {
+        "group": "start here",
+        "description": "spendguard's tools over MCP (stdio): model-advisor + spend/compaction queries",
+        "group_order": 0,
+        "entry_order": 10,
+        "name": "mcp"
+      }
+    ]
   },
   {
     "command": "consumer-audit",
@@ -2204,7 +2422,16 @@
       }
     ],
     "manual_token_ids": [],
-    "takes_no_flags": false
+    "takes_no_flags": false,
+    "help_entries": [
+      {
+        "group": "setup & plumbing",
+        "description": "prove every workspace LLM consumer is gated and on the deployed sha; safely arm fixable venvs",
+        "group_order": 4,
+        "entry_order": 16,
+        "name": "consumer-audit"
+      }
+    ]
   },
   {
     "command": "deploy",
@@ -2231,7 +2458,16 @@
       "deploy/--dry-run",
       "deploy/--no-auto-arm"
     ],
-    "takes_no_flags": false
+    "takes_no_flags": false,
+    "help_entries": [
+      {
+        "group": "setup & plumbing",
+        "description": "run the full gate, then promote committed HEAD \u2192 green pointer (running MCP servers roll onto latest+best)",
+        "group_order": 4,
+        "entry_order": 20,
+        "name": "deploy"
+      }
+    ]
   },
   {
     "command": "fleet",
@@ -2252,7 +2488,16 @@
       "fleet/--dry-run",
       "fleet/--stale"
     ],
-    "takes_no_flags": false
+    "takes_no_flags": false,
+    "help_entries": [
+      {
+        "group": "setup & plumbing",
+        "description": "tracked consumers and deployments (--restart, --json, or deregister <python_executable>)",
+        "group_order": 4,
+        "entry_order": 22,
+        "name": "fleet"
+      }
+    ]
   },
   {
     "command": "release",
@@ -2269,7 +2514,16 @@
       "release/--check",
       "release/--dry-run"
     ],
-    "takes_no_flags": false
+    "takes_no_flags": false,
+    "help_entries": [
+      {
+        "group": "setup & plumbing",
+        "description": "show release status, then converge and attest the fleet (--check verifies only; --json)",
+        "group_order": 4,
+        "entry_order": 21,
+        "name": "release"
+      }
+    ]
   },
   {
     "command": "bakeoff",
@@ -2362,7 +2616,16 @@
       }
     ],
     "manual_token_ids": [],
-    "takes_no_flags": false
+    "takes_no_flags": false,
+    "help_entries": [
+      {
+        "group": "spend less (measured, not guessed)",
+        "description": "measure cost\u00d7quality for a SLATE of untried models on an intent's tasks (feeds advise); --temperature/--seed for a deterministic A/B",
+        "group_order": 2,
+        "entry_order": 1,
+        "name": "bakeoff"
+      }
+    ]
   },
   {
     "command": "stability",
@@ -2435,7 +2698,16 @@
       }
     ],
     "manual_token_ids": [],
-    "takes_no_flags": false
+    "takes_no_flags": false,
+    "help_entries": [
+      {
+        "group": "spend less (measured, not guessed)",
+        "description": "measure a model/lane's RUN-TO-RUN variance at production settings (replicates) \u2014 the stability question temp=0 can't answer",
+        "group_order": 2,
+        "entry_order": 2,
+        "name": "stability"
+      }
+    ]
   },
   {
     "command": "effort-titrate",
@@ -2513,7 +2785,16 @@
       }
     ],
     "manual_token_ids": [],
-    "takes_no_flags": false
+    "takes_no_flags": false,
+    "help_entries": [
+      {
+        "group": "spend less (measured, not guessed)",
+        "description": "learn the CHEAPEST reasoning effort that HOLDS quality, per (intent, model)",
+        "group_order": 2,
+        "entry_order": 3,
+        "name": "effort-titrate"
+      }
+    ]
   },
   {
     "command": "metadata",
@@ -2553,7 +2834,16 @@
       }
     ],
     "manual_token_ids": [],
-    "takes_no_flags": false
+    "takes_no_flags": false,
+    "help_entries": [
+      {
+        "group": "setup & plumbing",
+        "description": "model-metadata backbone health: LiteLLM cache + measured-cap drift",
+        "group_order": 4,
+        "entry_order": 26,
+        "name": "metadata"
+      }
+    ]
   },
   {
     "command": "migrate",
@@ -2566,7 +2856,16 @@
     "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [],
     "manual_token_ids": [],
-    "takes_no_flags": true
+    "takes_no_flags": true,
+    "help_entries": [
+      {
+        "group": "setup & plumbing",
+        "description": "rebuild spend_events from charges (exact Decimal); proves \u03a3 preserved",
+        "group_order": 4,
+        "entry_order": 29,
+        "name": "migrate"
+      }
+    ]
   },
   {
     "command": "estimate-literals",
@@ -2585,7 +2884,16 @@
     "manual_token_ids": [
       "estimate-literals/--judge"
     ],
-    "takes_no_flags": false
+    "takes_no_flags": false,
+    "help_entries": [
+      {
+        "group": "setup & plumbing",
+        "description": "every cost call fed literal token counts; --judge rules quote vs probe",
+        "group_order": 4,
+        "entry_order": 28,
+        "name": "estimate-literals"
+      }
+    ]
   },
   {
     "command": "estimate-divergence",
@@ -2602,7 +2910,16 @@
     "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [],
     "manual_token_ids": [],
-    "takes_no_flags": true
+    "takes_no_flags": true,
+    "help_entries": [
+      {
+        "group": "setup & plumbing",
+        "description": "judge every recorded quote against the actual bill; fails on ungrounded ones",
+        "group_order": 4,
+        "entry_order": 27,
+        "name": "estimate-divergence"
+      }
+    ]
   },
   {
     "command": "pricing",
@@ -2619,7 +2936,16 @@
     "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [],
     "manual_token_ids": [],
-    "takes_no_flags": true
+    "takes_no_flags": true,
+    "help_entries": [
+      {
+        "group": "setup & plumbing",
+        "description": "print the canonical price table",
+        "group_order": 4,
+        "entry_order": 23,
+        "name": "pricing"
+      }
+    ]
   },
   {
     "command": "providers",
@@ -2649,7 +2975,16 @@
     "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [],
     "manual_token_ids": [],
-    "takes_no_flags": true
+    "takes_no_flags": true,
+    "help_entries": [
+      {
+        "group": "see the money",
+        "description": "which LLM-capable interpreters are NOT gated",
+        "group_order": 1,
+        "entry_order": 9,
+        "name": "coverage"
+      }
+    ]
   },
   {
     "command": "gate-coverage",
@@ -2679,7 +3014,16 @@
     "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [],
     "manual_token_ids": [],
-    "takes_no_flags": true
+    "takes_no_flags": true,
+    "help_entries": [
+      {
+        "group": "spend less (measured, not guessed)",
+        "description": "measured p99 bound for a call class (autotune's input)",
+        "group_order": 2,
+        "entry_order": 7,
+        "name": "maxtokens"
+      }
+    ]
   },
   {
     "command": "plan-queue",
@@ -2758,7 +3102,16 @@
     "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [],
     "manual_token_ids": [],
-    "takes_no_flags": true
+    "takes_no_flags": true,
+    "help_entries": [
+      {
+        "group": "setup & plumbing",
+        "description": "`config` show all \u00b7 `config set <section.key> <value>`",
+        "group_order": 4,
+        "entry_order": 0,
+        "name": "config"
+      }
+    ]
   },
   {
     "command": "init",
@@ -2783,7 +3136,16 @@
       "init/--yes",
       "init/-y"
     ],
-    "takes_no_flags": false
+    "takes_no_flags": false,
+    "help_entries": [
+      {
+        "group": "start here",
+        "description": "one-command setup: caps + identity + auto-wire your $0 lanes (--all also wires gate/MCP/receipt/rule/skills)",
+        "group_order": 0,
+        "entry_order": 1,
+        "name": "init"
+      }
+    ]
   },
   {
     "command": "install-hook",
@@ -2845,7 +3207,16 @@
       }
     ],
     "manual_token_ids": [],
-    "takes_no_flags": false
+    "takes_no_flags": false,
+    "help_entries": [
+      {
+        "group": "setup & plumbing",
+        "description": "gate EVERY process in a venv (opt-in; --uninstall removes)",
+        "group_order": 4,
+        "entry_order": 1,
+        "name": "install-hook"
+      }
+    ]
   },
   {
     "command": "gate-host",
@@ -2864,7 +3235,16 @@
     "manual_token_ids": [
       "gate-host/--apply"
     ],
-    "takes_no_flags": false
+    "takes_no_flags": false,
+    "help_entries": [
+      {
+        "group": "setup & plumbing",
+        "description": "offer/apply import-time gating to every discovered unregistered interpreter",
+        "group_order": 4,
+        "entry_order": 2,
+        "name": "gate-host"
+      }
+    ]
   },
   {
     "command": "install-agent-gate",
@@ -2883,7 +3263,16 @@
     "manual_token_ids": [
       "install-agent-gate/--uninstall"
     ],
-    "takes_no_flags": false
+    "takes_no_flags": false,
+    "help_entries": [
+      {
+        "group": "setup & plumbing",
+        "description": "hard-route reroutable Agent/Task spawns off a near-cap hosting plan",
+        "group_order": 4,
+        "entry_order": 3,
+        "name": "install-agent-gate"
+      }
+    ]
   },
   {
     "command": "install-capguard",
@@ -2902,7 +3291,16 @@
     "manual_token_ids": [
       "install-capguard/--uninstall"
     ],
-    "takes_no_flags": false
+    "takes_no_flags": false,
+    "help_entries": [
+      {
+        "group": "setup & plumbing",
+        "description": "guard Claude subagent and raw codex-exec spawns at low weekly headroom",
+        "group_order": 4,
+        "entry_order": 4,
+        "name": "install-capguard"
+      }
+    ]
   },
   {
     "command": "schedule",
@@ -2922,7 +3320,16 @@
       "schedule/--daily",
       "schedule/--remove"
     ],
-    "takes_no_flags": false
+    "takes_no_flags": false,
+    "help_entries": [
+      {
+        "group": "setup & plumbing",
+        "description": "OS-native daily sync (launchd / cron / schtasks)",
+        "group_order": 4,
+        "entry_order": 7,
+        "name": "schedule"
+      }
+    ]
   },
   {
     "command": "install-skills",
@@ -2962,7 +3369,16 @@
       }
     ],
     "manual_token_ids": [],
-    "takes_no_flags": false
+    "takes_no_flags": false,
+    "help_entries": [
+      {
+        "group": "setup & plumbing",
+        "description": "add the /spend, /spendguard-* slash commands",
+        "group_order": 4,
+        "entry_order": 6,
+        "name": "install-skills"
+      }
+    ]
   },
   {
     "command": "install-rule",
@@ -3014,7 +3430,16 @@
       }
     ],
     "manual_token_ids": [],
-    "takes_no_flags": false
+    "takes_no_flags": false,
+    "help_entries": [
+      {
+        "group": "setup & plumbing",
+        "description": "teach Claude/Cursor to route generated code through the gate",
+        "group_order": 4,
+        "entry_order": 5,
+        "name": "install-rule"
+      }
+    ]
   },
   {
     "command": "install-receipts",
@@ -3053,7 +3478,16 @@
     "manual_token_ids": [
       "install-mcp/--remove"
     ],
-    "takes_no_flags": false
+    "takes_no_flags": false,
+    "help_entries": [
+      {
+        "group": "start here",
+        "description": "register `spendguard mcp` in Claude Code (~/.claude.json); --remove to undo",
+        "group_order": 0,
+        "entry_order": 11,
+        "name": "install-mcp"
+      }
+    ]
   },
   {
     "command": "remote",
@@ -3099,7 +3533,16 @@
       "saas/--if-due",
       "saas/--no-open"
     ],
-    "takes_no_flags": false
+    "takes_no_flags": false,
+    "help_entries": [
+      {
+        "group": "teams",
+        "description": "`saas link|sync|push|reconcile|reattribute` \u2014 org roll-up (opt-in)",
+        "group_order": 3,
+        "entry_order": 0,
+        "name": "saas"
+      }
+    ]
   },
   {
     "command": "resources",
@@ -3205,7 +3648,16 @@
       "receipt/--week",
       "receipt/--since"
     ],
-    "takes_no_flags": false
+    "takes_no_flags": false,
+    "help_entries": [
+      {
+        "group": "see the money",
+        "description": "running tally: today / 7d / month, two axes",
+        "group_order": 1,
+        "entry_order": 1,
+        "name": "receipt"
+      }
+    ]
   },
   {
     "command": "backfill",
@@ -3294,7 +3746,16 @@
       }
     ],
     "manual_token_ids": [],
-    "takes_no_flags": false
+    "takes_no_flags": false,
+    "help_entries": [
+      {
+        "group": "spend less (measured, not guessed)",
+        "description": "cheapest config that HELD quality, per intent (the auto knob: reasoning='best-value')",
+        "group_order": 2,
+        "entry_order": 0,
+        "name": "advise"
+      }
+    ]
   },
   {
     "command": "optimize",
@@ -4394,7 +4855,16 @@
       }
     ],
     "manual_token_ids": [],
-    "takes_no_flags": false
+    "takes_no_flags": false,
+    "help_entries": [
+      {
+        "group": "spend less (measured, not guessed)",
+        "description": "A/B a cheaper config with graded output-equivalence",
+        "group_order": 2,
+        "entry_order": 6,
+        "name": "experiment"
+      }
+    ]
   },
   {
     "command": "models",
@@ -4734,7 +5204,16 @@
     "manual_token_ids": [
       "trust/--since"
     ],
-    "takes_no_flags": false
+    "takes_no_flags": false,
+    "help_entries": [
+      {
+        "group": "see the money",
+        "description": "is what we recorded \u2248 what you were billed?",
+        "group_order": 1,
+        "entry_order": 4,
+        "name": "trust"
+      }
+    ]
   },
   {
     "command": "cross-check",
@@ -4874,7 +5353,16 @@
       }
     ],
     "manual_token_ids": [],
-    "takes_no_flags": false
+    "takes_no_flags": false,
+    "help_entries": [
+      {
+        "group": "spend less (measured, not guessed)",
+        "description": "what the changes actually saved",
+        "group_order": 2,
+        "entry_order": 9,
+        "name": "realized"
+      }
+    ]
   },
   {
     "command": "savings",
@@ -4889,7 +5377,16 @@
     "manual_token_ids": [
       "savings/--json"
     ],
-    "takes_no_flags": false
+    "takes_no_flags": false,
+    "help_entries": [
+      {
+        "group": "spend less (measured, not guessed)",
+        "description": "what spendguard SAVED \u2014 measured + counterfactual, by source (the 3rd axis, never summed)",
+        "group_order": 2,
+        "entry_order": 10,
+        "name": "savings"
+      }
+    ]
   },
   {
     "command": "tokens",
@@ -4909,7 +5406,16 @@
       "tokens/--json",
       "tokens/--dry-run"
     ],
-    "takes_no_flags": false
+    "takes_no_flags": false,
+    "help_entries": [
+      {
+        "group": "spend less (measured, not guessed)",
+        "description": "per-provider token factors: `tokens calibrate` picks o200k\u2192native AGENTICALLY from call_io stats (--dry-run=$0)",
+        "group_order": 2,
+        "entry_order": 8,
+        "name": "tokens"
+      }
+    ]
   },
   {
     "command": "prompts",
@@ -4972,7 +5478,16 @@
       }
     ],
     "manual_token_ids": [],
-    "takes_no_flags": false
+    "takes_no_flags": false,
+    "help_entries": [
+      {
+        "group": "spend less (measured, not guessed)",
+        "description": "lint the call corpus for prompt waste",
+        "group_order": 2,
+        "entry_order": 5,
+        "name": "prompts"
+      }
+    ]
   },
   {
     "command": "close",
@@ -5025,7 +5540,16 @@
       }
     ],
     "manual_token_ids": [],
-    "takes_no_flags": false
+    "takes_no_flags": false,
+    "help_entries": [
+      {
+        "group": "see the money",
+        "description": "monthly close: provider truth + residual, named",
+        "group_order": 1,
+        "entry_order": 5,
+        "name": "close"
+      }
+    ]
   },
   {
     "command": "truth",
@@ -5073,7 +5597,16 @@
       }
     ],
     "manual_token_ids": [],
-    "takes_no_flags": false
+    "takes_no_flags": false,
+    "help_entries": [
+      {
+        "group": "teams",
+        "description": "push provider-truth totals (owner only)",
+        "group_order": 3,
+        "entry_order": 3,
+        "name": "truth"
+      }
+    ]
   },
   {
     "command": "sources",
@@ -5093,7 +5626,16 @@
       "sources/--json",
       "sources/--days"
     ],
-    "takes_no_flags": false
+    "takes_no_flags": false,
+    "help_entries": [
+      {
+        "group": "start here",
+        "description": "where can this machine spend? providers \u00b7 agent tools \u00b7 ungated venvs",
+        "group_order": 0,
+        "entry_order": 3,
+        "name": "sources"
+      }
+    ]
   },
   {
     "command": "scan",
@@ -5112,7 +5654,16 @@
     "manual_token_ids": [
       "scan/--days"
     ],
-    "takes_no_flags": false
+    "takes_no_flags": false,
+    "help_entries": [
+      {
+        "group": "start here",
+        "description": "what your local coding-agent work costs \u2014 no key, no network, 10s",
+        "group_order": 0,
+        "entry_order": 0,
+        "name": "scan"
+      }
+    ]
   },
   {
     "command": "run",
@@ -5132,7 +5683,16 @@
       "run/--show",
       "run/--"
     ],
-    "takes_no_flags": false
+    "takes_no_flags": false,
+    "help_entries": [
+      {
+        "group": "start here",
+        "description": "`run -- <cmd>` gate ONE command; nothing written to your interpreter",
+        "group_order": 0,
+        "entry_order": 2,
+        "name": "run"
+      }
+    ]
   },
   {
     "command": "lanes",
@@ -5189,7 +5749,16 @@
       "lanes/--jsonl",
       "lanes/--force"
     ],
-    "takes_no_flags": false
+    "takes_no_flags": false,
+    "help_entries": [
+      {
+        "group": "teams",
+        "description": "subscription lanes: run meta prompts on your plan (+ `lanes set-model <lane> <model>`)",
+        "group_order": 3,
+        "entry_order": 1,
+        "name": "lanes"
+      }
+    ]
   },
   {
     "command": "tiers",
@@ -5208,7 +5777,16 @@
     "manual_token_ids": [
       "tiers/--probe"
     ],
-    "takes_no_flags": false
+    "takes_no_flags": false,
+    "help_entries": [
+      {
+        "group": "teams",
+        "description": "bulk-lane routing groups: show/validate + `tiers set <group> <model\u2026>`",
+        "group_order": 3,
+        "entry_order": 2,
+        "name": "tiers"
+      }
+    ]
   },
   {
     "command": "register-critical",
@@ -5269,7 +5847,16 @@
     "manual_token_ids": [
       "keys/--since"
     ],
-    "takes_no_flags": false
+    "takes_no_flags": false,
+    "help_entries": [
+      {
+        "group": "see the money",
+        "description": "spend per API key (which workspace/project key)",
+        "group_order": 1,
+        "entry_order": 8,
+        "name": "keys"
+      }
+    ]
   },
   {
     "command": "insights",
@@ -5431,7 +6018,16 @@
     "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [],
     "manual_token_ids": [],
-    "takes_no_flags": true
+    "takes_no_flags": true,
+    "help_entries": [
+      {
+        "group": "setup & plumbing",
+        "description": "refresh the price breadth layer now",
+        "group_order": 4,
+        "entry_order": 8,
+        "name": "sync-prices"
+      }
+    ]
   },
   {
     "command": "sync-catalog",
@@ -5448,7 +6044,16 @@
     "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [],
     "manual_token_ids": [],
-    "takes_no_flags": true
+    "takes_no_flags": true,
+    "help_entries": [
+      {
+        "group": "setup & plumbing",
+        "description": "refresh the live model-catalog (validates model ids at dispatch)",
+        "group_order": 4,
+        "entry_order": 9,
+        "name": "sync-catalog"
+      }
+    ]
   },
   {
     "command": "sync-capabilities",
@@ -5493,7 +6098,16 @@
       }
     ],
     "manual_token_ids": [],
-    "takes_no_flags": false
+    "takes_no_flags": false,
+    "help_entries": [
+      {
+        "group": "setup & plumbing",
+        "description": "sync per-model capabilities (vision, response_schema, \u2026) + upper bounds from LiteLLM",
+        "group_order": 4,
+        "entry_order": 10,
+        "name": "sync-capabilities"
+      }
+    ]
   },
   {
     "command": "balances",
@@ -5512,7 +6126,16 @@
     "manual_token_ids": [
       "balances/--cached"
     ],
-    "takes_no_flags": false
+    "takes_no_flags": false,
+    "help_entries": [
+      {
+        "group": "setup & plumbing",
+        "description": "per-vendor metered prepay balance (sunk-pool vs on-demand), for routing",
+        "group_order": 4,
+        "entry_order": 11,
+        "name": "balances"
+      }
+    ]
   },
   {
     "command": "reliability",
@@ -5534,7 +6157,16 @@
       "reliability/--remediate",
       "reliability/--notify"
     ],
-    "takes_no_flags": false
+    "takes_no_flags": false,
+    "help_entries": [
+      {
+        "group": "setup & plumbing",
+        "description": "sweep every lane ($0) + metered provider (--run) for reachability; --remediate = agentic per-lane FIX (which login/quota/API to fix), cached; --notify = macOS notification on any red",
+        "group_order": 4,
+        "entry_order": 12,
+        "name": "reliability"
+      }
+    ]
   },
   {
     "command": "health",
@@ -5584,7 +6216,16 @@
       }
     ],
     "manual_token_ids": [],
-    "takes_no_flags": false
+    "takes_no_flags": false,
+    "help_entries": [
+      {
+        "group": "start here",
+        "description": "bounded MCP health check of lanes and metered providers (--no-run = no probes; --json)",
+        "group_order": 0,
+        "entry_order": 5,
+        "name": "health"
+      }
+    ]
   },
   {
     "command": "refresh-prices",

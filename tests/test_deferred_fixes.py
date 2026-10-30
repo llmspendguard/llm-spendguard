@@ -100,8 +100,30 @@ check("it points at the full reference rather than pretending to be complete",
       "docs.llmspendguard.com" in cli.help_text() and "Not listed here" in cli.help_text())
 
 print("-- help can't drift from the dispatch: every advertised command must dispatch --")
-disp = inspect.getsource(cli._dispatch)
-missing = [c for c in cli._all_commands() if f'"{c}"' not in disp]
+from _script_checks import cli_dispatch_preserves_owner_call
+from spendguard.capability_registry import CLI_COMMAND_BINDINGS
+from spendguard.capability_cli_callable_generation import registered_callable_cli_commands
+from unittest.mock import patch
+callable_commands = registered_callable_cli_commands()
+missing = []
+for advertised_command in cli._all_commands():
+    advertised_binding = CLI_COMMAND_BINDINGS.get(advertised_command)
+    if advertised_binding is None:
+        advertised_declaration = callable_commands.get(advertised_command)
+        if advertised_declaration is None:
+            missing.append(advertised_command)
+            continue
+        advertised_variant = advertised_declaration[1]
+        with patch("spendguard.capability_surface_generation.invoke_capability_tool_variant",
+                   return_value=0) as callable_owner_mock:
+            advertised_result = cli._dispatch([advertised_command])
+            callable_owner_mock.assert_called_once_with(advertised_variant, {})
+            if advertised_result != 0:
+                missing.append(advertised_command)
+    elif not cli_dispatch_preserves_owner_call(
+            advertised_command, advertised_binding.handler_ref, advertised_binding.invocation_policy,
+            legacy_argv_prefix=advertised_binding.legacy_argv_prefix, command_arguments=[]):
+        missing.append(advertised_command)
 check(f"every command in the help table is really dispatched: {missing}", not missing)
 
 print("-- a typo gets did-you-mean and exit 2 (not the old exit-1 docstring dump) --")

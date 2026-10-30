@@ -139,7 +139,9 @@ check("it names the plugin path so an unsupported tool has an answer",
 
 print("-- wired into the CLI + help --")
 from spendguard import cli
-check("`spendguard sources` dispatches", 'cmd == "sources"' in inspect.getsource(cli._dispatch))
+from _script_checks import cli_dispatch_preserves_owner_call
+check("`spendguard sources` dispatches",
+      cli_dispatch_preserves_owner_call("sources", "spendguard.sources:main", "rest"))
 check("it is advertised in the grouped help", "sources" in cli.help_text())
 
 print(f"\n{'[FAIL]' if failures else 'OK'} test_sources_port: {failures} failure(s)")

@@ -35,9 +35,9 @@ rc = close.main(["--month", "2026-06", "--csv", out])
 record_script_check(fails, "CLI runs + writes csv", rc == 0 and os.path.exists(out) and "openai,15.00,2" in open(out).read())
 record_script_check(fails, "CLI rejects a bad month", close.main(["--month", "junk"]) == 2)
 
-import inspect
-from spendguard import cli
-record_script_check(fails, "CLI wired: `spendguard close`", '"close"' in inspect.getsource(cli))
+from _script_checks import cli_dispatch_preserves_owner_call
+record_script_check(fails, "CLI wired: `spendguard close`",
+                    cli_dispatch_preserves_owner_call("close", "spendguard.close:main", "none"))
 
 print(("[OK]" if not fails else "[FAIL]") + " close: %d failure(s)" % len(fails))
 sys.exit(1 if fails else 0)
