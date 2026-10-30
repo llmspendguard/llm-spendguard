@@ -4,6 +4,29 @@ import os
 from . import config, lane_catalog, lane_registry, lanes, overage
 
 
+def hosting_plan_lane():
+    """Resolve the hook's hosting subscription from its host override or the existing lane registry."""
+    if os.getenv("SPENDGUARD_HOOK_HOST") == "codex":
+        return "codex"
+    configured = config._cfg_get("agent_spawn_gate", "plan_lane", None)
+    if configured:
+        return configured
+    marked = [row["lane"] for row in lane_registry.LANES if row.get("subagent_host")]
+    if len(marked) != 1:
+        raise RuntimeError("lane_registry must mark exactly one subagent_host, or configure agent_spawn_gate.plan_lane")
+    return marked[0]
+
+
+def hosting_plan_in_near_cap_band(hosting_lane, near_cap_remaining_pct):
+    """Shared subagent-route policy using the existing overage and cached headroom sources."""
+    if hosting_lane != "codex" and overage.current_overage_status().get("on_overage_now"):
+        return True
+    row = next((item for item in lanes.lane_headroom(do_fetch=False)
+                if item.get("lane") == hosting_lane), None)
+    return bool(row and row.get("known") and row.get("remaining_pct") is not None
+                and float(row["remaining_pct"]) <= near_cap_remaining_pct)
+
+
 def _threshold():
     return float(config._cfg_get("plan_admission", "remaining_pct", 0.0) or 0.0)
 

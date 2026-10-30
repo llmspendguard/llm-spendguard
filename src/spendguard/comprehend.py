@@ -26,7 +26,7 @@ import glob as _glob
 import os
 import re
 
-from . import calls, config, expected_output, lane_balance, pricing
+from . import calls, config, expected_output, lane_balance, lane_catalog, pricing
 
 # Per-task evidence ceiling (chars). A file larger than this is split into contiguous parts — contained, never
 # cut. ~200k chars ≈ 50k tokens, comfortably inside a 1M-context model, so in practice most files are one task.
@@ -151,8 +151,84 @@ def _aggregate(tasks, keyed):
     return by_file
 
 
-def comprehend_corpus(patterns, intent, question=None, model=None, run=False, budget_usd=None, lanes=None,
-                      max_chars=_DEFAULT_MAX_CHARS, checkpoint=None, refuse_billed=False):
+def _comprehend_input_files(patterns, items, intent):
+    """Resolve alternative corpus sources without expanding explicit item identities as globs."""
+    if not intent:
+        raise ValueError("intent is required")
+    if items is not None and patterns:
+        raise ValueError("items and patterns are alternative input sources")
+    if items is not None:
+        return list(dict.fromkeys(os.path.expanduser(os.fspath(item)) for item in items))
+    return resolve_files(patterns or [])
+
+
+def _comprehend_vendor_lanes(lanes, vendors, panel):
+    """Constrain registered lane identities by an explicit provider set; never widen an empty match."""
+    if vendors is None and not panel:
+        return lanes
+    selected_lanes = list(lanes) if lanes is not None else lane_catalog.lanes()
+    if vendors is not None:
+        vendor_set = set(vendors)
+        known_vendors = {lane_catalog.lane_provider(lane) for lane in lane_catalog.lanes()}
+        if vendor_set - known_vendors:
+            raise ValueError(f"unknown lane vendors: {sorted(vendor_set - known_vendors)}")
+        selected_lanes = [lane for lane in selected_lanes if lane_catalog.lane_provider(lane) in vendor_set]
+    if (vendors is not None or panel) and not selected_lanes:
+        raise ValueError("no lanes match the requested vendor/lane set")
+    return selected_lanes
+
+
+def _comprehend_panel_tasks(tasks, selected_lanes):
+    """Expand every whole-evidence task into the existing provider-pinned matrix shape."""
+    panel_models = {}
+    for lane in selected_lanes:
+        provider = lane_catalog.lane_provider(lane)
+        base_model = lane_catalog.configured_base(lane)
+        if not provider or not base_model:
+            raise ValueError(f"panel lane has no configured provider/model: {lane}")
+        panel_models[provider] = f"{provider}:{base_model}"
+    matrix = [{**task, "key": f"{task['key']}@{provider}", "reviewer": provider,
+               "review_model": review_model}
+              for task in tasks for provider, review_model in panel_models.items()]
+    return matrix, panel_models
+
+
+def _comprehend_review_estimate(tasks, model, intent, panel_models):
+    """Price every selected review using its configured model rather than a single proxy model."""
+    est = estimate_corpus(tasks, model, intent)
+    if panel_models:
+        reviewers = [estimate_corpus([t for t in tasks if t["reviewer"] == provider], review_model, intent)
+                     for provider, review_model in panel_models.items()]
+        est = {**est, "reviewers": reviewers,
+               "est_usd_ceiling": round(sum(row["est_usd_ceiling"] for row in reviewers), 4)}
+    return est
+
+
+def _comprehend_dispatch_tasks(live, intent, selected_lanes, checkpoint, refuse_billed, panel):
+    """Share the durable governed bulk fan for ordinary tasks and provider-pinned panel votes."""
+    controls = {"intent": intent, "lanes": selected_lanes, "checkpoint": checkpoint,
+                "return_keyed": True, "refuse_billed": refuse_billed}
+    if panel:
+        return lane_balance.bulk_delegate(live, **controls, model_for=lambda task: task["review_model"],
+                                          prompt_for=lambda task: task["prompt"], task_key=lambda task: task["key"])
+    return lane_balance.bulk_delegate([t["prompt"] for t in live], **controls,
+                                      task_key=[t["key"] for t in live])
+
+
+def _comprehend_aggregate_reviews(tasks, rows, panel_models):
+    """Retain each reviewer's ordered chunk results alongside the existing per-file aggregate."""
+    by_file = _aggregate(tasks, rows)
+    if panel_models:
+        for file, aggregate in by_file.items():
+            aggregate["reviews"] = {provider: _aggregate(
+                [task for task in tasks if task["file"] == file and task["reviewer"] == provider], rows)[file]
+                for provider in panel_models}
+    return by_file
+
+
+def comprehend_corpus(patterns=None, intent=None, question=None, model=None, run=False, budget_usd=None, lanes=None,
+                      max_chars=_DEFAULT_MAX_CHARS, checkpoint=None, refuse_billed=False,
+                      items=None, vendors=None, panel=False):
     """Fan the corpus across the $0 lanes and aggregate per file. Default (run=False) is a ZERO-SPEND estimate.
 
     `intent` is the job-type label every call records under (required — attribution is the core mission).
@@ -160,14 +236,25 @@ def comprehend_corpus(patterns, intent, question=None, model=None, run=False, bu
     protected lane); None lets bulk_delegate use every eligible idle lane, which already excludes a lane that is
     out of quota. `checkpoint` is the resumable results jsonl — when None on a run, a STABLE per-intent path is
     used, so the fan is durable/resumable by default. `run=True` FAILS CLOSED if the interpreter is not gated,
-    and refuses if the estimate exceeds `budget_usd`."""
+    and refuses if the estimate exceeds `budget_usd`.
+
+    `items` is an explicit list of literal file identities (no glob expansion), alternative to `patterns`.
+    Every item is read whole or contained in contiguous chunks; missing identities are reported as unreadable.
+    `vendors` confines the existing lane set by its registered provider identity; an empty intersection refuses.
+    `panel` reviews every item/chunk with every selected vendor's configured lane model, using the existing
+    provider-pinned bulk matrix. Results retain separate `reviews` per vendor, and the estimate prices all votes.
+    `intent` remains required at runtime when patterns are omitted for the items input surface."""
+    files = _comprehend_input_files(patterns, items, intent)
     question = question or _DEFAULT_QUESTION
     model = model or config.advisor_model()
-    files = resolve_files(patterns)
+    selected_lanes = _comprehend_vendor_lanes(lanes, vendors, panel)
     tasks = build_tasks(files, question, max_chars=max_chars)
+    panel_models = {}
+    if panel:
+        tasks, panel_models = _comprehend_panel_tasks(tasks, selected_lanes)
     live = [t for t in tasks if t.get("prompt")]
     unreadable = [t for t in tasks if not t.get("prompt")]
-    est = estimate_corpus(tasks, model, intent)
+    est = _comprehend_review_estimate(tasks, model, intent, panel_models)
     base = {"files": len(files), "tasks": len(live), "unreadable": [t["file"] for t in unreadable],
             "estimate": est, "intent": intent, "model": model}
     if not files:
@@ -186,13 +273,10 @@ def comprehend_corpus(patterns, intent, question=None, model=None, run=False, bu
 
     if not checkpoint:                         # durable + resumable by default (chunk-never-single-shot): each
         checkpoint = default_checkpoint(intent)  # result is appended before the next chunk, so a crash resumes
-    prompts = [t["prompt"] for t in live]
-    keys = [t["key"] for t in live]            # unique per task (file or file#part) → pair results by MEANING
     with config.scoped_intent_cap(intent, budget_usd), calls.context(intent=intent):
-        keyed = lane_balance.bulk_delegate(prompts, intent=intent, lanes=lanes, checkpoint=checkpoint,
-                                           task_key=keys, return_keyed=True, refuse_billed=refuse_billed)
+        keyed = _comprehend_dispatch_tasks(live, intent, selected_lanes, checkpoint, refuse_billed, panel)
     rows = keyed if isinstance(keyed, dict) else {}
-    by_file = _aggregate(tasks, rows)
+    by_file = _comprehend_aggregate_reviews(tasks, rows, panel_models)
     served = sum(1 for v in rows.values() if isinstance(v, dict) and v.get("text"))
     billed = [f for f, a in by_file.items() if a["billed"]]
     return {**base, "ran": True, "served": served, "results": by_file,
@@ -214,15 +298,21 @@ def cmd(argv=None):
     add_registered_cli_argument(ap, 'comprehend/comprehend.cmd/ap/--budget-usd', type=float)
     add_registered_cli_argument(ap, 'comprehend/comprehend.cmd/ap/--refuse-billed')
     add_registered_cli_argument(ap, 'comprehend/comprehend.cmd/ap/--lanes')
+    add_registered_cli_argument(ap, 'comprehend/comprehend.cmd/ap/--items')
+    add_registered_cli_argument(ap, 'comprehend/comprehend.cmd/ap/--vendors')
+    add_registered_cli_argument(ap, 'comprehend/comprehend.cmd/ap/--panel')
     add_registered_cli_argument(ap, 'comprehend/comprehend.cmd/ap/--max-chars', type=int, default=_DEFAULT_MAX_CHARS, help=f'per-task evidence ceiling; larger files are chunked, never cut (default {_DEFAULT_MAX_CHARS})')
     add_registered_cli_argument(ap, 'comprehend/comprehend.cmd/ap/--model')
     add_registered_cli_argument(ap, 'comprehend/comprehend.cmd/ap/--checkpoint')
     add_registered_cli_argument(ap, 'comprehend/comprehend.cmd/ap/--out')
     a = ap.parse_args(argv)
+    if bool(a.patterns) == (a.items is not None):
+        ap.error("supply either file/glob patterns or --items")
     lanes = [x.strip() for x in a.lanes.split(",") if x.strip()] if a.lanes else None
+    vendors = [x.strip() for x in a.vendors.split(",") if x.strip()] if a.vendors is not None else None
     res = comprehend_corpus(a.patterns, intent=a.intent, question=a.question, model=a.model, run=a.run,
                             budget_usd=a.budget_usd, lanes=lanes, max_chars=a.max_chars, checkpoint=a.checkpoint,
-                            refuse_billed=a.refuse_billed)
+                            refuse_billed=a.refuse_billed, items=a.items, vendors=vendors, panel=a.panel)
     est = res["estimate"]
     print(f"comprehend — {res['files']} file(s) → {res['tasks']} task(s), model {est['model']} · "
           f"estimate ceiling ${est['est_usd_ceiling']:.4f} "

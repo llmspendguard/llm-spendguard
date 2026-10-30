@@ -60,6 +60,36 @@ fleet.register_enforcing_interpreter()
 
 original_register_enforcing_interpreter = fleet.register_enforcing_interpreter
 
+# Repo affinity is recoverable only for recorded venvs physically inside that repo.
+with tempfile.TemporaryDirectory() as affinity_directory:
+    affinity_workspace = pathlib.Path(affinity_directory)
+    affinity_repo = affinity_workspace / "selected"
+    affinity_other_repo = affinity_workspace / "selected-sibling"
+    affinity_alias = affinity_workspace / "alias"
+    affinity_repo.mkdir()
+    affinity_alias.symlink_to(affinity_repo, target_is_directory=True)
+    affinity_venvs = (affinity_repo / "environment", affinity_other_repo / "environment")
+    affinity_executables = tuple(str(venv / "bin" / "python") for venv in affinity_venvs)
+    with fleet._fleet_db() as affinity_connection:
+        affinity_connection.executemany(
+            "INSERT INTO registered_interpreters"
+            "(python_executable,venv_root,first_seen,last_seen) VALUES(?,?,?,?)",
+            [(executable, str(venv), "first", "last")
+             for executable, venv in zip(affinity_executables, affinity_venvs)])
+    affinity_all = fleet.registered_interpreters()
+    ck("unfiltered registry preserves interpreters from both repositories",
+       set(affinity_executables).issubset({row["python_executable"] for row in affinity_all}))
+    affinity_selected = fleet.registered_interpreters(repo_root=affinity_alias)
+    ck("repo filter resolves aliases and excludes sibling-prefix repositories",
+       [row["python_executable"] for row in affinity_selected] == [affinity_executables[0]])
+    ck("repo filter selects the other repository independently",
+       [row["python_executable"] for row in fleet.registered_interpreters(repo_root=affinity_other_repo)]
+       == [affinity_executables[1]])
+    ck("exact recorded venv root is a valid affinity scope",
+       fleet.registered_interpreters(repo_root=affinity_venvs[0]) == affinity_selected)
+    for affinity_executable in affinity_executables:
+        fleet.deregister_interpreter(affinity_executable)
+
 
 def emit_and_fail_install_registration():
     print("registration dependency warning", file=sys.stderr)

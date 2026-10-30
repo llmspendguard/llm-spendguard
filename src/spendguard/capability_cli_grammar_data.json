@@ -2248,6 +2248,21 @@
           {
             "operation": "add_argument",
             "owner": "ap",
+            "declaration_id": "comprehend/comprehend.cmd/ap/--items"
+          },
+          {
+            "operation": "add_argument",
+            "owner": "ap",
+            "declaration_id": "comprehend/comprehend.cmd/ap/--vendors"
+          },
+          {
+            "operation": "add_argument",
+            "owner": "ap",
+            "declaration_id": "comprehend/comprehend.cmd/ap/--panel"
+          },
+          {
+            "operation": "add_argument",
+            "owner": "ap",
             "declaration_id": "comprehend/comprehend.cmd/ap/--max-chars"
           },
           {
