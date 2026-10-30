@@ -206,7 +206,7 @@ jobs:
           merge-multiple: false
       - name: Verify artifact integrity and merge environment evidence
         run: python scripts/test/readiness_environment_evidence.py merge --input "$CI_READINESS_EVIDENCE_ROOT" --output "$CI_READINESS_ENVIRONMENT_REPORT"
-      - name: Blocking offline capability readiness gate
+      - name: Blocking offline capability and architectural readiness gates
         run: |
           export HTTP_PROXY="$CI_OFFLINE_PROXY" HTTPS_PROXY="$CI_OFFLINE_PROXY" ALL_PROXY="$CI_OFFLINE_PROXY"
           export http_proxy="$CI_OFFLINE_PROXY" https_proxy="$CI_OFFLINE_PROXY" all_proxy="$CI_OFFLINE_PROXY"

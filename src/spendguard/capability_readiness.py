@@ -31,6 +31,7 @@ class CapabilityReadinessItem:
     arguments: dict[str, Any]
     reason: str
     standard: str | None = None
+    section: str | None = None
 
 
 @dataclass(frozen=True)
@@ -49,6 +50,7 @@ def load_capability_readiness_manifest():
         id=item["id"], description=item["description"], gate=item.get("gate"),
         arguments=item.get("arguments", {}), reason=item.get("reason", ""),
         standard=item.get("standard"),
+        section=item.get("section"),
     ) for item in declaration["items"])
     if len({item.id for item in items}) != len(items):
         raise ValueError("Duplicate readiness item identifiers")
@@ -114,7 +116,7 @@ def render_capability_readiness_definition():
              "A supplied clean-environment report must match the current input fingerprint and its complete verification logs.",
              "", "## Project invariants", ""]
     for item in items:
-        if item.standard is not None:
+        if item.standard is not None or item.section is not None:
             continue
         lines.extend([f"- [ ] **{item.id}** — {item.description}",
                       f"  Gate: `{item.gate}`; inputs: `{json.dumps(item.arguments, sort_keys=True)}`.", ""])
@@ -127,6 +129,14 @@ def render_capability_readiness_definition():
             for check in item.arguments.get("reviews", []):
                 lines.append(f"  - **{check['id']}** ({check['disposition']}): {check['reason']} Tracking: {check['tracking']}.")
             lines.append("")
+    lines.extend(["## Architectural & code quality", "",
+                  "Objective offline fitness functions enforce the recorded scope and measured ratchets. Reviewed exclusions are tracked explicitly.", ""])
+    for item in items:
+        if item.section != "architecture":
+            continue
+        lines.extend([f"- [ ] **{item.id}** — {item.description}",
+                      f"  Gate: `{item.gate}`; inputs: `{json.dumps(item.arguments, sort_keys=True)}`.",
+                      f"  Review: {item.reason}", ""])
     return "\n".join(lines)
 
 

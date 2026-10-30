@@ -1,6 +1,6 @@
 # Readiness
 
-Definition revision: 2
+Definition revision: 3
 
 Square means every checklist item has a reviewed deterministic gate and every gate passes.
 `spendguard selfcheck` runs each gate and exits nonzero for FAIL or UNREVIEWED.
@@ -22,7 +22,7 @@ A supplied clean-environment report must match the current input fingerprint and
   Gate: `spendguard.capability_readiness_gates:run_capability_script_readiness_gate`; inputs: `{"scripts": ["tests/test_release_green_pointer.py"]}`.
 
 - [ ] **env-parity-in-verification** — Current source passes required checks in independent clean environments.
-  Gate: `spendguard.capability_readiness_gates:assess_capability_environment_evidence`; inputs: `{"patterns": ["src/spendguard/**/*.py", "src/spendguard/capability*.json", "src/spendguard/capability*.jsonl", "scripts/test/*.py", "tests/**/*.py", "pyproject.toml", ".github/workflows/*", "docs/*.md", "LICENSE", "SECURITY.md", "CONTRIBUTING.md", "README.md", "CHANGELOG.md", "src/spendguard/distribution_build_wheels/*.whl"], "required_checks": ["ruff", "name-uniqueness", "surface-suites", "offline-audit"]}`.
+  Gate: `spendguard.capability_readiness_gates:assess_capability_environment_evidence`; inputs: `{"patterns": ["src/spendguard/**/*.py", "src/spendguard/capability*.json", "src/spendguard/capability*.jsonl", "src/spendguard/architectural_fitness_baseline.json", "scripts/test/*.py", "tests/**/*.py", "pyproject.toml", ".github/workflows/*", "docs/*.md", "LICENSE", "SECURITY.md", "CONTRIBUTING.md", "README.md", "CHANGELOG.md", "src/spendguard/distribution_build_wheels/*.whl"], "required_checks": ["ruff", "name-uniqueness", "surface-suites", "offline-audit"]}`.
 
 - [ ] **money-correctness** — Money scale, exact ledger arithmetic and global receipt allocation remain correct.
   Gate: `spendguard.capability_readiness_gates:run_capability_script_readiness_gate`; inputs: `{"scripts": ["tests/test_money_scale.py", "tests/test_ledger_money_is_exact_decimal.py", "tests/test_receipt_global_dollar_allocation.py"]}`.
@@ -60,3 +60,39 @@ PASS covers the declared offline subset, not certification or an external badge.
   Gate: `spendguard.external_standard_readiness:assess_external_standard_subset`.
   - **Four discoverable quadrants** (GATED-OFFLINE): Existing index quickstart provides the guided install/govern/verify sequence; architecture explains, agent guide gives tasks, capability reference describes interfaces. LAUNCH is marketing planning, not a tutorial. Tracking: docs/READINESS.md.
   - **Pedagogical quality / quadrant purity** (REVIEWED-N/A): Learning effectiveness and information architecture quality require reader evaluation, not file or keyword checks. Tracking: docs/READINESS-FOLLOWUP.md.
+
+## Architectural & code quality
+
+Objective offline fitness functions enforce the recorded scope and measured ratchets. Reviewed exclusions are tracked explicitly.
+
+- [ ] **architecture-import-cycles** — Track existing import cycles and reject new cyclic edges; complete acyclicity is reviewed N/A.
+  Gate: `spendguard.architectural_fitness:run_architectural_fitness_gate`; inputs: `{"invariant": "cycles"}`.
+  Review: AST includes deferred imports. Exact measured cyclic components and reviewed scope are recorded in architectural_fitness_baseline.json; removing existing cycles is tracked in docs/READINESS-FOLLOWUP.md. No claim of complete acyclicity.
+
+- [ ] **architecture-layer-boundaries** — Application code may use the recorded standard-library-only foundations; foundations may not import application modules.
+  Gate: `spendguard.architectural_fitness:run_architectural_fitness_gate`; inputs: `{"invariant": "layers"}`.
+  Review: Actual foundation modules and rationale are baseline data. Full core/adapters/surfaces layering is reviewed N/A: config and pricing contain deferred imports into adapters/calls. Track broader decomposition in docs/READINESS-FOLLOWUP.md.
+
+- [ ] **architecture-complexity-ratchet** — Radon cyclomatic complexity and maintainability index must not regress past measured per-file baselines.
+  Gate: `spendguard.architectural_fitness:run_architectural_fitness_gate`; inputs: `{"invariant": "complexity"}`.
+  Review: Every current file is independently measured for Python 3.11 and 3.12 in architectural_fitness_baseline.json. New files and unsupported Python minors require reviewed measurements; no invented grade threshold.
+
+- [ ] **architecture-duplication-ratchet** — Pylint symilar duplicate significant lines and groups must not exceed measured current duplication.
+  Gate: `spendguard.architectural_fitness:run_architectural_fitness_gate`; inputs: `{"invariant": "duplication"}`.
+  Review: Package-wide current duplication and documented detector settings are baseline data. Existing clones are debt tracked in docs/READINESS-FOLLOWUP.md, not a zero-duplication claim.
+
+- [ ] **architecture-dead-code** — Vulture definite unused variables and unreachable code require individually reviewed compatibility exceptions.
+  Gate: `spendguard.architectural_fitness:run_architectural_fitness_gate`; inputs: `{"invariant": "dead"}`.
+  Review: The recorded 100% certainty subset is gated across the package. Exact allowlist entries carry reasons. Lower-confidence dead functions and dynamic callers are reviewed N/A pending caller review in docs/READINESS-FOLLOWUP.md.
+
+- [ ] **architecture-type-integrity** — Mypy checks the measured existing clean annotated surface without suppressing its diagnostics.
+  Gate: `spendguard.architectural_fitness:run_architectural_fitness_gate`; inputs: `{"invariant": "types"}`.
+  Review: The exact clean subset and isolation options are baseline data. Full-package type coverage is reviewed N/A and tracked in docs/READINESS-FOLLOWUP.md; py.typed is not evidence of clean typing.
+
+- [ ] **architecture-name-uniqueness** — Existing unique-semantic naming fitness function; no duplicate implementation.
+  Gate: `spendguard.capability_readiness_gates:run_capability_script_readiness_gate`; inputs: `{"scripts": ["tests/test_names_stay_unique.py"]}`.
+  Review: Cites the existing registry-backed naming gate and docs/NAME_REGISTRY.json; collisions require an adjudicated verdict.
+
+- [ ] **architecture-surface-parity** — Existing capability-surface-parity fitness function, also declared as surface-parity in Project invariants.
+  Gate: `spendguard.capability_readiness_gates:run_capability_script_readiness_gate`; inputs: `{"scripts": ["tests/test_capability_surface_parity_guard.py"]}`.
+  Review: Cites and reuses the existing parity gate; its projection/SSOT implementation is unchanged.

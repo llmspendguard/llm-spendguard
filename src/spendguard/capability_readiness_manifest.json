@@ -1,6 +1,70 @@
 {
-  "revision": 2,
+  "revision": 3,
   "items": [
+    {
+      "id": "architecture-import-cycles",
+      "section": "architecture",
+      "description": "Track existing import cycles and reject new cyclic edges; complete acyclicity is reviewed N/A.",
+      "gate": "spendguard.architectural_fitness:run_architectural_fitness_gate",
+      "arguments": {"invariant": "cycles"},
+      "reason": "AST includes deferred imports. Exact measured cyclic components and reviewed scope are recorded in architectural_fitness_baseline.json; removing existing cycles is tracked in docs/READINESS-FOLLOWUP.md. No claim of complete acyclicity."
+    },
+    {
+      "id": "architecture-layer-boundaries",
+      "section": "architecture",
+      "description": "Application code may use the recorded standard-library-only foundations; foundations may not import application modules.",
+      "gate": "spendguard.architectural_fitness:run_architectural_fitness_gate",
+      "arguments": {"invariant": "layers"},
+      "reason": "Actual foundation modules and rationale are baseline data. Full core/adapters/surfaces layering is reviewed N/A: config and pricing contain deferred imports into adapters/calls. Track broader decomposition in docs/READINESS-FOLLOWUP.md."
+    },
+    {
+      "id": "architecture-complexity-ratchet",
+      "section": "architecture",
+      "description": "Radon cyclomatic complexity and maintainability index must not regress past measured per-file baselines.",
+      "gate": "spendguard.architectural_fitness:run_architectural_fitness_gate",
+      "arguments": {"invariant": "complexity"},
+      "reason": "Every current file is independently measured for Python 3.11 and 3.12 in architectural_fitness_baseline.json. New files and unsupported Python minors require reviewed measurements; no invented grade threshold."
+    },
+    {
+      "id": "architecture-duplication-ratchet",
+      "section": "architecture",
+      "description": "Pylint symilar duplicate significant lines and groups must not exceed measured current duplication.",
+      "gate": "spendguard.architectural_fitness:run_architectural_fitness_gate",
+      "arguments": {"invariant": "duplication"},
+      "reason": "Package-wide current duplication and documented detector settings are baseline data. Existing clones are debt tracked in docs/READINESS-FOLLOWUP.md, not a zero-duplication claim."
+    },
+    {
+      "id": "architecture-dead-code",
+      "section": "architecture",
+      "description": "Vulture definite unused variables and unreachable code require individually reviewed compatibility exceptions.",
+      "gate": "spendguard.architectural_fitness:run_architectural_fitness_gate",
+      "arguments": {"invariant": "dead"},
+      "reason": "The recorded 100% certainty subset is gated across the package. Exact allowlist entries carry reasons. Lower-confidence dead functions and dynamic callers are reviewed N/A pending caller review in docs/READINESS-FOLLOWUP.md."
+    },
+    {
+      "id": "architecture-type-integrity",
+      "section": "architecture",
+      "description": "Mypy checks the measured existing clean annotated surface without suppressing its diagnostics.",
+      "gate": "spendguard.architectural_fitness:run_architectural_fitness_gate",
+      "arguments": {"invariant": "types"},
+      "reason": "The exact clean subset and isolation options are baseline data. Full-package type coverage is reviewed N/A and tracked in docs/READINESS-FOLLOWUP.md; py.typed is not evidence of clean typing."
+    },
+    {
+      "id": "architecture-name-uniqueness",
+      "section": "architecture",
+      "description": "Existing unique-semantic naming fitness function; no duplicate implementation.",
+      "gate": "spendguard.capability_readiness_gates:run_capability_script_readiness_gate",
+      "arguments": {"scripts": ["tests/test_names_stay_unique.py"]},
+      "reason": "Cites the existing registry-backed naming gate and docs/NAME_REGISTRY.json; collisions require an adjudicated verdict."
+    },
+    {
+      "id": "architecture-surface-parity",
+      "section": "architecture",
+      "description": "Existing capability-surface-parity fitness function, also declared as surface-parity in Project invariants.",
+      "gate": "spendguard.capability_readiness_gates:run_capability_script_readiness_gate",
+      "arguments": {"scripts": ["tests/test_capability_surface_parity_guard.py"]},
+      "reason": "Cites and reuses the existing parity gate; its projection/SSOT implementation is unchanged."
+    },
     {
       "id": "surface-parity",
       "description": "Every capability is exposed on CLI, API and MCP except declared deliberate absences.",
@@ -50,6 +114,7 @@
           "src/spendguard/**/*.py",
           "src/spendguard/capability*.json",
           "src/spendguard/capability*.jsonl",
+          "src/spendguard/architectural_fitness_baseline.json",
           "scripts/test/*.py",
           "tests/**/*.py",
           "pyproject.toml",

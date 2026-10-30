@@ -1,5 +1,7 @@
 # Changelog
 
+- Readiness now includes offline architectural fitness functions with measured complexity/duplication ratchets, reviewed boundaries and exceptions, and mutation proofs.
+
 All notable changes to **llm-spendguard**. Format loosely follows Keep a Changelog; dates are UTC.
 
 ## [Unreleased]
