@@ -17,6 +17,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import tomllib
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from . import config, consumer_audit, fleet, release, setup
@@ -34,6 +35,12 @@ DISTRIBUTION_BUILD_TIMEOUT_SETTING = "install_timeout_s"
 DISTRIBUTION_MAX_WORKERS_SETTING = "max_install_workers"
 DISTRIBUTION_DEFAULT_MAX_WORKERS = 4
 DISTRIBUTION_WHEEL_BUILD_COMMAND = ("-m", "pip", "wheel", "--no-deps", "--no-build-isolation")
+DISTRIBUTION_PIP_PROBE_COMMAND = (
+    "-c", "import importlib.util, sys; sys.exit(importlib.util.find_spec('pip') is None)"
+)
+DISTRIBUTION_PIP_BOOTSTRAP_COMMAND = ("-m", "ensurepip", "--upgrade")
+DISTRIBUTION_BUILD_WHEELHOUSE_DIRECTORY = "distribution_build_wheels"
+DISTRIBUTION_BUILD_PROJECT_FILENAME = "pyproject.toml"
 DISTRIBUTION_BUILD_DIRECTORY_NAME = "build"
 DISTRIBUTION_SOURCE_DIRECTORY_NAME = "src"
 DISTRIBUTION_EGG_INFO_GLOB = "*.egg-info"
@@ -144,6 +151,44 @@ def purge_stale_build_artifacts_in_checkout(checkout):
             shutil.rmtree(metadata, ignore_errors=True)
 
 
+def ensure_distribution_build_pip(settings):
+    """Seed a pip-less builder from CPython's bundled wheels, without network access.
+
+    Backend provisioning is a separate step: ensurepip is not a backend installer.
+    """
+    probe = subprocess.run([sys.executable, *DISTRIBUTION_PIP_PROBE_COMMAND],
+                           capture_output=True, text=True,
+                           timeout=settings[DISTRIBUTION_BUILD_TIMEOUT_SETTING], check=False)
+    if not probe.returncode:
+        return
+    if probe.returncode != 1:
+        raise RuntimeError((probe.stderr or probe.stdout or "pip availability probe failed").strip())
+    bootstrap = subprocess.run([sys.executable, *DISTRIBUTION_PIP_BOOTSTRAP_COMMAND],
+                               capture_output=True, text=True,
+                               timeout=settings[DISTRIBUTION_BUILD_TIMEOUT_SETTING], check=False)
+    if bootstrap.returncode:
+        raise RuntimeError((bootstrap.stderr or bootstrap.stdout or "offline pip bootstrap failed").strip())
+
+
+def ensure_distribution_build_backend(checkout, settings):
+    """Provision the checkout's declared backend from shipped wheels, never PyPI.
+
+    ensurepip only guarantees pip (not setuptools on Python 3.12+). Install the
+    build requirements even when pip was already present: a uv venv can have pip
+    without a backend. Pip checks requirement versions and fails closed if our
+    wheelhouse cannot satisfy a newer checkout's build contract.
+    """
+    project = Path(checkout) / DISTRIBUTION_BUILD_PROJECT_FILENAME
+    requirements = tomllib.loads(project.read_text())["build-system"]["requires"]
+    wheelhouse = Path(__file__).with_name(DISTRIBUTION_BUILD_WHEELHOUSE_DIRECTORY)
+    command = [sys.executable, "-m", "pip", "install", "--upgrade", "--no-index", "--find-links", str(wheelhouse),
+               *requirements]
+    completed = subprocess.run(command, capture_output=True, text=True,
+                               timeout=settings[DISTRIBUTION_BUILD_TIMEOUT_SETTING], check=False)
+    if completed.returncode:
+        raise RuntimeError((completed.stderr or completed.stdout or "offline build backend provisioning failed").strip())
+
+
 def ensure_distribution_wheel(target, checkout, settings):
     """Reuse or build the green wheel, then verify its embedded filename version."""
     cache = mark_distribution_ephemeral_dir(distribution_wheel_cache_path())
@@ -152,6 +197,8 @@ def ensure_distribution_wheel(target, checkout, settings):
         return existing[0]
     if target["version"] != target.get("green_version", target["version"]):
         raise FileNotFoundError(f"rollback wheel is not cached: {target['version']}")
+    ensure_distribution_build_pip(settings)
+    ensure_distribution_build_backend(checkout, settings)
     purge_stale_build_artifacts_in_checkout(checkout)
     command = [sys.executable, *DISTRIBUTION_WHEEL_BUILD_COMMAND, "--wheel-dir", str(cache), str(checkout)]
     completed = subprocess.run(command, capture_output=True, text=True,

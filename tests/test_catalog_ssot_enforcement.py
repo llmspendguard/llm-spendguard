@@ -1,8 +1,11 @@
 """Structural source and observed-ledger guards, including deliberate fault mutations."""
 import ast
 import json
+import os
 import sqlite3
 import shutil
+import subprocess
+import sys
 import uuid
 import zipfile
 from pathlib import Path
@@ -32,9 +35,36 @@ GUARD_LEDGER_FILENAME = "observations.sqlite"
 GUARD_ADVISOR_SECTION = "advisor"
 GUARD_LANE_MODELS_KEY = "lane_models"
 CATALOG_WHEEL_PROJECT_FILES = ("pyproject.toml", "README.md")
+CATALOG_BUILD_PYTHON_ENV = "CATALOG_WHEEL_BUILD_PYTHON"
+CATALOG_BACKEND_ABSENCE_PROBE = (
+    "import importlib.util; "
+    "assert all(importlib.util.find_spec(name) is None for name in ('setuptools', 'wheel'))"
+)
+CATALOG_VENV_PYTHON_PROBE = (
+    "import sys, venv; print(venv.EnvBuilder().ensure_directories(sys.argv[1]).env_exe)"
+)
+CATALOG_DEAD_PROXY = "http://127.0.0.1:0"
 
 
-def test_catalog_ssot_distribution_wheel_excludes_stale_removed_leaf(tmp_path, monkeypatch):
+@pytest.mark.parametrize("pipless", (False, True))
+def test_catalog_ssot_distribution_wheel_excludes_stale_removed_leaf(tmp_path, monkeypatch, pipless):
+    environment = tmp_path / "builder"
+    build_python = os.environ.get(CATALOG_BUILD_PYTHON_ENV, sys.executable)
+    subprocess.run([build_python, "-m", "venv", "--without-pip", str(environment)], check=True)
+    target_python = subprocess.check_output(
+        [build_python, "-c", CATALOG_VENV_PYTHON_PROBE, str(environment)],
+        text=True,
+    ).strip()
+    if not pipless:
+        subprocess.run([target_python, "-m", "ensurepip", "--upgrade"], check=True, capture_output=True)
+        # Python 3.11 ensurepip also seeds setuptools; remove it to mirror bare uv environments.
+        subprocess.run([target_python, "-m", "pip", "uninstall", "--yes", "setuptools", "wheel"],
+                       check=True, capture_output=True)
+    subprocess.run([target_python, "-c", CATALOG_BACKEND_ABSENCE_PROBE], check=True)
+    if pipless:
+        absent = subprocess.run([target_python, "-m", "pip", "--version"], capture_output=True, text=True)
+        assert absent.returncode != 0 and "No module named pip" in absent.stderr
+    monkeypatch.setattr(distribution.sys, "executable", target_python)
     checkout = tmp_path / "checkout"
     source_directory = distribution.DISTRIBUTION_SOURCE_DIRECTORY_NAME
     package_name = model_catalog.__package__
@@ -53,11 +83,19 @@ def test_catalog_ssot_distribution_wheel_excludes_stale_removed_leaf(tmp_path, m
         (metadata / "PKG-INFO").write_text(metadata.name)
     monkeypatch.setattr(config, "HOME", tmp_path / "home")
     monkeypatch.setenv("PIP_NO_INDEX", "1")
+    monkeypatch.setenv("HTTP_PROXY", CATALOG_DEAD_PROXY)
+    monkeypatch.setenv("HTTPS_PROXY", CATALOG_DEAD_PROXY)
+    monkeypatch.setenv("ALL_PROXY", CATALOG_DEAD_PROXY)
+    monkeypatch.setenv("NO_PROXY", "")
     target = {"version": distribution.SPENDGUARD_WRITER_VERSION}
     wheel = distribution.ensure_distribution_wheel(target, checkout, distribution.distribution_policy())
     with zipfile.ZipFile(wheel) as archive:
         assert f"{package_name}/{LEGACY_PRICE_FILENAME}" not in archive.namelist()
         assert archive.read(f"{package_name}/{catalog_source.name}") == original_catalog
+        backend_wheels = list((checkout / source_directory / package_name).rglob("*.whl"))
+        assert backend_wheels, "offline build backend wheelhouse must ship in the distribution"
+        for backend_wheel in backend_wheels:
+            assert archive.read(str(backend_wheel.relative_to(checkout / source_directory))) == backend_wheel.read_bytes()
     assert catalog_source.read_bytes() == original_catalog
     assert not (catalog_source.parent / LEGACY_PRICE_FILENAME).exists()
     assert all(not metadata.exists() for metadata in stale_metadata)
