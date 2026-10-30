@@ -258,8 +258,8 @@
             "mi": 44.03143459396765
           },
           "src/spendguard/codex_daemon.py": {
-            "max_cc": 44,
-            "mi": 9.250773621857721
+            "max_cc": 49,
+            "mi": 8.245953954210295
           },
           "src/spendguard/codex_daemon_broker.py": {
             "max_cc": 17,
@@ -330,12 +330,12 @@
             "mi": 61.206448796592674
           },
           "src/spendguard/delegate_jobs.py": {
-            "max_cc": 11,
-            "mi": 32.990085603863996
+            "max_cc": 19,
+            "mi": 27.2735167946341
           },
           "src/spendguard/delegate_router.py": {
-            "max_cc": 37,
-            "mi": 2.9929123617153315
+            "max_cc": 48,
+            "mi": 0.0
           },
           "src/spendguard/disk_guard.py": {
             "max_cc": 5,
@@ -382,8 +382,8 @@
             "mi": 61.17881979232424
           },
           "src/spendguard/execution_journal.py": {
-            "max_cc": 20,
-            "mi": 15.984776146268782
+            "max_cc": 23,
+            "mi": 14.494812724643918
           },
           "src/spendguard/expected_output.py": {
             "max_cc": 24,
@@ -895,7 +895,7 @@
           },
           "src/spendguard/warm_stdio_daemon.py": {
             "max_cc": 15,
-            "mi": 23.962226863883735
+            "mi": 23.4549191517266
           },
           "src/spendguard/weekly_cap_guard.py": {
             "max_cc": 23,
@@ -920,6 +920,10 @@
           "src/spendguard/zai_exec.py": {
             "max_cc": 22,
             "mi": 59.845459267185056
+          },
+          "src/spendguard/delegate_worker.py": {
+            "max_cc": 1,
+            "mi": 68.14868072197874
           }
         },
         "measured_extremes": {
@@ -1122,8 +1126,8 @@
             "mi": 44.03143459396765
           },
           "src/spendguard/codex_daemon.py": {
-            "max_cc": 44,
-            "mi": 9.250773621857721
+            "max_cc": 49,
+            "mi": 8.245953954210295
           },
           "src/spendguard/codex_daemon_broker.py": {
             "max_cc": 17,
@@ -1194,12 +1198,12 @@
             "mi": 61.11579083959757
           },
           "src/spendguard/delegate_jobs.py": {
-            "max_cc": 11,
-            "mi": 32.990085603863996
+            "max_cc": 19,
+            "mi": 27.2735167946341
           },
           "src/spendguard/delegate_router.py": {
-            "max_cc": 37,
-            "mi": 2.92031672517836
+            "max_cc": 48,
+            "mi": 0.0
           },
           "src/spendguard/disk_guard.py": {
             "max_cc": 5,
@@ -1246,8 +1250,8 @@
             "mi": 61.17881979232424
           },
           "src/spendguard/execution_journal.py": {
-            "max_cc": 20,
-            "mi": 15.984776146268782
+            "max_cc": 23,
+            "mi": 14.494812724643918
           },
           "src/spendguard/expected_output.py": {
             "max_cc": 24,
@@ -1759,7 +1763,7 @@
           },
           "src/spendguard/warm_stdio_daemon.py": {
             "max_cc": 15,
-            "mi": 23.962226863883735
+            "mi": 23.4549191517266
           },
           "src/spendguard/weekly_cap_guard.py": {
             "max_cc": 23,
@@ -1784,6 +1788,10 @@
           "src/spendguard/zai_exec.py": {
             "max_cc": 22,
             "mi": 59.845459267185056
+          },
+          "src/spendguard/delegate_worker.py": {
+            "max_cc": 1,
+            "mi": 68.14868072197874
           }
         },
         "measured_extremes": {
@@ -1791,7 +1799,8 @@
           "mi": 0.0
         }
       }
-    }
+    },
+    "reviewed_delegate_lifecycle": "2026-10-30: Reviewed complete changed worker, router, job controls, journal adoption and shared warm broker bodies. Increased branches implement PID/birth-verified cancellation, locked identity validation before stale recovery can declare an adopted worker lost, terminal waits, generated CLI controls and race-safe warm cancellation through the existing daemon journal boundary. Worker reuses existing governed completion. Exact Radon 6.0.1 measurements independently recorded under Python 3.11 and 3.12; all other ratchet limits unchanged. Targeting lifetime, cancellation, wait, stream and warm tests include mutation proofs."
   },
   "duplication": {
     "duplicate_lines": 303,

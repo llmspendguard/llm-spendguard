@@ -237,6 +237,26 @@
           {
             "operation": "add_argument",
             "owner": "parser",
+            "declaration_id": "delegate/delegate_router.delegate_cli/parser/--warm"
+          },
+          {
+            "operation": "add_argument",
+            "owner": "parser",
+            "declaration_id": "delegate/delegate_router.delegate_cli/parser/--wait"
+          },
+          {
+            "operation": "add_argument",
+            "owner": "parser",
+            "declaration_id": "delegate/delegate_router.delegate_cli/parser/--timeout-s"
+          },
+          {
+            "operation": "add_argument",
+            "owner": "parser",
+            "declaration_id": "delegate/delegate_router.delegate_cli/parser/--mixed-stream"
+          },
+          {
+            "operation": "add_argument",
+            "owner": "parser",
             "declaration_id": "delegate/delegate_router.delegate_cli/parser/--timeout"
           },
           {
@@ -265,6 +285,16 @@
             "operation": "add_argument",
             "owner": "lookup",
             "declaration_id": "delegate/delegate_router.delegate_cli/lookup/--recover"
+          },
+          {
+            "operation": "add_argument",
+            "owner": "lookup",
+            "declaration_id": "delegate/delegate_router.delegate_cli/lookup/--cancel"
+          },
+          {
+            "operation": "add_argument",
+            "owner": "lookup",
+            "declaration_id": "delegate/delegate_router.delegate_cli/lookup/--kill"
           }
         ]
       }

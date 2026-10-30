@@ -299,11 +299,19 @@ class _CodexDaemon(_WarmStdioJsonRpcDaemon):
         evidence_execution_id = self._enter_warm_evidence_scope()
         try:
             for attempt in (1, 2):
+                if evidence_execution_id and sandbox == "workspace-write":
+                    if self._warm_execution_cancelled(evidence_execution_id):
+                        return {"text": None, "thread": thread, "error": "delegate execution cancelled"}
                 p = self.ensure_running()
                 if p is None:
                     return {"text": None, "thread": None, "error": "codex app-server would not start"}
                 if evidence_execution_id:
                     self._reference_warm_stderr_archive(p, (evidence_execution_id,))
+                    if sandbox == "workspace-write":
+                        self._bind_warm_execution_process(evidence_execution_id, p.pid)
+                        if self._warm_execution_cancelled(evidence_execution_id):
+                            self.shutdown()
+                            return {"text": None, "thread": thread, "error": "delegate execution cancelled"}
                 eff_timeout = timeout if (timeout and timeout > 0) else CALL_TIMEOUT_S   # caller's deadline wins; the
                 #   fallback reads the MODULE global so a monkeypatch of codex_daemon.CALL_TIMEOUT_S takes effect
                 deadline = time.monotonic() + eff_timeout

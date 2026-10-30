@@ -29,6 +29,8 @@ spendguard.require()
 import json
 from unittest.mock import patch
 from spendguard import cli, delegate_router
+def execute_guard_console_job(task, **kw):
+    return delegate_router.delegate_task(task, execute=True, **{key: value for key, value in kw.items() if key != 'detached'})
 fixture = json.loads(sys.argv[1])
 with patch.object(delegate_router, 'classify_task', return_value=fixture['classification']), \
         patch.object(delegate_router, 'delegation_lanes_ready', return_value=fixture['ready']), \
@@ -36,7 +38,8 @@ with patch.object(delegate_router, 'classify_task', return_value=fixture['classi
         patch.object(delegate_router.config, 'intent_cap', return_value=None), \
         patch.object(delegate_router, '_worktree_state', return_value=(None, set())), \
         patch.object(delegate_router, '_worktree_changed_files', return_value=None), \
-        patch.object(delegate_router, '_route_agentic', return_value=None):
+        patch.object(delegate_router, '_route_agentic', return_value=None), \
+        patch.object(delegate_router, 'start_delegate_job', side_effect=execute_guard_console_job):
     sys.exit(cli.main(sys.argv[2:]))
 """
 DELEGATE_GUARD_CONSOLE_ERROR_STATUS = 2
@@ -66,14 +69,15 @@ with tempfile.TemporaryDirectory() as workspace, \
         patch.object(delegate_router.config, "intent_cap", return_value=None), \
         patch.object(delegate_router, "_worktree_state", return_value=(None, set())), \
         patch.object(delegate_router, "_worktree_changed_files", return_value=None), \
-        patch.object(delegate_router, "_route_agentic") as executor:
+        patch.object(delegate_router, "_route_agentic") as executor, \
+        patch.object(delegate_router, "start_delegate_job", side_effect=lambda task, **kw: delegate_router.delegate_task(task, execute=True, **{key: value for key, value in kw.items() if key != "detached"})):
     for fault in DELEGATE_GUARD_FAULTS:
         executor.return_value = fault
         result = delegate_router.delegate_task(DELEGATE_GUARD_TASK, execute=True, cwd=workspace)
         assert result["status"] == "error", result
         assert result.get("reason") and result.get("why"), result
         output = io.StringIO()
-        with contextlib.redirect_stdout(output):
+        with contextlib.redirect_stderr(output):
             exit_status = delegate_router.delegate_cli([
                 DELEGATE_GUARD_TASK, "--provider", DELEGATE_GUARD_PLAN, "--cwd", workspace, "--yes"])
         assert exit_status != 0, output.getvalue()
@@ -89,8 +93,8 @@ console = subprocess.run(
      "delegate", DELEGATE_GUARD_TASK, "--yes"],
     capture_output=True, text=True, check=False)
 assert console.returncode == DELEGATE_GUARD_CONSOLE_ERROR_STATUS, console
-assert delegate_router.DELEGATE_EXECUTION_INVALID_RESULT in console.stdout, console
-assert "delegate error: None" not in console.stdout, console
+assert delegate_router.DELEGATE_EXECUTION_INVALID_RESULT in console.stderr, console
+assert "delegate error: None" not in console.stderr, console
 
 provider_refusal = codex_daemon._codex_pool_error_result(DELEGATE_GUARD_PROVIDER_ERROR, None)
 assert provider_refusal["error"] == str(DELEGATE_GUARD_PROVIDER_ERROR), provider_refusal

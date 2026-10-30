@@ -180,7 +180,7 @@ Each absence below carries the registry's reviewed reason.
 | C154 | Build a monthly provider-truth close view | close | spendguard.close.build_close(month) | capability_close__1_close_build_close | [spendguard.close:build_close](#core-a350a430c63f60cbf0ddae9db08b70771c58070731dfae38f71415809bbed5ff) |
 | C155 | Export a monthly close statement as CSV | close | spendguard.close.to_csv(stmt); spendguard.close.build_close(month) | ABSENT (DELIBERATE): Writing a monthly-close CSV is an operator file-export workflow. | [spendguard.close:to_csv](#core-918699d20ffd15e30ea3a5cb7ff89a957a927370f557b853cfdeadf30e61a8dd); [spendguard.close:build_close](#core-a350a430c63f60cbf0ddae9db08b70771c58070731dfae38f71415809bbed5ff) |
 | C156 | Read shared provider account reconciliation axis | close | spendguard.ledger_sync.leak_line(since=None); spendguard.close.month_window(month) | capability_close__3_ledger_sync_leak_line; capability_close__3_close_month_window | [spendguard.ledger_sync:leak_line](#core-9362401b412b1b805c125045e4ee7d7de9c47aaf0ced3ddfadb9def5512f1657); [spendguard.close:month_window](#core-61b64bd3142812e6d1c7cd900e7c9cce0d613d092b3b21c46109bec455b7dedb) |
-| C157 | Delegate a self-contained task to another provider plan | delegate | spendguard.delegate_router.delegate_task(task, files=None, intent=None, provider='auto', execute=False, timeout=None, cwd=None); spendguard.delegate_router.start_delegate_job(task, files=None, intent=None, provider='auto', cwd=None, timeout=None); spendguard.delegate_router.wait_for_delegate_job_handoff(job_id) | spendguard_delegate(task, files, intent, provider, cwd, execute) | [spendguard.delegate_router:delegate_task](#core-68ddabbd5490ea060407af6d2e38f0366a724e8bcf5ad0394a71f0852c521d8d); [spendguard.delegate_router:start_delegate_job](#core-27b0596e32b63a7c3e4de5028aa61d0e8ca760de16235afe09ba3988e43cc00e); [spendguard.delegate_router:wait_for_delegate_job_handoff](#core-23cfa6dd59c35987fb1c680583bd0660eb48994df194155ee711f3a5a92988f6) |
+| C157 | Delegate a self-contained task to another provider plan | delegate | spendguard.delegate_router.delegate_task(task, files=None, intent=None, provider='auto', execute=False, timeout=None, cwd=None, warm=False); spendguard.delegate_router.start_delegate_job(task, files=None, intent=None, provider='auto', cwd=None, timeout=None, detached=False, warm=False); spendguard.delegate_router.wait_for_delegate_job_handoff(job_id) | spendguard_delegate(task, files, intent, provider, cwd, execute) | [spendguard.delegate_router:delegate_task](#core-68ddabbd5490ea060407af6d2e38f0366a724e8bcf5ad0394a71f0852c521d8d); [spendguard.delegate_router:start_delegate_job](#core-27b0596e32b63a7c3e4de5028aa61d0e8ca760de16235afe09ba3988e43cc00e); [spendguard.delegate_router:wait_for_delegate_job_handoff](#core-23cfa6dd59c35987fb1c680583bd0660eb48994df194155ee711f3a5a92988f6) |
 | C158 | Read delegated job progress | delegate | spendguard.delegate_jobs.read_delegate_job(job_id) | spendguard_delegate_status(job_id) | [spendguard.delegate_jobs:read_delegate_job](#core-531c16b0caeca81416ad6014208e8847bad71c05ccaf71428cb7a17e57f4dc8a) |
 | C159 | Collect a delegated job result | delegate | spendguard.delegate_jobs.read_delegate_job_result(job_id) | spendguard_delegate_result(job_id) | [spendguard.delegate_jobs:read_delegate_job_result](#core-2cf61e6857bb3198179cbe8eee0415f30de52f1a88fff5df3f7ca826f8cbf66d) |
 | C160 | Recover an interrupted delegated execution | delegate | spendguard.execution_journal.recover_durable_execution(execution_id, *, root=None) | capability_delegate__4_execution_journal_recover_durable_execution | [spendguard.execution_journal:recover_durable_execution](#core-4febdb316dd1d47a25609770d714af32c1449c1567a9b8d0f68836de1b3e2705) |
@@ -1317,7 +1317,7 @@ Takes no parameters.
 
 ### C157: Delegate a self-contained task to another provider plan
 
-Callable variants preserve each exact existing source signature, annotation (Any when absent), unevaluated default expression and full docstring. Source declarations are not inferred cross-surface semantic conversions. Audited CLI invocation: spendguard delegate TASK [--files FILES] [--intent I] [--provider P] [--cwd DIR] [--estimate|--yes] [--timeout S].
+Governed delegate dry-run is default. Execute with --yes or --execute; --warm requests the existing broker. CLI jobs survive launcher exit. Use --status JOB_ID or --collect JOB_ID; state is the canonical lifecycle key (running/done/failed/killed), while status preserves legacy execution semantics on collected results. --collect --wait [--timeout-s SECONDS] blocks until terminal; timeout leaves work running. --cancel JOB_ID terminates and --kill JOB_ID force-kills the governed worker. Result text uses stdout; diagnostics and receipts use stderr; --mixed-stream restores legacy output.
 
 Takes no parameters.
 
@@ -4309,6 +4309,7 @@ cold ``codex exec`` only. See README.md's routing cheat-sheet.
 | execute | Any | no | False | Source parameter execute at src/spendguard/delegate_router.py:586; see complete callable contract. |
 | timeout | Any | no | None | Source parameter timeout at src/spendguard/delegate_router.py:586; see complete callable contract. |
 | cwd | Any | no | None | Source parameter cwd at src/spendguard/delegate_router.py:586; see complete callable contract. |
+| warm | Any | no | False | Use the existing warm governed broker path. |
 
 Returns: `Any`
 
@@ -4320,7 +4321,7 @@ Source: `src/spendguard/delegate_router.py:546`
 
 Prepare and start one daemon delegate job, returning without awaiting execution.
 
-CLI DELIBERATE variant restriction: Starts a daemon thread and returns before completion; a short-lived CLI destroys that thread. Use blocking delegate_task on CLI; the starter remains available in a long-lived API or MCP host.
+CLI DELIBERATE variant restriction: The delegate command invokes this lifecycle starter with detached=True; a direct generated starter command is omitted to preserve governed handoff and result collection.
 
 | Parameter | Type | Required | Default | Contract |
 | --- | --- | --- | --- | --- |
@@ -4330,6 +4331,8 @@ CLI DELIBERATE variant restriction: Starts a daemon thread and returns before co
 | provider | Any | no | 'auto' | Source parameter provider at src/spendguard/delegate_router.py:546; see complete callable contract. |
 | cwd | Any | no | None | Source parameter cwd at src/spendguard/delegate_router.py:546; see complete callable contract. |
 | timeout | Any | no | None | Source parameter timeout at src/spendguard/delegate_router.py:546; see complete callable contract. |
+| detached | Any | no | False | Launch the existing governed executor in an independent OS worker that survives caller exit. |
+| warm | Any | no | False | Use the existing warm governed broker path. |
 
 Returns: `Any`
 

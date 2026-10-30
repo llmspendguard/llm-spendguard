@@ -2421,14 +2421,15 @@
       "delegate"
     ],
     "names": [
-      "--yes"
+      "--yes",
+      "--execute"
     ],
     "attributes": {
       "action": {
         "literal": "store_true"
       },
       "help": {
-        "literal": "execute hop 2 after classification and estimate"
+        "literal": "execute hop 2 after classification and estimate (--execute is an alias)"
       }
     },
     "evidence": "src/spendguard/delegate_router.py:663"
@@ -2482,7 +2483,7 @@
         "literal": "JOB_ID"
       },
       "help": {
-        "literal": "print the durable terminal result for a delegate job"
+        "literal": "print the complete persisted result; state is canonical, status preserves execution compatibility; add --wait to block"
       }
     },
     "evidence": "src/spendguard/delegate_router.py:668"
@@ -2500,7 +2501,7 @@
         "literal": "JOB_ID"
       },
       "help": {
-        "literal": "print durable delegate job status"
+        "literal": "print durable job metadata; state is the canonical lifecycle key (status is a legacy alias)"
       }
     },
     "evidence": "src/spendguard/delegate_router.py:669"
@@ -5305,5 +5306,113 @@
       }
     },
     "evidence": "src/spendguard/workdone.py:207"
+  },
+  {
+    "declaration_id": "delegate/delegate_router.delegate_cli/parser/--warm",
+    "commands": [
+      "delegate"
+    ],
+    "names": [
+      "--warm"
+    ],
+    "attributes": {
+      "action": {
+        "literal": "store_true"
+      },
+      "help": {
+        "literal": "request the existing warm governed Codex broker path"
+      }
+    },
+    "evidence": "src/spendguard/delegate_router.py:delegate_cli"
+  },
+  {
+    "declaration_id": "delegate/delegate_router.delegate_cli/parser/--wait",
+    "commands": [
+      "delegate"
+    ],
+    "names": [
+      "--wait"
+    ],
+    "attributes": {
+      "action": {
+        "literal": "store_true"
+      },
+      "help": {
+        "literal": "with --collect JOB_ID, block until a durable terminal state is available"
+      }
+    },
+    "evidence": "src/spendguard/delegate_router.py:delegate_cli"
+  },
+  {
+    "declaration_id": "delegate/delegate_router.delegate_cli/parser/--timeout-s",
+    "commands": [
+      "delegate"
+    ],
+    "names": [
+      "--timeout-s"
+    ],
+    "attributes": {
+      "help": {
+        "literal": "maximum collection wait in seconds; expiry leaves the worker running"
+      },
+      "type": {
+        "expression": "float"
+      }
+    },
+    "evidence": "src/spendguard/delegate_router.py:delegate_cli"
+  },
+  {
+    "declaration_id": "delegate/delegate_router.delegate_cli/parser/--mixed-stream",
+    "commands": [
+      "delegate"
+    ],
+    "names": [
+      "--mixed-stream"
+    ],
+    "attributes": {
+      "action": {
+        "literal": "store_true"
+      },
+      "help": {
+        "literal": "compatibility: print spendguard diagnostics and receipts to stdout (default: stderr)"
+      }
+    },
+    "evidence": "src/spendguard/delegate_router.py:delegate_cli"
+  },
+  {
+    "declaration_id": "delegate/delegate_router.delegate_cli/lookup/--cancel",
+    "commands": [
+      "delegate"
+    ],
+    "names": [
+      "--cancel"
+    ],
+    "attributes": {
+      "metavar": {
+        "literal": "JOB_ID"
+      },
+      "help": {
+        "literal": "terminate the governed worker and record terminal state"
+      }
+    },
+    "evidence": "src/spendguard/delegate_router.py:delegate_cli"
+  },
+  {
+    "declaration_id": "delegate/delegate_router.delegate_cli/lookup/--kill",
+    "commands": [
+      "delegate"
+    ],
+    "names": [
+      "--kill"
+    ],
+    "attributes": {
+      "metavar": {
+        "literal": "JOB_ID"
+      },
+      "help": {
+        "literal": "force-kill the governed worker and record terminal state"
+      }
+    },
+    "evidence": "src/spendguard/delegate_router.py:delegate_cli"
   }
 ]

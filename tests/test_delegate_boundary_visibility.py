@@ -40,7 +40,7 @@ def test_delegate_dirty_stale_serving_tree_emits_release_warning():
         "stale": True,
     }
     output_stream = io.StringIO()
-    with contextlib.redirect_stdout(output_stream), \
+    with contextlib.redirect_stderr(output_stream), \
             patch.object(delegate_router._release, "release_status", return_value=release_status), \
             patch.object(delegate_router._release, "_tracked_dirty", return_value=True), \
             patch.object(delegate_router, "delegate_task", return_value=_boundary_estimate_result()), \
@@ -61,7 +61,7 @@ def test_delegate_clean_on_green_serving_tree_emits_no_release_warning():
         "stale": False,
     }
     output_stream = io.StringIO()
-    with contextlib.redirect_stdout(output_stream), \
+    with contextlib.redirect_stderr(output_stream), \
             patch.object(delegate_router._release, "release_status", return_value=release_status), \
             patch.object(delegate_router._release, "_tracked_dirty", return_value=False), \
             patch.object(delegate_router, "delegate_task", return_value=_boundary_estimate_result()), \
@@ -85,7 +85,7 @@ def test_delegate_codex_launch_failure_names_ungoverned_attribution_loss():
         "why": BOUNDARY_TEST_UNDERLYING_ERROR,
     }
     output_stream = io.StringIO()
-    with contextlib.redirect_stdout(output_stream), \
+    with contextlib.redirect_stderr(output_stream), \
             patch.object(delegate_router, "_delegate_release_state_warning", return_value=None), \
             patch.object(delegate_router, "delegate_task", return_value=failed_result), \
             patch("spendguard.fleet.register_consumer"):

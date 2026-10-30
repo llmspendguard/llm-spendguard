@@ -298,6 +298,14 @@ class _WarmStdioJsonRpcDaemon:
             raise ValueError("warm evidence chunk bytes must be positive")
         return warm_read_size
 
+    def _warm_execution_cancelled(self, execution_id):
+        from . import execution_journal
+        return execution_journal.recover_durable_execution(execution_id)["state"] == "killed"
+
+    def _bind_warm_execution_process(self, execution_id, pid):
+        from . import execution_journal
+        execution_journal.bind_durable_execution_child(execution_id, pid)
+
     def _reference_warm_stderr_archive(self, process, execution_ids=None):
         from . import execution_journal
         warm_archive_path = getattr(process, "_spendguard_stderr_archive", getattr(process, "name", None))
