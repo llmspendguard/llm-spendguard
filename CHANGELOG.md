@@ -1,10 +1,46 @@
 # Changelog
 
-- Readiness now includes offline architectural fitness functions with measured complexity/duplication ratchets, reviewed boundaries and exceptions, and mutation proofs.
-
 All notable changes to **llm-spendguard**. Format loosely follows Keep a Changelog; dates are UTC.
 
 ## [Unreleased]
+
+## [0.16.13] — 2026-10-29
+
+Theme: make "square" a structural property, not a claim. One capability SSOT now generates every user-facing
+surface, a versioned readiness checklist is deterministically gated and CI hard-blocks a release on it, and the
+timing tests that guard deadline-cancellation are deterministic under load so a flake can never again read as a
+red build.
+
+### Capability SSOT — CLI/API/MCP generated from one registry (parity + docs by construction) (#246)
+- Every user-facing capability is declared exactly once in an in-repo registry (`capability_registry.py` +
+  `capability_registry_data.jsonl`): id, typed parameters, the bound core callable, and per-surface exposure (the
+  name/alias it appears as, or `ABSENT·DELIBERATE` with a reviewed reason). The CLI, the programmatic API, and the
+  MCP surface are GENERATED from that one declaration, so cross-surface parity and discoverable per-surface docs
+  hold by construction rather than by hand-maintenance.
+- A conformance test reads the registry and asserts parity (present on every surface except declared-absent) and
+  non-trivial help/docs per surface, with a coverage denominator so "cannot tell" is never counted as clean.
+
+### Readiness checklist + `spendguard selfcheck` as a blocking CI gate (#247)
+- `docs/READINESS.md` + `capability_readiness_manifest.json` declare the squareness checklist; each item binds to a
+  deterministic offline gate. `spendguard selfcheck` prints `Coverage X/Y`, exits nonzero on any FAIL or UNREVIEWED,
+  and is wired into CI as a blocking job — a release cannot ship unless the full checklist is green for the exact
+  commit. Result: 19/19, 0 UNREVIEWED, on Python 3.11 and 3.12.
+- External-standards section (PyPA packaging, clig.dev, Diátaxis, OpenSSF Scorecard/Best-Practices) as honest
+  offline-subset gates labeled "reviewed offline subset; external certification is not claimed"; genuine gaps fixed
+  (least-privilege workflow `permissions:`, SHA-pinned actions, a hash-enforced build-backend wheel waiver).
+- Architectural-quality section (ISO/IEC 5055-grounded fitness functions): import-cycle, layer-boundary,
+  complexity, duplication, dead-code and type-integrity gates, each a MEASURED ratchet baseline stored as data
+  (no hardcoded grade) that fails only on regression, plus the existing name-uniqueness and surface-parity gates.
+  Every new gate was proven RED-before/GREEN-after; real existing debt is recorded honestly and tracked in
+  `docs/READINESS-FOLLOWUP.md`, not faked green.
+
+### Deadline/cancellation tests made deterministic under parallel CI load (#248)
+- `test_call_deadline_bounds_hang`, `test_deadline_cancel_waste` and `test_durable_delegate_evidence` asserted on a
+  real wall-clock deadline and could flake under parallel CI load even though cancellation worked. A controlled
+  timeline (`tests/deadline_test_timeline.py`) now drives the behavior on an injected clock instead of racing the
+  host, while still proving the deadline error, client closure, the zero-cost/zero-usage ledger row, and
+  exactly-once terminalization. Mutation proof: broken-closure and doubled-deadline mutations go RED, restored code
+  GREEN; 20/20 repeated parallel runs on 3.11 and 3.12. Production deadline/ledger semantics unchanged.
 
 ## [0.16.12] — 2026-10-29
 
