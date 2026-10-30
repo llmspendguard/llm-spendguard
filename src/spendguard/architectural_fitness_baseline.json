@@ -61,7 +61,7 @@
   ],
   "type_scope_reason": "Existing annotated immutable CLI data model passes mypy with normal diagnostics. Follow-imports skip isolates this explicitly recorded surface; it does not claim typing of transitive application imports or full-package coverage.",
   "complexity": {
-    "justification": "Radon 6.0.1 counts logical lines through the running Python tokenizer. Measured __init__.py MI parameters on identical source: Python 3.11 LLOC90 versus Python3.12 LLOC91, with identical volume120.40465370320703/CC15/comments54.0. Independently measured per-minor baselines avoid false regressions; unsupported versions and new source files fail closed pending explicit measured review.",
+    "justification": "Radon 6.0.1 counts logical lines through the running Python tokenizer. Measured __init__.py MI parameters on identical source: Python 3.11 LLOC90 versus Python3.12 LLOC91, with identical volume120.40465370320703/CC15/comments54.0. Independently measured per-minor baselines avoid false regressions; unsupported versions and new source files fail closed pending explicit measured review. F2/F4 review (2026-10-30): comprehend adds literal items, vendor confinement and provider panels through extracted helpers (max CC improves 22 to 21); its size-sensitive MI baseline reflects the requested expanded input surface. config_schema adds the shared configured plan-cap threshold policy (max CC 2 to 4); plan_admission owns the common hosting/band policy and residency_gate consumes it, removing the agent_spawn_gate surface import cycle. Only these four files were remeasured on both supported interpreters; all other ratchets remain unchanged.",
     "interpreters": {
       "3.11": {
         "files": {
@@ -278,16 +278,16 @@
             "mi": 69.39536668279646
           },
           "src/spendguard/comprehend.py": {
-            "max_cc": 22,
-            "mi": 50.727161149870575
+            "max_cc": 21,
+            "mi": 39.06540928307973
           },
           "src/spendguard/config.py": {
             "max_cc": 23,
             "mi": 0.0
           },
           "src/spendguard/config_schema.py": {
-            "max_cc": 2,
-            "mi": 74.84839778755519
+            "max_cc": 4,
+            "mi": 69.9386487242984
           },
           "src/spendguard/consumer_audit.py": {
             "max_cc": 42,
@@ -631,7 +631,7 @@
           },
           "src/spendguard/plan_admission.py": {
             "max_cc": 20,
-            "mi": 52.01011956259717
+            "mi": 48.01059710608563
           },
           "src/spendguard/pricing.py": {
             "max_cc": 23,
@@ -727,7 +727,7 @@
           },
           "src/spendguard/residency_gate.py": {
             "max_cc": 25,
-            "mi": 35.09598410966133
+            "mi": 35.028116921535904
           },
           "src/spendguard/resource_state.py": {
             "max_cc": 14,
@@ -1146,16 +1146,16 @@
             "mi": 68.0064916641366
           },
           "src/spendguard/comprehend.py": {
-            "max_cc": 22,
-            "mi": 50.618889294699414
+            "max_cc": 21,
+            "mi": 38.987113926607044
           },
           "src/spendguard/config.py": {
             "max_cc": 23,
             "mi": 0.0
           },
           "src/spendguard/config_schema.py": {
-            "max_cc": 2,
-            "mi": 74.84839778755519
+            "max_cc": 4,
+            "mi": 69.9386487242984
           },
           "src/spendguard/consumer_audit.py": {
             "max_cc": 42,
@@ -1499,7 +1499,7 @@
           },
           "src/spendguard/plan_admission.py": {
             "max_cc": 20,
-            "mi": 52.01011956259717
+            "mi": 48.01059710608563
           },
           "src/spendguard/pricing.py": {
             "max_cc": 23,
@@ -1595,7 +1595,7 @@
           },
           "src/spendguard/residency_gate.py": {
             "max_cc": 25,
-            "mi": 35.01501195681278
+            "mi": 34.94816974489087
           },
           "src/spendguard/resource_state.py": {
             "max_cc": 14,

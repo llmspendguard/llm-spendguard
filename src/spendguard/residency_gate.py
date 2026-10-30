@@ -218,9 +218,20 @@ def evaluate_posttooluse(payload):
         if resident is not None and subagent is not None:
             cost = (f" ~${resident:.2f} to re-read over ~{rem} more turns as a resident, vs ~${subagent:.4f} read once "
                     f"in a subagent")
+        # Share the spawn gate's plan-state policy, including its configured hosting lane and near-cap band.
+        # The evidence's meaning remains the agentic verdict above; this branch only chooses the permitted route.
+        from . import plan_admission
+        from .config_schema import configured_agent_near_cap_threshold
+        recommendation = (
+            "prefer an off-plan route via `spendguard delegate` (estimate first), or another provider's ready "
+            "agent CLI such as `codex exec`; the hosting plan is near cap/overage, so avoid its subagents"
+            if plan_admission.hosting_plan_in_near_cap_band(
+                plan_admission.hosting_plan_lane(), configured_agent_near_cap_threshold())
+            else "prefer a subagent (reads once, returns a summary)"
+        )
         msg = (f"⚠ spendguard residency: a {nbytes:,}-byte {tool_name} result is now RESIDENT in the main thread"
-               f"{cost}. The classifier judged it delegable: {verdict.get('why', '')}. For this SHAPE of work, prefer a "
-               f"subagent (reads once, returns a summary); you can't un-read it now, but /compact or a fresh session "
+               f"{cost}. The classifier judged it delegable: {verdict.get('why', '')}. For this SHAPE of work, "
+               f"{recommendation}; you can't un-read it now, but /compact or a fresh session "
                f"drops it.")
         return {"systemMessage": msg,
                 "hookSpecificOutput": {"hookEventName": "PostToolUse", "additionalContext": msg}}

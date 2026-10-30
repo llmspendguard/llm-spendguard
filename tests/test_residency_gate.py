@@ -11,6 +11,7 @@ import tempfile
 
 os.environ["SPENDGUARD_TEST_ISOLATED"] = "1"
 os.environ["SPENDGUARD_NO_AUTOINSTALL"] = "1"
+os.environ.pop("SPENDGUARD_HOOK_HOST", None)  # This script targets the registered subagent-host plan.
 os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="sg-resgate-")
 os.environ["SPENDGUARD_RESIDENCY_MIN_RESULT_BYTES"] = "100"
 os.environ["SPENDGUARD_RESIDENCY_MIN_TURNS"] = "10"
@@ -19,6 +20,7 @@ os.environ["SPENDGUARD_RESIDENCY_REMAINING_TURNS_EST"] = "100"
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
 from spendguard import residency_gate as rg, adapters, plan_admission, claudecode, pricing  # noqa: E402
+from spendguard import agent_spawn_gate, lanes, overage  # noqa: E402
 from spendguard.config_schema import SETTINGS  # noqa: E402
 
 fails = []
@@ -39,6 +41,14 @@ claudecode._cache_read_rate = lambda m: 1e-6
 pricing.price = lambda m: {"in_": 3.0}
 pricing.realtime_cost = lambda model, in_tok, out_tok, cached_in_tok=0, cache_creation_tok=0, **kw: (
     cached_in_tok * 0.000001 + cache_creation_tok * 0.000003 + out_tok * 0.000015)
+_residency_host_lane = agent_spawn_gate._hosting_lane()
+_residency_near_cap = next(setting["default"] for setting in SETTINGS
+                           if setting.get("section") == "agent_spawn_gate"
+                           and setting.get("key") == "near_cap_remaining_pct")
+_residency_plan_state = {"remaining_pct": _residency_near_cap + 1, "on_overage_now": False}
+lanes.lane_headroom = lambda **kw: [{"lane": _residency_host_lane, "known": True,
+                                   "remaining_pct": _residency_plan_state["remaining_pct"]}]
+overage.current_overage_status = lambda: {"on_overage_now": _residency_plan_state["on_overage_now"]}
 
 _big = {"tool_name": "Bash", "session_id": "S1", "tool_input": {"command": "cat big.log"},
         "tool_response": "Y" * 4000}
@@ -58,6 +68,21 @@ ck("judge is minimal, strict-schema, and output-bounded",
    and _calls[0][2].get("schema", {}).get("additionalProperties") is False
    and _calls[0][2].get("no_metered_fallback") is True)
 ck("judge receives the whole tool result", "Y" * 4000 in _calls[0][1])
+
+# Route policy shares the spawn gate's real overage/headroom sources; cached meaning verdict stays agentic.
+for _residency_state_name, _residency_remaining, _residency_overage, _residency_off_plan in (
+        ("capped", 0, False, True),
+        ("near-cap boundary", _residency_near_cap, False, True),
+        ("paid overage", _residency_near_cap + 1, True, True),
+        ("headroom", _residency_near_cap + 1, False, False)):
+    _residency_plan_state.update(remaining_pct=_residency_remaining, on_overage_now=_residency_overage)
+    _residency_policy_message = rg.evaluate_posttooluse(_big).get("systemMessage", "")
+    ck(f"{_residency_state_name} selects the matching residency recommendation",
+       ("prefer an off-plan route" in _residency_policy_message
+        and "spendguard delegate" in _residency_policy_message
+        and "prefer a subagent" not in _residency_policy_message)
+       if _residency_off_plan else "prefer a subagent" in _residency_policy_message)
+ck("plan-policy changes reuse the agentic evidence verdict", len(_calls) == 1)
 
 # ── a bounded long rationale cannot truncate away the required boolean verdict ──
 _calls.clear()

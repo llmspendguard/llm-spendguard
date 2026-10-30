@@ -9,7 +9,7 @@ import shlex
 import shutil
 import sys
 
-from . import config, delegate_router, lane_registry, lanes, overage
+from . import config, delegate_router, plan_admission
 from .ledger_read import LedgerReadError
 
 _HOOK_SUFFIX = "agent-spawn-gate --pretooluse-hook"
@@ -18,28 +18,12 @@ _OVERRIDE_REASON = "SPENDGUARD_ALLOW_SUBAGENT_REASON"
 
 
 def _hosting_lane():
-    if os.getenv("SPENDGUARD_HOOK_HOST") == "codex":
-        return "codex"
-    configured = config._cfg_get("agent_spawn_gate", "plan_lane", None)
-    if configured:
-        return configured
-    marked = [row["lane"] for row in lane_registry.LANES if row.get("subagent_host")]
-    if len(marked) != 1:
-        raise RuntimeError("lane_registry must mark exactly one subagent_host, or configure agent_spawn_gate.plan_lane")
-    return marked[0]
+    return plan_admission.hosting_plan_lane()
 
 
 def _plan_in_band():
-    if _hosting_lane() != "codex" and overage.current_overage_status().get("on_overage_now"):
-        return True
-    from . import config_schema
-    declared = next(item for item in config_schema.SETTINGS
-                    if item["section"] == "agent_spawn_gate" and item["key"] == "near_cap_remaining_pct")
-    threshold = float(config._cfg_get("agent_spawn_gate", "near_cap_remaining_pct", declared["default"]))
-    row = next((item for item in lanes.lane_headroom(do_fetch=False)
-                if item.get("lane") == _hosting_lane()), None)
-    return bool(row and row.get("known") and row.get("remaining_pct") is not None
-                and float(row["remaining_pct"]) <= threshold)
+    from .config_schema import configured_agent_near_cap_threshold
+    return plan_admission.hosting_plan_in_near_cap_band(_hosting_lane(), configured_agent_near_cap_threshold())
 
 
 def _agent_spawn_state_path(session_id):

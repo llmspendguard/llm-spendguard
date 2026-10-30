@@ -40,6 +40,13 @@ from .residency_gate import (
 from .config import DISK_GUARD_FLOOR_DEFAULT_BYTES, DISK_GUARD_FLOOR_ENV
 from .fleet import FLEET_RESTARTS_ENABLED_DEFAULT, FLEET_RESTARTS_ENABLED_ENV
 
+
+def configured_agent_near_cap_threshold():
+    """Resolve the shared hosting-plan route threshold from its declared schema default."""
+    declared = next(item for item in SETTINGS
+                    if item["section"] == "agent_spawn_gate" and item["key"] == "near_cap_remaining_pct")
+    return float(config._cfg_get("agent_spawn_gate", "near_cap_remaining_pct", declared["default"]))
+
 SETTINGS = [
     *[dict(section="distribute", key=key, store="config.json:distribute." + key,
            env=None, default=default, kind=kind, secret=False, desc=desc)

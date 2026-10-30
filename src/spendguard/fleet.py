@@ -319,15 +319,26 @@ def enforcing_interpreter_registration_status():
             "python_executable": str(pathlib.Path(sys.executable).resolve())}
 
 
-def registered_interpreters():
-    """The persistent authoritative deployment inventory, independent of live process lifetime."""
+def registered_interpreters(repo_root=None):
+    """Persistent deployment inventory, optionally scoped by recorded venv path containment.
+
+    Registrations store the venv root, not an owning repository. An external/shared venv's
+    repository affinity cannot be inferred and is excluded from a repository-scoped result.
+    With no scope, preserve the complete inventory independent of live process lifetime.
+    """
     with closing(_fleet_db(read_only=True)) as connection:
         rows = connection.execute(
             f"SELECT python_executable,venv_root,code_version,metadata_version,catalog_verified,first_seen,last_seen "
             f"FROM {_INTERPRETER_REGISTRATION_TABLE} ORDER BY python_executable").fetchall()
     keys = ("python_executable", "venv_root", "code_version", "metadata_version", "catalog_verified",
             "first_seen", "last_seen")
-    return [dict(zip(keys, row)) for row in rows]
+    inventory = [dict(zip(keys, row)) for row in rows]
+    if repo_root is None:
+        return inventory
+    resolved_repo_root = pathlib.Path(repo_root).expanduser().resolve()
+    return [interpreter for interpreter in inventory
+            if interpreter["venv_root"]
+            and pathlib.Path(interpreter["venv_root"]).expanduser().resolve().is_relative_to(resolved_repo_root)]
 
 
 def deregister_interpreter(python_executable):

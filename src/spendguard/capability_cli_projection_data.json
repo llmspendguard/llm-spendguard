@@ -1729,7 +1729,7 @@
     ],
     "attributes": {
       "nargs": {
-        "literal": "+"
+        "literal": "*"
       },
       "help": {
         "literal": "files or globs to analyse (e.g. 'docs/**/*.md')"
@@ -5414,5 +5414,56 @@
       }
     },
     "evidence": "src/spendguard/delegate_router.py:delegate_cli"
+  },
+  {
+    "declaration_id": "comprehend/comprehend.cmd/ap/--items",
+    "commands": [
+      "comprehend"
+    ],
+    "names": [
+      "--items"
+    ],
+    "attributes": {
+      "nargs": {
+        "literal": "+"
+      },
+      "help": {
+        "literal": "explicit literal file/id list (alternative to globs); read whole"
+      }
+    },
+    "evidence": "src/spendguard/comprehend.py:cmd"
+  },
+  {
+    "declaration_id": "comprehend/comprehend.cmd/ap/--vendors",
+    "commands": [
+      "comprehend"
+    ],
+    "names": [
+      "--vendors"
+    ],
+    "attributes": {
+      "help": {
+        "literal": "registered lane vendors, comma-separated (constrains --lanes)"
+      }
+    },
+    "evidence": "src/spendguard/comprehend.py:cmd"
+  },
+  {
+    "declaration_id": "comprehend/comprehend.cmd/ap/--panel",
+    "commands": [
+      "comprehend"
+    ],
+    "names": [
+      "--panel"
+    ],
+    "attributes": {
+      "action": {
+        "literal": "store_true"
+      },
+      "help": {
+        "literal": "review every item with every selected vendor's configured lane model"
+      }
+    },
+    "evidence": "src/spendguard/comprehend.py:cmd"
   }
 ]
