@@ -14,7 +14,9 @@
   • any failure — CLI missing, timeout, non-zero exit, status != SUCCESS, empty response, quota exhausted —
     returns {error} and the caller falls back (pool → API): the lane can degrade, the advisor cannot break.
 
-Doctrine note: PRINT-mode only (`-p` + --disable-slash-commands), no agent loop / tools for meta work — same as
+Doctrine note: meta work runs in a neutral temporary directory. Explicit agentic delegation uses the supplied
+isolated workspace and `--mode auto` for the CLI's tool loop. PRINT-mode (`-p` + --disable-slash-commands) is
+headless transport, not a restriction on agent capability. As with
 the claude-code and codex lanes. `agy`'s model ids carry the reasoning tier as a suffix (gemini-3.7-flash-high/
 -medium/-low, gemini-3.1-pro-high/-low — see `agy models`); a requested id agy does not serve exits non-zero →
 API fallback, so the lane never silently answers on a different model than the caller asked for. `agy`'s id
@@ -31,6 +33,7 @@ import time
 TIMEOUT_S = 300               # meta prompts are small; a hung CLI must not stall the daily report
 MIN_TIMEOUT_S = 30            # agy's real working latency is ~5s (no big cold-start), and its plan quota OSCILLATES
 ANTIGRAVITY_WORK_DIRECTORY_PREFIX = "spendguard-antigravity-"
+ANTIGRAVITY_AGENT_EXECUTION_MODE = "auto"
 #                              (it is the flaky lane) — so bound a lane ATTEMPT to ~30s: a working call answers well
 #                              within it, a DOWN/hung agy fails fast and degrades to the metered Gemini API in
 #                              seconds instead of the 150s global floor, and the miss then cools the lane. Unlike a
@@ -269,15 +272,21 @@ def _error_result(text):
     return out
 
 
-def run_prompt(prompt, system=None, model=None, timeout=TIMEOUT_S, reasoning=None, max_tokens=None):   # reasoning/max_tokens: protocol-uniform; effort rides the MODEL SUFFIX and the agy CLI has no one-shot output cap → accepted, not enforced
+
+def run_prompt(prompt, system=None, model=None, timeout=TIMEOUT_S, reasoning=None, max_tokens=None,
+               *, agentic=False, cwd=None):
     """→ {text, in_tok, out_tok, latency, error} from one headless plan-billed Antigravity run. `system` is
     prepended to the prompt (print mode has no separate system slot). `model` IS forwarded to `agy --model` when
-    given (an agy id like gemini-3.7-flash-high); an id agy does not serve exits non-zero → API fallback."""
+    given (an agy id like gemini-3.7-flash-high); an id agy does not serve exits non-zero → API fallback.
+    Protocol parameters reasoning/max_tokens remain accepted but not enforced: effort rides the model suffix,
+    and agy has no one-shot output cap. Agentic mode changes workspace/tool permissions, not those guarantees."""
     from . import execution_journal
     antigravity_exec_durable_dispatch_id = execution_journal.current_durable_execution_id()
     antigravity_exec_delegate_process_runner = (execution_journal.run_durable_delegate_subprocess
                                if antigravity_exec_durable_dispatch_id else subprocess.run)
     exe = _bin()
+    if agentic and cwd is None:
+        return {"error": "agentic Antigravity execution requires an explicit workspace"}
     if not exe:
         return {"error": "agy (Antigravity CLI) not found"}
     full = (f"{system.strip()}\n\n{prompt}" if system else prompt)
@@ -285,15 +294,18 @@ def run_prompt(prompt, system=None, model=None, timeout=TIMEOUT_S, reasoning=Non
     env = config.lane_exec_env(exe)   # strip EVERY provider's metered key and expose the CLI's co-located runtime; the
     #                                   gemini lane must never carry ANTHROPIC_API_KEY (Claude tokens) or any other
     cmd = [exe, "-p", full, "--output-format", "json", "--disable-slash-commands"]
+    if agentic:
+        cmd += ["--mode", ANTIGRAVITY_AGENT_EXECUTION_MODE]
     if model:
         cmd += ["--model", model.split(":", 1)[-1]]   # forward the requested id; a bad one fails → API fallback
     t0 = time.time()
     neutral_cwd = None
     try:
-        neutral_cwd = tempfile.mkdtemp(prefix=ANTIGRAVITY_WORK_DIRECTORY_PREFIX)
+        if not agentic:
+            neutral_cwd = tempfile.mkdtemp(prefix=ANTIGRAVITY_WORK_DIRECTORY_PREFIX)
         try:
             r = antigravity_exec_delegate_process_runner(cmd, capture_output=True, text=True, timeout=timeout, env=env,
-                               stdin=subprocess.DEVNULL, cwd=neutral_cwd)
+                               stdin=subprocess.DEVNULL, cwd=cwd if agentic else neutral_cwd)
         except subprocess.TimeoutExpired:
             if antigravity_exec_durable_dispatch_id:
                 raise
@@ -305,15 +317,5 @@ def run_prompt(prompt, system=None, model=None, timeout=TIMEOUT_S, reasoning=Non
     finally:
         if neutral_cwd:
             shutil.rmtree(neutral_cwd, ignore_errors=True)
-    if r.returncode != 0:
-        return _error_result(r.stderr or r.stdout or "agy exited non-zero")   # quota→a reset window rides retry_after_s
-    obj = _result_obj(r.stdout)
-    if obj is None:
-        return {"error": "agy produced no parseable json result"}
-    if obj.get("status") != "SUCCESS":
-        return _error_result(obj.get("error") or f"agy status={obj.get('status')!r}")
-    text = (obj.get("response") or "").strip()
-    if not text:
-        return {"error": "agy produced no response text"}
-    in_tok, out_tok = _usage_from_result(obj)
-    return {"text": text, "in_tok": in_tok, "out_tok": out_tok, "latency": time.time() - t0, "error": None}
+    from .subscription_cli_results import antigravity_completed_response
+    return antigravity_completed_response(r, t0, _result_obj, _usage_from_result, _error_result)

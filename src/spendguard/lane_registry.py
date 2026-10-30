@@ -10,6 +10,8 @@ Each row (a plain dict — pure data, no imports of adapters/lanes so this stays
   provider    — the metered PROVIDER it stands in for (adapters.PROVIDERS key); the routing + pricing key.
   exec        — the `<name>_exec` module that drives it (imported lazily BY NAME, never at module load).
   kind        — 'cli' (a host binary + a login artifact) or 'key' (an HTTP endpoint + a plan key).
+  agentic     — whether this executor has a governed workspace edit/command path. Host-subagent routing remains
+                separate; a coding-plan key alone does not confer an agent CLI or tool loop.
   creds       — for a CLI lane, the login-artifact path(s) that prove login; () for a key lane.
   keychain    — optional macOS keychain service whose mere presence is INCONCLUSIVE ('unknown', not 'ok').
   probe_tier  — the model tier `spendguard lanes --probe` pings it with; None = the lane's own default model.
@@ -33,18 +35,20 @@ def _home_path(*parts):
 
 LANES = [
     {"lane": "claude-code", "provider": "anthropic", "exec": "subscription_exec", "kind": "cli",
-     "subagent_host": True,
+     "subagent_host": True, "agentic": False,
      "creds": (_home_path(".claude", ".credentials.json"),), "keychain": "Claude Code-credentials", "probe_tier": "haiku",
      "reasoning": {"style": "thinking", "levels": (), "default": None},
      "login": ("run `claude` then `/login`, sign in with your SUBSCRIPTION account — and if it offers to use a "
                "detected ANTHROPIC_API_KEY, choose No: Yes meters every call to the API instead of your plan"),
      "relogin_cmd": "claude auth login"},
     {"lane": "codex", "provider": "openai", "exec": "codex_exec", "kind": "cli",
+     "agentic": True,
      "creds": (_home_path(".codex", "auth.json"),), "keychain": None, "probe_tier": None,
      "reasoning": {"style": "param", "levels": ("none", "low", "medium", "high", "xhigh", "max"), "default": None},
      "login": "run `codex` and sign in with your ChatGPT account (not an API key)",
      "relogin_cmd": "codex login"},
     {"lane": "gemini", "provider": "gemini", "exec": "antigravity_exec", "kind": "cli",
+     "agentic": True,
      # agy's OAuth path DRIFTS across versions — accept ANY known artifact (current + legacy) so a renamed token
      # never reports a logged-in lane as inactive.
      "creds": (_home_path(".gemini", "antigravity-cli", "antigravity-oauth-token"),
@@ -56,12 +60,14 @@ LANES = [
                "call to the Gemini API instead of your Antigravity plan)"),
      "relogin_cmd": "agy"},   # agy has no login subcommand — running it re-triggers the cached Antigravity OAuth
     {"lane": "zai-coding", "provider": "zai", "exec": "zai_exec", "kind": "key",
+     "agentic": False,  # HTTP completion executor, not a tool-running agent CLI.
      "creds": (), "keychain": None, "probe_tier": None,
      "reasoning": {"style": "none", "levels": (), "default": None},
      "login": ("add a z.ai GLM Coding Plan key to keys.env — `ZAI_CODING_API_KEY` (or your account's `ZAI_API_KEY` "
                "on an active plan); this lane is a key + endpoint, not a CLI login"),
      "relogin_cmd": ""},   # key lane: no login command — a 401 means regenerate ZAI_CODING_API_KEY at the z.ai console
     {"lane": "kimi-code", "provider": "moonshot", "exec": "kimi_exec", "kind": "cli",
+     "agentic": True,
      "creds": (_home_path(".kimi-code", "credentials"),), "keychain": None, "probe_tier": None,
      "reasoning": {"style": "none", "levels": (), "default": None},
      "login": ("run `kimi` then `/login` and choose Kimi Code OAuth (your subscription) — NOT the Moonshot API "

@@ -22,7 +22,7 @@ os.environ["SPENDGUARD_NO_AUTOINSTALL"] = "1"
 os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="sg-tmo-")
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
-from spendguard import codex_daemon, delegate_router  # noqa: E402
+from spendguard import codex_daemon, delegate_router, delegate_worktrees  # noqa: E402
 
 fails = []
 def ck(label, cond):
@@ -87,7 +87,9 @@ def _fake_run_prompt(prompt, **kwargs):
 import spendguard.codex_exec as _cx        # noqa: E402
 _orig_rp = _cx.run_prompt
 _orig_spec = delegate_router.lane_registry.lane_spec
-delegate_router.lane_registry.lane_spec = lambda plan: {"exec": "codex_exec", "provider": "openai"}
+_orig_timeout_isolation = delegate_worktrees.run_isolated_delegate
+delegate_worktrees.run_isolated_delegate = lambda executor, cwd, **isolation_dependencies: executor(cwd)
+delegate_router.lane_registry.lane_spec = lambda plan: {"exec": "codex_exec", "provider": "openai", "agentic": True}
 _cx.run_prompt = _fake_run_prompt
 try:
     delegate_router._route_agentic("codex", "do a thing", "gpt-5.6-sol", None, "/tmp/repo")
@@ -100,6 +102,7 @@ try:
 finally:
     _cx.run_prompt = _orig_rp
     delegate_router.lane_registry.lane_spec = _orig_spec
+    delegate_worktrees.run_isolated_delegate = _orig_timeout_isolation
 
 print(f"\n{'[FAIL]' if fails else 'OK'} test_delegate_timeout_kill: {len(fails)} failure(s)")
 sys.exit(1 if fails else 0)

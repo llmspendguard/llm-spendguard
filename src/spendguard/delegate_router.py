@@ -222,12 +222,13 @@ def delegation_lanes_ready(route_kind="oneshot"):
     else:
         for plan in sorted(configured):
             spec = lane_registry.lane_spec(plan)
-            if not spec:
+            if not spec or not spec.get("agentic"):
                 continue
             module = importlib.import_module(f".{spec['exec']}", __package__)
             try:
                 executor_available = bool(module.available())
-                auth = module.auth_status().get("authed") if hasattr(module, "auth_status") else None
+                auth = (module.auth_status().get("authed") if hasattr(module, "auth_status") else
+                        any(Path(path).exists() for path in spec["creds"]))
             except Exception:
                 executor_available, auth = False, None
             if executor_available and auth is True:
@@ -432,6 +433,36 @@ def _worktree_changed_files(cwd, before_dirty):
     return sorted(p for p in after_dirty if p not in before_dirty)
 
 
+def _persist_delegate_workspace_metadata(metadata, execution_id):
+    from .delegate_worktrees import delegate_worktree_metadata_path
+    from . import execution_journal
+    if execution_id:
+        config.update_json(delegate_worktree_metadata_path(
+            execution_journal.durable_execution_payload_paths(execution_id)["envelope"]),
+            lambda previous: metadata, reason="persist isolated delegate workspace", required=True)
+
+
+def _run_isolated_agentic_provider(executor, cwd):
+    from .delegate_worktrees import DELEGATE_WORKTREE_DIRECTORY, run_isolated_delegate
+    from . import execution_journal
+    execution_id = execution_journal.current_durable_execution_id()
+    return run_isolated_delegate(executor, cwd, worktree_root=config._cfg_get("delegate", "worktree_root", None)
+        or config.HOME / DELEGATE_WORKTREE_DIRECTORY,
+        metadata_writer=lambda metadata: _persist_delegate_workspace_metadata(metadata, execution_id))
+
+
+def _finalize_accepted_delegate_workspace(execution):
+    from .delegate_worktrees import finalize_delegate_worktree
+    from . import execution_journal
+    execution_id = execution.get("execution_id") or execution_journal.current_durable_execution_id()
+    def persist_accepted_delegate_envelope(payload):
+        if execution_id:
+            execution_journal.persist_durable_execution_payload(execution_id, envelope=json.dumps(payload, ensure_ascii=False))
+    finalize_delegate_worktree(execution,
+        metadata_writer=lambda metadata: _persist_delegate_workspace_metadata(metadata, execution_id),
+        envelope_writer=persist_accepted_delegate_envelope)
+
+
 def _route_agentic(plan, prompt, model, timeout, cwd, warm=False):
     """Run a self-contained AGENTIC subtask in a trusted workspace, using workspace-write where supported.
 
@@ -445,8 +476,10 @@ def _route_agentic(plan, prompt, model, timeout, cwd, warm=False):
     spec = lane_registry.lane_spec(plan)
     if not spec:
         return {"error": f"unknown configured plan {plan!r}"}
+    if not spec.get("agentic"):
+        return {"error": f"configured plan {plan!r} has no agentic executor"}
     module = importlib.import_module(f".{spec['exec']}", __package__)
-    kwargs = {"model": model}
+    kwargs = {"model": model, "cwd": cwd}
     if timeout is not None:
         kwargs["timeout"] = timeout
     if spec["exec"] == "codex_exec":
@@ -461,7 +494,15 @@ def _route_agentic(plan, prompt, model, timeout, cwd, warm=False):
         kwargs["recycle_on_timeout"] = config.codex_daemon_admission_settings()["recycle_on_timeout"]
         kwargs["delegate_context"] = not warm
         prompt = prompt + _WORKTREE_AUTHOR_CONSTRAINTS    # bake the sandbox/git/hook contract into what codex actually receives
-    return _invoke_recoverable_delegate(lambda: module.run_prompt(prompt, **kwargs),
+    else:
+        kwargs["agentic"] = True
+        if timeout is None:
+            kwargs["timeout"] = float(config._cfg_get("delegate", "agentic_timeout_s", AGENTIC_DELEGATE_TIMEOUT_S)
+                                      or AGENTIC_DELEGATE_TIMEOUT_S)
+        prompt = prompt + _WORKTREE_AUTHOR_CONSTRAINTS
+    def invoke_isolated_provider(workspace):
+        return module.run_prompt(prompt, **{**kwargs, "cwd": workspace})
+    return _invoke_recoverable_delegate(lambda: _run_isolated_agentic_provider(invoke_isolated_provider, cwd),
                                         plan=plan, model=model, cwd=cwd)
 
 
@@ -517,6 +558,7 @@ def _assemble_delegate_execution_result(execution, *, result, classification, es
                "est_value_basis": est_value_basis}
     completed_result = {**result, "status": "executed", "execution": execution,
                         "receipt": receipt, "changed_files": changed_files}
+    _finalize_accepted_delegate_workspace(execution)
     if degraded_signal_lines:
         completed_result["warnings"] = [{"reason": DELEGATE_EXECUTION_DEGRADED_TOOL_ENVELOPE,
                                           "signals": degraded_signal_lines,
@@ -535,7 +577,8 @@ def _run_delegate_job_to_completion(job_id, plan, prompt, model, timeout, cwd, d
                          _route_agentic(plan, prompt, model, timeout, cwd))
         completed = _assemble_delegate_execution_result(
             execution, result=result, classification=classification, estimate=estimate, intent=intent,
-            changed_files=_worktree_changed_files(cwd, dirty_before))
+            changed_files=(execution.get("worktree", {}).get("changed_files")
+                           if isinstance(execution, dict) else None))
         terminal_state = "done" if completed.get("status") == "executed" else "failed"
         delegate_jobs.finish_delegate_job(
             job_id, state=terminal_state, result_payload=completed,
@@ -671,7 +714,8 @@ def delegate_task(task, files=None, intent=None, provider="auto", execute=False,
         _dirty_before = _worktree_state(cwd)[1]            # pre-existing dirt, so changed_files is ONLY the agent's edits
         execution = (_route_agentic(estimate["plan"], prompt, estimate["model"], timeout, cwd, warm=True)
                      if warm else _route_agentic(estimate["plan"], prompt, estimate["model"], timeout, cwd))
-        changed_files = _worktree_changed_files(cwd, _dirty_before)   # the authed caller stages THESE → commit → push → PR
+        changed_files = (execution.get("worktree", {}).get("changed_files")
+                         if isinstance(execution, dict) else None)
     return _assemble_delegate_execution_result(
         execution, result=result, classification=classification, estimate=estimate, intent=intent,
         changed_files=changed_files)

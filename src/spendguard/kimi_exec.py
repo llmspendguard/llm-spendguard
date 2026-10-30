@@ -208,32 +208,17 @@ def _kimi_model_alias(model):
 
 
 def _kimi_assistant_text(stdout):
-    """The final assistant answer from `kimi -p --output-format stream-json`: JSONL where the answer rides
-    {"role":"assistant","content":…} and meta/tool events ride role='meta'. Keep the LAST non-empty assistant
-    content (the final message, like codex's --output-last-message); content is a string or a list of text blocks.
-    Mechanical extraction of a fixed event shape; '' when no assistant message is present."""
-    text = ""
-    for ln in (stdout or "").splitlines():
-        s = ln.strip()
-        if not s.startswith("{"):
-            continue
-        try:
-            d = json.loads(s)
-        except Exception:
-            continue
-        if d.get("role") != "assistant":
-            continue
-        c = d.get("content")
-        if isinstance(c, list):
-            c = "".join(b.get("text", "") for b in c if isinstance(b, dict) and b.get("type") in (None, "text"))
-        if isinstance(c, str) and c.strip():
-            text = c                                          # keep the latest non-empty assistant message (final answer)
-    return text
+    """Parse the final Kimi assistant event through the CLI result contract."""
+    from .subscription_cli_results import kimi_assistant_response_text
+    return kimi_assistant_response_text(stdout)
 
 
-def run_prompt(prompt, system=None, model=None, timeout=TIMEOUT_S, reasoning=None, max_tokens=None):   # reasoning/max_tokens: protocol-uniform; kimi -p has no one-shot effort/output-cap flag → accepted, not enforced
+def run_prompt(prompt, system=None, model=None, timeout=TIMEOUT_S, reasoning=None, max_tokens=None,
+               *, agentic=False, cwd=None):
     """→ {text, in_tok, out_tok, latency, error} from one headless plan-billed Kimi Code run. `system` is prepended
-    to the prompt (kimi -p has no separate system slot). `model` is mapped to the matching plan alias and forwarded
+    to the prompt (kimi -p has no separate system slot). Protocol parameters reasoning/max_tokens remain accepted
+    but not enforced: kimi -p exposes no effort/output-cap flag. Agentic mode does not change that guarantee.
+    `model` is mapped to the matching plan alias and forwarded
     to `-m` (an unknown id → the CLI default; a bad alias makes kimi exit non-zero → the caller falls back to the
     metered API). Tokens are ESTIMATED (len//4) — the CLI emits no usage — for the est-value axis only; $0 billed."""
     from . import execution_journal
@@ -241,37 +226,23 @@ def run_prompt(prompt, system=None, model=None, timeout=TIMEOUT_S, reasoning=Non
     kimi_exec_delegate_process_runner = (execution_journal.run_durable_delegate_subprocess
                                if kimi_exec_durable_dispatch_id else subprocess.run)
     exe = _bin()
+    if agentic and cwd is None:
+        return {"error": "agentic Kimi execution requires an explicit workspace"}
     if not exe:
         return {"error": "kimi CLI not found"}
     full = (f"{system.strip()}\n\n{prompt}" if system else prompt)
-    # WARM DAEMON PATH (default-on, explicit opt-out): reuse a persistent `kimi acp` server instead of cold-starting
-    # `kimi -p` each call. Used ONLY when the requested model resolves to the plan default (kimi acp has no model
-    # flag) — else the cold `-p -m <alias>` path runs below so the recorded model matches the model that ran. Falls
-    # THROUGH to the cold path on ANY daemon failure — degrade, never break. Tokens are ESTIMATED (len//4) exactly as
-    # the cold path: the ACP stream carries no usage, $0 billed either way (the flat-fee plan served it).
-    if _daemon_enabled() and _warm_model_eligible(model):
+    # ACP has a neutral workspace and cannot execute a delegated repo-editing job.
+    if not agentic and _daemon_enabled() and _warm_model_eligible(model):
         from . import kimi_daemon
-        _t0 = time.time()
-        try:
-            _r = kimi_daemon.run_warm(full, model=model, reasoning=reasoning, timeout=timeout)
-        except Exception as _e:                            # an exception must NEVER bypass the cold/API fallback below
-            if kimi_exec_durable_dispatch_id:
-                raise
-            _r = {"error": f"kimi daemon raised: {str(_e)[:150]}"}
-        if kimi_exec_durable_dispatch_id:
-            execution_journal.append_durable_execution_evidence(
-                kimi_exec_durable_dispatch_id, stdout=json.dumps(_r) + "\n")
-        if _r.get("text") and not _r.get("error"):
-            _txt = _r["text"]
-            return {"text": _txt, "in_tok": len(full) // 4, "out_tok": len(_txt) // 4,   # est: the ACP stream has no usage
-                    "latency": round(time.time() - _t0, 2), "error": None}
-        if _r.get("tool_error"):
-            # A HARD refusal/cancel. A cold `kimi -p` would refuse the same way, so return the error NOW and let the
-            # adapter fall back to the metered API + back off the lane. NEVER surface the refusal text as `text`. (A
-            # merely TRANSIENT daemon problem — would-not-start / dead pipe / timeout — has no tool_error, so it still
-            # falls through to one cold `kimi -p` below.)
-            return {"error": (_r.get("error") or "kimi acp refused the request")[:200]}
+        from .subscription_cli_results import kimi_warm_prompt_result
+        warm_result = kimi_warm_prompt_result(
+            full, model, reasoning, timeout, kimi_exec_durable_dispatch_id, kimi_daemon.run_warm,
+            execution_journal.append_durable_execution_evidence)
+        if warm_result is not None:
+            return warm_result
     cmd = [exe, "-p", full, "--output-format", "stream-json"]
+    if agentic:
+        cmd += ["--auto"]
     alias = _kimi_model_alias(model)
     if alias:
         cmd += ["-m", alias]
@@ -281,11 +252,13 @@ def run_prompt(prompt, system=None, model=None, timeout=TIMEOUT_S, reasoning=Non
     t0 = time.time()
     tmpdir = None
     try:
-        tmpdir = tempfile.mkdtemp(prefix=KIMI_WORK_DIRECTORY_PREFIX)   # neutral CWD: kimi is an agentic CLI; a self-contained
+        if not agentic:
+            tmpdir = tempfile.mkdtemp(prefix=KIMI_WORK_DIRECTORY_PREFIX)   # neutral CWD: kimi is an agentic CLI; a self-contained
         #                                                        meta prompt needs no repo, and a throwaway dir keeps an
         #                                                        agentic step from ever touching the caller's working tree
         try:
-            r = kimi_exec_delegate_process_runner(cmd, capture_output=True, text=True, timeout=timeout, env=env, cwd=tmpdir,
+            r = kimi_exec_delegate_process_runner(cmd, capture_output=True, text=True, timeout=timeout, env=env,
+                               cwd=cwd if agentic else tmpdir,
                                stdin=subprocess.DEVNULL)
         except subprocess.TimeoutExpired:
             if kimi_exec_durable_dispatch_id:

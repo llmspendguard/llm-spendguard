@@ -2,8 +2,13 @@
 
 This follows ``lane_queue._ensure_queue_schema`` and ``queue_row_status`` for
 SQLite/WAL and read-only status access, but deliberately uses a separate table
-and lifecycle: delegate jobs are completed by their own executor threads, not
-leased to lane workers.
+and lifecycle: each job belongs to an OS-detached worker, independently of its
+launcher or MCP connection. The journal tracks the worker and provider process
+identities; this store projects those durable outcomes for status and collection.
+
+Workspace metadata is independent of the provider envelope. Cancellation or a
+lost process can leave no completed provider result, but the retained worktree
+must remain discoverable from both status and collection for inspection.
 """
 import datetime
 import contextlib
@@ -187,6 +192,12 @@ def _delegate_running_is_stale(updated_ts):
     return datetime.datetime.now(datetime.timezone.utc) - updated > stale_after
 
 
+def _delegate_job_workspace_details(row):
+    from .delegate_worktrees import read_delegate_worktree_details
+    from .execution_journal import durable_execution_payload_paths
+    return read_delegate_worktree_details(durable_execution_payload_paths(row["execution_id"])["envelope"]) if row["execution_id"] else {}
+
+
 def read_delegate_job(job_id):
     """Read job status; stale running jobs are reported failed without mutating history."""
     try:
@@ -202,6 +213,7 @@ def read_delegate_job(job_id):
         recover_delegate_job_execution(job_id)
         row = _delegate_job_row(job_id)
     result = dict(row)
+    result.update(_delegate_job_workspace_details(row))
     result.pop("result_payload", None)
     result["dirty_before"] = json.loads(result["dirty_before"])
     if (result["state"] == DELEGATE_JOB_RUNNING_STATE
@@ -234,9 +246,10 @@ def read_delegate_job_result(job_id):
                 "terminal_reason": None}
     if row["result_payload"] is not None:
         payload = json.loads(row["result_payload"])
-        return {**payload, "state": row["state"]} if isinstance(payload, dict) else payload
+        return {**payload, **_delegate_job_workspace_details(row), "state": row["state"]} if isinstance(payload, dict) else payload
     return {"state": row["state"], "status": row["state"], "job_id": job_id,
-            "terminal_reason": row["terminal_reason"], "error": row["error"]}
+            "terminal_reason": row["terminal_reason"], "error": row["error"],
+            **_delegate_job_workspace_details(row)}
 
 
 def wait_for_delegate_job(job_id, timeout=None):

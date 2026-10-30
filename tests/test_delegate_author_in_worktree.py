@@ -16,7 +16,7 @@ os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
 os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="sg-delwt-")
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
-from spendguard import delegate_router as dr, codex_exec, lane_registry  # noqa: E402
+from spendguard import delegate_router as dr, codex_exec, lane_registry, delegate_worktrees  # noqa: E402
 
 fails = []
 from functools import partial
@@ -34,10 +34,14 @@ os.environ.pop("SPENDGUARD_CODEX_DAEMON", None)
 # ── (b) sandbox/git/hook constraints baked into the prompt codex actually receives ─────────────────────────────
 _sent = {}
 _real_run = codex_exec.run_prompt
+_author_contract_real_isolation = delegate_worktrees.run_isolated_delegate
 def _capture(prompt, **kw):
     _sent["prompt"], _sent["kw"] = prompt, kw
     return {"text": "ok", "error": None, "in_tok": 10, "out_tok": 2, "cost": 0.0}
 codex_exec.run_prompt = _capture
+# This unit exercises prompt/transport forwarding; real git isolation is covered by
+# the concurrent worktree and detached lifecycle targeting tests.
+delegate_worktrees.run_isolated_delegate = lambda executor, cwd, **isolation_dependencies: executor(cwd)
 try:
     cwd = tempfile.mkdtemp(prefix="sg-wt-")
     codex_plan = next((p for p in ("codex",) if (lane_registry.lane_spec(p) or {}).get("exec") == "codex_exec"), None)
@@ -51,6 +55,7 @@ try:
     ck("codex gets workspace-write + the explicit cwd", _sent["kw"].get("sandbox") == "workspace-write" and _sent["kw"].get("cwd") == cwd)
 finally:
     codex_exec.run_prompt = _real_run
+    delegate_worktrees.run_isolated_delegate = _author_contract_real_isolation
 
 # ── (c) changed-file set = only the agent's edits (pre-existing dirt subtracted), None off-git ─────────────────
 repo = tempfile.mkdtemp(prefix="sg-gitwt-")

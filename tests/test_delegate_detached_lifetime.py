@@ -13,6 +13,9 @@ DETACHED_TEST_COMPLETION_BOUND_S = 15
 DETACHED_TEST_POLL_S = 0.05
 DETACHED_TEST_SOURCE_ROOT = Path(__file__).resolve().parents[1] / "src"
 DETACHED_TEST_TESTS_ROOT = Path(__file__).resolve().parent
+DETACHED_TEST_EDIT_FILENAME = "detached-result.txt"
+DETACHED_TEST_EDIT_CONTENT = "isolated detached edit\n"
+DETACHED_TEST_DELAY_ENV = "SPENDGUARD_DETACHED_TEST_DELAY_S"
 
 
 def install_detached_lifetime_fixture():
@@ -27,22 +30,34 @@ def install_detached_lifetime_fixture():
     delegate_router._worktree_state = lambda cwd: (None, set())
     delegate_router._worktree_changed_files = lambda cwd, before: []
 
-    def execute_detached_lifetime_fixture(*args, **kwargs):
+    def execute_detached_lifetime_fixture(workspace):
         execution_id = execution_journal.current_durable_execution_id()
         process = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(float(__import__('sys').argv[1]))",
-                                    str(DETACHED_TEST_COMPLETION_DELAY_S)])
+                                    os.environ.get(DETACHED_TEST_DELAY_ENV, str(DETACHED_TEST_COMPLETION_DELAY_S))])
         execution_journal.bind_durable_execution_child(execution_id, process.pid)
         process.wait()
+        Path(workspace, DETACHED_TEST_EDIT_FILENAME).write_text(DETACHED_TEST_EDIT_CONTENT)
         return {"text": "offline detached result", "execution_started": True}
 
-    delegate_router._route_agentic = execute_detached_lifetime_fixture
-    delegate_router._assemble_delegate_execution_result = lambda execution, **kwargs: {
-        "status": "executed", "execution": execution}
+    delegate_router._route_agentic = lambda plan, prompt, model, timeout, cwd, **kwargs: (
+        delegate_router._invoke_recoverable_delegate(
+            lambda: delegate_router._run_isolated_agentic_provider(execute_detached_lifetime_fixture, cwd),
+            plan=plan, model=model, cwd=cwd))
+    def assemble_detached_lifetime_result(execution, **kwargs):
+        delegate_router._finalize_accepted_delegate_workspace(execution)
+        return {"status": "executed", "execution": execution}
+    delegate_router._assemble_delegate_execution_result = assemble_detached_lifetime_result
 
 
-def check_detached_lifetime_boundary():
+def check_detached_lifetime_boundary(cancel_isolated_job=False):
     with tempfile.TemporaryDirectory(prefix="sg-detached-lifetime-") as temporary:
         directory = Path(temporary)
+        repository = directory / "repository"
+        repository.mkdir()
+        subprocess.run(["git", "init", str(repository)], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(repository), "-c", "user.name=Detached fixture",
+                        "-c", "user.email=detached@example.invalid", "commit", "--allow-empty",
+                        "-m", "Detached lifecycle baseline"], capture_output=True, check=True)
         # Python's standard startup hook injects the identical offline executor into
         # both fresh interpreters. Production still executes its normal provider path.
         (directory / "sitecustomize.py").write_text(
@@ -52,14 +67,29 @@ def check_detached_lifetime_boundary():
                        "SPENDGUARD_TEST_ISOLATED": "1", "SPENDGUARD_NO_AUTOINSTALL": "1",
                        "PYTHONPATH": os.pathsep.join(map(str, (directory, DETACHED_TEST_TESTS_ROOT,
                                                                 DETACHED_TEST_SOURCE_ROOT)))}
+        if cancel_isolated_job:
+            environment[DETACHED_TEST_DELAY_ENV] = str(DETACHED_TEST_COMPLETION_BOUND_S)
         detached = os.environ.get("SPENDGUARD_TEST_MUTATE_DAEMON_THREAD") != "1"
         launch = subprocess.run([
             sys.executable, "-c",
             "import json,os; from spendguard import delegate_router; "
             "print(json.dumps(delegate_router.start_delegate_job('offline task', cwd=os.getcwd(), "
             f"detached={detached!r})))"], env=environment, capture_output=True, text=True,
-            timeout=DETACHED_TEST_COMPLETION_BOUND_S, check=True)
+            timeout=DETACHED_TEST_COMPLETION_BOUND_S, check=True, cwd=repository)
         job_id = json.loads(launch.stdout)["job_id"]
+        if cancel_isolated_job:
+            cancellation = subprocess.run([
+                sys.executable, "-c",
+                "import json,sys,time; from spendguard import delegate_jobs; "
+                "deadline=time.monotonic()+float(sys.argv[2]); status={}; "
+                "exec('while time.monotonic()<deadline:\\n status=delegate_jobs.read_delegate_job(sys.argv[1])"
+                "\\n if status.get(\"worktree\"): break\\n time.sleep(float(sys.argv[3]))'); "
+                "assert status.get('worktree'), status; "
+                "print(json.dumps(delegate_jobs.cancel_delegate_job(sys.argv[1])))",
+                job_id, str(DETACHED_TEST_COMPLETION_BOUND_S), str(DETACHED_TEST_POLL_S)],
+                env=environment, capture_output=True, text=True, timeout=DETACHED_TEST_COMPLETION_BOUND_S * 2,
+                check=True)
+            assert json.loads(cancellation.stdout)["state"] == "killed", cancellation.stdout
         # This interpreter is deliberately launched only AFTER the launcher exited.
         collector = subprocess.run([
             sys.executable, "-c",
@@ -71,6 +101,14 @@ def check_detached_lifetime_boundary():
             str(DETACHED_TEST_POLL_S)], env=environment, capture_output=True, text=True,
             timeout=DETACHED_TEST_COMPLETION_BOUND_S * 2, check=True)
         result = json.loads(collector.stdout)
+        if cancel_isolated_job:
+            assert result["state"] == "killed", result
+            retained = result["worktree"]
+            assert retained["retained"] is True and Path(retained["path"]).is_dir(), result
+            assert not (repository / DETACHED_TEST_EDIT_FILENAME).exists()
+            assert Path(retained["path"]) != repository
+            print("4 passed: detached isolated cancel, retained collect metadata, primary unchanged, separate workspace")
+            return
         assert isinstance(result, dict) and result.get("execution", {}).get("text") == "offline detached result", result
         states = list(directory.glob("delegate-executions/*/state.json"))
         assert len(states) == 1, states
@@ -78,15 +116,23 @@ def check_detached_lifetime_boundary():
         assert state["child_pid"] and state["child_birth"], state
         assert state["worker_pid"] and state["worker_birth"], state
         assert state["state"] == "success", state
-        print("4 passed: detached completion, collect after exit, child identity, terminal signal")
+        worktree = result["execution"]["worktree"]
+        assert Path(worktree["path"]) != repository and not Path(worktree["path"]).exists(), worktree
+        assert worktree["retained"] is False and DETACHED_TEST_EDIT_FILENAME in worktree["changed_files"], worktree
+        assert DETACHED_TEST_EDIT_CONTENT.strip() in worktree["patch"], worktree
+        assert not (repository / DETACHED_TEST_EDIT_FILENAME).exists()
+        persisted = json.loads((states[0].parent / "worktree.json").read_text())
+        assert persisted == worktree, persisted
+        print("9 passed: detached completion/collection, PID identity, terminal signal, isolated patch/cleanup")
 
 
 def check_explicit_warm_delegate_transport():
     """Warm requests reach the existing broker; defaults retain agentic MCP transport."""
     sys.path.insert(0, str(DETACHED_TEST_SOURCE_ROOT))
     from spendguard import codex_exec, delegate_router
-    with patch.object(delegate_router.lane_registry, "lane_spec", return_value={"exec": "codex_exec"}), \
+    with patch.object(delegate_router.lane_registry, "lane_spec", return_value={"exec": "codex_exec", "agentic": True}), \
             patch.object(delegate_router, "_invoke_recoverable_delegate", side_effect=lambda executor, **kwargs: executor()), \
+            patch("spendguard.delegate_worktrees.run_isolated_delegate", side_effect=lambda executor, cwd, **kwargs: executor(cwd)), \
             patch.object(codex_exec, "run_prompt", side_effect=lambda prompt, **kwargs: kwargs):
         default_transport = delegate_router._route_agentic("offline-plan", "offline prompt", None, None,
                                                          str(DETACHED_TEST_SOURCE_ROOT))
@@ -146,6 +192,7 @@ def check_warm_cancellation_stops_retry():
 
 if __name__ == "__main__":
     check_detached_lifetime_boundary()
+    check_detached_lifetime_boundary(cancel_isolated_job=True)
     check_detached_adoption_rejects_stale_loss()
     check_explicit_warm_delegate_transport()
     check_warm_cancellation_stops_retry()
