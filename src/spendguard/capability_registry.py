@@ -4,7 +4,7 @@ The baseline preserves audited exposure. ``contract_status`` deliberately distin
 reviewed parameter contracts from pending work; pending is never an empty-argument promise.
 Importing this module loads data only and never imports a capability's implementation.
 """
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from importlib.resources import files
 from importlib import import_module
 import json
@@ -12,6 +12,7 @@ from typing import Any, Literal
 
 from .capability_cli_projection_models import (
     load_capability_cli_argument_projections,
+    load_capability_cli_dispatch_bindings,
     load_capability_cli_grammars,
     load_capability_cli_manual_projections,
 )
@@ -23,6 +24,7 @@ CAPABILITY_MCP_CONTRACT_RESOURCE = "capability_mcp_contracts.json"
 CLI_ARGUMENT_PROJECTIONS = load_capability_cli_argument_projections()
 CLI_MANUAL_OPTION_PROJECTIONS = load_capability_cli_manual_projections()
 CLI_COMMAND_GRAMMARS = load_capability_cli_grammars()
+CLI_COMMAND_BINDINGS = load_capability_cli_dispatch_bindings()
 
 # Reviewed against adapters.call, output_budget, and vendor_call.call. These are
 # contract declarations consumed by generated documentation, not routing policy.
@@ -87,6 +89,8 @@ class CapabilityParameter:
     help: str
     kind: str = "POSITIONAL_OR_KEYWORD"
     cli_projection_id: str | None = None
+    surface_restrictions: tuple[tuple[str, str], ...] = ()
+    json_conversion: str | None = None
 
 
 @dataclass(frozen=True)
@@ -96,6 +100,11 @@ class CapabilityCallableVariant:
     returns: str
     documentation: str
     source: str
+    constants: dict[str, Any] = field(default_factory=dict)
+    parameter_renames: dict[str, str] = field(default_factory=dict)
+    argument_mapping: bool = False
+    surface_restrictions: tuple[tuple[str, str], ...] = ()
+    result_serializer: str | None = None
 
 
 @dataclass(frozen=True)
@@ -153,6 +162,8 @@ def capability_parameter_from_declaration(parameter: dict[str, Any]) -> Capabili
         default_source=parameter.get("default_source"), help=parameter["help"],
         kind=parameter.get("kind", "POSITIONAL_OR_KEYWORD"),
         cli_projection_id=parameter.get("cli_projection_id"),
+        surface_restrictions=tuple(parameter.get("surface_restrictions", {}).items()),
+        json_conversion=parameter.get("json_conversion"),
     )
 
 
@@ -193,6 +204,11 @@ def load_capability_registry() -> tuple[Capability, ...]:
                 parameters=tuple(capability_parameter_from_declaration(parameter)
                                  for parameter in variant["parameters"]),
                 returns=variant["returns"], documentation=variant["documentation"], source=variant["source"],
+                constants=variant.get("constants", {}),
+                parameter_renames=variant.get("parameter_renames", {}),
+                argument_mapping=variant.get("argument_mapping", False),
+                surface_restrictions=tuple(variant.get("surface_restrictions", {}).items()),
+                result_serializer=variant.get("result_serializer"),
             ) for variant in declaration.get("variants", [])),
         ))
     return tuple(capabilities)

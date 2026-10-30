@@ -1617,23 +1617,32 @@ def _by_intent_report(args) -> int:
     the forensic intent label, sorted by cost. The caller had to query spend.db by hand to see this; now it is a
     command. The Σ over intents reconciles EXACTLY with the receipt's real-$ API line for the same window (budget.
     by_intent reuses spent_since's countable filter). Default window: month-to-date (the headline window)."""
+    since = args[args.index(registered_cli_option_token('receipt/--since')) + 1] if registered_cli_option_token('receipt/--since') in args and args.index(registered_cli_option_token('receipt/--since')) + 1 < len(args) else None
+    return render_intent_spend_receipt(today_only=registered_cli_option_token('receipt/--today') in args, week_only=registered_cli_option_token('receipt/--week') in args,
+                                       all_time=registered_cli_option_token('receipt/--all') in args, since_override=since, as_json=registered_cli_option_token('receipt/--json') in args)
+
+
+def render_intent_spend_receipt(*, today_only: bool = False, week_only: bool = False,
+                                all_time: bool = False, since_override: str | None = None,
+                                as_json: bool = False) -> int:
+    """Render the existing intent totals using the exact countable receipt filter."""
     from . import budget
     today, week, month = _windows()
     since, wlabel = month, "month-to-date"
-    if registered_cli_option_token('receipt/--today') in args:
+    if today_only:
         since, wlabel = today, "today"
-    elif registered_cli_option_token('receipt/--week') in args:
+    elif week_only:
         since, wlabel = week, "rolling 7d"
-    elif registered_cli_option_token('receipt/--all') in args:
+    elif all_time:
         since, wlabel = None, "all time"
-    if registered_cli_option_token('receipt/--since') in args and args.index(registered_cli_option_token('receipt/--since')) + 1 < len(args):
-        since = args[args.index(registered_cli_option_token('receipt/--since')) + 1]
+    if since_override is not None:
+        since = since_override
         wlabel = "since " + since
     rows = budget.by_intent(since=since)
     items = sorted(rows.items(), key=lambda kv: -kv[1]["cost"])
     total = sum(v["cost"] for _, v in items)
     calls = sum(v["calls"] for _, v in items)
-    if registered_cli_option_token('receipt/--json') in args:
+    if as_json:
         print(json.dumps({"window": wlabel, "since": since, "total_usd": total, "calls": calls,
                           "by_intent": dict(items)}, indent=2))
         return 0

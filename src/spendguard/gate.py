@@ -2931,7 +2931,7 @@ def _stale_editable_install():
     return bool(meta_v and meta_v != code_v), code_v, meta_v
 
 
-def _cli(cmd="status", live=False):
+def control_gate_runtime(cmd: str = "status", live: bool = False):
     _stale_install = False              # set True when _stale_editable_install() finds code!=metadata (a broken install)
     _consumer_install_drift_found = False
     _doctor_startup_gate_gap_found = False
@@ -3287,6 +3287,9 @@ def _cli(cmd="status", live=False):
     return 1 if (cmd == "doctor" and (
         _stale_install or _consumer_install_drift_found or _doctor_startup_gate_gap_found
     )) else 0
+
+
+_cli = control_gate_runtime
 
 
 if __name__ == "__main__":

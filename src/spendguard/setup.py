@@ -988,32 +988,42 @@ def cmd_config(argv=None):
             print("  e.g. spendguard config set caps.per_batch 30 · caps.llm.daily 50 · gate.autotune apply")
             return 2
         dotted, raw = argv[1], " ".join(argv[2:])
-        by_dotted = {f"{s['section']}.{s['key']}": s for s in config_schema.SETTINGS}
-        s = by_dotted.get(dotted)
-        if not s:
-            import difflib
-            near = difflib.get_close_matches(dotted, by_dotted, n=3, cutoff=0.5)
-            print(f"unknown setting {dotted!r}" + (f" — did you mean: {', '.join(near)}?" if near else ""))
-            print("  `spendguard config` lists every setting with its current value + source.")
-            return 2
-        try:
-            value = _coerce(raw, s["kind"])
-            path, _ = _write_store(s, value)
-        except ValueError as e:
-            print(f"cannot set {dotted}: {e}")
-            return 2
-        except Exception as e:
-            print(f"cannot set {dotted}: {e}")
-            return 1
-        shown = "***set***" if s["secret"] else ("(unset → default)" if value is None else value)
-        print(f"{dotted} = {shown}   → {path}")
-        now, src = _resolve_setting(s)
-        if src.startswith("env:"):                      # a live env var still wins — say so, don't pretend
-            print(f"  ⚠ an environment variable ({src[4:]}) overrides this at runtime; current effective value: {now}")
-        return 0
+        return set_declared_configuration_value(dotted, raw)
     if argv and argv[0] not in ("show", "list"):
         print(f"unknown config subcommand {argv[0]!r} — `config` (show all) or `config set <section.key> <value>`")
         return 2
+    return show_declared_configuration()
+
+
+def set_declared_configuration_value(dotted: str, raw: str) -> int:
+    """Write one declared setting using its existing coercion and store policy."""
+    by_dotted = {f"{s['section']}.{s['key']}": s for s in config_schema.SETTINGS}
+    s = by_dotted.get(dotted)
+    if not s:
+        import difflib
+        near = difflib.get_close_matches(dotted, by_dotted, n=3, cutoff=0.5)
+        print(f"unknown setting {dotted!r}" + (f" — did you mean: {', '.join(near)}?" if near else ""))
+        print("  `spendguard config` lists every setting with its current value + source.")
+        return 2
+    try:
+        value = _coerce(raw, s["kind"])
+        path, _ = _write_store(s, value)
+    except ValueError as e:
+        print(f"cannot set {dotted}: {e}")
+        return 2
+    except Exception as e:
+        print(f"cannot set {dotted}: {e}")
+        return 1
+    shown = "***set***" if s["secret"] else ("(unset → default)" if value is None else value)
+    print(f"{dotted} = {shown}   → {path}")
+    now, src = _resolve_setting(s)
+    if src.startswith("env:"):                      # a live env var still wins — say so, don't pretend
+        print(f"  ⚠ an environment variable ({src[4:]}) overrides this at runtime; current effective value: {now}")
+    return 0
+
+
+def show_declared_configuration() -> int:
+    """Display the complete existing declared settings table with secret masking."""
     print(f"spendguard config  (home: {config.HOME})\n")
     for sec, items in config_schema.sections().items():
         print(f"[{sec}]")

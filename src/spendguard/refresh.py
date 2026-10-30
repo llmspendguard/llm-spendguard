@@ -105,6 +105,9 @@ def _write(looked):
     return model_catalog.catalog_authoring_path()
 
 
+REFRESH_PRICE_LOOKUP_MODEL = "claude-haiku-4-5"
+
+
 def main(argv=None):
     """Parse optional argv, perform one paid lookup, display differences and optionally author catalog updates.
 
@@ -115,6 +118,13 @@ def main(argv=None):
     add_registered_cli_argument(ap, 'refresh-prices/refresh.main/ap/--model')
     add_registered_cli_argument(ap, 'refresh-prices/refresh.main/ap/--write')
     a = ap.parse_args(argv)
+    return refresh_verified_catalog_prices(**vars(a))
+
+
+def refresh_verified_catalog_prices(*, model: str = REFRESH_PRICE_LOOKUP_MODEL, write: bool = False) -> int:
+    """Execute the existing main operation with typed inputs; surface schemas document the contract."""
+    from types import SimpleNamespace
+    a = SimpleNamespace(model=model, write=write)
     key = config.api_key("ANTHROPIC_API_KEY")
     if not key:
         print("no ANTHROPIC_API_KEY (set env, ~/.spendguard, or ./.env). Needed for the lookup."); return 1

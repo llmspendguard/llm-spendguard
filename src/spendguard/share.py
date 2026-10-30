@@ -77,6 +77,9 @@ def _shareable(min_conf, require_active):
     return out
 
 
+SHARE_EXPORT_MIN_CONFIDENCE = 0.6
+
+
 def cmd_export(argv):
     import argparse
     ap = argparse.ArgumentParser(prog="spendguard insights export")
@@ -84,6 +87,13 @@ def cmd_export(argv):
     add_registered_cli_argument(ap, 'insights/share.cmd_export/ap/--min-conf', type=float)
     add_registered_cli_argument(ap, 'insights/share.cmd_export/ap/--all')
     a = ap.parse_args(argv)
+    return export_scrubbed_insights(**vars(a))
+
+
+def export_scrubbed_insights(*, out: str | None = None, min_conf: float = SHARE_EXPORT_MIN_CONFIDENCE, all: bool = False) -> int:
+    """Execute the existing cmd_export operation with typed inputs; surface schemas document the contract."""
+    from types import SimpleNamespace
+    a = SimpleNamespace(out=out, min_conf=min_conf, all=all)
     recs = _shareable(a.min_conf, require_active=not a.all)
     print(f"insights export — {len(recs)} shareable rule(s) (conf≥{a.min_conf}"
           f"{', active only' if not a.all else ''}). PREVIEW of EXACTLY what would leave:\n")
@@ -104,12 +114,22 @@ def cmd_export(argv):
     return 0
 
 
+SHARE_IMPORT_TRUST_CEILING = 0.4
+
+
 def cmd_import(argv):
     import argparse
     ap = argparse.ArgumentParser(prog="spendguard insights import")
     add_registered_cli_argument(ap, 'insights/share.cmd_import/ap/path')
     add_registered_cli_argument(ap, 'insights/share.cmd_import/ap/--trust', type=float)
     a = ap.parse_args(argv)
+    return import_community_insights(**vars(a))
+
+
+def import_community_insights(path: str, *, trust: float = SHARE_IMPORT_TRUST_CEILING) -> int:
+    """Execute the existing cmd_import operation with typed inputs; surface schemas document the contract."""
+    from types import SimpleNamespace
+    a = SimpleNamespace(path=path, trust=trust)
     with open(a.path) as _fh:                                  # closed deterministically (was a leaked handle)
         data = json.load(_fh)
     recs = data.get("insights", []) if isinstance(data, dict) else data

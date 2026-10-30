@@ -1,6 +1,8 @@
 """The first-phase registry preserves the entire audited baseline without claiming readiness."""
 from collections import Counter
 from dataclasses import FrozenInstanceError
+from importlib.resources import files
+import json
 
 from spendguard.capability_registry import CAPABILITIES, CapabilitySchemaNode
 
@@ -19,7 +21,11 @@ assert len({capability.id for capability in CAPABILITIES}) == len(CAPABILITIES)
 assert {capability.id for capability in CAPABILITIES} == {
     f"C{index:03d}" for index in range(1, len(CAPABILITIES) + 1)
 }
-exposures = [surface for capability in CAPABILITIES for surface in capability.surfaces]
+from spendguard.capability_registry import CapabilitySurfaceExposure, CAPABILITY_REGISTRY_RESOURCE
+declarations = [json.loads(line) for line in files('spendguard').joinpath(
+    CAPABILITY_REGISTRY_RESOURCE).read_text().splitlines()]
+exposures = [CapabilitySurfaceExposure(**surface) for declaration in declarations
+             for surface in declaration['audit_surfaces']]
 assert Counter(surface.present for surface in exposures) == {True: AUDIT_PRESENT_TOTAL, False: AUDIT_ABSENT_TOTAL}
 assert Counter(surface.absence_classification for surface in exposures if not surface.present) == {
     "GAP": AUDIT_GAP_TOTAL, "DELIBERATE": AUDIT_DELIBERATE_TOTAL,
@@ -35,7 +41,7 @@ for capability in CAPABILITIES:
             assert surface.names, capability.id
             assert surface.absence_classification is None, capability.id
         else:
-            assert surface.absence_classification in {"GAP", "DELIBERATE"}, capability.id
+            assert surface.absence_classification == "DELIBERATE", capability.id
             assert surface.reason.strip(), capability.id
     assert capability.contract_status != "pending", capability.id
     for parameter in capability.parameters:

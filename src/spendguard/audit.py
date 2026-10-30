@@ -164,6 +164,11 @@ def main(argv=None):
     argv = sys.argv[1:] if argv is None else list(argv)
     ci = registered_cli_option_token('audit/--ci') in argv
     is_deep = registered_cli_option_token('audit/--deep') in argv
+    return audit_repository_price_literals(ci=ci, is_deep=is_deep, run="--run" in argv)
+
+
+def audit_repository_price_literals(*, ci: bool = False, is_deep: bool = False, run: bool = False) -> int:
+    """Execute the existing complete scan, including its named coverage limits."""
     hits = []
     scanned, skipped = [], []   # DENOMINATOR and EXCLUSIONS: "no hits in 0 files" is not a pass,
                                 # and a tree skipped in silence is a clean bill for unread code
@@ -228,9 +233,9 @@ def main(argv=None):
         # --deep asks the question the patterns cannot. It runs on the SAME files the scan cleared, because
         # those are precisely the ones a clean pattern result would otherwise close the book on.
         print(f"\n--deep: reading {len(scanned)} file(s) for prices in ANY form …")
-        deep_hits = deep(scanned, PRICING, run=registered_cli_option_token('audit/--run') in argv)   # the WHOLE table; deep() chunks it to fit, never slices
+        deep_hits = deep(scanned, PRICING, run=run)   # the WHOLE table; deep() chunks it to fit, never slices
         if not deep_hits:
-            print("  no hardcoded price found by reading the code either." if registered_cli_option_token('audit/--run') in argv else "")
+            print("  no hardcoded price found by reading the code either." if run else "")
             return 0
         print(f"\nFOUND {len(deep_hits)} hardcoded price(s) the pattern scan could not see:\n")
         for fn, h in deep_hits:

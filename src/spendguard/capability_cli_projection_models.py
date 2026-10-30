@@ -6,11 +6,28 @@ from dataclasses import dataclass
 from importlib.resources import files
 import json
 from types import MappingProxyType
-from typing import Any, Mapping
+from typing import Any, Literal, Mapping
 
 CAPABILITY_CLI_ARGUMENT_RESOURCE = 'capability_cli_projection_data.json'
 CAPABILITY_CLI_MANUAL_RESOURCE = 'capability_cli_manual_schema_data.json'
 CAPABILITY_CLI_GRAMMAR_RESOURCE = 'capability_cli_grammar_data.json'
+CAPABILITY_CLI_DISPATCH_RESOURCE = 'capability_cli_dispatch_bindings.json'
+
+
+@dataclass(frozen=True)
+class CapabilityCliDispatchBinding:
+    """Existing owning callable and its exact legacy argument transport."""
+
+    handler_ref: str
+    invocation_policy: Literal['rest', 'none', 'command_prefix', 'context']
+    source_evidence: str
+    legacy_argv_prefix: str | None = None
+
+
+def load_capability_cli_dispatch_bindings() -> Mapping[str, CapabilityCliDispatchBinding]:
+    """Load reviewed command routing without importing implementations."""
+    records = json.loads(files('spendguard').joinpath(CAPABILITY_CLI_DISPATCH_RESOURCE).read_text(encoding='utf-8'))
+    return MappingProxyType({name: CapabilityCliDispatchBinding(**record) for name, record in records.items()})
 
 
 @dataclass(frozen=True)

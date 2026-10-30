@@ -385,13 +385,46 @@ def overage_nudge_line(do_fetch=False):
             f"`spendguard lanes --usage` for detail.")
 
 
+def set_declared_lane_model(lane: str, model: str, *, tier: str | None = None) -> int:
+    """Validate and persist the existing lane model declaration without clobbering other tiers."""
+    from . import lane_catalog, config as _cfg, model_catalog, tier_config, route_utility
+    if lane not in lane_catalog.lanes():
+        print(f"unknown lane {lane!r} — known lanes: {', '.join(lane_catalog.lanes())}")
+        return 2
+    if model_catalog.model_record(model) is None:
+        print(f"refusing: {model!r} is not in model_catalog.json — a lane model must be catalogued so its "
+              f"lane→metered crosswalk has one authoring SSOT. Add the model and its lane_spellings there, "
+              f"then re-run.")
+        return 2
+    if not tier_config._model_is_priced(model):
+        print(f"refusing: {model!r} is not priced — a lane model must be priced (so lane VALUE + metered fallback "
+              f"are cost-visible). `spendguard sync-prices`, or add it to prices.json WITH A SOURCE, then re-run.")
+        return 2
+    cur = _cfg._cfg_get("advisor", "lane_models", {}) or {}
+    if tier:
+        entry = dict(cur.get(lane)) if isinstance(cur.get(lane), dict) else {}
+        entry[tier] = model
+        newval = {**cur, lane: entry}
+    else:
+        newval = {**cur, lane: model}
+    tier_config._write_advisor_cfg("lane_models", newval)
+    print(f"advisor.lane_models[{lane!r}]{('[' + repr(tier) + ']') if tier else ''} = {model!r}   → {_cfg.CONFIG_JSON}")
+    _served = [g for g in route_utility.tiers() if model in route_utility.tier_models(g)]
+    if _served:
+        print(f"  serves `--tier` group(s): {', '.join(_served)}")
+    else:
+        print(f"  ⚠ {model!r} is in no advisor.tiers group yet → this lane serves no `--tier` fan. "
+              f"Add it: `spendguard tiers set <group> {model}`.")
+    return 0
+
+
 def main(argv=None):
     argv = list(argv or [])
     if argv and argv[0] == "set-model":
         # Declare the model a subscription LANE calls with (advisor.lane_models[lane]), VALIDATED at declaration: the
         # lane must be real and the model must be catalogued + priced. `set-model <lane> <model>` sets its single model;
         # `set-model <lane> <tier> <model>` sets ONE tier of its per-tier map, preserving the others (no clobber).
-        from . import lane_catalog, config as _cfg, model_catalog, tier_config, route_utility
+        from . import lane_catalog
         rest = argv[1:]
         if len(rest) == 2:
             lane, tier, model = rest[0], None, rest[1]
@@ -402,34 +435,7 @@ def main(argv=None):
             print("       spendguard lanes set-model <lane> <tier> <model>     (one tier of its per-tier map)")
             print(f"  lanes: {', '.join(lane_catalog.lanes())}")
             return 2
-        if lane not in lane_catalog.lanes():
-            print(f"unknown lane {lane!r} — known lanes: {', '.join(lane_catalog.lanes())}")
-            return 2
-        if model_catalog.model_record(model) is None:
-            print(f"refusing: {model!r} is not in model_catalog.json — a lane model must be catalogued so its "
-                  f"lane→metered crosswalk has one authoring SSOT. Add the model and its lane_spellings there, "
-                  f"then re-run.")
-            return 2
-        if not tier_config._model_is_priced(model):
-            print(f"refusing: {model!r} is not priced — a lane model must be priced (so lane VALUE + metered fallback "
-                  f"are cost-visible). `spendguard sync-prices`, or add it to prices.json WITH A SOURCE, then re-run.")
-            return 2
-        cur = _cfg._cfg_get("advisor", "lane_models", {}) or {}
-        if tier:
-            entry = dict(cur.get(lane)) if isinstance(cur.get(lane), dict) else {}
-            entry[tier] = model
-            newval = {**cur, lane: entry}
-        else:
-            newval = {**cur, lane: model}
-        tier_config._write_advisor_cfg("lane_models", newval)
-        print(f"advisor.lane_models[{lane!r}]{('[' + repr(tier) + ']') if tier else ''} = {model!r}   → {_cfg.CONFIG_JSON}")
-        _served = [g for g in route_utility.tiers() if model in route_utility.tier_models(g)]
-        if _served:
-            print(f"  serves `--tier` group(s): {', '.join(_served)}")
-        else:
-            print(f"  ⚠ {model!r} is in no advisor.tiers group yet → this lane serves no `--tier` fan. "
-                  f"Add it: `spendguard tiers set <group> {model}`.")
-        return 0
+        return set_declared_lane_model(lane, model, tier=tier)
     # The operator LANE SUMMARY + fallback/eligibility alerts are for a person reading `spendguard lanes`. The
     # lane-drain DAEMON re-invokes this same main() every cycle with --drain and NO reader (stdout/stderr → a log),
     # so printing the summary each run wrote the banner + every lane's "ready" line ~11,261 times into a 15MB

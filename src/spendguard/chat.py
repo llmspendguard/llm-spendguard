@@ -1026,7 +1026,7 @@ def diagnose_connection():
         return 1
 
 
-def _set_enabled(on):
+def set_chat_consent(on: bool):
     config.save_config(lambda cfg: cfg.setdefault("chat", {}).update({"enabled": bool(on)}),
                        reason="chat-enabled")
     print(f"chat adapter {'ENABLED' if on else 'disabled'} (config.json chat.enabled={bool(on)}).")
@@ -1035,7 +1035,7 @@ def _set_enabled(on):
     return 0
 
 
-def _status():
+def show_chat_adapter_status():
     """Show adapter state + any PENDING org attribution request (the consent surface)."""
     print(f"chat adapter: {'🟢 ENABLED' if _chat_enabled() else 'disabled'}")
     try:
@@ -1056,7 +1056,7 @@ def _status():
     return 0
 
 
-def _accept():
+def accept_chat_org_taxonomy():
     """Consent to an org attribution request: enable + adopt the org's canonical taxonomy. Runs on next sync."""
     _set_enabled(True)
     try:
@@ -1068,6 +1068,17 @@ def _accept():
         print("    or now: `spendguard chat loop --run`.")
     except Exception as e:
         print(f"  (enabled; org taxonomy pull deferred: {str(e)[:80]})")
+    return 0
+
+
+_set_enabled = set_chat_consent
+_status = show_chat_adapter_status
+_accept = accept_chat_org_taxonomy
+
+
+def publish_chat_org_taxonomy() -> int:
+    from . import saas
+    print("push-taxonomy:", saas.push_taxonomy())
     return 0
 
 
@@ -1098,9 +1109,7 @@ def main(argv=None):
     if sub == "accept":                                    # consent to an org attribution request → enable + adopt taxonomy
         return _accept()
     if sub == "push-taxonomy":                             # curator: publish local taxonomy as the org canonical
-        from . import saas
-        print("push-taxonomy:", saas.push_taxonomy())
-        return 0
+        return publish_chat_org_taxonomy()
     if sub == "discover":                                  # agentically PROPOSE the org→project taxonomy
         sample = None
         if registered_cli_option_token('chat/--sample') in argv:

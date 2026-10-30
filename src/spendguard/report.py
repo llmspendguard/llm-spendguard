@@ -192,6 +192,13 @@ def main():
     add_registered_cli_argument(ap, 'report/report.main/ap/--email-to')
     add_registered_cli_argument(ap, 'report/report.main/ap/--max-seconds', type=float)
     a = ap.parse_args()
+    return produce_periodic_spend_report(**vars(a))
+
+
+def produce_periodic_spend_report(*, alert_threshold: float | None = None, email: bool = False, email_to: str | None = None, max_seconds: float | None = None) -> int:
+    """Execute the existing main operation with typed inputs; surface schemas document the contract."""
+    from types import SimpleNamespace
+    a = SimpleNamespace(alert_threshold=alert_threshold, email=email, email_to=email_to, max_seconds=max_seconds)
 
     import io, contextlib
     buf = io.StringIO()

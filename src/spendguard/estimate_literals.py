@@ -25,7 +25,6 @@ on a call, this one guards the PROVENANCE of a quoted price) — and it reuses t
 rather than growing a second copy of them.
 """
 
-from .capability_cli_parsing import registered_cli_option_token
 import ast
 import pathlib
 
@@ -151,6 +150,11 @@ def cmd(argv=None):
     """`spendguard estimate-literals [--judge]` — list every literal-fed cost call; rule on the unjudged."""
     import sys
     argv = list(sys.argv[2:] if argv is None else argv)
+    return review_literal_token_estimates(judge="--judge" in argv)
+
+
+def review_literal_token_estimates(*, judge: bool = False) -> int:
+    """Run the existing literal-estimate scan and optional durable adjudication."""
     root = pathlib.Path(__file__).resolve().parents[2]
     res = unruled_and_quotes(root)
     print(f"{res['total']} cost call(s) with literal token counts · {len(res['cleared'])} ruled NOT a quote "
@@ -160,7 +164,7 @@ def cmd(argv=None):
         print("                a quote must come from a measured sample (estimate.fit_from_sample)")
     for s in res["unjudged"]:
         print(f"  unjudged      {s['file']}:{s['symbol']} {s['fn']}{tuple(s['literals'])}")
-    if registered_cli_option_token('estimate-literals/--judge') not in argv:
+    if not judge:
         return 1 if (res["unjudged"] or res["failed"]) else 0
 
     from . import verdict_ledger

@@ -66,6 +66,8 @@ def _load_public_api_and_install_gate():
     from .bedrock_adapter import install as _install_bedrock
     from .vertex_adapter import install as _install_vertex
     _auto_install()
+    from .capability_surface_generation import document_existing_capability_exports
+    document_existing_capability_exports(globals())
 
 
 def install_litellm() -> bool:
@@ -98,6 +100,11 @@ __all__ = ["install", "require", "register", "install_litellm", "install_bedrock
            "cancel_on_zero_billable", "relative_escalation_gate",
            "ItemLedger", "compute_job_fingerprint", "guard_resume", "compare_fingerprints", "read_fingerprint",
            "write_fingerprint", "JobPlanDrift", "JobMethodUndecided"]
+from .capability_surface_generation import build_capability_api_exports as _build_capability_api_exports
+
+_capability_api_exports, CAPABILITY_API_COVERAGE = _build_capability_api_exports()
+globals().update(_capability_api_exports)
+__all__.extend(_capability_api_exports)
 # Version SSOT: src/spendguard/_version.py, read LIVE from source so `__version__` is always the version of the CODE
 # actually running — including an editable install whose frozen dist-info metadata lags source (importlib.metadata
 # reads install-time metadata, so it reported 0.7.2 while running 0.10.0 code). pyproject consumes the SAME file at

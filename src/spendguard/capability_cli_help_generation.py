@@ -102,6 +102,11 @@ def build_capability_cli_help_root() -> argparse.ArgumentParser:
         description=descriptions.get(contract['command'],contract['nested_grammar_summary'] or contract['command'])
         command_parser=subparsers.add_parser(contract['command'],aliases=contract['aliases'],description=description,help=description)
         populate_capability_cli_help_parser(command_parser, contract)
+    from .capability_cli_callable_generation import populate_callable_cli_parser, registered_callable_cli_commands
+
+    for command, (capability, variant) in registered_callable_cli_commands().items():
+        command_parser = subparsers.add_parser(command, help=capability.description)
+        populate_callable_cli_parser(command_parser, capability, variant)
     return parser
 
 
@@ -114,4 +119,3 @@ def render_capability_cli_help(command: str | None = None) -> str:
         if isinstance(action, argparse._SubParsersAction) and command in action.choices:
             return action.choices[command].format_help()
     return f'usage: spendguard {command} [args]\n\nspendguard command\n'
-

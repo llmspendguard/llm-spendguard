@@ -98,6 +98,13 @@ def fetch_batch_output(rest):
     add_registered_cli_argument(ap, 'batch-fetch/openai_batch_cli.fetch_batch_output/ap/--intent')
     add_registered_cli_argument(ap, 'batch-fetch/openai_batch_cli.fetch_batch_output/ap/--chain')
     a = ap.parse_args(rest)
+    return download_completed_batch_output(**vars(a))
+
+
+def download_completed_batch_output(*, batch_id: str, out: str, force: bool = False, intent: str | None = None, chain: str | None = None) -> int:
+    """Execute the existing fetch_batch_output operation with typed inputs; surface schemas document the contract."""
+    from types import SimpleNamespace
+    a = SimpleNamespace(batch_id=batch_id, out=out, force=force, intent=intent, chain=chain)
     from openai import OpenAI
     from .submit import _api_key
     from . import calls
