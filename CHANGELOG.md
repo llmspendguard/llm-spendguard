@@ -4,6 +4,28 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 
 ## [Unreleased]
 
+## [0.16.14] — 2026-10-30
+
+Theme: make `budget.spent_since` a real spend control on both of its axes — close the two sharp edges where a
+consumer could believe a spend read was governed when it was not.
+
+### `spent_since` is consumer-safe without opt-in (writer-handoff gap, fail-CLOSED) (#249)
+- A consumer process reading the shared ledger previously fell through to the writer `_ledger()` path unless it
+  passed `read_only=True`, so under a concurrent writer transaction it could hit `LedgerQueryDeadline` and, worse,
+  initialize/migrate the write ledger. A consumer context (no already-initialized writer) now **auto-routes to the
+  bounded read-only snapshot**, generalizing the existing "consumers must never initialize/migrate" rule from "a
+  `conv` was passed" to "this process is a consumer." `read_only=True` still forces the snapshot; the owner fast
+  path and its numbers are unchanged. The spend-since reads are exposed on the generated public surface.
+
+### A timestamp `since`/`until` fails loud instead of silently dropping same-day spend (fail-OPEN) (#249)
+- `_where` compares `since`/`until` against the date-granular `day` column (`YYYY-MM-DD`). A full ISO timestamp
+  sorted lexically after the date and silently excluded every same-day row — reading ~$0 until the date rolled
+  over, so a budget cap could silently never fire. `validate_ledger_date_bounds` (a shared chokepoint in `_where`
+  and `read_spend_events`) now raises `LedgerDateBoundaryError` on a non-date boundary with an actionable message;
+  valid `YYYY-MM-DD` and `None`/empty bounds are unchanged.
+- Both fixes are proven un-regressable by mutation (removing the consumer routing → RED at prohibited write-ledger
+  init; removing the date guard → RED, same-day spend reads 0). selfcheck 19/19; full suite green.
+
 ## [0.16.13] — 2026-10-29
 
 Theme: make "square" a structural property, not a claim. One capability SSOT now generates every user-facing
