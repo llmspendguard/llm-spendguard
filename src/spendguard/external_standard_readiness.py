@@ -10,6 +10,7 @@ import tempfile
 import tomllib
 import zipfile
 from email.parser import BytesParser
+from urllib.parse import unquote, urlsplit
 
 from .capability_readiness import CapabilityReadinessEvidence
 
@@ -18,6 +19,8 @@ EXTERNAL_STANDARD_COMMAND_SUCCESS = 0
 EXTERNAL_STANDARD_SHA_PATTERN = r"[0-9a-f]{40}"
 EXTERNAL_STANDARD_EXPRESSION_PATTERN = r"\$\{\{(.*?)\}\}"
 EXTERNAL_STANDARD_ESCAPE = "\x1b["
+EXTERNAL_STANDARD_MARKDOWN_LINK_PATTERN = r"\[[^\]\n]+\]\(([^\s)]+)\)"
+EXTERNAL_STANDARD_MARKDOWN_HEADING_PATTERN = r"^#{1,6}\s+(.+?)\s*#*\s*$"
 
 
 def run_external_standard_command(arguments, *, cwd, environment=None):
@@ -52,8 +55,21 @@ def assess_external_standard_subset(*, context, kind, reviews, policy):
             document = root / mapping["document"]
             if not document.is_file():
                 raise ValueError(f"Missing {quadrant}: {document}")
-            if not any(mapping["link"] in (root / index).read_text() for index in mapping["indexes"]):
+            discoverable = False
+            for index in mapping['indexes']:
+                index_path = root / index
+                for target in re.findall(EXTERNAL_STANDARD_MARKDOWN_LINK_PATTERN, index_path.read_text()):
+                    parsed = urlsplit(target)
+                    if parsed.scheme or parsed.netloc or target != mapping['link']:
+                        continue
+                    resolved = (index_path.parent / unquote(parsed.path)).resolve() if parsed.path else index_path.resolve()
+                    if resolved == document.resolve():
+                        discoverable = True
+            if not discoverable:
                 raise ValueError(f"Undiscoverable {quadrant}: {document}")
+            heading = mapping.get('heading')
+            if heading and heading not in re.findall(EXTERNAL_STANDARD_MARKDOWN_HEADING_PATTERN, document.read_text(), re.MULTILINE):
+                raise ValueError(f"Missing {quadrant} target heading: {heading}")
             evidence.append(f"{quadrant}: {mapping['document']}")
     elif kind == "best-practices":
         run_external_standard_command(["git", "rev-parse", "--is-inside-work-tree"], cwd=root)
@@ -68,7 +84,7 @@ def assess_external_standard_subset(*, context, kind, reviews, policy):
         evidence.append("git repository; configured static analysis and automated suite")
     elif kind == "scorecard":
         import yaml
-        workflows = sorted(root.glob(policy["workflows"]))
+        workflows = sorted({path for pattern in policy["workflows"] for path in root.glob(pattern)})
         if not workflows:
             raise ValueError("No workflows available for review")
         for relative in workflows:

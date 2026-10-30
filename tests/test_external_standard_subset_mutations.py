@@ -11,6 +11,10 @@ from spendguard.external_standard_readiness import assess_external_standard_subs
 
 EXTERNAL_MUTATION_REPOSITORY = Path(__file__).resolve().parents[1]
 EXTERNAL_MUTATION_CHANGED_BYTES = b"changed backend archive"
+EXTERNAL_MUTATION_WORKFLOW_NAME = 'insecure.yaml'
+EXTERNAL_MUTATION_UNPINNED_REFERENCE = 'owner/action@mutable-tag'
+EXTERNAL_MUTATION_WORKFLOW_CONTENT = 'permissions:\n  contents: read\non: push\njobs:\n  probe:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: '
+EXTERNAL_MUTATION_HEADING_PREFIX = '## '
 
 
 def verify_external_standard_mutation_rejection():
@@ -26,7 +30,7 @@ def verify_external_standard_mutation_rejection():
         root = Path(temporary)
         paths = set(policy['required_files'])
         paths.update(str(path.relative_to(EXTERNAL_MUTATION_REPOSITORY))
-                     for path in EXTERNAL_MUTATION_REPOSITORY.glob(policy['workflows']))
+                     for pattern in policy['workflows'] for path in EXTERNAL_MUTATION_REPOSITORY.glob(pattern))
         paths.update(waiver['path'] for waiver in policy['binary_waivers'])
         paths.update(waiver['document'] for waiver in policy['binary_waivers'])
         for relative in paths:
@@ -46,6 +50,16 @@ def verify_external_standard_mutation_rejection():
         else:
             raise AssertionError('Changed binary passed its waiver')
         artifact.write_bytes(original)
+        workflow_directory = next(path.parent for path in root.glob(policy['workflows'][0]))
+        insecure = workflow_directory / EXTERNAL_MUTATION_WORKFLOW_NAME
+        insecure.write_text(EXTERNAL_MUTATION_WORKFLOW_CONTENT + EXTERNAL_MUTATION_UNPINNED_REFERENCE)
+        try:
+            assess_external_standard_subset(context={'repo_root': root}, **arguments)
+        except ValueError as error:
+            assert 'not SHA pinned' in str(error)
+        else:
+            raise AssertionError('Unpinned Action in .yaml workflow passed')
+        insecure.unlink()
         with patch('spendguard.external_standard_readiness.Path.glob', return_value=iter(())):
             try:
                 assess_external_standard_subset(context={'repo_root': root}, **arguments)
@@ -53,6 +67,22 @@ def verify_external_standard_mutation_rejection():
                 assert 'No workflows' in str(error)
             else:
                 raise AssertionError('Missing workflow evidence passed')
+        documentation = deepcopy(items['diataxis'].arguments)
+        for mapping in documentation['policy']['quadrants'].values():
+            for relative in {mapping['document'], *mapping['indexes']}:
+                destination = root / relative
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(EXTERNAL_MUTATION_REPOSITORY / relative, destination)
+        assert assess_external_standard_subset(context={'repo_root': root}, **documentation).status == 'PASS'
+        tutorial = documentation['policy']['quadrants']['tutorial']
+        tutorial_path = root / tutorial['document']
+        tutorial_path.write_text(tutorial_path.read_text().replace(EXTERNAL_MUTATION_HEADING_PREFIX + tutorial['heading'], tutorial['heading']))
+        try:
+            assess_external_standard_subset(context={'repo_root': root}, **documentation)
+        except ValueError as error:
+            assert 'target heading' in str(error)
+        else:
+            raise AssertionError('Missing tutorial heading passed via stale navigation link')
 
 
 if __name__ == '__main__':

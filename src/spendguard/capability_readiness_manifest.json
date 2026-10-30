@@ -53,7 +53,7 @@
           "scripts/test/*.py",
           "tests/**/*.py",
           "pyproject.toml",
-          ".github/workflows/*.yml",
+          ".github/workflows/*",
           "docs/*.md",
           "LICENSE",
           "SECURITY.md",
@@ -95,7 +95,10 @@
             "LICENSE",
             "SECURITY.md"
           ],
-          "workflows": ".github/workflows/*.yml",
+          "workflows": [
+            ".github/workflows/*.yml",
+            ".github/workflows/*.yaml"
+          ],
           "safe_run_expressions": [
             "steps.python.outputs.python-path",
             "matrix.shard-index",
@@ -364,7 +367,8 @@
               "link": "#quickstart",
               "indexes": [
                 "docs/index.md"
-              ]
+              ],
+              "heading": "Quickstart"
             }
           }
         },

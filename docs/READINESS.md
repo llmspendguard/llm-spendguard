@@ -22,7 +22,7 @@ A supplied clean-environment report must match the current input fingerprint and
   Gate: `spendguard.capability_readiness_gates:run_capability_script_readiness_gate`; inputs: `{"scripts": ["tests/test_release_green_pointer.py"]}`.
 
 - [ ] **env-parity-in-verification** — Current source passes required checks in independent clean environments.
-  Gate: `spendguard.capability_readiness_gates:assess_capability_environment_evidence`; inputs: `{"patterns": ["src/spendguard/**/*.py", "src/spendguard/capability*.json", "src/spendguard/capability*.jsonl", "scripts/test/*.py", "tests/**/*.py", "pyproject.toml", ".github/workflows/*.yml", "docs/*.md", "LICENSE", "SECURITY.md", "CONTRIBUTING.md", "README.md", "CHANGELOG.md", "src/spendguard/distribution_build_wheels/*.whl"], "required_checks": ["ruff", "name-uniqueness", "surface-suites", "offline-audit"]}`.
+  Gate: `spendguard.capability_readiness_gates:assess_capability_environment_evidence`; inputs: `{"patterns": ["src/spendguard/**/*.py", "src/spendguard/capability*.json", "src/spendguard/capability*.jsonl", "scripts/test/*.py", "tests/**/*.py", "pyproject.toml", ".github/workflows/*", "docs/*.md", "LICENSE", "SECURITY.md", "CONTRIBUTING.md", "README.md", "CHANGELOG.md", "src/spendguard/distribution_build_wheels/*.whl"], "required_checks": ["ruff", "name-uniqueness", "surface-suites", "offline-audit"]}`.
 
 - [ ] **money-correctness** — Money scale, exact ledger arithmetic and global receipt allocation remain correct.
   Gate: `spendguard.capability_readiness_gates:run_capability_script_readiness_gate`; inputs: `{"scripts": ["tests/test_money_scale.py", "tests/test_ledger_money_is_exact_decimal.py", "tests/test_receipt_global_dollar_allocation.py"]}`.
