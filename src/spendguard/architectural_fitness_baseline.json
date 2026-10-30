@@ -609,6 +609,10 @@
             "max_cc": 9,
             "mi": 62.365455196795004
           },
+          "src/spendguard/offline_python_build.py": {
+            "max_cc": 9,
+            "mi": 51.72342577474964
+          },
           "src/spendguard/openai_batch_cli.py": {
             "max_cc": 11,
             "mi": 63.31893735110742
@@ -1468,6 +1472,10 @@
           "src/spendguard/notify.py": {
             "max_cc": 9,
             "mi": 62.365455196795004
+          },
+          "src/spendguard/offline_python_build.py": {
+            "max_cc": 9,
+            "mi": 51.72342577474964
           },
           "src/spendguard/openai_batch_cli.py": {
             "max_cc": 11,

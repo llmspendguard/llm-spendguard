@@ -19,12 +19,12 @@ import subprocess
 import sys
 import tempfile
 import threading
-import tomllib
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from . import config, consumer_audit, fleet, release, setup
 from ._version import __version__ as SPENDGUARD_WRITER_VERSION
 from .distribution_daemon import attest_distribution_daemons
+from . import offline_python_build
 
 DISTRIBUTION_CONFIG_SECTION = "distribute"
 DISTRIBUTION_PROBE_TIMEOUT_S = consumer_audit.CONSUMER_AUDIT_PROBE_TIMEOUT_SECONDS
@@ -37,12 +37,10 @@ DISTRIBUTION_BUILD_TIMEOUT_SETTING = "install_timeout_s"
 DISTRIBUTION_MAX_WORKERS_SETTING = "max_install_workers"
 DISTRIBUTION_DEFAULT_MAX_WORKERS = 4
 DISTRIBUTION_WHEEL_BUILD_COMMAND = ("-m", "pip", "wheel", "--no-deps", "--no-build-isolation")
-DISTRIBUTION_PIP_PROBE_COMMAND = (
-    "-c", "import importlib.util, sys; sys.exit(importlib.util.find_spec('pip') is None)"
-)
-DISTRIBUTION_PIP_BOOTSTRAP_COMMAND = ("-m", "ensurepip", "--upgrade")
-DISTRIBUTION_BUILD_WHEELHOUSE_DIRECTORY = "distribution_build_wheels"
-DISTRIBUTION_BUILD_PROJECT_FILENAME = "pyproject.toml"
+DISTRIBUTION_PIP_PROBE_COMMAND = offline_python_build.PYTHON_BUILD_PIP_PROBE_COMMAND
+DISTRIBUTION_PIP_BOOTSTRAP_COMMAND = offline_python_build.PYTHON_BUILD_PIP_BOOTSTRAP_COMMAND
+DISTRIBUTION_BUILD_WHEELHOUSE_DIRECTORY = offline_python_build.PYTHON_BUILD_WHEELHOUSE_DIRECTORY
+DISTRIBUTION_BUILD_PROJECT_FILENAME = offline_python_build.PYTHON_BUILD_PROJECT_FILENAME
 DISTRIBUTION_BUILD_DIRECTORY_NAME = "build"
 DISTRIBUTION_SOURCE_DIRECTORY_NAME = "src"
 DISTRIBUTION_EGG_INFO_GLOB = "*.egg-info"
@@ -154,22 +152,8 @@ def purge_stale_build_artifacts_in_checkout(checkout):
 
 
 def ensure_distribution_build_pip(settings):
-    """Seed a pip-less builder from CPython's bundled wheels, without network access.
-
-    Backend provisioning is a separate step: ensurepip is not a backend installer.
-    """
-    probe = subprocess.run([sys.executable, *DISTRIBUTION_PIP_PROBE_COMMAND],
-                           capture_output=True, text=True,
-                           timeout=settings[DISTRIBUTION_BUILD_TIMEOUT_SETTING], check=False)
-    if not probe.returncode:
-        return
-    if probe.returncode != 1:
-        raise RuntimeError((probe.stderr or probe.stdout or "pip availability probe failed").strip())
-    bootstrap = subprocess.run([sys.executable, *DISTRIBUTION_PIP_BOOTSTRAP_COMMAND],
-                               capture_output=True, text=True,
-                               timeout=settings[DISTRIBUTION_BUILD_TIMEOUT_SETTING], check=False)
-    if bootstrap.returncode:
-        raise RuntimeError((bootstrap.stderr or bootstrap.stdout or "offline pip bootstrap failed").strip())
+    """Seed this builder offline; backend provisioning remains a separate step."""
+    offline_python_build.ensure_python_build_pip(timeout=settings[DISTRIBUTION_BUILD_TIMEOUT_SETTING])
 
 
 def ensure_distribution_build_backend(checkout, settings):
@@ -180,15 +164,7 @@ def ensure_distribution_build_backend(checkout, settings):
     without a backend. Pip checks requirement versions and fails closed if our
     wheelhouse cannot satisfy a newer checkout's build contract.
     """
-    project = Path(checkout) / DISTRIBUTION_BUILD_PROJECT_FILENAME
-    requirements = tomllib.loads(project.read_text())["build-system"]["requires"]
-    wheelhouse = Path(__file__).with_name(DISTRIBUTION_BUILD_WHEELHOUSE_DIRECTORY)
-    command = [sys.executable, "-m", "pip", "install", "--upgrade", "--no-index", "--find-links", str(wheelhouse),
-               *requirements]
-    completed = subprocess.run(command, capture_output=True, text=True,
-                               timeout=settings[DISTRIBUTION_BUILD_TIMEOUT_SETTING], check=False)
-    if completed.returncode:
-        raise RuntimeError((completed.stderr or completed.stdout or "offline build backend provisioning failed").strip())
+    offline_python_build.ensure_python_build_backend(checkout, timeout=settings[DISTRIBUTION_BUILD_TIMEOUT_SETTING])
 
 
 def ensure_distribution_wheel(target, checkout, settings):

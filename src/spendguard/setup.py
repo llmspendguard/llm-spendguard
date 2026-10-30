@@ -108,6 +108,14 @@ def _consumer_editable_install_command(python_executable, repo_root, timeout, en
 def refresh_consumer_editable_package(python_executable, repo_root, timeout):
     """Install this checkout into a consumer interpreter; shared by install-hook and fleet promotion."""
     import subprocess
+    from .offline_python_build import ensure_python_build_backend, ensure_python_build_pip
+    pip_was_seeded = ensure_python_build_pip(python_executable=python_executable, timeout=timeout)
+    # CPython's bundled setuptools can satisfy the floor but still lack bdist_wheel.
+    # A newly seeded interpreter needs the complete shipped build backend.
+    if (pip_was_seeded or (_pip_index_is_disabled(os.environ)
+            and not _consumer_has_satisfying_setuptools(
+                python_executable, _declared_setuptools_build_requirement(repo_root), timeout))):
+        ensure_python_build_backend(repo_root, python_executable=python_executable, timeout=timeout)
     install_command = _consumer_editable_install_command(python_executable, repo_root, timeout)
     result = subprocess.run(install_command, capture_output=True, text=True, timeout=timeout)
     if result.returncode:
@@ -733,6 +741,7 @@ _PTH_HOOK = _gate_hook_for_checkout_src(_pkg_src())
 def install_hook(venv=None, uninstall=False, install_pkg=True, user=False, python=None):
     """Gate every process in another interpreter:
       --venv <path>            pip-install spendguard + a sitecustomize hook (clean venv).
+                               Missing pip/build backend is bootstrapped offline from bundled wheels.
       --user [--python <interp>]  write a PATH-INJECTING usercustomize into that interpreter's user site —
                                NO pip, so it works on PEP668 'externally-managed' pythons (Homebrew/system).
     Closes the system-python bypass. `--uninstall` removes the hook."""

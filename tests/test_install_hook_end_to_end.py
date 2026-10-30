@@ -26,6 +26,8 @@ SYSTEM_SITE_PACKAGES_DISABLED_SETTING = "include-system-site-packages = false"
 BUILD_ISOLATION_FAILURE_MARKER = "No matching distribution found for setuptools"
 EDITABLE_INSTALL_FAILURE_PREFIX = "editable build backend unavailable offline:"
 PEP517_EDITABLE_INSTALL_OPTION = "--use-pep517"
+PIPLESS_CONSUMER_DIRECTORY_NAME = "pipless-consumer-venv"
+PIP_IMPORT_PROBE = "import pip"
 
 
 def run_install_hook_end_to_end_regression():
@@ -143,6 +145,25 @@ def run_install_hook_end_to_end_regression():
             bare_python, PROJECT_ROOT, timeout=None, environment=online_environment)
         assert PEP517_EDITABLE_INSTALL_OPTION in bare_install_command
         assert _NO_BUILD_ISOLATION_OPTION not in bare_install_command
+
+        pipless_consumer = scratch_root / PIPLESS_CONSUMER_DIRECTORY_NAME
+        subprocess.run([sys.executable, "-m", "venv", "--without-pip", os.fspath(pipless_consumer)],
+                       check=True, cwd=PROJECT_ROOT)
+        pipless_python = pipless_consumer / "bin" / "python"
+        missing_pip_probe = subprocess.run([os.fspath(pipless_python), "-c", PIP_IMPORT_PROBE],
+                                           capture_output=True, text=True, env=isolated_environment)
+        assert missing_pip_probe.returncode != 0, missing_pip_probe.stdout
+        pipless_install = subprocess.run(
+            [sys.executable, "-m", "spendguard", "install-hook", "--venv", os.fspath(pipless_consumer)],
+            capture_output=True, text=True, env=isolated_environment, cwd=PROJECT_ROOT)
+        assert pipless_install.returncode == 0, pipless_install.stdout + pipless_install.stderr
+        pipless_startup = subprocess.run(
+            [os.fspath(pipless_python), "-c", STARTUP_GATE_MODULE_PROBE],
+            capture_output=True, text=True, env=isolated_environment, cwd=PROJECT_ROOT)
+        assert pipless_startup.returncode == 0, pipless_startup.stderr
+        assert pipless_startup.stdout.strip() == STARTUP_GATE_ACTIVE_OUTPUT, pipless_startup.stdout
+        subprocess.run([os.fspath(pipless_consumer / "bin" / "spendguard"), "--help"],
+                       check=True, capture_output=True, text=True, env=isolated_environment, cwd=PROJECT_ROOT)
 
 
 run_install_hook_end_to_end_regression()

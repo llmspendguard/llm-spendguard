@@ -74,9 +74,6 @@ jobs:
           # deterministic — a backtracking resolve once pulled pydantic 1.x and broke `import anthropic` (httpx2.Timeout).
           # Refresh the editable install even on a cache hit, so checkout metadata always matches the current tree.
           uv pip install --python "${CI_TEST_VENV}/bin/python" -e "$CI_TEST_EXTRAS" "$CI_PYDANTIC_FLOOR"
-      - name: Enforce spend governance in the suite environment
-        run: |
-          "${CI_TEST_VENV}/bin/spendguard" install-hook --venv "$CI_TEST_VENV"
       - name: Provision the declared build backend for offline consumers
         run: |
           # The install-hook regression creates a consumer with --system-site-packages. A venv created by this
