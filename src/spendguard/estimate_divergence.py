@@ -23,6 +23,8 @@ The code's only jobs are to find every pair, hand each one over, and REFUSE when
 estimate was not grounded. Finding and refusing are mechanical. Deciding is not.
 """
 import json
+import sqlite3
+from contextlib import closing
 
 
 class EstimateNotGrounded(Exception):
@@ -49,10 +51,26 @@ JUDGE_SCHEMA = '{"grounded": true|false, "why": "...", "what_to_fix": "..."}'
 
 
 def _pairs():
-    """Every (estimate, actual) the calibrator has joined. Reading a recorded join, not re-deriving it."""
-    from . import calibrate
+    """Refresh pairing, then read every persisted estimate with captured actuals.
+
+    ``calibrate.pair`` returns operation counts, so its summary is never evidence
+    for the grounding judge. The persisted row carries the prediction, measured
+    tokens, actual bill, and job context together. Pending predictions and expired
+    windows have no captured actual and cannot be judged as estimate/bill pairs.
+
+    Read whole rows so schema additions reach the judge without a second field
+    allowlist silently dropping evidence. Pairing commits its updates, so this
+    consumer owns a fresh connection without taking ownership of a pooled writer.
+    """
+    from . import calibrate, config
     try:
-        return list(calibrate.pair() or [])
+        # pair() refreshes persisted joins and returns COUNTS, not the joined rows.
+        calibrate.pair()
+        with closing(config.fresh_ledger_conn(calibrate._ensure_cost_predictions_schema)) as connection:
+            cursor = connection.execute(
+                "SELECT * FROM cost_predictions WHERE paired_ts IS NOT NULL AND actual_calls > 0")
+            cursor.row_factory = sqlite3.Row
+            return list(map(dict, cursor))
     except Exception as e:
         raise EstimateNotGrounded(
             f"cannot read estimate/actual pairs ({e}) — a spend guard that cannot check its own quotes "
@@ -120,8 +138,6 @@ def enforce(raise_on_fail=True, model=None):
 
 def cmd(argv=None):
     """`spendguard estimate-divergence` — judge every recorded quote against the bill."""
-    import sys
-    argv = list(sys.argv[2:] if argv is None else argv)
     try:
         res = enforce(raise_on_fail=False)
     except EstimateNotGrounded as e:
