@@ -31,9 +31,13 @@ def verify_gate_hermeticity_isolation_contract():
             tempfile.TemporaryDirectory(dir=chunked_suite.GATE_SHORT_TMPDIR_BASE) as external_tool_home:
         expected_home = str(Path(scratch_home).resolve())
         expected_tmpdir = str(Path(scratch_tmpdir).resolve())
-        environment = chunked_suite._child_env(scratch_home, scratch_tmpdir)
+        environment = chunked_suite._child_env(
+            scratch_home, scratch_tmpdir, hermeticity_pytest_runner.MIN_RUNNER_SCALE
+        )
         assert hermeticity_pytest_runner._child_env is chunked_suite._child_env
-        assert hermeticity_pytest_runner._child_env(scratch_home, scratch_tmpdir) == environment
+        assert hermeticity_pytest_runner._child_env(
+            scratch_home, scratch_tmpdir, hermeticity_pytest_runner.MIN_RUNNER_SCALE
+        ) == environment
         for home_key in chunked_suite.GATE_ISOLATED_HOME_ENV_NAMES:
             assert environment[home_key] == expected_home
         assert environment[chunked_suite.GATE_ISOLATED_TMPDIR_ENV_NAME] == expected_tmpdir
@@ -74,7 +78,12 @@ def verify_gate_hermeticity_isolation_contract():
                     returncode=HERMETICITY_SUCCESS_RETURN_CODE, stdout="", stderr="")) as runner_child:
             hermeticity_pytest_runner.test_script(__file__, hermeticity_pytest_runner.MIN_RUNNER_SCALE)
         # Coverage may add its startup key; every shared isolation key must survive unchanged.
-        assert environment.items() <= runner_child.call_args.kwargs["env"].items()
+        # The pytest runner intentionally replaces the standalone runner's locally measured
+        # scale with the controller fixture value passed to test_script.
+        expected_runner_environment = dict(environment)
+        expected_runner_environment[chunked_suite.RUNNER_BUDGET_SCALE_ENV] = str(
+            hermeticity_pytest_runner.MIN_RUNNER_SCALE)
+        assert expected_runner_environment.items() <= runner_child.call_args.kwargs["env"].items()
         for broken_key in (*chunked_suite.GATE_ISOLATED_HOME_ENV_NAMES,
                            chunked_suite.GATE_ISOLATED_TMPDIR_ENV_NAME,
                            chunked_suite.GATE_TEST_ISOLATED_ENV, config.CLI_TEST_OFFLINE_ENVIRONMENT_KEY):

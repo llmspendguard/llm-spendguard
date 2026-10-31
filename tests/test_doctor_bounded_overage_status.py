@@ -3,6 +3,7 @@ import atexit
 import contextlib
 import io
 import json
+import math
 import os
 import sqlite3
 import subprocess
@@ -11,8 +12,11 @@ import tempfile
 import time
 from unittest.mock import patch
 
+from _runner_budget_calibration import MAX_RUNNER_SCALE, MIN_RUNNER_SCALE, RUNNER_BUDGET_SCALE_ENV
+
 
 _DOCTOR_WALL_BUDGET_SECONDS = 2.0
+_DEFAULT_RUNNER_BUDGET_SCALE = 1.0
 _SEEDED_LEDGER_ROWS = 50_000
 _STALE_CACHE_TIMESTAMP = 1.0
 _TRANSCRIPT_FILE_COUNT = 12
@@ -44,6 +48,17 @@ _AMBIENT_PROVIDER_ENVIRONMENT_VARIABLES = (
     "ZAI_API_KEY",
     "ZAI_CODING_API_KEY",
 )
+
+runner_budget_scale_text = os.environ.get(
+    RUNNER_BUDGET_SCALE_ENV, str(_DEFAULT_RUNNER_BUDGET_SCALE))
+try:
+    runner_budget_scale = float(runner_budget_scale_text)
+except ValueError as error:
+    raise AssertionError(f"invalid runner budget scale: {runner_budget_scale_text!r}") from error
+if not math.isfinite(runner_budget_scale) or runner_budget_scale <= 0:
+    raise AssertionError(f"invalid runner budget scale: {runner_budget_scale!r}")
+runner_budget_scale = max(MIN_RUNNER_SCALE, min(MAX_RUNNER_SCALE, runner_budget_scale))
+doctor_wall_budget_seconds = _DOCTOR_WALL_BUDGET_SECONDS * runner_budget_scale
 
 isolated_home_owner = tempfile.TemporaryDirectory(prefix="spendguard-doctor-bounded-")
 atexit.register(isolated_home_owner.cleanup)
@@ -90,6 +105,10 @@ os.environ.pop("SPENDGUARD_TEST_ISOLATED", None)
 sys.path.insert(0, source_root)
 from spendguard import claudecode, gate, overage, setup  # noqa: E402
 
+overage_status_wall_budget_seconds = (
+    overage.OVERAGE_DIAGNOSTIC_WALL_BUDGET_SECONDS * runner_budget_scale
+)
+
 
 def fail_if_live_overage_refresh_runs():
     raise AssertionError("ordinary status read ran the unbounded transcript/ledger refresh")
@@ -117,17 +136,17 @@ with patch.object(claudecode, "residency_decomposition",
 started = time.monotonic()
 completed = subprocess.run(
     [sys.executable, "-S", "-c", _SUBPROCESS_DOCTOR_PROBE], env=environment,
-    capture_output=True, text=True, check=False, timeout=_DOCTOR_WALL_BUDGET_SECONDS,
+    capture_output=True, text=True, check=False, timeout=doctor_wall_budget_seconds,
 )
 elapsed = time.monotonic() - started
 combined_output = completed.stdout + completed.stderr
 
 failures = []
-if status_elapsed >= overage.OVERAGE_DIAGNOSTIC_WALL_BUDGET_SECONDS:
+if status_elapsed >= overage_status_wall_budget_seconds:
     failures.append(f"current_overage_status exceeded wall budget: {status_elapsed:.3f}s")
 if cached_status.get("on_overage_now") is not None or not cached_status.get("stale"):
     failures.append("current_overage_status did not return an explicit stale/unknown verdict")
-if elapsed >= _DOCTOR_WALL_BUDGET_SECONDS:
+if elapsed >= doctor_wall_budget_seconds:
     failures.append(f"doctor exceeded wall budget: {elapsed:.3f}s")
 if bounded_doctor_returncode != _EXPECTED_DIAGNOSTIC_EXIT_CODE:
     failures.append(f"in-process fatal-seam doctor failed with {bounded_doctor_returncode}")

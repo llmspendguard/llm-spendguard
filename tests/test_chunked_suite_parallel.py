@@ -29,7 +29,7 @@ def verify_chunked_parallel_evidence():
         cache = root / PARALLEL_CHECK_CACHE_NAME
         seen = []
 
-        def execute_chunked_parallel_probe(path):
+        def execute_chunked_parallel_probe(path, _runner_budget_scale):
             seen.append(path)
             return int(path == files[-1]), "probe output", ""
 

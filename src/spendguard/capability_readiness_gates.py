@@ -42,13 +42,14 @@ def run_capability_script_readiness_gate(*, context, scripts):
     # offline enforcement and cleanup rather than launching against user state.
     harness = runpy.run_path(str(harness_path))
     run_isolated_script = harness["_run_one"]
+    _, runner_budget_scale = harness["measure_isolated_runner_budget_scale"]()
     evidence = []
     failed = []
     for relative_path in scripts:
         script = root / relative_path
         if not script.is_file():
             return CapabilityReadinessEvidence("UNREVIEWED", f"Check unavailable: {relative_path}")
-        returncode, stdout, stderr = run_isolated_script(str(script))
+        returncode, stdout, stderr = run_isolated_script(str(script), runner_budget_scale)
         evidence.append(f"{relative_path}: exit {returncode}\nstdout:\n{stdout}\nstderr:\n{stderr}")
         if returncode:
             failed.append(f"{relative_path}\n{stdout}\n{stderr}")
