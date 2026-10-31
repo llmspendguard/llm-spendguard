@@ -4,6 +4,58 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 
 ## [Unreleased]
 
+## [0.16.15] — 2026-10-30
+
+Theme: close the delegate governance-bypass cluster and the silent-misroute defects surfaced by the aggregate-TODO
+triage. A CLI-launched delegate now survives its launcher, has real controls and a machine-readable contract,
+routes agentic work only to providers that can actually do it, and runs isolated in a git worktree — so the raw
+`codex exec` workaround (which bypasses the gate entirely) is no longer necessary. Three more defects that each let
+the operator believe they were governed when they were not are fixed and mutation-proven.
+
+### Delegate governed lifecycle — detached worker, controls, unified contract, stream split (#250)
+- **D2:** a CLI-launched delegate ran its executor on an in-process `daemon=True` thread, so the one-shot CLI exit
+  killed the "detached" job at ~15–77s — true detachment only worked inside the long-lived MCP host. The CLI path
+  now reuses that same executor + execution journal in an **OS-detached worker** (`delegate_worker.py`), preserving
+  worker/child PID + birth identity so `--collect/--status/--recover` work after the launcher exits; also fixes an
+  ownership-transfer recovery race.
+- **D8:** governed `--cancel`/`--kill <job-id>` (terminates the real worker + records a terminal row), blocking
+  `--collect --wait [--timeout-s N]`, and a durable terminal-state finish signal; warm cancel terminates the leased
+  worker and prevents restart.
+- **H3:** `state` is canonical across `--status` and `--collect` (legacy `status` retained); `--execute` alias and
+  `--warm` added, help expanded; capability registry + generated surfaces regenerated.
+- **D19:** diagnostics/receipts go to stderr, stdout carries the result cleanly; `--mixed-stream` preserves the old
+  combined stream.
+
+### Fail-loud lane config, SDK-named require() refusal, estimate-divergence crash (#251)
+- **L4:** `config._cfg()` swallowed any config read/parse error and cached an empty `{}`, so every lane read as
+  disabled and `_executor()` silently fell back to the paid metered path — the exact failure spendguard exists to
+  prevent. A read/parse error is now distinguished from a legitimately-absent config, surfaced, and not cached, so
+  an unreadable config can no longer silently reroute $0-lane work to metered.
+- **G4:** `require()`'s not-enforcing refusal now names the specific unpatched SDK/module/client + remediation.
+- **H6:** `estimate_divergence` crashed (`dict(pair)` over a summary return) so the check was dead — it now reads
+  the paired rows `calibrate` persists; `estimate_literals` takes `repo_root` instead of a hardcoded self-path.
+
+### comprehend input surface, plan-aware residency nudge, fleet repo-affinity (#252)
+- **F2:** `comprehend` gains `--items` (explicit set, read whole), `--vendors` (pin lane vendors), and `--panel`
+  (multi-reviewer fan-out), wired through the capability registry + generated surfaces.
+- **F4:** the residency nudge no longer hardcodes "prefer a subagent" — when the plan is capped/near-cap it
+  recommends off-plan delegation (reusing the existing overage/headroom policy via `plan_admission`); the agentic
+  delegability judgement is unchanged.
+- **G7:** `fleet.registered_interpreters()` accepts an optional `repo_root` filter over recorded venv paths; the
+  no-arg default inventory is unchanged.
+
+### Per-provider agentic truth + git-worktree isolation (#253)
+- **D15:** provider agentic capability now matches reality — codex, agy/Gemini and Kimi use real edit-capable agent
+  modes for agentic delegates; z.ai is HTTP-completion-only and is explicitly recorded non-agentic and excluded from
+  agentic routing. No provider is advertised agentic while running read-only.
+- **D17:** agentic delegates no longer edit the shared editable checkout in place (which collided under concurrency
+  and leaked in-flight edits into the live fleet import). `delegate_worktrees.py` gives each concurrent agentic job
+  its own git worktree seeded with uncommitted inputs; the complete diff is collected, successful worktrees removed
+  and failures retained; the D2 journal + PID lifecycle stays intact under isolation.
+
+Every behavior above has a targeting test with a mutation proof (RED-when-mutated → GREEN-restored). Across the four
+PRs: chunked suite 792/792; selfcheck Coverage 19/19, passing 19/19, no UNREVIEWED; clean py3.11 + py3.12 checks.
+
 ## [0.16.14] — 2026-10-30
 
 Theme: make `budget.spent_since` a real spend control on both of its axes — close the two sharp edges where a
