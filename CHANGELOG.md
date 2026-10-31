@@ -4,6 +4,45 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 
 ## [Unreleased]
 
+## [0.16.17] — 2026-10-31
+
+Theme: CI determinism and an offline-reconcile correctness fix. A load-sensitive gate no longer false-fails on a
+busy runner, the offline ledger reconcile opens its estimate-read without a managed-dispatch step that could trip
+the correction guard under concurrency, and the radon complexity ratchet baseline is now mechanically regenerable
+instead of hand-typed.
+
+### Bound every worker-cohort wait so a dying peer can't deadlock CI (#260)
+- `test_delegate_worktree_isolation` and five siblings waited unboundedly on a peer in the worker cohort; a peer
+  that died left the wait hanging until the CI job timed out. Every cohort wait is now bounded, so a dead peer
+  surfaces as a prompt test failure rather than a job-level deadlock.
+
+### Dispatch-free offline-reconcile estimate-read (#261)
+- `config.managed_ledger_read_connection` ran its `PRAGMA busy_timeout` setup via `connection.execute(...)`. On a
+  `_CountedLedgerConnection` the default cursor routes through
+  `ManagedRequestCursorState.dispatch_managed_request_cursor_step` before the read deadline is owned, so a
+  connection-SETUP pragma dispatched as a managed request step. Offline `true_down` correction runs under a guard
+  that forbids that dispatch, and under concurrency one caller's owner-context window overlapped another caller's
+  estimate-read open and tripped (`offline correction used managed request dispatch`).
+- Fix: the counted-vs-raw setup idiom `budget_ledger_connection_memory` already used is extracted into one helper,
+  `run_ledger_setup_pragmas(connection, pragmas)`, which for a counted connection honors
+  `require_ledger_home_alignment` then runs each pragma on a raw `sqlite3.Cursor` (never managed dispatch), and
+  uses `connection.execute` otherwise. Both setup sites call it. Stress (16 workers × 800 iters under 10 CPU
+  hogs): 730/800 failures before, 0/800 after; managed-read behavior is unchanged.
+
+### Mechanically-regenerable complexity ratchet baseline (#261)
+- The radon CC/MI ratchet compared against a frozen per-interpreter baseline that could only be updated by
+  hand-typing a float. `architectural_fitness.regenerate_architectural_complexity_baseline` now re-measures and
+  records only the files whose measurement regresses the stored baseline — via a shared
+  `architectural_complexity_metrics_regress` predicate the gate reads too (one SSOT) — fails closed without a
+  reviewer justification, is idempotent across the two interpreter runs under one `reviewed_*` key, and writes
+  through `config.update_json(keep_backups=0)` so the write stays atomic and backed up (`path~`) without leaving
+  an undeclared timestamped `.json` in the package dir. It is never wired into CI; CI still compares the committed
+  baseline, so the ratchet is preserved and a human runs the regenerator for a reviewed change. A
+  prove-it-can-fail test covers surgical scope, fail-closed, idempotent no-op, idempotent-shared-key vs
+  different-text, and that a new injected regression still fails the gate.
+- Doctor-bounded load-scale: the capability readiness gate threads a measured `runner_budget_scale` into the
+  isolated-script runner so a loaded machine cannot false-fail the offline readiness-evidence step.
+
 ## [0.16.16] — 2026-10-31
 
 Theme: the ledger WAL-contention cluster — a recurring `$inf` false-refusal, the checkpoint that caused its own
