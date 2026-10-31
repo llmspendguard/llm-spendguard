@@ -11,6 +11,7 @@ import time
 import functools
 import inspect
 import math
+import sqlite3
 from numbers import Number
 from decimal import Decimal
 from . import config
@@ -50,6 +51,7 @@ def _budget_snapshot_generation_observer():
     observer = getattr(_LEDGER_TL, "projection_observer", None)
     if observer is not None and observer[0] != observer_identity:
         observer[1].__exit__(None, None, None)
+        _LEDGER_TL.projection_observer = None
         observer = None
     if observer is None:
         owner = config.managed_ledger_read_connection(read_target, uri=True,
@@ -58,7 +60,12 @@ def _budget_snapshot_generation_observer():
         connection = owner.__enter__()
         observer = (observer_identity, owner, connection)
         _LEDGER_TL.projection_observer = observer
-    return observer[2], observer[2].execute("PRAGMA data_version").fetchone()[0]
+    try:
+        return observer[2], observer[2].execute("PRAGMA data_version").fetchone()[0]
+    except BaseException:
+        _LEDGER_TL.projection_observer = None
+        observer[1].__exit__(*sys.exc_info())
+        raise
 
 
 @contextlib.contextmanager
@@ -68,10 +75,13 @@ def budget_projection_reader(*, deadline_s=None, rollup_eligible=True):
     from .ledger_writer import current_ledger_writer_connection, ledger_connection_commit_deferred
     from .ledger_read import (_ledger_read_connection, consumer_empty_spend_compatibility,
                               SPEND_EVENT_READ_COLUMNS, DEFAULT_LEDGER_READ_TIME_BUDGET_S,
-                              LedgerReadTimeout, LedgerQueryDeadline)
+                              LedgerReadTimeout, LedgerQueryDeadline,
+                              LEDGER_READ_SQLITE_PRIMARY_CODE_MASK,
+                              effective_ledger_admission_deadline)
     time_budget = DEFAULT_LEDGER_READ_TIME_BUDGET_S if deadline_s is None else deadline_s
     if not math.isfinite(time_budget) or time_budget <= 0:
         raise LedgerQueryDeadline(time_budget)
+    projection_deadline = effective_ledger_admission_deadline(time.monotonic() + time_budget)
     existing = getattr(_LEDGER_TL, "read_ledger", None)
     if existing is not None:
         yield existing
@@ -106,14 +116,25 @@ def budget_projection_reader(*, deadline_s=None, rollup_eligible=True):
             # Capture the observer before anything can pin the snapshot. Later
             # concurrent commits make this snapshot cache-ineligible.
             if rollup_eligible:
-                snapshot_reader._daily_rollup_snapshot_generation = _budget_snapshot_generation_observer()
+                snapshot_reader._daily_rollup_snapshot_generation = None
+                try:
+                    snapshot_reader._daily_rollup_snapshot_generation = _budget_snapshot_generation_observer()
+                except (TimeoutError, LedgerReadTimeout):
+                    if time.monotonic() >= effective_ledger_admission_deadline(projection_deadline):
+                        raise LedgerQueryDeadline(time_budget)
+                except sqlite3.Error as failure:
+                    if (getattr(failure, "sqlite_errorcode", 0) & LEDGER_READ_SQLITE_PRIMARY_CODE_MASK
+                            not in (sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED, sqlite3.SQLITE_INTERRUPT)):
+                        raise
+                    if time.monotonic() >= effective_ledger_admission_deadline(projection_deadline):
+                        raise LedgerQueryDeadline(time_budget) from failure
             # Coverage and money observe one complete committed version.
             connection.execute("BEGIN")
             snapshot_reader._total_memo = getattr(cached, "_total_memo", None)
             yield snapshot_reader
             if cached is not None:
                 cached._total_memo = snapshot_reader._total_memo
-    except LedgerReadTimeout as failure:
+    except (LedgerReadTimeout, TimeoutError) as failure:
         raise LedgerQueryDeadline(time_budget) from failure
 
 
