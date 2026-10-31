@@ -15,6 +15,8 @@ import pathlib
 import sys
 import tempfile
 
+import yaml
+
 os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="spendguard-release-")
 os.environ.setdefault("SPENDGUARD_TEST_ISOLATED", "1")
 os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
@@ -123,6 +125,23 @@ _reset_served()
 record_script_check(fails, "served_sha() is None when git is unavailable", release.served_sha() is None)
 record_script_check(fails, "stale_vs_green() is False when the served version is unknown", release.stale_vs_green() is False)
 record_script_check(fails, "release_status note says version unknown, server keeps running", "unknown" in release.release_status()["note"])
+
+print("\n-- the tag release cannot publish without the live selfcheck gate --")
+repository_root = pathlib.Path(__file__).resolve().parents[1]
+release_workflow_path = repository_root / ".github" / "workflows" / "release.yml"
+release_workflow = yaml.safe_load(release_workflow_path.read_text())
+release_test_steps = release_workflow["jobs"]["test"]["steps"]
+release_test_commands = [str(step.get("run", "")).splitlines() for step in release_test_steps]
+record_script_check(
+    fails,
+    "release test job invokes spendguard selfcheck",
+    any("spendguard selfcheck" in [command.strip() for command in commands] for commands in release_test_commands),
+)
+record_script_check(
+    fails,
+    "publish needs the test job, so selfcheck failure blocks publication",
+    release_workflow["jobs"]["publish"].get("needs") == "test",
+)
 
 print(f"\n{'[FAIL]' if fails else 'OK'} test_release_green_pointer: {len(fails)} failure(s)")
 sys.exit(1 if fails else 0)
