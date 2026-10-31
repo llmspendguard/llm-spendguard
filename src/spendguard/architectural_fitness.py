@@ -10,11 +10,13 @@ import subprocess
 import sys
 import tempfile
 
+from . import config
 from .capability_readiness import CapabilityReadinessEvidence
 
 ARCHITECTURAL_BASELINE_RESOURCE = "architectural_fitness_baseline.json"
 ARCHITECTURAL_PACKAGE_RELATIVE_ROOT = Path("src") / "spendguard"
 ARCHITECTURAL_LAYER_CONFIGURATION_FILENAME = "architecture.ini"
+ARCHITECTURAL_COMPLEXITY_REVIEW_KEY_PREFIX = "reviewed_"
 
 
 def load_architectural_fitness_baseline(root):
@@ -121,6 +123,71 @@ def select_architectural_interpreter_baseline(settings):
     return recorded
 
 
+def architectural_complexity_metrics_regress(current_metrics, stored_metrics):
+    """Return whether measured complexity is absent or worse than its reviewed ratchet."""
+    return (
+        stored_metrics is None
+        or current_metrics["max_cc"] > stored_metrics["max_cc"]
+        or current_metrics["mi"] < stored_metrics["mi"]
+    )
+
+
+def regenerate_architectural_complexity_baseline(root, justification=None, justification_key=None):
+    """Record only this interpreter's measured regressions after explicit review."""
+    root = Path(root).resolve()
+    settings = load_architectural_fitness_baseline(root)
+    measured_files = measure_architectural_complexity(root, settings)
+    recorded = select_architectural_interpreter_baseline(settings)
+    updated_files = {
+        name: metrics
+        for name, metrics in measured_files.items()
+        if architectural_complexity_metrics_regress(metrics, recorded["files"].get(name))
+    }
+    if not updated_files:
+        return {"updated_files": (), "justification_key": None, "measured_extremes": recorded["measured_extremes"]}
+    if not isinstance(justification, str) or not justification.strip():
+        raise ValueError("A non-empty justification is required to record complexity regressions")
+    if (
+        not isinstance(justification_key, str)
+        or not justification_key.startswith(ARCHITECTURAL_COMPLEXITY_REVIEW_KEY_PREFIX)
+        or justification_key == ARCHITECTURAL_COMPLEXITY_REVIEW_KEY_PREFIX
+    ):
+        raise ValueError("The justification key must start with 'reviewed_'")
+    recorded_justification = settings["complexity"].get(justification_key)
+    if recorded_justification is not None and recorded_justification != justification:
+        raise ValueError(f"The justification key already records a different review: {justification_key}")
+    baseline_path = root / ARCHITECTURAL_PACKAGE_RELATIVE_ROOT / ARCHITECTURAL_BASELINE_RESOURCE
+    regenerated_extremes = {}
+
+    def mutate_architectural_complexity_baseline(data):
+        fresh_recorded = select_architectural_interpreter_baseline(data)
+        recorded_file_names = list(fresh_recorded["files"])
+        fresh_recorded["files"].update(updated_files)
+        if recorded_file_names == sorted(recorded_file_names):
+            fresh_recorded["files"] = dict(sorted(fresh_recorded["files"].items()))
+        regenerated_extremes.update({
+            "max_cc": max(metrics["max_cc"] for metrics in fresh_recorded["files"].values()),
+            "mi": min(metrics["mi"] for metrics in fresh_recorded["files"].values()),
+        })
+        fresh_recorded["measured_extremes"] = dict(regenerated_extremes)
+        data["complexity"][justification_key] = justification
+
+    config.update_json(
+        baseline_path,
+        mutate_architectural_complexity_baseline,
+        reason="architectural complexity ratchet regeneration",
+        # The documented 0 sentinel keeps atomic replace and the always-on path~ backup, while suppressing only
+        # redundant timestamped .json history (git is the deep backup) that violates the package-data invariant.
+        keep_backups=0,
+        required=True,
+    )
+    return {
+        "updated_files": tuple(sorted(updated_files)),
+        "justification_key": justification_key,
+        "measured_extremes": regenerated_extremes,
+    }
+
+
 def measure_architectural_duplication(root, settings):
     """Count pylint symilar duplicate lines using its complete package comparison."""
     from pylint.checkers.symilar import Symilar
@@ -204,7 +271,7 @@ def run_architectural_fitness_gate(*, context, invariant):
                 if baseline is None:
                     violations.append(f"{name}: new source file needs an explicit reviewed measured complexity baseline")
                     continue
-                if metrics["max_cc"] > baseline["max_cc"] or metrics["mi"] < baseline["mi"]:
+                if architectural_complexity_metrics_regress(metrics, baseline):
                     violations.append(f"{name}: {metrics} regresses {baseline}")
             detail = f"Radon per-file ratchet: {len(current)} files; measured worst CC {recorded['measured_extremes']['max_cc']}, MI {recorded['measured_extremes']['mi']}; new files require explicit measured review"
         elif invariant == "duplication":

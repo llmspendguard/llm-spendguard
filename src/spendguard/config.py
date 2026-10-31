@@ -1419,27 +1419,33 @@ def ledger_connection_count():
         return _LEDGER_ADMISSION.live_count
 
 
+def run_ledger_setup_pragmas(connection, pragmas):
+    """Apply connection setup without entering managed-request cursor dispatch."""
+    if isinstance(connection, _CountedLedgerConnection):
+        # A home-aligned connection's own cursor dispatches through managed-request
+        # cursor state; offline reconcile correction runs under a guard that forbids
+        # that dispatch. Honor the home boundary explicitly, then run setup PRAGMAs
+        # on a raw base cursor so connection setup never counts as a managed step.
+        require_ledger_home_alignment(
+            connection._ledger_home_path,
+            opened_path_identity=connection._ledger_opened_path_identity,
+        )
+        with contextlib.closing(
+                sqlite3.Connection.cursor(connection, sqlite3.Cursor)) as setup_cursor:
+            for pragma in pragmas:
+                sqlite3.Cursor.execute(setup_cursor, "PRAGMA " + pragma)
+    else:
+        for pragma in pragmas:
+            connection.execute("PRAGMA " + pragma)
+
+
 def budget_ledger_connection_memory(c, ceiling=None):
     """Share named process cache/mmap budgets across the configured ceiling."""
     ceiling = ledger_connection_limit() if ceiling is None else ceiling
     # ceiling * floor(budget / ceiling) <= budget: 256 MiB cache, 512 MiB mmap.
     pragmas = (f"cache_size={-(LEDGER_CACHE_BUDGET_KIB // ceiling)}",
                f"mmap_size={LEDGER_MMAP_BUDGET_BYTES // ceiling}")
-    if isinstance(c, _CountedLedgerConnection):
-        # A home-aligned connection's own cursor dispatches through managed-request
-        # cursor state; offline reconcile correction runs under a guard that forbids
-        # that dispatch. Honor the home boundary explicitly, then run setup PRAGMAs
-        # on a raw base cursor so connection setup never counts as a managed step.
-        require_ledger_home_alignment(
-            c._ledger_home_path,
-            opened_path_identity=c._ledger_opened_path_identity,
-        )
-        with contextlib.closing(sqlite3.Connection.cursor(c, sqlite3.Cursor)) as setup_cursor:
-            for pragma in pragmas:
-                sqlite3.Cursor.execute(setup_cursor, "PRAGMA " + pragma)
-    else:
-        for pragma in pragmas:
-            c.execute("PRAGMA " + pragma)
+    run_ledger_setup_pragmas(c, pragmas)
 
 
 class _HomeAlignedLedgerCursor(sqlite3.Cursor):
@@ -1761,7 +1767,7 @@ def managed_ledger_read_connection(path, *, timeout=LEDGER_CONNECT_TIMEOUT_S, de
     try:
         with contextlib.closing(open_ledger_connection(
                 path, timeout=timeout, tune=False, deadline_at=deadline_at, **options)) as connection:
-            connection.execute(f"PRAGMA busy_timeout={ledger_read_busy_timeout_ms()}").close()
+            run_ledger_setup_pragmas(connection, (f"busy_timeout={ledger_read_busy_timeout_ms()}",))
             yield connection
     finally:
         with _LEDGER_READ_POOL_CONDITION:
