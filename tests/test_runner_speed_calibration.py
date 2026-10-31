@@ -23,12 +23,13 @@ calibration_guard_spec = importlib.util.spec_from_file_location(CALIBRATION_GUAR
 calibration_guard_runner = importlib.util.module_from_spec(calibration_guard_spec)
 with patch.dict(os.environ, {"SPENDGUARD_COVERAGE": CALIBRATION_GUARD_COVERAGE_OFF}):
     calibration_guard_spec.loader.exec_module(calibration_guard_runner)
-calibration_guard_runner.RUNNER_YARDSTICK_ITERATIONS = CALIBRATION_GUARD_YARDSTICK_ITERATIONS
+calibration_guard_shared = calibration_guard_runner.measure_isolated_runner_budget_scale.__globals__
+calibration_guard_shared["RUNNER_YARDSTICK_ITERATIONS"] = CALIBRATION_GUARD_YARDSTICK_ITERATIONS
 
 # The whole kernel is deterministic, not just its timed wrapper.
 assert calibration_guard_runner.runner_budget_cpu_yardstick() == calibration_guard_runner.runner_budget_cpu_yardstick()
 for calibration_guard_invalid_elapsed in CALIBRATION_GUARD_INVALID_MEASUREMENTS:
-    with patch.object(calibration_guard_runner.time, "monotonic", side_effect=(
+    with patch.object(calibration_guard_shared["time"], "monotonic", side_effect=(
             CALIBRATION_GUARD_CLOCK_START_S, calibration_guard_invalid_elapsed)):
         try:
             calibration_guard_runner.measure_runner_budget_scale()
@@ -66,7 +67,7 @@ assert calibration_guard_conftest.runner_budget_scale.__wrapped__(
     SimpleNamespace(config=calibration_guard_worker)) == CALIBRATION_GUARD_SLOW_RATIO
 for calibration_guard_ratio in (CALIBRATION_GUARD_FAST_RATIO, CALIBRATION_GUARD_SLOW_RATIO,
                                 calibration_guard_runner.MAX_RUNNER_SCALE + CALIBRATION_GUARD_CLAMP_EXCESS):
-    with patch.object(calibration_guard_runner.time, "monotonic", side_effect=(
+    with patch.object(calibration_guard_shared["time"], "monotonic", side_effect=(
             CALIBRATION_GUARD_CLOCK_START_S,
             calibration_guard_runner.RUNNER_YARDSTICK_BASELINE_S * calibration_guard_ratio)):
         calibration_guard_scale = calibration_guard_runner.measure_runner_budget_scale()

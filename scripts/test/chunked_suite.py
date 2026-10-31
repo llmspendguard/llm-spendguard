@@ -26,6 +26,10 @@ from _gate_shard_plan import (  # noqa: E402
     GATE_SHARD_MANIFEST_FILENAME, GATE_SHARD_MINIMUM_COUNT,
     GATE_SHARD_SCHEMA_VERSION, GateShardEvidenceError, validate_gate_shard_manifest,
 )
+from _runner_budget_calibration import (  # noqa: E402
+    RUNNER_BUDGET_SCALE_ENV,
+    measure_isolated_runner_budget_scale,
+)
 from spendguard.config import CLI_TEST_OFFLINE_ENVIRONMENT_KEY, CLI_TEST_OFFLINE_ENABLED_VALUE  # noqa: E402
 
 DEFAULT_MAX_PARALLEL = max(1, (os.cpu_count() or 2) - 2)
@@ -66,9 +70,9 @@ def _chunked_promote_cache(files, shard_count):
     _chunked_atomic_json(os.path.join(REPO, GATE_SHARD_MANIFEST_FILENAME), manifest)
 
 
-def _chunked_timed_file(path):
+def _chunked_timed_file(path, runner_budget_scale):
     started = time.perf_counter()
-    result = _run_one(path)
+    result = _run_one(path, runner_budget_scale)
     return result, time.perf_counter() - started
 FILE_BUDGET_S = 600                      # per-file timeout — MIRROR tests/test_runner.py's `timeout=600` (they must stay
 #                                          in step). 120 here silently diverged and false-failed `spendguard deploy` when a
@@ -126,7 +130,7 @@ def validate_gate_child_environment(env, scratch_home, scratch_tmpdir):
         raise GateTestEnvironmentError("test isolation violated: CLI offline signal missing")
 
 
-def _child_env(scratch_home, scratch_tmpdir):
+def _child_env(scratch_home, scratch_tmpdir, runner_budget_scale):
     env = dict(os.environ)
     for root_name in GATE_ISOLATED_HOME_ENV_NAMES:
         env[root_name] = os.path.realpath(scratch_home)
@@ -137,6 +141,7 @@ def _child_env(scratch_home, scratch_tmpdir):
     )
     env[GATE_TEST_ISOLATED_ENV] = GATE_TEST_ENABLED
     env[CLI_TEST_OFFLINE_ENVIRONMENT_KEY] = CLI_TEST_OFFLINE_ENABLED_VALUE
+    env[RUNNER_BUDGET_SCALE_ENV] = str(runner_budget_scale)
     # Mirror test_runner.py so offline runners stay in step: deterministic short recovery schedules; chaos sets its own timing explicitly.
     env["SPENDGUARD_LANE_BACKOFF_S"] = "0"
     env["SPENDGUARD_SDK_MAX_RETRIES"] = "0"
@@ -177,7 +182,7 @@ def validate_gate_broker_socket_path_capacity(scratch_home, scratch_tmpdir):
         )
 
 
-def _run_one(path):
+def _run_one(path, runner_budget_scale):
     # Only files under tests/ are ever spawned (symlink-resolved), so a stray path can never escape the repo.
     real = os.path.realpath(path)
     tests_root = os.path.realpath(TESTS) + os.sep
@@ -188,7 +193,7 @@ def _run_one(path):
     try:
         scratch_tmpdir = tempfile.mkdtemp(prefix=GATE_SCRATCH_TMPDIR_PREFIX, dir=GATE_SHORT_TMPDIR_BASE)
         validate_gate_broker_socket_path_capacity(scratch_home, scratch_tmpdir)
-        env = _child_env(scratch_home, scratch_tmpdir)
+        env = _child_env(scratch_home, scratch_tmpdir, runner_budget_scale)
         p = subprocess.run([sys.executable, real], env=env, timeout=FILE_BUDGET_S,
                            capture_output=True, text=True)
         return p.returncode, p.stdout, p.stderr
@@ -229,6 +234,8 @@ def main(argv=None):
             return 1
         return 0
 
+    _, runner_budget_scale = measure_isolated_runner_budget_scale()
+
     # LINT GATE FIRST — mirror CI (`ruff check src tests`), so "green locally" means "green in the release build".
     # A suite that passes but fails lint still fails the release; this catches it in seconds instead of at the tag.
     try:
@@ -259,7 +266,10 @@ def main(argv=None):
     suite_started = time.perf_counter()
     if not a.sequential and only is None:
         with ThreadPoolExecutor(max_workers=a.max_parallel) as pool:
-            pending = {pool.submit(_chunked_timed_file, path): path for path in files}
+            pending = {
+                pool.submit(_chunked_timed_file, path, runner_budget_scale): path
+                for path in files
+            }
             for future in as_completed(pending):
                 path = pending[future]
                 (rc, out, err), elapsed = future.result()
@@ -276,7 +286,7 @@ def main(argv=None):
         t0 = time.time()
         fails = []
         for path in chunk:
-            (rc, out, err), elapsed = _chunked_timed_file(path)
+            (rc, out, err), elapsed = _chunked_timed_file(path, runner_budget_scale)
             durations[CHUNKED_NODEID_TEMPLATE.format(os.path.basename(path))] = elapsed
             total_run += 1
             if rc != 0:

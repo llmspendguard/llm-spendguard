@@ -20,6 +20,8 @@ import os
 import shutil
 import tempfile
 
+from _runner_budget_calibration import MIN_RUNNER_SCALE
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 RUNNER = os.path.join(os.path.dirname(HERE), "scripts", "test", "chunked_suite.py")
 SMALLEST_OFFLINE_TEST = os.path.join(HERE, "test_cacheaudit.py")     # pure logic, runs in well under a second
@@ -54,7 +56,7 @@ runner.GATE_SHORT_TMPDIR_BASE = _iso
 
 print("-- chunked_suite._run_one removes its scratch SPENDGUARD_HOME (clean run) --")
 before = _scratch_dirs(runner.SCRATCH_HOME_PREFIX)
-rc, out, err = runner._run_one(SMALLEST_OFFLINE_TEST)
+rc, out, err = runner._run_one(SMALLEST_OFFLINE_TEST, MIN_RUNNER_SCALE)
 after = _scratch_dirs(runner.SCRATCH_HOME_PREFIX)
 check("the spawned test file itself passed", rc == 0)
 check("no new scratch home survives the run", not (after - before))
@@ -65,7 +67,7 @@ runner.shutil.rmtree = lambda *a, **k: None          # simulate _run_one failing
 leaked = set()
 try:
     before = _scratch_dirs(runner.SCRATCH_HOME_PREFIX)
-    rc, out, err = runner._run_one(SMALLEST_OFFLINE_TEST)
+    rc, out, err = runner._run_one(SMALLEST_OFFLINE_TEST, MIN_RUNNER_SCALE)
     leaked = _scratch_dirs(runner.SCRATCH_HOME_PREFIX) - before
     check("a genuinely-unremoved scratch home IS detected (after - before is non-empty)", bool(leaked))
 finally:
@@ -75,7 +77,7 @@ finally:
 
 print("-- a path outside tests/ is refused, and leaves nothing behind either --")
 before = _scratch_dirs(runner.SCRATCH_HOME_PREFIX)
-rc, out, err = runner._run_one(RUNNER)                 # scripts/test/…, not tests/
+rc, out, err = runner._run_one(RUNNER, MIN_RUNNER_SCALE)  # scripts/test/…, not tests/
 after = _scratch_dirs(runner.SCRATCH_HOME_PREFIX)
 check("refused with a non-zero code", rc != 0 and "not under" in err)
 check("refusal created no scratch home", not (after - before))

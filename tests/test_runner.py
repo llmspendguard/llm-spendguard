@@ -20,15 +20,18 @@ import conftest
 
 import pytest
 
+from _runner_budget_calibration import (
+    MAX_RUNNER_SCALE,
+    MIN_RUNNER_SCALE,
+    RUNNER_YARDSTICK_BASELINE_S,  # noqa: F401 - public calibration test seam
+    RUNNER_YARDSTICK_ITERATIONS,  # noqa: F401 - public calibration test seam
+    RunnerBudgetCalibrationError,
+    measure_isolated_runner_budget_scale,
+    runner_budget_cpu_yardstick,  # noqa: F401 - public calibration test seam
+)
+
 # Reference-machine seconds; runner compute calibration scales this tight budget.
 FILE_BUDGET_S = 120
-RUNNER_YARDSTICK_ITERATIONS = 10_000_000
-RUNNER_YARDSTICK_MODULUS = 1_000_000_007
-# Measured 2026-10-21 on the reference dev machine, gated Python 3.11,
-# time.monotonic around runner_budget_cpu_yardstick, without coverage tracing.
-RUNNER_YARDSTICK_BASELINE_S = 0.3443317089986522
-MIN_RUNNER_SCALE = 1.0
-MAX_RUNNER_SCALE = 4.0
 RUNNER_SUBPROCESS_TIMEOUT_S = 600
 RUNNER_ORDINARY_FILE_MULTIPLIER = 1.0
 # Perf tier: unchanged full-ledger containment proof (120k+ rows). Coverage
@@ -41,30 +44,9 @@ REVIEWED_FILE_BUDGET_MULTIPLIERS = {
 }
 
 
-class RunnerBudgetCalibrationError(RuntimeError):
-    """Calibration cannot establish a finite positive compute measurement."""
-
-
-def runner_budget_cpu_yardstick():
-    """Fixed pure integer CPU work: no I/O, randomness, sleeps or dependencies."""
-    yardstick_accumulator = 0
-    for yardstick_index in range(RUNNER_YARDSTICK_ITERATIONS):
-        yardstick_accumulator = (
-            yardstick_accumulator + yardstick_index * yardstick_index
-        ) % RUNNER_YARDSTICK_MODULUS
-    return yardstick_accumulator
-
-
 def measure_runner_budget_scale():
     """Measure once on the controller before dispatching test workers."""
-    yardstick_started = time.monotonic()
-    runner_budget_cpu_yardstick()
-    yardstick_elapsed = time.monotonic() - yardstick_started
-    if not math.isfinite(yardstick_elapsed) or yardstick_elapsed <= 0:
-        raise RunnerBudgetCalibrationError(f"invalid yardstick elapsed: {yardstick_elapsed!r}")
-    if not math.isfinite(RUNNER_YARDSTICK_BASELINE_S) or RUNNER_YARDSTICK_BASELINE_S <= 0:
-        raise RunnerBudgetCalibrationError("invalid reference yardstick baseline")
-    measured_scale = max(MIN_RUNNER_SCALE, min(MAX_RUNNER_SCALE, yardstick_elapsed / RUNNER_YARDSTICK_BASELINE_S))
+    yardstick_elapsed, measured_scale = measure_isolated_runner_budget_scale()
     print(f"runner calibration: yardstick={yardstick_elapsed:.6f}s scale={measured_scale:.3f} "
           f"effective_budget={FILE_BUDGET_S * measured_scale:.3f}s")
     return measured_scale
@@ -123,7 +105,7 @@ def test_script(script, runner_budget_scale):
     try:
         scratch_tmpdir = tempfile.mkdtemp(prefix=RUNNER_SCRATCH_TMPDIR_PREFIX, dir=GATE_SHORT_TMPDIR_BASE)
         validate_gate_broker_socket_path_capacity(scratch_home, scratch_tmpdir)
-        env = _child_env(scratch_home, scratch_tmpdir)
+        env = _child_env(scratch_home, scratch_tmpdir, runner_budget_scale)
         if COVERAGE:
             env["COVERAGE_PROCESS_START"] = RCFILE
             # with the .pth hook → plain python (coverage starts at startup, traces sitecustomize imports);
