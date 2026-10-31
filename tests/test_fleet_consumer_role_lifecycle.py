@@ -32,6 +32,7 @@ TRANSIENT_RETRY_PID = 92008
 MISMATCHED_CREATE_TIME = 2000.5
 FORK_CHILD_CREATE_TIME = 3000.5
 CONCURRENT_REGISTRATION_OBSERVATION_TIMEOUT_S = 1.0
+CONCURRENT_REGISTRATION_COMPLETION_TIMEOUT_S = config.LEDGER_WRITE_TIMEOUT_S
 LEGACY_TABLE_SQL = (
     "CREATE TABLE consumers(pid INTEGER PRIMARY KEY, version TEXT, served_sha TEXT, served_short TEXT, "
     "dirty INTEGER, cmdline TEXT, launchd_label TEXT, registered_ts TEXT, venv_root TEXT, "
@@ -284,14 +285,16 @@ def test_concurrent_declared_daemon_is_not_downgraded_by_ephemeral_registration(
                 args=(fleet.CONSUMER_ROLE_DAEMON,),
             )
             daemon_thread.start()
-            assert daemon_reached_db_write.wait()
+            assert daemon_reached_db_write.wait(CONCURRENT_REGISTRATION_COMPLETION_TIMEOUT_S), "daemon registration never reached database"
             ephemeral_thread = threading.Thread(
                 target=register_declared_consumer_role,
                 args=(fleet.CONSUMER_ROLE_EPHEMERAL,),
             )
             ephemeral_thread.start()
-            ephemeral_thread.join()
-            daemon_thread.join()
+            ephemeral_thread.join(CONCURRENT_REGISTRATION_COMPLETION_TIMEOUT_S)
+            assert not ephemeral_thread.is_alive(), "ephemeral registration did not finish"
+            daemon_thread.join(CONCURRENT_REGISTRATION_COMPLETION_TIMEOUT_S)
+            assert not daemon_thread.is_alive(), "daemon registration did not finish"
 
         assert not thread_failures
         with unpatched_fleet_db() as connection:
@@ -383,15 +386,17 @@ def test_concurrent_ephemeral_insert_is_upgraded_by_declared_daemon():
                 args=(fleet.CONSUMER_ROLE_EPHEMERAL,),
             )
             ephemeral_thread.start()
-            assert ephemeral_reached_insert.wait()
+            assert ephemeral_reached_insert.wait(CONCURRENT_REGISTRATION_COMPLETION_TIMEOUT_S), "ephemeral registration never reached database"
             daemon_thread = threading.Thread(
                 target=register_concurrent_role_for_ephemeral_first_case,
                 args=(fleet.CONSUMER_ROLE_DAEMON,),
             )
             daemon_thread.start()
             allow_ephemeral_insert.set()
-            ephemeral_thread.join()
-            daemon_thread.join()
+            ephemeral_thread.join(CONCURRENT_REGISTRATION_COMPLETION_TIMEOUT_S)
+            assert not ephemeral_thread.is_alive(), "ephemeral registration did not finish"
+            daemon_thread.join(CONCURRENT_REGISTRATION_COMPLETION_TIMEOUT_S)
+            assert not daemon_thread.is_alive(), "daemon registration did not finish"
         assert not thread_failures
         with unpatched_fleet_db() as connection:
             stored_role = connection.execute(

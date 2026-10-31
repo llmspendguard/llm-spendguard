@@ -25,6 +25,7 @@ BOUNDS_TEST_CEILING = 3
 BOUNDS_WRITER_OWNERS = 1
 BOUNDS_FORK_CEILING = BOUNDS_SINGLE_SLOT_CEILING + BOUNDS_WRITER_OWNERS
 BOUNDS_TEST_WORKERS = 4
+BOUNDS_COHORT_WAIT_S = config.LEDGER_WRITE_TIMEOUT_S
 BOUNDS_TEST_SCHEMA = "CREATE TABLE IF NOT EXISTS bounds_probe(value INTEGER)"
 
 
@@ -139,8 +140,12 @@ def run_ledger_bounds_checks(failures):
         start = threading.Barrier(BOUNDS_TEST_WORKERS)
 
         def contend_bounds_worker():
-            start.wait()
-            return open_bounds_worker(bounds_path)
+            try:
+                start.wait(timeout=BOUNDS_COHORT_WAIT_S)
+                return open_bounds_worker(bounds_path)
+            except BaseException:
+                start.abort()
+                raise
 
         with patch.object(config, "ledger_connection_limit", return_value=baseline + BOUNDS_TEST_CEILING + BOUNDS_WRITER_OWNERS):
             config.fresh_ledger_conn(ensure_bounds_probe, bounds_path).close()

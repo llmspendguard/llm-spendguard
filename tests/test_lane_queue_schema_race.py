@@ -20,9 +20,10 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(
 
 import spendguard  # noqa: E402
 spendguard.require = lambda: None
-from spendguard import lane_queue  # noqa: E402
+from spendguard import config, lane_queue  # noqa: E402
 
 N = 24
+QUEUE_SCHEMA_RACE_WAIT_S = config.LEDGER_WRITE_TIMEOUT_S
 ROUNDS = 6                                               # each round starts from a FRESH table so the ALTER race re-fires
 fails = []
 
@@ -48,16 +49,20 @@ for rnd in range(ROUNDS):
 
     def _worker(i, _intent=intent, _ids=ids, _errs=errors, _bar=barrier):
         try:
-            _bar.wait()                                  # all N threads hit schema-ensure + enqueue at the same instant
+            _bar.wait(timeout=QUEUE_SCHEMA_RACE_WAIT_S)                                  # all N threads hit schema-ensure + enqueue at the same instant
             _ids[i] = lane_queue.enqueue(_intent, "task-%d" % i, sla_class="realtime")
-        except Exception as e:                           # enqueue should degrade to [], never raise
+        except BaseException as e:                       # enqueue should degrade to [], never raise
+            _bar.abort()
             _errs.append("%r" % e)
 
     threads = [threading.Thread(target=_worker, args=(i,), name="lqrace-%d-%d" % (rnd, i)) for i in range(N)]
     for t in threads:
         t.start()
     for t in threads:
-        t.join()
+        t.join(timeout=QUEUE_SCHEMA_RACE_WAIT_S)
+        if t.is_alive():
+            barrier.abort()
+            errors.append("worker did not finish within queue operation budget")
 
     enqueued = sum(1 for x in ids if x is not None)
     rows = 0

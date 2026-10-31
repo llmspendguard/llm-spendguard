@@ -15,9 +15,10 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from spendguard.ledger import SpendLedger
-from spendguard import budget
+from spendguard import budget, config
 
 WRITER_TEST_CONCURRENCY = 12
+WRITER_COHORT_WAIT_S = config.LEDGER_WRITE_TIMEOUT_S
 WRITER_TEST_TRANSACTION_HOLD_SECONDS = 0.02
 WRITER_TEST_BUSY_TIMEOUT_MS = 0
 WRITER_TEST_EVENT_COST = "0.01"
@@ -49,10 +50,14 @@ start = threading.Barrier(WRITER_TEST_CONCURRENCY)
 
 
 def post_contention_reproduction_event(index):
-    event = budget.charge_to_event(WRITER_TEST_PROVIDER, WRITER_TEST_MODEL, "realtime", WRITER_TEST_EVENT_COST)
-    event["dedup_key"] = str(index)
-    start.wait()
-    return ledgers[index].record_event(event)
+    try:
+        event = budget.charge_to_event(WRITER_TEST_PROVIDER, WRITER_TEST_MODEL, "realtime", WRITER_TEST_EVENT_COST)
+        event["dedup_key"] = str(index)
+        start.wait(timeout=WRITER_COHORT_WAIT_S)
+        return ledgers[index].record_event(event)
+    except BaseException:
+        start.abort()
+        raise
 
 
 try:
