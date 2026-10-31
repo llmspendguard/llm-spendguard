@@ -1,5 +1,6 @@
 """Fault guards: complete seeded scans, deadline refusal, recovery and concurrency."""
 import concurrent.futures
+import itertools
 import sqlite3
 import sys
 import threading
@@ -33,6 +34,10 @@ DEADLINE_GUARD_PENDING_AMOUNT = "7"
 DEADLINE_GUARD_JOB = "deadline-guard-job"
 DEADLINE_GUARD_EMPTY_JOB = "deadline-guard-empty-job"
 DEADLINE_GUARD_FAILURE_MESSAGE = "injected deadline replacement failure"
+DEADLINE_GUARD_OBSERVER_OWNER_COUNT = 2
+DEADLINE_GUARD_BEFORE_OBSERVER_OPEN = "before-open"
+DEADLINE_GUARD_ENTERED_OBSERVER_OWNER = "entered-owner"
+DEADLINE_GUARD_OBSERVER_GENERATION_READ = "generation-read"
 DEADLINE_GUARD_PENDING_ID = "deadline-guard-pending-write"
 DEADLINE_GUARD_AUDIT_SQL = "SELECT * FROM spend_audit ORDER BY id"
 DEADLINE_GUARD_POSTED_STATUS = "posted"
@@ -178,6 +183,65 @@ def test_ledger_query_deadline_budget_refuses():
                 raise AssertionError("deadline must raise, never manufacture an infinite cap")
     finally:
         close_deadline_guard_thread_ledger()
+
+
+def test_ledger_query_deadline_observer_setup_degrades_to_heap():
+    seed_deadline_guard_ledger()
+    close_deadline_guard_thread_ledger()
+    baseline = config.ledger_connection_count()
+    original_read_owner = config.managed_ledger_read_connection
+    observer_failures = [TimeoutError(DEADLINE_GUARD_FAILURE_MESSAGE),
+                         ledger_read.LedgerReadTimeout(DEADLINE_GUARD_BUDGET_S)]
+    for sqlite_code in (sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED,
+                        sqlite3.SQLITE_INTERRUPT, sqlite3.SQLITE_CORRUPT, sqlite3.SQLITE_ERROR):
+        sqlite_failure = sqlite3.OperationalError(DEADLINE_GUARD_FAILURE_MESSAGE)
+        sqlite_failure.sqlite_errorcode = sqlite_code
+        observer_failures.append(sqlite_failure)
+    for observer_failure, exhaust_budget, failure_stage in itertools.product(
+            observer_failures, (False, True), (DEADLINE_GUARD_BEFORE_OBSERVER_OPEN,
+                DEADLINE_GUARD_ENTERED_OBSERVER_OWNER, DEADLINE_GUARD_OBSERVER_GENERATION_READ)):
+        opened_owners = []
+        fatal_observer_failure = getattr(observer_failure, "sqlite_errorcode", None) in (
+            sqlite3.SQLITE_CORRUPT, sqlite3.SQLITE_ERROR)
+
+        @contextmanager
+        def inject_deadline_guard_observer_open(*args, owners=opened_owners,
+                                               exhaust=exhaust_budget, stage=failure_stage,
+                                               failure=observer_failure, **kwargs):
+            owners.append(args)
+            is_observer = len(owners) == DEADLINE_GUARD_OBSERVER_OWNER_COUNT
+            if is_observer and exhaust:
+                request = ledger_read._LEDGER_ACTIVE_REQUEST_SCOPE.get()
+                request.deadline_at = time.monotonic()
+            if is_observer and stage == DEADLINE_GUARD_BEFORE_OBSERVER_OPEN:
+                raise failure
+            with original_read_owner(*args, **kwargs) as connection:
+                if is_observer:
+                    if stage == DEADLINE_GUARD_OBSERVER_GENERATION_READ:
+                        proxy = Mock(wraps=connection)
+                        proxy.execute.side_effect = failure
+                        yield proxy
+                        return
+                    raise failure
+                yield connection
+
+        try:
+            with patch.object(config, "managed_ledger_read_connection",
+                              side_effect=inject_deadline_guard_observer_open):
+                try:
+                    result = budget.spent_since(DEADLINE_GUARD_DAY)
+                except ledger_read.LedgerQueryDeadline:
+                    assert exhaust_budget
+                except ledger_read.LedgerReadError:
+                    assert fatal_observer_failure
+                else:
+                    assert not exhaust_budget and not fatal_observer_failure
+                    assert result == DEADLINE_GUARD_ROWS
+            assert len(opened_owners) == DEADLINE_GUARD_OBSERVER_OWNER_COUNT
+            assert getattr(budget._LEDGER_TL, "projection_observer", None) is None
+            assert config.ledger_connection_count() == baseline
+        finally:
+            close_deadline_guard_thread_ledger()
 
 
 
