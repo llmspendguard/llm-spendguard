@@ -345,7 +345,10 @@ def test_pool_auth_metadata_parses_protocol_and_actual_rpc_failure_paths():
             waiter["msg"] = response
             waiter["event"].set()
 
-        with patch.object(worker, "ensure_running", return_value=object()), patch.object(
+        with patch.object(worker, "ensure_running", return_value=SimpleNamespace(pid=os.getpid())), patch(
+                "spendguard.delegate_jobs.register_codex_session_lease"), patch(
+                "spendguard.delegate_jobs.settle_codex_session_lease"), patch(
+                "spendguard.delegate_jobs.record_delegate_codex_thread"), patch.object(
                 worker, "_write_rpc", side_effect=pool_rpc_reply), patch.object(
                 worker, "_schedule_idle_shutdown"):
             result = worker.run_warm(POOL_TEST_PROMPT, timeout=POOL_EVENT_TIMEOUT_S)

@@ -720,6 +720,30 @@ def consumer_audit_settings(checkout_path=None):
     }
 
 
+CODEX_SESSION_REAP_DEFAULTS = {
+    "enabled": True, "success_grace_s": 300, "failure_grace_s": 600,
+    "max_per_pass": 200, "delete_timeout_s": 30,
+}
+
+
+def codex_session_reap_settings():
+    """Resolve and validate completion-driven retention through the config SSOT."""
+    settings = {key: _cfg_get("codex_session_reap", key, value)
+                for key, value in CODEX_SESSION_REAP_DEFAULTS.items()}
+    if not isinstance(settings["enabled"], bool):
+        raise ValueError("codex_session_reap.enabled must be boolean")
+    for key in ("success_grace_s", "failure_grace_s", "delete_timeout_s"):
+        settings[key] = float(settings[key])
+        if not math.isfinite(settings[key]) or settings[key] < 0:
+            raise ValueError(f"codex_session_reap.{key} must be finite and nonnegative")
+    cap = settings["max_per_pass"]
+    if isinstance(cap, bool) or not isinstance(cap, int) or cap <= 0:
+        raise ValueError("codex_session_reap.max_per_pass must be a positive integer")
+    if settings["delete_timeout_s"] <= 0:
+        raise ValueError("codex_session_reap.delete_timeout_s must be positive")
+    return settings
+
+
 def codex_daemon_pool_settings():
     """Pool settings, with explicit environment overrides taking precedence over advisor config."""
     size = int(os.getenv("SPENDGUARD_CODEX_DAEMON_POOL_SIZE",

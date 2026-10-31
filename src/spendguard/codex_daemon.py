@@ -323,6 +323,8 @@ class _CodexDaemon(_WarmStdioJsonRpcDaemon):
                 bare_model = model.split(":", 1)[-1] if model else None
                 approval_policy = "never"
                 if thread:
+                    from .codex_exec import hold_execution_codex_session as register_codex_session_lease
+                    register_codex_session_lease(thread, p.pid)
                     thread_method = "thread/resume"
                     thread_params = {"threadId": thread}
                 else:
@@ -363,6 +365,11 @@ class _CodexDaemon(_WarmStdioJsonRpcDaemon):
                     return _codex_pool_error_result(msg["error"], thread)
                 new_thread = ((msg.get("result") or {}).get("thread") or {}).get("id") or thread
 
+                from .codex_exec import (hold_execution_codex_session as register_codex_session_lease,
+                                         capture_execution_codex_thread as record_delegate_codex_thread)
+                register_codex_session_lease(new_thread, p.pid)
+                record_delegate_codex_thread(new_thread, evidence_execution_id)
+
                 from . import codex_exec
                 turn_params = {"threadId": new_thread, "input": [{"type": "text", "text": prompt}],
                                "cwd": task_cwd, "sandboxPolicy": {
@@ -400,6 +407,8 @@ class _CodexDaemon(_WarmStdioJsonRpcDaemon):
                                 "error": "codex app-server turn failed after restart"}
                     continue
                 if turn_msg is not None and turn_msg.get("error"):
+                    from .codex_exec import settle_execution_codex_session as settle_codex_session_lease
+                    settle_codex_session_lease(new_thread, p.pid)
                     return _codex_pool_error_result(turn_msg["error"], new_thread)
                 if turn_msg is None or completed_turn is None:
                     if recycle_on_timeout:                        # the turn wedged (pipe alive, no completion) → recycle
@@ -407,6 +416,8 @@ class _CodexDaemon(_WarmStdioJsonRpcDaemon):
                     return {"text": None, "thread": new_thread,
                             "error": f"codex warm call timeout ({eff_timeout:.0f}s)", "timed_out": True}
                 status = completed_turn.get("status")
+                from .codex_exec import settle_execution_codex_session as settle_codex_session_lease
+                settle_codex_session_lease(new_thread, p.pid)
                 if status != "completed":
                     error = completed_turn.get("error") or f"codex turn {status or 'failed'}"
                     return _codex_pool_error_result(error, new_thread, tool_error=True)
@@ -502,6 +513,11 @@ class _CodexDaemonPool:
             # Continuously reclaim orphaned codex app-servers (a host that died WHILE this pool runs leaks its
             # servers too), so the leak can never accumulate between restarts — the active reaper the user asked for.
             _reap_codex_orphans()
+            from . import codex_exec
+            from .warm_stdio_daemon import _warm_owner_identity_state, WARM_OWNER_IDENTITY_DEAD
+            codex_exec.reap_execution_codex_sessions(
+                executable=codex_exec._bin(), owner_identity_state=_warm_owner_identity_state,
+                dead_identity=WARM_OWNER_IDENTITY_DEAD)
             # Idle health work leases through the same bucket. Agentic leases have an independent
             # deadline in pool_run_warm, so even an invocation that never returns is reclaimed.
             from .dispatch import DispatchTimeout

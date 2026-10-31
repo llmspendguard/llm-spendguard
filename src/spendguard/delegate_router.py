@@ -570,6 +570,7 @@ def _run_delegate_job_to_completion(job_id, plan, prompt, model, timeout, cwd, d
                                     result, classification, estimate, intent, warm=False):
     """Run and durably settle a detached delegate using only executor-owned state."""
     from . import delegate_jobs, execution_journal
+    execution = None
     try:
         execution_id = delegate_jobs.read_delegate_job(job_id)["execution_id"]
         with execution_journal.durable_execution_scope(execution_id):
@@ -589,6 +590,8 @@ def _run_delegate_job_to_completion(job_id, plan, prompt, model, timeout, cwd, d
     except Exception as exc:
         reason = "delegate-executor-timeout" if isinstance(exc, TimeoutError) else "delegate-executor-exception"
         failed_result = {**result, "status": "error", "reason": reason, "why": str(exc)}
+        if isinstance(execution, dict):
+            failed_result["execution"] = execution
         delegate_jobs.finish_delegate_job(job_id, state="failed", result_payload=failed_result,
                                           terminal_reason=reason, error=str(exc))
 

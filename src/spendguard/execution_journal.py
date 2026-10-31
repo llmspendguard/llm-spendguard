@@ -17,6 +17,45 @@ import tempfile
 import time
 import uuid
 
+
+def capture_execution_codex_thread(thread_id, execution_id):
+    """Attach transport session identity to its durable delegate execution."""
+    from .delegate_jobs import record_delegate_codex_thread
+    record_delegate_codex_thread(thread_id, execution_id)
+
+
+def hold_execution_codex_session(thread_id, worker_pid):
+    """Serialize transport session retention with terminal journal reclamation."""
+    from .delegate_jobs import register_codex_session_lease
+    register_codex_session_lease(thread_id, worker_pid)
+
+
+def settle_execution_codex_session(thread_id, worker_pid, *, release=False):
+    """Persist transport completion while retaining an idle warm session."""
+    from .delegate_jobs import settle_codex_session_lease
+    settle_codex_session_lease(thread_id, worker_pid, release=release)
+
+
+def reap_execution_codex_sessions(**dependencies):
+    """Run journal reclamation using transport-owned process dependencies."""
+    from .delegate_jobs import reap_terminal_codex_sessions
+    return reap_terminal_codex_sessions(**dependencies)
+
+
+def parse_execution_codex_thread(stdout):
+    """Read the documented thread.started identity from complete transport evidence."""
+    if isinstance(stdout, bytes):
+        stdout = stdout.decode("utf-8")
+    thread_id = None
+    for line in (stdout or "").splitlines():
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(event, dict) and event.get("type") == "thread.started":
+            thread_id = event.get("thread_id") or thread_id
+    return thread_id
+
 EXECUTION_STORE_DIRECTORY = "delegate-executions"
 EXECUTION_WATCH_INTERVAL_DEFAULT_S = 0.1
 EXECUTION_STATE_FILENAME = "state.json"

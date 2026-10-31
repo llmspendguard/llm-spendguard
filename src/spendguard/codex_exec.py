@@ -34,7 +34,13 @@ import time
 import logging
 import threading
 import contextlib
-from .execution_journal import _protect_durable_execution_io
+from .execution_journal import (
+    _protect_durable_execution_io,
+    capture_execution_codex_thread as capture_execution_codex_thread,
+    hold_execution_codex_session as hold_execution_codex_session,
+    reap_execution_codex_sessions as reap_execution_codex_sessions,
+    settle_execution_codex_session as settle_execution_codex_session,
+)
 
 CODEX_MCP_SCAN_INTERVAL_S = 0.05
 CODEX_MCP_EXIT_WAIT_S = 1.0
@@ -198,12 +204,14 @@ def _run_cold_codex_with_reaper(cmd, timeout, env, cwd):
                 stdout = paths["stdout"].read_text(encoding="utf-8")
                 stderr = paths["stderr"].read_text(encoding="utf-8")
             return subprocess.CompletedProcess(cmd, child.returncode, stdout, stderr)
-        except subprocess.TimeoutExpired:
+        except subprocess.TimeoutExpired as error:
             child.kill()
             # Don't drain inherited pipes before cleanup: an orphan may hold stderr open.
             child.wait()
             if dispatch_id:
                 execution_journal.persist_durable_execution_payload(dispatch_id, exit_code=child.returncode)
+                stdout_target.flush()
+                error.output = paths["stdout"].read_text(encoding="utf-8")
             raise
         finally:
             try:
@@ -367,6 +375,12 @@ def auth_status(timeout=20):
         return {"authed": False if not _ever_present else None}
     except Exception:
         return {"authed": None}
+
+
+def _codex_thread_from_events(stdout):
+    """Extract the documented thread.started event without interpreting prose."""
+    from .execution_journal import parse_execution_codex_thread
+    return parse_execution_codex_thread(stdout)
 
 
 def _usage_from_events(stdout):
@@ -651,6 +665,10 @@ def run_cold_prompt(prompt, model=None, thread=None, reasoning=None, sandbox="re
     environment = config.lane_exec_env(executable)
     resolved_timeout = TIMEOUT_S if timeout is None else timeout
     neutral_cwd = None
+    leased_thread = thread
+    if leased_thread:
+        from .execution_journal import hold_execution_codex_session as register_codex_session_lease
+        register_codex_session_lease(leased_thread, os.getpid())
     try:
         if cwd is None:
             neutral_cwd = tempfile.mkdtemp(prefix=CODEX_EXEC_WORK_DIRECTORY_PREFIX)
@@ -674,21 +692,26 @@ def run_cold_prompt(prompt, model=None, thread=None, reasoning=None, sandbox="re
             try:
                 completed = _run_cold_codex_with_reaper(
                     command, resolved_timeout, environment, resolved_cwd)
-            except subprocess.TimeoutExpired:
-                return {"error": f"cold codex execution timed out after {resolved_timeout} seconds"}
+            except subprocess.TimeoutExpired as error:
+                return {"error": f"cold codex execution timed out after {resolved_timeout} seconds",
+                        "thread": _codex_thread_from_events(error.output) or thread}
+            thread = _codex_thread_from_events(completed.stdout) or thread
             if completed.returncode != 0:
                 return {"error": completed.stderr.strip() or
-                        f"cold codex execution exited {completed.returncode}"}
+                        f"cold codex execution exited {completed.returncode}", "thread": thread}
             try:
                 with open(output_path, encoding="utf-8") as output_stream:
                     answer = output_stream.read()
             except OSError as error:
-                return {"error": f"cold codex execution produced no final-message file: {error}"}
+                return {"error": f"cold codex execution produced no final-message file: {error}", "thread": thread}
             if not answer:
-                return {"error": "cold codex execution produced an empty final message"}
+                return {"error": "cold codex execution produced an empty final message", "thread": thread}
             return {"text": answer, "thread": thread, "error": None,
                     "latency": round(time.time() - started_at, 2), "effort": effort}
     finally:
+        if leased_thread:
+            from .execution_journal import settle_execution_codex_session as settle_codex_session_lease
+            settle_codex_session_lease(leased_thread, os.getpid(), release=True)
         if neutral_cwd:
             shutil.rmtree(neutral_cwd, ignore_errors=True)
 
@@ -719,7 +742,8 @@ def _run_prompt_in_cwd(prompt, system=None, model=None, timeout=TIMEOUT_S, reaso
         if _r.get("text") and not _r.get("error"):
             if sandbox == "workspace-write" and not (
                     _r.get("thread") and _r.get("turn") and _r.get("process_pid")):
-                return {"error": "codex execution start unconfirmed: broker supplied no thread/turn/process evidence"}
+                return {"error": "codex execution start unconfirmed: broker supplied no thread/turn/process evidence",
+                        "thread": _r.get("thread")}
             _txt = _r["text"]
             return {"text": _txt, "in_tok": len(_full) // 4, "out_tok": len(_txt) // 4,   # est: the tool returns no usage
                     "execution_started": bool(_r.get("thread") and _r.get("turn") and _r.get("process_pid")),
@@ -727,7 +751,7 @@ def _run_prompt_in_cwd(prompt, system=None, model=None, timeout=TIMEOUT_S, reaso
                     "latency": round(time.time() - _t0, 2), "effort": _eff, "error": None}
         _derr = _r.get("error") or "codex warm admission returned no final message"
         structured_status = _codex_structured_http_status(_r.get("provider_error"))
-        return {"error": _derr, "status_code": structured_status if structured_status is not None
+        return {"error": _derr, "thread": _r.get("thread"), "status_code": structured_status if structured_status is not None
                 else _codex_error_status(_derr)}
     return {"error": "codex broker admission disabled; uncounted cold execution refused"}
 
@@ -774,24 +798,26 @@ def _run_agentic_codex_exec(prompt, system=None, model=None, timeout=TIMEOUT_S, 
         _validate_codex_exec_approval_boundary(command)
         try:
             completed = _run_cold_codex_with_reaper(command + [complete_prompt], timeout, environment, cwd)
-        except subprocess.TimeoutExpired:
+        except subprocess.TimeoutExpired as error:
             return {"error": f"codex delegated execution timed out after {timeout} seconds",
-                    "execution_started": True}
+                    "execution_started": True, "thread": _codex_thread_from_events(error.output)}
+        thread_id = _codex_thread_from_events(completed.stdout)
         if completed.returncode != 0:
             return {"error": completed.stderr.strip() or f"codex delegated execution exited {completed.returncode}",
-                    "execution_started": True}
+                    "execution_started": True, "thread": thread_id}
         try:
             with open(output_path, encoding="utf-8") as output_stream:
                 answer = output_stream.read()
                 os.fsync(output_stream.fileno())
         except OSError as error:
             return {"error": f"codex delegated execution produced no final-message file: {error}",
-                    "execution_started": True}
+                    "execution_started": True, "thread": thread_id}
         if not answer:
-            return {"error": "codex delegated execution produced an empty final message", "execution_started": True}
+            return {"error": "codex delegated execution produced an empty final message", "execution_started": True,
+                    "thread": thread_id}
         input_tokens, output_tokens = _usage_from_events(completed.stdout)
         return {"text": answer, "in_tok": input_tokens, "out_tok": output_tokens,
-                "execution_started": True, "transport": "codex-exec-mcp",
+                "execution_started": True, "thread": thread_id, "transport": "codex-exec-mcp",
                 "approval_mode": CODEX_AGENTIC_APPROVAL_FLAG,
                 "required_mcp_servers": list(CODEX_DELEGATE_REQUIRED_MCP_SERVERS),
                 "latency": round(time.time() - started_at, 2), "effort": effort, "error": None}
