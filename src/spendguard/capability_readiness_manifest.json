@@ -148,6 +148,12 @@
       }
     },
     {
+      "id": "budget-projection-snapshot-seam",
+      "description": "Grounded monetary read roots use the snapshot seam; projections require finite contracts; mutation controls reject raw writer reads.",
+      "gate": "spendguard.capability_readiness_gates:run_capability_script_readiness_gate",
+      "arguments": {"scripts": ["tests/test_budget_projection_seam_guard.py"]}
+    },
+    {
       "id": "openssf-scorecard",
       "description": "OpenSSF Scorecard mapping.",
       "standard": "https://scorecard.dev/",

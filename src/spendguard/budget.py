@@ -7,13 +7,132 @@ real-time volume; very high-volume loops should stay on the in-process cap.
 """
 import contextlib, datetime, hashlib, pathlib, tempfile, threading
 import sys
-import sqlite3
 import time
 import functools
 import inspect
+import math
+from numbers import Number
+from decimal import Decimal
 from . import config
 from .ledger_fork_locks import new_fork_reset_ledger_state
 from .ledger_writer import serialize_ledger_function
+
+
+def require_finite_budget_value(value):
+    """Reject incomplete monetary arithmetic instead of manufacturing a cap."""
+    finite = value.is_finite() if isinstance(value, Decimal) else (
+        math.isfinite(value) if isinstance(value, Number) else True)
+    if not finite:
+        raise ValueError("Budget projection requires finite monetary values")
+    if isinstance(value, (tuple, list)):
+        for component in value:
+            require_finite_budget_value(component)
+    return value
+
+
+def finite_budget_projection(project):
+    @functools.wraps(project)
+    def enforce_finite_budget_projection(*args, **kwargs):
+        for value in (*args, *kwargs.values()):
+            require_finite_budget_value(value)
+        return require_finite_budget_value(project(*args, **kwargs))
+    return enforce_finite_budget_projection
+
+
+def _budget_snapshot_generation_observer():
+    """Keep SQLite's connection-relative commit counter on a read-only owner."""
+    from .ledger_read import _consumer_ledger_read_target, effective_ledger_admission_deadline
+    path = pathlib.Path(config.db_path()).resolve()
+    read_target = _consumer_ledger_read_target(path)
+    # Empty-install compatibility owns a transient database until the real ledger
+    # materializes. Its commit counter cannot observe that different database.
+    observer_identity = (path, read_target)
+    observer = getattr(_LEDGER_TL, "projection_observer", None)
+    if observer is not None and observer[0] != observer_identity:
+        observer[1].__exit__(None, None, None)
+        observer = None
+    if observer is None:
+        owner = config.managed_ledger_read_connection(read_target, uri=True,
+            deadline_at=effective_ledger_admission_deadline(
+                time.monotonic() + config.LEDGER_QUERY_DEADLINE_S))
+        connection = owner.__enter__()
+        observer = (observer_identity, owner, connection)
+        _LEDGER_TL.projection_observer = observer
+    return observer[2], observer[2].execute("PRAGMA data_version").fetchone()[0]
+
+
+@contextlib.contextmanager
+def budget_projection_reader(*, deadline_s=None):
+    """Use committed WAL snapshots, except reserved bulk scopes read pending."""
+    from .ledger import SpendLedger
+    from .ledger_writer import current_ledger_writer_connection, ledger_connection_commit_deferred
+    from .ledger_read import (_ledger_read_connection, consumer_empty_spend_compatibility,
+                              SPEND_EVENT_READ_COLUMNS, DEFAULT_LEDGER_READ_TIME_BUDGET_S,
+                              LedgerReadTimeout, LedgerQueryDeadline)
+    time_budget = DEFAULT_LEDGER_READ_TIME_BUDGET_S if deadline_s is None else deadline_s
+    if not math.isfinite(time_budget) or time_budget <= 0:
+        raise LedgerQueryDeadline(time_budget)
+    existing = getattr(_LEDGER_TL, "read_ledger", None)
+    if existing is not None:
+        yield existing
+        return
+    owner = current_ledger_writer_connection(config.db_path())
+    cached = getattr(_LEDGER_TL, "led", None)
+    if (owner is None and cached is not None
+            and cached.db_path == config.db_path()):
+        owner = cached._conn
+    if owner is not None and ledger_connection_commit_deferred(owner):
+        pending_reader = object.__new__(SpendLedger)
+        pending_reader.db_path = config.db_path()
+        pending_reader._conn = owner
+        pending_reader._cols = set(SPEND_EVENT_READ_COLUMNS)
+        pending_reader._explicit_owned_connection = True
+        pending_reader._total_memo = None
+        pending_reader._budget_projection_connection_owned = True
+        yield pending_reader
+        return
+    try:
+        with consumer_empty_spend_compatibility(), _ledger_read_connection(
+                time_budget=time_budget) as connection:
+            snapshot_reader = object.__new__(SpendLedger)
+            snapshot_reader.db_path = config.db_path()
+            snapshot_reader._conn = connection
+            snapshot_reader._cols = set(SPEND_EVENT_READ_COLUMNS)
+            snapshot_reader._explicit_owned_connection = True
+            snapshot_reader._total_memo = None
+            snapshot_reader._budget_projection_connection_owned = True
+            snapshot_reader._budget_projection_snapshot = True
+            snapshot_reader._budget_projection_generation_observer = _budget_snapshot_generation_observer
+            # Coverage and money observe one complete committed version.
+            connection.execute("BEGIN")
+            snapshot_reader._total_memo = getattr(cached, "_total_memo", None)
+            yield snapshot_reader
+            if cached is not None:
+                cached._total_memo = snapshot_reader._total_memo
+    except LedgerReadTimeout as failure:
+        raise LedgerQueryDeadline(time_budget) from failure
+
+
+def budget_projection_snapshot(read_projection):
+    projection_signature = inspect.signature(read_projection)
+
+    @functools.wraps(read_projection)
+    def read_budget_projection_snapshot(*args, **kwargs):
+        arguments = projection_signature.bind(*args, **kwargs)
+        arguments.apply_defaults()
+        with budget_projection_reader(deadline_s=arguments.arguments.get("deadline_s")) as reader:
+            previous = getattr(_LEDGER_TL, "read_ledger", None)
+            _LEDGER_TL.read_ledger = reader
+            try:
+                if (getattr(reader, "_budget_projection_snapshot", False)
+                        and "deadline_s" in projection_signature.parameters):
+                    arguments.arguments["deadline_s"] = None
+                    args, kwargs = arguments.args, arguments.kwargs
+                return require_finite_budget_value(read_projection(*args, **kwargs))
+            finally:
+                _LEDGER_TL.read_ledger = previous
+    return read_budget_projection_snapshot
+
 from .ledger_read import bind_ledger_query_deadline
 
 _conn = None
@@ -130,6 +249,10 @@ def _reset_ledger():
     schema change. Replaces the old `budget._LEDGER = None`, which a thread-local cache cannot honor."""
     _LEDGER_TL.led = None
     _LEDGER_TL.read_ledger = None
+    observer = getattr(_LEDGER_TL, "projection_observer", None)
+    if observer is not None:
+        observer[1].__exit__(None, None, None)
+        _LEDGER_TL.projection_observer = None
 
 
 def _reset_budget_after_fork():
@@ -781,12 +904,16 @@ def _require_budget_settlement_within_deadline(started, deadline_s, since=None, 
     if remaining <= 0:
         raise LedgerQueryDeadline(deadline_s)
     try:
-        require_complete_metered_settlements(since, project, time_budget=remaining)
+        projection_reader = getattr(_LEDGER_TL, "read_ledger", None)
+        require_complete_metered_settlements(
+            since, project, time_budget=remaining,
+            connection=projection_reader._conn if projection_reader is not None else None)
     except LedgerReadTimeout as coverage_timeout:
         raise LedgerQueryDeadline(deadline_s) from coverage_timeout
 
 
 @bind_ledger_query_deadline
+@budget_projection_snapshot
 def spent_since(day, project=None, conv=None, *, deadline_s=config.LEDGER_QUERY_DEADLINE_S, read_only=False):
     """Gate-recorded workload $ since `day` — the LLM cap's number, now read from spend_events via the single
     `_COUNTABLE` filter (batch+realtime, excluding meta / reconciliation / voided-impossible / reconstructed).
@@ -795,8 +922,9 @@ def spent_since(day, project=None, conv=None, *, deadline_s=config.LEDGER_QUERY_
     Optionally SCOPE to a `project` (repo) and/or `conv` (conversation) — the receipt uses this to show what is
     relevant to the current repo/conversation, not a global sum.
     A cold consumer automatically uses a bounded read-only snapshot, without
-    initializing or migrating the writer. An initialized owner retains its
-    existing facade; read_only=True always forces the snapshot path.
+    initializing or migrating the writer. Every projection uses the same
+    committed snapshot seam; reserved deferred bulk scopes retain pending reads.
+    ``read_only`` remains accepted for compatibility with snapshot consumers.
 
     Repointed onto spend_events (the money-of-record). This is LLM-only by construction: GPU/remote spend has
     its OWN cap (resources.compute_exceeded) and is no longer lumped into the LLM total as the old
@@ -807,39 +935,6 @@ def spent_since(day, project=None, conv=None, *, deadline_s=config.LEDGER_QUERY_
         where["project_primary"] = normalize_ledger_project_id(project)
     if conv is not None:
         where["conv_id"] = str(conv)
-    if conv is not None or read_only or not _budget_writer_is_initialized():
-        # Consumers must never initialize/migrate the write ledger.
-        # The bounded reader owns setup, lock waiting, stepping and disposal;
-        # spent_dec remains the single definition of the countable aggregate.
-        from .ledger import SpendLedger
-        from .ledger_read import (_ledger_read_connection, LedgerReadTimeout,
-                                  LedgerQueryDeadline, DEFAULT_LEDGER_READ_TIME_BUDGET_S,
-                                  SPEND_EVENT_READ_COLUMNS, consumer_empty_spend_compatibility)
-        conversation_budget = (deadline_s if deadline_s is not None
-                               else DEFAULT_LEDGER_READ_TIME_BUDGET_S)
-        import math
-        if not math.isfinite(conversation_budget) or conversation_budget <= 0:
-            raise LedgerQueryDeadline(conversation_budget)
-        conversation_ledger = getattr(_LEDGER_TL, "led", None)
-        if (conversation_ledger is not None and conversation_ledger._conn is not None
-                and conversation_ledger._conn.in_transaction):
-            raise LedgerQueryDeadline(conversation_budget)
-        try:
-            with consumer_empty_spend_compatibility(), \
-                    _ledger_read_connection(time_budget=conversation_budget) as conversation_connection:
-                # Coverage and aggregate must observe one snapshot, even when a
-                # separate WAL writer commits an incomplete settlement mid-read.
-                # The bounded reader rolls back on exit, including failures.
-                conversation_connection.execute("BEGIN")
-                require_complete_metered_settlements(since=day, project=project,
-                                                     connection=conversation_connection)
-                conversation_reader = object.__new__(SpendLedger)
-                conversation_reader._conn = conversation_connection
-                conversation_reader._cols = set(SPEND_EVENT_READ_COLUMNS)
-                return float(conversation_reader.spent_dec(
-                    since=day, where=where, deadline_s=None))
-        except LedgerReadTimeout as conversation_timeout:
-            raise LedgerQueryDeadline(conversation_budget) from conversation_timeout
     spend_total = float(_ledger().spent_dec(since=day, where=where or None, deadline_s=deadline_s))
     _require_budget_settlement_within_deadline(spend_started, deadline_s, day, project)
     return spend_total
@@ -871,7 +966,7 @@ def input_cache_split(since=None, project=None, conv=None):
 
 
 @bind_ledger_query_deadline
-@_consumer_aggregate_snapshot
+@budget_projection_snapshot
 def spent_by_job(job, since=None, *, deadline_s=config.LEDGER_QUERY_DEADLINE_S):
     """Gate-recorded billed LLM $ for ONE job/run tag — the rows whose `chain` == `spendguard.context(chain=<job>)`.
     This is the concurrency-SAFE "my spend": the chain is per-run, so a job's total never sweeps in a CONCURRENT run
@@ -887,7 +982,7 @@ def spent_by_job(job, since=None, *, deadline_s=config.LEDGER_QUERY_DEADLINE_S):
 
 
 @bind_ledger_query_deadline
-@_consumer_aggregate_snapshot
+@budget_projection_snapshot
 def spent_all_time(*, deadline_s=config.LEDGER_QUERY_DEADLINE_S):
     """Running total of ALL gate-recorded countable LLM billed-$ to date — the flow-receipt BASELINE, read at a
     flow's enter and its exit so the DELTA is what that flow spent (calls.context / receipt.emit_flow). Memoized
@@ -1297,16 +1392,22 @@ def record_external_cost(provider, service, cost, conv_id=None, intent=None, act
                         project=project or "", source="external")
 
 
+@budget_projection_snapshot
 def external_spent_since(day):
     """Real EXTERNAL (MCP/tool + external API) $ recorded since `day`, from the ledger's external axis — its OWN
     number, never mixed into the LLM cap (spent_since reads only batch+realtime)."""
-    return round(sum(by_day(kind="external", since=day).values()), 6)
+    projection_ledger = _ledger()
+    return round(float(projection_ledger._bounded_category_total(
+        (projection_ledger.category_col("external"),),
+        projection_ledger._LIVE_FILTER + " AND " + projection_ledger._NOT_UNPRICED,
+        since=day, where={"is_meta": 0})), 6)
 
 
 def external_spent_today():
     return external_spent_since(_utc().strftime("%Y-%m-%d"))
 
 
+@finite_budget_projection
 def external_exceeded(pending=0.0):
     """(‑, cap, projected) if today's external spend + `pending` would breach the external cap, else None. ONE read
     of the spent total so the value compared and the value reported can't diverge (same discipline as meta_exceeded)."""
@@ -1314,10 +1415,11 @@ def external_exceeded(pending=0.0):
     if cap is None:
         return None                                     # no external cap set → gating is a no-op (opt-in)
     spent = external_spent_today() + float(pending or 0)
+    require_finite_budget_value((cap, spent))
     return ("external", cap, spent) if spent > cap else None
 
 
-@_consumer_aggregate_snapshot
+@budget_projection_snapshot
 def meta_spent_since(day):
     """spendguard's OWN (meta) spend since `day` — the is_meta rows, on their own cap line. Read from
     spend_events via meta_dec (excludes voided/reversed; a meta row is never quarantine/unpriced)."""
@@ -1328,12 +1430,14 @@ def meta_spent_today():
     return meta_spent_since(_utc().strftime("%Y-%m-%d"))
 
 
+@finite_budget_projection
 def meta_exceeded(pending=0.0):
     cap = config.meta_cap()
     # ONE READ. Called twice, the value compared against the cap and the value REPORTED to the user were
     # two different measurements with a concurrent write possible between them — so the message could name
     # a total that does not breach the cap it says was breached, which reads as a bug in the cap itself.
     spent = meta_spent_today() + pending
+    require_finite_budget_value((cap, spent))
     if cap is not None and spent > cap:
         return ("meta", cap, spent)
     return None
@@ -1472,6 +1576,7 @@ def spent_today():  return spent_since(_utc().strftime("%Y-%m-%d"))
 def spent_month():  return spent_since(_utc().strftime("%Y-%m-01"))
 
 
+@finite_budget_projection
 def exceeded(pending=0.0, kind="llm", *, deadline_s=config.LEDGER_QUERY_DEADLINE_S):
     """(scope, cap, projected) if a cap would be exceeded by `pending` more $ on a call of resource class
     `kind` (llm|compute), else None. Checks the class SUB-CAP then the TOTAL ceiling, daily then monthly.
@@ -1479,20 +1584,12 @@ def exceeded(pending=0.0, kind="llm", *, deadline_s=config.LEDGER_QUERY_DEADLINE
     (vast.ai launches don't hit the gate). meta is separate (meta_exceeded). NOTE: this local ledger holds LLM
     spend, so the total ceiling here is evaluated against LLM spend — the true LLM+compute total is composed on
     the dashboard/report; the compute portion is enforced/alerted via resources.compute_exceeded()."""
-    from .ledger_read import LedgerQueryDeadline
-    try:
-        if deadline_s is None:
-            sd, sm = spent_today(), spent_month()
-        else:
-            expires = time.monotonic() + deadline_s
-            sd = spent_since(_utc().strftime("%Y-%m-%d"), deadline_s=expires - time.monotonic())
-            sm = spent_since(_utc().strftime("%Y-%m-01"), deadline_s=expires - time.monotonic())
-    except LedgerQueryDeadline:
-        return ("ledger-query-deadline", float("inf"), float("inf"))
-    except (OSError, sqlite3.Error) as error:
-        import logging
-        logging.getLogger(__name__).error("Budget enforcement refused: ledger read unavailable: %s", error)
-        return ("ledger-read-unavailable", float("inf"), float("inf"))
+    if deadline_s is None:
+        sd, sm = spent_today(), spent_month()
+    else:
+        expires = time.monotonic() + deadline_s
+        sd = spent_since(_utc().strftime("%Y-%m-%d"), deadline_s=expires - time.monotonic())
+        sm = spent_since(_utc().strftime("%Y-%m-01"), deadline_s=expires - time.monotonic())
     checks = []
     if kind in ("llm", "compute"):
         checks.append((f"{kind}-daily", config.class_cap(kind, "daily"), sd))
@@ -1505,6 +1602,7 @@ def exceeded(pending=0.0, kind="llm", *, deadline_s=config.LEDGER_QUERY_DEADLINE
     checks.append(("total-daily", config.daily_cap(), sd))
     checks.append(("total-monthly", config.monthly_cap(), sm))
     for scope, capv, sp in checks:
+        require_finite_budget_value((capv, sp, sp + pending))
         if capv is not None and sp + pending > capv:
             return (scope, capv, sp + pending)
     return None

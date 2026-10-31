@@ -22,7 +22,7 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
 
 import spendguard
 from _script_checks import record_script_check
-from spendguard import budget
+from spendguard import budget, ledger_read
 from spendguard.ledger import SpendLedger
 from spendguard.ledger_read import LedgerQueryDeadline
 
@@ -89,9 +89,9 @@ with patch.object(SpendLedger, "spent_dec", side_effect=LedgerQueryDeadline(_FLO
     else:
         record_script_check(fails, "a failed cold baseline read propagates its typed deadline", False)
 record_script_check(fails, "a failed baseline read never fills the memo", budget._ledger()._total_memo is None)
-with patch.object(SpendLedger, "spent_dec", autospec=True, side_effect=_orig_spent_dec) as bounded_retry:
+with patch.object(ledger_read, "_ledger_read_connection", wraps=ledger_read._ledger_read_connection) as bounded_retry:
     recovered = budget.spent_all_time(deadline_s=_FLOW_EXPLICIT_READ_DEADLINE_S)
-    remaining_budget = bounded_retry.call_args.kwargs["deadline_s"]
+    remaining_budget = bounded_retry.call_args.kwargs["time_budget"]
     record_script_check(fails, "a retry retains the explicit bounded-read deadline",
        remaining_budget is not None and 0 < remaining_budget <= _FLOW_EXPLICIT_READ_DEADLINE_S)
     record_script_check(fails, "the recovered baseline is complete", recovered == live)

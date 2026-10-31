@@ -1192,6 +1192,11 @@ class SpendLedger:
             sharing this cross-process ledger); it does not move for our own writes.
         Their union catches every mutation from any writer, so it is safe to trust for cache invalidation. Both are
         pure reads (an attribute + a pragma) — no table scan."""
+        if getattr(self, "_budget_projection_snapshot", False):
+            generation_before = self._budget_projection_generation_observer()
+            self._conn.execute("PRAGMA schema_version").fetchone()
+            generation_after = self._budget_projection_generation_observer()
+            return generation_before if generation_before == generation_after else object()
         if not self._explicit_owned_connection:
             from .ledger_writer import run_ledger_write, current_ledger_writer_connection
             def read_spend_total_generation():
@@ -1216,10 +1221,12 @@ class SpendLedger:
         expires = None
         if deadline_s is not None:
             if (not math.isfinite(deadline_s) or deadline_s <= 0
-                    or (self._conn.in_transaction and not ledger_connection_commit_deferred(self._conn))):
+                    or (self._conn.in_transaction and not ledger_connection_commit_deferred(self._conn)
+                        and not getattr(self, "_budget_projection_snapshot", False))):
                 raise LedgerQueryDeadline(deadline_s)
             expires = time.monotonic() + deadline_s
-        if ledger_connection_commit_deferred(self._conn) or self._conn.in_transaction:
+        if ledger_connection_commit_deferred(self._conn) or (
+                self._conn.in_transaction and not getattr(self, "_budget_projection_snapshot", False)):
             # SQLite's total_changes/data_version do not change on ROLLBACK.
             # Pending values therefore must neither use nor populate a memo
             # shared with readers after this transaction (or savepoint) exits.
@@ -1258,6 +1265,8 @@ class SpendLedger:
 
     def _bounded_category_total(self, cols, filt, since=None, until=None, where=None, **filters):
         """Read committed category totals through the deadline-owning, disposable reader."""
+        if getattr(self, "_budget_projection_connection_owned", False):
+            return self._cat_dec(cols, filt, since=since, until=until, where=where, **filters)
         from .ledger_read import LedgerReadRequest, read_ledger_rows
         w, args = self._where(since, until, {**(where or {}), **filters})
         if filt:
