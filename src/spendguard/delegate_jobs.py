@@ -15,6 +15,7 @@ import contextlib
 import json
 import os
 import sqlite3
+import subprocess
 import sys
 import time
 import uuid
@@ -39,6 +40,10 @@ DELEGATE_JOB_DEFAULT_CODEX_TIMEOUT_S = 1800
 DELEGATE_JOB_WAIT_POLL_DEFAULT_S = 0.1
 DELEGATE_JOB_CANCEL_GRACE_DEFAULT_S = 5.0
 DELEGATE_JOB_CANCEL_REASON = "operator-cancelled"
+CODEX_DELETE_MISSING_SESSION_TEMPLATES = (
+    "No active or archived session found matching '{thread_id}'.",
+    "thread not found: {thread_id}",
+)
 DELEGATE_JOBS_RETENTION_S = float(config._cfg_get(
     "delegate", "jobs_retention_s", DELEGATE_JOB_DEFAULT_RETENTION_S) or DELEGATE_JOB_DEFAULT_RETENTION_S)
 DELEGATE_JOB_STALENESS_MARGIN_S = float(config._cfg_get(
@@ -70,6 +75,24 @@ def _ensure_delegate_jobs_schema(connection):
     columns = {row[1] for row in connection.execute("PRAGMA table_info(delegate_jobs)")}
     if "execution_id" not in columns:
         connection.execute("ALTER TABLE delegate_jobs ADD COLUMN execution_id TEXT")
+    for column in ("codex_thread_id", "codex_session_reaped_at"):
+        if column not in columns:
+            connection.execute(f"ALTER TABLE delegate_jobs ADD COLUMN {column} TEXT")
+    if "codex_thread_id" not in columns:
+        for job_id, payload in connection.execute(
+                "SELECT job_id,result_payload FROM delegate_jobs WHERE result_payload IS NOT NULL").fetchall():
+            result = json.loads(payload)
+            execution = result.get("execution", result) if isinstance(result, dict) else {}
+            thread_id = execution.get("thread") if isinstance(execution, dict) else None
+            if thread_id:
+                connection.execute("UPDATE delegate_jobs SET codex_thread_id=? WHERE job_id=?", (thread_id, job_id))
+    connection.execute("CREATE INDEX IF NOT EXISTS delegate_jobs_codex_retention "
+                       "ON delegate_jobs(codex_session_reaped_at,state,updated_ts,codex_thread_id)")
+    connection.execute("CREATE INDEX IF NOT EXISTS delegate_jobs_codex_thread "
+                       "ON delegate_jobs(codex_thread_id)")
+    connection.execute("""CREATE TABLE IF NOT EXISTS delegate_codex_session_leases(
+        thread_id TEXT NOT NULL, worker_pid INTEGER NOT NULL, worker_birth REAL NOT NULL,
+        active INTEGER NOT NULL, PRIMARY KEY(thread_id,worker_pid,worker_birth))""")
 
 
 @contextlib.contextmanager
@@ -123,9 +146,17 @@ def finish_delegate_job(job_id, *, state, result_payload=None, terminal_reason=N
     if state not in DELEGATE_JOB_TERMINAL_STATES:
         raise ValueError(f"delegate job terminal state required, got {state!r}")
     payload = json.dumps(result_payload) if result_payload is not None else None
+    execution = result_payload.get("execution", result_payload) if isinstance(result_payload, dict) else {}
+    codex_thread_id = execution.get("thread") if isinstance(execution, dict) else None
     row = _delegate_job_row(job_id)
     if row is None:
         raise KeyError(job_id)
+    if codex_thread_id is None and row["provider"] == "codex" and row["execution_id"]:
+        from .execution_journal import parse_execution_codex_thread
+        from .execution_journal import durable_execution_payload_paths
+        stdout = durable_execution_payload_paths(row["execution_id"])["stdout"]
+        if stdout.exists():
+            codex_thread_id = parse_execution_codex_thread(stdout.read_text(encoding="utf-8"))
     if row["execution_id"]:
         from .execution_journal import terminalize_durable_execution
         terminal = terminalize_durable_execution(row["execution_id"], DELEGATE_JOB_JOURNAL_STATES[state])
@@ -137,10 +168,15 @@ def finish_delegate_job(job_id, *, state, result_payload=None, terminal_reason=N
             error = None
         state = winner_state
     with _open_delegate_jobs_connection() as connection:
+        if codex_thread_id:
+            connection.execute("UPDATE delegate_jobs SET codex_thread_id=COALESCE(codex_thread_id,?) "
+                               "WHERE job_id=?", (codex_thread_id, job_id))
         connection.execute(
-            "UPDATE delegate_jobs SET state=?,updated_ts=?,result_payload=?,terminal_reason=?,error=? "
+            "UPDATE delegate_jobs SET state=?,updated_ts=?,result_payload=?,terminal_reason=?,error=?,"
+            "codex_thread_id=COALESCE(?,codex_thread_id) "
             "WHERE job_id=? AND (state=? OR (state=? AND ?!=?))",
-            (state, _delegate_job_timestamp(), payload, terminal_reason, error, job_id, DELEGATE_JOB_RUNNING_STATE,
+            (state, _delegate_job_timestamp(), payload, terminal_reason, error, codex_thread_id,
+             job_id, DELEGATE_JOB_RUNNING_STATE,
              DELEGATE_JOB_LOST_STATE, state, DELEGATE_JOB_LOST_STATE))
 
 
@@ -356,7 +392,139 @@ def prune_delegate_jobs(retention_s=DELEGATE_JOBS_RETENTION_S):
     try:
         with _open_delegate_jobs_connection() as connection:
             placeholders = ",".join("?" for _ in DELEGATE_JOB_TERMINAL_STATES)
-            connection.execute(f"DELETE FROM delegate_jobs WHERE state IN ({placeholders}) AND updated_ts<?",
+            connection.execute(f"DELETE FROM delegate_jobs WHERE state IN ({placeholders}) AND updated_ts<? "
+                               "AND (codex_thread_id IS NULL OR codex_session_reaped_at IS NOT NULL)",
                                (*DELEGATE_JOB_TERMINAL_STATES, cutoff.isoformat(timespec="seconds")))
     except sqlite3.OperationalError:
         return
+
+
+def record_delegate_codex_thread(thread_id, execution_id):
+    """Capture session identity before a transport exception can lose its envelope."""
+    if execution_id:
+        with _open_delegate_jobs_connection() as connection:
+            connection.execute("UPDATE delegate_jobs SET codex_thread_id=? WHERE execution_id=? "
+                               "AND codex_session_reaped_at IS NULL", (thread_id, execution_id))
+
+
+def register_codex_session_lease(thread_id, worker_pid):
+    """Hold a thread while its identity-verified pool worker executes or retains it.
+
+    Registration and deletion use the same SQLite writer exclusion. A worker's
+    previous idle session stops being held when it starts its next session;
+    concurrent active sessions remain protected.
+    """
+    import psutil
+    birth = psutil.Process(worker_pid).create_time()
+    with _open_delegate_jobs_connection() as connection:
+        connection.execute("DELETE FROM delegate_codex_session_leases "
+                           "WHERE worker_pid=? AND worker_birth=? AND active=0 AND thread_id!=?",
+                           (worker_pid, birth, thread_id))
+        connection.execute("INSERT OR REPLACE INTO delegate_codex_session_leases "
+                           "(thread_id,worker_pid,worker_birth,active) VALUES(?,?,?,1)",
+                           (thread_id, worker_pid, birth))
+
+
+def settle_codex_session_lease(thread_id, worker_pid, *, release=False):
+    """Retain the worker's idle thread, or release a completed cold invocation."""
+    with _open_delegate_jobs_connection() as connection:
+        if release:
+            connection.execute("DELETE FROM delegate_codex_session_leases WHERE thread_id=? AND worker_pid=?",
+                               (thread_id, worker_pid))
+        else:
+            connection.execute("UPDATE delegate_codex_session_leases SET active=0 "
+                               "WHERE thread_id=? AND worker_pid=?", (thread_id, worker_pid))
+
+
+def reap_terminal_codex_sessions(now=None, *, executable=None, owner_identity_state=None, dead_identity=None):
+    """Bounded completion-driven session deletion, never touching Codex databases.
+
+    Hold the journal writer transaction from eligibility recheck through delete
+    and receipt so a concurrent resume cannot acquire a lease in between. A
+    crash after deletion retries the idempotent CLI primitive on the next tick.
+    """
+    report = {"reaped": [], "skipped": [], "errors": []}
+    try:
+        settings = config.codex_session_reap_settings()
+        if not settings["enabled"] or not delegate_jobs_database_path().exists():
+            return report
+        if not executable or owner_identity_state is None or dead_identity is None:
+            return report
+        current = now or datetime.datetime.now(datetime.timezone.utc)
+        success_cutoff = (current - datetime.timedelta(seconds=settings["success_grace_s"])).isoformat()
+        failure_cutoff = (current - datetime.timedelta(seconds=settings["failure_grace_s"])).isoformat()
+        terminal_placeholders = ",".join("?" for _ in DELEGATE_JOB_TERMINAL_STATES)
+        eligibility = (f"state IN ({terminal_placeholders}) AND codex_thread_id IS NOT NULL "
+                       "AND codex_session_reaped_at IS NULL AND "
+                       "((state=? AND updated_ts<?) OR (state!=? AND updated_ts<?))")
+        arguments = (*DELEGATE_JOB_TERMINAL_STATES, DELEGATE_JOB_DONE_STATE, success_cutoff,
+                     DELEGATE_JOB_DONE_STATE, failure_cutoff)
+        with _open_delegate_jobs_connection() as connection:
+            stale_leases = connection.execute(
+                "SELECT thread_id,worker_pid,worker_birth FROM delegate_codex_session_leases").fetchall()
+            for leased_thread, worker_pid, worker_birth in stale_leases:
+                if owner_identity_state(worker_pid, worker_birth) == dead_identity:
+                    connection.execute("DELETE FROM delegate_codex_session_leases "
+                                       "WHERE thread_id=? AND worker_pid=? AND worker_birth=?",
+                                       (leased_thread, worker_pid, worker_birth))
+            candidates = connection.execute(
+                f"SELECT job_id,codex_thread_id FROM delegate_jobs WHERE {eligibility} "
+                "ORDER BY updated_ts,job_id", arguments).fetchall()
+        attempts = 0
+        handled_threads = set()
+        for job_id, thread_id in candidates:
+            if attempts >= settings["max_per_pass"]:
+                break
+            if thread_id in handled_threads:
+                continue
+            handled_threads.add(thread_id)
+            with _open_delegate_jobs_connection() as connection:
+                # The first write acquires the cross-process reservation before
+                # reads: lease registration cannot slip through the safety check.
+                connection.execute("UPDATE delegate_codex_session_leases SET active=active WHERE thread_id=?",
+                                   (thread_id,))
+                shared = connection.execute(
+                    "SELECT job_id,state,updated_ts,codex_session_reaped_at FROM delegate_jobs "
+                    "WHERE codex_thread_id=?", (thread_id,)).fetchall()
+                eligible = []
+                safe = True
+                for shared_id, state, terminal_at, reaped_at in shared:
+                    cutoff = success_cutoff if state == DELEGATE_JOB_DONE_STATE else failure_cutoff
+                    if (state not in DELEGATE_JOB_TERMINAL_STATES
+                            or datetime.datetime.fromisoformat(terminal_at) >= datetime.datetime.fromisoformat(cutoff)):
+                        safe = False
+                    if reaped_at is None:
+                        eligible.append(shared_id)
+                leases = connection.execute("SELECT worker_pid,worker_birth FROM delegate_codex_session_leases "
+                                            "WHERE thread_id=?", (thread_id,)).fetchall()
+                if (not safe or not eligible or any(
+                        owner_identity_state(pid, birth) != dead_identity
+                        for pid, birth in leases)):
+                    report["skipped"].append(job_id)
+                    continue
+                attempts += 1
+                try:
+                    deleted = subprocess.run([executable, "delete", thread_id, "--force"],
+                                             capture_output=True, text=True,
+                                             env=config.lane_exec_env(executable),
+                                             timeout=settings["delete_timeout_s"])
+                    expected_missing = {template.format(thread_id=thread_id)
+                                        for template in CODEX_DELETE_MISSING_SESSION_TEMPLATES}
+                    missing = any(line.removeprefix("Error: ") in expected_missing
+                                  for line in (deleted.stderr or "").splitlines())
+                    if deleted.returncode != 0 and not missing:
+                        report["errors"].append(f"{job_id}: codex delete exited {deleted.returncode}: {deleted.stderr}")
+                        continue
+                except (OSError, subprocess.SubprocessError) as error:
+                    report["errors"].append(f"{job_id}: {error}")
+                    continue
+                connection.execute("UPDATE delegate_jobs SET codex_session_reaped_at=? "
+                                   "WHERE codex_thread_id=? AND codex_session_reaped_at IS NULL",
+                                   (current.isoformat(), thread_id))
+                connection.execute("DELETE FROM delegate_codex_session_leases WHERE thread_id=?", (thread_id,))
+                report["reaped"].extend(eligible)
+    except Exception as error:
+        report["errors"].append(f"codex session reap: {error}")
+    if report["errors"]:
+        config.warn_once(f"[spendguard] codex session reap gaps: {report['errors']}")
+    return report

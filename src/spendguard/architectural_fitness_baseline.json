@@ -61,7 +61,7 @@
   ],
   "type_scope_reason": "Existing annotated immutable CLI data model passes mypy with normal diagnostics. Follow-imports skip isolates this explicitly recorded surface; it does not claim typing of transitive application imports or full-package coverage.",
   "complexity": {
-    "justification": "Radon 6.0.1 counts logical lines through the running Python tokenizer. Measured __init__.py MI parameters on identical source: Python 3.11 LLOC90 versus Python3.12 LLOC91, with identical volume120.40465370320703/CC15/comments54.0. Independently measured per-minor baselines avoid false regressions; unsupported versions and new source files fail closed pending explicit measured review. F2/F4 review (2026-10-30): comprehend adds literal items, vendor confinement and provider panels through extracted helpers (max CC improves 22 to 21); its size-sensitive MI baseline reflects the requested expanded input surface. config_schema adds the shared configured plan-cap threshold policy (max CC 2 to 4); plan_admission owns the common hosting/band policy and residency_gate consumes it, removing the agent_spawn_gate surface import cycle. Only these four files were remeasured on both supported interpreters; all other ratchets remain unchanged.",
+    "justification": "Radon 6.0.1 counts logical lines through the running Python tokenizer. Measured __init__.py MI parameters on identical source: Python 3.11 LLOC90 versus Python3.12 LLOC91, with identical volume120.40465370320703/CC15/comments54.0. Independently measured per-minor baselines avoid false regressions; unsupported versions and new source files fail closed pending explicit measured review. F2/F4 review (2026-10-30): comprehend adds literal items, vendor confinement and provider panels through extracted helpers (max CC improves 22 to 21); its size-sensitive MI baseline reflects the requested expanded input surface. config_schema adds the shared configured plan-cap threshold policy (max CC 2 to 4); plan_admission owns the common hosting/band policy and residency_gate consumes it, removing the agent_spawn_gate surface import cycle. Only these four files were remeasured on both supported interpreters; all other ratchets remain unchanged. Codex session reaper review (2026-10-30): complete changed bodies reviewed in codex_daemon, codex_exec, delegate_jobs and execution_journal. Durable indexed session capture, additive migration, unreaped pruning protection, active/idle owner leases, existing identity-based liveness, bounded transactional delete/retry and terminal gates add required lifecycle safety; journal wrappers and injected dependencies avoid new import cycles. Existing daemon/journal maximum CC stays 49/23; exec rises 17 to 18 for resume lease cleanup; jobs rises 19 to 30 for the explicit terminal/grace/shared-session/live-owner/error gates. Independently remeasured with Radon 6.0.1 under Python 3.11 and 3.12; only these four file baselines changed.",
     "interpreters": {
       "3.11": {
         "files": {
@@ -259,15 +259,15 @@
           },
           "src/spendguard/codex_daemon.py": {
             "max_cc": 49,
-            "mi": 8.245953954210295
+            "mi": 7.880856918064156
           },
           "src/spendguard/codex_daemon_broker.py": {
             "max_cc": 17,
             "mi": 21.026037017456613
           },
           "src/spendguard/codex_exec.py": {
-            "max_cc": 17,
-            "mi": 19.534603646990497
+            "max_cc": 18,
+            "mi": 18.420720204206486
           },
           "src/spendguard/compaction.py": {
             "max_cc": 18,
@@ -330,8 +330,8 @@
             "mi": 61.206448796592674
           },
           "src/spendguard/delegate_jobs.py": {
-            "max_cc": 19,
-            "mi": 27.2735167946341
+            "max_cc": 30,
+            "mi": 18.532985996875016
           },
           "src/spendguard/delegate_router.py": {
             "max_cc": 48,
@@ -383,7 +383,7 @@
           },
           "src/spendguard/execution_journal.py": {
             "max_cc": 23,
-            "mi": 14.494812724643918
+            "mi": 12.536718980712662
           },
           "src/spendguard/expected_output.py": {
             "max_cc": 24,
@@ -1135,15 +1135,15 @@
           },
           "src/spendguard/codex_daemon.py": {
             "max_cc": 49,
-            "mi": 8.245953954210295
+            "mi": 7.880856918064156
           },
           "src/spendguard/codex_daemon_broker.py": {
             "max_cc": 17,
             "mi": 21.026037017456613
           },
           "src/spendguard/codex_exec.py": {
-            "max_cc": 17,
-            "mi": 19.518395457903484
+            "max_cc": 18,
+            "mi": 18.40491755798936
           },
           "src/spendguard/compaction.py": {
             "max_cc": 18,
@@ -1206,8 +1206,8 @@
             "mi": 61.11579083959757
           },
           "src/spendguard/delegate_jobs.py": {
-            "max_cc": 19,
-            "mi": 27.2735167946341
+            "max_cc": 30,
+            "mi": 18.532985996875016
           },
           "src/spendguard/delegate_router.py": {
             "max_cc": 48,
@@ -1259,7 +1259,7 @@
           },
           "src/spendguard/execution_journal.py": {
             "max_cc": 23,
-            "mi": 14.494812724643918
+            "mi": 12.536718980712662
           },
           "src/spendguard/expected_output.py": {
             "max_cc": 24,
