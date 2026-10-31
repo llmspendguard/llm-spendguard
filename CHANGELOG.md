@@ -4,6 +4,55 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 
 ## [Unreleased]
 
+## [0.16.16] — 2026-10-31
+
+Theme: the ledger WAL-contention cluster — a recurring `$inf` false-refusal, the checkpoint that caused its own
+busy, and the full-heap scan behind both — plus bounding `~/.codex` disk growth. The gate no longer manufactures
+an infinite cap when a read races a writer; budget/cap reads stop scanning the whole 2.1 GB ledger; and codex
+exec sessions are reaped on a grace after their job finishes.
+
+### `$inf` LedgerQueryDeadline false-refusal — one snapshot seam for all budget/cap/flow reads (#255)
+- A busy WAL checkpoint / writer txn in flight made budget-projection reads race the writer and resolve to a
+  degenerate `('ledger-query-deadline', inf, inf)`, which the gate turned into a pre-HTTP `SpendGateRefused`
+  (`$inf`) that billed `$0` — a false-refusal/availability bug. Prior fixes converted one read site at a time
+  (`budget.exceeded`; `_persist_health`); the realtime precheck was the 3rd site.
+- `budget.budget_projection_reader` — one snapshot-aware seam (reusing `ledger_read._ledger_read_connection`)
+  routes all six read roots (`spent_since` / `spent_by_job` / `spent_all_time` / `external_spent_since` /
+  `meta_spent_since`; `calls.intent_spend`). It reads the committed WAL snapshot, never emits a non-finite
+  projection, and a genuine read failure/timeout still raises (fail-closed) — no cap-raise, no `inf` sentinel.
+- Guard: `test_budget_projection_seam_guard.py` + readiness line `budget-projection-snapshot-seam` fail if any
+  budget/cap/flow read bypasses the seam or a projection can go non-finite.
+
+### WAL checkpoint hygiene — bounded lock wait, explicit autocheckpoint, reader busy_timeout (#256)
+- The 60 s maintenance checkpoint ran `PRAGMA wal_checkpoint(TRUNCATE)` with `busy_timeout=0`, so a concurrent
+  writer/reader made it return BUSY instantly (frames flushed; only the file truncate failed). Now a **bounded**
+  lock wait (config SSOT `wal_checkpoint_busy_timeout_ms`, default 100 ms, validated `>0` and `≤10%` of cadence);
+  `wal_autocheckpoint_pages` made explicit (= prior implicit default, no behavior change); the snapshot/read-only
+  connection gets an explicit `read_busy_timeout_ms`. Durability (`synchronous=NORMAL`) and logged-BUSY/no-inline-
+  retry preserved.
+
+### Per-day spend rollup + precise dirty-marker — end the full-heap scan on budget/cap reads (#257)
+- The grand-total reads full-scanned the ~692k-row, ~2.1 GB `spend_events` heap via `_cat_dec` on every call —
+  the long scan that held the WAL read-mark the checkpoint raced. New derived `spend_daily_rollup`
+  (`ledger_daily_rollup.py`) at grain `day × is_meta × reconciled × status × cost_basis × currency` — 797 rollup
+  rows vs 692,046 heap rows (~868× smaller). Money reuses the existing `_cat_dec` nano-USD mirror so the rollup is
+  exact to the cent (reconciliation delta `0E-9`); a missing/stale/corrupt cache fails closed to the exact heap.
+- Precise dirty-marker invalidation (`rollup_dirty_day`, transactional triggers): TODAY writes mark nothing; only
+  backdated writes dirty that one day; reads recompute only dirty days (compare-and-clear so a racing backdated
+  mutation is never lost). Post-TODAY-write first read 1.269 s → 2.42 ms, 0 closed days recomputed, 0 busy. Full
+  fingerprint sweep demoted to an off-hot-path periodic audit on the WAL-maintenance daemon
+  (`daily_rollup.audit_interval_seconds`, default 3600 s). Readiness line `spend-daily-rollup-reconciles-to-heap`.
+- `spent_by_job` stays on the heap (insufficient compression); `intent_spend` stays on `calls`. The nano-USD
+  integer money-*format* migration remains out of scope.
+
+### Codex session reaper — bound `~/.codex` disk growth (#254)
+- Codex CLI persists every `exec` session (`state_5.sqlite`, `thread_history_1.sqlite`, rollout `.jsonl`) with no
+  native retention (~12 GB/day under the warm pool). A completion-driven reaper keeps sessions resumable then reaps
+  each a configurable grace after its delegate job goes terminal (success 5 min / failed 10 min) via
+  `codex delete <uuid> --force` — probe-proven to clear all three stores in one call; deleting frees sqlite pages
+  for reuse (`auto_vacuum=INCREMENTAL`) and returns the rollout files to the OS immediately. The one-time backlog
+  reclaim is a separate owner-triggered step.
+
 ## [0.16.15] — 2026-10-30
 
 Theme: close the delegate governance-bypass cluster and the silent-misroute defects surfaced by the aggregate-TODO
