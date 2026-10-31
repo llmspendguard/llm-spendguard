@@ -1249,7 +1249,12 @@ LEDGER_READ_PROGRESS_VM_INSTRUCTIONS = int(os.getenv(
     "SPENDGUARD_LEDGER_READ_PROGRESS_VM_INSTRUCTIONS", str(LEDGER_QUERY_PROGRESS_VM_INSTRUCTIONS)))
 LEDGER_BUSY_TIMEOUT_MS = 5000
 LEDGER_WAL_CHECKPOINT_INTERVAL_DEFAULT_S = 60.0
-LEDGER_WAL_CHECKPOINT_BUSY_TIMEOUT_MS = 0
+LEDGER_WAL_CHECKPOINT_BUSY_TIMEOUT_MS = 100
+LEDGER_WAL_CHECKPOINT_CADENCE_WAIT_FRACTION = 0.1
+LEDGER_TIMEOUT_MS_PER_S = 1000
+# SQLite's existing default, now explicit and owner-tunable without a source edit.
+LEDGER_WAL_AUTOCHECKPOINT_PAGES = 1000
+LEDGER_READ_BUSY_TIMEOUT_MS = 100
 LEDGER_REQUEST_DISCONNECT_POLL_S = float(os.getenv("SPENDGUARD_LEDGER_REQUEST_DISCONNECT_POLL_S", "0.05"))
 LEDGER_JOURNAL_LIMIT_BYTES = 64 * 1024 * 1024
 LEDGER_HOME_ENVIRONMENT_KEY = "SPENDGUARD_HOME"
@@ -1372,6 +1377,35 @@ def ledger_wal_checkpoint_interval_s():
         "ledger", "wal_checkpoint_interval_s", LEDGER_WAL_CHECKPOINT_INTERVAL_DEFAULT_S)))
     if not math.isfinite(value) or value <= 0:
         raise ValueError("ledger.wal_checkpoint_interval_s must be positive and finite")
+    return value
+
+
+def ledger_wal_checkpoint_busy_timeout_ms():
+    """Bound lock waiting to a small fraction of the live maintenance cadence."""
+    value = int(os.getenv("SPENDGUARD_LEDGER_WAL_CHECKPOINT_BUSY_TIMEOUT_MS", _cfg_get(
+        "ledger", "wal_checkpoint_busy_timeout_ms", LEDGER_WAL_CHECKPOINT_BUSY_TIMEOUT_MS)))
+    ceiling = (ledger_wal_checkpoint_interval_s() * LEDGER_TIMEOUT_MS_PER_S
+               * LEDGER_WAL_CHECKPOINT_CADENCE_WAIT_FRACTION)
+    if value <= 0 or value > ceiling:
+        raise ValueError("ledger.wal_checkpoint_busy_timeout_ms must be positive and at most one tenth of cadence")
+    return value
+
+
+def ledger_wal_autocheckpoint_pages():
+    """Explicit automatic drain threshold; the default preserves SQLite behavior."""
+    value = int(os.getenv("SPENDGUARD_LEDGER_WAL_AUTOCHECKPOINT_PAGES", _cfg_get(
+        "ledger", "wal_autocheckpoint_pages", LEDGER_WAL_AUTOCHECKPOINT_PAGES)))
+    if value <= 0:
+        raise ValueError("ledger.wal_autocheckpoint_pages must be positive")
+    return value
+
+
+def ledger_read_busy_timeout_ms():
+    """Brief explicit lock wait for managed committed-snapshot readers."""
+    value = int(os.getenv("SPENDGUARD_LEDGER_READ_BUSY_TIMEOUT_MS", _cfg_get(
+        "ledger", "read_busy_timeout_ms", LEDGER_READ_BUSY_TIMEOUT_MS)))
+    if value <= 0:
+        raise ValueError("ledger.read_busy_timeout_ms must be positive")
     return value
 
 
@@ -1652,7 +1686,8 @@ def tune_ledger_connection(c, ceiling=None):
             with contextlib.closing(c.execute("PRAGMA journal_mode=WAL")) as journal_cursor:
                 journal_mode = journal_cursor.fetchone()[0]
     for pragma in (f"busy_timeout={LEDGER_BUSY_TIMEOUT_MS}", "synchronous=NORMAL", "temp_store=MEMORY",
-                   f"journal_size_limit={LEDGER_JOURNAL_LIMIT_BYTES}"):
+                   f"journal_size_limit={LEDGER_JOURNAL_LIMIT_BYTES}",
+                   f"wal_autocheckpoint={ledger_wal_autocheckpoint_pages()}"):
         c.execute("PRAGMA " + pragma).close()
     budget_ledger_connection_memory(c, ceiling=ceiling)
     return c
@@ -1726,6 +1761,7 @@ def managed_ledger_read_connection(path, *, timeout=LEDGER_CONNECT_TIMEOUT_S, de
     try:
         with contextlib.closing(open_ledger_connection(
                 path, timeout=timeout, tune=False, deadline_at=deadline_at, **options)) as connection:
+            connection.execute(f"PRAGMA busy_timeout={ledger_read_busy_timeout_ms()}").close()
             yield connection
     finally:
         with _LEDGER_READ_POOL_CONDITION:
