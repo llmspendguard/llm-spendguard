@@ -154,6 +154,12 @@
       "arguments": {"scripts": ["tests/test_budget_projection_seam_guard.py"]}
     },
     {
+      "id": "spend-daily-rollup-reconciles-to-heap",
+      "description": "Closed reporting-day aggregates preserve exact heap money, precise dirty-day invalidation with compare-and-clear, off-hot-path snapshot audits, compact grain and snapshot semantics.",
+      "gate": "spendguard.capability_readiness_gates:run_capability_script_readiness_gate",
+      "arguments": {"scripts": ["tests/test_ledger_daily_rollup.py"]}
+    },
+    {
       "id": "openssf-scorecard",
       "description": "OpenSSF Scorecard mapping.",
       "standard": "https://scorecard.dev/",

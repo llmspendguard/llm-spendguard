@@ -320,7 +320,7 @@ def _now_utc():
 
 
 def _reporting_tz():
-    return os.getenv("SPENDGUARD_REPORTING_TZ") or "UTC"
+    return config.spend_daily_rollup_reporting_timezone()
 
 
 def _day_period(ts_iso, tzname):
@@ -385,6 +385,13 @@ class _DecSum:
 
     def finalize(self):
         return str(self.acc)
+
+
+def spend_event_nano_expression(column):
+    """The heap category reader's established rounded mirror fallback, shared verbatim."""
+    return (f"COALESCE({SPEND_EVENT_NANO_COLUMNS[column]}, "
+            f"CASE WHEN currency='USD' THEN "
+            f"CAST(ROUND({column} * {NANO_USD_PER_USD}) AS INTEGER) END)")
 
 
 def spend_event_nano_sum_to_decimal(total):
@@ -506,8 +513,17 @@ def live_dedup_key(ts_iso):
 class SpendLedger:
     """The one door to spend_events: SCRUD + queries + lifecycle/audit. Mutable until locked; integrity in spend_audit."""
 
+    # Inject the existing money contract into the dependency-free cache module.
+    _daily_rollup_money_columns = SPEND_EVENT_NANO_COLUMNS
+    _daily_rollup_nano_expression = staticmethod(spend_event_nano_expression)
+    _daily_rollup_nano_to_decimal = staticmethod(spend_event_nano_sum_to_decimal)
+    _daily_rollup_settings = config
+
     def __init__(self, db_path=None, *, owned_connection=None):
         self.db_path = db_path or config.db_path()
+        from .ledger_daily_rollup import register_rollup_audit_context
+        from .ledger_read import _ledger_read_connection
+        register_rollup_audit_context(self, _ledger_read_connection)
         self._explicit_owned_connection = owned_connection is not None
         self._conn = owned_connection
         if self._conn is not None:
@@ -587,6 +603,8 @@ class SpendLedger:
         return initialized_columns
 
     def _initialize_spend_nano_schema_transaction(self):
+        from .ledger_daily_rollup import initialize_spend_daily_rollup, initialize_rollup_dirty_triggers
+        initialize_spend_daily_rollup(self._conn, SPEND_EVENT_NANO_COLUMNS)
         for ddl in (_DDL_EVENTS, _DDL_AUDIT, _DDL_LOCKS):
             self._conn.execute(ddl)
         # Forward-only additive migration: CREATE TABLE IF NOT EXISTS leaves an existing table's columns as
@@ -620,6 +638,7 @@ class SpendLedger:
                 ("source", "conv_id", "occurred_at"), False
             )),
         )
+        initialize_rollup_dirty_triggers(self._conn)
         self._conn.execute("CREATE INDEX IF NOT EXISTS idx_audit_event ON spend_audit(event_id)")
         return tuple(have)
 
@@ -1083,12 +1102,11 @@ class SpendLedger:
         w, args = self._where(since, until, {**(where or {}), **filters})
         if filt:
             w += " AND " + filt
-        sums = ", ".join(
-            f"dec_sum(COALESCE({SPEND_EVENT_NANO_COLUMNS[c]}, "
-            f"CASE WHEN currency='USD' THEN "
-            f"CAST(ROUND({c} * {NANO_USD_PER_USD}) AS INTEGER) END))"
-            for c in cols
-        )
+        from .ledger_daily_rollup import read_daily_rollup_category
+        accelerated = read_daily_rollup_category(self, cols, filt, since, until, {**(where or {}), **filters})
+        if accelerated is not None:
+            return accelerated
+        sums = ", ".join(f"dec_sum({spend_event_nano_expression(c)})" for c in cols)
         cursor = self._conn.execute(f"SELECT {sums} FROM spend_events WHERE 1=1" + w, args)
         try:
             r = cursor.fetchone()

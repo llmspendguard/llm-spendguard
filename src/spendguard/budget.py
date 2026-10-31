@@ -62,7 +62,7 @@ def _budget_snapshot_generation_observer():
 
 
 @contextlib.contextmanager
-def budget_projection_reader(*, deadline_s=None):
+def budget_projection_reader(*, deadline_s=None, rollup_eligible=True):
     """Use committed WAL snapshots, except reserved bulk scopes read pending."""
     from .ledger import SpendLedger
     from .ledger_writer import current_ledger_writer_connection, ledger_connection_commit_deferred
@@ -103,6 +103,10 @@ def budget_projection_reader(*, deadline_s=None):
             snapshot_reader._budget_projection_connection_owned = True
             snapshot_reader._budget_projection_snapshot = True
             snapshot_reader._budget_projection_generation_observer = _budget_snapshot_generation_observer
+            # Capture the observer before anything can pin the snapshot. Later
+            # concurrent commits make this snapshot cache-ineligible.
+            if rollup_eligible:
+                snapshot_reader._daily_rollup_snapshot_generation = _budget_snapshot_generation_observer()
             # Coverage and money observe one complete committed version.
             connection.execute("BEGIN")
             snapshot_reader._total_memo = getattr(cached, "_total_memo", None)
@@ -120,7 +124,10 @@ def budget_projection_snapshot(read_projection):
     def read_budget_projection_snapshot(*args, **kwargs):
         arguments = projection_signature.bind(*args, **kwargs)
         arguments.apply_defaults()
-        with budget_projection_reader(deadline_s=arguments.arguments.get("deadline_s")) as reader:
+        rollup_eligible = not any(arguments.arguments.get(scope) is not None
+                                  for scope in ("project", "conv", "job"))
+        with budget_projection_reader(deadline_s=arguments.arguments.get("deadline_s"),
+                                      rollup_eligible=rollup_eligible) as reader:
             previous = getattr(_LEDGER_TL, "read_ledger", None)
             _LEDGER_TL.read_ledger = reader
             try:

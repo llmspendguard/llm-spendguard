@@ -2378,3 +2378,27 @@ def disk_guard_floor_bytes():
     if floor <= 0:
         raise ValueError("disk_guard.floor_bytes must be a positive integer byte count")
     return floor
+
+
+# Cache publication never waits behind a spend writer; the authoritative heap is available.
+SPEND_DAILY_ROLLUP_WRITE_TIMEOUT_S = 0.0
+
+
+def spend_daily_rollup_reporting_timezone():
+    """Accounting-day timezone shared with ledger event normalization."""
+    return os.environ.get("SPENDGUARD_REPORTING_TZ") or "UTC"
+
+
+SPEND_DAILY_ROLLUP_AUDIT_INTERVAL_DEFAULT_SECONDS = 3600
+
+
+def spend_daily_rollup_audit_interval_seconds():
+    """Positive maintenance cadence from environment or daily_rollup config."""
+    value = os.environ.get("SPENDGUARD_DAILY_ROLLUP_AUDIT_INTERVAL_SECONDS")
+    if value is None:
+        value = _cfg_get("daily_rollup", "audit_interval_seconds",
+                         SPEND_DAILY_ROLLUP_AUDIT_INTERVAL_DEFAULT_SECONDS)
+    interval = float(value)
+    if not math.isfinite(interval) or interval <= 0:
+        raise ValueError("daily_rollup.audit_interval_seconds must be positive and finite")
+    return interval
