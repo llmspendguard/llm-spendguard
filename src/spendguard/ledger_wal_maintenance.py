@@ -46,9 +46,10 @@ class LedgerWalCheckpointReport:
 
 
 def truncate_ledger_wal_bounded(path=None, *, deadline_s=None):
-    """Attempt one TRUNCATE with zero busy waiting; close on every outcome.
+    """Attempt one TRUNCATE with a bounded lock wait; close on every outcome.
 
-    Managed admission and the progress handler share the read deadline. SQLite
+    Admission and SQLite lock waiting share one short budget, capped by the read
+    deadline; the progress handler observes that same short budget. SQLite
     filesystem I/O itself remains subject to OS scheduling, as with ledger opens.
     No row contents change; contention is a visible BUSY report, never retried inline.
     """
@@ -59,11 +60,17 @@ def truncate_ledger_wal_bounded(path=None, *, deadline_s=None):
         if not math.isfinite(duration) or duration <= 0:
             raise ValueError("WAL checkpoint deadline must be positive and finite")
         deadline_at = effective_ledger_admission_deadline(time.monotonic() + duration)
+        busy_timeout_ms = config.ledger_wal_checkpoint_busy_timeout_ms()
+        checkpoint_deadline_at = min(deadline_at, time.monotonic()
+                                     + busy_timeout_ms / config.LEDGER_TIMEOUT_MS_PER_S)
         connection = config.open_ledger_connection(
-            path, timeout=config.LEDGER_WAL_CHECKPOINT_BUSY_TIMEOUT_MS,
-            tune=False, deadline_at=deadline_at, isolation_level=None)
-        connection.execute(f"PRAGMA busy_timeout={config.LEDGER_WAL_CHECKPOINT_BUSY_TIMEOUT_MS}")
-        connection.set_progress_handler(lambda: time.monotonic() >= deadline_at,
+            path, timeout=busy_timeout_ms / config.LEDGER_TIMEOUT_MS_PER_S,
+            tune=False, deadline_at=checkpoint_deadline_at, isolation_level=None)
+        # SQLite's busy handler does not run the VM progress handler. Bound it
+        # separately to the remaining admission/query deadline as well as cadence.
+        remaining_ms = max(0, int((checkpoint_deadline_at - time.monotonic()) * config.LEDGER_TIMEOUT_MS_PER_S))
+        connection.execute(f"PRAGMA busy_timeout={min(busy_timeout_ms, remaining_ms)}")
+        connection.set_progress_handler(lambda: time.monotonic() >= checkpoint_deadline_at,
                                         config.LEDGER_QUERY_PROGRESS_VM_INSTRUCTIONS)
         busy, log_frames, checkpointed_frames = connection.execute(WAL_CHECKPOINT_SQL).fetchone()
         if time.monotonic() >= deadline_at:

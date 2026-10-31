@@ -48,6 +48,27 @@ def configured_agent_near_cap_threshold():
     return float(config._cfg_get("agent_spawn_gate", "near_cap_remaining_pct", declared["default"]))
 
 SETTINGS = [
+    # Ledger connection policy is owner-tunable through the same registry as
+    # setup/config, rather than hidden in connection-specific PRAGMA literals.
+    # The reset wait is independently constrained against the live maintenance
+    # cadence; changing this setting never authorizes an unbounded checkpoint.
+    # Readers use a separate wait because snapshot acquisition and writer lock
+    # acquisition have different latency requirements. Neither timeout changes
+    # the committed WAL snapshot or permits a failed read to fabricate a value.
+    # Automatic checkpoints retain SQLite's prior page threshold by default;
+    # making that threshold visible is not a change to drain or durability policy.
+    # The default lock waits intentionally change latency, while genuine failures
+    # remain visible in checkpoint reports and in the existing read error path.
+    *[dict(section="ledger", key=key, store="config.json:ledger." + key,
+           env="SPENDGUARD_LEDGER_" + key.upper(), default=default, kind=kind, secret=False, desc=desc)
+      for key, default, kind, desc in (
+          ("wal_checkpoint_busy_timeout_ms", config.LEDGER_WAL_CHECKPOINT_BUSY_TIMEOUT_MS, "int",
+           "Positive WAL reset lock wait in milliseconds; at most one tenth of the maintenance cadence."),
+          ("wal_autocheckpoint_pages", config.LEDGER_WAL_AUTOCHECKPOINT_PAGES, "int",
+           "Positive writer automatic checkpoint page threshold; the default preserves SQLite's existing behavior."),
+          ("read_busy_timeout_ms", config.LEDGER_READ_BUSY_TIMEOUT_MS, "int",
+           "Positive managed snapshot reader lock wait in milliseconds; genuine read failures remain fail-closed."),
+      )],
     *[dict(section="distribute", key=key, store="config.json:distribute." + key,
            env=None, default=default, kind=kind, secret=False, desc=desc)
       for key, default, kind, desc in (
