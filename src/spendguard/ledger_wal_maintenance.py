@@ -109,6 +109,8 @@ def maintain_ledger_wal_if_due(path=None, *, cadence=None):
         if last_attempt is not None and now - last_attempt < interval:
             return LedgerWalCheckpointReport(WAL_CHECKPOINT_SKIPPED)
         cadence.attempts[ledger] = now
+        from .ledger_daily_rollup import schedule_rollup_fingerprint_audit
+        schedule_rollup_fingerprint_audit(ledger)
         return truncate_ledger_wal_bounded(ledger)
     except LedgerReadError:
         raise

@@ -27,6 +27,12 @@ A supplied clean-environment report must match the current input fingerprint and
 - [ ] **money-correctness** — Money scale, exact ledger arithmetic and global receipt allocation remain correct.
   Gate: `spendguard.capability_readiness_gates:run_capability_script_readiness_gate`; inputs: `{"scripts": ["tests/test_money_scale.py", "tests/test_ledger_money_is_exact_decimal.py", "tests/test_receipt_global_dollar_allocation.py"]}`.
 
+- [ ] **budget-projection-snapshot-seam** — Grounded monetary read roots use the snapshot seam; projections require finite contracts; mutation controls reject raw writer reads.
+  Gate: `spendguard.capability_readiness_gates:run_capability_script_readiness_gate`; inputs: `{"scripts": ["tests/test_budget_projection_seam_guard.py"]}`.
+
+- [ ] **spend-daily-rollup-reconciles-to-heap** — Closed reporting-day aggregates preserve exact heap money, precise dirty-day invalidation with compare-and-clear, off-hot-path snapshot audits, compact grain and snapshot semantics.
+  Gate: `spendguard.capability_readiness_gates:run_capability_script_readiness_gate`; inputs: `{"scripts": ["tests/test_ledger_daily_rollup.py"]}`.
+
 ## External standards — reviewed offline subsets
 
 PASS covers the declared offline subset, not certification or an external badge. Reviewed N/A checks remain tracked below.

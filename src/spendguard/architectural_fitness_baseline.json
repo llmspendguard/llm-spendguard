@@ -63,6 +63,7 @@
   "complexity": {
     "justification": "Radon 6.0.1 counts logical lines through the running Python tokenizer. Measured __init__.py MI parameters on identical source: Python 3.11 LLOC90 versus Python3.12 LLOC91, with identical volume120.40465370320703/CC15/comments54.0. Independently measured per-minor baselines avoid false regressions; unsupported versions and new source files fail closed pending explicit measured review. F2/F4 review (2026-10-30): comprehend adds literal items, vendor confinement and provider panels through extracted helpers (max CC improves 22 to 21); its size-sensitive MI baseline reflects the requested expanded input surface. config_schema adds the shared configured plan-cap threshold policy (max CC 2 to 4); plan_admission owns the common hosting/band policy and residency_gate consumes it, removing the agent_spawn_gate surface import cycle. Only these four files were remeasured on both supported interpreters; all other ratchets remain unchanged. Codex session reaper review (2026-10-30): complete changed bodies reviewed in codex_daemon, codex_exec, delegate_jobs and execution_journal. Durable indexed session capture, additive migration, unreaped pruning protection, active/idle owner leases, existing identity-based liveness, bounded transactional delete/retry and terminal gates add required lifecycle safety; journal wrappers and injected dependencies avoid new import cycles. Existing daemon/journal maximum CC stays 49/23; exec rises 17 to 18 for resume lease cleanup; jobs rises 19 to 30 for the explicit terminal/grace/shared-session/live-owner/error gates. Independently remeasured with Radon 6.0.1 under Python 3.11 and 3.12; only these four file baselines changed.",
     "reviewed_budget_projection_snapshot": "2026-10-30: Reviewed the complete intent_spend change: replace the raw calls writer read with the shared budget snapshot decorator, preserve exact nano-first cost aggregation, and propagate incomplete or failed reads rather than returning a zero cap basis. The added schema and settlement checks retain maximum CC 69; the size-sensitive calls.py MI is independently measured with Radon 6.0.1 on Python 3.11 and 3.12. Only this file's two measured MI baselines change; cyclic-edge, dead-code, duplication and all other complexity limits are unchanged. Snapshot identity, pending bulk and failure tests plus structural bypass mutations enforce the contracts.",
+    "reviewed_daily_rollup": "2026-10-30: Reviewed complete daily rollup bodies: additive disposable memo/dirty-day schema, exact shared nano expressions, bounded transactional dirty markers, revision compare-and-clear, snapshot overlays, optimistic publication, reporting-day rollover, heap fallback and off-hot-path snapshot audits. Dependency-injected snapshot/money contracts avoid new cyclic edges. Audit persists mismatch markers before publication and forces heap if marker persistence is refused. Required dirty-day and audit behavior expands the module; only this new module and the two-line WAL maintenance admission wiring receive independently measured Radon 6.0.1 baselines under Python 3.11 and 3.12. Existing cycle, duplication, dead-code and other file complexity ratchets remain unchanged. Regression groups verify precision, corruption, concurrent writes, snapshots and cadence.",
     "interpreters": {
       "3.11": {
         "files": {
@@ -518,6 +519,10 @@
             "max_cc": 49,
             "mi": 0.0
           },
+          "src/spendguard/ledger_daily_rollup.py": {
+            "max_cc": 25,
+            "mi": 29.299462890954953
+          },
           "src/spendguard/ledger_deadletter.py": {
             "max_cc": 24,
             "mi": 29.928244183948888
@@ -548,7 +553,7 @@
           },
           "src/spendguard/ledger_wal_maintenance.py": {
             "max_cc": 10,
-            "mi": 55.74793093791554
+            "mi": 55.360338331926236
           },
           "src/spendguard/ledger_writer.py": {
             "max_cc": 18,
@@ -1394,6 +1399,10 @@
             "max_cc": 49,
             "mi": 0.0
           },
+          "src/spendguard/ledger_daily_rollup.py": {
+            "max_cc": 25,
+            "mi": 29.299462890954953
+          },
           "src/spendguard/ledger_deadletter.py": {
             "max_cc": 24,
             "mi": 29.928244183948888
@@ -1424,7 +1433,7 @@
           },
           "src/spendguard/ledger_wal_maintenance.py": {
             "max_cc": 10,
-            "mi": 55.74793093791554
+            "mi": 55.360338331926236
           },
           "src/spendguard/ledger_writer.py": {
             "max_cc": 18,
