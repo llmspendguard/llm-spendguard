@@ -14,7 +14,7 @@ os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
 os.environ.setdefault("OPENAI_API_KEY", "sk-test-not-used")
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
-from spendguard import codex_exec, config, delegate_router, gate, guard, lane_balance, lanes, pricing, reliability  # noqa: E402
+from spendguard import codex_exec, config, delegate_router, delegate_worktrees, gate, guard, lane_balance, lanes, pricing, reliability  # noqa: E402
 from spendguard.execution_journal import DurableExecutionPersistenceError  # noqa: E402
 
 
@@ -38,6 +38,7 @@ original_saving = guard.record_saving
 original_require = gate.require
 original_lanes_status = lanes.lanes_status
 original_health_reds = reliability.health_reds
+original_router_test_isolation = delegate_worktrees.run_isolated_delegate
 lane_calls = []
 codex_calls = []
 decision_calls = []
@@ -77,6 +78,8 @@ def fake_codex(prompt, **kwargs):
 
 
 try:
+    # This contract targets dispatch/accounting; real git isolation is covered by the D17 targeting test.
+    delegate_worktrees.run_isolated_delegate = lambda executor, cwd, **isolation_dependencies: executor(cwd)
     config._cfg_get = fake_config
     lane_balance.delegate = fake_lane
     codex_exec.run_prompt = fake_codex
@@ -250,6 +253,7 @@ try:
         delegate_router.codex_agentic_events_path = original_demand_path
         config.warn_once = original_demand_warning
 finally:
+    delegate_worktrees.run_isolated_delegate = original_router_test_isolation
     config._cfg_get = original_config
     lane_balance.delegate = original_lane
     codex_exec.run_prompt = original_codex

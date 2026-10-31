@@ -111,6 +111,7 @@ def test_delegate_self_narrated_sanctioned_equivalent_is_warning_not_failure(tmp
         "text": (f"{delegate_router.DELEGATE_TOOL_DEGRADED_MARKER}: {SUBSTRATE_TEST_TOOL} MCP unavailable; "
                  "sanctioned CLI equivalent succeeded."),
         "execution_started": True,
+        "worktree": {"changed_files": [SUBSTRATE_CHANGED_FILE]},
     }
     with patch.object(delegate_router, "classify_task", return_value=classification), \
             patch.object(delegate_router, "delegation_lanes_ready",
@@ -292,8 +293,12 @@ def test_delegate_claude_route_is_a_brief_defect_without_execution(tmp_path):
 
 
 def test_delegate_cwd_provider_and_timeout_are_applied(tmp_path):
+    from spendguard import delegate_worktrees
     with patch.object(delegate_router.lane_registry, "lane_spec",
-                      return_value={"exec": "codex_exec", "provider": SUBSTRATE_TEST_PROVIDER}), \
+                      return_value={"exec": "codex_exec", "provider": SUBSTRATE_TEST_PROVIDER,
+                                    "agentic": True}), \
+            patch.object(delegate_worktrees, "run_isolated_delegate",
+                         side_effect=lambda executor, cwd, **isolation_dependencies: executor(cwd)), \
             patch.object(codex_exec, "run_prompt",
                          return_value={"text": "done", "execution_started": True}) as runner:
         delegate_router._route_agentic(SUBSTRATE_TEST_PLAN, SUBSTRATE_TEST_TASK,
