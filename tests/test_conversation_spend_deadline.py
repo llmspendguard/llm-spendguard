@@ -126,19 +126,27 @@ def test_unscoped_consumer_snapshot_while_writer_transaction_is_open():
         writer.close()
 
 
-def test_initialized_budget_owner_retains_writer_facade_fast_path():
+def test_initialized_budget_owner_uses_projection_snapshot():
     seed_conversation_consumer_fault_rows()
     budget._reset_ledger()
     owner_facade = budget._ledger()
     try:
-        with patch.object(budget, "_ledger", return_value=owner_facade) as owner_lookup:
+        original_lookup = budget._ledger
+
+        def require_conversation_projection_snapshot():
+            reader = original_lookup()
+            assert reader is not owner_facade
+            assert reader._conn is not owner_facade._conn
+            return reader
+
+        with patch.object(budget, "_ledger", side_effect=require_conversation_projection_snapshot) as owner_lookup:
             ordinary = budget.spent_since(CONVERSATION_FAULT_DAY,
                                           deadline_s=CONVERSATION_FAULT_FAST_S)
             owner_lookup.assert_called_once_with()
         assert ordinary == CONVERSATION_FAULT_ROWS
         assert budget.spent_since(CONVERSATION_FAULT_DAY, read_only=True,
                                   deadline_s=CONVERSATION_FAULT_FAST_S) == ordinary
-        with patch.object(budget, "_ledger", side_effect=AssertionError("forced snapshot used writer")):
+        with patch.object(budget, "_ledger", side_effect=require_conversation_projection_snapshot):
             assert spendguard.capability_ledger_read_ledger_read_read_spend_since(CONVERSATION_FAULT_DAY,
                                                deadline_s=CONVERSATION_FAULT_FAST_S) == ordinary
     finally:

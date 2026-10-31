@@ -44,31 +44,23 @@ DEADLINE_GUARD_DELETE_PENDING_SQL = "DELETE FROM spend_events WHERE id=?"
 def advance_deadline_guard_on_sqlite_progress():
     """Charge virtual scan time on the first real VM poll, then run the real guard."""
     clock_state = threading.local()
-    original_handler_setter = config._CountedLedgerConnection.set_progress_handler
+    original_aggregate_step = ledger._DecSum.step
 
     def deadline_guard_virtual_monotonic():
         return time.monotonic() + getattr(clock_state, "elapsed", 0.0)
 
-    def install_deadline_guard_progress(connection, handler, interval):
-        charged = False
-
-        def charge_deadline_guard_scan():
-            nonlocal charged
-            if not charged:
-                clock_state.elapsed = getattr(clock_state, "elapsed", 0.0) + DEADLINE_GUARD_SCAN_S
-                charged = True
-            return handler()
-
-        return original_handler_setter(connection,
-            charge_deadline_guard_scan if handler is not None else None, interval)
+    def charge_deadline_guard_aggregate(aggregate, value):
+        if not getattr(aggregate, "_deadline_guard_charged", False):
+            aggregate._deadline_guard_charged = True
+            clock_state.elapsed = getattr(clock_state, "elapsed", 0.0) + DEADLINE_GUARD_SCAN_S
+        return original_aggregate_step(aggregate, value)
 
     clock_proxy = SimpleNamespace(**{name: getattr(time, name) for name in dir(time)})
     clock_proxy.monotonic = deadline_guard_virtual_monotonic
     with ExitStack() as patches:
         for module in (ledger, ledger_read, config, budget):
             patches.enter_context(patch.object(module, "time", clock_proxy))
-        patches.enter_context(patch.object(config._CountedLedgerConnection,
-            "set_progress_handler", install_deadline_guard_progress))
+        patches.enter_context(patch.object(ledger._DecSum, "step", charge_deadline_guard_aggregate))
         yield clock_proxy
 
 
@@ -127,13 +119,8 @@ def test_ledger_query_deadline_fault_and_recovery():
                 raise AssertionError("slow complete aggregate must raise the typed deadline error")
         assert time.monotonic() - started < DEADLINE_GUARD_OPERATION_TIMEOUT_S
         recovered = budget._ledger()
-        assert recovered._conn is not expired_connection
-        try:
-            expired_connection.execute("SELECT 1")
-        except sqlite3.ProgrammingError:
-            pass
-        else:
-            raise AssertionError("expired connection must be closed, not retained")
+        assert recovered._conn is expired_connection
+        assert expired_connection.execute("SELECT 1").fetchone()[0] == 1
         recovered_total, recovery_deadline_s = measure_deadline_guard_recovery(
             lambda: budget.spent_since(DEADLINE_GUARD_DAY))
         assert recovered_total == DEADLINE_GUARD_ROWS
@@ -183,8 +170,12 @@ def test_ledger_query_deadline_budget_refuses():
     seed_deadline_guard_ledger()
     try:
         with advance_deadline_guard_on_sqlite_progress():
-            refusal = budget.exceeded(deadline_s=DEADLINE_GUARD_BUDGET_S)
-        assert refusal is not None, "deadline must refuse even without a configured cap"
+            try:
+                budget.exceeded(deadline_s=DEADLINE_GUARD_BUDGET_S)
+            except ledger_read.LedgerQueryDeadline:
+                pass
+            else:
+                raise AssertionError("deadline must raise, never manufacture an infinite cap")
     finally:
         close_deadline_guard_thread_ledger()
 
@@ -245,6 +236,7 @@ def test_deferred_writer_deadline_guard_counts_pending_spend():
 def test_ledger_query_deadline_replacement_fault_recovers():
     for failure_mode in ("open", "aggregate-registration"):
         current = seed_deadline_guard_ledger()
+        budget.spent_all_time()  # include the managed read-only generation observer in the live baseline
         before = capture_deadline_guard_rows(current)
         baseline = config.ledger_connection_count()
         original_open = config.open_ledger_connection
@@ -265,12 +257,17 @@ def test_ledger_query_deadline_replacement_fault_recovers():
                     patch.object(config, "open_ledger_connection", side_effect=fail_deadline_guard_replacement):
                 try:
                     budget.spent_since(DEADLINE_GUARD_DAY, deadline_s=DEADLINE_GUARD_BUDGET_S)
-                except ledger_read.LedgerQueryDeadline:
+                except ledger_read.LedgerReadError:
                     pass
                 else:
                     raise AssertionError("replacement failure must remain a typed refusal")
-                assert budget.exceeded(deadline_s=DEADLINE_GUARD_BUDGET_S) is not None
-            assert config.ledger_connection_count() < baseline
+                try:
+                    budget.exceeded(deadline_s=DEADLINE_GUARD_BUDGET_S)
+                except ledger_read.LedgerReadError:
+                    pass
+                else:
+                    raise AssertionError("unavailable snapshot must refuse")
+            assert config.ledger_connection_count() == baseline
             for failed in failed_handles:
                 try:
                     failed.execute("SELECT 1")
@@ -284,7 +281,7 @@ def test_ledger_query_deadline_replacement_fault_recovers():
             assert recovered_total == DEADLINE_GUARD_ROWS
             assert budget.spent_since(DEADLINE_GUARD_DAY, deadline_s=recovery_deadline_s) == DEADLINE_GUARD_ROWS
             assert capture_deadline_guard_rows(current) == before
-            assert config.ledger_connection_count() == baseline - 1
+            assert config.ledger_connection_count() == baseline
         finally:
             close_deadline_guard_thread_ledger()
 
@@ -304,9 +301,13 @@ def test_ledger_query_deadline_shared_budget_window():
             scan_duration = scan_clock.monotonic() - started
             shared_budget = scan_duration * DEADLINE_GUARD_SHARED_SCAN_MULTIPLIER
             started = time.monotonic()
-            refusal = budget.exceeded(deadline_s=shared_budget)
+            try:
+                budget.exceeded(deadline_s=shared_budget)
+            except ledger_read.LedgerQueryDeadline:
+                pass
+            else:
+                raise AssertionError("daily and monthly scans must share one caller deadline")
             elapsed = time.monotonic() - started
-        assert refusal is not None, "daily and monthly scans must share one caller deadline"
         assert elapsed < shared_budget + DEADLINE_GUARD_OPERATION_TIMEOUT_S
     finally:
         close_deadline_guard_thread_ledger()

@@ -627,12 +627,14 @@ def _budget_check(cost, model, provider, kind):
         return
     from .ledger_read import LedgerSettlementIncomplete
     try:
-        budget.require_complete_metered_settlements()
         if config.budget_backend() != "sqlite":
+            budget.require_complete_metered_settlements()
             return
         ex = budget.exceeded(cost, kind="llm")  # daily/monthly cap and process-cap coverage share this door
     except LedgerSettlementIncomplete as partial_settlement:
         raise SpendGateRefused(str(partial_settlement)) from partial_settlement
+    except Exception as budget_read_error:
+        raise SpendGateRefused(f"Budget ledger read failed: {budget_read_error}") from budget_read_error
     if not ex:
         return
     w, capv, proj = ex
@@ -980,17 +982,24 @@ def _intent_door_gate(intent, est, provider, model):
     if cap is None or _allow():
         return
     from .ledger_read import LedgerSettlementIncomplete
+    from .budget import require_finite_budget_value
     try:
         from . import calls
         spent = calls.intent_spend(intent, config.intent_cap_window_s())
+        require_finite_budget_value((spent, est, cap, spent + est))
     except LedgerSettlementIncomplete as partial_settlement:
         raise SpendGateRefused(str(partial_settlement)) from partial_settlement
-    except Exception:
-        return                                            # ledger hiccup → do not break the call
+    except Exception as intent_read_error:
+        raise SpendGateRefused(f"Intent budget ledger read failed: {intent_read_error}") from intent_read_error
     authorization_note = ""
     exceeded = spent + est > float(cap)
     for effective, authorized, phase_intents in config.scoped_intent_authorizations(intent):
-        cumulative = sum(calls.intent_spend(label, config.intent_cap_window_s()) for label in phase_intents)
+        try:
+            cumulative = sum(calls.intent_spend(label, config.intent_cap_window_s()) for label in phase_intents)
+            require_finite_budget_value((cumulative, authorized, cumulative + est))
+        except Exception as cumulative_read_error:
+            raise SpendGateRefused(
+                f"Cumulative intent budget ledger read failed: {cumulative_read_error}") from cumulative_read_error
         if cumulative + est > authorized:
             exceeded = True
         if exceeded:

@@ -926,6 +926,10 @@ def _link_used(chain, current_prompt):
     return None
 
 
+from .budget import budget_projection_snapshot
+
+
+@budget_projection_snapshot
 def intent_spend(intent, window_s=86400):
     """The ACTUAL metered $ recorded for `intent` in the last `window_s` seconds — what guardrail D's per-intent
     running cap (enforced at the call door, gate._rt_precheck_usd) sums to decide whether the next call would cross the
@@ -939,7 +943,8 @@ def intent_spend(intent, window_s=86400):
            - datetime.timedelta(seconds=max(1, int(window_s)))).isoformat(timespec="seconds")
     try:
         from . import ledger_read
-        connection = _calls_db()
+        from . import budget
+        connection = budget._ledger()._conn
         available_columns = {column[1] for column in connection.execute("PRAGMA table_info(calls)")}
         incomplete = ledger_read._read_incomplete_settlement_totals(
             connection, since=cut, intent=intent)
@@ -963,7 +968,6 @@ def intent_spend(intent, window_s=86400):
     except ledger_read.LedgerSettlementIncomplete:
         raise
     except Exception:
-        config.rollback_ledger_conn("calls")
         raise  # an unknown settlement must not disable the running monetary cap
 
 
