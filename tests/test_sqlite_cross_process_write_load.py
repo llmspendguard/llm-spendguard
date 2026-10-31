@@ -49,7 +49,7 @@ def run_sqlite_load_writer(database_path, load_run_id, writer_id, start_event, r
     other_errors = []
     try:
         ready_queue.put(writer_id)
-        start_event.wait()
+        assert start_event.wait(SQLITE_LOAD_READY_TIMEOUT_S), "load coordinator did not release writer cohort"
         for sequence_id in range(SQLITE_LOAD_WRITES_PER_PROCESS):
             event_id = f"{load_run_id}:{writer_id}:{sequence_id}"
             write_started = time.perf_counter()
