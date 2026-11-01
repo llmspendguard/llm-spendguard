@@ -13,6 +13,7 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
 from _script_checks import record_script_check
+from ledger_index_plan_harness import ledger_plan_details, ledger_plan_searches_with
 from spendguard import calls, content_retention, guard, semcache
 from spendguard.ledger import SpendLedger
 from spendguard.schema_indexes import (
@@ -28,12 +29,8 @@ _REPRESENTATIVE_ROWS = 30_000
 
 
 
-def plan_details(connection, sql, parameters=()):
-    return tuple(row[3] for row in connection.execute("EXPLAIN QUERY PLAN " + sql, parameters))
-
-
-def plan_searches_with(plan, index_name):
-    return any("SEARCH " in detail and index_name in detail for detail in plan)
+plan_details = ledger_plan_details
+plan_searches_with = ledger_plan_searches_with
 
 
 calls_connection = sqlite3.connect(":memory:")

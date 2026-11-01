@@ -1,0 +1,40 @@
+name: perf-nightly
+
+on:
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  PERF_RUNNER_CLASS: github-ubuntu-latest-python-3.11
+  PERF_PYTHON_VERSION: "3.11"
+
+jobs:
+  ledger-performance:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-python@6d4fd22b20465ccc5f7354476588e8df7b9ca0e0 # v7
+        with:
+          python-version: ${{ env.PERF_PYTHON_VERSION }}
+      - run: python -m pip install -e .
+      - name: Record an ephemeral first-run runner class when absent
+        env:
+          SPENDGUARD_BENCH_RUNNER_CLASS: ${{ env.PERF_RUNNER_CLASS }}
+        run: |
+          python -c "import json,os,pathlib; data=json.loads(pathlib.Path('src/spendguard/ledger_performance_baseline.json').read_text()); raise SystemExit(0 if os.environ['SPENDGUARD_BENCH_RUNNER_CLASS'] in data['runner_classes'] else 1)" || spendguard bench --record
+      - name: Fail on a relative performance regression
+        env:
+          SPENDGUARD_BENCH_RUNNER_CLASS: ${{ env.PERF_RUNNER_CLASS }}
+        run: spendguard bench --check
+      - name: Run isolated performance tests ten times
+        env:
+          SPENDGUARD_BENCH_RUNNER_CLASS: ${{ env.PERF_RUNNER_CLASS }}
+        run: |
+          for iteration in $(seq 1 10); do
+            python tests/test_ledger_performance_thresholds.py
+            python tests/test_ledger_data_flow_performance.py
+          done

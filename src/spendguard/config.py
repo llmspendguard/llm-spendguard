@@ -1174,6 +1174,11 @@ def db_path():
     return p if p else str(HOME / "spend.db")
 
 
+def active_spendguard_home():
+    """Return the live configured state home, including post-import test isolation."""
+    return Path(os.environ.get(LEDGER_HOME_ENVIRONMENT_KEY) or HOME)
+
+
 def lane_queue_db_path():
     """The lane_queue's OWN database file — deliberately NOT the spend.db money ledger. The queue is transient work
     state (leased/parked/done/failed task rows with large task/result TEXT), not money-of-record; co-locating it in
