@@ -14,6 +14,7 @@ jobs:
   test:                          # GATE — a version tag must NOT publish an unverified build (forensic tool: no red build ships)
     runs-on: ubuntu-latest
     env:
+      CI_OFFLINE_PROXY: http://127.0.0.1:9
       # The offline suite (test_runner) strips keys + points a DEAD PROXY at any real call — so tiktoken cannot
       # DOWNLOAD its o200k vocab on first use. Pin a cache dir the warm step below populates (with network) and the
       # test subprocess inherits (test_runner copies os.environ), so the real-BPE token tests run offline, not a
@@ -64,6 +65,12 @@ jobs:
         run: pytest -n auto
       - name: Price-literal audit
         run: SPENDGUARD_AUDIT_DIR=src/spendguard spendguard audit --ci
+      - name: Blocking offline capability and architectural readiness gates
+        run: |
+          export HTTP_PROXY="$CI_OFFLINE_PROXY" HTTPS_PROXY="$CI_OFFLINE_PROXY" ALL_PROXY="$CI_OFFLINE_PROXY"
+          export http_proxy="$CI_OFFLINE_PROXY" https_proxy="$CI_OFFLINE_PROXY" all_proxy="$CI_OFFLINE_PROXY"
+          export NO_PROXY= no_proxy= PIP_NO_INDEX=1
+          spendguard selfcheck
 
   publish:
     needs: test                  # publish ONLY after the tagged commit passes lint + tests + audit
