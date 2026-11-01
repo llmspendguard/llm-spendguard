@@ -32,7 +32,7 @@
       "name": "current_prompt",
       "message": "unused variable 'current_prompt'",
       "reason": "_link_used preserves the documented compatibility argument; linkage no longer uses prompt text.",
-      "line": 918
+      "line": 942
     },
     {
       "path": "src/spendguard/litellm_adapter.py",
@@ -177,7 +177,7 @@
           },
           "src/spendguard/calls.py": {
             "max_cc": 69,
-            "mi": 6.4594084616175085
+            "mi": 4.830428097618213
           },
           "src/spendguard/capability_cli_callable_generation.py": {
             "max_cc": 13,
@@ -229,7 +229,7 @@
           },
           "src/spendguard/catalog_price_authoring.py": {
             "max_cc": 27,
-            "mi": 45.32940101337756
+            "mi": 38.398466988650554
           },
           "src/spendguard/chat.py": {
             "max_cc": 49,
@@ -317,7 +317,7 @@
           },
           "src/spendguard/cost_integrity.py": {
             "max_cc": 19,
-            "mi": 51.73449640078443
+            "mi": 48.34992153195338
           },
           "src/spendguard/coverage.py": {
             "max_cc": 16,
@@ -596,8 +596,8 @@
             "mi": 70.70362044668978
           },
           "src/spendguard/model_catalog.py": {
-            "max_cc": 42,
-            "mi": 19.565472475180556
+            "max_cc": 43,
+            "mi": 12.608930133037466
           },
           "src/spendguard/model_preflight.py": {
             "max_cc": 18,
@@ -641,7 +641,7 @@
           },
           "src/spendguard/pricing.py": {
             "max_cc": 23,
-            "mi": 26.09609973405903
+            "mi": 25.82654388083465
           },
           "src/spendguard/prompts.py": {
             "max_cc": 69,
@@ -1065,7 +1065,7 @@
           },
           "src/spendguard/calls.py": {
             "max_cc": 69,
-            "mi": 6.401465258294438
+            "mi": 4.774036953675416
           },
           "src/spendguard/capability_cli_callable_generation.py": {
             "max_cc": 13,
@@ -1117,7 +1117,7 @@
           },
           "src/spendguard/catalog_price_authoring.py": {
             "max_cc": 27,
-            "mi": 45.32940101337756
+            "mi": 38.398466988650554
           },
           "src/spendguard/chat.py": {
             "max_cc": 49,
@@ -1205,7 +1205,7 @@
           },
           "src/spendguard/cost_integrity.py": {
             "max_cc": 19,
-            "mi": 51.486263399156854
+            "mi": 48.13044412823358
           },
           "src/spendguard/coverage.py": {
             "max_cc": 16,
@@ -1484,8 +1484,8 @@
             "mi": 70.70362044668978
           },
           "src/spendguard/model_catalog.py": {
-            "max_cc": 42,
-            "mi": 19.565472475180556
+            "max_cc": 43,
+            "mi": 12.608930133037466
           },
           "src/spendguard/model_preflight.py": {
             "max_cc": 18,
@@ -1529,7 +1529,7 @@
           },
           "src/spendguard/pricing.py": {
             "max_cc": 23,
-            "mi": 26.032446521176176
+            "mi": 25.742519523290415
           },
           "src/spendguard/prompts.py": {
             "max_cc": 69,
@@ -1850,7 +1850,8 @@
     "reviewed_selfcheck_named_unreviewed_exit_policy": "Reviewed the explicit selfcheck exit-policy helper and repeatable CLI array parsing; both are small mechanical policy/argument adapters with can-still-fail coverage.",
     "reviewed_warm_daemon_reader_join_teardown": "Reviewed the sole-reader bounded join on every warm-daemon teardown path and the loud join-timeout warning; the measured MI cost is essential to close the evidence-write-after-teardown correctness race, not avoidable churn.",
     "reviewed_delegate_cancel_orphan_group_reaper": "Records the measured cost of the new stdlib-only bounded process-group reaper and the cancel-path orphaned-group reap and identity logic.",
-    "reviewed_delegate_result_contract_dict_wrap": "Records the measured per-file complexity cost of read_delegate_job_result always returning a state-bearing dict (wrapping a non-dict terminal result_payload), which adds one isinstance branch to the terminal-result contract."
+    "reviewed_delegate_result_contract_dict_wrap": "Records the measured per-file complexity cost of read_delegate_job_result always returning a state-bearing dict (wrapping a non-dict terminal result_payload), which adds one isinstance branch to the terminal-result contract.",
+    "reviewed_effective_dated_pricing_integrity": "2026-11-01: Effective-dated pricing adds essential interval selection and validation plus immutable record-time rate provenance across calls, catalog authoring, cost integrity, ledger, model catalog, and pricing. Readability extractions isolate history updates, date normalization, interval validation, stamped-rate reconstruction, and ledger rate stamping; the remaining measured CC/MI reflects required half-open interval, legacy compatibility, nullable provenance, and fail-closed integrity branches."
   },
   "duplication": {
     "duplicate_lines": 303,

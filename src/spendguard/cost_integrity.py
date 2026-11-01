@@ -58,6 +58,17 @@ def _reconstruct_split_token_cost(model, in_tok, out_tok, cache_read_tok, cache_
     return sum(components)
 
 
+def _recorded_token_rates_from_axes(kind, stamped_axes):
+    """Return complete stamped rates in the shape consumed by pricing reconstruction."""
+    if len(stamped_axes) != 4 or any(rate is None for rate in stamped_axes):
+        return None
+    recorded_rates = dict(zip(("in_", "out", "cached_in", "cache_write"), stamped_axes))
+    if kind == "batch":
+        recorded_rates.update(batch_in=stamped_axes[0], batch_out=stamped_axes[1],
+                              batch_cached_in=stamped_axes[2])
+    return recorded_rates
+
+
 def classify_impossible_cost_buckets(rows, *, gaps=None):
     """Return mismatches and uncheckable count; optionally collect named coverage gaps.
 
@@ -74,12 +85,7 @@ def classify_impossible_cost_buckets(rows, *, gaps=None):
         if not split and gaps is not None:
             gaps.append({**identity, "gap": "legacy_cache_split_missing", "basis": "best-effort ceiling only"})
         try:
-            recorded_rates = None
-            if len(stamped_axes) == 4 and all(rate is not None for rate in stamped_axes):
-                recorded_rates = dict(zip(("in_", "out", "cached_in", "cache_write"), stamped_axes))
-                if kind == "batch":
-                    recorded_rates.update(batch_in=stamped_axes[0], batch_out=stamped_axes[1],
-                                          batch_cached_in=stamped_axes[2])
+            recorded_rates = _recorded_token_rates_from_axes(kind, stamped_axes)
             expected = (_reconstruct_split_token_cost(model, in_tok, out_tok, *cache_axes, kind == "batch",
                                                       charge_date=day, recorded_rates=recorded_rates)
                         if split else _max_token_cost(model, in_tok, out_tok, kind == "batch"))

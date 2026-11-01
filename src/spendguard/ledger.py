@@ -514,6 +514,25 @@ def live_dedup_key(ts_iso):
     return f"live:{ts_iso}:{os.getpid()}:{next(_LIVE_SEQ)}"
 
 
+def _stamp_spend_event_catalog_rates(ev):
+    """Fill absent token-rate provenance from the catalog without budget refusal."""
+    rate_columns = ("rate_in", "rate_out", "cache_read_rate", "cache_write_rate")
+    if not ev.get("model") or all(ev.get(column) is not None for column in rate_columns):
+        return
+    from . import pricing
+    catalog_price = pricing._catalog_price(ev["model"]) or pricing.PRICING.get(ev["model"])
+    if catalog_price is None:
+        logging.getLogger(__name__).warning("%s model=%s", LEDGER_RATE_PROVENANCE_GAP, ev["model"])
+        return
+    is_batch = ev.get("cost_type") == "batch"
+    input_rate = catalog_price.get("batch_in" if is_batch else "in_")
+    ev.setdefault("rate_in", input_rate)
+    ev.setdefault("rate_out", catalog_price.get("batch_out" if is_batch else "out"))
+    ev.setdefault("cache_read_rate", catalog_price.get("batch_cached_in" if is_batch else "cached_in"))
+    ev.setdefault("cache_write_rate", input_rate * pricing.CACHE_WRITE_5M_MULTIPLIER
+                  if input_rate is not None and catalog_price.get("provider") == "anthropic" else None)
+
+
 class SpendLedger:
     """The one door to spend_events: SCRUD + queries + lifecycle/audit. Mutable until locked; integrity in spend_audit."""
 
@@ -782,24 +801,9 @@ class SpendLedger:
         d, p = _day_period(ev["occurred_at"], _reporting_tz())
         ev.setdefault("day", d)
         ev.setdefault("period", p)
-        rate_columns = ("rate_in", "rate_out", "cache_read_rate", "cache_write_rate")
-        if ev.get("model") and any(ev.get(column) is None for column in rate_columns):
-            # Amounts are already supplied and validated. Optional rate
-            # provenance uses nullable catalog facts and exact table entries;
-            # it must never invoke the budget-pricing refusal API.
-            from . import pricing
-            pr = pricing._catalog_price(ev["model"]) or pricing.PRICING.get(ev["model"])
-            if pr is None:
-                logging.getLogger(__name__).warning("%s model=%s",
-                    LEDGER_RATE_PROVENANCE_GAP, ev["model"])
-            else:
-                bt = ev.get("cost_type") == "batch"
-                ev.setdefault("rate_in", pr.get("batch_in" if bt else "in_"))
-                ev.setdefault("rate_out", pr.get("batch_out" if bt else "out"))
-                ev.setdefault("cache_read_rate", pr.get("batch_cached_in" if bt else "cached_in"))
-                input_rate = pr.get("batch_in" if bt else "in_")
-                ev.setdefault("cache_write_rate", input_rate * pricing.CACHE_WRITE_5M_MULTIPLIER
-                              if input_rate is not None and pr.get("provider") == "anthropic" else None)
+        # Amounts are already supplied and validated. Optional rate provenance
+        # uses nullable catalog facts and must never invoke budget refusal.
+        _stamp_spend_event_catalog_rates(ev)
         ev.setdefault("schema_version", SCHEMA_VERSION)
         ev.setdefault("status", "draft")
         ev.setdefault("revision", 1)

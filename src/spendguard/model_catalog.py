@@ -323,6 +323,22 @@ def model_price(model_id):
     return price_for_date_from_record(rec)
 
 
+def _normalize_catalog_price_query_date(on_date):
+    """Normalize a catalog price query date to strict ISO YYYY-MM-DD."""
+    target = on_date or datetime.datetime.now(datetime.timezone.utc).date().isoformat()
+    if isinstance(target, (datetime.date, datetime.datetime)):
+        target = target.date().isoformat() if isinstance(target, datetime.datetime) else target.isoformat()
+    if not isinstance(target, str):
+        raise ValueError("on_date must be a YYYY-MM-DD date")
+    target = target[:10]
+    try:
+        if datetime.date.fromisoformat(target).isoformat() != target:
+            raise ValueError
+    except ValueError as exc:
+        raise ValueError("on_date must be a YYYY-MM-DD date") from exc
+    return target
+
+
 def price_for_date_from_record(record, on_date=None):
     """Return the catalog rate interval covering ``on_date``; legacy prices are open intervals.
 
@@ -343,17 +359,7 @@ def price_for_date_from_record(record, on_date=None):
         if on_date is None and interval["valid_from"] is None:
             return interval
         intervals = [interval]
-    target = on_date or datetime.datetime.now(datetime.timezone.utc).date().isoformat()
-    if isinstance(target, (datetime.date, datetime.datetime)):
-        target = target.date().isoformat() if isinstance(target, datetime.datetime) else target.isoformat()
-    if not isinstance(target, str):
-        raise ValueError("on_date must be a YYYY-MM-DD date")
-    target = target[:10]
-    try:
-        if datetime.date.fromisoformat(target).isoformat() != target:
-            raise ValueError
-    except ValueError as exc:
-        raise ValueError("on_date must be a YYYY-MM-DD date") from exc
+    target = _normalize_catalog_price_query_date(on_date)
     matches = [interval for interval in intervals
                if interval.get("valid_from") is not None and interval["valid_from"] <= target
                and (interval.get("valid_until") is None or target < interval["valid_until"])]
@@ -557,6 +563,29 @@ def as_price_table():
     return out
 
 
+def _validate_catalog_price_intervals(record_id, intervals):
+    """Return contract problems for one record's effective-dated price history."""
+    if not isinstance(intervals, list) or not intervals:
+        return [f"{record_id}: price_intervals must be a non-empty list"]
+    problems = []
+    previous_until = None
+    for index, interval in enumerate(intervals):
+        start, until = interval.get("valid_from"), interval.get("valid_until")
+        try:
+            start_valid = datetime.date.fromisoformat(start).isoformat() == start
+            until_valid = until is None or datetime.date.fromisoformat(until).isoformat() == until
+        except (TypeError, ValueError):
+            start_valid = until_valid = False
+        if not start_valid or not until_valid or (until is not None and start >= until):
+            problems.append(f"{record_id}: price_intervals[{index}] has an invalid effective window")
+        if previous_until is not None and start < previous_until:
+            problems.append(f"{record_id}: price_intervals overlap at index {index}")
+        previous_until = until
+    if intervals[-1].get("valid_until") is not None:
+        problems.append(f"{record_id}: price_intervals has no open current interval")
+    return problems
+
+
 def validate_catalog(models=None, allow_legacy_missing_as_of=True):
     """Check the DATA CONTRACT and return a list of human-readable problems ([] = clean). Used by
     tests/test_model_catalog_ssot.py. Verifies: required top fields present; price fields (when a price exists) are
@@ -595,24 +624,7 @@ def validate_catalog(models=None, allow_legacy_missing_as_of=True):
                     problems.append(f"{rid}: price.{k} is {type(v).__name__}, expected number|null")
         intervals = rec.get("price_intervals")
         if intervals is not None:
-            if not isinstance(intervals, list) or not intervals:
-                problems.append(f"{rid}: price_intervals must be a non-empty list")
-            else:
-                previous_until = None
-                for index, interval in enumerate(intervals):
-                    start, until = interval.get("valid_from"), interval.get("valid_until")
-                    try:
-                        start_valid = datetime.date.fromisoformat(start).isoformat() == start
-                        until_valid = until is None or datetime.date.fromisoformat(until).isoformat() == until
-                    except (TypeError, ValueError):
-                        start_valid = until_valid = False
-                    if not start_valid or not until_valid or (until is not None and start >= until):
-                        problems.append(f"{rid}: price_intervals[{index}] has an invalid effective window")
-                    if previous_until is not None and start < previous_until:
-                        problems.append(f"{rid}: price_intervals overlap at index {index}")
-                    previous_until = until
-                if intervals[-1].get("valid_until") is not None:
-                    problems.append(f"{rid}: price_intervals has no open current interval")
+            problems.extend(_validate_catalog_price_intervals(rid, intervals))
         oc = (rec.get("output_ceiling") or {}).get("value")
         if oc is not None and not isinstance(oc, int):
             problems.append(f"{rid}: output_ceiling.value is {type(oc).__name__}, expected int|null")
