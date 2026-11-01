@@ -1,6 +1,6 @@
 # Readiness
 
-Definition revision: 3
+Definition revision: 4
 
 Square means every checklist item has a reviewed deterministic gate and every gate passes.
 `spendguard selfcheck` runs each gate and exits nonzero for FAIL or UNREVIEWED.
@@ -13,6 +13,9 @@ A supplied clean-environment report must match the current input fingerprint and
 
 - [ ] **surface-parity** — Every capability is exposed on CLI, API and MCP except declared deliberate absences.
   Gate: `spendguard.capability_readiness_gates:run_capability_script_readiness_gate`; inputs: `{"scripts": ["tests/test_capability_surface_parity_guard.py"]}`.
+
+- [ ] **lane-queue-maintenance** — Lane queue size, free-page ratio, and expired terminal retention remain within configured limits.
+  Gate: `spendguard.capability_readiness_gates:assess_lane_queue_maintenance_readiness`; inputs: `{}`.
 
 - [ ] **help-non-trivial** — Every CLI command exposes real flags or its explicit no-flags declaration.
   Gate: `spendguard.capability_readiness_gates:run_capability_script_readiness_gate`; inputs: `{"scripts": ["tests/test_capability_cli_help_guard.py"]}`.
