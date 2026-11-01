@@ -6,6 +6,7 @@ through bulk_delegate and empties the queue; and the local-load ceiling pauses l
 loadavg stubbed, isolated db, no LLM, no subprocess.
 """
 import contextlib
+import datetime
 import io
 import os
 import sqlite3
@@ -33,6 +34,7 @@ fails = []
 
 _GUARD_FAILURE_MESSAGE = "forced queue guard rejection"
 _TRANSIENT_FAILURE_MESSAGE = "database is busy"
+_PURGE_TEST_RETAIN_DAYS = 1
 
 
 def _raise_queue_write_error(error):
@@ -182,9 +184,10 @@ with contextlib.closing(q._queue_db()) as _c:
     _c.commit()
 pend_before = q.queue_depth().get("pending", 0)
 with contextlib.closing(q._queue_db()) as _c:                      # backdate the old row past the retain window
-    _c.execute("UPDATE lane_queue SET updated_ts='2000-01-01T00:00:00+00:00' WHERE id=?", (rid_old,))
+    old_terminal_timestamp = q._iso(q._utcnow() - datetime.timedelta(days=_PURGE_TEST_RETAIN_DAYS + 1))
+    _c.execute("UPDATE lane_queue SET terminal_ts=? WHERE id=?", (old_terminal_timestamp, rid_old))
     _c.commit()
-res = q.purge(retain_days=1)
+res = q.purge(retain_days=_PURGE_TEST_RETAIN_DAYS)
 fails += ck("purge archived + deleted exactly the OLD terminal row", res.get("archived") == 1 and res.get("deleted") == 1)
 with contextlib.closing(q._queue_db()) as _c:
     gone = _c.execute("SELECT COUNT(*) FROM lane_queue WHERE id=?", (rid_old,)).fetchone()[0]

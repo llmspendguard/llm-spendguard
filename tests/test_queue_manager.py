@@ -98,6 +98,32 @@ def test_stale_retirement_is_archive_first_and_excludes_fresh_terminal_and_live_
     assert lane_queue.queue_row_status(deadline_id, str(archive))["source"] == "archive"
 
 
+def test_terminal_retention_archives_deletes_and_reclaims_fixture(tmp_path):
+    old = _queue_manager_timestamp(-TEST_OLD_DAYS)
+    archive = tmp_path / TEST_ARCHIVE_FILENAME
+    row_ids = [_insert_queue_manager_row(state, old) for state in ("done", "failed", "retired")]
+    result = lane_queue.purge(retain_days=TEST_RETAIN_DAYS, stale_days=TEST_STALE_DAYS,
+                              archive_path=str(archive), chunk=1)
+    assert result["terminal"] == {"archived": len(row_ids), "deleted": len(row_ids)}
+    assert {json.loads(line)["id"] for line in archive.read_text().splitlines()} == set(row_ids)
+    assert all(_queue_manager_state(row_id) is None for row_id in row_ids)
+    assert result["reclaim"]["freelist_after"] <= result["reclaim"]["freelist_before"]
+
+
+def test_terminal_retention_archive_failure_prevents_delete(monkeypatch, tmp_path):
+    old = _queue_manager_timestamp(-TEST_OLD_DAYS)
+    row_id = _insert_queue_manager_row("failed", old)
+
+    def fail_archive_write(archive_path, records):
+        raise OSError("fixture archive refusal")
+
+    monkeypatch.setattr(lane_queue, "_append_durable_queue_archive", fail_archive_write)
+    result = lane_queue.purge(retain_days=TEST_RETAIN_DAYS, stale_days=TEST_STALE_DAYS,
+                              archive_path=str(tmp_path / TEST_ARCHIVE_FILENAME), chunk=1)
+    assert "fixture archive refusal" in result["error"]
+    assert _queue_manager_state(row_id)[0] == "failed"
+
+
 def test_queue_row_status_all_dispositions_and_unknown(tmp_path):
     now = _queue_manager_timestamp(0)
     statuses = {}

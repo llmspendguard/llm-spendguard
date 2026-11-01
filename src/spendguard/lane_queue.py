@@ -70,6 +70,16 @@ _QUEUE_RESULT_GAP = "lane_queue_result_invalid_json"
 QUEUE_STALE_DAYS_DEFAULT = 1.0  # hook classifications describe the triggering edit; after a day they are obsolete
 QUEUE_MANAGER_IDLE_ROUNDS_DEFAULT = 1
 QUEUE_MANAGER_MAX_ITERS_DEFAULT = 100
+QUEUE_VACUUM_PAGES_DEFAULT = 8192
+QUEUE_SIZE_LIMIT_BYTES_DEFAULT = 2 * 1024 * 1024 * 1024
+QUEUE_FREELIST_RATIO_LIMIT_DEFAULT = 0.40
+QUEUE_OLD_TERMINAL_LIMIT_DEFAULT = 0
+TERMINAL_STATES = ("done", "failed", "retired")
+QUEUE_ARCHIVE_COLUMNS = ("id", "intent", "task", "system", "reasoning", "priority", "state", "lease_until",
+                         "attempts", "max_attempts", "worker", "result", "lane", "billed", "sla_class",
+                         "deadline_ts", "defer_until", "parks", "fingerprint", "batch_handle", "batch_model",
+                         "result_payload", "result_gap", "result_migrated", "terminal_reason", "terminal_ts",
+                         "created_ts", "updated_ts")
 
 # Priority convention (higher drains first): a delegated task someone is WAITING on jumps ahead of a big backfill,
 # so a 6k-item bulk enqueue never starves interactive work sharing the same queue.
@@ -119,12 +129,16 @@ def _ensure_queue_schema(c):
     c.execute("CREATE TABLE IF NOT EXISTS lane_queue_meta(key TEXT PRIMARY KEY, value TEXT)")
     c.execute("""CREATE TABLE IF NOT EXISTS lane_queue(
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        intent TEXT NOT NULL, task TEXT NOT NULL, system TEXT, reasoning TEXT,
+        intent TEXT NOT NULL, task TEXT, system TEXT, reasoning TEXT,
         priority INTEGER DEFAULT 0,
         state TEXT DEFAULT 'pending',        -- pending | leased | done | failed | retired
         lease_until TEXT, attempts INTEGER DEFAULT 0, max_attempts INTEGER DEFAULT 3,
         worker TEXT, result TEXT, lane TEXT, billed INTEGER DEFAULT 0,
         created_ts TEXT, updated_ts TEXT)""")
+    queue_table_info = c.execute("PRAGMA table_info(lane_queue)").fetchall()
+    task_column = next((column for column in queue_table_info if column[1] == "task"), None)
+    if task_column and task_column[3]:
+        _migrate_queue_task_to_nullable(c, queue_table_info)
     # FORWARD-ONLY additive migration for tables created before these columns existed: a queue item carries its
     # SERVICE CLASS ('realtime' | 'batch'), an absolute SLA DEADLINE, and PARKING state (defer_until = NOT leasable
     # until this ts, for capacity backpressure; parks = how many times deferred for saturation, bounded by MAX_PARKS,
@@ -137,6 +151,7 @@ def _ensure_queue_schema(c):
                         ("defer_until", "TEXT"), ("parks", "INTEGER DEFAULT 0"),
                         ("fingerprint", "TEXT"), ("batch_handle", "TEXT"), ("batch_model", "TEXT"),
                         ("result_payload", "TEXT"), ("result_gap", "TEXT"), ("terminal_reason", "TEXT"),
+                        ("terminal_ts", "TEXT"),
                         ("result_migrated", "INTEGER DEFAULT 0")):
         if _col in queue_existing_columns:
             continue
@@ -150,6 +165,7 @@ def _ensure_queue_schema(c):
     # every terminal row comparing updated_ts — on 137k terminal rows in a 2.7GB table that read most of the file
     # under the write lock every drain cycle (measured 2026-10-08). (state, updated_ts) makes it a bounded range scan.
     c.execute("CREATE INDEX IF NOT EXISTS lane_queue_purge ON lane_queue(state, updated_ts)")
+    c.execute("CREATE INDEX IF NOT EXISTS lane_queue_terminal_retention ON lane_queue(state, terminal_ts)")
     # index the DEDUP lookup: enqueue checks "does an identical (fingerprint) task already have a result or sit
     # in-flight?" and settle coalesces same-fingerprint pending rows. A point lookup on fingerprint, so one commit of
     # a 6k backfill stays cheap even against a deep table.
@@ -164,6 +180,28 @@ def _ensure_queue_schema(c):
                   "lane=COALESCE(lane,?),result_gap=?,result_migrated=1 WHERE id=? AND result_migrated=0",
                   (parsed.get("batch"), parsed.get("batch_model"), payload, parsed.get("lane"),
                    parsed.get("_gap"), rid))
+
+
+def _migrate_queue_task_to_nullable(queue_connection, queue_table_info):
+    """Rebuild the legacy table once so archived terminal payloads can be represented by SQL NULL."""
+    legacy_table = "lane_queue_task_not_null_legacy"
+    queue_connection.execute(f"ALTER TABLE lane_queue RENAME TO {legacy_table}")
+    queue_connection.execute("""CREATE TABLE lane_queue(
+        id INTEGER PRIMARY KEY AUTOINCREMENT, intent TEXT NOT NULL, task TEXT, system TEXT, reasoning TEXT,
+        priority INTEGER DEFAULT 0, state TEXT DEFAULT 'pending', lease_until TEXT,
+        attempts INTEGER DEFAULT 0, max_attempts INTEGER DEFAULT 3, worker TEXT, result TEXT, lane TEXT,
+        billed INTEGER DEFAULT 0, created_ts TEXT, updated_ts TEXT, sla_class TEXT DEFAULT 'batch',
+        deadline_ts TEXT, defer_until TEXT, parks INTEGER DEFAULT 0, fingerprint TEXT, batch_handle TEXT,
+        batch_model TEXT, result_payload TEXT, result_gap TEXT, result_migrated INTEGER DEFAULT 0,
+        terminal_reason TEXT, terminal_ts TEXT)""")
+    source_columns = [column[1] for column in queue_table_info]
+    destination_columns = source_columns + (["terminal_ts"] if "terminal_ts" not in source_columns else [])
+    source_expressions = source_columns + (["CASE WHEN state IN ('done','failed','retired') THEN updated_ts END"]
+                                           if "terminal_ts" not in source_columns else [])
+    queue_connection.execute(
+        f"INSERT INTO lane_queue({','.join(destination_columns)}) SELECT {','.join(source_expressions)} "
+        f"FROM {legacy_table}")
+    queue_connection.execute(f"DROP TABLE {legacy_table}")
 
 
 def _decode_queue_audit(row_id, payload):
@@ -448,10 +486,10 @@ def dedup_pending_against_done(chunk=5000):
                 "  result=(SELECT d.result FROM lane_queue d WHERE d.fingerprint=lane_queue.fingerprint "
                 "          AND d.state='done' AND d.result IS NOT NULL AND d.result!='' LIMIT 1), "
                 "  state='done', lane='content-addressed-dedup', billed=0, lease_until=NULL, defer_until=NULL, "
-                "  updated_ts=? "
+                "  terminal_reason='content_addressed_dedup',terminal_ts=?,updated_ts=? "
                 "WHERE state='pending' AND fingerprint IS NOT NULL AND EXISTS ("
                 "  SELECT 1 FROM lane_queue d WHERE d.fingerprint=lane_queue.fingerprint AND d.state='done' "
-                "          AND d.result IS NOT NULL AND d.result!='')", (now,))
+                          "          AND d.result IS NOT NULL AND d.result!='')", (now, now))
             settled = cur.rowcount
             c.commit()
     except Exception as _e:
@@ -472,8 +510,8 @@ def reclaim_expired_leases(connection=None, now=None):
 
     def _reclaim_locked(active_connection):
         failed = active_connection.execute(
-            "UPDATE lane_queue SET state='failed', updated_ts=? "
-            "WHERE state='leased' AND lease_until<? AND attempts>=max_attempts", (now, now)).rowcount
+            "UPDATE lane_queue SET state='failed', terminal_reason='retry_budget_exhausted',terminal_ts=?,updated_ts=? "
+            "WHERE state='leased' AND lease_until<? AND attempts>=max_attempts", (now, now, now)).rowcount
         pending = active_connection.execute(
             "UPDATE lane_queue SET state='pending', worker=NULL, updated_ts=? "
             "WHERE state='leased' AND lease_until<? AND attempts<max_attempts", (now, now)).rowcount
@@ -519,9 +557,9 @@ def lease(n, worker=None, lease_s=None):
             try:
                 # A dead synchronous hold may never become a later purchase, even if its
                 # cleanup write failed. Deadline is durable admission evidence.
-                c.execute("UPDATE lane_queue SET state='failed', result=?, result_payload=?, batch_handle=NULL, batch_model=NULL,  result_gap=NULL, result_migrated=1, lease_until=NULL, updated_ts=? "
+                c.execute("UPDATE lane_queue SET state='failed', result=?, result_payload=?, batch_handle=NULL, batch_model=NULL,  result_gap=NULL, result_migrated=1, lease_until=NULL,terminal_reason='deadline_exceeded',terminal_ts=?,updated_ts=? "
                           "WHERE state IN ('leased','pending') AND deadline_ts IS NOT NULL AND deadline_ts<=?",
-                          (deadline_audit, deadline_payload, now, now))
+                          (deadline_audit, deadline_payload, now, now, now))
                 # reclaim expired leases: exhausted → failed, else → pending (retryable). attempts was already
                 # incremented at lease time, so `attempts>=max_attempts` here means every allowed try is spent.
                 reclaim_expired_leases(connection=c, now=now)
@@ -642,14 +680,27 @@ def settle(row_id, result):
                     defer_until = _iso(now_dt + datetime.timedelta(seconds=rb)) if rb > 0 else None   # instantly & churns
                 else:
                     defer_until = None
+            terminal_reason = None
+            if state == "done":
+                terminal_reason = "completed"
+            elif state == "failed":
+                if saturated:
+                    terminal_reason = "parking_limit_or_deadline"
+                elif result.get("outcome") in (None,):
+                    terminal_reason = "retry_budget_exhausted"
+                elif retryable:
+                    terminal_reason = "retry_budget_exhausted"
+                else:
+                    terminal_reason = "non_retryable:" + str(result.get("outcome"))
             # F2: STATE-GUARD the write — only a row still leased (realtime path) or queued_batch (collect path) may be
             # settled. Without the guard a late collect_batched result could overwrite a row realtime already settled
             # `done` (or vice-versa) — a cross-path double-settle/double-deliver. rowcount==0 means another path already
             # settled it: do NOT overwrite and do NOT let a caller count it again.
             cur = c.execute("UPDATE lane_queue SET state=?, result=?, result_payload=?, batch_handle=?, batch_model=?,  result_gap=NULL, result_migrated=1, lane=?, billed=?, lease_until=NULL, defer_until=?, "
-                            "attempts=?, parks=?, updated_ts=? WHERE id=? AND state IN ('leased','queued_batch')",
+                            "attempts=?, parks=?,terminal_reason=?,terminal_ts=CASE WHEN ? IS NULL THEN terminal_ts ELSE ? END,updated_ts=? WHERE id=? AND state IN ('leased','queued_batch')",
                             (state, audit, full_payload, batch_handle, batch_model, result.get("lane"),
-                             1 if result.get("billed") else 0, defer_until, new_attempts, new_parks, now, row_id))
+                             1 if result.get("billed") else 0, defer_until, new_attempts, new_parks,
+                             terminal_reason, terminal_reason, now, now, row_id))
             settled = cur.rowcount > 0                   # True only if THIS call settled it (not an already-settled row)
             if ok and settled and fp:
                 # CONTENT-ADDRESSED COALESCE: this row produced a result for fingerprint `fp`. Any OTHER PENDING row
@@ -658,8 +709,8 @@ def settle(row_id, result):
                 # lookup and inserted) and drains any pre-existing duplicates. Only PENDING rows: a leased dup is being
                 # worked and its own settle + the F2 state guard handle it; billed=0 — a coalesced row incurs no spend.
                 c.execute("UPDATE lane_queue SET state='done', result=?, result_payload=?, batch_handle=?, batch_model=?,  result_gap=NULL, result_migrated=1, lane='content-addressed-dedup', billed=0, "
-                          "lease_until=NULL, defer_until=NULL, updated_ts=? WHERE fingerprint=? AND state='pending' AND id!=?",
-                          (audit, full_payload, batch_handle, batch_model, now, fp, row_id))
+                          "lease_until=NULL,defer_until=NULL,terminal_reason='content_addressed_dedup',terminal_ts=?,updated_ts=? WHERE fingerprint=? AND state='pending' AND id!=?",
+                          (audit, full_payload, batch_handle, batch_model, now, now, fp, row_id))
             c.commit()
             return settled
     except Exception as _e:
@@ -1269,10 +1320,7 @@ def purge_due(min_interval_s=None):
 
 def _archive_then_delete_queue_pass(where_sql, where_parameters, archive_path, chunk):
     """Run one fixed structural retirement pass in bounded archive-before-delete transactions."""
-    cols = ("id", "intent", "task", "system", "reasoning", "priority", "state", "lease_until", "attempts",
-            "max_attempts", "worker", "result", "lane", "billed", "sla_class", "deadline_ts", "defer_until",
-            "parks", "fingerprint", "batch_handle", "batch_model", "result_payload", "result_gap",
-            "result_migrated", "terminal_reason", "created_ts", "updated_ts")
+    cols = QUEUE_ARCHIVE_COLUMNS
     archived = deleted = 0
     while True:
         with _queue_op() as queue_connection:
@@ -1298,12 +1346,36 @@ def _archive_then_delete_queue_pass(where_sql, where_parameters, archive_path, c
     return {"archived": archived, "deleted": deleted}
 
 
+def _reclaim_queue_freelist(vacuum_pages=None):
+    """Reclaim free queue pages under the queue writer lease; never opens the spend ledger."""
+    pages = max(1, int(vacuum_pages if vacuum_pages is not None else
+                       _qcfg("queue_vacuum_pages", QUEUE_VACUUM_PAGES_DEFAULT)))
+    database_path = config.lane_queue_db_path()
+    bytes_before = os.path.getsize(database_path) if os.path.exists(database_path) else 0
+    with _queue_op() as queue_connection:
+        page_size = int(queue_connection.execute("PRAGMA page_size").fetchone()[0])
+        freelist_before = int(queue_connection.execute("PRAGMA freelist_count").fetchone()[0])
+        pages_to_reclaim = min(pages, freelist_before)
+        for _ in range(pages_to_reclaim):
+            before_step = int(queue_connection.execute("PRAGMA freelist_count").fetchone()[0])
+            queue_connection.execute("PRAGMA incremental_vacuum(1)")
+            after_step = int(queue_connection.execute("PRAGMA freelist_count").fetchone()[0])
+            if after_step >= before_step:
+                break
+        queue_connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        freelist_after = int(queue_connection.execute("PRAGMA freelist_count").fetchone()[0])
+    bytes_after = os.path.getsize(database_path) if os.path.exists(database_path) else 0
+    physical_bytes_reclaimed = max(0, bytes_before - bytes_after)
+    logical_bytes_reclaimed = max(0, freelist_before - freelist_after) * page_size
+    return {"freelist_before": freelist_before, "freelist_after": freelist_after,
+            "bytes_before": bytes_before, "bytes_after": bytes_after,
+            "physical_bytes_reclaimed": physical_bytes_reclaimed,
+            "bytes_reclaimed": max(physical_bytes_reclaimed, logical_bytes_reclaimed)}
+
+
 def _archive_then_retire_stale_queue_pass(where_sql, where_parameters, archive_path, chunk, now):
     """Archive stale live rows in their original form, then retain them as queryable terminal rows."""
-    columns = ("id", "intent", "task", "system", "reasoning", "priority", "state", "lease_until", "attempts",
-               "max_attempts", "worker", "result", "lane", "billed", "sla_class", "deadline_ts", "defer_until",
-               "parks", "fingerprint", "batch_handle", "batch_model", "result_payload", "result_gap",
-               "result_migrated", "terminal_reason", "created_ts", "updated_ts")
+    columns = QUEUE_ARCHIVE_COLUMNS
     archived = retired = 0
     while True:
         with _queue_op() as queue_connection:
@@ -1321,10 +1393,11 @@ def _archive_then_retire_stale_queue_pass(where_sql, where_parameters, archive_p
                     record = dict(zip(columns, row))
                     reason = "stale_deadline" if record["deadline_ts"] and record["deadline_ts"] < now else "stale_age"
                     records.append({**record, "retired_state": "retired", "retired_reason": reason})
-                    updates.append((reason, now, row[0]))
+                    updates.append((reason, now, now, row[0]))
                 _append_durable_queue_archive(archive_path, records)
                 queue_connection.executemany(
-                    "UPDATE lane_queue SET state='retired',terminal_reason=?,updated_ts=?,lease_until=NULL,worker=NULL "
+                    "UPDATE lane_queue SET state='retired',terminal_reason=?,terminal_ts=?,updated_ts=?,"
+                    "lease_until=NULL,worker=NULL,task=NULL,result=NULL,result_payload=NULL "
                     "WHERE id=?", updates)
                 queue_connection.execute("COMMIT")
             except Exception:
@@ -1367,15 +1440,18 @@ def purge(retain_days=None, archive_path=None, chunk=None, stale_days=None):
             "AND ((deadline_ts IS NOT NULL AND deadline_ts<?) OR created_ts<?)",
             (now, now, stale_cutoff), archive_path, chunk, now)
         terminal_result = _archive_then_delete_queue_pass(
-            "state IN ('done','failed','retired') AND updated_ts<?", (terminal_cutoff,), archive_path, chunk)
+            "state IN ('done','failed','retired') AND COALESCE(terminal_ts,created_ts)<?",
+            (terminal_cutoff,), archive_path, chunk)
+        reclaim_result = _reclaim_queue_freelist()
         if not _queue_meta_set(QUEUE_PURGE_STAMP_KEY, _t.time()):
             return {"stale": stale_result, "terminal": terminal_result,
                     "archived": stale_result["archived"] + terminal_result["archived"],
                     "deleted": stale_result["deleted"] + terminal_result["deleted"],
-                    "error": "purge throttle stamp could not be persisted"}
+                    "reclaim": reclaim_result, "error": "purge throttle stamp could not be persisted"}
         return {"stale": stale_result, "terminal": terminal_result,
                 "archived": stale_result["archived"] + terminal_result["archived"],
-                "deleted": stale_result["deleted"] + terminal_result["deleted"], "archive": archive_path}
+                "deleted": stale_result["deleted"] + terminal_result["deleted"], "archive": archive_path,
+                "reclaim": reclaim_result}
     except Exception as e:
         return {"stale": stale_result, "terminal": terminal_result,
                 "archived": stale_result["archived"] + terminal_result["archived"],
@@ -1402,8 +1478,8 @@ def queue_management_plan(stale_days=None, retain_days=None):
                 "AND ((deadline_ts IS NOT NULL AND deadline_ts<?) OR created_ts<?) "
                 "GROUP BY state,intent ORDER BY state,intent", (now, now, stale_cutoff)).fetchall()
             terminal = queue_connection.execute(
-                "SELECT state,intent,COUNT(*),MIN(updated_ts),MAX(updated_ts) FROM lane_queue "
-                "WHERE state IN ('done','failed','retired') AND updated_ts<? GROUP BY state,intent ORDER BY state,intent",
+                "SELECT state,intent,COUNT(*),MIN(COALESCE(terminal_ts,created_ts)),MAX(COALESCE(terminal_ts,created_ts)) FROM lane_queue "
+                "WHERE state IN ('done','failed','retired') AND COALESCE(terminal_ts,created_ts)<? GROUP BY state,intent ORDER BY state,intent",
                 (terminal_cutoff,)).fetchall()
             ready = queue_connection.execute(
                 "SELECT COUNT(*) FROM lane_queue WHERE state='pending' "

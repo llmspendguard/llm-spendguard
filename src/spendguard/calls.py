@@ -34,6 +34,26 @@ def _call_observation_nano_amounts(cost, input_cost_floor):
                  for amount in (cost, input_cost_floor))
 
 
+def _stamp_call_price_rates(connection, call_id, model, kind, timestamp):
+    """Snapshot the effective token rates on a newly written call; never rewrites historical rows."""
+    if not model or kind not in ("realtime", "batch"):
+        return
+    from . import pricing
+    try:
+        rates = pricing.price(model, as_of=str(timestamp)[:10])
+    except pricing.PriceUnknownError:
+        return
+    batch = kind == "batch"
+    input_rate = rates.get("batch_in" if batch else "in_")
+    output_rate = rates.get("batch_out" if batch else "out")
+    read_rate = rates.get("batch_cached_in" if batch else "cached_in")
+    write_rate = (input_rate * pricing.CACHE_WRITE_5M_MULTIPLIER
+                  if input_rate is not None and rates.get("provider") == "anthropic" else None)
+    connection.execute(
+        "UPDATE calls SET rate_in=?,rate_out=?,cache_read_rate=?,cache_write_rate=? WHERE id=?",
+        (input_rate, output_rate, read_rate, write_rate, call_id))
+
+
 @own_spend_ledger_schema_reads
 def _backfill_call_observation_nano_columns(connection, missing_columns):
     conversion_gaps = []
@@ -477,6 +497,8 @@ def _initialize_call_observation_nano_schema(c):
                         ("requested_model", "TEXT"), ("served_model", "TEXT"),
                         ("resolved_lane", "TEXT"), ("redirect_reason", "TEXT"),
                         ("cache_read_tok", "INTEGER"), ("cache_write_tok", "INTEGER"),
+                        ("rate_in", "REAL"), ("rate_out", "REAL"),
+                        ("cache_read_rate", "REAL"), ("cache_write_rate", "REAL"),
                         ("routing_snapshot_json", "TEXT"), ("request_schema_json", "TEXT"),
                         ("request_max_tokens", "INTEGER"), ("request_decomposition_json", "TEXT"),
                         *((column, "INTEGER") for column in CALL_OBSERVATION_NANO_COLUMNS.values())):
@@ -800,6 +822,7 @@ def record_call(provider, model, kind, cost, in_tok=0, out_tok=0, latency=None,
                  (int(request_max_tokens) if request_max_tokens is not None else None),
                  routing_audit.encode_audit_json(request_decomposition), *settlement_values[3:],
                  *_call_observation_nano_amounts(settlement_values[2], settlement_values[4])))
+            _stamp_call_price_rates(audit_connection, cid, model, kind, ts)
             routing_audit.insert_linked_decision(
                 audit_connection,
                 call_id=cid,
@@ -893,6 +916,7 @@ def insert(provider, model, kind, cost, in_tok=0, out_tok=0, ts=None, intent=Non
              *settlement_values[:3], quality, quality_src, quality_conf,
              (effort or None), proj, call_class, origin_session, *settlement_values[3:],
              *_call_observation_nano_amounts(settlement_values[2], settlement_values[4])))
+        _stamp_call_price_rates(_calls_db(), cid, model, kind, ts)
         _calls_db().commit()
     return cid
 
