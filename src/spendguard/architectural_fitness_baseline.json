@@ -333,7 +333,7 @@
           },
           "src/spendguard/delegate_jobs.py": {
             "max_cc": 30,
-            "mi": 18.532985996875016
+            "mi": 17.623099760090394
           },
           "src/spendguard/delegate_router.py": {
             "max_cc": 48,
@@ -901,7 +901,7 @@
           },
           "src/spendguard/warm_stdio_daemon.py": {
             "max_cc": 15,
-            "mi": 23.4549191517266
+            "mi": 22.101793907587247
           },
           "src/spendguard/weekly_cap_guard.py": {
             "max_cc": 23,
@@ -942,6 +942,10 @@
           "src/spendguard/ledger_performance_benchmark.py": {
             "max_cc": 19,
             "mi": 22.449277155991624
+          },
+          "src/spendguard/process_group_reaper.py": {
+            "max_cc": 9,
+            "mi": 73.39668068181851
           }
         },
         "measured_extremes": {
@@ -1217,7 +1221,7 @@
           },
           "src/spendguard/delegate_jobs.py": {
             "max_cc": 30,
-            "mi": 18.532985996875016
+            "mi": 17.623099760090394
           },
           "src/spendguard/delegate_router.py": {
             "max_cc": 48,
@@ -1785,7 +1789,7 @@
           },
           "src/spendguard/warm_stdio_daemon.py": {
             "max_cc": 15,
-            "mi": 23.4549191517266
+            "mi": 22.101793907587247
           },
           "src/spendguard/weekly_cap_guard.py": {
             "max_cc": 23,
@@ -1826,6 +1830,10 @@
           "src/spendguard/ledger_performance_benchmark.py": {
             "max_cc": 19,
             "mi": 22.29606059471751
+          },
+          "src/spendguard/process_group_reaper.py": {
+            "max_cc": 9,
+            "mi": 73.39668068181851
           }
         },
         "measured_extremes": {
@@ -1839,7 +1847,10 @@
     "reviewed_doctor_bounded_load_scale_and_regen": "2026-10-31: Reviewed the complete changed bodies for the doctor-bounded load-scale branch. capability_readiness_gates.run_capability_script_readiness_gate now pulls measure_isolated_runner_budget_scale from the chunked_suite harness namespace and threads the measured runner_budget_scale into run_isolated_script, fixing the missing-argument regression that broke the offline readiness-evidence step; its size-sensitive MI falls 47.38754686040469 to 47.21367827153188 with max CC 14 unchanged \u2014 the only file whose measurement regresses the frozen baseline on this branch. architectural_fitness additionally gains the shared architectural_complexity_metrics_regress predicate \u2014 now the single regression rule read by both run_architectural_fitness_gate and the regenerator \u2014 and the surgical, justification-gated regenerate_architectural_complexity_baseline, which records only measured per-interpreter regressions (routing its write through config.update_json with keep_backups=0 so the atomic replace and always-on path~ backup are kept while no undeclared timestamped .json is left in the package dir) and leaves every other ratchet untouched; with those additions architectural_fitness measures max CC 30 and MI 22.221214118439754, improving on both axes versus the stored 31 / 20.935514428828085, so it does not regress and its baseline entry is intentionally left unchanged. Independently remeasured with Radon 6.0.1 under Python 3.11 and 3.12; only capability_readiness_gates.py's baseline changes, identically on each interpreter. All other complexity, cycle, duplication and dead-code ratchets remain unchanged.",
     "reviewed_ledger_performance_benchmark": "Measured offline ledger performance benchmark core and relative baseline comparison.",
     "reviewed_ledger_performance_profile_wiring": "Reviewed benchmark profile wiring adds bounded metadata derivation, fixture construction, and read-only source-ledger integration.",
-    "reviewed_selfcheck_named_unreviewed_exit_policy": "Reviewed the explicit selfcheck exit-policy helper and repeatable CLI array parsing; both are small mechanical policy/argument adapters with can-still-fail coverage."
+    "reviewed_selfcheck_named_unreviewed_exit_policy": "Reviewed the explicit selfcheck exit-policy helper and repeatable CLI array parsing; both are small mechanical policy/argument adapters with can-still-fail coverage.",
+    "reviewed_warm_daemon_reader_join_teardown": "Reviewed the sole-reader bounded join on every warm-daemon teardown path and the loud join-timeout warning; the measured MI cost is essential to close the evidence-write-after-teardown correctness race, not avoidable churn.",
+    "reviewed_delegate_cancel_orphan_group_reaper": "Records the measured cost of the new stdlib-only bounded process-group reaper and the cancel-path orphaned-group reap and identity logic.",
+    "reviewed_delegate_result_contract_dict_wrap": "Records the measured per-file complexity cost of read_delegate_job_result always returning a state-bearing dict (wrapping a non-dict terminal result_payload), which adds one isinstance branch to the terminal-result contract."
   },
   "duplication": {
     "duplicate_lines": 303,
