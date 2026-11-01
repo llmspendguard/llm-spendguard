@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 from collections import Counter
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from importlib.resources import files
 import json
 import os
 from pathlib import Path
 import platform
+import sqlite3
 import sys
 import time
 
@@ -17,6 +18,7 @@ from .ledger import SpendLedger
 
 
 LEDGER_PERFORMANCE_BASELINE_RESOURCE = "ledger_performance_baseline.json"
+LEDGER_PERFORMANCE_SOURCE_LEDGER_RESOURCE = "spend.db"
 LEDGER_PERFORMANCE_SCHEMA_VERSION = 1
 LEDGER_PERFORMANCE_DEFAULT_ITERATIONS = 80
 LEDGER_PERFORMANCE_DEFAULT_WARMUPS = 10
@@ -37,6 +39,7 @@ LEDGER_PERFORMANCE_FIXTURE_COST = "0.000001"
 LEDGER_PERFORMANCE_FIXTURE_COST_NANO = 1000
 LEDGER_PERFORMANCE_SUCCESS_EXIT = 0
 LEDGER_PERFORMANCE_REGRESSION_EXIT = 1
+LEDGER_PERFORMANCE_METADATA_SOURCE = "ledger-metadata"
 
 
 def calculate_ledger_latency_percentiles(samples):
@@ -75,11 +78,14 @@ def derive_retrospective_ledger_load_profile(connection, fallback_volume):
             "token_sizes": [1],
             "arrival_gaps_s": [0.0],
         }
-    timestamps = [datetime.fromisoformat(str(row[0]).replace("Z", "+00:00")) for row in combined if row[0]]
+    timestamps = sorted(
+        datetime.fromisoformat(str(row[0]).replace("Z", "+00:00")) for row in combined if row[0]
+    )
     gaps = [(right - left).total_seconds() for left, right in zip(timestamps, timestamps[1:])]
     mix = Counter(str(row[2] or row[1] or "unknown") for row in combined)
     sizes = [int(row[4] or 0) + int(row[5] or 0) for row in combined]
-    return {"source": "ledger-metadata", "volume": len(combined), "call_mix": dict(sorted(mix.items())),
+    return {"source": LEDGER_PERFORMANCE_METADATA_SOURCE, "volume": len(combined),
+            "call_mix": dict(sorted(mix.items())),
             "token_sizes": sizes, "arrival_gaps_s": gaps or [0.0]}
 
 
@@ -111,29 +117,44 @@ def _ledger_performance_queries():
     }
 
 
-def _populate_ledger_performance_fixture(ledger, volume):
-    timestamp = LEDGER_PERFORMANCE_FIXTURE_TIMESTAMP
-    rows = ((f"fixture-{number}", timestamp, timestamp, timestamp, "UTC", timestamp,
+def _populate_ledger_performance_fixture(ledger, load_profile):
+    model_sequence = tuple(
+        model
+        for model, count in load_profile["call_mix"].items()
+        for _ in range(count)
+    )
+    token_sizes = load_profile["token_sizes"]
+    arrival_gaps = load_profile["arrival_gaps_s"]
+    occurred_at = datetime.fromisoformat(LEDGER_PERFORMANCE_FIXTURE_TIMESTAMP)
+    rows = []
+    for number in range(load_profile["volume"]):
+        if number:
+            occurred_at += timedelta(seconds=arrival_gaps[(number - 1) % len(arrival_gaps)])
+        timestamp = occurred_at.isoformat()
+        rows.append((f"fixture-{number}", timestamp, timestamp, timestamp, "UTC", timestamp,
              LEDGER_PERFORMANCE_FIXTURE_DAY, LEDGER_PERFORMANCE_FIXTURE_PERIOD,
              "gate", "batch" if number % LEDGER_PERFORMANCE_ACTION_COUNT else "realtime", "estimate",
              f"provider-{number % LEDGER_PERFORMANCE_PROVIDER_CARDINALITY}",
-             f"model-{number % LEDGER_PERFORMANCE_MODEL_CARDINALITY}",
+             model_sequence[number % len(model_sequence)],
              f"intent-{number % LEDGER_PERFORMANCE_INTENT_CARDINALITY}",
              f"conversation-{number % LEDGER_PERFORMANCE_CONVERSATION_CARDINALITY}", "draft", "USD",
-             LEDGER_PERFORMANCE_FIXTURE_COST, LEDGER_PERFORMANCE_FIXTURE_COST_NANO)
-            for number in range(volume))
+             token_sizes[number % len(token_sizes)], 0,
+             LEDGER_PERFORMANCE_FIXTURE_COST, LEDGER_PERFORMANCE_FIXTURE_COST_NANO))
     ledger._conn.executemany(
         "INSERT INTO spend_events(id,ts_utc,recorded_at,occurred_at,tz,local_datetime,day,period,source,cost_type,"
-        "cost_basis,provider,model,intent,conv_id,status,currency,realtime_usd,realtime_usd_nano) "
-        "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", rows)
+        "cost_basis,provider,model,intent,conv_id,status,currency,in_tok,out_tok,realtime_usd,realtime_usd_nano) "
+        "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", rows)
     ledger._conn.commit()
     ledger._conn.execute("ANALYZE")
 
 
-def measure_hot_ledger_operations(*, iterations, warmups, volume, ledger_path):
+def measure_hot_ledger_operations(*, iterations, warmups, volume, ledger_path, retrospective_connection=None):
     """Measure complete latency series at production SQL and SpendLedger.record_event boundaries."""
     ledger = SpendLedger(db_path=str(ledger_path), owned_connection=config.open_ledger_connection(str(ledger_path)))
-    _populate_ledger_performance_fixture(ledger, volume)
+    load_profile = derive_retrospective_ledger_load_profile(
+        retrospective_connection or ledger._conn, volume
+    )
+    _populate_ledger_performance_fixture(ledger, load_profile)
     measurements = {}
     for name, (statement, parameters) in _ledger_performance_queries().items():
         samples = []
@@ -146,7 +167,7 @@ def measure_hot_ledger_operations(*, iterations, warmups, volume, ledger_path):
         measurements[name] = calculate_ledger_latency_percentiles(samples)
     write_samples = []
     for iteration in range(iterations + warmups):
-        event_number = volume + iteration
+        event_number = load_profile["volume"] + iteration
         started = time.perf_counter()
         ledger.record_event({"id": f"bench-{event_number}", "source": "bench", "kind": "realtime",
                              "usd": LEDGER_PERFORMANCE_FIXTURE_COST, "model": None, "intent": "benchmark"})
@@ -159,8 +180,14 @@ def measure_hot_ledger_operations(*, iterations, warmups, volume, ledger_path):
     reconciled = ledger._conn.execute("SELECT COUNT(*) FROM spend_events WHERE id LIKE ?", ("bench-%",)).fetchone()[0]
     flow_elapsed = time.perf_counter() - flow_started
     ledger._conn.close()
-    return {"latencies_s": measurements,
+    return {"latencies_s": measurements, "load_profile": load_profile,
             "data_flow": {"latency_s": flow_elapsed, "throughput_per_s": (flow_count + reconciled) / flow_elapsed}}
+
+
+def _open_retrospective_ledger_metadata_connection(ledger_path):
+    if not ledger_path.is_file():
+        return None
+    return sqlite3.connect(f"file:{ledger_path}?mode=ro", uri=True)
 
 
 def compare_ledger_performance_baseline(current, baseline, tolerance):
@@ -203,8 +230,16 @@ def run_ledger_performance_benchmark(*, record=False, check=False, iterations=LE
     ledger_path = benchmark_home / "ledger-performance-benchmark.db"
     if ledger_path.exists():
         ledger_path.unlink()
-    measurement = measure_hot_ledger_operations(iterations=iterations, warmups=warmups, volume=volume,
-                                                ledger_path=ledger_path)
+    source_ledger_path = benchmark_home / LEDGER_PERFORMANCE_SOURCE_LEDGER_RESOURCE
+    retrospective_connection = _open_retrospective_ledger_metadata_connection(source_ledger_path)
+    try:
+        measurement = measure_hot_ledger_operations(
+            iterations=iterations, warmups=warmups, volume=volume, ledger_path=ledger_path,
+            retrospective_connection=retrospective_connection,
+        )
+    finally:
+        if retrospective_connection is not None:
+            retrospective_connection.close()
     measurement["provenance"] = {"runner_class": runner_class, "interpreter": sys.version,
                                  "platform": platform.platform(), "cpu": platform.processor() or platform.machine(),
                                  "recorded_at": datetime.now(timezone.utc).isoformat(),
@@ -216,7 +251,7 @@ def run_ledger_performance_benchmark(*, record=False, check=False, iterations=LE
             data.setdefault("runner_classes", {})[runner_class] = measurement
         config.update_json(resource, update_ledger_performance_baseline, reason="ledger performance baseline recording",
                            keep_backups=0, required=True)
-        print(f"recorded runner_class={runner_class} profile={LEDGER_PERFORMANCE_FALLBACK_PROFILE_SOURCE}")
+        print(f"recorded runner_class={runner_class} profile={measurement['load_profile']['source']}")
         return LEDGER_PERFORMANCE_SUCCESS_EXIT
     recorded = baseline.get("runner_classes", {}).get(runner_class)
     if recorded is None:

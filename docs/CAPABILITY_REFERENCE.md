@@ -303,8 +303,9 @@ Each absence below carries the registry's reviewed reason.
 | C277 | Interpret response truncation from finish reason and output cap | ABSENT (DELIBERATE): In-process response interpretation is consumed by wrappers; no separate user workflow is needed. | spendguard.is_truncated; governing inputs: finish_reason,out_tok,max_tokens | ABSENT (DELIBERATE): In-process response interpretation is consumed by wrappers; no separate user workflow is needed. | [spendguard:is_truncated](#core-e4f73e0b02341949055b5b7a2808cdefa24c6001630e267bfb996b97803790f0) |
 | C278 | Record a quality outcome for a recorded call | ABSENT (DELIBERATE): Programmatic API or MCP contract, not a user-facing CLI command. | spendguard.feedback(call_id, ok=True, source="explicit", confidence=None) | capability_record_quality_feedback_spendguard_feedback | [spendguard:feedback](#core-f808d412b970120f1f3895bf185b3b418f36529625c8f29a2bfdd4c184e42a2f) |
 | C279 | Assess versioned project readiness with fail-closed evidence and coverage | selfcheck | capability_readiness_selfcheck_capability_readiness_assess_capability_readiness; capability_readiness_selfcheck_capability_readiness_run_capability_selfcheck | capability_readiness_selfcheck_capability_readiness_assess_capability_readiness; capability_readiness_selfcheck_capability_readiness_run_capability_selfcheck | [spendguard.capability_readiness:assess_capability_readiness](#core-338ee42e079697612ca024dd53e80591dc88fba822e615dfb983a69793a6e9d5); [spendguard.capability_readiness:run_capability_selfcheck](#core-af3c9425d056c61cb4885c201af073c5d2d56a68f9bd8f7356a7276f2f9c647a) |
+| C280 | Measure or check nightly ledger hot-path performance against a same-runner committed baseline | bench | ledger_performance_benchmark_ledger_performance_benchmark_run_ledger_performance_benchmark | ledger_performance_benchmark_ledger_performance_benchmark_run_ledger_performance_benchmark | [spendguard.ledger_performance_benchmark:run_ledger_performance_benchmark](#core-f67b31ebb2ff87950b46bd6abb6b2ce5534113fae77503d7eccd3d78893f69b6) |
 
-Counts: ABSENT 102; DELIBERATE 102; PRESENT 735
+Counts: ABSENT 102; DELIBERATE 102; PRESENT 738
 
 ## Capability parameter contracts
 
@@ -2089,6 +2090,18 @@ New readiness capability; CLI exit status is declared on its callable variant. A
 | repo_root | str \| None | no | None | Repository checkout whose deterministic readiness gates and source fingerprint are assessed; omitted uses the current working directory. |
 | environment_report | str \| None | no | None | Path to independently produced clean-environment verification evidence; absent evidence remains UNREVIEWED. |
 | json_output | bool | no | False | Print the complete structured readiness report instead of the human-readable checklist; does not alter readiness or exit status. |
+
+### C280: Measure or check nightly ledger hot-path performance against a same-runner committed baseline
+
+Use bench --record to commit p50/p95/p99 hot-read and record_event latency, data-flow throughput, provenance, and load-profile evidence for the current runner_class. Use bench --check to compare the same operations only with that runner_class baseline. --iterations selects retained samples after --warmups; --volume controls only the synthetic fallback when spend_events/calls metadata is empty. Latency ceilings are baseline multiplied by latency_multiplier; the throughput floor is baseline divided by throughput_divisor. A missing runner_class baseline or threshold breach fails closed. Timing is offline and never calls a model.
+
+| Parameter | Type | Required | Default | Contract |
+| --- | --- | --- | --- | --- |
+| record | bool | no | False | Measure and commit latency, throughput, provenance, and load-profile evidence for the current runner_class. |
+| check | bool | no | False | Measure and fail when a metric breaches its same-runner_class baseline and configured relative tolerance. |
+| iterations | int | no | LEDGER_PERFORMANCE_DEFAULT_ITERATIONS | Measured iterations per hot operation after warmup. |
+| warmups | int | no | LEDGER_PERFORMANCE_DEFAULT_WARMUPS | Warmup iterations discarded before measurement. |
+| volume | int | no | LEDGER_PERFORMANCE_DEFAULT_VOLUME | Synthetic fallback volume used only when spend_events and calls have no retrospective metadata. |
 
 ## Programmatic core contracts
 
@@ -5517,6 +5530,24 @@ Declare a validated subscription lane model assignment Extract set-model branch;
 | tier | str \| None {"alternatives": [{"alternatives": [], "enum": [], "items": null, "properties": [], "python_annotation": null, "type": "string"}, {"alternatives": [], "enum": [], "items": null, "properties": [], "python_annotation": null, "type": "null"}], "enum": [], "items": null, "properties": [], "python_annotation": "str \| None", "type": "any"} | no | null | Extract set-model branch; registered lane/model/priced validation, preserve other tiers on tier update, scalar replacement otherwise; _write_advisor_cfg and served-tier print. |
 
 Returns: `Existing bound core result; printed output retained by JSON surfaces.`
+
+<a id="core-f67b31ebb2ff87950b46bd6abb6b2ce5534113fae77503d7eccd3d78893f69b6"></a>
+
+### `spendguard.ledger_performance_benchmark:run_ledger_performance_benchmark`
+
+Source: `src/spendguard/ledger_performance_benchmark.py`
+
+bench --record measures p50/p95/p99 hot reads and record_event plus data-flow throughput, records provenance and the derived load profile, and commits the result for the current runner_class. bench --check measures the same paths and fails closed against that runner_class only: latency must remain at or below baseline multiplied by latency_multiplier, and throughput at or above baseline divided by throughput_divisor. --iterations controls retained samples, --warmups controls discarded warmups, and --volume supplies the synthetic fallback only when spend_events/calls metadata is empty.
+
+| Parameter | Type | Required | Default | Contract |
+| --- | --- | --- | --- | --- |
+| record | bool | no | False | Measure and commit latency, throughput, provenance, and load-profile evidence for the current runner_class. |
+| check | bool | no | False | Measure and fail when a metric breaches its same-runner_class baseline and configured relative tolerance. |
+| iterations | int | no | LEDGER_PERFORMANCE_DEFAULT_ITERATIONS | Measured iterations per hot operation after warmup. |
+| warmups | int | no | LEDGER_PERFORMANCE_DEFAULT_WARMUPS | Warmup iterations discarded before measurement. |
+| volume | int | no | LEDGER_PERFORMANCE_DEFAULT_VOLUME | Synthetic fallback volume used only when spend_events and calls have no retrospective metadata. |
+
+Returns: `int`
 
 <a id="core-a0a020bdbbce41054d34d973da5805386f95fe519d5a0e87d8361b0b2db5fe92"></a>
 
