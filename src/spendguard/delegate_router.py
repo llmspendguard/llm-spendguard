@@ -541,14 +541,25 @@ def _assemble_delegate_execution_result(execution, *, result, classification, es
     spec = lane_registry.lane_spec(estimate["plan"])
     actual_value = float(pricing.realtime_cost(estimate["model"], actual_in, actual_out,
                                                provider=spec["provider"]) or 0)
-    ratio = _measured_claude_overage_ratio()
-    avoided = actual_value * ratio if ratio is not None else None
     actual_api = float(execution.get("cost") or 0)
-    guard.record_decision(intent=intent, requested_model="claude-overage", chosen_model=estimate["model"],
-                          counterfactual_usd=avoided or 0, actual_usd=actual_api,
-                          saved_usd=max(0, (avoided or 0) - actual_api),
-                          basis="delegate", why=classification["why"])
-    guard.record_saving("delegate", max(0, (avoided or 0) - actual_api))
+    # Mandatory terminal success-accounting for an already-COMPLETED delegation. The ENTIRE ledger-touching
+    # region here — READING the measured overage ratio (a ledger query) and WRITING the decision/saving — must
+    # run under a FRESH persistence budget. By the time a minutes-long delegation reaches here, the serving
+    # surface's cancellable request-lifetime ledger_request_scope may be long past its absolute 5s deadline: the
+    # broker (_serve_one) and pool now span the call, but the MCP do_POST scope (mcp_server.py) and any
+    # abandoned peer do not. Under that expired ambient scope the overage-evidence READ would raise
+    # LedgerQueryDeadline before the booking is even reached, failing a job whose work already landed. The
+    # persistence scope replaces the expired ambient scope with a fresh, uncancellable bounded budget — the
+    # exact mandatory-charge-recovery case ledger_evidence_persistence_scope exists for (ledger_read.py).
+    from .ledger_read import ledger_evidence_persistence_scope
+    with ledger_evidence_persistence_scope():
+        ratio = _measured_claude_overage_ratio()
+        avoided = actual_value * ratio if ratio is not None else None
+        guard.record_decision(intent=intent, requested_model="claude-overage", chosen_model=estimate["model"],
+                              counterfactual_usd=avoided or 0, actual_usd=actual_api,
+                              saved_usd=max(0, (avoided or 0) - actual_api),
+                              basis="delegate", why=classification["why"])
+        guard.record_saving("delegate", max(0, (avoided or 0) - actual_api))
     est_value_basis = ("lane-measured tokens" if classification["kind"] == "oneshot"
                        else "token estimate (warm daemon); reconcile plan value via `spendguard codex sync`")
     receipt = {"plan": estimate["plan"], "model": estimate["model"], "real_api_usd": actual_api,

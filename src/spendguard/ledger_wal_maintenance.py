@@ -96,7 +96,16 @@ def maintain_ledger_wal_if_due(path=None, *, cadence=None):
     maintenance. BUSY/failed attempts are logged and retried on a later operation.
     """
     from .ledger_read import LedgerReadError, effective_ledger_admission_deadline
-    effective_ledger_admission_deadline()
+    # Best-effort maintenance must NEVER abort the serving operation that happens to trigger it. A serving
+    # surface can hold an expired/abandoned request scope (e.g. a long inline delegate turn ran under a
+    # request-lifetime ledger_request_scope whose absolute deadline has since passed); raising that request's
+    # deadline out of a checkpoint would fail an otherwise-complete pool open (config.pooled_ledger_conn and
+    # ledger_op re-raise it). With no live budget there is nothing to reclaim within bound anyway, so SKIP and
+    # let a later unpressured open run it — SQLite's own wal_autocheckpoint still bounds the WAL meanwhile.
+    try:
+        effective_ledger_admission_deadline()
+    except LedgerReadError:
+        return LedgerWalCheckpointReport(WAL_CHECKPOINT_SKIPPED)
     if cadence is None:
         cadence = _DEFAULT_WAL_MAINTENANCE_CADENCE
     if not cadence.lock.acquire(blocking=False):
@@ -113,7 +122,9 @@ def maintain_ledger_wal_if_due(path=None, *, cadence=None):
         schedule_rollup_fingerprint_audit(ledger)
         return truncate_ledger_wal_bounded(ledger)
     except LedgerReadError:
-        raise
+        # The ambient request expired/aborted mid-checkpoint: best-effort maintenance SKIPS rather than
+        # propagating the serving caller's deadline out of a non-mandatory checkpoint (see the pre-check above).
+        return LedgerWalCheckpointReport(WAL_CHECKPOINT_SKIPPED)
     except (Exception, config.LedgerConnectionLimitError) as error:
         report = LedgerWalCheckpointReport(WAL_CHECKPOINT_FAILED, error=f"{type(error).__name__}: {error}")
         _WAL_MAINTENANCE_LOG.warning("Ledger WAL maintenance: %s", report)

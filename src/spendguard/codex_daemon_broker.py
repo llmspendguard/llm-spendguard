@@ -43,16 +43,22 @@ def _stale_consumer_attach_error(error):
 
 
 @contextlib.contextmanager
-def _broker_request_ledger_lifetime(connection):
+def _broker_request_ledger_lifetime(connection, *, deadline_s=None):
     """Interrupt this request's ledger reads when its peer abandons the socket.
 
     Only the serving thread consumes the framed protocol. The observer peeks at
     EOF and never changes socket timeouts or worker recycling policy.
+
+    `deadline_s` spans the scope across the CALL's own budget. This scope exists to CANCEL the request's
+    ledger reads on peer abandonment, NOT to impose the 5s ledger-read default on a warm turn that may run for
+    minutes (an agentic repo turn). Without it, a serving-path ledger op that happens to run after 5s of an
+    otherwise-healthy long turn raises LedgerQueryDeadline, which _serve_one re-wraps as "codex broker request
+    refused: Ledger read exceeded wall-clock budget 5.0 seconds" — failing a job whose work already completed.
     """
     from .ledger_read import ledger_request_scope
 
     observer_stopped = threading.Event()
-    with ledger_request_scope() as request_reads:
+    with ledger_request_scope(deadline_s=deadline_s) as request_reads:
         def observe_broker_peer_abandonment():
             while not observer_stopped.is_set():
                 try:
@@ -250,8 +256,20 @@ class _CodexDaemonBroker:
                     raise ValueError("broker kwargs are not an object")
                 connection.settimeout(None)
                 execution = request.get("execution") or {}
-                with _broker_request_ledger_lifetime(connection), execution_journal.durable_execution_scope(
-                        execution.get("id"), root=execution.get("root")):
+                # Span the request-ledger (cancellation) scope across the whole call window, exactly as the client
+                # socket timeout in _call_owner does, so the 5s ledger-read default never aborts a legitimately
+                # long warm/agentic turn. Peer-abandonment cancellation is unaffected (the observer cancels
+                # explicitly); only the spurious absolute 5s read deadline is removed.
+                call_timeout = kwargs.get("timeout")
+                # Size the scope to the call's own effective deadline exactly as _call_owner sizes its client
+                # socket timeout — the caller's timeout wins, else the local daemon's fallback CALL_TIMEOUT_S —
+                # read at runtime off self._local (no import edge to codex_daemon, never a hardcode).
+                ledger_lifetime_s = ((float(call_timeout) if call_timeout and call_timeout > 0
+                                      else float(self._local.CALL_TIMEOUT_S)) + _RESPONSE_GRACE_S
+                                     + getattr(self._local, "STARTUP_TIMEOUT_S", 0))
+                with _broker_request_ledger_lifetime(connection, deadline_s=ledger_lifetime_s), \
+                        execution_journal.durable_execution_scope(
+                            execution.get("id"), root=execution.get("root")):
                     result = (self._local.run_warm(**kwargs) if method == "run_warm"
                               else self._local.read_rate_limits(**kwargs))
                 connection.settimeout(read_timeout)

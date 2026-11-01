@@ -271,6 +271,39 @@ def test_wal_expired_request_refuses_read_and_next_request_recovers(tmp_path):
         writer.close()
 
 
+def test_wal_maintenance_skips_not_raises_under_expired_request_scope(tmp_path):
+    """Best-effort maintenance must SKIP, never propagate a serving request's expired read deadline.
+
+    A long serving turn can hold a request-lifetime ledger_request_scope whose absolute deadline has passed by
+    the time a pool open triggers maintenance; raising that out of a non-mandatory checkpoint would fail an
+    otherwise-complete operation. Prove the precondition is real (the ambient scope genuinely raises on a
+    mandatory admission read), then assert maintenance returns SKIPPED rather than raising, and recovers under a
+    fresh scope.
+    """
+    from spendguard.ledger_read import (ledger_request_scope, effective_ledger_admission_deadline,
+                                         ledger_evidence_persistence_scope, LedgerReadError)
+    ledger_path = tmp_path / pathlib.Path(__file__).stem
+    writer = _seed_wal_maintenance_fixture(ledger_path)
+    isolated_cadence = maintenance.LedgerWalMaintenanceCadence()
+    try:
+        with ledger_request_scope(deadline_s=WAL_GUARD_REQUEST_DEADLINE_S):
+            time.sleep(WAL_GUARD_REQUEST_DEADLINE_S + config.LEDGER_REQUEST_DISCONNECT_POLL_S)
+            precondition_raised = False
+            try:
+                effective_ledger_admission_deadline()
+            except LedgerReadError:
+                precondition_raised = True
+            assert precondition_raised, "precondition not met: the ambient request scope was not actually expired"
+            report = maintenance.maintain_ledger_wal_if_due(ledger_path, cadence=isolated_cadence)
+            assert report.status == maintenance.WAL_CHECKPOINT_SKIPPED, report
+        with ledger_evidence_persistence_scope():
+            recovered = maintenance.maintain_ledger_wal_if_due(ledger_path,
+                                                               cadence=maintenance.LedgerWalMaintenanceCadence())
+            assert recovered.status in (maintenance.WAL_CHECKPOINT_SUCCESS, maintenance.WAL_CHECKPOINT_BUSY), recovered
+    finally:
+        writer.close()
+
+
 def _hold_wal_guard_connection_lock(step_lock, ready, release):
     with step_lock:
         ready.set()
