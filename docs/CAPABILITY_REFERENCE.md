@@ -2089,6 +2089,7 @@ New readiness capability; CLI exit status is declared on its callable variant. A
 | --- | --- | --- | --- | --- |
 | repo_root | str \| None | no | None | Repository checkout whose deterministic readiness gates and source fingerprint are assessed; omitted uses the current working directory. |
 | environment_report | str \| None | no | None | Path to independently produced clean-environment verification evidence; absent evidence remains UNREVIEWED. |
+| tolerate_unreviewed | tuple[str, ...] {"alternatives": [], "enum": [], "items": {"alternatives": [], "enum": [], "items": null, "properties": [], "python_annotation": null, "type": "string"}, "properties": [], "python_annotation": "tuple[str, ...]", "type": "array"} | no | () | Repeatable readiness check identifier whose UNREVIEWED result does not make the process exit nonzero; rendering is unchanged and FAIL is never tolerated. |
 | json_output | bool | no | False | Print the complete structured readiness report instead of the human-readable checklist; does not alter readiness or exit status. |
 
 ### C280: Measure or check nightly ledger hot-path performance against a same-runner committed baseline
@@ -3396,12 +3397,13 @@ Returns: `dict`
 
 Source: `src/spendguard/capability_readiness.py`
 
-Print every readiness outcome and coverage. Return zero only when every item passes; failing or UNREVIEWED items and malformed manifests return nonzero.
+Print every readiness outcome and coverage. Return zero only when every item passes or an UNREVIEWED item is explicitly named by tolerate_unreviewed; FAIL, other UNREVIEWED items, and malformed manifests return nonzero.
 
 | Parameter | Type | Required | Default | Contract |
 | --- | --- | --- | --- | --- |
 | repo_root | str \| None | no | None | Repository checkout whose deterministic readiness gates and source fingerprint are assessed; omitted uses the current working directory. |
 | environment_report | str \| None | no | None | Path to independently produced clean-environment verification evidence; absent evidence remains UNREVIEWED. |
+| tolerate_unreviewed | tuple[str, ...] {"alternatives": [], "enum": [], "items": {"alternatives": [], "enum": [], "items": null, "properties": [], "python_annotation": null, "type": "string"}, "properties": [], "python_annotation": "tuple[str, ...]", "type": "array"} | no | () | Repeatable readiness check identifier whose UNREVIEWED result does not make the process exit nonzero; rendering is unchanged and FAIL is never tolerated. |
 | json_output | bool | no | False | Print the complete structured readiness report instead of the human-readable checklist; does not alter readiness or exit status. |
 
 Returns: `int`

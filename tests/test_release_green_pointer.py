@@ -24,6 +24,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(
 
 from _script_checks import record_script_check
 from spendguard import manifest, release   # noqa: E402
+from spendguard.capability_readiness import capability_selfcheck_exit_code  # noqa: E402
 
 fails = []
 
@@ -134,14 +135,32 @@ release_test_steps = release_workflow["jobs"]["test"]["steps"]
 release_test_commands = [str(step.get("run", "")).splitlines() for step in release_test_steps]
 record_script_check(
     fails,
-    "release test job invokes spendguard selfcheck",
-    any("spendguard selfcheck" in [command.strip() for command in commands] for commands in release_test_commands),
+    "release test job tolerates only the env-parity UNREVIEWED result",
+    any(
+        "spendguard selfcheck --tolerate-unreviewed env-parity-in-verification"
+        in [command.strip() for command in commands]
+        for commands in release_test_commands
+    ),
 )
 record_script_check(
     fails,
     "publish needs the test job, so selfcheck failure blocks publication",
     release_workflow["jobs"]["publish"].get("needs") == "test",
 )
+
+passing_outcome = {"id": "source-ratchet", "status": "PASS"}
+environment_unreviewed_outcome = {"id": "env-parity-in-verification", "status": "UNREVIEWED"}
+failing_outcome = {"id": "architecture-ratchet", "status": "FAIL"}
+other_unreviewed_outcome = {"id": "another-check", "status": "UNREVIEWED"}
+tolerated_environment_identifier = (environment_unreviewed_outcome["id"],)
+record_script_check(fails, "named env-parity tolerance exits zero", capability_selfcheck_exit_code(
+    {"items": [passing_outcome, environment_unreviewed_outcome]}, tolerated_environment_identifier) == 0)
+record_script_check(fails, "untolerated env-parity exits nonzero", capability_selfcheck_exit_code(
+    {"items": [passing_outcome, environment_unreviewed_outcome]}) == 1)
+record_script_check(fails, "a FAIL remains blocking beside tolerated env-parity", capability_selfcheck_exit_code(
+    {"items": [environment_unreviewed_outcome, failing_outcome]}, tolerated_environment_identifier) == 1)
+record_script_check(fails, "another UNREVIEWED remains blocking beside tolerated env-parity", capability_selfcheck_exit_code(
+    {"items": [environment_unreviewed_outcome, other_unreviewed_outcome]}, tolerated_environment_identifier) == 1)
 
 print(f"\n{'[FAIL]' if fails else 'OK'} test_release_green_pointer: {len(fails)} failure(s)")
 sys.exit(1 if fails else 0)

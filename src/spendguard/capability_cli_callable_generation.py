@@ -46,7 +46,11 @@ def populate_callable_cli_parser(parser, capability, variant):
         if converter is decode_callable_cli_json:
             help_text += ' Supply a JSON value, including quotes around JSON strings.'
         option = '--' + parameter.name.replace('_', '-')
-        if parameter.schema.type == 'boolean' and parameter.default is False:
+        if (parameter.schema.type == 'array' and parameter.schema.items is not None
+                and parameter.schema.items.type == 'string'):
+            parser.add_argument(option, dest=parameter.name, action='append',
+                                required=parameter.required, default=argparse.SUPPRESS, help=help_text)
+        elif parameter.schema.type == 'boolean' and parameter.default is False:
             parser.add_argument(option, dest=parameter.name, action='store_true', default=argparse.SUPPRESS,
                                 required=parameter.required, help=help_text)
         else:

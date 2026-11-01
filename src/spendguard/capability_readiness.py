@@ -106,6 +106,17 @@ def render_capability_readiness_report(report):
     return "\n".join(lines)
 
 
+def capability_selfcheck_exit_code(report, tolerate_unreviewed=()):
+    """Return success only when every outcome passes or is explicitly tolerated UNREVIEWED."""
+    tolerated_identifiers = frozenset(tolerate_unreviewed)
+    acceptable_states = (
+        item["status"] == "PASS"
+        or (item["status"] == "UNREVIEWED" and item["id"] in tolerated_identifiers)
+        for item in report["items"]
+    )
+    return READINESS_SUCCESS_EXIT if all(acceptable_states) else READINESS_INCOMPLETE_EXIT
+
+
 def render_capability_readiness_definition():
     """Derive the versioned readiness checklist directly from its manifest."""
     revision, items = load_capability_readiness_manifest()
@@ -140,8 +151,8 @@ def render_capability_readiness_definition():
     return "\n".join(lines)
 
 
-def run_capability_selfcheck(*, repo_root=None, environment_report=None, json_output=False):
-    """Evaluate readiness and print every uncovered/failing item; never fail open."""
+def run_capability_selfcheck(*, repo_root=None, environment_report=None, json_output=False, tolerate_unreviewed=()):
+    """Print readiness; explicit named UNREVIEWED tolerances affect only the process exit."""
     try:
         report = assess_capability_readiness(repo_root=repo_root, environment_report=environment_report)
     except Exception as error:
@@ -151,4 +162,4 @@ def run_capability_selfcheck(*, repo_root=None, environment_report=None, json_ou
             "items": [{"id": "manifest", "description": "Readiness manifest", "status": "FAIL", "detail": f"{type(error).__name__}: {error}", "evidence": []}],
         }
     print(json.dumps(report, indent=2) if json_output else render_capability_readiness_report(report))
-    return READINESS_SUCCESS_EXIT if report["ready"] else READINESS_INCOMPLETE_EXIT
+    return capability_selfcheck_exit_code(report, tolerate_unreviewed)
