@@ -1485,7 +1485,7 @@
           },
           "src/spendguard/model_catalog.py": {
             "max_cc": 43,
-            "mi": 12.608930133037466
+            "mi": 12.608930133037463
           },
           "src/spendguard/model_preflight.py": {
             "max_cc": 18,
