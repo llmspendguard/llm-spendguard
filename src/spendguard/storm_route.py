@@ -116,6 +116,13 @@ def _coalescer_key(vendor, model, intent, reasoning, system):
     return (vendor, model, intent or "", reasoning or "", sysh)
 
 
+def storm_realtime_callback_budget(request, model, intent):
+    """Size coordinator callback time with the same measured deadline as governed admission."""
+    prompt = request.prompt if isinstance(request, StormRequestContract) else request
+    return adapters.deadline_for(model, intent=intent, in_chars=len(prompt or ""),
+                                 default_s=adapters.LANE_MIN_TIMEOUT_S)[0] or adapters.LANE_MIN_TIMEOUT_S
+
+
 def get_coalescer(vendor, model, intent, system=None, reasoning="minimal", horizon_s=_DEFAULT_HORIZON_S,
                   clock=time.monotonic):
     """The shared StormCoalescer for one exact call shape (created lazily). Returns None when no rpm is known for the
@@ -139,6 +146,7 @@ def get_coalescer(vendor, model, intent, system=None, reasoning="minimal", horiz
                 # real per-prompt deadline from deadline_for (output-budget-aware: it sizes UP for a large expected
                 # reply). Horizon stays below for capacity sizing only.
                 execute_realtime=governed_realtime_executor(model, system, reasoning, intent, None),
+                realtime_timeout_for=lambda request: storm_realtime_callback_budget(request, model, intent),
                 execute_batch=default_batch_executor(model, intent, system=system, reasoning=reasoning),
                 sustainable_rate_per_s=rate, horizon_s=horizon_s, provider=vendor)
             _REG[key] = c
