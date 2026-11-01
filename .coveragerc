@@ -3,6 +3,7 @@
 # SPENDGUARD_COVERAGE=1, then: coverage combine && coverage report.
 [run]
 parallel = true
+concurrency = thread
 source = spendguard
 branch = true
 

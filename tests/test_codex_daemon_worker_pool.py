@@ -43,9 +43,11 @@ IMMEDIATE_STALE_AGE_S = 0.0
 
 
 def _pool_guard_fake_child(turn_handler=None):
+    pool_guard_fake_activity_age_s = IMMEDIATE_STALE_AGE_S
     return SimpleNamespace(
         run_warm=Mock(side_effect=turn_handler, return_value=dict(POOL_SUCCESS_REPLY)),
         ensure_running=Mock(return_value=object()), running=Mock(return_value=True),
+        seconds_since_last_activity=lambda: pool_guard_fake_activity_age_s,
         shutdown=Mock(), _cancel_idle_shutdown=Mock(), _schedule_idle_shutdown=Mock())
 
 
