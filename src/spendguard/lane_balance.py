@@ -1259,24 +1259,28 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None,
                 results[i] = res
                 _spent += float(res.get("cost") or 0.0)      # ACTUAL cost drives the cap — never an estimate
                 _checkpoint(i, res)
+
+            def _settle_fan_deadline_futures(future_indices, ceiling_s, settle_future):
+                # Preserve a result that crossed the deadline concurrently; only genuinely unfinished tasks become
+                # coordinator-timeout rows. Every row is checkpointed exactly like an ordinary runner result.
+                for fut, i in future_indices.items():
+                    if i in results:
+                        continue
+                    if fut.done():
+                        settle_future(fut)
+                        continue
+                    res = {"text": None, "lane": None, "use_name": None, "model": None, "billed": False,
+                           "reason": "fan_coordinator_timeout",
+                           "error": "fan coordinator exceeded derived %.3fs ceiling" % ceiling_s}
+                    results[i] = res
+                    _checkpoint(i, res)
+
             try:
                 for fut in _cf.as_completed(_fut_idx, timeout=_fan_ceiling_s):
                     _settle_fan_future(fut)
             except _cf.TimeoutError:
                 _fan_timed_out = True
-                # Preserve a result that crossed the deadline concurrently; only genuinely unfinished tasks become
-                # coordinator-timeout rows. Every row is checkpointed exactly like an ordinary runner result.
-                for fut, i in _fut_idx.items():
-                    if i in results:
-                        continue
-                    if fut.done():
-                        _settle_fan_future(fut)
-                        continue
-                    res = {"text": None, "lane": None, "use_name": None, "model": None, "billed": False,
-                           "reason": "fan_coordinator_timeout",
-                           "error": "fan coordinator exceeded derived %.3fs ceiling" % _fan_ceiling_s}
-                    results[i] = res
-                    _checkpoint(i, res)
+                _settle_fan_deadline_futures(_fut_idx, _fan_ceiling_s, _settle_fan_future)
             finally:
                 # Normal chunks still drain completely. A timed-out chunk never joins a wedged worker; Python cannot
                 # preempt it, and admitted calls remain uncancelled so any eventual billing is recorded by the ledger.

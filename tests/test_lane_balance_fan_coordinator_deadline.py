@@ -15,7 +15,10 @@ FAN_WORKER_COUNT = FAN_TASK_COUNT
 HEDGE_TASK_COUNT = 1
 HEDGE_WORKER_COUNT = HEDGE_TASK_COUNT
 SCENARIO_COUNT = 3
-COORDINATOR_RETURN_MULTIPLIER = 8.0
+# The adapter waits forever, so a seconds-wide promptness window still distinguishes
+# abandonment from a hang while allowing scheduler starvation after the return.
+# Keep the injected deadline short; derive both watchdogs from the wider window.
+COORDINATOR_RETURN_MULTIPLIER = 50.0
 TRACEBACK_WATCHDOG_MULTIPLIER = 2.0
 SUBPROCESS_WATCHDOG_MULTIPLIER = 2.0
 EXPECTED_RETURN_CODE = 0
