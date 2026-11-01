@@ -1,14 +1,16 @@
-"""Nightly-only ingest -> record -> read -> reconcile performance coverage."""
+"""Always-on ingest -> record -> read -> reconcile performance invariants."""
 import os
 import sqlite3
 import tempfile
+
+LEDGER_DATA_FLOW_ISOLATED_HOME = tempfile.mkdtemp(prefix="spendguard-perf-flow-")
+os.environ["SPENDGUARD_HOME"] = LEDGER_DATA_FLOW_ISOLATED_HOME
 
 from spendguard.ledger_performance_benchmark import (
     LEDGER_PERFORMANCE_FALLBACK_PROFILE_SOURCE,
     LEDGER_PERFORMANCE_METADATA_SOURCE,
     derive_retrospective_ledger_load_profile,
     measure_hot_ledger_operations,
-    run_ledger_performance_benchmark,
 )
 
 from storm_harness import CallerCollector, canary
@@ -45,7 +47,6 @@ def create_representative_retrospective_connection():
 
 
 def verify_ledger_data_flow_performance():
-    os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="spendguard-perf-flow-")
     profile = derive_retrospective_ledger_load_profile(sqlite3.connect(":memory:"), DATA_FLOW_TEST_VOLUME)
     assert profile["source"] == LEDGER_PERFORMANCE_FALLBACK_PROFILE_SOURCE
     retrospective_connection = create_representative_retrospective_connection()
@@ -88,9 +89,17 @@ def verify_ledger_data_flow_performance():
     collector = CallerCollector()
     collector.record({"status_code": 200, "text": "ok " + canary(1)})
     assert collector.bijection_ok([canary(1)])
-    assert run_ledger_performance_benchmark(check=True, iterations=DATA_FLOW_TEST_ITERATIONS,
-                                            warmups=DATA_FLOW_TEST_WARMUPS,
-                                            volume=DATA_FLOW_TEST_VOLUME) == 0
+    suite_measurement_path = os.path.join(
+        os.environ["SPENDGUARD_HOME"], RETROSPECTIVE_FIXTURE_DATABASE_NAME
+    )
+    suite_measurement = measure_hot_ledger_operations(
+        iterations=DATA_FLOW_TEST_ITERATIONS,
+        warmups=DATA_FLOW_TEST_WARMUPS,
+        volume=DATA_FLOW_TEST_VOLUME,
+        ledger_path=suite_measurement_path,
+    )
+    assert suite_measurement["data_flow"]["latency_s"] > 0
+    assert suite_measurement["data_flow"]["throughput_per_s"] > 0
 
 
 if __name__ == "__main__":

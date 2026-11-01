@@ -26,7 +26,6 @@ LEDGER_PERFORMANCE_DEFAULT_VOLUME = 300
 LEDGER_PERFORMANCE_PERCENTILES = (50, 95, 99)
 LEDGER_PERFORMANCE_FALLBACK_PROFILE_SOURCE = "documented-synthetic-metadata"
 LEDGER_PERFORMANCE_RUNNER_ENV = "SPENDGUARD_BENCH_RUNNER_CLASS"
-LEDGER_PERFORMANCE_HOME_ENV = "SPENDGUARD_HOME"
 LEDGER_PERFORMANCE_ACTION_COUNT = 2
 LEDGER_PERFORMANCE_PROVIDER_CARDINALITY = 5
 LEDGER_PERFORMANCE_MODEL_CARDINALITY = 11
@@ -225,7 +224,7 @@ def run_ledger_performance_benchmark(*, record=False, check=False, iterations=LE
     resource = Path(str(files(__package__).joinpath(LEDGER_PERFORMANCE_BASELINE_RESOURCE)))
     baseline = json.loads(resource.read_text(encoding="utf-8"))
     runner_class = _ledger_performance_runner_class()
-    benchmark_home = Path(os.environ.get(LEDGER_PERFORMANCE_HOME_ENV, config.HOME))
+    benchmark_home = config.active_spendguard_home()
     benchmark_home.mkdir(parents=True, exist_ok=True)
     ledger_path = benchmark_home / "ledger-performance-benchmark.db"
     if ledger_path.exists():
