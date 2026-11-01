@@ -1065,7 +1065,7 @@
           },
           "src/spendguard/capability_cli_callable_generation.py": {
             "max_cc": 13,
-            "mi": 36.32542298081097
+            "mi": 35.08984529144459
           },
           "src/spendguard/capability_cli_dispatch_generation.py": {
             "max_cc": 8,
@@ -1089,7 +1089,7 @@
           },
           "src/spendguard/capability_readiness.py": {
             "max_cc": 14,
-            "mi": 43.465096414953436
+            "mi": 41.47786328660156
           },
           "src/spendguard/capability_readiness_gates.py": {
             "max_cc": 14,
