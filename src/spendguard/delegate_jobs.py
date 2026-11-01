@@ -285,7 +285,11 @@ def read_delegate_job_result(job_id):
                 "terminal_reason": None}
     if row["result_payload"] is not None:
         payload = json.loads(row["result_payload"])
-        return {**payload, **_delegate_job_workspace_details(row), "state": row["state"]} if isinstance(payload, dict) else payload
+        if isinstance(payload, dict):
+            return {**payload, **_delegate_job_workspace_details(row), "state": row["state"]}
+        return {"state": row["state"], "status": row["state"], "job_id": job_id,
+                "terminal_reason": row["terminal_reason"], "error": row["error"],
+                "result": payload, **_delegate_job_workspace_details(row)}
     return {"state": row["state"], "status": row["state"], "job_id": job_id,
             "terminal_reason": row["terminal_reason"], "error": row["error"],
             **_delegate_job_workspace_details(row)}

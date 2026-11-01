@@ -47,21 +47,34 @@ check_delegate_job_contract(
     "whole changed-files list and full receipt survive roundtrip",
     delegate_jobs.read_delegate_job_result(job_id) == {**payload, "state": "done"})
 
-print("-- scalar terminal payload remains collectible through the CLI --")
-scalar_delegate_result_payload = "complete scalar delegate result"
-scalar_delegate_result_job_id = delegate_jobs.create_delegate_job(
-    kind="agentic", task_fingerprint="scalar-result-fingerprint", cwd=os.getcwd(),
-    provider="fixture-provider", intent="fixture-intent", dirty_before=set())
-delegate_jobs.finish_delegate_job(
-    scalar_delegate_result_job_id, state="done", result_payload=scalar_delegate_result_payload)
-scalar_delegate_result_stdout = io.StringIO()
-with contextlib.redirect_stdout(scalar_delegate_result_stdout):
-    scalar_delegate_result_exit_code = delegate_router.delegate_cli(
-        ["--collect", scalar_delegate_result_job_id])
-check_delegate_job_contract(
-    "scalar collect payload prints unchanged and returns success",
-    scalar_delegate_result_exit_code == 0
-    and json.loads(scalar_delegate_result_stdout.getvalue()) == scalar_delegate_result_payload)
+print("-- scalar terminal payload remains structured and collectible through the CLI --")
+
+
+def check_scalar_terminal_delegate_result_contract():
+    scalar_delegate_result_payload = "complete scalar delegate result"
+    scalar_delegate_result_state = delegate_jobs.DELEGATE_JOB_KILLED_STATE
+    scalar_delegate_result_job_id = delegate_jobs.create_delegate_job(
+        kind="agentic", task_fingerprint="scalar-result-fingerprint", cwd=os.getcwd(),
+        provider="fixture-provider", intent="fixture-intent", dirty_before=set())
+    delegate_jobs.finish_delegate_job(
+        scalar_delegate_result_job_id, state=scalar_delegate_result_state,
+        result_payload=scalar_delegate_result_payload)
+    scalar_delegate_result = delegate_jobs.read_delegate_job_result(scalar_delegate_result_job_id)
+    scalar_delegate_result_stdout = io.StringIO()
+    with contextlib.redirect_stdout(scalar_delegate_result_stdout):
+        scalar_delegate_result_exit_code = delegate_router.delegate_cli(
+            ["--collect", scalar_delegate_result_job_id])
+    check_delegate_job_contract(
+        "scalar terminal result is a state-bearing dict and remains collectible",
+        isinstance(scalar_delegate_result, dict)
+        and scalar_delegate_result["state"] == scalar_delegate_result_state
+        and scalar_delegate_result["status"] == scalar_delegate_result_state
+        and scalar_delegate_result["result"] == scalar_delegate_result_payload
+        and scalar_delegate_result_exit_code == 0
+        and json.loads(scalar_delegate_result_stdout.getvalue()) == scalar_delegate_result)
+
+
+check_scalar_terminal_delegate_result_contract()
 
 print("-- start returns before worker completion and another connection reads the result --")
 thread_payload = {**payload, "execution": {"text": "thread-owned durable result"}}
