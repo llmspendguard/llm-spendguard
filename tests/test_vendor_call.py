@@ -48,7 +48,7 @@ def proves(req, label, probe, break_it, restore):
     ok = intact and not broken and back
     if not ok:
         failures += 1
-    detail = "" if ok else f"  (intact={intact} broken={broken} restored={back})"
+    detail = f"  (intact={intact} broken={broken} restored={back})"
     print(f"  [{'OK' if ok else 'FAIL'}] {req}: {label} — and FAILS when removed{detail}")
 
 
@@ -91,6 +91,15 @@ check("real content → ok", vc._classify({"text": "hi", "finish_reason": "stop"
 print("-- C: the deadline bounds the WHOLE call, retries included --")
 _real_attempt = vc._attempt
 
+# Leave a wide scheduling window while keeping an unbounded join well outside it.
+C_DEADLINE_SECONDS = 1.0
+C_PROMPTNESS_DEADLINE_MULTIPLE = 15
+C_HANG_PROMPTNESS_MULTIPLE = 3
+C_PROMPTNESS_BOUND_SECONDS = C_DEADLINE_SECONDS * C_PROMPTNESS_DEADLINE_MULTIPLE
+C_ADAPTER_HANG_SECONDS = C_PROMPTNESS_BOUND_SECONDS * C_HANG_PROMPTNESS_MULTIPLE
+C_RETRY_ATTEMPTS = 2
+C_REQUEST_MAX_TOKENS = 100
+
 
 def _unbounded_attempt(vendor, model, prompt, system, max_tokens, budget_s, schema=None,
                        reasoning=None, **kwargs):   # tolerate _attempt's real signature (metered_only, …)
@@ -99,7 +108,7 @@ def _unbounded_attempt(vendor, model, prompt, system, max_tokens, budget_s, sche
     import threading as _t
     from spendguard import adapters as _a
     box = {}
-    th = _t.Thread(target=lambda: box.update(r=_a.call(f"{vendor}:{model}", prompt, max_tokens=100)), daemon=True)
+    th = _t.Thread(target=lambda: box.update(r=_a.call(f"{vendor}:{model}", prompt, max_tokens=max_tokens)), daemon=True)
     th.start()
     th.join()                                    # no timeout — the removal being proved
     return box.get("r") or {"error": "none", "text": None}
@@ -107,16 +116,32 @@ def _unbounded_attempt(vendor, model, prompt, system, max_tokens, budget_s, sche
 
 def _c_probe():
     """A call whose adapter HANGS must still return within its deadline. Timed, not asserted from the code."""
+    import threading
+    # Warm lazy dispatch/attribution imports before the timed call: expiration before
+    # dispatch would not prove that a running adapter was abandoned.
+    from spendguard import calls, dispatch
     import spendguard.adapters as _a
     real = _a.call
-    _a.call = lambda *a, **k: (time.sleep(4.0), {"text": "late", "finish_reason": "stop"})[1]
+    c_adapter_started = threading.Event()
+    c_adapter_finished = threading.Event()
+
+    def _c_hanging_adapter(*args, **kwargs):
+        c_adapter_started.set()
+        time.sleep(C_ADAPTER_HANG_SECONDS)
+        c_adapter_finished.set()
+        return {"text": "late", "finish_reason": "stop"}
+
+    _a.call = _c_hanging_adapter
     try:
-        t0 = time.time()
-        r = vc.call("v", "m", "p", deadline_s=1.0, max_tokens=100, attempts=2)
-        took = time.time() - t0
+        t0 = time.perf_counter()
+        r = vc.call("v", "m", "p", deadline_s=C_DEADLINE_SECONDS,
+                    max_tokens=C_REQUEST_MAX_TOKENS, attempts=C_RETRY_ATTEMPTS)
+        took = time.perf_counter() - t0
     finally:
         _a.call = real
-    return took < 3.0 and not r.ok               # the hang is abandoned; unbounded would take 4s+
+    return (c_adapter_started.is_set() and not c_adapter_finished.is_set()
+            and not r.ok and r.kind == vc.DEADLINE_EXCEEDED
+            and took < C_PROMPTNESS_BOUND_SECONDS)
 
 
 proves("C", "a hanging call is abandoned at the deadline", _c_probe,
