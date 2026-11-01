@@ -583,6 +583,9 @@ class PriceUnknownError(KeyError):
     """No authoritative catalog price or unambiguous breadth price exists."""
 
 
+CATALOG_RATE_INTERVAL_SELECTION_FIELDS = frozenset(("valid_from", "valid_until"))
+
+
 def _semantic_catalog_map(model: str) -> Optional[str]:
     """Hook for a future cached semantic catalog mapping; never calls an LLM in the hot path."""
     return None
@@ -598,7 +601,10 @@ def _catalog_price(model: str, as_of=None) -> Optional[dict]:
     def _norm_price_row(p, provider):
         if not p or p.get("in_") is None:          # catalog entry with no usable rate (price_error/ceiling-only)
             return None
-        row = dict(p)
+        row = {
+            key: value for key, value in p.items()
+            if key not in CATALOG_RATE_INTERVAL_SELECTION_FIELDS
+        }
         if row.get("source") and not row.get("_source"):
             row["_source"] = row.pop("source")      # catalog authors `source`; the pricing layer reads `_source`
         row["provider"] = provider
