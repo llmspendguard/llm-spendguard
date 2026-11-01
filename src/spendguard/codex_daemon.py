@@ -658,7 +658,12 @@ class _CodexDaemonPool:
                             completion.set()
 
                     from .ledger_read import ledger_request_scope
-                    with ledger_request_scope() as lease_reads:
+                    # Span the lease's cancellation scope across the lease budget (an agentic turn is minutes), not
+                    # the 5s ledger-read default — otherwise an incidental serving-path ledger op after 5s of a
+                    # healthy long lease raises LedgerQueryDeadline and fails a completed turn. Never shorter than
+                    # the old default (no regression); explicit cancellation on lease timeout is unaffected below.
+                    with ledger_request_scope(deadline_s=max(config.LEDGER_QUERY_DEADLINE_S,
+                                                             deadline - time.monotonic())) as lease_reads:
                         lease_context = contextvars.copy_context()
                         threading.Thread(target=lease_context.run, args=(invoke_pool_lease,), daemon=True).start()
                         while not completed.is_set():

@@ -164,7 +164,11 @@ class BrokerLedgerAbandonmentGuards(unittest.TestCase):
                 read_released.set()
             raise AssertionError("slow fixture unexpectedly finished before abandonment")
 
-        local = SimpleNamespace(run_warm=invoke_broker_snapshot_fixture)
+        # A real daemon local always carries the deadline constants _serve_one sizes the ledger scope from;
+        # mirror the authoritative module values (never a hardcode) so the stub is a faithful _local.
+        local = SimpleNamespace(run_warm=invoke_broker_snapshot_fixture,
+                                CALL_TIMEOUT_S=codex_daemon.CALL_TIMEOUT_S,
+                                STARTUP_TIMEOUT_S=codex_daemon.STARTUP_TIMEOUT_S)
         broker = codex_daemon_broker._CodexDaemonBroker(local)
         server, client = socket.socketpair()
         self.assertTrue(broker._handler_slots.acquire(blocking=False))
