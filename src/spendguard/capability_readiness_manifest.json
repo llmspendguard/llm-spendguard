@@ -1,5 +1,5 @@
 {
-  "revision": 3,
+  "revision": 4,
   "items": [
     {
       "id": "architecture-import-cycles",
@@ -74,6 +74,12 @@
           "tests/test_capability_surface_parity_guard.py"
         ]
       }
+    },
+    {
+      "id": "lane-queue-maintenance",
+      "description": "Lane queue size, free-page ratio, and expired terminal retention remain within configured limits.",
+      "gate": "spendguard.capability_readiness_gates:assess_lane_queue_maintenance_readiness",
+      "arguments": {}
     },
     {
       "id": "help-non-trivial",
