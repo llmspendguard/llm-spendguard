@@ -3,7 +3,10 @@ import os
 import signal
 import subprocess
 import sys
+import tempfile
+import threading
 import unittest
+from pathlib import Path
 from unittest.mock import Mock, patch
 
 from spendguard import warm_stdio_daemon as warm
@@ -11,6 +14,9 @@ from spendguard import warm_stdio_daemon as warm
 _WARM_TEST_PID = os.getpid()
 _WARM_TEST_GRACE_S = 0
 _WARM_TREE_READY_TIMEOUT_S = warm._WARM_REAP_TIMEOUT_S
+_READER_JOIN_GUARD_WAIT_S = warm._WARM_READER_JOIN_TIMEOUT_S
+_FINAL_EVIDENCE_FILENAME = "final-evidence"
+_FINAL_EVIDENCE_CONTENT = "flushed"
 _WARM_TREE_PROGRAM = r'''
 import os
 import signal
@@ -27,6 +33,66 @@ signal.pause()
 
 
 class WarmDaemonGroupTeardownGuard(unittest.TestCase):
+    def test_shutdown_waits_for_reader_final_evidence_flush(self):
+        daemon = warm._WarmStdioJsonRpcDaemon()
+        process = Mock()
+        daemon._proc = process
+        termination_started = threading.Event()
+        permit_final_evidence = threading.Event()
+        shutdown_returned = threading.Event()
+
+        with tempfile.TemporaryDirectory() as execution_store:
+            evidence_path = Path(execution_store) / _FINAL_EVIDENCE_FILENAME
+
+            def write_final_evidence_after_termination():
+                self.assertTrue(termination_started.wait(_READER_JOIN_GUARD_WAIT_S))
+                self.assertTrue(permit_final_evidence.wait(_READER_JOIN_GUARD_WAIT_S))
+                evidence_path.write_text(_FINAL_EVIDENCE_CONTENT, encoding="utf-8")
+
+            reader_thread = threading.Thread(target=write_final_evidence_after_termination, daemon=True)
+            daemon._reader_threads_by_process[process] = reader_thread
+            reader_thread.start()
+
+            def terminate_process_for_reader_guard(terminated_process):
+                self.assertIs(terminated_process, process)
+                termination_started.set()
+
+            def shutdown_daemon_for_reader_guard():
+                daemon.shutdown()
+                shutdown_returned.set()
+
+            with patch.object(daemon, "_terminate", side_effect=terminate_process_for_reader_guard):
+                shutdown_thread = threading.Thread(target=shutdown_daemon_for_reader_guard)
+                shutdown_thread.start()
+                self.assertTrue(termination_started.wait(_READER_JOIN_GUARD_WAIT_S))
+                self.assertFalse(shutdown_returned.is_set())
+                permit_final_evidence.set()
+                shutdown_thread.join(_READER_JOIN_GUARD_WAIT_S)
+
+            self.assertTrue(shutdown_returned.is_set())
+            self.assertFalse(shutdown_thread.is_alive())
+            self.assertFalse(reader_thread.is_alive())
+            files_at_shutdown_return = tuple(Path(execution_store).iterdir())
+            self.assertEqual(files_at_shutdown_return, (evidence_path,))
+            self.assertEqual(tuple(Path(execution_store).iterdir()), files_at_shutdown_return)
+
+    def test_reader_join_timeout_warns_once(self):
+        daemon = warm._WarmStdioJsonRpcDaemon()
+        process = Mock(pid=_WARM_TEST_PID)
+        reader_thread = Mock()
+        reader_thread.is_alive.return_value = True
+        daemon._reader_threads_by_process[process] = reader_thread
+
+        with patch.object(daemon, "_terminate") as terminate, \
+                patch.object(warm.threading, "current_thread", return_value=Mock()), \
+                patch.object(warm.config, "warn_once") as warn_once:
+            daemon._terminate_and_join_reader(process)
+
+        terminate.assert_called_once_with(process)
+        reader_thread.join.assert_called_once_with(timeout=warm._WARM_READER_JOIN_TIMEOUT_S)
+        warn_once.assert_called_once()
+        self.assertIn("final transport evidence may be incomplete", warn_once.call_args.args[0])
+
     def test_warm_spawn_starts_owned_session(self):
         daemon = warm._WarmStdioJsonRpcDaemon()
         daemon._spawn_cmd = lambda: [sys.executable]
@@ -76,10 +142,10 @@ class WarmDaemonGroupTeardownGuard(unittest.TestCase):
         with patch.object(warm.subprocess, "Popen", return_value=process), \
                 patch.object(warm.config, "lane_exec_env", return_value={}), \
                 patch.object(warm.fcntl, "fcntl", side_effect=OSError), \
-                patch.object(daemon, "_terminate") as reap:
+                patch.object(daemon, "_terminate_and_join_reader") as reap_and_join:
             with self.assertRaises(OSError):
                 daemon._spawn()
-        reap.assert_called_once_with(process)
+        reap_and_join.assert_called_once_with(process)
 
     def test_warm_restart_reaps_dead_leader_before_replacement(self):
         daemon = warm._WarmStdioJsonRpcDaemon()

@@ -44,6 +44,7 @@ import time
 import psutil
 
 from . import config
+from .process_group_reaper import reap_process_group_bounded
 
 # A FIXED, non-external bootstrap directory for the server process. Each call carries its own explicit task cwd where
 # the protocol supports it; keeping the daemon SPAWN here means its startup directory can never be steered by content.
@@ -52,6 +53,7 @@ WARM_EVIDENCE_CHUNK_DEFAULT_BYTES = 65536
 WARM_STDERR_ARCHIVE_DIRECTORY_DEFAULT = "warm-transport-stderr"
 WARM_STDERR_ARCHIVE_PREFIX = "warm-stderr-"
 _WARM_REAP_TIMEOUT_S = 5
+_WARM_READER_JOIN_TIMEOUT_S = _WARM_REAP_TIMEOUT_S
 _WARM_GROUP_POLL_INTERVAL_S = 0.05
 _WARM_GROUP_PROBE_SIGNAL = 0
 _WARM_FORCE_KILL_SIGNAL = getattr(signal, "SIGKILL", None)
@@ -124,29 +126,10 @@ def _warm_reap_process_group(pid):
         except Exception:
             return False
         return True
-    deadline = time.monotonic() + _WARM_REAP_TIMEOUT_S
-    for sig in (signal.SIGTERM, _WARM_FORCE_KILL_SIGNAL or signal.SIGTERM):
-        try:
-            os.killpg(pid, sig)
-        except ProcessLookupError:
-            return True
-        except Exception:
-            return False
-        while time.monotonic() < deadline:
-            try:
-                os.killpg(pid, _WARM_GROUP_PROBE_SIGNAL)     # signal 0 = liveness probe, kills nothing
-            except ProcessLookupError:
-                return True
-            except Exception:
-                break
-            time.sleep(_WARM_GROUP_POLL_INTERVAL_S)
-    try:
-        os.killpg(pid, _WARM_GROUP_PROBE_SIGNAL)
-        return False
-    except ProcessLookupError:
-        return True
-    except Exception:
-        return False
+    return reap_process_group_bounded(
+        pid, terminate_grace_s=_WARM_REAP_TIMEOUT_S, force_kill_grace_s=_WARM_REAP_TIMEOUT_S,
+        poll_interval_s=_WARM_GROUP_POLL_INTERVAL_S, warning_context="warm orphan reap",
+        emit_warning=config.warn_once)
 
 
 def reap_orphaned_warm_servers(lane=None, execute=True):
@@ -237,6 +220,7 @@ class _WarmStdioJsonRpcDaemon:
         self._spawn_lock = threading.Lock()    # serialises SPAWNS (a slow handshake must not run under _state_lock)
         self._write_lock = threading.Lock()    # serialises stdin WRITES only — never held while awaiting a response
         self._proc = None
+        self._reader_threads_by_process = {}
         self._retired_from_pool = False
         self._idle_timer = None
         self._last_activity = 0.0
@@ -565,6 +549,21 @@ class _WarmStdioJsonRpcDaemon:
             except Exception as exc:
                 config.warn_once(f"[spendguard] warm daemon: reaping process {p.pid} after kill failed: {exc}")
 
+    def _terminate_and_join_reader(self, process):
+        """Terminate ``process``, then bound-wait for its sole reader's final evidence flush."""
+        self._terminate(process)
+        with self._state_lock:
+            reader_thread = self._reader_threads_by_process.pop(process, None)
+        if (reader_thread is not None and reader_thread is not threading.current_thread()
+                and reader_thread.is_alive()):
+            reader_thread.join(timeout=_WARM_READER_JOIN_TIMEOUT_S)
+            if reader_thread.is_alive():
+                config.warn_once(
+                    "[spendguard] warm daemon: reader for process %s did not stop within %ss after termination; "
+                    "final transport evidence may be incomplete"
+                    % (process.pid, _WARM_READER_JOIN_TIMEOUT_S)
+                )
+
     def _spawn(self):
         """Start the server, START THE READER, run the protocol handshake; return the live process or None (a startup
         failure the caller degrades on — the lane may degrade, the advisor must not break). Called only under
@@ -607,19 +606,22 @@ class _WarmStdioJsonRpcDaemon:
         try:
             fl = fcntl.fcntl(p.stdout.fileno(), fcntl.F_GETFL)     # non-blocking stdout for the reader's os.read
             fcntl.fcntl(p.stdout.fileno(), fcntl.F_SETFL, fl | os.O_NONBLOCK)
-            threading.Thread(target=self._reader_loop, args=(p,), daemon=True).start()   # the sole reader for THIS proc
+            reader_thread = threading.Thread(target=self._reader_loop, args=(p,), daemon=True)
+            with self._state_lock:
+                self._reader_threads_by_process[p] = reader_thread
+            reader_thread.start()                              # the sole reader for THIS proc
             try:
                 ok = bool(self._handshake(p))
             except (BrokenPipeError, OSError):
                 ok = False
         except BaseException:
-            self._terminate(p)
+            self._terminate_and_join_reader(p)
             raise
         if not ok:
             config.warn_once("[spendguard] %s warm daemon: the initialize handshake did not complete within %ds — "
                              "treating the server as unavailable this run (falling back to the metered API)"
                              % (self._LANE_LABEL, self.STARTUP_TIMEOUT_S))
-            self._terminate(p)
+            self._terminate_and_join_reader(p)
             return None
         return p
 
@@ -639,7 +641,7 @@ class _WarmStdioJsonRpcDaemon:
                     return self._proc
                 previous, self._proc = self._proc, None
             if previous is not None:
-                self._terminate(previous)  # A dead session leader can still have live descendants.
+                self._terminate_and_join_reader(previous)  # A dead leader can still have live descendants.
             p = self._spawn()                         # slow handshake — outside _state_lock, inside _spawn_lock
             with self._state_lock:
                 retired = self._retired_from_pool
@@ -659,7 +661,7 @@ class _WarmStdioJsonRpcDaemon:
             p, self._proc = self._proc, None          # detach under the lock; REAP outside it (wait() can block)
         if p is None:
             return
-        self._terminate(p)
+        self._terminate_and_join_reader(p)
         self._fail_all_waiters()                      # anything still pending on the dead proc is woken, not hung
 
     # ── a shared request/response primitive the subclass run_warm() composes ──────────────────────────────────

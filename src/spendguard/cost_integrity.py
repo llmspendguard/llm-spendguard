@@ -31,7 +31,8 @@ def _max_token_cost(model, in_tok, out_tok, batch):
     return float(in_only) * float(pricing.CACHE_WRITE_1H_MULTIPLIER) + float(out_only)
 
 
-def _reconstruct_split_token_cost(model, in_tok, out_tok, cache_read_tok, cache_write_tok, batch):
+def _reconstruct_split_token_cost(model, in_tok, out_tok, cache_read_tok, cache_write_tok, batch,
+                                  *, charge_date=None, recorded_rates=None):
     """Price disjoint token axes without pricing._cost's missing-cache-rate fallback.
 
     in_tok here is fresh input (as in spend_events), whereas pricing's public helpers include reads in input.
@@ -40,19 +41,32 @@ def _reconstruct_split_token_cost(model, in_tok, out_tok, cache_read_tok, cache_
     counts = (in_tok, out_tok, cache_read_tok, cache_write_tok)
     if any(value is None or not math.isfinite(float(value)) or float(value) < 0 for value in counts):
         raise ValueError(f"Incomplete or invalid token axes: {counts!r}")
-    rates = pricing.price(model)
+    rates = pricing.price(model, as_of=charge_date) if recorded_rates is None else recorded_rates
     input_key, output_key = ("batch_in", "batch_out") if batch else ("in_", "out")
     read_key = "batch_cached_in" if batch else "cached_in"
     input_rate, output_rate = rates[input_key], rates[output_key]
     read_rate = rates[read_key] if cache_read_tok else 0
-    if cache_write_tok and rates.get("provider") != "anthropic":
-        raise ValueError(f"No authoritative cache-write rate for {model!r}: {rates!r}")
-    write_rate = input_rate * pricing.CACHE_WRITE_5M_MULTIPLIER
+    write_rate = rates.get("cache_write")
+    if write_rate is None:
+        if cache_write_tok and rates.get("provider") != "anthropic":
+            raise ValueError(f"No authoritative cache-write rate for {model!r}: {rates!r}")
+        write_rate = input_rate * pricing.CACHE_WRITE_5M_MULTIPLIER
     components = tuple(float(tokens) * float(rate) / pricing.ONE_MILLION
                        for tokens, rate in zip(counts, (input_rate, output_rate, read_rate, write_rate)))
     if not all(math.isfinite(component) and component >= 0 for component in components):
         raise ValueError(f"Invalid priced token components: {components!r}")
     return sum(components)
+
+
+def _recorded_token_rates_from_axes(kind, stamped_axes):
+    """Return complete stamped rates in the shape consumed by pricing reconstruction."""
+    if len(stamped_axes) != 4 or any(rate is None for rate in stamped_axes):
+        return None
+    recorded_rates = dict(zip(("in_", "out", "cached_in", "cache_write"), stamped_axes))
+    if kind == "batch":
+        recorded_rates.update(batch_in=stamped_axes[0], batch_out=stamped_axes[1],
+                              batch_cached_in=stamped_axes[2])
+    return recorded_rates
 
 
 def classify_impossible_cost_buckets(rows, *, gaps=None):
@@ -63,13 +77,17 @@ def classify_impossible_cost_buckets(rows, *, gaps=None):
     """
     findings, unpriced = [], 0
     for row in rows:
-        model, day, kind, n, ledger_cost, in_tok, out_tok, *cache_axes = row
-        split = len(row) != COST_INTEGRITY_LEGACY_WIDTH and all(axis is not None for axis in cache_axes)
+        model, day, kind, n, ledger_cost, in_tok, out_tok, *extra_axes = row
+        cache_axes = extra_axes[:2]
+        stamped_axes = extra_axes[2:6]
+        split = len(cache_axes) == 2 and all(axis is not None for axis in cache_axes)
         identity = {"model": model, "day": day, "kind": kind, "n": int(n)}
         if not split and gaps is not None:
             gaps.append({**identity, "gap": "legacy_cache_split_missing", "basis": "best-effort ceiling only"})
         try:
-            expected = (_reconstruct_split_token_cost(model, in_tok, out_tok, *cache_axes, kind == "batch")
+            recorded_rates = _recorded_token_rates_from_axes(kind, stamped_axes)
+            expected = (_reconstruct_split_token_cost(model, in_tok, out_tok, *cache_axes, kind == "batch",
+                                                      charge_date=day, recorded_rates=recorded_rates)
                         if split else _max_token_cost(model, in_tok, out_tok, kind == "batch"))
             if expected is None:
                 raise ValueError("Pricing returned no token cost")
