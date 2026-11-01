@@ -117,9 +117,12 @@ def _unbounded_attempt(vendor, model, prompt, system, max_tokens, budget_s, sche
 def _c_probe():
     """A call whose adapter HANGS must still return within its deadline. Timed, not asserted from the code."""
     import threading
+    import importlib
     # Warm lazy dispatch/attribution imports before the timed call: expiration before
-    # dispatch would not prove that a running adapter was abandoned.
-    from spendguard import calls, dispatch
+    # dispatch would not prove that a running adapter was abandoned. Imported for the
+    # warming side effect only (no bound name), so the names are not referenced.
+    importlib.import_module("spendguard.calls")
+    importlib.import_module("spendguard.dispatch")
     import spendguard.adapters as _a
     real = _a.call
     c_adapter_started = threading.Event()
