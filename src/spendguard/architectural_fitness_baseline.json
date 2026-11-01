@@ -333,7 +333,7 @@
           },
           "src/spendguard/delegate_jobs.py": {
             "max_cc": 30,
-            "mi": 18.532985996875016
+            "mi": 17.751604274358506
           },
           "src/spendguard/delegate_router.py": {
             "max_cc": 48,
@@ -942,6 +942,10 @@
           "src/spendguard/ledger_performance_benchmark.py": {
             "max_cc": 19,
             "mi": 22.449277155991624
+          },
+          "src/spendguard/process_group_reaper.py": {
+            "max_cc": 9,
+            "mi": 73.39668068181851
           }
         },
         "measured_extremes": {
@@ -1217,7 +1221,7 @@
           },
           "src/spendguard/delegate_jobs.py": {
             "max_cc": 30,
-            "mi": 18.532985996875016
+            "mi": 17.751604274358506
           },
           "src/spendguard/delegate_router.py": {
             "max_cc": 48,
@@ -1826,6 +1830,10 @@
           "src/spendguard/ledger_performance_benchmark.py": {
             "max_cc": 19,
             "mi": 22.29606059471751
+          },
+          "src/spendguard/process_group_reaper.py": {
+            "max_cc": 9,
+            "mi": 73.39668068181851
           }
         },
         "measured_extremes": {
@@ -1840,7 +1848,8 @@
     "reviewed_ledger_performance_benchmark": "Measured offline ledger performance benchmark core and relative baseline comparison.",
     "reviewed_ledger_performance_profile_wiring": "Reviewed benchmark profile wiring adds bounded metadata derivation, fixture construction, and read-only source-ledger integration.",
     "reviewed_selfcheck_named_unreviewed_exit_policy": "Reviewed the explicit selfcheck exit-policy helper and repeatable CLI array parsing; both are small mechanical policy/argument adapters with can-still-fail coverage.",
-    "reviewed_warm_daemon_reader_join_teardown": "Reviewed the sole-reader bounded join on every warm-daemon teardown path and the loud join-timeout warning; the measured MI cost is essential to close the evidence-write-after-teardown correctness race, not avoidable churn."
+    "reviewed_warm_daemon_reader_join_teardown": "Reviewed the sole-reader bounded join on every warm-daemon teardown path and the loud join-timeout warning; the measured MI cost is essential to close the evidence-write-after-teardown correctness race, not avoidable churn.",
+    "reviewed_delegate_cancel_orphan_group_reaper": "Records the measured cost of the new stdlib-only bounded process-group reaper and the cancel-path orphaned-group reap and identity logic."
   },
   "duplication": {
     "duplicate_lines": 303,

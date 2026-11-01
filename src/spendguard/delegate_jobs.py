@@ -22,6 +22,7 @@ import uuid
 from pathlib import Path
 
 from . import config
+from .process_group_reaper import PROCESS_GROUP_LIVENESS_PROBE_SIGNAL, reap_process_group_bounded
 
 DELEGATE_JOBS_DATABASE_FILENAME = "delegate_jobs.db"
 DELEGATE_JOB_RUNNING_STATE = "running"
@@ -39,6 +40,8 @@ DELEGATE_JOB_DEFAULT_STALENESS_MARGIN_S = 60
 DELEGATE_JOB_DEFAULT_CODEX_TIMEOUT_S = 1800
 DELEGATE_JOB_WAIT_POLL_DEFAULT_S = 0.1
 DELEGATE_JOB_CANCEL_GRACE_DEFAULT_S = 5.0
+DELEGATE_JOB_CANCEL_GROUP_POLL_DEFAULT_S = 0.05
+DELEGATE_JOB_CANCEL_GROUP_WARNING_CONTEXT = "delegate cancel"
 DELEGATE_JOB_CANCEL_REASON = "operator-cancelled"
 CODEX_DELETE_MISSING_SESSION_TEMPLATES = (
     "No active or archived session found matching '{thread_id}'.",
@@ -327,39 +330,57 @@ def cancel_delegate_job(job_id, force=False):
     execution = execution_journal.recover_durable_execution(execution_id)
     if execution["state"] != DELEGATE_JOB_RUNNING_STATE:
         return read_delegate_job_result(job_id)
-    processes = {}
-    for identity in ("child", "worker"):
-        pid, birth = execution.get(f"{identity}_pid"), execution.get(f"{identity}_birth")
-        if pid is None:
-            continue
+    worker_pid, worker_birth = execution.get("worker_pid"), execution.get("worker_birth")
+    worker_process_group = None
+    worker_group_proven_empty = False
+    if worker_pid is not None:
         try:
-            process = psutil.Process(pid)
-            if process.create_time() != birth or process.status() == psutil.STATUS_ZOMBIE:
-                continue
-            for descendant in process.children(recursive=True):
-                processes[descendant.pid] = descendant
-            processes[pid] = process
-        except psutil.NoSuchProcess:
-            continue
-    if not processes:
+            worker = psutil.Process(worker_pid)
+            if worker.create_time() != worker_birth:
+                config.warn_once(
+                    f"[spendguard] delegate cancel: refusing to signal worker {worker_pid} because its process "
+                    "identity did not match the governed worker")
+                return {**status, "error": "delegate termination unconfirmed"}
+            if worker.status() != psutil.STATUS_ZOMBIE:
+                observed_process_group = os.getpgid(worker_pid)
+                if observed_process_group == worker_pid:
+                    worker_process_group = observed_process_group
+                else:
+                    config.warn_once(
+                        f"[spendguard] delegate cancel: refusing to signal worker {worker_pid} because its process "
+                        f"group is {observed_process_group}, not its owned session group")
+                    return {**status, "error": "delegate termination unconfirmed"}
+            else:
+                raise psutil.NoSuchProcess(worker_pid)
+        except (psutil.NoSuchProcess, ProcessLookupError):
+            try:
+                os.killpg(worker_pid, PROCESS_GROUP_LIVENESS_PROBE_SIGNAL)
+                worker_process_group = worker_pid
+            except ProcessLookupError:
+                worker_group_proven_empty = True
+            except PermissionError as error:
+                config.warn_once(
+                    f"[spendguard] delegate cancel: cannot confirm orphaned process group {worker_pid} is empty "
+                    f"because its liveness probe was denied: {error}")
+                return {**status, "error": "delegate termination unconfirmed"}
+            except OSError as error:
+                return {**status, "error": f"delegate worker identity verification failed: {error}"}
+        except (psutil.Error, OSError) as error:
+            return {**status, "error": f"delegate worker identity verification failed: {error}"}
+    if worker_process_group is None and not worker_group_proven_empty:
         return {**status, "error": "delegate process identity is not yet available; retry cancellation"}
     terminal = execution_journal.terminalize_durable_execution(execution_id, DELEGATE_JOB_KILLED_STATE)
     if terminal["state"] != DELEGATE_JOB_KILLED_STATE:
         return read_delegate_job_result(job_id)
     grace = float(config._cfg_get("delegate", "cancel_grace_s", DELEGATE_JOB_CANCEL_GRACE_DEFAULT_S))
-    try:
-        for process in processes.values():
-            try:
-                process.kill() if force else process.terminate()
-            except psutil.NoSuchProcess:
-                pass
-        _, alive = psutil.wait_procs(list(processes.values()), timeout=grace)
-        for process in alive:
-            process.kill()
-        _, surviving = psutil.wait_procs(alive, timeout=grace)
-    except psutil.Error as error:
-        return {**status, "error": f"delegate termination failed: {error}"}
-    if surviving:
+    poll_interval = float(config._cfg_get(
+        "delegate", "cancel_group_poll_s", DELEGATE_JOB_CANCEL_GROUP_POLL_DEFAULT_S))
+    group_reaped = worker_group_proven_empty or reap_process_group_bounded(
+        worker_process_group, terminate_grace_s=grace, force_kill_grace_s=grace,
+        poll_interval_s=poll_interval, warning_context=DELEGATE_JOB_CANCEL_GROUP_WARNING_CONTEXT,
+        emit_warning=config.warn_once,
+        force_immediately=force)
+    if not group_reaped:
         return {**status, "error": "delegate termination unconfirmed"}
     finish_delegate_job(job_id, state=DELEGATE_JOB_KILLED_STATE, terminal_reason=DELEGATE_JOB_CANCEL_REASON)
     return read_delegate_job_result(job_id)

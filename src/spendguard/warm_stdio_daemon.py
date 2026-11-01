@@ -44,6 +44,7 @@ import time
 import psutil
 
 from . import config
+from .process_group_reaper import reap_process_group_bounded
 
 # A FIXED, non-external bootstrap directory for the server process. Each call carries its own explicit task cwd where
 # the protocol supports it; keeping the daemon SPAWN here means its startup directory can never be steered by content.
@@ -125,29 +126,10 @@ def _warm_reap_process_group(pid):
         except Exception:
             return False
         return True
-    deadline = time.monotonic() + _WARM_REAP_TIMEOUT_S
-    for sig in (signal.SIGTERM, _WARM_FORCE_KILL_SIGNAL or signal.SIGTERM):
-        try:
-            os.killpg(pid, sig)
-        except ProcessLookupError:
-            return True
-        except Exception:
-            return False
-        while time.monotonic() < deadline:
-            try:
-                os.killpg(pid, _WARM_GROUP_PROBE_SIGNAL)     # signal 0 = liveness probe, kills nothing
-            except ProcessLookupError:
-                return True
-            except Exception:
-                break
-            time.sleep(_WARM_GROUP_POLL_INTERVAL_S)
-    try:
-        os.killpg(pid, _WARM_GROUP_PROBE_SIGNAL)
-        return False
-    except ProcessLookupError:
-        return True
-    except Exception:
-        return False
+    return reap_process_group_bounded(
+        pid, terminate_grace_s=_WARM_REAP_TIMEOUT_S, force_kill_grace_s=_WARM_REAP_TIMEOUT_S,
+        poll_interval_s=_WARM_GROUP_POLL_INTERVAL_S, warning_context="warm orphan reap",
+        emit_warning=config.warn_once)
 
 
 def reap_orphaned_warm_servers(lane=None, execute=True):
