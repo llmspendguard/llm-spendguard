@@ -4,6 +4,36 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 
 ## [Unreleased]
 
+## [0.16.18] — 2026-10-31
+
+Theme: a completed codex delegation is never reported failed by the request-lifetime 5s ledger-read deadline.
+
+### Span the request-lifetime read scope across a warm/agentic turn (#264)
+The recurring "Ledger read exceeded wall-clock budget 5.0 seconds" that marked COMPLETED codex delegations as
+failed was neither a write-queue gap nor a WAL misconfig. It was a request-lifetime 5s ABSOLUTE ledger-read
+deadline, fixed at scope-open, wrongly spanning a minutes-long warm/agentic turn.
+
+- **The job-failing raise (broker + pool).** `codex_daemon_broker._serve_one` and `codex_daemon.pool_run_warm`
+  opened their peer-abandonment cancellation scope with the 5s ledger-read default; a warm turn legitimately runs
+  for minutes, so a serving-path ledger op after 5s raised `LedgerQueryDeadline`, which the broker re-wrapped as
+  "codex broker request refused: …", failing a job whose work had already landed. The scope is now sized to the
+  call's own budget (caller timeout, else the daemon's `CALL_TIMEOUT_S`), read at runtime off `self._local` — no
+  import edge, no hardcode; the pool sizes to its lease budget, never shorter than the old default. Explicit
+  peer-abandonment cancellation is unchanged.
+- **Silently-lost accounting + the MCP surface.** The terminal success-accounting in
+  `delegate_router._assemble_delegate_execution_result` runs after the turn under the serving surface's now-expired
+  request scope. The overage-ratio READ and the decision/saving WRITE now run under
+  `ledger_evidence_persistence_scope()` (a fresh, uncancellable budget), so the counterfactual and the value-proof
+  row survive the expired ambient scope that the MCP `do_POST` lifetime still opens.
+- **Defense-in-depth.** `maintain_ledger_wal_if_due` now SKIPS (never raises) under an expired admission deadline:
+  best-effort WAL maintenance must never abort the serving operation that triggered it. SQLite's own
+  `wal_autocheckpoint` still bounds the WAL, and a later unpressured open runs the checkpoint.
+
+The deliberate read deadline itself is unchanged — a genuine serving-path read still refuses under an expired scope.
+Only the scope's lifetime on long-running serving surfaces, and the mandatory accounting's budget, are corrected.
+Prove-it-can-fail guards: `tests/test_broker_ledger_lifetime_spans_call.py` (new),
+`tests/test_ledger_wal_maintenance.py`, `tests/test_broker_ledger_abandonment.py`.
+
 ## [0.16.17] — 2026-10-31
 
 Theme: CI determinism and an offline-reconcile correctness fix. A load-sensitive gate no longer false-fails on a
