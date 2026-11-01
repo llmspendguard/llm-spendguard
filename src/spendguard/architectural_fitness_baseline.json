@@ -181,7 +181,7 @@
           },
           "src/spendguard/capability_cli_callable_generation.py": {
             "max_cc": 13,
-            "mi": 36.32542298081097
+            "mi": 35.08984529144459
           },
           "src/spendguard/capability_cli_dispatch_generation.py": {
             "max_cc": 8,
@@ -205,7 +205,7 @@
           },
           "src/spendguard/capability_readiness.py": {
             "max_cc": 14,
-            "mi": 43.465096414953436
+            "mi": 41.47786328660156
           },
           "src/spendguard/capability_readiness_gates.py": {
             "max_cc": 14,
@@ -1065,7 +1065,7 @@
           },
           "src/spendguard/capability_cli_callable_generation.py": {
             "max_cc": 13,
-            "mi": 36.32542298081097
+            "mi": 35.08984529144459
           },
           "src/spendguard/capability_cli_dispatch_generation.py": {
             "max_cc": 8,
@@ -1089,7 +1089,7 @@
           },
           "src/spendguard/capability_readiness.py": {
             "max_cc": 14,
-            "mi": 43.465096414953436
+            "mi": 41.47786328660156
           },
           "src/spendguard/capability_readiness_gates.py": {
             "max_cc": 14,
@@ -1838,7 +1838,8 @@
     "reviewed_delegate_isolation_and_provider_results": "2026-10-30: Reviewed both complete new modules. delegate_worktrees is standard-library-only git isolation: snapshots tracked dirty and untracked inputs, collects the complete binary delta, retains failures, and cleans accepted workspaces through injected durable metadata/envelope writers. Concurrent actual-router and detached success/cancel tests exercise primary-checkout confinement, cleanup and retained inspection; bypassing isolation makes targeting tests red. subscription_cli_results extracts existing fixed-shape provider decoding and warm fallback contracts with injected transports, preserving errors and usage without package imports or semantic routing decisions. Provider execution targeting tests and read-only-routing mutations cover its consumers. Exact Radon 6.0.1 new-file measurements independently match on Python 3.11 and 3.12; existing file ratchets and cyclic-edge limits are unchanged.",
     "reviewed_doctor_bounded_load_scale_and_regen": "2026-10-31: Reviewed the complete changed bodies for the doctor-bounded load-scale branch. capability_readiness_gates.run_capability_script_readiness_gate now pulls measure_isolated_runner_budget_scale from the chunked_suite harness namespace and threads the measured runner_budget_scale into run_isolated_script, fixing the missing-argument regression that broke the offline readiness-evidence step; its size-sensitive MI falls 47.38754686040469 to 47.21367827153188 with max CC 14 unchanged \u2014 the only file whose measurement regresses the frozen baseline on this branch. architectural_fitness additionally gains the shared architectural_complexity_metrics_regress predicate \u2014 now the single regression rule read by both run_architectural_fitness_gate and the regenerator \u2014 and the surgical, justification-gated regenerate_architectural_complexity_baseline, which records only measured per-interpreter regressions (routing its write through config.update_json with keep_backups=0 so the atomic replace and always-on path~ backup are kept while no undeclared timestamped .json is left in the package dir) and leaves every other ratchet untouched; with those additions architectural_fitness measures max CC 30 and MI 22.221214118439754, improving on both axes versus the stored 31 / 20.935514428828085, so it does not regress and its baseline entry is intentionally left unchanged. Independently remeasured with Radon 6.0.1 under Python 3.11 and 3.12; only capability_readiness_gates.py's baseline changes, identically on each interpreter. All other complexity, cycle, duplication and dead-code ratchets remain unchanged.",
     "reviewed_ledger_performance_benchmark": "Measured offline ledger performance benchmark core and relative baseline comparison.",
-    "reviewed_ledger_performance_profile_wiring": "Reviewed benchmark profile wiring adds bounded metadata derivation, fixture construction, and read-only source-ledger integration."
+    "reviewed_ledger_performance_profile_wiring": "Reviewed benchmark profile wiring adds bounded metadata derivation, fixture construction, and read-only source-ledger integration.",
+    "reviewed_selfcheck_named_unreviewed_exit_policy": "Reviewed the explicit selfcheck exit-policy helper and repeatable CLI array parsing; both are small mechanical policy/argument adapters with can-still-fail coverage."
   },
   "duplication": {
     "duplicate_lines": 303,
