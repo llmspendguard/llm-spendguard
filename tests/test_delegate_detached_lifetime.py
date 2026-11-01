@@ -5,6 +5,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import time
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -16,6 +17,49 @@ DETACHED_TEST_TESTS_ROOT = Path(__file__).resolve().parent
 DETACHED_TEST_EDIT_FILENAME = "detached-result.txt"
 DETACHED_TEST_EDIT_CONTENT = "isolated detached edit\n"
 DETACHED_TEST_DELAY_ENV = "SPENDGUARD_DETACHED_TEST_DELAY_S"
+DETACHED_TEST_GUARD_PREFIX = "sg-detached-join-guard-"
+DETACHED_TEST_GUARD_EXECUTION_ID = "offline-guard-execution"
+
+
+def wait_for_detached_test_state_processes(directory):
+    """Wait until persisted detached workers and children can no longer touch the test root."""
+    state_paths = list(directory.glob("delegate-executions/*/state.json"))
+    persisted_process_ids = set()
+    for state_path in state_paths:
+        state = json.loads(state_path.read_text())
+        persisted_process_ids.update(state.get(key) for key in ("child_pid", "worker_pid") if state.get(key))
+    deadline = time.monotonic() + DETACHED_TEST_COMPLETION_BOUND_S
+    for process_id in persisted_process_ids:
+        while True:
+            try:
+                os.kill(process_id, 0)
+            except ProcessLookupError:
+                break
+            assert time.monotonic() < deadline, f"detached process {process_id} did not exit before cleanup"
+            time.sleep(DETACHED_TEST_POLL_S)
+
+
+def check_detached_process_join_guard():
+    """Prove the teardown join polls a live PID and fails loudly when it never exits."""
+    with tempfile.TemporaryDirectory(prefix=DETACHED_TEST_GUARD_PREFIX) as temporary:
+        state_directory = Path(temporary)
+        execution_directory = state_directory / "delegate-executions" / DETACHED_TEST_GUARD_EXECUTION_ID
+        execution_directory.mkdir(parents=True)
+        state_path = execution_directory / "state.json"
+        state_path.write_text(json.dumps({"worker_pid": os.getpid()}))
+        with patch("os.kill", side_effect=(None, ProcessLookupError)), \
+                patch("time.sleep") as joined_sleep:
+            wait_for_detached_test_state_processes(state_directory)
+        joined_sleep.assert_called_once_with(DETACHED_TEST_POLL_S)
+        with patch("os.kill", return_value=None), \
+                patch("time.monotonic", side_effect=(0, DETACHED_TEST_COMPLETION_BOUND_S)):
+            try:
+                wait_for_detached_test_state_processes(state_directory)
+            except AssertionError:
+                pass
+            else:
+                raise AssertionError("detached process join did not fail at its completion bound")
+    print("2 passed: detached PID join waits for exit and times out loudly")
 
 
 def install_detached_lifetime_fixture():
@@ -107,6 +151,7 @@ def check_detached_lifetime_boundary(cancel_isolated_job=False):
             assert retained["retained"] is True and Path(retained["path"]).is_dir(), result
             assert not (repository / DETACHED_TEST_EDIT_FILENAME).exists()
             assert Path(retained["path"]) != repository
+            wait_for_detached_test_state_processes(directory)
             print("4 passed: detached isolated cancel, retained collect metadata, primary unchanged, separate workspace")
             return
         assert isinstance(result, dict) and result.get("execution", {}).get("text") == "offline detached result", result
@@ -123,6 +168,7 @@ def check_detached_lifetime_boundary(cancel_isolated_job=False):
         assert not (repository / DETACHED_TEST_EDIT_FILENAME).exists()
         persisted = json.loads((states[0].parent / "worktree.json").read_text())
         assert persisted == worktree, persisted
+        wait_for_detached_test_state_processes(directory)
         print("9 passed: detached completion/collection, PID identity, terminal signal, isolated patch/cleanup")
 
 
@@ -150,6 +196,10 @@ def check_detached_adoption_rejects_stale_loss():
         with patch.object(execution_journal, "durable_execution_store_root", return_value=Path(temporary)):
             execution_id = execution_journal.begin_durable_execution()
             original_terminalize = execution_journal.terminalize_durable_execution
+            adopted_worker = subprocess.Popen([
+                sys.executable, "-c", "import time,sys; time.sleep(float(sys.argv[1]))",
+                str(DETACHED_TEST_COMPLETION_DELAY_S),
+            ], start_new_session=True)
 
             def transfer_before_terminalize(execution_id, state, **kwargs):
                 with execution_journal._locked_durable_execution(execution_id) as directory:
@@ -163,8 +213,10 @@ def check_detached_adoption_rejects_stale_loss():
                                  side_effect=transfer_before_terminalize):
                 recovered = execution_journal.recover_durable_execution(execution_id)
             assert recovered["state"] == "running", recovered
-            execution_journal.adopt_durable_execution_owner(execution_id)
+            execution_journal.adopt_durable_execution_owner(execution_id, adopted_worker.pid)
             execution_journal.terminalize_durable_execution(execution_id, "killed")
+            adopted_worker.wait(timeout=DETACHED_TEST_COMPLETION_BOUND_S)
+            wait_for_detached_test_state_processes(Path(temporary))
     print("1 passed: stale launcher observation cannot terminalize adopted worker")
 
 
@@ -191,6 +243,7 @@ def check_warm_cancellation_stops_retry():
 
 
 if __name__ == "__main__":
+    check_detached_process_join_guard()
     check_detached_lifetime_boundary()
     check_detached_lifetime_boundary(cancel_isolated_job=True)
     check_detached_adoption_rejects_stale_loss()
