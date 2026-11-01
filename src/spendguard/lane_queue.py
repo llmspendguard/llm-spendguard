@@ -481,10 +481,6 @@ def dedup_pending_against_done(chunk=5000):
         #    UPDATE with a correlated subquery (fingerprint is indexed), so a deep backlog stays cheap.
         now = _iso(_utcnow())
         with _queue_op() as c:
-            deduplicated_ids = [row[0] for row in c.execute(
-                "SELECT id FROM lane_queue WHERE state='pending' AND fingerprint IS NOT NULL AND EXISTS ("
-                "SELECT 1 FROM lane_queue d WHERE d.fingerprint=lane_queue.fingerprint AND d.state='done' "
-                "AND d.result IS NOT NULL AND d.result!='')").fetchall()]
             cur = c.execute(
                 "UPDATE lane_queue SET "
                 "  result=(SELECT d.result FROM lane_queue d WHERE d.fingerprint=lane_queue.fingerprint "
@@ -495,7 +491,6 @@ def dedup_pending_against_done(chunk=5000):
                 "  SELECT 1 FROM lane_queue d WHERE d.fingerprint=lane_queue.fingerprint AND d.state='done' "
                           "          AND d.result IS NOT NULL AND d.result!='')", (now, now))
             settled = cur.rowcount
-            _archive_and_strip_terminal_payloads_locked(c, deduplicated_ids)
             c.commit()
     except Exception as _e:
         from . import provider_tokens as _pt                  # CANONICAL stop-or-locked predicate (same as settle)
@@ -514,16 +509,12 @@ def reclaim_expired_leases(connection=None, now=None):
     now = now or _iso(_utcnow())
 
     def _reclaim_locked(active_connection):
-        exhausted_ids = [row[0] for row in active_connection.execute(
-            "SELECT id FROM lane_queue WHERE state='leased' AND lease_until<? AND attempts>=max_attempts",
-            (now,)).fetchall()]
         failed = active_connection.execute(
             "UPDATE lane_queue SET state='failed', terminal_reason='retry_budget_exhausted',terminal_ts=?,updated_ts=? "
             "WHERE state='leased' AND lease_until<? AND attempts>=max_attempts", (now, now, now)).rowcount
         pending = active_connection.execute(
             "UPDATE lane_queue SET state='pending', worker=NULL, updated_ts=? "
             "WHERE state='leased' AND lease_until<? AND attempts<max_attempts", (now, now)).rowcount
-        _archive_and_strip_terminal_payloads_locked(active_connection, exhausted_ids)
         return {"reclaimed_to_pending": pending, "failed_exhausted": failed}
 
     if connection is not None:
@@ -566,12 +557,9 @@ def lease(n, worker=None, lease_s=None):
             try:
                 # A dead synchronous hold may never become a later purchase, even if its
                 # cleanup write failed. Deadline is durable admission evidence.
-                deadline_rows = c.execute("SELECT id FROM lane_queue WHERE state IN ('leased','pending') "
-                                          "AND deadline_ts IS NOT NULL AND deadline_ts<=?", (now,)).fetchall()
                 c.execute("UPDATE lane_queue SET state='failed', result=?, result_payload=?, batch_handle=NULL, batch_model=NULL,  result_gap=NULL, result_migrated=1, lease_until=NULL,terminal_reason='deadline_exceeded',terminal_ts=?,updated_ts=? "
                           "WHERE state IN ('leased','pending') AND deadline_ts IS NOT NULL AND deadline_ts<=?",
                           (deadline_audit, deadline_payload, now, now, now))
-                _archive_and_strip_terminal_payloads_locked(c, [row[0] for row in deadline_rows])
                 # reclaim expired leases: exhausted → failed, else → pending (retryable). attempts was already
                 # incremented at lease time, so `attempts>=max_attempts` here means every allowed try is spent.
                 reclaim_expired_leases(connection=c, now=now)
@@ -723,13 +711,6 @@ def settle(row_id, result):
                 c.execute("UPDATE lane_queue SET state='done', result=?, result_payload=?, batch_handle=?, batch_model=?,  result_gap=NULL, result_migrated=1, lane='content-addressed-dedup', billed=0, "
                           "lease_until=NULL,defer_until=NULL,terminal_reason='content_addressed_dedup',terminal_ts=?,updated_ts=? WHERE fingerprint=? AND state='pending' AND id!=?",
                           (audit, full_payload, batch_handle, batch_model, now, now, fp, row_id))
-            if settled and terminal_reason is not None:
-                terminal_ids = [row_id]
-                if ok and fp:
-                    terminal_ids.extend(row[0] for row in c.execute(
-                        "SELECT id FROM lane_queue WHERE fingerprint=? AND state='done' AND terminal_ts=? AND id!=?",
-                        (fp, now, row_id)).fetchall())
-                _archive_and_strip_terminal_payloads_locked(c, terminal_ids)
             c.commit()
             return settled
     except Exception as _e:
@@ -1321,25 +1302,6 @@ def _append_durable_queue_archive(archive_path, records):
             os.fsync(directory_fd)
         finally:
             os.close(directory_fd)
-
-
-def _archive_and_strip_terminal_payloads_locked(queue_connection, row_ids, archive_path=None):
-    """Durably archive terminal rows before dropping their request/response payload columns."""
-    identifiers = tuple(dict.fromkeys(int(row_id) for row_id in row_ids))
-    if not identifiers:
-        return 0
-    archive_path = archive_path or str(config.HOME / "lane_queue_archive.jsonl")
-    placeholders = ",".join("?" for _ in identifiers)
-    rows = queue_connection.execute(
-        f"SELECT {','.join(QUEUE_ARCHIVE_COLUMNS)} FROM lane_queue WHERE id IN ({placeholders}) "
-        "AND state IN ('done','failed','retired') AND task IS NOT NULL", identifiers).fetchall()
-    if not rows:
-        return 0
-    _append_durable_queue_archive(archive_path, [dict(zip(QUEUE_ARCHIVE_COLUMNS, row)) for row in rows])
-    queue_connection.executemany(
-        "UPDATE lane_queue SET task=NULL,result=NULL,result_payload=NULL WHERE id=?",
-        [(row[0],) for row in rows])
-    return len(rows)
 
 
 def purge_due(min_interval_s=None):
