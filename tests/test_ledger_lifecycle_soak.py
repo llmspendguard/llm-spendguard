@@ -1,5 +1,8 @@
 """Offline operation-owned connection regression; retained handles expose real leaks."""
 import os
+import faulthandler
+import subprocess
+import sys
 import tempfile
 import concurrent.futures
 import threading
@@ -18,6 +21,21 @@ LIFECYCLE_SOAK_POOL_KEY = "lifecycle-soak"
 LIFECYCLE_READ_TEST_CAP = 2
 LIFECYCLE_READ_TEST_WORKERS = 6
 LIFECYCLE_READ_HOLD_S = 0.01
+RECYCLER_DEADLOCK_WATCHDOG_MULTIPLIER = 100
+RECYCLER_DEADLOCK_WATCHDOG_S = LIFECYCLE_READ_HOLD_S * RECYCLER_DEADLOCK_WATCHDOG_MULTIPLIER
+RECYCLER_FAULTHANDLER_GRACE_MULTIPLIER = 2
+RECYCLER_FAULTHANDLER_WATCHDOG_S = (
+    RECYCLER_DEADLOCK_WATCHDOG_S * RECYCLER_FAULTHANDLER_GRACE_MULTIPLIER
+)
+RECYCLER_SUBPROCESS_TIMEOUT_MULTIPLIER = 3
+RECYCLER_SUBPROCESS_TIMEOUT_S = RECYCLER_DEADLOCK_WATCHDOG_S * RECYCLER_SUBPROCESS_TIMEOUT_MULTIPLIER
+RECYCLER_CHILD_MODE = "--recycler-lease-child"
+RECYCLER_CHILD_INJECT_LOCK_REGRESSION = "--inject-recycler-lock-regression"
+RECYCLER_DEADLOCK_EXIT_CODE = 86
+RECYCLER_DEADLOCK_DIAGNOSTIC = (
+    "recycler-lock regression: recycle_idle_ledger_connections did not return against a held lease "
+    f"within {RECYCLER_DEADLOCK_WATCHDOG_S:g}s"
+)
 
 
 def ensure_lifecycle_soak_schema(connection):
@@ -90,16 +108,62 @@ def run_legacy_pool_cap_probe(ledger_path, baseline):
 
 
 def run_recycler_lease_ownership_probe(ledger_path, baseline):
+    del baseline  # Connection counts are process-local; each isolated child establishes its own baseline.
+    child_environment = os.environ.copy()
+    child_environment["PYTHONPATH"] = str(Path(__file__).resolve().parents[1] / "src")
+    child_environment["SPENDGUARD_TEST_ISOLATED"] = "1"
+    with tempfile.TemporaryDirectory() as isolated_home:
+        child_environment["SPENDGUARD_HOME"] = isolated_home
+        control = subprocess.run(
+            [sys.executable, __file__, RECYCLER_CHILD_MODE, os.fspath(ledger_path)],
+            env=child_environment,
+            capture_output=True,
+            text=True,
+            timeout=RECYCLER_SUBPROCESS_TIMEOUT_S,
+            check=False,
+        )
+        assert control.returncode == 0, control.stdout + control.stderr
+
+        regression_started = time.monotonic()
+        injected_regression = subprocess.run(
+            [sys.executable, __file__, RECYCLER_CHILD_MODE, os.fspath(ledger_path),
+             RECYCLER_CHILD_INJECT_LOCK_REGRESSION],
+            env=child_environment,
+            capture_output=True,
+            text=True,
+            timeout=RECYCLER_SUBPROCESS_TIMEOUT_S,
+            check=False,
+        )
+        regression_elapsed = time.monotonic() - regression_started
+        assert injected_regression.returncode != 0, "injected recycler-lock regression unexpectedly passed"
+        assert RECYCLER_DEADLOCK_DIAGNOSTIC in injected_regression.stderr, injected_regression.stderr
+        assert regression_elapsed < RECYCLER_SUBPROCESS_TIMEOUT_S
+
+
+def run_isolated_recycler_lease_ownership_probe(ledger_path, inject_lock_regression):
     lease_key = run_recycler_lease_ownership_probe.__name__
     retained = []
-    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as recycler:
+    with config.ledger_op(LIFECYCLE_SOAK_POOL_KEY, ensure_lifecycle_soak_schema, ledger_path):
+        pass
+    baseline = config.ledger_connection_count()
+    recycler = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+    if inject_lock_regression:
+        recycler_lock_regression = threading.Event()
+
+        def recycle_idle_ledger_connections_lock_regression():
+            recycler_lock_regression.wait()
+
+        recycler_operation = recycle_idle_ledger_connections_lock_regression
+    else:
+        recycler_operation = config.recycle_idle_ledger_connections
+    try:
         try:
             with config.ledger_op(lease_key, ensure_lifecycle_soak_schema, ledger_path) as outer:
                 retained.append(outer)
-                recycler.submit(config.recycle_idle_ledger_connections).result()
+                recycler.submit(recycler_operation).result(timeout=RECYCLER_DEADLOCK_WATCHDOG_S)
                 assert not outer._ledger_released
                 cursor = outer.execute("SELECT value FROM lifecycle_soak ORDER BY value")
-                recycler.submit(config.recycle_idle_ledger_connections).result()
+                recycler.submit(recycler_operation).result(timeout=RECYCLER_DEADLOCK_WATCHDOG_S)
                 assert cursor.fetchone()[0] == 0
                 with config.ledger_op(lease_key, ensure_lifecycle_soak_schema, ledger_path) as inner:
                     assert inner is outer
@@ -113,6 +177,13 @@ def run_recycler_lease_ownership_probe(ledger_path, baseline):
             assert str(error) == lease_key
         else:
             raise AssertionError("nested lease exception was swallowed")
+    except concurrent.futures.TimeoutError:
+        faulthandler.dump_traceback()
+        os.write(2, f"{RECYCLER_DEADLOCK_DIAGNOSTIC}\n".encode())
+        recycler.shutdown(wait=False, cancel_futures=True)
+        os._exit(RECYCLER_DEADLOCK_EXIT_CODE)
+    else:
+        recycler.shutdown(wait=True)
     assert all(connection._ledger_released for connection in retained)
     assert config.ledger_connection_count() == baseline
 
@@ -136,6 +207,16 @@ def run_recycler_lease_ownership_probe(ledger_path, baseline):
             config.reset_ledger_conn(key)
     assert config.ledger_connection_count() == baseline
     print("recycler regression: pre-execute, mid-cursor, nested exception, borrowed raw cap passed")
+
+
+def run_recycler_lease_child_mode(ledger_path, inject_lock_regression):
+    faulthandler.enable()
+    # The Future bound fires first; this second layer still dumps stacks if timeout handling itself wedges.
+    faulthandler.dump_traceback_later(RECYCLER_FAULTHANDLER_WATCHDOG_S, exit=True)
+    try:
+        run_isolated_recycler_lease_ownership_probe(ledger_path, inject_lock_regression)
+    finally:
+        faulthandler.cancel_dump_traceback_later()
 
 
 def run_bounded_read_lifecycle_probe(ledger_path, baseline):
@@ -166,4 +247,10 @@ def run_bounded_read_lifecycle_probe(ledger_path, baseline):
 
 
 if __name__ == "__main__":
-    run_operation_owned_lifecycle_soak()
+    if len(sys.argv) >= 3 and sys.argv[1] == RECYCLER_CHILD_MODE:
+        run_recycler_lease_child_mode(
+            Path(sys.argv[2]),
+            len(sys.argv) >= 4 and sys.argv[3] == RECYCLER_CHILD_INJECT_LOCK_REGRESSION,
+        )
+    else:
+        run_operation_owned_lifecycle_soak()

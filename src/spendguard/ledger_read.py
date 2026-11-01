@@ -95,7 +95,7 @@ def _consumer_ledger_read_target(ledger_path):
     return ledger_path.as_uri() + "?mode=ro"
 
 
-SPEND_EVENT_READ_COLUMNS = tuple("""id dedup_key source content_hash schema_version ts_utc occurred_at recorded_at tz local_datetime day period eligibility_window window_start window_end currency batch_usd realtime_usd est_chat_usd remote_compute_usd subscription_usd external_usd cost_type billed is_meta cost_basis amount_confidence rate_in rate_out fx_rate base_usd provider model model_kind finish in_tok out_tok cache_read_tok cache_write_tok reasoning_tok num_calls num_items latency org team projects project_primary member_ref key_fp account_id customer_id cost_center engagement billable invoice_id conv_id seg_id call_id cwd batch_id from_message_ids prior_message_ids post_message_ids script repo host prompt_hash prompt_snip output_snip evidence_uri intent actor chain attr_what attr_why attr_how attr_reason attr_confidence attr_source attr_model attr_ts attr_version recorded_by ingest_version status revision locked locked_at lock_reason reverses_id adjusts_id superseded_by reconciled reconciled_vs reconciled_at reconciliation_id gap_flag period_closed recon_marker quality quality_src quality_conf cache_hit savings_cv tags""".split())
+SPEND_EVENT_READ_COLUMNS = tuple("""id dedup_key source content_hash schema_version ts_utc occurred_at recorded_at tz local_datetime day period eligibility_window window_start window_end currency batch_usd realtime_usd est_chat_usd remote_compute_usd subscription_usd external_usd cost_type billed is_meta cost_basis amount_confidence rate_in rate_out cache_read_rate cache_write_rate fx_rate base_usd provider model model_kind finish in_tok out_tok cache_read_tok cache_write_tok reasoning_tok num_calls num_items latency org team projects project_primary member_ref key_fp account_id customer_id cost_center engagement billable invoice_id conv_id seg_id call_id cwd batch_id from_message_ids prior_message_ids post_message_ids script repo host prompt_hash prompt_snip output_snip evidence_uri intent actor chain attr_what attr_why attr_how attr_reason attr_confidence attr_source attr_model attr_ts attr_version recorded_by ingest_version status revision locked locked_at lock_reason reverses_id adjusts_id superseded_by reconciled reconciled_vs reconciled_at reconciliation_id gap_flag period_closed recon_marker quality quality_src quality_conf cache_hit savings_cv tags""".split())
 RECENT_CALL_READ_COLUMNS = tuple("id ts chain intent caller provider model kind in_tok out_tok cost latency finish quality executor project effort outcome disposition".split())
 LEDGER_READ_ALLOWED_TABLES = (LEDGER_EVENTS_TABLE, LEDGER_CALLS_TABLE, LEDGER_INSIGHTS_TABLE)
 LEDGER_READ_AGGREGATE_DIMENSIONS = (("provider", "day"), ("intent",), ("model",))
@@ -121,15 +121,17 @@ _INVOICE_OVERAGE_MONTH_SQL_TEMPLATE = """SELECT substr(occurred_at,1,7) AS mo,
 ROUND(SUM({realtime_nano})/{nano}.0,2) AS amount FROM spend_events
 WHERE source=? AND intent LIKE ? GROUP BY mo ORDER BY mo DESC"""
 COST_INTEGRITY_CACHE_COLUMNS = ("cache_read_tok", "cache_write_tok")
+COST_INTEGRITY_RATE_COLUMNS = ("rate_in", "rate_out", "cache_read_rate", "cache_write_rate")
 COST_INTEGRITY_SCHEMA_SQL = "SELECT name FROM pragma_table_info(?)"
 COST_INTEGRITY_BUCKET_SQL = """SELECT model,date(ts) AS d,kind,COUNT(*) AS n,
-SUM(COALESCE({cost_nano},0))/{nano}.0 AS c,{{input_projection}} AS i,
+SUM(cost) AS c,{input_projection} AS i,
 CASE WHEN COUNT(out_tok)=COUNT(*) THEN SUM(out_tok) END AS o,
-{{cache_read_projection}} AS cache_read_tok,
-{{cache_write_projection}} AS cache_write_tok FROM calls
+{cache_read_projection} AS cache_read_tok,
+{cache_write_projection} AS cache_write_tok,
+{rate_in_projection} AS rate_in,{rate_out_projection} AS rate_out,
+{cache_read_rate_projection} AS cache_read_rate,{cache_write_rate_projection} AS cache_write_rate FROM calls
 WHERE ts>=? AND kind IN ('realtime','batch')
-AND cost IS NOT NULL AND suspect IS NULL GROUP BY model,date(ts),kind{{cache_completeness_group}}""".format(
-    cost_nano=CALL_COST_NANO_COLUMN, nano=NANO_USD_PER_USD)
+AND cost IS NOT NULL AND suspect IS NULL GROUP BY model,date(ts),kind{cache_completeness_group}"""
 RECEIPT_LANE_ACTIVITY_SQL = """SELECT executor,COUNT(*) AS n,
 CASE WHEN COUNT(in_tok)=COUNT(*) THEN COALESCE(SUM(in_tok),0) END AS in_tok,
 CASE WHEN COUNT(out_tok)=COUNT(*) THEN COALESCE(SUM(out_tok),0) END AS out_tok
@@ -1037,6 +1039,9 @@ def read_cost_integrity_buckets(since_days, path=None):
     projections = tuple(
         f"CASE WHEN COUNT({column})=COUNT(*) THEN SUM({column}) END" if column in available else "NULL"
         for column in COST_INTEGRITY_CACHE_COLUMNS)
+    rate_projections = tuple(
+        f"CASE WHEN COUNT({column})=COUNT(*) THEN MIN({column}) END" if column in available else "NULL"
+        for column in COST_INTEGRITY_RATE_COLUMNS)
     # Split calls.in_tok follows pricing's API: reads are included, writes are separate.
     # Preserve total input for incomplete legacy buckets so their best-effort ceiling stays unchanged.
     read_column = COST_INTEGRITY_CACHE_COLUMNS[0]
@@ -1046,8 +1051,14 @@ def read_cost_integrity_buckets(since_days, path=None):
                         if all(column in available for column in COST_INTEGRITY_CACHE_COLUMNS) else "SUM(in_tok)")
     completeness_group = (",(" + " AND ".join(f"{column} IS NOT NULL" for column in COST_INTEGRITY_CACHE_COLUMNS)
                           + ")" if all(column in available for column in COST_INTEGRITY_CACHE_COLUMNS) else "")
+    if all(column in available for column in COST_INTEGRITY_RATE_COLUMNS):
+        completeness_group += "," + ",".join(COST_INTEGRITY_RATE_COLUMNS)
     sql = COST_INTEGRITY_BUCKET_SQL.format(input_projection=input_projection, cache_read_projection=projections[0],
                                           cache_write_projection=projections[1],
+                                          rate_in_projection=rate_projections[0],
+                                          rate_out_projection=rate_projections[1],
+                                          cache_read_rate_projection=rate_projections[2],
+                                          cache_write_rate_projection=rate_projections[3],
                                           cache_completeness_group=completeness_group)
     cutoff = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=int(since_days))
     return read_ledger_sql(LedgerSQLReadRequest(sql, (cutoff.isoformat(timespec="seconds"),)), path)

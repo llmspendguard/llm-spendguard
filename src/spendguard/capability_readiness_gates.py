@@ -3,13 +3,51 @@ import hashlib
 import json
 from pathlib import Path
 import runpy
+import sqlite3
 import sys
+import datetime
 
 from .capability_readiness import CapabilityReadinessEvidence
 
 READINESS_HASH_CHUNK_BYTES = 1024 * 1024
 READINESS_REQUIRED_ENVIRONMENTS = 2
 READINESS_SCRIPT_HARNESS_PATH = Path("scripts") / "test" / "chunked_suite.py"
+
+
+def assess_lane_queue_maintenance_readiness(*, context, database_path=None, retain_days=None,
+                                            size_limit_bytes=None, freelist_ratio_limit=None,
+                                            old_terminal_limit=None):
+    """Fail readiness when the queue file or its retained terminal population breaches policy."""
+    from . import config, lane_queue
+    queue_path = Path(database_path) if database_path is not None else Path(config.lane_queue_db_path())
+    if not queue_path.is_file():
+        return CapabilityReadinessEvidence("PASS", "Queue database is not present",
+                                           (f"queue_path={queue_path}; absent",))
+    retain = float(retain_days if retain_days is not None else
+                   lane_queue._qcfg("queue_retain_days", lane_queue.RETAIN_DAYS_DEFAULT))
+    size_limit = int(size_limit_bytes if size_limit_bytes is not None else
+                     lane_queue._qcfg("queue_size_limit_bytes", lane_queue.QUEUE_SIZE_LIMIT_BYTES_DEFAULT))
+    ratio_limit = float(freelist_ratio_limit if freelist_ratio_limit is not None else lane_queue._qcfg(
+        "queue_freelist_ratio_limit", lane_queue.QUEUE_FREELIST_RATIO_LIMIT_DEFAULT))
+    terminal_limit = int(old_terminal_limit if old_terminal_limit is not None else lane_queue._qcfg(
+        "queue_old_terminal_limit", lane_queue.QUEUE_OLD_TERMINAL_LIMIT_DEFAULT))
+    cutoff = lane_queue._iso(lane_queue._utcnow() - datetime.timedelta(days=retain))
+    queue_uri = queue_path.expanduser().resolve().as_uri() + "?mode=ro"
+    with sqlite3.connect(queue_uri, uri=True) as connection:
+        page_count = int(connection.execute("PRAGMA page_count").fetchone()[0])
+        freelist_count = int(connection.execute("PRAGMA freelist_count").fetchone()[0])
+        old_terminal_count = int(connection.execute(
+            "SELECT COUNT(*) FROM lane_queue WHERE state IN ('done','failed','retired') "
+            "AND COALESCE(terminal_ts,created_ts)<?", (cutoff,)).fetchone()[0])
+    file_size = queue_path.stat().st_size
+    freelist_ratio = (freelist_count / page_count) if page_count else 0.0
+    evidence = (f"path={queue_path}; bytes={file_size}/{size_limit}; "
+                f"freelist_ratio={freelist_ratio:.6f}/{ratio_limit}; "
+                f"old_terminal={old_terminal_count}/{terminal_limit}; retain_days={retain}",)
+    breached = file_size > size_limit or freelist_ratio > ratio_limit or old_terminal_count > terminal_limit
+    return CapabilityReadinessEvidence("FAIL" if breached else "PASS",
+                                       "Lane queue maintenance thresholds breached" if breached
+                                       else "Lane queue maintenance thresholds satisfied", evidence)
 
 
 def capability_verification_fingerprint(repo_root, patterns):

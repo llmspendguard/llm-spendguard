@@ -1,10 +1,14 @@
 """Target the governed lifecycle using real local workers; no provider calls."""
 import contextlib
+import errno
 import json
 import os
 from pathlib import Path
+import shutil
+import signal
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 from unittest import mock
@@ -16,13 +20,40 @@ os.environ.setdefault("SPENDGUARD_TEST_ISOLATED", "1")
 os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from spendguard import delegate_jobs, delegate_router, execution_journal  # noqa: E402
+from spendguard import delegate_jobs, delegate_router, execution_journal, process_group_reaper  # noqa: E402
+from test_delegate_cancel_process_group import (  # noqa: E402
+    PROCESS_GROUP_TEST_EPERM_SKIP_REASON,
+    host_permits_foreign_session_killpg,
+)
 
 CONTROLS_PROCESS_BOUND_S = 5
 CONTROLS_FINISH_DELAY_S = 0.15
 CONTROLS_WAIT_TIMEOUT_S = 0.02
 CONTROLS_IDLE_PROCESS_CODE = "import sys; print('ready', flush=True); sys.stdin.read()"
 CONTROLS_MUTATION_ENV = "SPENDGUARD_CONTROLS_MUTATION"
+CONTROLS_CANCEL_SKIP_ORPHAN_GROUP_MUTATION = "cancel-skip-orphan-group"
+CONTROLS_ORPHAN_REPOSITORY_DIRECTORY_NAME = "repository"
+CONTROLS_ORPHAN_TEMPORARY_DIRECTORY_PREFIX = "sg-governed-orphan-group-"
+CONTROLS_ORPHAN_WRITER_FILENAME_PREFIX = "write-"
+CONTROLS_ORPHAN_WRITER_POLL_S = 0.01
+CONTROLS_ORPHAN_WORKER_CODE = """
+import pathlib,signal,subprocess,sys
+repository=pathlib.Path(sys.argv[1])
+writer_code=sys.argv[2]
+child=subprocess.Popen([sys.executable, '-c', writer_code, str(repository), sys.argv[3], sys.argv[4]])
+print(child.pid, flush=True)
+sys.stdin.readline()
+"""
+CONTROLS_ORPHAN_WRITER_CODE = """
+import pathlib,signal,sys,time
+repository=pathlib.Path(sys.argv[1])
+signal.signal(signal.SIGTERM, signal.SIG_IGN)
+counter=0
+while True:
+    (repository / (sys.argv[2] + str(counter))).write_text(str(counter))
+    counter += 1
+    time.sleep(float(sys.argv[3]))
+"""
 
 
 def create_controls_fixture_job():
@@ -61,12 +92,13 @@ def assert_controls_wait_and_finish_signal():
 
 def assert_controls_cancel_real_worker(force):
     with subprocess.Popen([sys.executable, "-c", CONTROLS_IDLE_PROCESS_CODE],
-                          stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True) as worker:
+                          stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True,
+                          start_new_session=True) as worker:
         try:
             assert worker.stdout.readline().strip() == "ready"
             cancelled_job_id = create_controls_fixture_job()
             execution_id = delegate_jobs._delegate_job_row(cancelled_job_id)["execution_id"]
-            execution_journal.bind_durable_execution_child(execution_id, worker.pid)
+            execution_journal.adopt_durable_execution_owner(execution_id, worker.pid)
             cancelled = delegate_jobs.cancel_delegate_job(cancelled_job_id, force=force)
             assert cancelled["state"] == "killed", cancelled
             assert worker.poll() is not None, "governed cancel left the real worker alive"
@@ -79,6 +111,52 @@ def assert_controls_cancel_real_worker(force):
             if worker.poll() is None:
                 worker.kill()
             worker.wait(timeout=CONTROLS_PROCESS_BOUND_S)
+
+
+def assert_controls_cancel_reaps_orphaned_worker_group():
+    temporary = Path(tempfile.mkdtemp(prefix=CONTROLS_ORPHAN_TEMPORARY_DIRECTORY_PREFIX))
+    repository = temporary / CONTROLS_ORPHAN_REPOSITORY_DIRECTORY_NAME
+    repository.mkdir()
+    worker = subprocess.Popen(
+        [sys.executable, "-c", CONTROLS_ORPHAN_WORKER_CODE, str(repository),
+         CONTROLS_ORPHAN_WRITER_CODE, CONTROLS_ORPHAN_WRITER_FILENAME_PREFIX,
+         str(CONTROLS_ORPHAN_WRITER_POLL_S)],
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, start_new_session=True)
+    descendant_pid = int(worker.stdout.readline())
+    try:
+        orphaned_job_id = create_controls_fixture_job()
+        execution_id = delegate_jobs._delegate_job_row(orphaned_job_id)["execution_id"]
+        execution_journal.adopt_durable_execution_owner(execution_id, worker.pid)
+        worker.stdin.close()
+        worker.wait(timeout=CONTROLS_PROCESS_BOUND_S)
+        assert os.getpgid(descendant_pid) == worker.pid
+        os.killpg(worker.pid, process_group_reaper.PROCESS_GROUP_LIVENESS_PROBE_SIGNAL)
+        mutation = os.environ.get(CONTROLS_MUTATION_ENV)
+        mutation_context = (mock.patch.object(delegate_jobs, "reap_process_group_bounded", return_value=True)
+                            if mutation == CONTROLS_CANCEL_SKIP_ORPHAN_GROUP_MUTATION
+                            else contextlib.nullcontext())
+        with mutation_context:
+            cancelled = delegate_jobs.cancel_delegate_job(orphaned_job_id)
+        assert isinstance(cancelled, dict) and cancelled["state"] == "killed", cancelled
+        try:
+            os.killpg(worker.pid, process_group_reaper.PROCESS_GROUP_LIVENESS_PROBE_SIGNAL)
+        except ProcessLookupError as error:
+            assert error.errno == errno.ESRCH
+        else:
+            raise AssertionError("cancel returned while an orphaned process-group descendant survived")
+        shutil.rmtree(repository)
+        assert not repository.exists()
+    finally:
+        try:
+            os.killpg(worker.pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            pass
+        try:
+            os.kill(descendant_pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        worker.wait(timeout=CONTROLS_PROCESS_BOUND_S)
+        shutil.rmtree(temporary, ignore_errors=True)
 
 
 def assert_controls_pid_reuse_protected():
@@ -138,9 +216,15 @@ with contextlib.ExitStack() as mutations:
             lambda job_id, timeout=None: {**delegate_jobs.read_delegate_job_result(job_id), "wait_timed_out": True}))
     if mutation in (None, "wait-no-block", "finish-no-terminal"):
         assert_controls_wait_and_finish_signal()
-    if mutation in (None, "cancel-no-signal"):
-        assert_controls_cancel_real_worker(force=False)
-        assert_controls_cancel_real_worker(force=True)
+    if mutation in (None, "cancel-no-signal", CONTROLS_CANCEL_SKIP_ORPHAN_GROUP_MUTATION):
+        if host_permits_foreign_session_killpg():
+            if mutation in (None, "cancel-no-signal"):
+                assert_controls_cancel_real_worker(force=False)
+                assert_controls_cancel_real_worker(force=True)
+            if mutation in (None, CONTROLS_CANCEL_SKIP_ORPHAN_GROUP_MUTATION):
+                assert_controls_cancel_reaps_orphaned_worker_group()
+        else:
+            print(PROCESS_GROUP_TEST_EPERM_SKIP_REASON)
         assert_controls_pid_reuse_protected()
     if mutation in (None, "collect-without-state"):
         assert_controls_canonical_terminal_key()

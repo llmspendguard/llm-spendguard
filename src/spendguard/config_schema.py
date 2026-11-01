@@ -548,6 +548,17 @@ SETTINGS = [
               "reviewable log) and removed from the live queue, so it never accumulates forever. Recent terminal "
               "rows stay for `spendguard lanes --queue`. A drain purges at most hourly (queue_purge_min_interval_s); "
               "`--purge` runs it on demand."),
+    dict(section="advisor", key="queue_vacuum_pages", store="config.json:advisor.queue_vacuum_pages", default=8192,
+         kind="int", secret=False, desc="Maximum free queue pages reclaimed by each incremental-vacuum pass."),
+    dict(section="advisor", key="queue_size_limit_bytes", store="config.json:advisor.queue_size_limit_bytes",
+         default=2147483648, kind="int", secret=False,
+         desc="Selfcheck fails when lane_queue.db exceeds this configured byte limit."),
+    dict(section="advisor", key="queue_freelist_ratio_limit", store="config.json:advisor.queue_freelist_ratio_limit",
+         default=0.40, kind="float", secret=False,
+         desc="Selfcheck fails when free pages exceed this fraction of all lane_queue.db pages."),
+    dict(section="advisor", key="queue_old_terminal_limit", store="config.json:advisor.queue_old_terminal_limit",
+         default=0, kind="int", secret=False,
+         desc="Selfcheck fails when more terminal rows than this remain past queue_retain_days."),
     dict(section="advisor", key="queue_purge_min_interval_s", store="config.json:advisor.queue_purge_min_interval_s",
          default=3600.0, kind="float", secret=False,
          desc="Minimum seconds between queue purges during draining. Purge is O(terminal rows); leasing is O(batch). "

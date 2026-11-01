@@ -25,7 +25,9 @@ def ck(label, cond):
 
 def _row(rid):
     with lq._queue_op() as c:
-        r = c.execute("SELECT state, lane, billed, fingerprint, result FROM lane_queue WHERE id=?", (rid,)).fetchone()
+        r = c.execute(
+            "SELECT state, lane, billed, fingerprint, result, result_payload FROM lane_queue WHERE id=?", (rid,)
+        ).fetchone()
     return r
 
 def _insert_nullfp(intent, task, state, result=None):
@@ -88,9 +90,14 @@ leased_twin_id = leased_twin.pop()
 other_twin = (t2 if leased_twin_id == t1 else t1)
 ck("the un-leased twin is still pending", _row(other_twin)[0] == "pending")
 lq.settle(leased_twin_id, {"text": "twin answer", "lane": "codex", "billed": True})
+settled_twin = _row(leased_twin_id)
 otw = _row(other_twin)
 ck("settling the leased twin coalesced the pending twin to done ($0)",
    otw[0] == "done" and otw[1] == "content-addressed-dedup" and otw[2] == 0)
+ck("freshly-terminal producer retains result and full result payload",
+   settled_twin[4] is not None and settled_twin[5] is not None)
+ck("freshly-terminal content-addressed twin retains result and full result payload",
+   otw[4] is not None and otw[5] is not None and otw[4] == settled_twin[4] and otw[5] == settled_twin[5])
 
 print(f"\n{'[FAIL]' if fails else 'OK'} test_queue_dedup_consumer_side: {len(fails)} failure(s)")
 sys.exit(1 if fails else 0)
