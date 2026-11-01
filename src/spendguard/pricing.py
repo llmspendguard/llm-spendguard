@@ -588,7 +588,7 @@ def _semantic_catalog_map(model: str) -> Optional[str]:
     return None
 
 
-def _catalog_price(model: str) -> Optional[dict]:
+def _catalog_price(model: str, as_of=None) -> Optional[dict]:
     """Resolve exact, common variant, then alias ids using only catalog rates and providers. Returns the
     pricing-layer dict shape — provenance under `_source` (the key the breadth layer and every consumer read),
     provider from the catalog record — or None when the catalog has no USABLE rate for the id (a price_error /
@@ -607,7 +607,7 @@ def _catalog_price(model: str) -> Optional[dict]:
     candidate = model
     while True:
         record = model_catalog.model_record(candidate) or {}
-        row = _norm_price_row(record.get("price"), record.get("provider"))
+        row = _norm_price_row(model_catalog.price_for_date_from_record(record, as_of), record.get("provider"))
         if row:
             return row
         base = re.sub(r"-(?:\d{4}-\d{2}-\d{2}|\d{8}|preview|latest|v\d+)$", "", candidate)
@@ -616,19 +616,19 @@ def _catalog_price(model: str) -> Optional[dict]:
         candidate = base
     for rec in model_catalog.all_records().values():
         if model in (rec.get("aliases") or []):
-            row = _norm_price_row(rec.get("price"), rec["provider"])
+            row = _norm_price_row(model_catalog.price_for_date_from_record(rec, as_of), rec["provider"])
             if row:
                 return row
     mapped = _semantic_catalog_map(model)
     if mapped:
         record = model_catalog.model_record(mapped) or {}
-        row = _norm_price_row(record.get("price"), record.get("provider"))
+        row = _norm_price_row(model_catalog.price_for_date_from_record(record, as_of), record.get("provider"))
         if row:
             return row
     return None
 
 
-def price(model: str, provider: str = None) -> dict:
+def price(model: str, provider: str = None, *, as_of=None) -> dict:
     """The RAW per-token RATE row for `model` — {in_, out, cached_in, batch_in, batch_out, provider, …} in DOLLARS
     PER MILLION TOKENS. This is the rate TABLE, not a cost: do NOT multiply raw token counts by these values (that is
     off by 1e6 — a caller printed a $258,249 quote for a $0.26 job doing exactly that). To get DOLLARS, call
@@ -647,13 +647,16 @@ def price(model: str, provider: str = None) -> dict:
     # total is built from, and nothing about it looks wrong.
     if ":" in model and not model.startswith("ft:"):
         provider, model = model.split(":", 1)     # 'provider:model' form carries its own answer — KEEP it
-    catalog = _catalog_price(model)
+    catalog = _catalog_price(model, as_of)
     if catalog and (not provider or catalog["provider"] == provider):
         return catalog
     if provider:
         v = _vendor_qualified(model, provider, exact_only=True)
         if v:
             return v                              # exact_only: the named vendor answers, or nobody does
+    if as_of is not None:
+        raise PriceUnknownError(
+            f"No catalog price interval covers {model!r} on {str(as_of)[:10]}; refusing a current-rate fallback")
     if model in PRICING:                          # an explicit verified entry (codex/dated/o-series) wins
         return PRICING[model]
     # NB: a NAMED provider that doesn't publish the id falls through to the cross-vendor scan below, which resolves an

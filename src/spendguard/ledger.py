@@ -162,6 +162,8 @@ CREATE TABLE IF NOT EXISTS spend_events (
   amount_confidence REAL,
   rate_in       REAL,
   rate_out      REAL,
+  cache_read_rate REAL,
+  cache_write_rate REAL,
   fx_rate       REAL,
   base_usd      TEXT,
   -- provider / model
@@ -299,7 +301,9 @@ SUMMABLE_INT_COLS = ("in_tok", "out_tok", "cache_read_tok", "cache_write_tok", "
 # (CREATE TABLE IF NOT EXISTS never adds a column to a table that already exists). Append new columns here.
 # intent/actor are the FORENSIC pair carried from charges: WHAT the money bought · WHAT RAN IT.
 _ADDITIVE_COLUMNS = (("intent", "TEXT"), ("actor", "TEXT"), ("external_usd", "TEXT"), ("chain", "TEXT"),
-                     ("venv", "TEXT")) + tuple((column, "INTEGER") for column in SPEND_EVENT_NANO_COLUMNS.values())
+                     ("venv", "TEXT"), ("cache_read_rate", "REAL"),
+                     ("cache_write_rate", "REAL")) + tuple(
+                         (column, "INTEGER") for column in SPEND_EVENT_NANO_COLUMNS.values())
 _KIND_TO_USD = {"batch": "batch_usd", "realtime": "realtime_usd",
                 "est_chat": "est_chat_usd", "est-chat": "est_chat_usd", "estchat": "est_chat_usd",
                 "remote": "remote_compute_usd", "remote_compute": "remote_compute_usd", "gpu": "remote_compute_usd",
@@ -778,7 +782,8 @@ class SpendLedger:
         d, p = _day_period(ev["occurred_at"], _reporting_tz())
         ev.setdefault("day", d)
         ev.setdefault("period", p)
-        if ev.get("model") and (ev.get("rate_in") is None or ev.get("rate_out") is None):
+        rate_columns = ("rate_in", "rate_out", "cache_read_rate", "cache_write_rate")
+        if ev.get("model") and any(ev.get(column) is None for column in rate_columns):
             # Amounts are already supplied and validated. Optional rate
             # provenance uses nullable catalog facts and exact table entries;
             # it must never invoke the budget-pricing refusal API.
@@ -791,6 +796,10 @@ class SpendLedger:
                 bt = ev.get("cost_type") == "batch"
                 ev.setdefault("rate_in", pr.get("batch_in" if bt else "in_"))
                 ev.setdefault("rate_out", pr.get("batch_out" if bt else "out"))
+                ev.setdefault("cache_read_rate", pr.get("batch_cached_in" if bt else "cached_in"))
+                input_rate = pr.get("batch_in" if bt else "in_")
+                ev.setdefault("cache_write_rate", input_rate * pricing.CACHE_WRITE_5M_MULTIPLIER
+                              if input_rate is not None and pr.get("provider") == "anthropic" else None)
         ev.setdefault("schema_version", SCHEMA_VERSION)
         ev.setdefault("status", "draft")
         ev.setdefault("revision", 1)

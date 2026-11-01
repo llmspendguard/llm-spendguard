@@ -22,6 +22,7 @@ CATALOG_AUTHOR_ENCODING = "utf-8"
 CATALOG_AUTHOR_JSON_INDENT = 2
 CATALOG_AUTHOR_MIN_RATE = 0
 CATALOG_LOCAL_AUTHOR_IDS_KEY = "_local_price_authors"
+CATALOG_PRICE_RATE_FIELDS = ("in_", "out", "cached_in", "batch_in", "batch_out", "batch_cached_in")
 
 
 def _catalog_authoring_rate(value, field):
@@ -90,10 +91,42 @@ for updates. Corrupt/missing catalogs and failed snapshots fail closed.
             records[canonical] = record
         elif provider is not None and provider != record.get("provider"):
             raise ValueError("provider does not match the authored catalog record")
-        price = dict(record.get("price") or {})
+        current_price = model_catalog.price_for_date_from_record(record)
+        price = dict(current_price or {})
         price.update(rates)
         price.update(source=source.strip(), verified=verified)
-        model_catalog.merge_row_updates(record, {"price": price, "price_error": None}, today=today)
+        price.pop("valid_until", None)
+        price["valid_from"] = verified
+        rates_changed = current_price is not None and any(
+            current_price.get(field) != price.get(field) for field in CATALOG_PRICE_RATE_FIELDS)
+        if rates_changed:
+            current_start = current_price.get("valid_from")
+            if not current_start or verified <= current_start:
+                raise ValueError("a changed price verified date must be after the current interval start")
+            intervals = [dict(interval) for interval in record.get("price_intervals", [])]
+            if not intervals and record.get("price"):
+                legacy = dict(current_price)
+                legacy["valid_until"] = verified
+                intervals.append(legacy)
+            else:
+                open_intervals = [interval for interval in intervals if interval.get("valid_until") is None]
+                if len(open_intervals) != 1:
+                    raise ValueError("catalog price history must have exactly one open interval")
+                open_intervals[0]["valid_until"] = verified
+            intervals.append(price)
+            updates = {"price_intervals": intervals, "price_error": None}
+            if "price" in record:
+                record.pop("price")
+        elif record.get("price_intervals"):
+            intervals = [dict(interval) for interval in record["price_intervals"]]
+            open_intervals = [interval for interval in intervals if interval.get("valid_until") is None]
+            if len(open_intervals) != 1:
+                raise ValueError("catalog price history must have exactly one open interval")
+            open_intervals[0].update(price)
+            updates = {"price_intervals": intervals, "price_error": None}
+        else:
+            updates = {"price": price, "price_error": None}
+        model_catalog.merge_row_updates(record, updates, today=today)
         local_authors = _catalog_local_author_ids(document)
         document[CATALOG_LOCAL_AUTHOR_IDS_KEY] = sorted(local_authors | {canonical})
         encoded = (json.dumps(document, indent=CATALOG_AUTHOR_JSON_INDENT) + "\n").encode(CATALOG_AUTHOR_ENCODING)
