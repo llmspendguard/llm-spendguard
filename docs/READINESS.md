@@ -9,6 +9,8 @@ A supplied clean-environment report must match the current input fingerprint and
 
 ## Project invariants
 
+- **Nightly ledger performance** (GATED-NIGHTLY): `spendguard bench --check` compares hot ledger p50/p95/p99 and end-to-end data-flow latency/throughput with the committed same-runner baseline. The separate `perf-nightly.yml` workflow repeats both mechanical tests ten times; the PR gate remains unchanged.
+
 - [ ] **surface-parity** — Every capability is exposed on CLI, API and MCP except declared deliberate absences.
   Gate: `spendguard.capability_readiness_gates:run_capability_script_readiness_gate`; inputs: `{"scripts": ["tests/test_capability_surface_parity_guard.py"]}`.
 
