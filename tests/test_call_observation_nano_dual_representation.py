@@ -18,7 +18,9 @@ CALL_NANO_PROOF_AMOUNTS = (-1.25, 0.0, None, 0.1234567895, 0.1, 0.2)
 CALL_NANO_PROOF_INVALID = (float('inf'), float('-inf'), 'NaN', 'malformed', 1e100)
 CALL_NANO_PROOF_DB = 'call-observation-nano.sqlite'
 CALL_NANO_PROOF_PROVIDER = 'openai'
+CALL_NANO_PROOF_ALIAS_PROVIDER = 'anthropic'
 CALL_NANO_PROOF_MODEL = 'gpt-5-nano'
+CALL_NANO_PROOF_DATED_ALIAS = 'claude-haiku-4-5-20251001'
 CALL_NANO_PROOF_REVISED = 0.875
 CALL_NANO_PROOF_FLOOR = 0.025
 CALL_NANO_PROOF_LARGE_AMOUNT = 5_000_000_000.0
@@ -90,6 +92,8 @@ def test_call_nano_normal_writers_update_and_reject_derived_fields(tmp_path):
             'batch', CALL_NANO_PROOF_FLOOR, in_tok=0, out_tok=0, intent=__name__, project=__name__)
         calls.insert.__wrapped__(CALL_NANO_PROOF_PROVIDER, CALL_NANO_PROOF_MODEL, 'realtime',
             CALL_NANO_PROOF_REVISED, intent=__name__, project=__name__)
+        calls.insert.__wrapped__(CALL_NANO_PROOF_ALIAS_PROVIDER, CALL_NANO_PROOF_DATED_ALIAS, 'realtime',
+            CALL_NANO_PROOF_REVISED, intent=__name__, project=__name__)
         calls.record_call.__wrapped__(CALL_NANO_PROOF_PROVIDER, CALL_NANO_PROOF_MODEL, 'realtime',
             None, in_tok=None, out_tok=None, input_cost_floor=CALL_NANO_PROOF_FLOOR,
             intent=__name__, project=__name__)
@@ -97,6 +101,8 @@ def test_call_nano_normal_writers_update_and_reject_derived_fields(tmp_path):
             CALL_NANO_PROOF_MODEL, __name__, 0, 0, CALL_NANO_PROOF_REVISED)
         assert connection.execute('SELECT cost FROM calls WHERE id=?', (recorded,)).fetchone()[0] == CALL_NANO_PROOF_REVISED
         assert_call_nano_fixture_mirrors(connection)
+        assert connection.execute(
+            'SELECT COUNT(*) FROM calls WHERE cost IS NOT NULL AND cost_nano IS NULL').fetchone()[0] == 0
         for derived_column in calls.CALL_OBSERVATION_NANO_COLUMNS.values():
             with pytest.raises(TypeError, match=derived_column):
                 calls.insert.__wrapped__(CALL_NANO_PROOF_PROVIDER, CALL_NANO_PROOF_MODEL, 'realtime',

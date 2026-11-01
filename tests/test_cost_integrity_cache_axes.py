@@ -1,5 +1,6 @@
 """Offline guard: cache axes, legacy gaps, and injected pricing/schema failures."""
 import math
+import datetime
 import os
 from pathlib import Path
 import sqlite3
@@ -7,7 +8,7 @@ import tempfile
 from unittest.mock import patch
 from types import SimpleNamespace
 
-os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="sg-cache-axes-")
+os.environ.setdefault("SPENDGUARD_HOME", tempfile.mkdtemp(prefix="sg-cache-axes-"))
 os.environ["SPENDGUARD_NO_AUTOINSTALL"] = "1"
 
 from spendguard import calls, cost_integrity, ledger_read, pricing
@@ -19,7 +20,7 @@ CACHE_AXIS_READ = 80000
 CACHE_AXIS_WRITE = 7000
 CACHE_AXIS_DAYS = 7
 CACHE_AXIS_CALLS = 1
-CACHE_AXIS_DAY = "offline-day"
+CACHE_AXIS_DAY = datetime.datetime.now(datetime.timezone.utc).date().isoformat()
 CACHE_AXIS_KINDS = ("realtime", "batch")
 CACHE_AXIS_FAILURE = "injected pricing outage"
 CACHE_AXIS_DATABASE_NAME = "cache_axes.sqlite"
@@ -68,6 +69,21 @@ assert cost_integrity.classify_impossible_cost_buckets(row.values for row in cac
 assert cache_axis_rows[0]["i"] == CACHE_AXIS_FRESH
 assert cache_axis_rows[0]["cache_read_tok"] == CACHE_AXIS_READ
 assert cache_axis_rows[0]["cache_write_tok"] == CACHE_AXIS_WRITE
+# A missing derived nano mirror must not understate authoritative recorded cost.
+with sqlite3.connect(cache_axis_path) as cache_axis_connection:
+    cache_axis_connection.execute("UPDATE calls SET cost_nano=NULL")
+cache_axis_nano_gap_rows = ledger_read.read_cost_integrity_buckets(CACHE_AXIS_DAYS, cache_axis_path)
+assert cost_integrity.classify_impossible_cost_buckets(
+    row.values for row in cache_axis_nano_gap_rows) == ([], 0)
+# Prove the same check still fails for a genuinely wrong authoritative cost.
+with sqlite3.connect(cache_axis_path) as cache_axis_connection:
+    cache_axis_connection.execute("UPDATE calls SET cost=cost*?", (pricing.CACHE_WRITE_1H_MULTIPLIER,))
+cache_axis_wrong_cost_rows = ledger_read.read_cost_integrity_buckets(CACHE_AXIS_DAYS, cache_axis_path)
+cache_axis_wrong_findings, cache_axis_wrong_unpriced = cost_integrity.classify_impossible_cost_buckets(
+    row.values for row in cache_axis_wrong_cost_rows)
+assert not cache_axis_wrong_unpriced and len(cache_axis_wrong_findings) == CACHE_AXIS_CALLS
+with sqlite3.connect(cache_axis_path) as cache_axis_connection:
+    cache_axis_connection.execute("UPDATE calls SET cost=?", (cache_axis_realtime_cost,))
 # Fault dimension: partially populated bucket cannot silently SUM past a missing cache component.
 with sqlite3.connect(cache_axis_path) as cache_axis_connection:
     with patch.object(calls, "_calls_db", return_value=cache_axis_connection):
