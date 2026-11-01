@@ -209,7 +209,7 @@
           },
           "src/spendguard/capability_readiness_gates.py": {
             "max_cc": 14,
-            "mi": 47.21367827153188
+            "mi": 39.69470049673828
           },
           "src/spendguard/capability_registry.py": {
             "max_cc": 7,
@@ -1097,7 +1097,7 @@
           },
           "src/spendguard/capability_readiness_gates.py": {
             "max_cc": 14,
-            "mi": 47.21367827153188
+            "mi": 39.60404253974317
           },
           "src/spendguard/capability_registry.py": {
             "max_cc": 7,
@@ -1850,7 +1850,8 @@
     "reviewed_selfcheck_named_unreviewed_exit_policy": "Reviewed the explicit selfcheck exit-policy helper and repeatable CLI array parsing; both are small mechanical policy/argument adapters with can-still-fail coverage.",
     "reviewed_warm_daemon_reader_join_teardown": "Reviewed the sole-reader bounded join on every warm-daemon teardown path and the loud join-timeout warning; the measured MI cost is essential to close the evidence-write-after-teardown correctness race, not avoidable churn.",
     "reviewed_delegate_cancel_orphan_group_reaper": "Records the measured cost of the new stdlib-only bounded process-group reaper and the cancel-path orphaned-group reap and identity logic.",
-    "reviewed_delegate_result_contract_dict_wrap": "Records the measured per-file complexity cost of read_delegate_job_result always returning a state-bearing dict (wrapping a non-dict terminal result_payload), which adds one isinstance branch to the terminal-result contract."
+    "reviewed_delegate_result_contract_dict_wrap": "Records the measured per-file complexity cost of read_delegate_job_result always returning a state-bearing dict (wrapping a non-dict terminal result_payload), which adds one isinstance branch to the terminal-result contract.",
+    "reviewed_lane_queue_maintenance_size_guard": "2026-11-01: Reviewed assess_lane_queue_maintenance_readiness in full; its measured MI cost is essential to enforce the lane-queue maintenance size, freelist-ratio, and old-terminal-count readiness guard."
   },
   "duplication": {
     "duplicate_lines": 303,
