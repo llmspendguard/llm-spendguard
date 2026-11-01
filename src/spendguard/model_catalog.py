@@ -314,13 +314,58 @@ def model_price(model_id):
     is the CURATED rate; pricing.py layers it above the synced breadth cache and does the cost math."""
     rec = model_record(model_id)
     visited = set()
-    while rec and not rec.get("price") and rec.get("retired_alias_of"):
+    while rec and not (rec.get("price") or rec.get("price_intervals")) and rec.get("retired_alias_of"):
         target = rec["retired_alias_of"]
         if target in visited:
             return None
         visited.add(target)
         rec = model_record(target)
-    return (rec or {}).get("price")
+    return price_for_date_from_record(rec)
+
+
+def _normalize_catalog_price_query_date(on_date):
+    """Normalize a catalog price query date to strict ISO YYYY-MM-DD."""
+    target = on_date or datetime.datetime.now(datetime.timezone.utc).date().isoformat()
+    if isinstance(target, (datetime.date, datetime.datetime)):
+        target = target.date().isoformat() if isinstance(target, datetime.datetime) else target.isoformat()
+    if not isinstance(target, str):
+        raise ValueError("on_date must be a YYYY-MM-DD date")
+    target = target[:10]
+    try:
+        if datetime.date.fromisoformat(target).isoformat() != target:
+            raise ValueError
+    except ValueError as exc:
+        raise ValueError("on_date must be a YYYY-MM-DD date") from exc
+    return target
+
+
+def price_for_date_from_record(record, on_date=None):
+    """Return the catalog rate interval covering ``on_date``; legacy prices are open intervals.
+
+    Intervals are half-open ``[valid_from, valid_until)``.  A legacy ``price`` record is interpreted as
+    beginning at its verified date (or the record's as_of date) so existing catalog values migrate without
+    inventing a second rate source.
+    """
+    if not record:
+        return None
+    intervals = record.get("price_intervals")
+    if not intervals:
+        legacy = record.get("price")
+        if not legacy:
+            return None
+        interval = dict(legacy)
+        interval.setdefault("valid_from", legacy.get("verified") or record.get("as_of"))
+        interval.setdefault("valid_until", None)
+        if on_date is None and interval["valid_from"] is None:
+            return interval
+        intervals = [interval]
+    target = _normalize_catalog_price_query_date(on_date)
+    matches = [interval for interval in intervals
+               if interval.get("valid_from") is not None and interval["valid_from"] <= target
+               and (interval.get("valid_until") is None or target < interval["valid_until"])]
+    if len(matches) > 1:
+        raise ValueError(f"overlapping price intervals for {record.get('id')!r} on {target}")
+    return dict(matches[0]) if matches else None
 
 
 def published_ceiling(model_id):
@@ -506,7 +551,7 @@ def as_price_table():
     omitted (an unpriced model is a gap, never a $0 row)."""
     out = {}
     for rid, rec in _load_records().items():
-        p = rec.get("price") or {}
+        p = price_for_date_from_record(rec) or {}
         if p.get("in_") is None:
             continue
         prov = rec.get("provider") or "?"
@@ -516,6 +561,29 @@ def as_price_table():
             row["_source"] = src
         out.setdefault(prov, {})[rec.get("metered_id") or rid] = row
     return out
+
+
+def _validate_catalog_price_intervals(record_id, intervals):
+    """Return contract problems for one record's effective-dated price history."""
+    if not isinstance(intervals, list) or not intervals:
+        return [f"{record_id}: price_intervals must be a non-empty list"]
+    problems = []
+    previous_until = None
+    for index, interval in enumerate(intervals):
+        start, until = interval.get("valid_from"), interval.get("valid_until")
+        try:
+            start_valid = datetime.date.fromisoformat(start).isoformat() == start
+            until_valid = until is None or datetime.date.fromisoformat(until).isoformat() == until
+        except (TypeError, ValueError):
+            start_valid = until_valid = False
+        if not start_valid or not until_valid or (until is not None and start >= until):
+            problems.append(f"{record_id}: price_intervals[{index}] has an invalid effective window")
+        if previous_until is not None and start < previous_until:
+            problems.append(f"{record_id}: price_intervals overlap at index {index}")
+        previous_until = until
+    if intervals[-1].get("valid_until") is not None:
+        problems.append(f"{record_id}: price_intervals has no open current interval")
+    return problems
 
 
 def validate_catalog(models=None, allow_legacy_missing_as_of=True):
@@ -554,6 +622,9 @@ def validate_catalog(models=None, allow_legacy_missing_as_of=True):
                 v = p.get(k)
                 if v is not None and not isinstance(v, (int, float)):
                     problems.append(f"{rid}: price.{k} is {type(v).__name__}, expected number|null")
+        intervals = rec.get("price_intervals")
+        if intervals is not None:
+            problems.extend(_validate_catalog_price_intervals(rid, intervals))
         oc = (rec.get("output_ceiling") or {}).get("value")
         if oc is not None and not isinstance(oc, int):
             problems.append(f"{rid}: output_ceiling.value is {type(oc).__name__}, expected int|null")

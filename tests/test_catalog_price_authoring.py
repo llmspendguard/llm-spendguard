@@ -24,6 +24,8 @@ AUTHOR_TEST_OUTPUT_RATE = 11
 AUTHOR_TEST_REVISED_RATE = 13
 AUTHOR_TEST_ENCODING = "utf-8"
 AUTHOR_TEST_VERIFIED = datetime.datetime.now(datetime.timezone.utc).date().isoformat()
+AUTHOR_TEST_INITIAL_VERIFIED = (datetime.datetime.now(datetime.timezone.utc).date()
+                                - datetime.timedelta(days=1)).isoformat()
 
 
 def _run_catalog_authoring_guards():
@@ -41,7 +43,7 @@ def _run_catalog_authoring_guards():
                 patch.object(model_catalog, "catalog_authoring_path", return_value=str(overlay)):
             arguments = dict(input=AUTHOR_TEST_INPUT_RATE, output=AUTHOR_TEST_OUTPUT_RATE,
                              provider=AUTHOR_TEST_PROVIDER, source=AUTHOR_TEST_SOURCE,
-                             verified=AUTHOR_TEST_VERIFIED)
+                             verified=AUTHOR_TEST_INITIAL_VERIFIED)
             path, _ = catalog_price_authoring.set_catalog_model_price(AUTHOR_TEST_MODEL, **arguments)
             assert Path(path) == overlay, "the isolated catalog overlay is the price authoring destination"
             assert model_catalog.model_price(AUTHOR_TEST_MODEL)["in_"] == AUTHOR_TEST_INPUT_RATE
@@ -58,7 +60,8 @@ def _run_catalog_authoring_guards():
             with patch.object(catalog_price_authoring.os, "replace", side_effect=InterruptedError):
                 try:
                     catalog_price_authoring.set_catalog_model_price(
-                        AUTHOR_TEST_MODEL, **(arguments | {"input": AUTHOR_TEST_REVISED_RATE}))
+                        AUTHOR_TEST_MODEL, **(arguments | {"input": AUTHOR_TEST_REVISED_RATE,
+                                                          "verified": AUTHOR_TEST_VERIFIED}))
                 except InterruptedError:
                     pass
                 else:
@@ -81,6 +84,15 @@ def _run_catalog_authoring_guards():
             with patch("spendguard._load_public_api_and_install_gate"), patch.object(gate, "install"):
                 assert cli._dispatch(cli_arguments) == 0
             assert model_catalog.model_price(AUTHOR_TEST_MODEL)["in_"] == AUTHOR_TEST_REVISED_RATE
+            authored_record = model_catalog.model_record(AUTHOR_TEST_MODEL)
+            authored_intervals = authored_record["price_intervals"]
+            assert len(authored_intervals) == 2
+            assert authored_intervals[0]["valid_until"] == AUTHOR_TEST_VERIFIED
+            assert authored_intervals[1]["valid_from"] == AUTHOR_TEST_VERIFIED
+            assert model_catalog.price_for_date_from_record(
+                authored_record, AUTHOR_TEST_INITIAL_VERIFIED)["in_"] == AUTHOR_TEST_INPUT_RATE
+            assert model_catalog.price_for_date_from_record(
+                authored_record, AUTHOR_TEST_VERIFIED)["in_"] == AUTHOR_TEST_REVISED_RATE
             assert catalog.read_bytes() == floor_snapshot, "CLI must preserve the packaged floor"
             assert Path(pricing.user_prices_path()) == overlay, "CLI must share the catalog overlay authoring target"
             print("catalog price authoring: SSOT, provenance, interrupt, snapshot, concurrent callers PASS")
