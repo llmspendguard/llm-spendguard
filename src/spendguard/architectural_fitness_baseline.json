@@ -1713,11 +1713,11 @@
           },
           "src/spendguard/storm_coalescer.py": {
             "max_cc": 24,
-            "mi": 33.5630615814814
+            "mi": 30.15302067138812
           },
           "src/spendguard/storm_route.py": {
             "max_cc": 11,
-            "mi": 60.94003876928755
+            "mi": 59.80546381562603
           },
           "src/spendguard/storm_submit.py": {
             "max_cc": 31,
@@ -1852,7 +1852,8 @@
     "reviewed_delegate_cancel_orphan_group_reaper": "Records the measured cost of the new stdlib-only bounded process-group reaper and the cancel-path orphaned-group reap and identity logic.",
     "reviewed_delegate_result_contract_dict_wrap": "Records the measured per-file complexity cost of read_delegate_job_result always returning a state-bearing dict (wrapping a non-dict terminal result_payload), which adds one isinstance branch to the terminal-result contract.",
     "reviewed_effective_dated_pricing_integrity": "2026-11-01: Effective-dated pricing adds essential interval selection and validation plus immutable record-time rate provenance across calls, catalog authoring, cost integrity, ledger, model catalog, and pricing. Readability extractions isolate history updates, date normalization, interval validation, stamped-rate reconstruction, and ledger rate stamping; the remaining measured CC/MI reflects required half-open interval, legacy compatibility, nullable provenance, and fail-closed integrity branches.",
-    "reviewed_lane_queue_maintenance_size_guard": "2026-11-01: Reviewed assess_lane_queue_maintenance_readiness in full; its measured MI cost is essential to enforce the lane-queue maintenance size, freelist-ratio, and old-terminal-count readiness guard."
+    "reviewed_lane_queue_maintenance_size_guard": "2026-11-01: Reviewed assess_lane_queue_maintenance_readiness in full; its measured MI cost is essential to enforce the lane-queue maintenance size, freelist-ratio, and old-terminal-count readiness guard.",
+    "reviewed_storm_realtime_per_item_deadline": "2026-11-01: The storm coalescer's realtime door now computes a per-item coordinator deadline (pacing budget + queue-position delay + the item's measured per-prompt callback budget, clamped to the request deadline) so a paced storm no longer starves the realtime door while still bounding a hung callback. The added interval/budget arithmetic and the deadline_for-derived callback budget are essential, fail-closed, and not extractable; the measured MI reflects that required branching, not avoidable complexity."
   },
   "duplication": {
     "duplicate_lines": 303,
