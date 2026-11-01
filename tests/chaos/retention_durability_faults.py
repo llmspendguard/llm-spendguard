@@ -36,7 +36,7 @@ def run_retention_durability_chaos_contract():
     lane_queue.settle(row_id, {"text": RETENTION_CHAOS_TASK, "billed": False})
     old_timestamp = lane_queue._iso(lane_queue._utcnow() - datetime.timedelta(days=RETENTION_CHAOS_AGE_DAYS))
     with lane_queue._queue_op() as connection:
-        connection.execute("UPDATE lane_queue SET updated_ts=? WHERE id=?", (old_timestamp, row_id))
+        connection.execute("UPDATE lane_queue SET terminal_ts=? WHERE id=?", (old_timestamp, row_id))
     archive_path = config.HOME / "retention-chaos-archive.jsonl"
     stable_bytes = b""
     active_connections = []
