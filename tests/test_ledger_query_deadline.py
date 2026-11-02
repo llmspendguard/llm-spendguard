@@ -234,7 +234,7 @@ def test_ledger_query_deadline_observer_setup_degrades_to_heap():
                 try:
                     result = budget.spent_since(DEADLINE_GUARD_DAY)
                 except ledger_read.LedgerQueryDeadline:
-                    assert exhaust_budget
+                    assert exhaust_budget or fatal_observer_failure
                 except ledger_read.LedgerReadError:
                     assert fatal_observer_failure
                 else:
@@ -282,7 +282,7 @@ def test_ledger_query_deadline_preserves_pending_write():
 
 
 
-def test_deferred_writer_deadline_guard_counts_pending_spend():
+def test_deferred_writer_deadline_guard_reads_committed_until_commit():
     current = seed_deadline_guard_ledger()
     connection = current._conn
     try:
@@ -291,9 +291,14 @@ def test_deferred_writer_deadline_guard_counts_pending_spend():
         current._defer = False
         connection._ledger_bulk_commit_deferred = True
         with patch.object(ledger_writer, "current_ledger_writer_connection", return_value=connection):
-            assert budget.spent_since(DEADLINE_GUARD_DAY) == (
-                DEADLINE_GUARD_ROWS + int(DEADLINE_GUARD_PENDING_AMOUNT))
+            assert budget.spent_since(DEADLINE_GUARD_DAY) == DEADLINE_GUARD_ROWS
         assert connection.in_transaction
+        connection._ledger_bulk_commit_deferred = False
+        connection.commit()
+        assert budget.spent_since(DEADLINE_GUARD_DAY) == (
+            DEADLINE_GUARD_ROWS + int(DEADLINE_GUARD_PENDING_AMOUNT))
+        connection.execute(DEADLINE_GUARD_DELETE_PENDING_SQL, (DEADLINE_GUARD_PENDING_ID,))
+        connection.commit()
     finally:
         connection._ledger_bulk_commit_deferred = False
         connection.rollback()

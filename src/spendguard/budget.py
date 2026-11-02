@@ -70,37 +70,23 @@ def _budget_snapshot_generation_observer():
 
 @contextlib.contextmanager
 def budget_projection_reader(*, deadline_s=None, rollup_eligible=True):
-    """Use committed WAL snapshots, except reserved bulk scopes read pending."""
+    """Use committed WAL snapshots independently of pending writer work."""
     from .ledger import SpendLedger
-    from .ledger_writer import current_ledger_writer_connection, ledger_connection_commit_deferred
     from .ledger_read import (_ledger_read_connection, consumer_empty_spend_compatibility,
                               SPEND_EVENT_READ_COLUMNS, DEFAULT_LEDGER_READ_TIME_BUDGET_S,
-                              LedgerReadTimeout, LedgerQueryDeadline,
+                              LedgerReadTimeout, LedgerReadError, LedgerReadOpenError, LedgerRequestAbandoned,
+                              LedgerSettlementIncomplete, LedgerQueryDeadline,
                               LEDGER_READ_SQLITE_PRIMARY_CODE_MASK,
                               effective_ledger_admission_deadline)
     time_budget = DEFAULT_LEDGER_READ_TIME_BUDGET_S if deadline_s is None else deadline_s
     if not math.isfinite(time_budget) or time_budget <= 0:
         raise LedgerQueryDeadline(time_budget)
-    projection_deadline = effective_ledger_admission_deadline(time.monotonic() + time_budget)
+    projection_deadline = time.monotonic() + time_budget
     existing = getattr(_LEDGER_TL, "read_ledger", None)
     if existing is not None:
         yield existing
         return
-    owner = current_ledger_writer_connection(config.db_path())
     cached = getattr(_LEDGER_TL, "led", None)
-    if (owner is None and cached is not None
-            and cached.db_path == config.db_path()):
-        owner = cached._conn
-    if owner is not None and ledger_connection_commit_deferred(owner):
-        pending_reader = object.__new__(SpendLedger)
-        pending_reader.db_path = config.db_path()
-        pending_reader._conn = owner
-        pending_reader._cols = set(SPEND_EVENT_READ_COLUMNS)
-        pending_reader._explicit_owned_connection = True
-        pending_reader._total_memo = None
-        pending_reader._budget_projection_connection_owned = True
-        yield pending_reader
-        return
     try:
         with consumer_empty_spend_compatibility(), _ledger_read_connection(
                 time_budget=time_budget) as connection:
@@ -134,7 +120,9 @@ def budget_projection_reader(*, deadline_s=None, rollup_eligible=True):
             yield snapshot_reader
             if cached is not None:
                 cached._total_memo = snapshot_reader._total_memo
-    except (LedgerReadTimeout, TimeoutError) as failure:
+    except (LedgerReadOpenError, LedgerRequestAbandoned, LedgerSettlementIncomplete):
+        raise
+    except (LedgerReadError, TimeoutError) as failure:
         raise LedgerQueryDeadline(time_budget) from failure
 
 
@@ -951,7 +939,7 @@ def spent_since(day, project=None, conv=None, *, deadline_s=config.LEDGER_QUERY_
     relevant to the current repo/conversation, not a global sum.
     A cold consumer automatically uses a bounded read-only snapshot, without
     initializing or migrating the writer. Every projection uses the same
-    committed snapshot seam; reserved deferred bulk scopes retain pending reads.
+    committed snapshot seam, including reads initiated by deferred writers.
     ``read_only`` remains accepted for compatibility with snapshot consumers.
 
     Repointed onto spend_events (the money-of-record). This is LLM-only by construction: GPU/remote spend has

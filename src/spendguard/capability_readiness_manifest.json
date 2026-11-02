@@ -187,6 +187,12 @@
       "arguments": {"scripts": ["tests/test_ledger_daily_rollup.py"]}
     },
     {
+      "id": "ledger-read-never-spurious-refuse",
+      "description": "Cap and delegate admission reads serve committed snapshots despite writer transactions or expired request scopes; genuine query deadlines still refuse.",
+      "gate": "spendguard.capability_readiness_gates:assess_ledger_read_never_spurious_refuse_readiness",
+      "arguments": {"scripts": ["tests/test_ledger_read_never_spurious_refuse.py"]}
+    },
+    {
       "id": "openssf-scorecard",
       "description": "OpenSSF Scorecard mapping.",
       "standard": "https://scorecard.dev/",

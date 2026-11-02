@@ -74,8 +74,12 @@ def _verify_owned_projection_window(window, *, deferred=False, read_only=False):
                 assert connection.execute(PROJECTION_TEST_CHECKPOINT_SQL).fetchone()[0] == 1
             result = queries[window]()
             assert math.isfinite(result)
-            expected = PROJECTION_TEST_CAP if deferred else PROJECTION_TEST_AMOUNT
+            expected = PROJECTION_TEST_AMOUNT
             assert result == expected, (window, result)
+            if deferred:
+                owner._ledger_bulk_commit_deferred = False
+                owner.commit()
+                assert queries[window]() == PROJECTION_TEST_CAP, window
             if window == "realtime" and not deferred:
                 with patch.object(config, "class_cap", return_value=PROJECTION_TEST_CAP), \
                         patch.object(config, "daily_cap", return_value=PROJECTION_TEST_CAP), \
@@ -118,7 +122,7 @@ def test_budget_projection_intent_owned_writer():
     _verify_owned_projection_window("intent")
 
 
-def test_budget_projection_deferred_bulk_preserves_pending_all_windows():
+def test_budget_projection_deferred_bulk_reads_committed_then_observes_commit():
     for window in ("realtime", "job", "flow", "meta", "external", "intent"):
         _verify_owned_projection_window(window, deferred=True)
 
