@@ -173,6 +173,10 @@ def install_periodic_launchd_fleet_jobs():
             current = None
         if current != encoded:
             path.write_bytes(encoded)
+            if current is not None:
+                # launchd retains the loaded definition after a plist changes; bootstrap alone cannot update it.
+                subprocess.run(["launchctl", "bootout", "%s/%s" % (domain, document["Label"])],
+                               capture_output=True, text=True, timeout=FLEET_LAUNCHD_OPERATION_TIMEOUT_S)
         clean_report = None
         if document["Label"] == QUEUE_MANAGE_LAUNCHD_LABEL and current is None:
             from .lane_queue import manage_queue_tick
