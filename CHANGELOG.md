@@ -4,6 +4,25 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 
 ## [Unreleased]
 
+## [0.16.27] — 2026-11-02
+
+Ledger writes budget their own operation time, not the ambient MCP request scope's absolute wall-clock (#289) —
+completes the read-path fix from #288 and closes the live `spendguard delegate` wedge at the root. The MCP
+`do_POST` opens an ambient `ledger_request_scope` whose absolute 5s deadline bounded the *whole* request, including
+a multi-second classify LLM call that has nothing to do with the ledger. A serialized durable write reached after
+that span (the dead-letter drain, dispatch/accounting writes) then refused via the write-lease liveness gate
+`require_ledger_writer_request_live()` with `LedgerQueryDeadline` — an unsatisfiable design, since the request
+legitimately spends seconds in non-ledger work before any write. `run_ledger_write` now opens a fresh,
+uncancellable per-operation budget (the `ledger_evidence_persistence_scope` pattern the terminal accounting read
+already used); nested writes inherit its expiry; the write is bounded by its own lease+write time, never the stale
+request lifetime.
+
+Genuine request abandonment (client disconnect / explicit cancel) still aborts the write — that protection is
+preserved and covered by a negative control. A durable spend write that genuinely cannot complete is retained as
+dead-letter evidence for retry, never dropped because a timer elapsed. A new readiness gate
+`ledger-write-never-refused-on-expired-ambient-scope` (manifest item 26) makes this un-regressable, with a RED→GREEN
+guard proving both the expired-ambient write completes and genuine cancellation still aborts.
+
 ## [0.16.26] — 2026-11-02
 
 Ledger reads never spuriously refuse with `LedgerQueryDeadline` (#288). A read no longer refuses merely because a
