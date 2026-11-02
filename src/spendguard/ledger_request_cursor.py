@@ -244,32 +244,33 @@ class ManagedRequestCursorState:
         connection = cursor.connection
         if getattr(connection, "_ledger_owned_read_deadline", False):
             return operation(cursor, *args, **kwargs)
-        retained_deadline = None if self.scope is None else self.scope.deadline_at
+        preparing = operation in (sqlite3.Cursor.execute, sqlite3.Cursor.executemany,
+                                  sqlite3.Cursor.executescript)
+        retained_deadline = None if preparing or self.scope is None else self.scope.deadline_at
         with admit_managed_cursor_step_lock(self.step_lock, retained_deadline=retained_deadline):
-            scope = self.scope or ledger_read.current_ledger_request_scope()
-            preparing = operation in (sqlite3.Cursor.execute, sqlite3.Cursor.executemany,
-                                      sqlite3.Cursor.executescript)
+            scope = (None if preparing else self.scope) or ledger_read.current_ledger_request_scope()
+            scope_deadline_s = config.LEDGER_QUERY_DEADLINE_S if scope is None else scope.deadline_s
             if scope is None:
                 if operation is sqlite3.Cursor.executescript:
                     return operation(cursor, *args, **kwargs)
-                scope_deadline_s = config.LEDGER_QUERY_DEADLINE_S
                 if not math.isfinite(scope_deadline_s) or scope_deadline_s <= 0:
                     raise ledger_read.LedgerQueryDeadline(scope_deadline_s)
-            else:
-                scope_deadline_s = scope.deadline_s
 
             def acquire_managed_statement_read_scope():
                 nonlocal scope
-                if scope is None:
-                    scope = ledger_read.LedgerRequestReadScope(scope_deadline_s)
-                return scope
+                if scope is None or not scope.ledger_operation_budget:
+                    scope = ledger_read.LedgerRequestReadScope(
+                        scope_deadline_s, parent_scope=scope, ledger_operation_budget=True)
+                    scope.deadline_at = min(scope.deadline_at, self.operation_deadline_at)
+                scope.require_ledger_request_live()
+                if time.monotonic() >= self.operation_deadline_at:
+                    raise ledger_read.LedgerQueryDeadline(scope.deadline_s)
 
             if operation is sqlite3.Cursor.executescript:
                 raise ledger_read.LedgerReadError("Request scripts require separately owned bounded statements")
-            if self.operation_deadline_at is None:
+            if preparing or self.operation_deadline_at is None:
                 self.operation_deadline_at = time.monotonic() + scope_deadline_s
             if preparing:
-                self.operation_deadline_at = time.monotonic() + scope_deadline_s
                 self.deadline_duration_s = scope_deadline_s
                 self.read_deadline_expired = False
                 self.deadline_polling = None
@@ -281,11 +282,8 @@ class ManagedRequestCursorState:
                     connection._ledger_transaction_has_writes = False
                 elif not hasattr(connection, "_ledger_transaction_has_writes"):
                     connection._ledger_transaction_has_writes = True
-            ambient_scope = ledger_read.current_ledger_request_scope()
-            if ambient_scope is not None:
-                self.operation_deadline_at = min(self.operation_deadline_at, ambient_scope.deadline_at)
-            if scope is not None:
-                self.operation_deadline_at = min(self.operation_deadline_at, scope.deadline_at)
+            self.operation_deadline_at = ledger_read.intersect_ledger_operation_deadlines(
+                self.operation_deadline_at, ledger_read.current_ledger_request_scope(), scope)
             self.abort_error = None
             if self.read_deadline_expired:
                 raise ledger_read.LedgerQueryDeadline(self.deadline_duration_s)
@@ -305,9 +303,6 @@ class ManagedRequestCursorState:
                 if not self.writes:
                     try:
                         acquire_managed_statement_read_scope()
-                        scope.require_ledger_request_live()
-                        if time.monotonic() >= self.operation_deadline_at:
-                            raise ledger_read.LedgerQueryDeadline(scope.deadline_s)
                         if not registered:
                             scope.register_request_read_connection(connection)
                             registered = True
@@ -346,9 +341,6 @@ class ManagedRequestCursorState:
                 result = operation(cursor, *args, **kwargs)
                 if not self.writes:
                     acquire_managed_statement_read_scope()
-                    scope.require_ledger_request_live()
-                    if time.monotonic() >= self.operation_deadline_at:
-                        raise ledger_read.LedgerQueryDeadline(scope.deadline_s)
                     if cursor.description is not None and self.scope is None:
                         # Registration lasts for the statement, including idle time
                         # between fetches. Re-registering on every row wakes the
@@ -361,12 +353,11 @@ class ManagedRequestCursorState:
                 return result
             except BaseException as error:
                 if not self.writes:
-                    acquire_managed_statement_read_scope()
-                    self.scope = scope
-                    self.dispose_managed_request_cursor()
-                    scope.require_ledger_request_live()
-                    if time.monotonic() >= self.operation_deadline_at:
-                        raise ledger_read.LedgerQueryDeadline(scope.deadline_s) from error
+                    try:
+                        acquire_managed_statement_read_scope()
+                    finally:
+                        self.scope = scope
+                        self.dispose_managed_request_cursor()
                 if self.abort_error is not None:
                     raise self.abort_error from error
                 raise

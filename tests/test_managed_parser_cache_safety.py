@@ -175,9 +175,9 @@ def test_managed_parser_cache_allocates_default_scope_only_for_reads(tmp_path, m
     scope_allocations = []
     scope_type = ledger_read.LedgerRequestReadScope
 
-    def observe_managed_parser_cache_default_scope(deadline_s):
+    def observe_managed_parser_cache_default_scope(deadline_s, **scope_options):
         scope_allocations.append(deadline_s)
-        return scope_type(deadline_s)
+        return scope_type(deadline_s, **scope_options)
 
     try:
         connection.execute(PARSER_CACHE_CREATE_SQL)
