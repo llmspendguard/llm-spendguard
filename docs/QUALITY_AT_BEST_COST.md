@@ -34,7 +34,7 @@ shipped (the foundation this work stands on); `OPEN` = closed by this plan; `EXT
 
 | # | Challenge (who hit it) | Pillar | Status | Resolved by |
 |---|---|---|---|---|
-| 1 | Callers hand-pick model AND effort per intent; the learn-loop is built but **unwired** (`experiment` never passes `efforts=`, `_measure` drops `v["effort"]`, no effort verdict recorded) | A | **OPEN** | **Phase 0–2** |
+| 1 | Model AND effort selection learn-loop is wired through bakeoff effort sweeps → titration verdicts → `models.effort_for` → adapter auto-application per panel member; `experiment._measure` still does not forward effort | A | **WIRED / GATED** | **Phase 0–2**; `effort-learn-loop` readiness gate runs all six offline behavior checks |
 | 2 | Reasoning models return EMPTY (hidden reasoning eats the budget; empty reads as "no findings") | A | FIXED 09-10 | reasoning-budget self-heal (floor + empty-jump + LEARN + `_probe`) |
 | 3 | Hand-sizing `max_tokens` destroys work — too low silently truncates, removed hangs; autotune only ever *shrank* | A | FIXED / **EXT** | self-heal (done) + **auto max_tokens from measured p90/p99 need, reasoning-aware, respects caller ceiling** (Part III) |
 | 4 | Panel collapse — the lane bandit runs ONE model across a "5-vendor" panel; every prior cross-vendor review invalidated | A | FIXED 08-31 | `served_by`/`panel_providers`/`panel_integrity`; **Phase 3 must carry this guarantee forward** |

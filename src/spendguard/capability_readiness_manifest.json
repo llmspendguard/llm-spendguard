@@ -160,6 +160,21 @@
       }
     },
     {
+      "id": "effort-learn-loop",
+      "description": "Reasoning-effort is on the measured frontier, titrated, best-value-selected and applied per panel member without collapse.",
+      "gate": "spendguard.capability_readiness_gates:run_capability_script_readiness_gate",
+      "arguments": {
+        "scripts": [
+          "tests/test_effort_on_frontier.py",
+          "tests/test_best_value_select.py",
+          "tests/test_bakeoff_effort_sweep.py",
+          "tests/test_effort_titration.py",
+          "tests/test_lane_records_applied_effort.py",
+          "tests/test_panel_effort_autoapply.py"
+        ]
+      }
+    },
+    {
       "id": "budget-projection-snapshot-seam",
       "description": "Grounded monetary read roots use the snapshot seam; projections require finite contracts; mutation controls reject raw writer reads.",
       "gate": "spendguard.capability_readiness_gates:run_capability_script_readiness_gate",
