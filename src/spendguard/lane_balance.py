@@ -30,6 +30,32 @@ HOT_RATIO_DEFAULT = 1.5
 ROUTE_EST_IN_DEFAULT = 2000
 ROUTE_EST_OUT_DEFAULT = 500
 
+# A lane task can spend one deadline waiting for a dispatch slot and another deadline in the provider call. The fan
+# allows another quarter of that composed bound for thread scheduling and result hand-off; this margin is deliberately
+# outside the provider budget, so a call completing at its own deadline is not falsely timed out.
+BULK_DELEGATE_DEFAULT_DEADLINE_S = 120.0
+BULK_TASK_DEADLINE_PHASE_COUNT = 2
+BULK_COORDINATOR_SCHEDULING_MARGIN = 1.25
+
+
+def _bulk_task_coordinator_bound_s(deadline_s):
+    """Finite acquire-plus-call bound used by bulk coordinators, including for a falsy caller deadline."""
+    try:
+        effective_deadline_s = float(deadline_s)
+    except (TypeError, ValueError):
+        effective_deadline_s = BULK_DELEGATE_DEFAULT_DEADLINE_S
+    if effective_deadline_s <= 0:
+        effective_deadline_s = BULK_DELEGATE_DEFAULT_DEADLINE_S
+    return effective_deadline_s * BULK_TASK_DEADLINE_PHASE_COUNT
+
+
+def _bulk_fan_coordinator_bound_s(deadline_s, task_count, worker_count):
+    """Bound a chunk by its serialized worker waves, each allowed the complete task coordinator bound."""
+    import math
+    bounded_worker_count = max(1, int(worker_count))
+    wave_count = max(1, math.ceil(int(task_count) / bounded_worker_count))
+    return wave_count * _bulk_task_coordinator_bound_s(deadline_s) * BULK_COORDINATOR_SCHEDULING_MARGIN
+
 
 def _utilization_ratio_setting(name, default):
     # Delegates to the ONE advisor-float reader (config.advisor_float), which uses `v is None` (NOT `v or default`) so
@@ -438,7 +464,8 @@ def _least_loaded_arm(arms, start, free_of, cooling_of):
     return pick
 
 
-def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, deadline_s=120.0,
+def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None,
+                  deadline_s=BULK_DELEGATE_DEFAULT_DEADLINE_S,
                   checkpoint=None, chunk_size=100, refuse_billed=False, stats=None, force=False, tier=None,
                   schema=None, expect_ids=None, gate_sig=None, lanes=None, images_for=None, vision_model=None,
                   model_for=None, prompt_for=None, task_key=None, return_keyed=False,
@@ -566,6 +593,7 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, 
     import os as _os
     import json as _json
     import threading as _th
+    import time as _time
     import concurrent.futures as _cf
     from . import adapters, calls, dispatch, lane_catalog
 
@@ -1125,6 +1153,21 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, 
         # skew toward fast vendors is VISIBLE/measurable, never silent. The loser is NOT joined (that would re-add the
         # tail) — pool.shutdown(wait=False); its dispatch slot releases in _attempt_on_lane's own finally when it ends.
         pool = _cf.ThreadPoolExecutor(max_workers=2)
+        _hedge_started_at = _time.monotonic()
+        _hedge_window_s = max(0.0, float(_hedge_ms) / 1000.0)
+        # The hedge may start only after its configured window, then legitimately consume the full acquire+call
+        # bound. Use one wall-clock deadline so repeated wait calls cannot each restart that allowance.
+        _hedge_coordinator_deadline = (
+            _hedge_started_at + _hedge_window_s + _bulk_task_coordinator_bound_s(deadline_s)
+        )
+
+        def _hedge_timeout_result():
+            return i, {"text": None, "lane": lane, "use_name": use_name,
+                       "model": f"{lane_catalog.lane_provider(lane)}:{use_name}", "billed": False,
+                       "reason": "hedge_coordinator_timeout",
+                       "error": "hedge coordinator exceeded derived %.3fs ceiling" %
+                                (_hedge_coordinator_deadline - _hedge_started_at)}
+
         try:
             primary = pool.submit(_attempt_on_lane, i, task, lane, use_name, refuse_billed)
             try:
@@ -1144,12 +1187,21 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, 
             # anything. On a small fan with spare capacity a free lane exists, so a straggler still gets raced.
             # (A bound on a real quantity — free slots — not a meaning-judgement; deliberately arithmetic.)
             if hlane == lane or adapters._lane_cooling(hlane) or dispatch.lane_free(hlane) <= 0:
-                return res if res is not None else primary.result()
+                if res is not None:
+                    return res
+                try:
+                    return primary.result(timeout=max(0.0, _hedge_coordinator_deadline - _time.monotonic()))
+                except _cf.TimeoutError:
+                    return _hedge_timeout_result()
             hedge = pool.submit(_attempt_on_lane, i, task, hlane, hname, True)   # hedge is ALWAYS $0 (no_fallback=True)
             pending = {hedge} if res is not None else {primary, hedge}
             fallback = res                                    # a primary miss we already hold; returned iff the hedge misses too
             while pending:
-                done, pending = _cf.wait(pending, return_when=_cf.FIRST_COMPLETED)
+                done, pending = _cf.wait(
+                    pending, timeout=max(0.0, _hedge_coordinator_deadline - _time.monotonic()),
+                    return_when=_cf.FIRST_COMPLETED)
+                if not done:
+                    return fallback if fallback is not None else _hedge_timeout_result()
                 for f in done:
                     fr = f.result()                           # a deliberate stop from either side re-raises → halts the fan
                     if (fr[1] or {}).get("text"):
@@ -1184,9 +1236,15 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, 
             _stopped_at = c0
             break
         chunk = todo[c0:c0 + max(1, int(chunk_size))]
-        with _gate.governed_bulk(), _cf.ThreadPoolExecutor(max_workers=max(1, n)) as ex:   # fan already governed (D)
+        with _gate.governed_bulk():                            # fan already governed (D)
+            _fan_worker_count = max(1, n)
+            _fan_ceiling_s = _bulk_fan_coordinator_bound_s(deadline_s, len(chunk), _fan_worker_count)
+            ex = _cf.ThreadPoolExecutor(max_workers=_fan_worker_count)
+            _fan_timed_out = False
             _fut_idx = {ex.submit(_run_task_on_lane, i, tasks[i]): i for i in chunk}
-            for fut in _cf.as_completed(_fut_idx):
+
+            def _settle_fan_future(fut, future_indices=_fut_idx):
+                nonlocal _spent
                 try:
                     i, res = fut.result()
                 except _STOP_TYPES:
@@ -1196,11 +1254,37 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None, 
                     # dispatch_saturated row, not a raise). If anything UNEXPECTED still escapes one task, it becomes
                     # THAT task's miss row here, never an abort of the chunk/fan or a crash of the caller. Only a
                     # deliberate stop (caught just above) may stop the fan.
-                    i, res = _fut_idx[fut], {"text": None, "lane": "?", "use_name": "?", "model": "?", "billed": False,
+                    i, res = future_indices[fut], {"text": None, "lane": "?", "use_name": "?", "model": "?", "billed": False,
                                              "reason": "task_crashed", "error": f"{type(_e).__name__}: {str(_e)[:70]}"}
                 results[i] = res
                 _spent += float(res.get("cost") or 0.0)      # ACTUAL cost drives the cap — never an estimate
                 _checkpoint(i, res)
+
+            def _settle_fan_deadline_futures(future_indices, ceiling_s, settle_future):
+                # Preserve a result that crossed the deadline concurrently; only genuinely unfinished tasks become
+                # coordinator-timeout rows. Every row is checkpointed exactly like an ordinary runner result.
+                for fut, i in future_indices.items():
+                    if i in results:
+                        continue
+                    if fut.done():
+                        settle_future(fut)
+                        continue
+                    res = {"text": None, "lane": None, "use_name": None, "model": None, "billed": False,
+                           "reason": "fan_coordinator_timeout",
+                           "error": "fan coordinator exceeded derived %.3fs ceiling" % ceiling_s}
+                    results[i] = res
+                    _checkpoint(i, res)
+
+            try:
+                for fut in _cf.as_completed(_fut_idx, timeout=_fan_ceiling_s):
+                    _settle_fan_future(fut)
+            except _cf.TimeoutError:
+                _fan_timed_out = True
+                _settle_fan_deadline_futures(_fut_idx, _fan_ceiling_s, _settle_fan_future)
+            finally:
+                # Normal chunks still drain completely. A timed-out chunk never joins a wedged worker; Python cannot
+                # preempt it, and admitted calls remain uncancelled so any eventual billing is recorded by the ledger.
+                ex.shutdown(wait=not _fan_timed_out)
     if _stopped_at is not None:                              # everything from the stop point on was NEVER issued
         import sys as _sysbd
         _left = todo[_stopped_at:]
