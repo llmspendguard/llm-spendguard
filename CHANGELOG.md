@@ -4,6 +4,24 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 
 ## [Unreleased]
 
+## [0.16.26] — 2026-11-02
+
+Ledger reads never spuriously refuse with `LedgerQueryDeadline` (#288). A read no longer refuses merely because a
+plain writer transaction is open on its handed connection, or because the ambient MCP request scope's absolute
+wall-clock budget was already consumed by non-ledger work (classification, estimate, queue wait) — both cases now
+serve the last-committed read-only `query_only=ON` WAL snapshot, which is the correct basis for a cap/attribution
+read. The deadline budgets actual ledger-query time via the progress handler, not the request lifetime, so a read
+that starts late but runs in milliseconds succeeds. This closes the wedge where governed `spendguard delegate`
+dispatch admission reads refused instantly under writer contention. Genuine failures (corruption, interrupt, a
+truly over-budget query) still raise.
+
+The surgical fix preserves every pre-existing read invariant: deferred-commit bulk scopes still read their own
+pending events on the owner/reserved connection, a pending total never survives a bulk rollback, reserved
+settlement reads restore the owner's progress handler and keep the outer transaction and its writes intact, and
+non-busy opens still error. A new readiness gate `ledger-read-never-spurious-refuse` (manifest item 25) makes the
+spurious refusal un-regressable, with a RED→GREEN guard that opens a writer txn / expires the scope and asserts
+every public cap and dispatch-admission read returns the committed snapshot in well under the budget.
+
 ## [0.16.25] — 2026-11-01
 
 Arm the effort learn-loop readiness gate with all six offline frontier, best-value selection, bakeoff,
