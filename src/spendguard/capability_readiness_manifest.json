@@ -76,6 +76,12 @@
       }
     },
     {
+      "id": "lane-leak-tripwire",
+      "description": "No protected subscription lane or metered provider was billed inside the lookback window.",
+      "gate": "spendguard.capability_readiness_gates:assess_protected_lane_leak_readiness",
+      "arguments": {"hours": 1.0}
+    },
+    {
       "id": "lane-queue-maintenance",
       "description": "Lane queue size, free-page ratio, and expired terminal retention remain within configured limits.",
       "gate": "spendguard.capability_readiness_gates:assess_lane_queue_maintenance_readiness",
