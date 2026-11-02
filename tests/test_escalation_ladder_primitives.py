@@ -11,13 +11,17 @@ from spendguard import calls  # noqa: E402
 from spendguard.escalation_ladder import cancel_on_zero_billable, relative_escalation_gate  # noqa: E402
 from _script_checks import ScriptCheckAccumulator as Checks  # noqa: E402
 
+LADDER_STALL_BASE_SECONDS = 1.0
+LADDER_STALL_SCHEDULER_CUSHION = 30
+LADDER_STALL_RELEASE_SECONDS = LADDER_STALL_BASE_SECONDS * LADDER_STALL_SCHEDULER_CUSHION
+
 
 def main():
     c = Checks(detail_prefix=" — ")
     stopped = threading.Event()
 
     def stalled():
-        stopped.wait(1)
+        stopped.wait(LADDER_STALL_RELEASE_SECONDS)
         return "late"
 
     cancelled = cancel_on_zero_billable(

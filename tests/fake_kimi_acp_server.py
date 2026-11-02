@@ -13,6 +13,10 @@ import sys
 import threading
 import time
 
+KIMI_FAKE_PERMISSION_BASE_SECONDS = 3.0
+KIMI_FAKE_PERMISSION_SCHEDULER_CUSHION = 10
+KIMI_FAKE_PERMISSION_WAIT_SECONDS = KIMI_FAKE_PERMISSION_BASE_SECONDS * KIMI_FAKE_PERMISSION_SCHEDULER_CUSHION
+
 write_lock = threading.Lock()
 next_session = 0
 server_request_replies = {}        # rid -> Event, set when the client answers a server-initiated request
@@ -37,7 +41,7 @@ def finish_prompt(session_id, rid, text):
         server_request_replies[server_rid] = ev
         send({"jsonrpc": "2.0", "id": server_rid, "method": "session/request_permission",
               "params": {"sessionId": session_id}})
-        if not ev.wait(3):                                 # the client must reply or we'd hang — the daemon declines it
+        if not ev.wait(KIMI_FAKE_PERMISSION_WAIT_SECONDS):  # daemon must decline before the safety release
             return
     # a reasoning chunk (must be IGNORED by the client) then the answer in two chunks (tests concatenation)
     send({"jsonrpc": "2.0", "method": "session/update", "params": {

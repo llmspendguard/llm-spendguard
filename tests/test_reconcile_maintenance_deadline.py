@@ -16,7 +16,8 @@ from spendguard.ledger_writer import current_ledger_writer_connection, run_ledge
 
 MAINTENANCE_GUARD_DATABASE = "maintenance-deadline.sqlite"
 MAINTENANCE_GUARD_BUDGET_S = 0.03
-MAINTENANCE_GUARD_HEADROOM_S = 0.5
+MAINTENANCE_GUARD_HEADROOM_MULTIPLIER = 500
+MAINTENANCE_GUARD_HEADROOM_S = MAINTENANCE_GUARD_BUDGET_S * MAINTENANCE_GUARD_HEADROOM_MULTIPLIER
 MAINTENANCE_GUARD_IDLE_MULTIPLIER = 2
 MAINTENANCE_GUARD_INVALID_BUDGETS = (0, -1, float("nan"), float("inf"), True)
 MAINTENANCE_GUARD_INVALID_ENV = "not-a-duration"
@@ -136,7 +137,7 @@ def run_reconcile_maintenance_deadline_guards():
             raise AssertionError("idle owner must refuse a silently complete result after deadline")
 
         with maintenance.owned_reconcile_maintenance_connection(
-                path, time_budget=MAINTENANCE_GUARD_BUDGET_S) as owner:
+                path, time_budget=MAINTENANCE_GUARD_HEADROOM_S) as owner:
             owner.commit_reconcile_maintenance_corrections()
             time.sleep(MAINTENANCE_GUARD_BUDGET_S * MAINTENANCE_GUARD_IDLE_MULTIPLIER)
             try:

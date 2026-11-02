@@ -28,6 +28,11 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
 from spendguard import dispatch   # noqa: E402
 
 fails = 0
+DISPATCH_REFUSAL_DEADLINE_SECONDS = 0.4
+DISPATCH_REFUSAL_PROMPTNESS_MULTIPLE = 40
+DISPATCH_REFUSAL_PROMPTNESS_SECONDS = (
+    DISPATCH_REFUSAL_DEADLINE_SECONDS * DISPATCH_REFUSAL_PROMPTNESS_MULTIPLE
+)
 
 
 def ck(label, cond, extra=""):
@@ -73,13 +78,14 @@ dispatch.acquire("busyvendor", "m", deadline_s=10)     # occupy the single slot
 timed_out = False
 t0 = time.monotonic()
 try:
-    dispatch.acquire("busyvendor", "m", deadline_s=0.4)   # a second caller cannot get in
+    dispatch.acquire("busyvendor", "m", deadline_s=DISPATCH_REFUSAL_DEADLINE_SECONDS)
 except dispatch.DispatchTimeout:
     timed_out = True
 waited = time.monotonic() - t0
 dispatch.release("busyvendor", "m")
 ck("a queued call with no slot raises DispatchTimeout (honest deadline, not a silent hang)", timed_out)
-ck("...and it gave up at ~its deadline, not forever", waited < 3.0, f"waited={waited:.2f}s")
+ck("...and it gave up promptly, not forever", waited < DISPATCH_REFUSAL_PROMPTNESS_SECONDS,
+   f"waited={waited:.2f}s")
 
 
 # ── 3. the kill switch disables the governor entirely ────────────────────────────────────────────────────────

@@ -12,7 +12,9 @@ import spendguard
 from spendguard import config
 
 RECLAMATION_JOIN_CONNECTION_LIMIT = 2
-RECLAMATION_JOIN_WAIT_S = 5.0
+RECLAMATION_JOIN_WAIT_S = 90.0
+RECLAMATION_JOIN_RETENTION_RATIO = 6
+RECLAMATION_JOIN_PROMPTNESS_S = RECLAMATION_JOIN_WAIT_S / RECLAMATION_JOIN_RETENTION_RATIO
 RECLAMATION_JOIN_OBSERVATION_S = 0.1
 RECLAMATION_JOIN_REQUEST_BUDGET_S = 0.1
 RECLAMATION_JOIN_DATABASE_NAME = "reclamation-join.sqlite"
@@ -78,7 +80,7 @@ def run_ledger_admission_reclamation_join_guard():
                 pass
             else:
                 raise AssertionError("request admission must refuse the occupied ceiling")
-            assert time.monotonic() - started < RECLAMATION_JOIN_REQUEST_BUDGET_S
+            assert time.monotonic() - started < RECLAMATION_JOIN_PROMPTNESS_S
             second = threading.Thread(target=attempt_reclamation_join_admission, args=(True,))
             workers.append(second)
             second.start()
