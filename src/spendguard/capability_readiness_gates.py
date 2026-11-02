@@ -144,6 +144,16 @@ def assess_ledger_write_ambient_scope_persistence_readiness(*, context, scripts)
     return run_capability_script_readiness_gate(context=context, scripts=scripts)
 
 
+def assess_ambient_scope_ledger_operation_readiness(*, context, scripts):
+    """Prove all ledger entry classes budget operation time, preserving cancellation.
+
+    Run the complete regression script through the canonical offline harness:
+    its temporary startup HOME isolates every connection and dead-letter event
+    from operator state while exercising real ledger operations.
+    """
+    return run_capability_script_readiness_gate(context=context, scripts=scripts)
+
+
 def assess_capability_environment_evidence(*, context, patterns, required_checks):
     """Require current-input, complete successful checks from independent clean environments."""
     report_path = context.get("environment_report")

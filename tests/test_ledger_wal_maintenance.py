@@ -278,48 +278,46 @@ def test_wal_checkpoint_fault_deadline_leak_mutation_is_detected(tmp_path, monke
                 deadline_guard(guard_path, deadline_leak)
 
 
-def test_wal_expired_request_refuses_read_and_next_request_recovers(tmp_path):
+def test_wal_expired_operation_refuses_read_and_next_operation_recovers(tmp_path):
     import pytest
-    from spendguard.ledger_read import ledger_request_scope, LedgerQueryDeadline
+    from spendguard.ledger_read import ledger_query_work_scope, LedgerQueryDeadline
 
     ledger_path = tmp_path / pathlib.Path(__file__).stem
     writer = _seed_wal_maintenance_fixture(ledger_path)
     reader = config.open_ledger_connection(ledger_path)
     try:
-        with ledger_request_scope(deadline_s=WAL_GUARD_REQUEST_DEADLINE_S):
+        with ledger_query_work_scope(deadline_s=WAL_GUARD_REQUEST_DEADLINE_S):
             time.sleep(WAL_GUARD_REQUEST_DEADLINE_S + config.LEDGER_REQUEST_DISCONNECT_POLL_S)
             with pytest.raises(LedgerQueryDeadline):
                 reader.execute("SELECT COUNT(*) FROM wal_guard").fetchone()
-        with ledger_request_scope(deadline_s=WAL_GUARD_EXPIRY_WAIT_S):
+        with ledger_query_work_scope(deadline_s=WAL_GUARD_EXPIRY_WAIT_S):
             assert reader.execute("SELECT COUNT(*) FROM wal_guard").fetchone()[0] == WAL_GUARD_ROWS
     finally:
         reader.close()
         writer.close()
 
 
-def test_wal_maintenance_skips_not_raises_under_expired_request_scope(tmp_path):
-    """Best-effort maintenance must SKIP, never propagate a serving request's expired read deadline.
+def test_wal_maintenance_skips_not_raises_under_expired_operation_scope(tmp_path):
+    """Best-effort maintenance skips an exhausted ledger operation, then recovers.
 
-    A long serving turn can hold a request-lifetime ledger_request_scope whose absolute deadline has passed by
-    the time a pool open triggers maintenance; raising that out of a non-mandatory checkpoint would fail an
-    otherwise-complete operation. Prove the precondition is real (the ambient scope genuinely raises on a
-    mandatory admission read), then assert maintenance returns SKIPPED rather than raising, and recovers under a
-    fresh scope.
+    An operation deadline remains authoritative even though ambient request age
+    no longer consumes ledger budgets. Prove mandatory admission refuses the
+    exhausted operation, then verify maintenance skips without propagating it.
     """
-    from spendguard.ledger_read import (ledger_request_scope, effective_ledger_admission_deadline,
+    from spendguard.ledger_read import (ledger_query_work_scope, effective_ledger_admission_deadline,
                                          ledger_evidence_persistence_scope, LedgerReadError)
     ledger_path = tmp_path / pathlib.Path(__file__).stem
     writer = _seed_wal_maintenance_fixture(ledger_path)
     isolated_cadence = maintenance.LedgerWalMaintenanceCadence()
     try:
-        with ledger_request_scope(deadline_s=WAL_GUARD_REQUEST_DEADLINE_S):
+        with ledger_query_work_scope(deadline_s=WAL_GUARD_REQUEST_DEADLINE_S):
             time.sleep(WAL_GUARD_REQUEST_DEADLINE_S + config.LEDGER_REQUEST_DISCONNECT_POLL_S)
             precondition_raised = False
             try:
                 effective_ledger_admission_deadline()
             except LedgerReadError:
                 precondition_raised = True
-            assert precondition_raised, "precondition not met: the ambient request scope was not actually expired"
+            assert precondition_raised, "precondition not met: the ledger operation scope was not actually expired"
             report = maintenance.maintain_ledger_wal_if_due(ledger_path, cadence=isolated_cadence)
             assert report.status == maintenance.WAL_CHECKPOINT_SKIPPED, report
         with ledger_evidence_persistence_scope():

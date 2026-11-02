@@ -336,17 +336,20 @@ class LedgerRequestAbandoned(LedgerReadError):
 
 
 class LedgerRequestReadScope:
-    """Share only interrupt handles with the transport, never SQLite ownership.
+    """Share transport cancellation and distinguish ledger work from request age.
 
     SQLite interrupt is safe from a watcher thread. The query-owning thread
     always disposes its connection in the bounded reader's finally block.
+    Only operation scopes enforce their absolute expiry; ambient scopes supply
+    a fresh duration when ledger work starts after unrelated request work.
     """
 
-    def __init__(self, deadline_s, *, parent_scope=None):
+    def __init__(self, deadline_s, *, parent_scope=None, ledger_operation_budget=False):
         if not math.isfinite(deadline_s) or deadline_s <= 0:
             raise LedgerQueryDeadline(deadline_s)
         self.deadline_at = time.monotonic() + deadline_s
         self.deadline_s = deadline_s
+        self.ledger_operation_budget = ledger_operation_budget
         self._parent_read_scope = parent_scope
         self._request_cancelled = threading.Event()
         self._request_connection_lock = threading.Lock()
@@ -421,7 +424,8 @@ def ledger_query_work_scope(*, deadline_s=None):
     query_budget = config.LEDGER_QUERY_DEADLINE_S if deadline_s is None else deadline_s
     if query_budget is None:
         query_budget = DEFAULT_LEDGER_READ_TIME_BUDGET_S
-    query_scope = LedgerRequestReadScope(query_budget, parent_scope=current_ledger_request_scope())
+    query_scope = LedgerRequestReadScope(query_budget, parent_scope=current_ledger_request_scope(),
+                                        ledger_operation_budget=True)
     query_scope.require_ledger_request_live()
     request_token = _LEDGER_ACTIVE_REQUEST_SCOPE.set(query_scope)
     query_token = _LEDGER_ACTIVE_QUERY_SCOPE.set(query_scope)
@@ -433,15 +437,23 @@ def ledger_query_work_scope(*, deadline_s=None):
         _LEDGER_ACTIVE_REQUEST_SCOPE.reset(request_token)
 
 
+def intersect_ledger_operation_deadlines(deadline_at, *scopes):
+    """Retain operation expiries without charging ledger work for request age."""
+    return min((deadline_at, *(scope.deadline_at for scope in scopes
+                              if scope is not None and scope.ledger_operation_budget)))
+
+
 def effective_ledger_admission_deadline(deadline_at=None):
-    """Intersect an absolute operation expiry with the ambient request budget.
+    """Bound admission by ledger operation time while inheriting cancellation.
 
     This reads context only and takes no locks, so admission keeps its lock order.
     """
     scope = current_ledger_request_scope()
     if scope is not None:
         scope.require_ledger_request_live()
-        deadline_at = scope.deadline_at if deadline_at is None else min(deadline_at, scope.deadline_at)
+        scope_deadline = (scope.deadline_at if scope.ledger_operation_budget
+                          else time.monotonic() + scope.deadline_s)
+        deadline_at = scope_deadline if deadline_at is None else min(deadline_at, scope_deadline)
         if time.monotonic() >= deadline_at:
             raise LedgerQueryDeadline(scope.deadline_s)
     return deadline_at
@@ -457,7 +469,7 @@ def ledger_evidence_persistence_scope(*, parent_scope=None, deadline_s=None):
     """
     persistence_scope = LedgerRequestReadScope(
         config.LEDGER_EVIDENCE_PERSISTENCE_BUDGET_S if deadline_s is None else deadline_s,
-        parent_scope=parent_scope)
+        parent_scope=parent_scope, ledger_operation_budget=True)
     persistence_scope.require_ledger_request_live()
     persistence_token = _LEDGER_ACTIVE_REQUEST_SCOPE.set(persistence_scope)
     try:
@@ -496,7 +508,7 @@ def ledger_serialized_write_scope(*, deadline_at=None):
 
 @contextmanager
 def ledger_request_scope(*, deadline_s=None):
-    """Bind request reads to one absolute deadline and cancellation owner.
+    """Bind transport cancellation and the duration available to ledger work.
 
     Nested dispatch retains its caller's scope; worker dispatch must propagate
     contextvars.copy_context() so cancellation crosses thread boundaries.
@@ -515,7 +527,8 @@ def ledger_request_scope(*, deadline_s=None):
     scope_budget = config.LEDGER_QUERY_DEADLINE_S if deadline_s is None else deadline_s
     if scope_budget is None:
         scope_budget = config.LEDGER_READ_TIME_BUDGET_S
-    request_scope = LedgerRequestReadScope(scope_budget, parent_scope=existing_scope)
+    request_scope = LedgerRequestReadScope(scope_budget, parent_scope=existing_scope,
+        ledger_operation_budget=existing_scope is not None and existing_scope.ledger_operation_budget)
     request_token = _LEDGER_ACTIVE_REQUEST_SCOPE.set(request_scope)
     try:
         yield request_scope

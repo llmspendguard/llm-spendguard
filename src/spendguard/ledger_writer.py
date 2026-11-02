@@ -113,12 +113,12 @@ def ledger_connection_commit_deferred(connection):
 
 
 def require_ledger_writer_request_live():
-    """Reject expired callbacks before SQL and, critically, before commit."""
+    """Reject abandonment and expired ledger work before SQL and commit."""
     from .ledger_read import current_ledger_request_scope, LedgerQueryDeadline
     scope = current_ledger_request_scope()
     if scope is not None:
         scope.require_ledger_request_live()
-        if time.monotonic() >= scope.deadline_at:
+        if scope.ledger_operation_budget and time.monotonic() >= scope.deadline_at:
             raise LedgerQueryDeadline(scope.deadline_s)
 
 
@@ -304,18 +304,19 @@ class _LedgerWriteOwner:
 
         Owner admission serializes callers and its worker, allowing a bulk scope
         to retain the lease while nested queued jobs execute on that worker.
+        Only acquisition binds a temporary operation scope: borrowed handles
+        may outlive the ambient scope in which maintenance admitted them.
         """
-        config.require_ledger_home_alignment(self.path)
-        if self.write_lock_depth == 0:
-            lock_path = pathlib.Path(self.path + LEDGER_WRITER_LOCK_SUFFIX)
-            lock_path.parent.mkdir(parents=True, exist_ok=True)
-            self.write_lock_handle = lock_path.open("a")
-            try:
-                from .ledger_read import current_ledger_request_scope
-                scope = current_ledger_request_scope()
-                if scope is None:
-                    fcntl.flock(self.write_lock_handle.fileno(), fcntl.LOCK_EX)
-                else:
+        from .ledger_read import ledger_serialized_write_scope
+        with ledger_serialized_write_scope():
+            config.require_ledger_home_alignment(self.path)
+            if self.write_lock_depth == 0:
+                lock_path = pathlib.Path(self.path + LEDGER_WRITER_LOCK_SUFFIX)
+                lock_path.parent.mkdir(parents=True, exist_ok=True)
+                self.write_lock_handle = lock_path.open("a")
+                try:
+                    from .ledger_read import current_ledger_request_scope
+                    scope = current_ledger_request_scope()
                     while True:
                         require_ledger_writer_request_live()
                         try:
@@ -324,11 +325,11 @@ class _LedgerWriteOwner:
                         except BlockingIOError:
                             time.sleep(max(0, scope.deadline_at - time.monotonic())
                                        / LEDGER_WRITER_DEADLINE_POLL_DIVISOR)
-            except BaseException:
-                self.write_lock_handle.close()
-                self.write_lock_handle = None
-                raise
-        self.write_lock_depth += 1
+                except BaseException:
+                    self.write_lock_handle.close()
+                    self.write_lock_handle = None
+                    raise
+            self.write_lock_depth += 1
         try:
             yield
         finally:

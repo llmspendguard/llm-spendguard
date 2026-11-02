@@ -199,6 +199,12 @@
       "arguments": {"scripts": ["tests/test_ledger_write_never_refused_on_expired_ambient_scope.py"]}
     },
     {
+      "id": "ambient-scope-never-refuses-ledger-ops",
+      "description": "Reads, serialized writes, connection admission, content retention and dead-letter drains survive elapsed ambient request time; cancellation and operation budgets still refuse.",
+      "gate": "spendguard.capability_readiness_gates:assess_ambient_scope_ledger_operation_readiness",
+      "arguments": {"scripts": ["tests/test_ambient_scope_never_refuses_ledger_ops.py"]}
+    },
+    {
       "id": "openssf-scorecard",
       "description": "OpenSSF Scorecard mapping.",
       "standard": "https://scorecard.dev/",

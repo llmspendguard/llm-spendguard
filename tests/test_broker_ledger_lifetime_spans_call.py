@@ -15,6 +15,9 @@ Two distinct, proven defects of the request-lifetime ledger scope (both observed
      ledger_evidence_persistence_scope() (a fresh, uncancellable budget), so the row records despite the expired
      ambient request scope. The central serialized writer now also gives direct booking its own operation budget.
 
+The central ambient-scope fix now permits ledger work after even the short broker scope ages out. Its negative
+control therefore exhausts an actual ledger operation budget, preserving refusal of genuinely over-budget work.
+
 Offline only; no provider/network/paid call; isolated tmp ledger. The broker retains its explicit failure control;
 accounting verifies both direct central persistence and the delegate's terminal persistence scope.
 """
@@ -32,7 +35,7 @@ os.environ.setdefault("OPENAI_API_KEY", "sk-test-not-used")
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
 from spendguard import config, guard, delegate_router, codex_daemon_broker  # noqa: E402
-from spendguard.ledger_read import ledger_request_scope, LedgerQueryDeadline  # noqa: E402
+from spendguard.ledger_read import ledger_request_scope, ledger_query_work_scope, LedgerQueryDeadline  # noqa: E402
 
 # A warm/agentic turn's legitimate window dwarfs the 5s read default; the tests simulate it with a short
 # overrun against a short scope so no test actually sleeps for minutes.
@@ -79,17 +82,21 @@ def _raises_deadline(fn):
 # ───────────────────────── Defect #1: the broker/pool cancellation scope must span the call ─────────────────
 
 def defect1_prove_it_can_fail(checks):
-    """OLD behavior: a short (5s-default-sized) scope + a turn that outlasts it aborts a serving-path ledger op."""
+    """Ambient age permits ledger work; an exhausted operation still refuses."""
     pair_a, pair_b = socket.socketpair()
     try:
         raised = 0
         with codex_daemon_broker._broker_request_ledger_lifetime(pair_a, deadline_s=SHORT_SCOPE_S):
             time.sleep(OVERRUN_S)
-            for _ in range(STRESS_ITERS):
-                if _raises_deadline(_open_pooled_conn):
-                    raised += 1
-        print(f"  short-scope (old 5s default) overrun failure rate = {raised}/{STRESS_ITERS}")
-        checks.record("defect#1 prove-it-can-fail: a too-short scope DOES abort the completed turn's ledger op",
+            checks.record("defect#1 central fix: aged broker scope permits the completed turn's ledger op",
+                          not _raises_deadline(_open_pooled_conn))
+            with ledger_query_work_scope(deadline_s=SHORT_SCOPE_S):
+                time.sleep(OVERRUN_S)
+                for _ in range(STRESS_ITERS):
+                    if _raises_deadline(_open_pooled_conn):
+                        raised += 1
+        print(f"  exhausted ledger-operation failure rate = {raised}/{STRESS_ITERS}")
+        checks.record("defect#1 negative control: exhausted operation DOES refuse the ledger op",
                       raised == STRESS_ITERS)
     finally:
         pair_a.close()
