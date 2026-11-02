@@ -368,14 +368,19 @@ def admit_live_ledger_writer(ledger_path):
             return
 
 
-def run_ledger_write(callback, path=None):
+def run_ledger_write(callback, path=None, *, deadline_at=None):
+    """Apply evidence with an operation budget and transport cancellation."""
+    from .ledger_read import ledger_serialized_write_scope
+    with ledger_serialized_write_scope(deadline_at=deadline_at):
+        return _run_admitted_ledger_write(callback, path)
+
+
+def _run_admitted_ledger_write(callback, path=None):
     """Synchronously apply one callback on the sole connection for this ledger."""
     from .ledger_read import current_ledger_request_scope, LedgerQueryDeadline
     request_scope = current_ledger_request_scope()
 
     def remaining_writer_deadline():
-        if request_scope is None:
-            return None
         request_scope.require_ledger_request_live()
         remaining = request_scope.deadline_at - time.monotonic()
         if remaining <= 0:
@@ -403,7 +408,7 @@ def run_ledger_write(callback, path=None):
         while True:
             try:
                 remaining = remaining_writer_deadline()
-                value = result.result(timeout=owner.idle_seconds if remaining is None else remaining)
+                value = result.result(timeout=remaining)
                 remaining_writer_deadline()
                 return value
             except FutureTimeoutError:

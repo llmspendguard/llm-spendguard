@@ -13,9 +13,10 @@ Two distinct, proven defects of the request-lifetime ledger scope (both observed
      record_saving) is @best_effort_ledger_function, so under an expired ambient scope it SWALLOWS the deadline
      (warn-once) and LOSES the value-proof row — the job survives but its accounting vanishes. Fix: book it under
      ledger_evidence_persistence_scope() (a fresh, uncancellable budget), so the row records despite the expired
-     ambient request scope.
+     ambient request scope. The central serialized writer now also gives direct booking its own operation budget.
 
-Offline only; no provider/network/paid call; isolated tmp ledger. Prove-it-can-fail is explicit for BOTH.
+Offline only; no provider/network/paid call; isolated tmp ledger. The broker retains its explicit failure control;
+accounting verifies both direct central persistence and the delegate's terminal persistence scope.
 """
 import os
 import socket
@@ -169,17 +170,17 @@ def _assemble_stubbed(**overrides):
         return delegate_router._assemble_delegate_execution_result(**kwargs)
 
 
-def defect2_prove_it_can_fail(checks):
-    """OLD behavior: booking the decision directly (best-effort) under an expired ambient scope LOSES the row."""
+def defect2_direct_booking_uses_central_persistence_budget(checks):
+    """Direct best-effort booking persists through the central writer despite ambient request age."""
     before = _decisions_count()
     with ledger_request_scope(deadline_s=SHORT_SCOPE_S):
         time.sleep(OVERRUN_S)
         guard.record_decision(intent="spendguard:delegate-task", requested_model="claude-overage",
                               chosen_model="test-model", counterfactual_usd=0.0, actual_usd=0.0,
-                              saved_usd=0.0, basis="delegate", why="prove-it-can-fail")
+                              saved_usd=0.0, basis="delegate", why="central-persistence-budget")
     after = _decisions_count()
-    checks.record("defect#2 prove-it-can-fail: best-effort booking under an expired scope LOSES the row",
-                  after == before)
+    checks.record("defect#2 central fix: direct booking under an expired ambient scope RECORDS the row",
+                  after == before + 1)
 
 
 def defect2_fix_records_through_persistence_scope(checks):
@@ -239,7 +240,7 @@ def main():
         defect1_serve_one_sizes_scope_to_call(checks)
 
     print("\nDefect #2 — terminal accounting must record despite an expired ambient scope:")
-    defect2_prove_it_can_fail(checks)
+    defect2_direct_booking_uses_central_persistence_budget(checks)
     defect2_fix_records_through_persistence_scope(checks)
 
     print(f"\n{'ALL PASS' if not checks.failed else 'FAILURES: ' + ', '.join(checks.failed)}")

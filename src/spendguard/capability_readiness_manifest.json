@@ -193,6 +193,12 @@
       "arguments": {"scripts": ["tests/test_ledger_read_never_spurious_refuse.py"]}
     },
     {
+      "id": "ledger-write-never-refused-on-expired-ambient-scope",
+      "description": "Serialized durable writes persist delegate and dead-letter evidence despite expired ambient request time; genuine abandonment and operation deadlines still abort.",
+      "gate": "spendguard.capability_readiness_gates:assess_ledger_write_ambient_scope_persistence_readiness",
+      "arguments": {"scripts": ["tests/test_ledger_write_never_refused_on_expired_ambient_scope.py"]}
+    },
+    {
       "id": "openssf-scorecard",
       "description": "OpenSSF Scorecard mapping.",
       "standard": "https://scorecard.dev/",

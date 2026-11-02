@@ -135,6 +135,15 @@ def assess_ledger_read_never_spurious_refuse_readiness(*, context, scripts):
     return run_capability_script_readiness_gate(context=context, scripts=scripts)
 
 
+def assess_ledger_write_ambient_scope_persistence_readiness(*, context, scripts):
+    """Prove durable writes survive elapsed ambient time and still reject abandonment.
+
+    Reuse the canonical offline harness so complete persistence regressions run
+    with a fresh temporary HOME before interpreter startup.
+    """
+    return run_capability_script_readiness_gate(context=context, scripts=scripts)
+
+
 def assess_capability_environment_evidence(*, context, patterns, required_checks):
     """Require current-input, complete successful checks from independent clean environments."""
     report_path = context.get("environment_report")
