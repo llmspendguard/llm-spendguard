@@ -16,6 +16,7 @@ from spendguard import budget, config, ledger, ledger_deadletter, ledger_read, l
 DEADLETTER_EXPIRY_BUDGET_S = 0.05
 DEADLETTER_EXPIRY_WATCHDOG_MULTIPLIER = 300
 DEADLETTER_EXPIRY_WATCHDOG_S = DEADLETTER_EXPIRY_BUDGET_S * DEADLETTER_EXPIRY_WATCHDOG_MULTIPLIER
+DEADLETTER_EXPIRY_TAIL_SETUP_BUDGET_S = DEADLETTER_EXPIRY_BUDGET_S * DEADLETTER_EXPIRY_WATCHDOG_MULTIPLIER
 DEADLETTER_EXPIRY_WRITE_BUDGET_S = DEADLETTER_EXPIRY_BUDGET_S * 10
 DEADLETTER_EXPIRY_TAIL_COUNT = 4
 DEADLETTER_EXPIRY_EVENT_COST = "0.001"
@@ -73,13 +74,13 @@ def test_deadline_tail_keeps_original_bytes_and_retries(tmp_path):
     def fail_attempt_then_exhaust_deadline(self, event, **kwargs):
         attempted.append(event)
         scope = ledger_read.current_ledger_request_scope()
-        while time.monotonic() < scope.deadline_at:
-            time.sleep(max(0, scope.deadline_at - time.monotonic()))
+        # Let setup reach this attempt; force expiry here as in the sibling tests.
+        scope.deadline_at = time.monotonic()
         raise OSError(__name__)
 
     with patch.object(ledger.SpendLedger, "record_event", fail_attempt_then_exhaust_deadline):
         try:
-            with ledger_read.ledger_request_scope(deadline_s=DEADLETTER_EXPIRY_BUDGET_S):
+            with ledger_read.ledger_request_scope(deadline_s=DEADLETTER_EXPIRY_TAIL_SETUP_BUDGET_S):
                 ledger_deadletter.drain_spend_deadletter_events([retry_path])
         except ledger_read.LedgerQueryDeadline:
             pass
