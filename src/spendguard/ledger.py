@@ -441,10 +441,10 @@ def serialize_spend_ledger_mutation(method):
 
 
 def own_spend_ledger_read_scope(method):
-    """Read committed state on a disposable read-only WAL snapshot.
+    """Retain owned/bulk reads; isolate ordinary readers on committed WAL state.
 
-    A handed writer is never interrupted or inspected for pending money. Nested
-    operations may reuse an already owned read-only snapshot and its deadline.
+    Deferred bulk scopes see their pending writes on the reserved owner. Plain
+    writers instead lend no state or progress handler to the disposable reader.
     """
     from .ledger_read import bind_ledger_query_deadline
     deadline_parameter = inspect.signature(method).parameters.get("deadline_s")
@@ -453,12 +453,23 @@ def own_spend_ledger_read_scope(method):
     @functools.wraps(method)
     def invoke_scoped_spend_ledger_read(self, *args, **kwargs):
         from .ledger_read import (_ledger_read_connection, LedgerQueryDeadline,
-                                  LedgerReadError, LedgerRequestAbandoned, LedgerSettlementIncomplete,
+                                  LedgerReadError, LedgerReadOpenError, LedgerRequestAbandoned, LedgerSettlementIncomplete,
                                   DEFAULT_LEDGER_READ_TIME_BUDGET_S)
         deadline_s = (kwargs.get("deadline_s", deadline_parameter.default)
                       if deadline_parameter is not None else DEFAULT_LEDGER_READ_TIME_BUDGET_S)
         if self._conn is not None and getattr(self._conn, "_ledger_owned_read_deadline", False):
             return method(self, *args, **kwargs)
+        from .ledger_writer import (ledger_connection_commit_deferred,
+                                    ledger_bulk_scope_matches, reserved_ledger_bulk_read_connection)
+        if self._conn is not None and ledger_connection_commit_deferred(self._conn):
+            return method(self, *args, **kwargs)
+        if ledger_bulk_scope_matches(self.db_path):
+            facade = copy.copy(self)
+            facade._conn = reserved_ledger_bulk_read_connection(self.db_path)
+            try:
+                return method(facade, *args, **kwargs)
+            finally:
+                self._total_memo = facade._total_memo
         time_budget = DEFAULT_LEDGER_READ_TIME_BUDGET_S if deadline_s is None else deadline_s
         try:
             with _ledger_read_connection(self.db_path, time_budget=time_budget) as connection:
@@ -471,7 +482,7 @@ def own_spend_ledger_read_scope(method):
                 connection.row_factory = sqlite3.Row
                 connection.execute("PRAGMA query_only=ON")
                 return method(facade, *args, **kwargs)
-        except (LedgerRequestAbandoned, LedgerSettlementIncomplete):
+        except (LedgerReadOpenError, LedgerRequestAbandoned, LedgerSettlementIncomplete):
             raise
         except LedgerReadError as query_timeout:
             raise LedgerQueryDeadline(time_budget) from query_timeout

@@ -74,7 +74,7 @@ def budget_projection_reader(*, deadline_s=None, rollup_eligible=True):
     from .ledger import SpendLedger
     from .ledger_read import (_ledger_read_connection, consumer_empty_spend_compatibility,
                               SPEND_EVENT_READ_COLUMNS, DEFAULT_LEDGER_READ_TIME_BUDGET_S,
-                              LedgerReadTimeout, LedgerReadError, LedgerRequestAbandoned,
+                              LedgerReadTimeout, LedgerReadError, LedgerReadOpenError, LedgerRequestAbandoned,
                               LedgerSettlementIncomplete, LedgerQueryDeadline,
                               LEDGER_READ_SQLITE_PRIMARY_CODE_MASK,
                               effective_ledger_admission_deadline)
@@ -120,7 +120,7 @@ def budget_projection_reader(*, deadline_s=None, rollup_eligible=True):
             yield snapshot_reader
             if cached is not None:
                 cached._total_memo = snapshot_reader._total_memo
-    except (LedgerRequestAbandoned, LedgerSettlementIncomplete):
+    except (LedgerReadOpenError, LedgerRequestAbandoned, LedgerSettlementIncomplete):
         raise
     except (LedgerReadError, TimeoutError) as failure:
         raise LedgerQueryDeadline(time_budget) from failure

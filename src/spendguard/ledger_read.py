@@ -573,7 +573,19 @@ class LedgerSQLReadRequest:
 
 @contextmanager
 def _ledger_read_connection(path=None, time_budget=DEFAULT_LEDGER_READ_TIME_BUDGET_S, *, bulk_chunked=False):
-    with _ledger_read_observation(), ledger_query_work_scope(deadline_s=time_budget):
+    from contextlib import nullcontext
+    if not math.isfinite(time_budget) or time_budget <= 0:
+        raise ValueError("Ledger read time budget must be finite and positive")
+    ambient_scope = current_ledger_request_scope()
+    # Offline chunks retain boundary polling without a request owner. An expired
+    # ambient request cannot donate its consumed non-ledger wall-clock budget.
+    if bulk_chunked and ambient_scope is not None:
+        ambient_scope.require_ledger_request_live()
+        if time.monotonic() < ambient_scope.deadline_at:
+            raise LedgerReadError("Offline chunked reads cannot borrow a request scope")
+    with (_ledger_read_observation(),
+          nullcontext() if bulk_chunked and ambient_scope is None
+          else ledger_query_work_scope(deadline_s=time_budget)):
         with _ledger_bounded_read_handle(path, time_budget, bulk_chunked=bulk_chunked) as connection:
             yield connection
 
@@ -603,6 +615,9 @@ def _ledger_bounded_read_handle(path, time_budget, *, bulk_chunked=False):
     except TimeoutError as exc:
         raise LedgerReadTimeout(time_budget) from exc
     except (sqlite3.Error, OSError) as exc:
+        if (getattr(exc, "sqlite_errorcode", 0) & LEDGER_READ_SQLITE_PRIMARY_CODE_MASK
+                in (sqlite3.SQLITE_CORRUPT, sqlite3.SQLITE_NOTADB, sqlite3.SQLITE_INTERRUPT)):
+            raise LedgerQueryDeadline(time_budget) from exc
         # SQLite's busy timeout uses integer milliseconds and can exhaust just
         # before the monotonic deadline. Its BUSY result is already a bounded
         # lock-wait refusal; a second clock sample must not change its type.
@@ -791,6 +806,8 @@ def _ledger_sql_evidence_snapshot(connection):
 
 def read_ledger_sql(request: LedgerSQLReadRequest, path=None) -> tuple[LedgerReadRow, ...]:
     """Execute one complete bounded projected report, or raise without returning rows."""
+    from .ledger_writer import reserved_ledger_bulk_read_connection
+    resolved_path = path or config.db_path()
     if request.row_cap <= 0:
         raise ValueError("Ledger read row cap must be positive")
     # SQL lexical validation is parsing, not a semantic/meaning classification.
@@ -802,8 +819,19 @@ def read_ledger_sql(request: LedgerSQLReadRequest, path=None) -> tuple[LedgerRea
     projection_tokens = re.sub(r"\b[A-Z_][A-Z_0-9]*\*[0-9]+\b", "", projection_tokens)
     if "*" in projection_tokens:
         raise ValueError("Ledger reads require explicit column projections")
-    with (_ledger_read_connection(path, request.time_budget) as connection,
-          _ledger_sql_evidence_snapshot(connection)):
+    from contextlib import nullcontext
+    reserved = reserved_ledger_bulk_read_connection(resolved_path)
+    native_reserved = getattr(reserved, "_native_reconcile_connection", reserved)
+    maintenance_live = getattr(reserved, "require_reconcile_maintenance_live", None)
+    if maintenance_live is not None:
+        maintenance_live()
+    with (
+        ledger_query_work_scope(deadline_s=request.time_budget) if reserved is not None else nullcontext(),
+        (nullcontext(native_reserved) if reserved is not None
+         else _ledger_read_connection(path, request.time_budget)) as connection,
+        (_reserved_ledger_evidence_read_owner(connection) if reserved is not None else nullcontext()),
+        _ledger_sql_evidence_snapshot(connection),
+    ):
         # Completeness and consumer evidence must share one SQLite snapshot;
         # a concurrent writer cannot insert an incomplete row between them.
         for required_table in request.required_tables:
@@ -842,7 +870,8 @@ def read_ledger_sql(request: LedgerSQLReadRequest, path=None) -> tuple[LedgerRea
                 return sqlite3.SQLITE_DENY
             return sqlite3.SQLITE_OK
 
-        connection.execute("PRAGMA query_only=ON")
+        if reserved is None:
+            connection.execute("PRAGMA query_only=ON")
         connection.set_authorizer(authorize_complete_call_evidence)
         try:
             cursor = connection.execute(request.sql, request.parameters)
@@ -862,6 +891,8 @@ def read_ledger_sql(request: LedgerSQLReadRequest, path=None) -> tuple[LedgerRea
             raise LedgerReadTooLarge(request.row_cap, len(rows))
         result = tuple(LedgerReadRow(columns, tuple(row)) for row in rows)
         cursor.close()
+    if maintenance_live is not None:
+        maintenance_live()
     return result
 
 
