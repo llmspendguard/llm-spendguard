@@ -4,6 +4,12 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 
 ## [Unreleased]
 
+## [0.16.23] — 2026-11-01
+
+Arm the protected-lane leak tripwire in the capability readiness manifest. Selfcheck now fails on protected
+subscription-lane or metered-provider leaks, preserves inconclusive and failed probes as UNREVIEWED, and reports
+an absent ledger honestly for offline CI. Temporary-ledger regression tests cover all terminal states.
+
 ## [0.16.22] — 2026-11-02
 
 Theme: the codex-daemon-broker OFFLINE flake family is closed at the root — a reclamation cleanup race, not the broker.

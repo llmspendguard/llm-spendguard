@@ -14,6 +14,9 @@ A supplied clean-environment report must match the current input fingerprint and
 - [ ] **surface-parity** — Every capability is exposed on CLI, API and MCP except declared deliberate absences.
   Gate: `spendguard.capability_readiness_gates:run_capability_script_readiness_gate`; inputs: `{"scripts": ["tests/test_capability_surface_parity_guard.py"]}`.
 
+- [ ] **lane-leak-tripwire** — No protected subscription lane or metered provider was billed inside the lookback window.
+  Gate: `spendguard.capability_readiness_gates:assess_protected_lane_leak_readiness`; inputs: `{"hours": 1.0}`.
+
 - [ ] **lane-queue-maintenance** — Lane queue size, free-page ratio, and expired terminal retention remain within configured limits.
   Gate: `spendguard.capability_readiness_gates:assess_lane_queue_maintenance_readiness`; inputs: `{}`.
 

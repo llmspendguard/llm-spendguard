@@ -209,7 +209,7 @@
           },
           "src/spendguard/capability_readiness_gates.py": {
             "max_cc": 14,
-            "mi": 39.69470049673828
+            "mi": 37.25447954793135
           },
           "src/spendguard/capability_registry.py": {
             "max_cc": 7,
@@ -1097,7 +1097,7 @@
           },
           "src/spendguard/capability_readiness_gates.py": {
             "max_cc": 14,
-            "mi": 39.60404253974317
+            "mi": 37.175859310739504
           },
           "src/spendguard/capability_registry.py": {
             "max_cc": 7,
@@ -1858,7 +1858,8 @@
     "reviewed_delegate_cancel_retention_dir_guard": "delegate_worktrees cyclomatic complexity rises by one branch because the cancel-retention path now guards on the retained worktree directory actually existing before persisting its metadata: a retained worktree is only recorded when its directory is present on disk, so a cancelled/failed delegate can no longer leave a dangling metadata entry pointing at a directory that was never materialized. The added conditional is the fix itself (reviewed in PR #277, axis-4 delegate cancel-retention); the measured CC/MI shift is recorded here rather than refactored away because collapsing the guard would reintroduce the dangling-metadata defect.",
     "reviewed_storm_realtime_per_item_deadline": "storm_coalescer and storm_route whole-file maintainability fell slightly because the realtime coalescing path now applies a coordinator-derived per-item deadline to each callback it drives: a slow or wedged realtime callback can no longer stall the storm coalescer indefinitely, so the fan-out bounds its waits and fails closed on an exceeded per-item budget (reviewed in PR #273, axis-4 site 2/5). The added fail-closed deadline/timeout lines are essential and not extractable without reintroducing the unbounded-wait defect; max cyclomatic complexity of the worst functions is not what regressed, only whole-file MI from the few added bounded-wait lines. Regenerated as a zero-margin ceiling in the CI exact interpreter (python 3.12.15, linux/amd64).",
     "reviewed_ledger_read_expiry_debug_demote_ssot": "Promoting the self-healing managed-read-expiry deferral log line to a module-level SSOT message\nconstant (MANAGED_READ_EXPIRY_DEFERRED_LOG_MESSAGE) and demoting it from WARNING to DEBUG marginally\nlowers this file's maintainability index (max CC unchanged at 34; MI 29.6357 -> 29.5825). The demote\nis a deliberate, reviewed observability change: the deferral is routine under connection-step-lock\ncontention and self-healing (the background expiry sweep re-schedules; outcome flag\nMANAGED_READ_CLEANUP_DEFERRED), so DEBUG is the correct level. It stops production WARNING log spam and\nbenign leakage into tests that assert logger silence, while hiding no terminal error (raised\nLedgerQueryDeadline/LedgerReadTimeout paths are unchanged and still surface). The SSOT constant removes\na duplicated string literal so the one observability assertion can import it rather than re-hardcode it.\nReviewed and accepted as part of closing the busy-connection / ledger-read-expiry timing flake family.",
-    "reviewed_supported_minor_parity_for_existing_lifecycle_guards": "Restore supported Python 3.11 measurement parity for existing reviewed changes already recorded under Python 3.12: delegate cancel-retention directory guard; managed read-expiry DEBUG SSOT observability; bounded ledger-writer shutdown drain; report whole-collector deadline; realtime storm per-item deadline. The six source files are unchanged by the broker fix. Their existing review narratives remain authoritative; this entry records only the omitted 3.11 Linux/amd64 Radon 6.0.1 measurements, preserving independent tokenizer-specific baselines. The same Linux measurement also records model_catalog MI 12.608930133037463 instead of 12.608930133037466, a platform floating-point difference with unchanged CC 43 and unchanged source. Broker execution_journal maximum CC remains 23 and MI improves, requiring no ratchet increase."
+    "reviewed_supported_minor_parity_for_existing_lifecycle_guards": "Restore supported Python 3.11 measurement parity for existing reviewed changes already recorded under Python 3.12: delegate cancel-retention directory guard; managed read-expiry DEBUG SSOT observability; bounded ledger-writer shutdown drain; report whole-collector deadline; realtime storm per-item deadline. The six source files are unchanged by the broker fix. Their existing review narratives remain authoritative; this entry records only the omitted 3.11 Linux/amd64 Radon 6.0.1 measurements, preserving independent tokenizer-specific baselines. The same Linux measurement also records model_catalog MI 12.608930133037463 instead of 12.608930133037466, a platform floating-point difference with unchanged CC 43 and unchanged source. Broker execution_journal maximum CC remains 23 and MI improves, requiring no ratchet increase.",
+    "reviewed_protected_lane_leak_readiness": "Reviewed complete readiness gate body: reuses CLI probe and its terminal constants, captures the whole report, honestly exempts absent offline ledgers, and preserves uncertain states. The added live-state wrapper lowers module maintainability index; no existing function complexity or global ratchet is relaxed."
   },
   "duplication": {
     "duplicate_lines": 303,

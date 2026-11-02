@@ -14,6 +14,31 @@ READINESS_REQUIRED_ENVIRONMENTS = 2
 READINESS_SCRIPT_HARNESS_PATH = Path("scripts") / "test" / "chunked_suite.py"
 
 
+def assess_protected_lane_leak_readiness(*, context, hours=1.0, min_other_calls=None, ledger_path=None):
+    """Arm the CLI's read-only tripwire on operator ledgers; offline installs have no ledger."""
+    import contextlib
+    import io
+    from . import cli, config
+
+    probe_path = Path(ledger_path if ledger_path is not None else config.db_path()).expanduser()
+    window_evidence = f"hours={hours}"
+    if not probe_path.exists():
+        return CapabilityReadinessEvidence(
+            "PASS", "Ledger absent; offline CI has no ledger. This gate checks operator machines via selfcheck.",
+            (f"ledger_path={probe_path}; absent; probe not run", "exit_code=not run (ledger absent)", window_evidence))
+    tripwire = cli.load_protected_lane_tripwire_module()
+    report = io.StringIO()
+    with contextlib.redirect_stdout(report), contextlib.redirect_stderr(report):
+        exit_code = cli.check_protected_lane_leaks(
+            hours=hours, min_other_calls=min_other_calls, ledger_path=str(probe_path))
+    status = {tripwire.CLEAN_EXIT: "PASS", tripwire.LEAK_EXIT: "FAIL",
+              tripwire.INCONCLUSIVE_EXIT: "UNREVIEWED", tripwire.PROBE_FAILED_EXIT: "UNREVIEWED"}.get(
+                  exit_code, "UNREVIEWED")
+    return CapabilityReadinessEvidence(
+        status, f"Protected-lane tripwire exit {exit_code}; checks operator machines via selfcheck",
+        (report.getvalue(), f"exit_code={exit_code}", window_evidence))
+
+
 def assess_lane_queue_maintenance_readiness(*, context, database_path=None, retain_days=None,
                                             size_limit_bytes=None, freelist_ratio_limit=None,
                                             old_terminal_limit=None):
