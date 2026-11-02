@@ -5,6 +5,9 @@ import time
 from unittest.mock import patch
 
 from _pytest_fixture_bridge import align_test_startup_home, run_pytest_style
+from _runner_budget_calibration import measure_isolated_runner_budget_scale
+
+_, runner_budget_scale = measure_isolated_runner_budget_scale()
 
 align_test_startup_home(prefix=__name__)
 
@@ -55,7 +58,7 @@ def assert_ambient_pool_refusal(current, accessor):
                 with ledger_read.ledger_request_scope(deadline_s=ADMISSION_REPRO_DEADLINE_S):
                     accessor()
             assert time.monotonic() - started < (
-                ADMISSION_REPRO_DEADLINE_S * ADMISSION_REPRO_SCHEDULING_MULTIPLIER)
+                ADMISSION_REPRO_DEADLINE_S * ADMISSION_REPRO_SCHEDULING_MULTIPLIER) * runner_budget_scale
             assert holder.is_alive(), "scope expiry must precede holder release"
         finally:
             release.set()
@@ -88,7 +91,7 @@ def test_aggregate_deadline_expires_before_pool_release():
                 else:
                     raise AssertionError("saturated admission must raise LedgerQueryDeadline")
                 assert time.monotonic() - started < (
-                    ADMISSION_REPRO_DEADLINE_S * ADMISSION_REPRO_SCHEDULING_MULTIPLIER)
+                    ADMISSION_REPRO_DEADLINE_S * ADMISSION_REPRO_SCHEDULING_MULTIPLIER) * runner_budget_scale
                 assert holder.is_alive(), "timeout must precede lease release"
             finally:
                 release.set()

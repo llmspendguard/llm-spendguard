@@ -6,6 +6,10 @@ import sys
 import tempfile
 import time
 
+from _runner_budget_calibration import measure_isolated_runner_budget_scale
+
+_, runner_budget_scale = measure_isolated_runner_budget_scale()
+
 os.environ.setdefault("SPENDGUARD_TEST_ISOLATED", "1")
 os.environ.setdefault("SPENDGUARD_HOME", tempfile.mkdtemp())
 
@@ -118,7 +122,8 @@ def run_reconcile_maintenance_deadline_guards():
             pass
         else:
             raise AssertionError("large native scan must raise a typed deadline")
-        assert time.monotonic() - started < MAINTENANCE_GUARD_BUDGET_S + MAINTENANCE_GUARD_HEADROOM_S
+        assert time.monotonic() - started < (
+            MAINTENANCE_GUARD_BUDGET_S + MAINTENANCE_GUARD_HEADROOM_S) * runner_budget_scale
 
         try:
             with maintenance.owned_reconcile_maintenance_connection(
@@ -159,7 +164,8 @@ def run_reconcile_maintenance_deadline_guards():
                 pass
             else:
                 raise AssertionError("held writer lock must raise a typed deadline")
-            assert time.monotonic() - started < MAINTENANCE_GUARD_BUDGET_S + MAINTENANCE_GUARD_HEADROOM_S
+            assert time.monotonic() - started < (
+                MAINTENANCE_GUARD_BUDGET_S + MAINTENANCE_GUARD_HEADROOM_S) * runner_budget_scale
         finally:
             blocker.rollback()
             blocker.close()

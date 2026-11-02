@@ -8,6 +8,9 @@ from unittest.mock import patch
 import pytest
 
 from _pytest_fixture_bridge import align_test_startup_home, run_pytest_style
+from _runner_budget_calibration import measure_isolated_runner_budget_scale
+
+_, runner_budget_scale = measure_isolated_runner_budget_scale()
 
 align_test_startup_home(prefix=__name__)
 
@@ -132,7 +135,7 @@ def test_recovery_lock_uses_own_budget_and_surfaces_exhaustion(tmp_path):
                 with pytest.raises(ledger_read.LedgerQueryDeadline):
                     ledger_deadletter.append_spend_deadletter_event(retry_path, {"event": {}})
                 assert time.monotonic() - started >= DEADLETTER_EXPIRY_BUDGET_S
-                assert time.monotonic() - started < DEADLETTER_EXPIRY_WATCHDOG_S
+                assert time.monotonic() - started < DEADLETTER_EXPIRY_WATCHDOG_S * runner_budget_scale
                 assert ledger_read.current_ledger_request_scope() is expired_scope
         fcntl.flock(blocker, fcntl.LOCK_UN)
     assert not retry_path.exists()

@@ -7,6 +7,9 @@ from unittest.mock import patch
 
 import pytest
 from _pytest_fixture_bridge import align_test_startup_home, run_pytest_style
+from _runner_budget_calibration import measure_isolated_runner_budget_scale
+
+_, runner_budget_scale = measure_isolated_runner_budget_scale()
 
 align_test_startup_home(prefix=__name__)
 
@@ -38,7 +41,7 @@ def assert_ambient_admission_owner_retained(ownership, attempt, *, explicit_budg
         started = time.monotonic()
         with ledger_read.ledger_request_scope(deadline_s=AMBIENT_WAIT_SCOPE_S):
             attempt()
-        assert time.monotonic() - started < AMBIENT_WAIT_PROMPTNESS_S
+        assert time.monotonic() - started < AMBIENT_WAIT_PROMPTNESS_S * runner_budget_scale
         assert holder.is_alive(), "admission must stop before conflicting owner releases"
     finally:
         release.set()

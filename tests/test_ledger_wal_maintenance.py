@@ -338,15 +338,16 @@ def _hold_wal_guard_connection_lock(step_lock, ready, release):
 
 def test_wal_idle_expiry_retries_busy_connection_owner(tmp_path, monkeypatch):
     from spendguard import ledger_request_cursor as cursor_module
+    from spendguard.ledger_request_cursor import MANAGED_READ_EXPIRY_DEFERRED_LOG_MESSAGE
 
     ledger_path = tmp_path / pathlib.Path(__file__).stem
     writer = _seed_wal_maintenance_fixture(ledger_path)
     reader = config.open_ledger_connection(ledger_path)
     release = threading.Event()
     ready = threading.Event()
-    warnings = []
-    monkeypatch.setattr(cursor_module._MANAGED_READ_EXPIRY_LOG, "warning",
-                        lambda *args: warnings.append(args))
+    debug_messages = []
+    monkeypatch.setattr(cursor_module._MANAGED_READ_EXPIRY_LOG, "debug",
+                        lambda *args: debug_messages.append(args))
     holder = None
     try:
         reader.execute("BEGIN")
@@ -364,7 +365,8 @@ def test_wal_idle_expiry_retries_busy_connection_owner(tmp_path, monkeypatch):
         while state.expiry_cleanup_outcome is None and time.monotonic() < expires:
             time.sleep(config.LEDGER_REQUEST_DISCONNECT_POLL_S)
         assert state.expiry_cleanup_outcome == cursor_module.MANAGED_READ_CLEANUP_DEFERRED
-        assert warnings, "deferred expiry must be observable"
+        assert any(message[0] == MANAGED_READ_EXPIRY_DEFERRED_LOG_MESSAGE
+                   for message in debug_messages), "deferred expiry must be observable at DEBUG"
         assert reader.in_transaction, "busy connection owner must retain its transaction"
         release.set()
         holder.join(WAL_GUARD_EXPIRY_WAIT_S)

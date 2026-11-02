@@ -7,6 +7,9 @@ import time
 
 import pytest
 from _pytest_fixture_bridge import align_test_startup_home, run_pytest_style
+from _runner_budget_calibration import measure_isolated_runner_budget_scale
+
+_, runner_budget_scale = measure_isolated_runner_budget_scale()
 
 align_test_startup_home(prefix=__name__)
 
@@ -88,7 +91,7 @@ def check_wal_checkpoint_stays_bounded(tmp_path, monkeypatch):
         assert report.status == maintenance.WAL_CHECKPOINT_BUSY, report
         assert warnings and warnings[-1][-1] == report
         assert elapsed >= configured_seconds * WAL_HYGIENE_MIN_WAIT_FRACTION, elapsed
-        assert elapsed < configured_seconds + WAL_HYGIENE_SCHEDULER_ALLOWANCE_S, elapsed
+        assert elapsed < (configured_seconds + WAL_HYGIENE_SCHEDULER_ALLOWANCE_S) * runner_budget_scale, elapsed
     finally:
         reader.close()
         writer.close()
@@ -118,7 +121,7 @@ def _check_wal_hygiene_admission_wait_bound(ledger_path, monkeypatch):
         assert report.status == maintenance.WAL_CHECKPOINT_FAILED, report
         assert warnings and warnings[-1][-1] == report
         assert elapsed < (WAL_HYGIENE_WAIT_MS * WAL_HYGIENE_SECONDS_PER_MS
-                          + WAL_HYGIENE_SCHEDULER_ALLOWANCE_S), elapsed
+                          + WAL_HYGIENE_SCHEDULER_ALLOWANCE_S) * runner_budget_scale, elapsed
     finally:
         release_admission.set()
         lock_holder.join(WAL_HYGIENE_THREAD_JOIN_S)

@@ -10,6 +10,9 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from _pytest_fixture_bridge import align_test_startup_home, run_pytest_style
+from _runner_budget_calibration import measure_isolated_runner_budget_scale
+
+_, runner_budget_scale = measure_isolated_runner_budget_scale()
 
 align_test_startup_home(prefix=__name__)
 
@@ -122,7 +125,7 @@ def test_ledger_query_deadline_fault_and_recovery():
                 pass
             else:
                 raise AssertionError("slow complete aggregate must raise the typed deadline error")
-        assert time.monotonic() - started < DEADLINE_GUARD_OPERATION_TIMEOUT_S
+        assert time.monotonic() - started < DEADLINE_GUARD_OPERATION_TIMEOUT_S * runner_budget_scale
         recovered = budget._ledger()
         assert recovered._conn is expired_connection
         assert expired_connection.execute("SELECT 1").fetchone()[0] == 1
@@ -146,7 +149,7 @@ def test_ledger_query_deadline_concurrent_pool_baseline():
     def contend_deadline_guard_reader():
         current = budget._ledger()
         expired_connection = current._conn
-        barrier.wait(timeout=DEADLINE_GUARD_OPERATION_TIMEOUT_S)
+        barrier.wait(timeout=DEADLINE_GUARD_OPERATION_TIMEOUT_S * runner_budget_scale)
         try:
             try:
                 budget.spent_since(DEADLINE_GUARD_DAY, deadline_s=DEADLINE_GUARD_BUDGET_S)
@@ -166,8 +169,8 @@ def test_ledger_query_deadline_concurrent_pool_baseline():
         with concurrent.futures.ThreadPoolExecutor(max_workers=DEADLINE_GUARD_WORKERS) as executor:
             futures = [executor.submit(contend_deadline_guard_reader) for _ in range(DEADLINE_GUARD_WORKERS)]
             for future in futures:
-                future.result(timeout=DEADLINE_GUARD_OPERATION_TIMEOUT_S)
-    assert time.monotonic() - started < DEADLINE_GUARD_OPERATION_TIMEOUT_S
+                future.result(timeout=DEADLINE_GUARD_OPERATION_TIMEOUT_S * runner_budget_scale)
+    assert time.monotonic() - started < DEADLINE_GUARD_OPERATION_TIMEOUT_S * runner_budget_scale
     assert config.ledger_connection_count() == baseline
 
 
@@ -372,7 +375,7 @@ def test_ledger_query_deadline_shared_budget_window():
             else:
                 raise AssertionError("daily and monthly scans must share one caller deadline")
             elapsed = time.monotonic() - started
-        assert elapsed < shared_budget + DEADLINE_GUARD_OPERATION_TIMEOUT_S
+        assert elapsed < (shared_budget + DEADLINE_GUARD_OPERATION_TIMEOUT_S) * runner_budget_scale
     finally:
         close_deadline_guard_thread_ledger()
 

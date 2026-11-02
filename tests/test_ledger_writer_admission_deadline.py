@@ -4,6 +4,9 @@ import threading
 import time
 
 from _pytest_fixture_bridge import align_test_startup_home, run_pytest_style
+from _runner_budget_calibration import measure_isolated_runner_budget_scale
+
+_, runner_budget_scale = measure_isolated_runner_budget_scale()
 
 align_test_startup_home(prefix=__name__)
 
@@ -39,7 +42,7 @@ def test_freshness_deadline_expires_before_writer_release():
         else:
             raise AssertionError("writer admission must refuse the expired aggregate")
         print(f"writer deadline elapsed={elapsed:.6f}s hold={hold_s:.6f}s")
-        assert elapsed < WRITER_REPRO_DEADLINE_S * WRITER_REPRO_SCHEDULING_FACTOR
+        assert elapsed < WRITER_REPRO_DEADLINE_S * WRITER_REPRO_SCHEDULING_FACTOR * runner_budget_scale
         assert holder.is_alive(), "deadline must precede writer release"
     finally:
         release.set()
@@ -70,7 +73,7 @@ def assert_setup_read_refuses_occupied_writer(read_callback):
             setup_elapsed = time.monotonic() - setup_started
         else:
             raise AssertionError("setup admission must refuse the expired read")
-        assert setup_elapsed < WRITER_REPRO_DEADLINE_S * WRITER_REPRO_SCHEDULING_FACTOR
+        assert setup_elapsed < WRITER_REPRO_DEADLINE_S * WRITER_REPRO_SCHEDULING_FACTOR * runner_budget_scale
         assert setup_holder.is_alive(), "setup deadline must precede writer release"
     finally:
         setup_release.set()

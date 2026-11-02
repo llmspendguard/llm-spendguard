@@ -41,6 +41,7 @@ def run_doctor_residency_refusal_containment():
         doctor_errors = io.StringIO()
         refusal_logs = io.StringIO()
         refusal_handler = logging.StreamHandler(refusal_logs)
+        refusal_handler.setLevel(logging.WARNING)
         refusal_logger = logging.getLogger("spendguard")
         refusal_logger.addHandler(refusal_handler)
         try:

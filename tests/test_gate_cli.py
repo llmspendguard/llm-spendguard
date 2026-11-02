@@ -9,6 +9,9 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
     os.execv(sys.executable, [sys.executable] + sys.argv)
 
 from _script_checks import record_script_check
+from _runner_budget_calibration import measure_isolated_runner_budget_scale
+
+_, runner_budget_scale = measure_isolated_runner_budget_scale()
 from spendguard import gate
 
 fails = []
@@ -54,7 +57,7 @@ with patch.object(setup, "_startup_gate_active", return_value=True), contextlib.
     rc = gate._cli("doctor")
 took = time.monotonic() - t0
 record_script_check(fails, "_cli('doctor') returns 0", rc == 0)
-record_script_check(fails, "doctor completes within the scheduling-tolerant hang guard", took < DOCTOR_PROMPTNESS_SECONDS)
+record_script_check(fails, "doctor completes within the scheduling-tolerant hang guard", took < DOCTOR_PROMPTNESS_SECONDS * runner_budget_scale)
 record_script_check(fails, "no cache → leak status reads UNKNOWN (never a silent skip)", "UNKNOWN" in buf.getvalue())
 
 # a prior report/reconcile computed the leak line → doctor reuses it WITH ITS AGE

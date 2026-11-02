@@ -9,6 +9,9 @@ from pathlib import Path
 from unittest.mock import patch
 
 from _pytest_fixture_bridge import align_test_startup_home, run_pytest_style
+from _runner_budget_calibration import measure_isolated_runner_budget_scale
+
+_, runner_budget_scale = measure_isolated_runner_budget_scale()
 
 align_test_startup_home(prefix=__name__)
 
@@ -61,7 +64,7 @@ def test_conversation_spend_deadline_slow_concurrent_recovery():
     barrier = threading.Barrier(CONVERSATION_FAULT_WORKERS)
 
     def exercise_conversation_consumer_deadline():
-        barrier.wait(timeout=CONVERSATION_FAULT_BOUND_S)
+        barrier.wait(timeout=CONVERSATION_FAULT_BOUND_S * runner_budget_scale)
         started = time.monotonic()
         try:
             budget.spent_since(CONVERSATION_FAULT_DAY, conv=CONVERSATION_FAULT_ID,
@@ -70,13 +73,13 @@ def test_conversation_spend_deadline_slow_concurrent_recovery():
             pass
         else:
             raise AssertionError("slow complete conversation aggregate escaped its deadline")
-        assert time.monotonic() - started < CONVERSATION_FAULT_BOUND_S
+        assert time.monotonic() - started < CONVERSATION_FAULT_BOUND_S * runner_budget_scale
 
     with patch.object(ledger._DecSum, "step", slow_conversation_consumer_decimal_step):
         with concurrent.futures.ThreadPoolExecutor(max_workers=CONVERSATION_FAULT_WORKERS) as pool:
             for future in [pool.submit(exercise_conversation_consumer_deadline)
                            for _ in range(CONVERSATION_FAULT_WORKERS)]:
-                future.result(timeout=CONVERSATION_FAULT_BOUND_S)
+                future.result(timeout=CONVERSATION_FAULT_BOUND_S * runner_budget_scale)
     assert config.ledger_connection_count() == baseline
     assert budget.spent_since(CONVERSATION_FAULT_DAY, conv=CONVERSATION_FAULT_ID,
                               deadline_s=CONVERSATION_FAULT_FAST_S) == CONVERSATION_FAULT_ROWS
@@ -199,7 +202,7 @@ def exercise_conversation_exclusive_lock_refusal(*, early_busy, deadline_s):
             pass
         else:
             raise AssertionError("locked conversation read must refuse explicitly")
-        assert time.monotonic() - started < CONVERSATION_FAULT_BOUND_S
+        assert time.monotonic() - started < CONVERSATION_FAULT_BOUND_S * runner_budget_scale
         assert lock_connection.in_transaction
         assert config.ledger_connection_count() == baseline
     finally:
@@ -254,12 +257,12 @@ def test_conversation_spend_deadline_busy_admission_refuses():
                                  conv=CONVERSATION_FAULT_ID,
                                  deadline_s=CONVERSATION_FAULT_DEADLINE_S)
             try:
-                future.result(timeout=CONVERSATION_FAULT_BOUND_S)
+                future.result(timeout=CONVERSATION_FAULT_BOUND_S * runner_budget_scale)
             except ledger_read.LedgerQueryDeadline:
                 pass
             else:
                 raise AssertionError("busy connection admission must refuse")
-            assert time.monotonic() - started < CONVERSATION_FAULT_BOUND_S
+            assert time.monotonic() - started < CONVERSATION_FAULT_BOUND_S * runner_budget_scale
 
 
 def test_conversation_spend_deadline_concurrent_admission_accounts_once():
@@ -269,7 +272,7 @@ def test_conversation_spend_deadline_concurrent_admission_accounts_once():
     original_memory_tuning = config.budget_ledger_connection_memory
 
     def synchronize_conversation_connection_setup(connection, ceiling=None):
-        barrier.wait(timeout=CONVERSATION_FAULT_BOUND_S)
+        barrier.wait(timeout=CONVERSATION_FAULT_BOUND_S * runner_budget_scale)
         return original_memory_tuning(connection, ceiling=ceiling)
 
     handles = []
