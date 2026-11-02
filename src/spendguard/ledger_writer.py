@@ -517,13 +517,18 @@ def close_ledger_writers():
     """Drain admitted writes and close owner handles (shutdown or fd recycling)."""
     with _ledger_writer_registry_lock:
         owners = list(_ledger_writer_registry.values())
+    _, shutdown_drain_timeout_s = config.ledger_read_pool_settings()
     for owner in owners:
         with owner.admission:
             if owner.retired:
                 continue
             owner.jobs.put(None)
             if owner.thread is not threading.current_thread():
-                owner.thread.join()
+                owner.thread.join(timeout=shutdown_drain_timeout_s)
+                if owner.thread.is_alive():
+                    config.warn_once(
+                        f"[spendguard] ledger writer shutdown drain timed out for {owner.path}; "
+                        f"{owner.jobs.qsize()} queued job(s) remain undrained")
             with _ledger_writer_registry_lock:
                 owner.retired = True
                 if _ledger_writer_registry.get(owner.path) is owner:

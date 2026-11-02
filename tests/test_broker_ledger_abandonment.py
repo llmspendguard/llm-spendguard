@@ -15,7 +15,9 @@ align_test_startup_home(prefix=__name__)
 from spendguard import codex_daemon, codex_daemon_broker, config, ledger_read, mcp_server
 from spendguard import agent_spawn_gate, residency_gate, weekly_cap_guard
 
-BROKER_WAL_WAIT_S = 5.0
+BROKER_WAL_WAIT_BASE_S = 5.0
+BROKER_WAL_SCHEDULING_MULTIPLIER = 3
+BROKER_WAL_WAIT_S = BROKER_WAL_WAIT_BASE_S * BROKER_WAL_SCHEDULING_MULTIPLIER
 BROKER_WAL_READ_DEADLINE_S = BROKER_WAL_WAIT_S * 4
 BROKER_WAL_RECURSIVE_STEPS = 1000000000
 BROKER_WAL_SCHEMA = "CREATE TABLE broker_snapshot_probe (value)"

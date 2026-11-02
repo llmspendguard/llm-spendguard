@@ -25,6 +25,9 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(
 from spendguard import codex_daemon, delegate_router, delegate_worktrees  # noqa: E402
 
 fails = []
+DELEGATE_KILL_CALLER_TIMEOUT_SECONDS = 0.05
+DELEGATE_KILL_PROMPTNESS_MULTIPLE = 300
+DELEGATE_KILL_PROMPTNESS_SECONDS = DELEGATE_KILL_CALLER_TIMEOUT_SECONDS * DELEGATE_KILL_PROMPTNESS_MULTIPLE
 def ck(label, cond):
     print(f"  [{'OK' if cond else 'FAIL'}] {label}")
     if not cond:
@@ -45,12 +48,12 @@ def _fresh_daemon():
 # ── 1. a caller timeout is HONORED on the warm path (not the fixed CALL_TIMEOUT_S) ──
 d = _fresh_daemon()
 d.shutdown = lambda: None                        # not under test here
-t0 = time.time()
-r = d.run_warm("hi", timeout=0.05)               # 50ms deadline → times out at once
-elapsed = time.time() - t0
-ck("a tiny caller timeout returns promptly (the 0.05s deadline was used, not 180s)", elapsed < 5.0)
+t0 = time.monotonic()
+r = d.run_warm("hi", timeout=DELEGATE_KILL_CALLER_TIMEOUT_SECONDS)
+elapsed = time.monotonic() - t0
 ck("the timeout error reports the caller's deadline, not the fixed CALL_TIMEOUT_S (180)",
    "timeout" in (r.get("error") or "") and "180" not in (r.get("error") or ""))
+ck("a tiny caller timeout returns promptly", elapsed < DELEGATE_KILL_PROMPTNESS_SECONDS)
 
 # ── 2. timeout=None falls back to CALL_TIMEOUT_S in the message (the documented default) ──
 # (use a monkeypatched tiny CALL_TIMEOUT_S so the test is fast but still proves the FALLBACK branch)

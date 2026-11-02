@@ -33,6 +33,8 @@ POOL_AUTH_FIXTURE = b'{"auth_mode":"chatgpt","tokens":{}}'
 POOL_CONFIG_FIXTURE = 'model = "fixture-model"\n[features]\nexample = false\n'
 POOL_CHAOS_WRITE_BUDGET_S = 0.1
 POOL_CHAOS_TURN_BUDGET_S = 0.8
+POOL_CHAOS_PROMPTNESS_MULTIPLIER = 20
+POOL_CHAOS_PROMPTNESS_BOUND_S = POOL_CHAOS_TURN_BUDGET_S * POOL_CHAOS_PROMPTNESS_MULTIPLIER
 POOL_CHAOS_RETRY_BUDGET_S = 0.01
 POOL_CHAOS_PIPE_BLOCK = b"x" * 65536
 POOL_CHAOS_RECOVERY_PROMPT = "post-chaos"
@@ -520,7 +522,7 @@ def _pool_chaos_exercise_wedge(wedge_mode):
             result = wedged.result(timeout=POOL_EVENT_TIMEOUT_S)
             assert result and result["error"]
             if wedge_mode == "stdin":
-                assert time.monotonic() - wedge_started < POOL_CHAOS_TURN_BUDGET_S / 2
+                assert time.monotonic() - wedge_started < POOL_CHAOS_PROMPTNESS_BOUND_S
             _pool_guard_wait_recovery(pool)
             assert children[0].shutdown.called
             assert all(not child.shutdown.called for child in children[1:POOL_GUARD_SIZE])

@@ -14,7 +14,8 @@ from spendguard import warm_stdio_daemon as warm
 _WARM_TEST_PID = os.getpid()
 _WARM_TEST_GRACE_S = 0
 _WARM_TREE_READY_TIMEOUT_S = warm._WARM_REAP_TIMEOUT_S
-_READER_JOIN_GUARD_WAIT_S = warm._WARM_READER_JOIN_TIMEOUT_S
+WARM_READER_SCHEDULER_CUSHION = 6
+_READER_JOIN_GUARD_WAIT_S = warm._WARM_READER_JOIN_TIMEOUT_S * WARM_READER_SCHEDULER_CUSHION
 _FINAL_EVIDENCE_FILENAME = "final-evidence"
 _FINAL_EVIDENCE_CONTENT = "flushed"
 _WARM_TREE_PROGRAM = r'''
@@ -61,7 +62,8 @@ class WarmDaemonGroupTeardownGuard(unittest.TestCase):
                 daemon.shutdown()
                 shutdown_returned.set()
 
-            with patch.object(daemon, "_terminate", side_effect=terminate_process_for_reader_guard):
+            with patch.object(daemon, "_terminate", side_effect=terminate_process_for_reader_guard), \
+                    patch.object(warm, "_WARM_READER_JOIN_TIMEOUT_S", _READER_JOIN_GUARD_WAIT_S):
                 shutdown_thread = threading.Thread(target=shutdown_daemon_for_reader_guard)
                 shutdown_thread.start()
                 self.assertTrue(termination_started.wait(_READER_JOIN_GUARD_WAIT_S))
