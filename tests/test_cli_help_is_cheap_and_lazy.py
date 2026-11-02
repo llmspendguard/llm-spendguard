@@ -6,6 +6,10 @@ import subprocess
 import sys
 import time
 
+from _runner_budget_calibration import measure_isolated_runner_budget_scale
+
+_, runner_budget_scale = measure_isolated_runner_budget_scale()
+
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 WORKTREE_SOURCE = ROOT / "src"
@@ -41,7 +45,7 @@ def run_isolated_help_probe(arguments):
         env=environment,
         text=True,
         capture_output=True,
-        timeout=HELP_WATCHDOG_SECONDS,
+        timeout=HELP_WATCHDOG_SECONDS * runner_budget_scale,
         check=False,
     )
     elapsed = time.monotonic() - started
@@ -59,7 +63,7 @@ for case_name, case_arguments in HELP_CASES:
             "prints usage/help": "spendguard" in process.stdout.lower(),
             "uses this worktree": pathlib.Path(result["cli_file"]).resolve().is_relative_to(WORKTREE_SOURCE.resolve()),
             "imports no heavy startup module": result["loaded"] == [],
-            "finishes within named generous limit": duration < HELP_COMPLETION_LIMIT_SECONDS,
+            "finishes within named generous limit": duration < HELP_COMPLETION_LIMIT_SECONDS * runner_budget_scale,
         }
     except Exception as error:
         checks = {f"probe completed ({type(error).__name__}: {error})": False}

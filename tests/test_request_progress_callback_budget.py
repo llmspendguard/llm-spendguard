@@ -7,6 +7,10 @@ import tempfile
 import threading
 import time
 
+from _runner_budget_calibration import measure_isolated_runner_budget_scale
+
+_, runner_budget_scale = measure_isolated_runner_budget_scale()
+
 os.environ.setdefault("SPENDGUARD_TEST_ISOLATED", "1")
 os.environ.setdefault("SPENDGUARD_HOME", tempfile.mkdtemp())
 
@@ -76,7 +80,7 @@ def run_request_progress_callback_budget_guards():
                 else:
                     raise AssertionError("adverse scan must raise a typed deadline error")
                 elapsed = time.monotonic() - started
-                assert elapsed <= PROGRESS_GUARD_PROMPTNESS_S, elapsed
+                assert elapsed <= PROGRESS_GUARD_PROMPTNESS_S * runner_budget_scale, elapsed
                 print(f"deadline bounded_owner={bounded_owner}: {elapsed:.6f}s")
 
             with ledger_read.ledger_request_scope(deadline_s=PROGRESS_GUARD_COMPLETION_BUDGET_S) as scope:

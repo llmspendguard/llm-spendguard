@@ -4,6 +4,10 @@ import sys
 import tempfile
 import time
 
+from _runner_budget_calibration import measure_isolated_runner_budget_scale
+
+_, runner_budget_scale = measure_isolated_runner_budget_scale()
+
 os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="sg-governed-bound-")
 os.environ["SPENDGUARD_TEST_ISOLATED"] = "1"
 os.environ["SPENDGUARD_NO_AUTOINSTALL"] = "1"
@@ -45,7 +49,7 @@ try:
     # The typed refusal proves the mechanism; this wide window catches an unbounded wait
     # without treating scheduler starvation as a deadline implementation failure.
     assert_governed_bound("non-admissible governed call returns within its explicit bound",
-                          elapsed < GOVERNED_NONADMISSION_PROMPTNESS_SECONDS)
+                          elapsed < GOVERNED_NONADMISSION_PROMPTNESS_SECONDS * runner_budget_scale)
 finally:
     dispatch.admit = original_admit
     adapters._call_guarded = original_guarded

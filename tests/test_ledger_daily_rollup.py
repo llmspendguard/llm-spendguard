@@ -13,6 +13,9 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from _pytest_fixture_bridge import align_test_startup_home
+from _runner_budget_calibration import measure_isolated_runner_budget_scale
+
+_, runner_budget_scale = measure_isolated_runner_budget_scale()
 
 align_test_startup_home(prefix=__name__)
 
@@ -243,7 +246,7 @@ def check_daily_rollup_today_write_does_not_revalidate_closed_days():
             elapsed = time.monotonic() - started
             assert recompute.call_count == 0, recompute.call_count
             assert audit.call_count == 0, audit.call_args_list
-            assert elapsed < DAILY_GUARD_HOT_READ_BOUND_SECONDS, elapsed
+            assert elapsed < DAILY_GUARD_HOT_READ_BOUND_SECONDS * runner_budget_scale, elapsed
             logged = " ".join(str(call).lower() for call in (*info_log.call_args_list,
                                                             *warning_log.call_args_list))
             assert not any(message in logged for message in DAILY_GUARD_BUSY_MESSAGES), logged

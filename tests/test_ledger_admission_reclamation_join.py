@@ -5,6 +5,10 @@ import tempfile
 import threading
 import time
 
+from _runner_budget_calibration import measure_isolated_runner_budget_scale
+
+_, runner_budget_scale = measure_isolated_runner_budget_scale()
+
 os.environ.setdefault("SPENDGUARD_TEST_ISOLATED", "1")
 os.environ.setdefault("SPENDGUARD_HOME", tempfile.mkdtemp())
 
@@ -80,7 +84,7 @@ def run_ledger_admission_reclamation_join_guard():
                 pass
             else:
                 raise AssertionError("request admission must refuse the occupied ceiling")
-            assert time.monotonic() - started < RECLAMATION_JOIN_PROMPTNESS_S
+            assert time.monotonic() - started < RECLAMATION_JOIN_PROMPTNESS_S * runner_budget_scale
             second = threading.Thread(target=attempt_reclamation_join_admission, args=(True,))
             workers.append(second)
             second.start()

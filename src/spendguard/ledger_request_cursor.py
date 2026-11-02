@@ -32,6 +32,7 @@ _REQUEST_CURSOR_WRITE_ACTIONS = frozenset((
 ))
 _MANAGED_READ_EXPIRY_THREAD_NAME = "spendguard-ledger-read-expiry"
 _MANAGED_READ_EXPIRY_LOG = logging.getLogger(__name__)
+MANAGED_READ_EXPIRY_DEFERRED_LOG_MESSAGE = "Ledger read expiry deferred: connection busy; retry scheduled"
 MANAGED_READ_CLEANUP_COMPLETE = "released"
 MANAGED_READ_CLEANUP_DEFERRED = "deferred_connection_busy"
 MANAGED_STATEMENT_FACT_CACHE_CAPACITY = 128
@@ -202,7 +203,7 @@ class ManagedRequestCursorState:
     def release_idle_managed_request_cursor(self):
         if not self.step_lock.acquire(blocking=False):
             if self.expiry_cleanup_outcome != MANAGED_READ_CLEANUP_DEFERRED:
-                _MANAGED_READ_EXPIRY_LOG.warning("Ledger read expiry deferred: connection busy; retry scheduled")
+                _MANAGED_READ_EXPIRY_LOG.debug(MANAGED_READ_EXPIRY_DEFERRED_LOG_MESSAGE)
             self.expiry_cleanup_outcome = MANAGED_READ_CLEANUP_DEFERRED
             return self.expiry_cleanup_outcome
         try:

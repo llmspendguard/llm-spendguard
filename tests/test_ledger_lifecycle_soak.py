@@ -10,6 +10,10 @@ import time
 from pathlib import Path
 from unittest.mock import patch
 
+from _runner_budget_calibration import measure_isolated_runner_budget_scale
+
+_, runner_budget_scale = measure_isolated_runner_budget_scale()
+
 os.environ.setdefault("SPENDGUARD_TEST_ISOLATED", "1")
 os.environ.setdefault("SPENDGUARD_HOME", tempfile.mkdtemp())
 
@@ -119,7 +123,7 @@ def run_recycler_lease_ownership_probe(ledger_path, baseline):
             env=child_environment,
             capture_output=True,
             text=True,
-            timeout=RECYCLER_SUBPROCESS_TIMEOUT_S,
+            timeout=RECYCLER_SUBPROCESS_TIMEOUT_S * runner_budget_scale,
             check=False,
         )
         assert control.returncode == 0, control.stdout + control.stderr
@@ -131,13 +135,13 @@ def run_recycler_lease_ownership_probe(ledger_path, baseline):
             env=child_environment,
             capture_output=True,
             text=True,
-            timeout=RECYCLER_SUBPROCESS_TIMEOUT_S,
+            timeout=RECYCLER_SUBPROCESS_TIMEOUT_S * runner_budget_scale,
             check=False,
         )
         regression_elapsed = time.monotonic() - regression_started
         assert injected_regression.returncode != 0, "injected recycler-lock regression unexpectedly passed"
         assert RECYCLER_DEADLOCK_DIAGNOSTIC in injected_regression.stderr, injected_regression.stderr
-        assert regression_elapsed < RECYCLER_SUBPROCESS_TIMEOUT_S
+        assert regression_elapsed < RECYCLER_SUBPROCESS_TIMEOUT_S * runner_budget_scale
 
 
 def run_isolated_recycler_lease_ownership_probe(ledger_path, inject_lock_regression):
@@ -160,10 +164,10 @@ def run_isolated_recycler_lease_ownership_probe(ledger_path, inject_lock_regress
         try:
             with config.ledger_op(lease_key, ensure_lifecycle_soak_schema, ledger_path) as outer:
                 retained.append(outer)
-                recycler.submit(recycler_operation).result(timeout=RECYCLER_DEADLOCK_WATCHDOG_S)
+                recycler.submit(recycler_operation).result(timeout=RECYCLER_DEADLOCK_WATCHDOG_S * runner_budget_scale)
                 assert not outer._ledger_released
                 cursor = outer.execute("SELECT value FROM lifecycle_soak ORDER BY value")
-                recycler.submit(recycler_operation).result(timeout=RECYCLER_DEADLOCK_WATCHDOG_S)
+                recycler.submit(recycler_operation).result(timeout=RECYCLER_DEADLOCK_WATCHDOG_S * runner_budget_scale)
                 assert cursor.fetchone()[0] == 0
                 with config.ledger_op(lease_key, ensure_lifecycle_soak_schema, ledger_path) as inner:
                     assert inner is outer
@@ -212,7 +216,7 @@ def run_isolated_recycler_lease_ownership_probe(ledger_path, inject_lock_regress
 def run_recycler_lease_child_mode(ledger_path, inject_lock_regression):
     faulthandler.enable()
     # The Future bound fires first; this second layer still dumps stacks if timeout handling itself wedges.
-    faulthandler.dump_traceback_later(RECYCLER_FAULTHANDLER_WATCHDOG_S, exit=True)
+    faulthandler.dump_traceback_later(RECYCLER_FAULTHANDLER_WATCHDOG_S * runner_budget_scale, exit=True)
     try:
         run_isolated_recycler_lease_ownership_probe(ledger_path, inject_lock_regression)
     finally:

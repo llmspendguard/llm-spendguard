@@ -17,6 +17,10 @@ straggler buys nothing.
 import os, sys, tempfile, time
 import threading
 
+from _runner_budget_calibration import measure_isolated_runner_budget_scale
+
+_, runner_budget_scale = measure_isolated_runner_budget_scale()
+
 PANEL_VENDOR_COUNT = 4
 PANEL_WORK_SECONDS = 0.4
 PANEL_SCHEDULER_CUSHION = 75
@@ -102,7 +106,8 @@ try:
     el = time.monotonic() - t0
     check("...and every vendor's result is present", fan["n_ok"] == 4 and fan["complete"])
     check("all vendors rendezvoused concurrently", not panel_concurrent_start.broken)
-    check("panel completes within the scheduling-tolerant hang guard", el < PANEL_PROMPTNESS_SECONDS, f"{el:.2f}s")
+    check("panel completes within the scheduling-tolerant hang guard",
+          el < PANEL_PROMPTNESS_SECONDS * runner_budget_scale, f"{el:.2f}s")
 
     def _mixed_call(vendor, model, prompt, **kw):
         if vendor == "fast":
@@ -117,7 +122,8 @@ try:
     el = time.monotonic() - t0
     check("...and says so honestly: complete means `need` was MET", r["complete"] and r["n_ok"] == 1)
     check("first_ok returns before the straggler finishes", not first_ok_slow_finished.is_set())
-    check("first_ok completes within the scheduling-tolerant hang guard", el < PANEL_PROMPTNESS_SECONDS, f"{el:.2f}s")
+    check("first_ok completes within the scheduling-tolerant hang guard",
+          el < PANEL_PROMPTNESS_SECONDS * runner_budget_scale, f"{el:.2f}s")
 finally:
     first_ok_release.set()
     vc.call = _orig

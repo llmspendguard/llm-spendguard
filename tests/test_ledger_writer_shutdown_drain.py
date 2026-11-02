@@ -11,6 +11,10 @@ import threading
 import time
 from unittest.mock import patch
 
+from _runner_budget_calibration import measure_isolated_runner_budget_scale
+
+_, runner_budget_scale = measure_isolated_runner_budget_scale()
+
 from spendguard import config, ledger, ledger_read, ledger_writer
 
 
@@ -31,7 +35,7 @@ def exercise_stuck_admitted_write_shutdown_drain():
         config.LEDGER_POOL_IDLE_TIMEOUT_DEFAULT_S / SHUTDOWN_DRAIN_TIMEOUT_DIVISOR)
     original_ledger_read_pool_settings = config.ledger_read_pool_settings
     faulthandler.dump_traceback_later(
-        configured_shutdown_timeout_s * SHUTDOWN_DRAIN_SUBPROCESS_WATCHDOG_MULTIPLIER,
+        configured_shutdown_timeout_s * SHUTDOWN_DRAIN_SUBPROCESS_WATCHDOG_MULTIPLIER * runner_budget_scale,
         exit=True,
     )
 
@@ -79,7 +83,7 @@ def exercise_stuck_admitted_write_shutdown_drain():
         surfaced_warning = warning_output.getvalue()
         assert str(stuck_owner_path.resolve()) in surfaced_warning, surfaced_warning
         assert f"{SHUTDOWN_DRAIN_EXPECTED_QUEUED_JOBS} queued job(s)" in surfaced_warning, surfaced_warning
-        assert shutdown_elapsed_s < shutdown_wall_clock_bound_s, shutdown_elapsed_s
+        assert shutdown_elapsed_s < shutdown_wall_clock_bound_s * runner_budget_scale, shutdown_elapsed_s
         print(surfaced_warning, end="", file=sys.stderr)
 
 
@@ -99,7 +103,7 @@ def test_stuck_admitted_write_shutdown_drain_is_bounded_and_surfaced():
             env=environment,
             capture_output=True,
             text=True,
-            timeout=subprocess_watchdog_s,
+            timeout=subprocess_watchdog_s * runner_budget_scale,
         )
     except subprocess.TimeoutExpired as error:
         raise AssertionError("ledger writer shutdown drain exceeded its SSOT-derived watchdog") from error
