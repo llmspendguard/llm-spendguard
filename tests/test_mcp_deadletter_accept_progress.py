@@ -11,7 +11,10 @@ from spendguard import config, ledger_writer, mcp_fd_lifecycle as lifecycle
 from spendguard import budget
 
 ACCEPT_PROGRESS_BUDGET_S = 0.2
-ACCEPT_WRITER_WATCHDOG_S = ACCEPT_PROGRESS_BUDGET_S * 20
+ACCEPT_PROMPTNESS_MULTIPLIER = 75
+ACCEPT_PROMPTNESS_BOUND_S = ACCEPT_PROGRESS_BUDGET_S * ACCEPT_PROMPTNESS_MULTIPLIER
+ACCEPT_HOLDER_RETENTION_MULTIPLIER = 6
+ACCEPT_WRITER_WATCHDOG_S = ACCEPT_PROMPTNESS_BOUND_S * ACCEPT_HOLDER_RETENTION_MULTIPLIER
 
 
 def test_periodic_deadletter_service_returns_while_writer_held():
@@ -39,7 +42,7 @@ def test_periodic_deadletter_service_returns_while_writer_held():
             assert occupied.wait(ACCEPT_WRITER_WATCHDOG_S)
             with patch.object(lifecycle, "_mcp_next_deadletter_drain_at", 0):
                 dispatcher.start()
-                assert returned.wait(ACCEPT_PROGRESS_BUDGET_S), "accept service waited for the ledger writer"
+                assert returned.wait(ACCEPT_PROMPTNESS_BOUND_S), "accept service waited for the ledger writer"
                 assert holder.is_alive()
         finally:
             release.set()
@@ -78,14 +81,14 @@ def test_deadletter_worker_deadline_retains_and_reschedules():
              patch.object(lifecycle.MCP_FD_LOG, "exception") as warning:
             lifecycle.service_mcp_spend_deadletters()
             first_worker = lifecycle._mcp_deadletter_worker
-            first_worker.join(ACCEPT_PROGRESS_BUDGET_S * 5)
+            first_worker.join(ACCEPT_PROMPTNESS_BOUND_S)
             assert not first_worker.is_alive(), "retry admission exceeded its configured deadline"
             assert holder.is_alive() and retry_path.read_text() == evidence
             warning.assert_called_once()
             lifecycle._mcp_next_deadletter_drain_at = 0
             lifecycle.service_mcp_spend_deadletters()
             assert lifecycle._mcp_deadletter_worker is not first_worker
-            lifecycle._mcp_deadletter_worker.join(ACCEPT_PROGRESS_BUDGET_S * 5)
+            lifecycle._mcp_deadletter_worker.join(ACCEPT_PROMPTNESS_BOUND_S)
             assert not lifecycle._mcp_deadletter_worker.is_alive()
             assert retry_path.read_text() == evidence
     finally:

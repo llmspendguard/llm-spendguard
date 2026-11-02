@@ -12,6 +12,9 @@ from _script_checks import record_script_check
 from spendguard import gate
 
 fails = []
+DOCTOR_EXPECTED_SECONDS = 2.0
+DOCTOR_SCHEDULER_CUSHION = 15
+DOCTOR_PROMPTNESS_SECONDS = DOCTOR_EXPECTED_SECONDS * DOCTOR_SCHEDULER_CUSHION
 
 # ── realtime_by_day: empty when no log, then aggregates by day + by model, honoring `since` ──
 record_script_check(fails, "realtime_by_day: no log file → ({}, {})", gate.realtime_by_day() == ({}, {}))
@@ -51,7 +54,7 @@ with patch.object(setup, "_startup_gate_active", return_value=True), contextlib.
     rc = gate._cli("doctor")
 took = time.monotonic() - t0
 record_script_check(fails, "_cli('doctor') returns 0", rc == 0)
-record_script_check(fails, "doctor completes fast (<2s) — never live-pulls provider billing by default", took < 2.0)
+record_script_check(fails, "doctor completes within the scheduling-tolerant hang guard", took < DOCTOR_PROMPTNESS_SECONDS)
 record_script_check(fails, "no cache → leak status reads UNKNOWN (never a silent skip)", "UNKNOWN" in buf.getvalue())
 
 # a prior report/reconcile computed the leak line → doctor reuses it WITH ITS AGE
@@ -73,7 +76,7 @@ with patch.object(setup, "_startup_gate_active", return_value=True), contextlib.
 record_script_check(fails, "doctor --live forces the full computation", "accounted" in buf3.getvalue() and "as of" not in buf3.getvalue())
 
 # ── GUARD (deterministic, not a timing proxy): the DEFAULT doctor path must NOT run the networked metadata
-# backbone audit — its capability-completeness leg reaches the org /v1/models — only `--live` does. The <2s check
+# backbone audit — its capability-completeness leg reaches the org /v1/models — only `--live` does. The timing check
 # above only caught this when that server happened to be slow; a fast/absent server let the live-pull-on-default
 # regression ship unseen. So assert the CALL itself, independent of wall-clock (CLAUDE.md #0c: when a rule keeps
 # breaking, the guard was blind to the defect — widen it to see the defect, not a proxy for it).

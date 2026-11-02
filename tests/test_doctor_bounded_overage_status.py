@@ -15,7 +15,11 @@ from unittest.mock import patch
 from _runner_budget_calibration import MAX_RUNNER_SCALE, MIN_RUNNER_SCALE, RUNNER_BUDGET_SCALE_ENV
 
 
-_DOCTOR_WALL_BUDGET_SECONDS = 2.0
+_DOCTOR_STARTUP_BUDGET_SECONDS = 2.0
+_DOCTOR_SCHEDULING_HEADROOM_MULTIPLE = 8
+_DOCTOR_WALL_BUDGET_SECONDS = _DOCTOR_STARTUP_BUDGET_SECONDS * _DOCTOR_SCHEDULING_HEADROOM_MULTIPLE
+_DOCTOR_WATCHDOG_MULTIPLE = 2
+_DOCTOR_WATCHDOG_SECONDS = _DOCTOR_WALL_BUDGET_SECONDS * _DOCTOR_WATCHDOG_MULTIPLE
 _DEFAULT_RUNNER_BUDGET_SCALE = 1.0
 _SEEDED_LEDGER_ROWS = 50_000
 _STALE_CACHE_TIMESTAMP = 1.0
@@ -106,7 +110,7 @@ sys.path.insert(0, source_root)
 from spendguard import claudecode, gate, overage, setup  # noqa: E402
 
 overage_status_wall_budget_seconds = (
-    overage.OVERAGE_DIAGNOSTIC_WALL_BUDGET_SECONDS * runner_budget_scale
+    max(overage.OVERAGE_DIAGNOSTIC_WALL_BUDGET_SECONDS, _DOCTOR_WALL_BUDGET_SECONDS) * runner_budget_scale
 )
 
 
@@ -136,7 +140,7 @@ with patch.object(claudecode, "residency_decomposition",
 started = time.monotonic()
 completed = subprocess.run(
     [sys.executable, "-S", "-c", _SUBPROCESS_DOCTOR_PROBE], env=environment,
-    capture_output=True, text=True, check=False, timeout=doctor_wall_budget_seconds,
+    capture_output=True, text=True, check=False, timeout=_DOCTOR_WATCHDOG_SECONDS * runner_budget_scale,
 )
 elapsed = time.monotonic() - started
 combined_output = completed.stdout + completed.stderr

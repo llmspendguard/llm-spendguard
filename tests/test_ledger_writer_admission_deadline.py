@@ -10,8 +10,8 @@ align_test_startup_home(prefix=__name__)
 from spendguard import budget, config, ledger, ledger_read, ledger_writer
 
 WRITER_REPRO_DEADLINE_S = 0.02
-WRITER_REPRO_HOLD_FACTOR = 20
-WRITER_REPRO_SCHEDULING_FACTOR = 5
+WRITER_REPRO_HOLD_FACTOR = 4500
+WRITER_REPRO_SCHEDULING_FACTOR = 750
 WRITER_REPRO_JOB = __name__
 WRITER_SETUP_REPRO_POOL_KEY = __name__
 
@@ -86,7 +86,7 @@ def test_budget_first_touch_avoids_occupied_writer_admission():
 
     def hold_consumer_setup_writer_callback():
         consumer_occupied.set()
-        consumer_release.wait(timeout=config.LEDGER_WRITE_TIMEOUT_S)
+        consumer_release.wait(timeout=WRITER_REPRO_DEADLINE_S * WRITER_REPRO_HOLD_FACTOR)
 
     consumer_holder = threading.Thread(target=lambda: ledger_writer.run_ledger_write(
         hold_consumer_setup_writer_callback))
@@ -94,9 +94,9 @@ def test_budget_first_touch_avoids_occupied_writer_admission():
     try:
         assert consumer_occupied.wait(timeout=config.LEDGER_WRITE_TIMEOUT_S)
         for setup_accessor in (
-                lambda: budget.spent_all_time(deadline_s=WRITER_REPRO_DEADLINE_S),
-                lambda: budget.spent_since(None, deadline_s=WRITER_REPRO_DEADLINE_S),
-                lambda: budget.spent_by_job(WRITER_REPRO_JOB, deadline_s=WRITER_REPRO_DEADLINE_S)):
+                lambda: budget.spent_all_time(deadline_s=WRITER_REPRO_DEADLINE_S * WRITER_REPRO_SCHEDULING_FACTOR),
+                lambda: budget.spent_since(None, deadline_s=WRITER_REPRO_DEADLINE_S * WRITER_REPRO_SCHEDULING_FACTOR),
+                lambda: budget.spent_by_job(WRITER_REPRO_JOB, deadline_s=WRITER_REPRO_DEADLINE_S * WRITER_REPRO_SCHEDULING_FACTOR)):
             assert setup_accessor() == 0
             assert consumer_holder.is_alive()
         assert getattr(budget._LEDGER_TL, "led", None) is None

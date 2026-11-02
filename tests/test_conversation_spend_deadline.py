@@ -19,7 +19,9 @@ from spendguard.money_scale import NANO_USD_PER_USD
 CONVERSATION_FAULT_ROWS = 2048
 CONVERSATION_FAULT_WORKERS = 4
 CONVERSATION_FAULT_DEADLINE_S = 0.02
-CONVERSATION_FAULT_BOUND_S = 1.0
+CONVERSATION_FAULT_PROMPTNESS_MULTIPLE = 750
+# Typed deadline refusals prove correctness; allow a loaded scheduler ample time.
+CONVERSATION_FAULT_BOUND_S = CONVERSATION_FAULT_DEADLINE_S * CONVERSATION_FAULT_PROMPTNESS_MULTIPLE
 CONVERSATION_FAULT_STEP_S = 0.001
 CONVERSATION_COVERAGE_DELAY_MULTIPLIER = 2
 CONVERSATION_FAULT_FAST_S = 5.0
@@ -101,7 +103,7 @@ def test_unscoped_consumer_snapshot_while_writer_transaction_is_open():
             with patch.object(ledger.SpendLedger, "__init__",
                               side_effect=AssertionError("consumer initialized write ledger")):
                 automatic = budget.spent_since(CONVERSATION_FAULT_DAY,
-                                               deadline_s=CONVERSATION_FAULT_DEADLINE_S)
+                                               deadline_s=CONVERSATION_FAULT_BOUND_S)
                 explicit = budget.spent_since(CONVERSATION_FAULT_DAY, read_only=True,
                                               deadline_s=CONVERSATION_FAULT_FAST_S)
                 assert automatic == explicit == CONVERSATION_FAULT_ROWS

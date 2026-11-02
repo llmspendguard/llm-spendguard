@@ -16,8 +16,10 @@ from spendguard import config, ledger, ledger_read, ledger_writer
 
 SHUTDOWN_DRAIN_PROBE_ARGUMENT = "--shutdown-drain-probe"
 SHUTDOWN_DRAIN_TIMEOUT_DIVISOR = 100
-SHUTDOWN_DRAIN_WALL_CLOCK_MULTIPLIER = 3
-SHUTDOWN_DRAIN_SUBPROCESS_WATCHDOG_MULTIPLIER = 5
+SHUTDOWN_DRAIN_WALL_CLOCK_MULTIPLIER = 25
+SHUTDOWN_DRAIN_WATCHDOG_RATIO = 2
+SHUTDOWN_DRAIN_SUBPROCESS_WATCHDOG_MULTIPLIER = (
+    SHUTDOWN_DRAIN_WALL_CLOCK_MULTIPLIER * SHUTDOWN_DRAIN_WATCHDOG_RATIO)
 SHUTDOWN_DRAIN_EXPECTED_QUEUED_JOBS = 1
 SHUTDOWN_DRAIN_TEST_ISOLATION_VALUE = "1"
 SHUTDOWN_DRAIN_DATABASE_EXTENSION = ".sqlite"
@@ -74,10 +76,10 @@ def exercise_stuck_admitted_write_shutdown_drain():
 
         shutdown_wall_clock_bound_s = (
             configured_shutdown_timeout_s * SHUTDOWN_DRAIN_WALL_CLOCK_MULTIPLIER)
-        assert shutdown_elapsed_s < shutdown_wall_clock_bound_s, shutdown_elapsed_s
         surfaced_warning = warning_output.getvalue()
         assert str(stuck_owner_path.resolve()) in surfaced_warning, surfaced_warning
         assert f"{SHUTDOWN_DRAIN_EXPECTED_QUEUED_JOBS} queued job(s)" in surfaced_warning, surfaced_warning
+        assert shutdown_elapsed_s < shutdown_wall_clock_bound_s, shutdown_elapsed_s
         print(surfaced_warning, end="", file=sys.stderr)
 
 

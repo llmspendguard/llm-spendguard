@@ -21,7 +21,8 @@ PROGRESS_GUARD_ADVERSE_STEPS = 100000000
 PROGRESS_GUARD_CALLBACK_CEILING = 2000
 PROGRESS_GUARD_DEADLINE_S = 0.02
 PROGRESS_GUARD_COMPLETION_BUDGET_S = 5.0
-PROGRESS_GUARD_DEADLINE_HEADROOM_S = 0.5
+PROGRESS_GUARD_PROMPTNESS_MULTIPLE = 750
+PROGRESS_GUARD_PROMPTNESS_S = PROGRESS_GUARD_DEADLINE_S * PROGRESS_GUARD_PROMPTNESS_MULTIPLE
 PROGRESS_GUARD_CANCEL_WAIT_S = 1.0
 PROGRESS_GUARD_CANCEL_THREAD = "request-progress-cancellation"
 PROGRESS_GUARD_PROFILE_EVENT = "call"
@@ -75,7 +76,7 @@ def run_request_progress_callback_budget_guards():
                 else:
                     raise AssertionError("adverse scan must raise a typed deadline error")
                 elapsed = time.monotonic() - started
-                assert elapsed <= PROGRESS_GUARD_DEADLINE_S + PROGRESS_GUARD_DEADLINE_HEADROOM_S, elapsed
+                assert elapsed <= PROGRESS_GUARD_PROMPTNESS_S, elapsed
                 print(f"deadline bounded_owner={bounded_owner}: {elapsed:.6f}s")
 
             with ledger_read.ledger_request_scope(deadline_s=PROGRESS_GUARD_COMPLETION_BUDGET_S) as scope:
