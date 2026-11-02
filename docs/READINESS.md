@@ -41,6 +41,9 @@ A supplied clean-environment report must match the current input fingerprint and
 - [ ] **spend-daily-rollup-reconciles-to-heap** — Closed reporting-day aggregates preserve exact heap money, precise dirty-day invalidation with compare-and-clear, off-hot-path snapshot audits, compact grain and snapshot semantics.
   Gate: `spendguard.capability_readiness_gates:run_capability_script_readiness_gate`; inputs: `{"scripts": ["tests/test_ledger_daily_rollup.py"]}`.
 
+- [ ] **ledger-read-never-spurious-refuse** — Cap and delegate admission reads serve committed snapshots despite writer transactions or expired request scopes; genuine query deadlines still refuse.
+  Gate: `spendguard.capability_readiness_gates:assess_ledger_read_never_spurious_refuse_readiness`; inputs: `{"scripts": ["tests/test_ledger_read_never_spurious_refuse.py"]}`.
+
 ## External standards — reviewed offline subsets
 
 PASS covers the declared offline subset, not certification or an external badge. Reviewed N/A checks remain tracked below.

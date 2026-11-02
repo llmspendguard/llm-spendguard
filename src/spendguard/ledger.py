@@ -441,68 +441,40 @@ def serialize_spend_ledger_mutation(method):
 
 
 def own_spend_ledger_read_scope(method):
-    """Lease one read handle; a caller's deadline covers admission and query alike.
+    """Read committed state on a disposable read-only WAL snapshot.
 
-    Resolve the absolute expiry before acquiring capacity, then give the method
-    only the unused duration. Pool/setup timeouts retain the aggregate API's typed
-    refusal instead of returning an incomplete or silently late result.
+    A handed writer is never interrupted or inspected for pending money. Nested
+    operations may reuse an already owned read-only snapshot and its deadline.
     """
     from .ledger_read import bind_ledger_query_deadline
     deadline_parameter = inspect.signature(method).parameters.get("deadline_s")
+
     @bind_ledger_query_deadline
     @functools.wraps(method)
     def invoke_scoped_spend_ledger_read(self, *args, **kwargs):
-        from .ledger_read import LedgerQueryDeadline, effective_ledger_admission_deadline
+        from .ledger_read import (_ledger_read_connection, LedgerQueryDeadline,
+                                  LedgerReadError, LedgerRequestAbandoned, LedgerSettlementIncomplete,
+                                  DEFAULT_LEDGER_READ_TIME_BUDGET_S)
         deadline_s = (kwargs.get("deadline_s", deadline_parameter.default)
-                      if deadline_parameter is not None else None)
-        expires = None
-        if deadline_s is not None:
-            if not math.isfinite(deadline_s) or deadline_s <= 0:
-                raise LedgerQueryDeadline(deadline_s)
-            expires = time.monotonic() + deadline_s
-        expires = effective_ledger_admission_deadline(expires)
-        from .ledger_writer import ledger_connection_commit_deferred
-        # A plain writer must never receive a reader's interrupt/progress handler.
-        # Existing bounded read snapshots may themselves have BEGIN in flight.
-        snapshot_pending_writer = (
-            self._conn is not None and self._conn.in_transaction
-            and not ledger_connection_commit_deferred(self._conn)
-            and not getattr(self._conn, "_ledger_owned_read_deadline", False)
-        )
-        if self._conn is not None and not snapshot_pending_writer:
+                      if deadline_parameter is not None else DEFAULT_LEDGER_READ_TIME_BUDGET_S)
+        if self._conn is not None and getattr(self._conn, "_ledger_owned_read_deadline", False):
             return method(self, *args, **kwargs)
-        from .ledger_writer import ledger_bulk_scope_matches, reserved_ledger_bulk_read_connection
-        if not snapshot_pending_writer and ledger_bulk_scope_matches(self.db_path):
-            def read_reserved_bulk_transaction():
-                facade = copy.copy(self)
-                facade._conn = reserved_ledger_bulk_read_connection(self.db_path)
-                try:
-                    return method(facade, *args, **kwargs)
-                finally:
-                    self._total_memo = facade._total_memo
-            return read_reserved_bulk_transaction()
+        time_budget = DEFAULT_LEDGER_READ_TIME_BUDGET_S if deadline_s is None else deadline_s
         try:
-            with config.managed_ledger_read_connection(self.db_path, deadline_at=expires) as connection:
+            with _ledger_read_connection(self.db_path, time_budget=time_budget) as connection:
                 facade = copy.copy(self)
                 facade._conn = connection
+                facade._explicit_owned_connection = True
+                # SQLite data_version is connection-relative. A memo from a
+                # different lease cannot establish this committed generation.
+                facade._total_memo = None
                 connection.row_factory = sqlite3.Row
-                connection.create_aggregate("dec_sum", 1, _DecSum)
-                if expires is not None:
-                    remaining = expires - time.monotonic()
-                    if remaining <= 0:
-                        raise LedgerQueryDeadline(deadline_s)
-                    if deadline_parameter is not None:
-                        kwargs["deadline_s"] = remaining
-                try:
-                    return method(facade, *args, **kwargs)
-                finally:
-                    self._total_memo = facade._total_memo
-                    if facade._conn is not None and facade._conn is not connection:
-                        facade._conn.close()
-        except TimeoutError as admission_error:
-            if expires is None:
-                raise
-            raise LedgerQueryDeadline(deadline_s) from admission_error
+                connection.execute("PRAGMA query_only=ON")
+                return method(facade, *args, **kwargs)
+        except (LedgerRequestAbandoned, LedgerSettlementIncomplete):
+            raise
+        except LedgerReadError as query_timeout:
+            raise LedgerQueryDeadline(time_budget) from query_timeout
     return invoke_scoped_spend_ledger_read
 
 
@@ -1169,9 +1141,7 @@ class SpendLedger:
             result = self._cat_dec(LLM_USD_COLS, self._COUNTABLE, since=since, until=until, where=where, **filters)
             require_ledger_writer_request_live()
             return result
-        if not math.isfinite(deadline_s) or deadline_s <= 0 or self._conn.in_transaction:
-            # SQLite interruption can roll back a pending transaction. Refuse the read
-            # before installing a handler rather than endangering forensic writes.
+        if not math.isfinite(deadline_s) or deadline_s <= 0:
             raise LedgerQueryDeadline(deadline_s)
         expires = time.monotonic() + deadline_s
         expired = False
@@ -1182,6 +1152,7 @@ class SpendLedger:
             return expired
 
         connection = self._conn
+        previous_progress, previous_interval = getattr(connection, "_ledger_progress", (None, 0))
         connection.set_progress_handler(_spend_aggregate_progress_expired,
                                         config.LEDGER_QUERY_PROGRESS_VM_INSTRUCTIONS)
         try:
@@ -1202,8 +1173,8 @@ class SpendLedger:
             expired = True
             raise
         finally:
-            connection.set_progress_handler(None, config.LEDGER_QUERY_PROGRESS_VM_INSTRUCTIONS)
-            if expired:
+            connection.set_progress_handler(previous_progress, previous_interval)
+            if expired and not getattr(connection, "_ledger_owned_read_deadline", False):
                 # This is SpendLedger's direct, counted handle, not config's keyed
                 # pool. Replace it before the thread-local ledger can be reused.
                 connection.close()

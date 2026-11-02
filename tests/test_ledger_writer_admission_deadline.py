@@ -1,4 +1,4 @@
-"""Read deadlines expire while a callback still owns writer admission."""
+"""Committed reads bypass writer admission; schema setup keeps its deadline."""
 import sys
 import threading
 import time
@@ -19,8 +19,9 @@ WRITER_REPRO_JOB = __name__
 WRITER_SETUP_REPRO_POOL_KEY = __name__
 
 
-def test_freshness_deadline_expires_before_writer_release():
+def test_committed_total_snapshot_returns_before_writer_release():
     current = ledger.SpendLedger()
+    committed_total = current.running_llm_total_dec()
     occupied = threading.Event()
     release = threading.Event()
     hold_s = WRITER_REPRO_DEADLINE_S * WRITER_REPRO_HOLD_FACTOR
@@ -35,15 +36,11 @@ def test_freshness_deadline_expires_before_writer_release():
     try:
         assert occupied.wait(timeout=config.LEDGER_WRITE_TIMEOUT_S)
         started = time.monotonic()
-        try:
-            current.running_llm_total_dec(deadline_s=WRITER_REPRO_DEADLINE_S)
-        except ledger_read.LedgerQueryDeadline:
-            elapsed = time.monotonic() - started
-        else:
-            raise AssertionError("writer admission must refuse the expired aggregate")
-        print(f"writer deadline elapsed={elapsed:.6f}s hold={hold_s:.6f}s")
+        assert current.running_llm_total_dec(deadline_s=WRITER_REPRO_DEADLINE_S) == committed_total
+        elapsed = time.monotonic() - started
+        print(f"snapshot read elapsed={elapsed:.6f}s hold={hold_s:.6f}s")
         assert elapsed < WRITER_REPRO_DEADLINE_S * WRITER_REPRO_SCHEDULING_FACTOR * runner_budget_scale
-        assert holder.is_alive(), "deadline must precede writer release"
+        assert holder.is_alive(), "snapshot must return before writer release"
     finally:
         release.set()
         holder.join(timeout=config.LEDGER_WRITE_TIMEOUT_S)

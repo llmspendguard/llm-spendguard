@@ -125,6 +125,16 @@ def run_capability_script_readiness_gate(*, context, scripts):
     )
 
 
+def assess_ledger_read_never_spurious_refuse_readiness(*, context, scripts):
+    """Prove committed reads survive dispatch state while genuine query failures refuse.
+
+    The canonical harness gives each complete regression script a fresh temporary
+    HOME before interpreter startup, so selfcheck never probes an operator ledger
+    for this gate.
+    """
+    return run_capability_script_readiness_gate(context=context, scripts=scripts)
+
+
 def assess_capability_environment_evidence(*, context, patterns, required_checks):
     """Require current-input, complete successful checks from independent clean environments."""
     report_path = context.get("environment_report")
