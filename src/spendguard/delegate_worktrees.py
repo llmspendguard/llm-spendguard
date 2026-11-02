@@ -46,9 +46,9 @@ def run_isolated_delegate(executor, cwd, *, worktree_root, metadata_writer=None)
     def persist_delegate_worktree_metadata():
         if metadata_writer:
             metadata_writer(metadata)
-    persist_delegate_worktree_metadata()
     try:
         _delegate_worktree_git(root, "worktree", "add", "--detach", os.fspath(workspace), "HEAD")
+        persist_delegate_worktree_metadata()
         dirty_patch = _delegate_worktree_git(root, "diff", "--binary", "HEAD", "--")
         if dirty_patch:
             _delegate_worktree_git(workspace, "apply", "--binary", "-", input_bytes=dirty_patch)
@@ -75,7 +75,8 @@ def run_isolated_delegate(executor, cwd, *, worktree_root, metadata_writer=None)
         persist_delegate_worktree_metadata()
         return {**execution, "worktree": metadata} if isinstance(execution, dict) else execution
     except BaseException:
-        persist_delegate_worktree_metadata()
+        if workspace.is_dir():
+            persist_delegate_worktree_metadata()
         raise
 
 
