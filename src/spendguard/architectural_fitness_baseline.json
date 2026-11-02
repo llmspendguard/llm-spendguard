@@ -541,7 +541,7 @@
           },
           "src/spendguard/ledger_request_cursor.py": {
             "max_cc": 34,
-            "mi": 29.635702005503575
+            "mi": 29.582462009186894
           },
           "src/spendguard/ledger_schema_migrations.py": {
             "max_cc": 2,
@@ -557,7 +557,7 @@
           },
           "src/spendguard/ledger_writer.py": {
             "max_cc": 18,
-            "mi": 24.736594780297587
+            "mi": 24.45057858321519
           },
           "src/spendguard/litellm_adapter.py": {
             "max_cc": 16,
@@ -597,7 +597,7 @@
           },
           "src/spendguard/model_catalog.py": {
             "max_cc": 43,
-            "mi": 12.608930133037466
+            "mi": 12.608930133037463
           },
           "src/spendguard/model_preflight.py": {
             "max_cc": 18,
@@ -725,7 +725,7 @@
           },
           "src/spendguard/report.py": {
             "max_cc": 33,
-            "mi": 38.13763319970016
+            "mi": 36.733245319007324
           },
           "src/spendguard/requirement_judge.py": {
             "max_cc": 10,
@@ -825,11 +825,11 @@
           },
           "src/spendguard/storm_coalescer.py": {
             "max_cc": 24,
-            "mi": 33.5630615814814
+            "mi": 30.15302067138812
           },
           "src/spendguard/storm_route.py": {
             "max_cc": 11,
-            "mi": 60.94003876928755
+            "mi": 59.80546381562603
           },
           "src/spendguard/storm_submit.py": {
             "max_cc": 31,
@@ -932,8 +932,8 @@
             "mi": 68.14868072197874
           },
           "src/spendguard/delegate_worktrees.py": {
-            "max_cc": 9,
-            "mi": 58.84676002046381
+            "max_cc": 10,
+            "mi": 58.494595475720615
           },
           "src/spendguard/subscription_cli_results.py": {
             "max_cc": 12,
@@ -1857,7 +1857,8 @@
     "reviewed_report_collector_deadline": "2026-11-01: _fetch_sources_concurrently adds a whole-collector deadline plus hung-source diagnostics and a non-blocking fail-closed ex.shutdown(cancel_futures=...) so a wedged provider pull cannot hang report generation. Max CC is unchanged (generate_report remains the CC-33 maximum, untouched; the new collector is only CC 4); the whole-file MI fell purely from ~30 essential, non-extractable lines, so it is recorded as a zero-margin ceiling measured in the CI exact interpreter (python 3.12.15, linux/amd64).",
     "reviewed_delegate_cancel_retention_dir_guard": "delegate_worktrees cyclomatic complexity rises by one branch because the cancel-retention path now guards on the retained worktree directory actually existing before persisting its metadata: a retained worktree is only recorded when its directory is present on disk, so a cancelled/failed delegate can no longer leave a dangling metadata entry pointing at a directory that was never materialized. The added conditional is the fix itself (reviewed in PR #277, axis-4 delegate cancel-retention); the measured CC/MI shift is recorded here rather than refactored away because collapsing the guard would reintroduce the dangling-metadata defect.",
     "reviewed_storm_realtime_per_item_deadline": "storm_coalescer and storm_route whole-file maintainability fell slightly because the realtime coalescing path now applies a coordinator-derived per-item deadline to each callback it drives: a slow or wedged realtime callback can no longer stall the storm coalescer indefinitely, so the fan-out bounds its waits and fails closed on an exceeded per-item budget (reviewed in PR #273, axis-4 site 2/5). The added fail-closed deadline/timeout lines are essential and not extractable without reintroducing the unbounded-wait defect; max cyclomatic complexity of the worst functions is not what regressed, only whole-file MI from the few added bounded-wait lines. Regenerated as a zero-margin ceiling in the CI exact interpreter (python 3.12.15, linux/amd64).",
-    "reviewed_ledger_read_expiry_debug_demote_ssot": "Promoting the self-healing managed-read-expiry deferral log line to a module-level SSOT message\nconstant (MANAGED_READ_EXPIRY_DEFERRED_LOG_MESSAGE) and demoting it from WARNING to DEBUG marginally\nlowers this file's maintainability index (max CC unchanged at 34; MI 29.6357 -> 29.5825). The demote\nis a deliberate, reviewed observability change: the deferral is routine under connection-step-lock\ncontention and self-healing (the background expiry sweep re-schedules; outcome flag\nMANAGED_READ_CLEANUP_DEFERRED), so DEBUG is the correct level. It stops production WARNING log spam and\nbenign leakage into tests that assert logger silence, while hiding no terminal error (raised\nLedgerQueryDeadline/LedgerReadTimeout paths are unchanged and still surface). The SSOT constant removes\na duplicated string literal so the one observability assertion can import it rather than re-hardcode it.\nReviewed and accepted as part of closing the busy-connection / ledger-read-expiry timing flake family."
+    "reviewed_ledger_read_expiry_debug_demote_ssot": "Promoting the self-healing managed-read-expiry deferral log line to a module-level SSOT message\nconstant (MANAGED_READ_EXPIRY_DEFERRED_LOG_MESSAGE) and demoting it from WARNING to DEBUG marginally\nlowers this file's maintainability index (max CC unchanged at 34; MI 29.6357 -> 29.5825). The demote\nis a deliberate, reviewed observability change: the deferral is routine under connection-step-lock\ncontention and self-healing (the background expiry sweep re-schedules; outcome flag\nMANAGED_READ_CLEANUP_DEFERRED), so DEBUG is the correct level. It stops production WARNING log spam and\nbenign leakage into tests that assert logger silence, while hiding no terminal error (raised\nLedgerQueryDeadline/LedgerReadTimeout paths are unchanged and still surface). The SSOT constant removes\na duplicated string literal so the one observability assertion can import it rather than re-hardcode it.\nReviewed and accepted as part of closing the busy-connection / ledger-read-expiry timing flake family.",
+    "reviewed_supported_minor_parity_for_existing_lifecycle_guards": "Restore supported Python 3.11 measurement parity for existing reviewed changes already recorded under Python 3.12: delegate cancel-retention directory guard; managed read-expiry DEBUG SSOT observability; bounded ledger-writer shutdown drain; report whole-collector deadline; realtime storm per-item deadline. The six source files are unchanged by the broker fix. Their existing review narratives remain authoritative; this entry records only the omitted 3.11 Linux/amd64 Radon 6.0.1 measurements, preserving independent tokenizer-specific baselines. The same Linux measurement also records model_catalog MI 12.608930133037463 instead of 12.608930133037466, a platform floating-point difference with unchanged CC 43 and unchanged source. Broker execution_journal maximum CC remains 23 and MI improves, requiring no ratchet increase."
   },
   "duplication": {
     "duplicate_lines": 303,
