@@ -21,6 +21,9 @@ from spendguard import config  # noqa: E402
 from spendguard import kimi_daemon        # noqa: E402
 
 FAKE = pathlib.Path(__file__).with_name("fake_kimi_acp_server.py").resolve()
+KIMI_PERMISSION_REPLY_BASE_SECONDS = 6.0
+KIMI_PERMISSION_REPLY_SCHEDULER_CUSHION = 10
+KIMI_PERMISSION_REPLY_GUARD_SECONDS = KIMI_PERMISSION_REPLY_BASE_SECONDS * KIMI_PERMISSION_REPLY_SCHEDULER_CUSHION
 
 
 def new_daemon(boot_log=None):
@@ -106,7 +109,7 @@ def test_server_initiated_request_is_declined_not_hung():
     os.environ.pop(config.CLI_TEST_OFFLINE_ENVIRONMENT_KEY, None)
     daemon = new_daemon()
     try:
-        r = daemon.run_warm("permreq", timeout=6)
+        r = daemon.run_warm("permreq", timeout=KIMI_PERMISSION_REPLY_GUARD_SECONDS)
         record_script_check(fails, "a server→client request is declined so the turn completes (never hangs)", r["text"] == "reply:permreq")
     finally:
         daemon.shutdown()

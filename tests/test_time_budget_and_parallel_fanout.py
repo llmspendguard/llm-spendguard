@@ -15,6 +15,15 @@ WHY THIS GUARD EXISTS. Two defects made a four-LLM panel neither reliable nor ti
 straggler buys nothing.
 """
 import os, sys, tempfile, time
+import threading
+
+PANEL_VENDOR_COUNT = 4
+PANEL_WORK_SECONDS = 0.4
+PANEL_SCHEDULER_CUSHION = 75
+PANEL_PROMPTNESS_SECONDS = PANEL_WORK_SECONDS * PANEL_SCHEDULER_CUSHION
+PANEL_HANG_MULTIPLE = 3
+PANEL_SYNC_SECONDS = PANEL_PROMPTNESS_SECONDS * PANEL_HANG_MULTIPLE
+FIRST_OK_FAST_SECONDS = 0.1
 
 if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
     os.environ["SPENDGUARD_TEST_ISOLATED"] = "1"
@@ -79,27 +88,38 @@ check("fan_out no longer calls vendors in a sequential comprehension",
 check("fan_out gives each vendor its OWN measured budget", "time_budget(" in src)
 
 _orig = vc.call
+panel_concurrent_start = threading.Barrier(PANEL_VENDOR_COUNT)
+first_ok_release = threading.Event()
+first_ok_slow_finished = threading.Event()
 try:
     def _slow_call(vendor, model, prompt, **kw):
-        time.sleep(0.4)
+        panel_concurrent_start.wait(PANEL_SYNC_SECONDS)
+        time.sleep(PANEL_WORK_SECONDS)
         return vc.Result(vc.OK, vendor, model, text="hi", out_tok=3)
     vc.call = _slow_call
-    t0 = time.time()
+    t0 = time.monotonic()
     fan = vc.fan_out([("a", "m1"), ("b", "m2"), ("c", "m3"), ("d", "m4")], "q", deadline_s=30)
-    el = time.time() - t0
-    check("four 0.4s vendors complete in well under the 1.6s a sequential panel would take", el < 1.0, f"{el:.2f}s")
+    el = time.monotonic() - t0
     check("...and every vendor's result is present", fan["n_ok"] == 4 and fan["complete"])
+    check("all vendors rendezvoused concurrently", not panel_concurrent_start.broken)
+    check("panel completes within the scheduling-tolerant hang guard", el < PANEL_PROMPTNESS_SECONDS, f"{el:.2f}s")
 
     def _mixed_call(vendor, model, prompt, **kw):
-        time.sleep(0.1 if vendor == "fast" else 3.0)
+        if vendor == "fast":
+            time.sleep(FIRST_OK_FAST_SECONDS)
+        else:
+            first_ok_release.wait(PANEL_SYNC_SECONDS)
+            first_ok_slow_finished.set()
         return vc.Result(vc.OK, vendor, model, text="hi", out_tok=3)
     vc.call = _mixed_call
-    t0 = time.time()
+    t0 = time.monotonic()
     r = vc.first_ok([("fast", "m1"), ("slow", "m2")], "q", deadline_s=30, need=1)
-    el = time.time() - t0
-    check("first_ok returns at the FAST vendor's latency, not the straggler's", el < 1.5, f"{el:.2f}s")
+    el = time.monotonic() - t0
     check("...and says so honestly: complete means `need` was MET", r["complete"] and r["n_ok"] == 1)
+    check("first_ok returns before the straggler finishes", not first_ok_slow_finished.is_set())
+    check("first_ok completes within the scheduling-tolerant hang guard", el < PANEL_PROMPTNESS_SECONDS, f"{el:.2f}s")
 finally:
+    first_ok_release.set()
     vc.call = _orig
 
 print(f"\n{'[FAIL]' if failures else 'OK'} test_time_budget_and_parallel_fanout: {failures} failure(s)")

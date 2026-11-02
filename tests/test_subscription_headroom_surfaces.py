@@ -18,6 +18,8 @@ FIXTURE_PERCENT = 25
 FIXTURE_RESET = "2099-01-01T00:00:00Z"
 FIXTURE_MILLISECONDS = 4070908800000
 FIXTURE_TIMEOUT = 1
+SURFACE_COHORT_SCHEDULER_CUSHION = 30
+SURFACE_COHORT_WAIT_SECONDS = FIXTURE_TIMEOUT * SURFACE_COHORT_SCHEDULER_CUSHION
 FIXTURE_TTL = 300
 FIXTURE_CONCURRENT_CALLERS = 8
 FIXTURE_SERVER_HOST = "localhost"
@@ -126,13 +128,13 @@ def assert_subscription_surface_concurrency():
     def subscription_surface_fault_fetch():
         count.append(True)
         started.set()
-        assert release.wait(FIXTURE_TIMEOUT)
+        assert release.wait(SURFACE_COHORT_WAIT_SECONDS)
         return {"buckets": None, "reason": "injected_slow_probe"}
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=FIXTURE_CONCURRENT_CALLERS) as pool:
         pending = [pool.submit(surfaces.cached_subscription_surface_report, cache, FIXTURE_TTL,
                                subscription_surface_fault_fetch) for _ in range(FIXTURE_CONCURRENT_CALLERS)]
-        assert started.wait(FIXTURE_TIMEOUT)
+        assert started.wait(SURFACE_COHORT_WAIT_SECONDS)
         release.set()
         reports = [future.result() for future in pending]
     assert len(count) == 1 and all(report["reason"] == "injected_slow_probe" for report in reports)

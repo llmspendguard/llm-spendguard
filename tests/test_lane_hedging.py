@@ -16,6 +16,7 @@ import os
 import sys
 import time
 import tempfile
+import threading
 
 os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="sg-hedge-")
 os.environ.setdefault("SPENDGUARD_TEST_ISOLATED", "1")
@@ -38,6 +39,13 @@ fails = []
 # stubbed adapters.call can branch on the model string alone (parsing a fixed convention, not a judgement).
 ARMS = [("slowlane", "slow-m"), ("fastlane", "fast-m")]
 SLOW_SLEEP_S = 0.6
+HEDGE_SCHEDULER_CUSHION = 50
+HEDGE_PROMPTNESS_SECONDS = SLOW_SLEEP_S * HEDGE_SCHEDULER_CUSHION
+HEDGE_HANG_MULTIPLE = 3
+HEDGE_RELEASE_SECONDS = HEDGE_PROMPTNESS_SECONDS * HEDGE_HANG_MULTIPLE
+hedge_primary_release = threading.Event()
+hedge_primary_finished = threading.Event()
+hedge_hold_primary = False
 lane_catalog.arms = lambda flt=None: list(ARMS)
 lane_catalog.lane_provider = lambda l: {"slowlane": "provS", "fastlane": "provF"}.get(l)
 lane_bandit._arm_cooling = lambda l, u: False
@@ -62,7 +70,11 @@ class _TimedRecorder:
         assert max_tokens is not None or sig, "adapters.call needs max_tokens or sig (an output budget)"
         self.calls.append({"model": model, "prompt": prompt, "no_metered_fallback": no_metered_fallback})
         if "slow-m" in model:
-            time.sleep(SLOW_SLEEP_S)
+            if hedge_hold_primary:
+                hedge_primary_release.wait(HEDGE_RELEASE_SECONDS)
+                hedge_primary_finished.set()
+            else:
+                time.sleep(SLOW_SLEEP_S)
         return {"text": f"ans::{model}", "cost": 0}
 
 
@@ -85,13 +97,18 @@ fails += ck("off: served by the primary (slowlane), no 'hedged' tag", r_off[0].g
 print("\n-- hedge_ms PARAM + SLOW primary + a FREE other lane: the fast lane wins, tagged hedged=True + hedge_peer --")
 dispatch.lane_free = _free({"slowlane": 10, "fastlane": 5})   # primary = slowlane; hedge picks the other (fastlane, free=5)
 _rec.calls.clear()
-t0 = time.time()
+hedge_hold_primary = True
+hedge_primary_finished.clear()   # re-run-safe: never read stale set-state from a prior hold-path call
+t0 = time.monotonic()
 r_on = lane_balance.bulk_delegate(["t"], "hedgeintent", hedge_ms=150)   # 150ms << the slow 600ms → primary times out
-wall = time.time() - t0
+wall = time.monotonic() - t0
 row = r_on[0]
 fails += ck("param on: the FAST lane's answer won (served by fastlane, not the slow primary)", row.get("lane") == "fastlane")
 fails += ck("param on: row tagged hedged=True + hedge_peer=slowlane", row.get("hedged") is True and row.get("hedge_peer") == "slowlane")
-fails += ck("param on: returned WITHOUT waiting for the slow primary (wall < 600ms slow sleep)", wall < SLOW_SLEEP_S)
+fails += ck("param on: returned while the slow primary remained unfinished", not hedge_primary_finished.is_set())
+fails += ck("param on: returned within the scheduling-tolerant hang guard", wall < HEDGE_PROMPTNESS_SECONDS)
+hedge_primary_release.set()
+hedge_hold_primary = False
 fails += ck("param on: BOTH lanes were called (primary + hedge)", len(_rec.calls) == 2)
 _hedge_call = [c for c in _rec.calls if "fast-m" in c["model"]]
 _prim_call = [c for c in _rec.calls if "slow-m" in c["model"]]
