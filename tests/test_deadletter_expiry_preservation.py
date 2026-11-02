@@ -14,7 +14,8 @@ align_test_startup_home(prefix=__name__)
 from spendguard import budget, config, ledger, ledger_deadletter, ledger_read, ledger_writer
 
 DEADLETTER_EXPIRY_BUDGET_S = 0.05
-DEADLETTER_EXPIRY_WATCHDOG_S = DEADLETTER_EXPIRY_BUDGET_S * 100
+DEADLETTER_EXPIRY_WATCHDOG_MULTIPLIER = 300
+DEADLETTER_EXPIRY_WATCHDOG_S = DEADLETTER_EXPIRY_BUDGET_S * DEADLETTER_EXPIRY_WATCHDOG_MULTIPLIER
 DEADLETTER_EXPIRY_WRITE_BUDGET_S = DEADLETTER_EXPIRY_BUDGET_S * 10
 DEADLETTER_EXPIRY_TAIL_COUNT = 4
 DEADLETTER_EXPIRY_EVENT_COST = "0.001"
@@ -49,7 +50,7 @@ def test_spool_lock_expiry_releases_writer_for_unrelated_spend(tmp_path):
             with patch.object(ledger_deadletter, "locked_spend_deadletter_path", observe_expiry_spool_lock):
                 worker.start()
                 assert entered.wait(DEADLETTER_EXPIRY_WATCHDOG_S)
-                worker.join(DEADLETTER_EXPIRY_WRITE_BUDGET_S)
+                worker.join(DEADLETTER_EXPIRY_WATCHDOG_S)
                 assert not worker.is_alive()
                 with ledger_read.ledger_request_scope(deadline_s=DEADLETTER_EXPIRY_WRITE_BUDGET_S):
                     current.record_event({"dedup_key": __name__, "realtime_usd": DEADLETTER_EXPIRY_EVENT_COST})

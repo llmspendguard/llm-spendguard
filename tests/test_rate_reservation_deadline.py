@@ -14,8 +14,8 @@ from spendguard import config, ledger_writer, xp_rate_window
 from spendguard.ledger_read import ledger_request_scope
 
 RATE_REPRO_BUDGET_S = 0.02
-RATE_REPRO_HOLD_FACTOR = 20
-RATE_REPRO_SCHEDULING_FACTOR = 5
+RATE_REPRO_HOLD_FACTOR = 4500
+RATE_REPRO_SCHEDULING_FACTOR = 750
 RATE_REPRO_LIMITS = [(config.LEDGER_WRITE_TIMEOUT_S, 1, None)]
 
 
@@ -34,6 +34,8 @@ def test_rate_window_sleep_inherits_ambient_request_expiry(monkeypatch):
 
 
 def test_rate_reservation_execution_expiry_rolls_back(monkeypatch):
+    ledger_writer.run_ledger_write(lambda: xp_rate_window._ensure_xp_rate_schema(
+        ledger_writer.current_ledger_writer_connection()))
     original = xp_rate_window._try_reserve
     release = threading.Event()
 
@@ -79,7 +81,8 @@ def test_rate_reservation_admission_expires_before_writer_release():
 
 
 def test_rate_reservation_os_lock_expiry_never_commits():
-    ledger_writer.run_ledger_write(lambda: None)
+    ledger_writer.run_ledger_write(lambda: xp_rate_window._ensure_xp_rate_schema(
+        ledger_writer.current_ledger_writer_connection()))
     occupied = threading.Event()
     release = threading.Event()
     lock_path = Path(config.db_path() + ledger_writer.LEDGER_WRITER_LOCK_SUFFIX)

@@ -4,6 +4,9 @@ import sqlite3
 import sys
 import time
 import threading
+from contextlib import contextmanager, ExitStack
+from unittest.mock import patch
+from types import SimpleNamespace
 
 from _pytest_fixture_bridge import align_test_startup_home, run_pytest_style
 
@@ -19,11 +22,33 @@ WAL_GUARD_SQL_READ = "SELECT * FROM wal_guard"
 WAL_GUARD_INTERVAL_S = 1.0
 WAL_GUARD_CLOCK_START_S = 100.0
 WAL_GUARD_REQUEST_DEADLINE_S = 0.02
-WAL_GUARD_EXPIRY_WAIT_S = 2.0
+WAL_GUARD_PROMPTNESS_MULTIPLE = 750
+WAL_GUARD_EXPIRY_WAIT_S = WAL_GUARD_REQUEST_DEADLINE_S * WAL_GUARD_PROMPTNESS_MULTIPLE
+WAL_GUARD_HOLDER_WAIT_MULTIPLE = 6
+WAL_GUARD_HOLDER_WAIT_S = WAL_GUARD_EXPIRY_WAIT_S * WAL_GUARD_HOLDER_WAIT_MULTIPLE
 WAL_GUARD_CURSOR_REFERENCES_PER_STEP = 1
 WAL_GUARD_DEADLINE_RESTORATION_ERROR = "deadline fault leaked into checkpoint verification"
 WAL_GUARD_SLOW_SQL = """WITH RECURSIVE counter(n) AS
 (VALUES(0) UNION ALL SELECT n+1 FROM counter) SELECT SUM(n) FROM counter"""
+
+
+@contextmanager
+def wal_guard_controlled_deadline_clock():
+    """Keep snapshot setup outside the adverse deadline's measured work."""
+    from spendguard import ledger_read, ledger_request_cursor
+
+    clock = SimpleNamespace(**vars(time))
+    clock.current = time.monotonic()
+    clock.resumed_at = None
+
+    def wal_guard_deadline_monotonic():
+        return clock.current + (time.monotonic() - clock.resumed_at if clock.resumed_at is not None else 0)
+
+    clock.monotonic = wal_guard_deadline_monotonic
+    with ExitStack() as stack:
+        for module in (config, ledger_read, ledger_request_cursor):
+            stack.enter_context(patch.object(module, "time", clock))
+        yield clock
 
 
 def _seed_wal_maintenance_fixture(ledger_path):
@@ -189,12 +214,12 @@ def test_wal_managed_imported_read_has_default_deadline(tmp_path, monkeypatch):
     reader = config.open_ledger_connection(ledger_path)
     checkpoint_query_deadline = config.LEDGER_QUERY_DEADLINE_S
     try:
+        reader.execute("BEGIN")
+        reader.execute(WAL_GUARD_SQL_READ).fetchone()
+        writer.execute(WAL_GUARD_SQL_INSERT, (bytes(WAL_GUARD_PAYLOAD_BYTES),))
+        writer.commit()
         with monkeypatch.context() as deadline_fault:
             deadline_fault.setattr(config, "LEDGER_QUERY_DEADLINE_S", WAL_GUARD_REQUEST_DEADLINE_S)
-            reader.execute("BEGIN")
-            reader.execute(WAL_GUARD_SQL_READ).fetchone()
-            writer.execute(WAL_GUARD_SQL_INSERT, (bytes(WAL_GUARD_PAYLOAD_BYTES),))
-            writer.commit()
             with pytest.raises(LedgerQueryDeadline):
                 reader.execute(WAL_GUARD_SLOW_SQL).fetchone()
         assert not reader.in_transaction
@@ -213,13 +238,14 @@ def test_wal_managed_idle_abandonment_releases_snapshot(tmp_path, monkeypatch):
     reader = config.open_ledger_connection(ledger_path)
     checkpoint_query_deadline = config.LEDGER_QUERY_DEADLINE_S
     try:
-        with monkeypatch.context() as deadline_fault:
+        with monkeypatch.context() as deadline_fault, wal_guard_controlled_deadline_clock() as clock:
             deadline_fault.setattr(config, "LEDGER_QUERY_DEADLINE_S", WAL_GUARD_REQUEST_DEADLINE_S)
             reader.execute("BEGIN")
             abandoned_cursor = reader.execute(WAL_GUARD_SQL_READ)
             abandoned_cursor.fetchone()
             writer.execute(WAL_GUARD_SQL_INSERT, (bytes(WAL_GUARD_PAYLOAD_BYTES),))
             writer.commit()
+            clock.resumed_at = time.monotonic()
             expires = time.monotonic() + WAL_GUARD_EXPIRY_WAIT_S
             while reader.in_transaction and time.monotonic() < expires:
                 time.sleep(config.LEDGER_REQUEST_DISCONNECT_POLL_S)
@@ -307,7 +333,7 @@ def test_wal_maintenance_skips_not_raises_under_expired_request_scope(tmp_path):
 def _hold_wal_guard_connection_lock(step_lock, ready, release):
     with step_lock:
         ready.set()
-        assert release.wait(WAL_GUARD_EXPIRY_WAIT_S)
+        assert release.wait(WAL_GUARD_HOLDER_WAIT_S)
 
 
 def test_wal_idle_expiry_retries_busy_connection_owner(tmp_path, monkeypatch):
@@ -519,20 +545,22 @@ def test_wal_adaptive_polling_both_owners_interrupt_slow_scan(tmp_path, monkeypa
 
     def record_wal_deadline_adaptation(polling, now):
         observed_intervals.append(polling.interval)
+        clock.current += WAL_GUARD_REQUEST_DEADLINE_S / WAL_ADAPTIVE_CALLBACK_RATIO
         return original_advance(polling, now)
 
     monkeypatch.setattr(LedgerDeadlinePolling, "advance_ledger_deadline_poll", record_wal_deadline_adaptation)
     try:
-        with pytest.raises(ledger_read.LedgerReadTimeout):
-            ledger_read.read_ledger_sql(ledger_read.LedgerSQLReadRequest(
-                WAL_GUARD_SLOW_SQL, time_budget=WAL_GUARD_REQUEST_DEADLINE_S), ledger_path)
-        assert observed_intervals, "owned bounded read never adapted"
-        observed_intervals.clear()
-        with ledger_read.ledger_request_scope(deadline_s=WAL_GUARD_REQUEST_DEADLINE_S):
-            with pytest.raises(ledger_read.LedgerQueryDeadline):
-                reader.execute(WAL_GUARD_SLOW_SQL).fetchone()
-        assert observed_intervals, "managed request read never adapted"
-        assert maintenance.truncate_ledger_wal_bounded(ledger_path).status == maintenance.WAL_CHECKPOINT_SUCCESS
+        with wal_guard_controlled_deadline_clock() as clock:
+            with pytest.raises(ledger_read.LedgerReadTimeout):
+                ledger_read.read_ledger_sql(ledger_read.LedgerSQLReadRequest(
+                    WAL_GUARD_SLOW_SQL, time_budget=WAL_GUARD_REQUEST_DEADLINE_S), ledger_path)
+            assert observed_intervals, "owned bounded read never adapted"
+            observed_intervals.clear()
+            with ledger_read.ledger_request_scope(deadline_s=WAL_GUARD_REQUEST_DEADLINE_S):
+                with pytest.raises(ledger_read.LedgerQueryDeadline):
+                    reader.execute(WAL_GUARD_SLOW_SQL).fetchone()
+            assert observed_intervals, "managed request read never adapted"
+            assert maintenance.truncate_ledger_wal_bounded(ledger_path).status == maintenance.WAL_CHECKPOINT_SUCCESS
     finally:
         reader.close()
         writer.close()

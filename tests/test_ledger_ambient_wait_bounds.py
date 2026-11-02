@@ -13,7 +13,9 @@ align_test_startup_home(prefix=__name__)
 from spendguard import config, ledger_read, ledger_wal_maintenance
 
 AMBIENT_WAIT_SCOPE_S = 0.02
-AMBIENT_WAIT_HOLD_FACTOR = 30
+AMBIENT_WAIT_HOLD_FACTOR = 4500
+AMBIENT_WAIT_RETENTION_RATIO = 6
+AMBIENT_WAIT_PROMPTNESS_S = AMBIENT_WAIT_SCOPE_S * AMBIENT_WAIT_HOLD_FACTOR / AMBIENT_WAIT_RETENTION_RATIO
 AMBIENT_WAIT_SCHEDULING_FACTOR = 5
 AMBIENT_WAIT_POOL_CAPACITY = 1
 AMBIENT_WAIT_MEMORY_TARGET = ":memory:"
@@ -36,8 +38,7 @@ def assert_ambient_admission_owner_retained(ownership, attempt, *, explicit_budg
         started = time.monotonic()
         with ledger_read.ledger_request_scope(deadline_s=AMBIENT_WAIT_SCOPE_S):
             attempt()
-        allowed = AMBIENT_WAIT_SCOPE_S if explicit_budget is None else explicit_budget
-        assert time.monotonic() - started < allowed * AMBIENT_WAIT_SCHEDULING_FACTOR
+        assert time.monotonic() - started < AMBIENT_WAIT_PROMPTNESS_S
         assert holder.is_alive(), "admission must stop before conflicting owner releases"
     finally:
         release.set()

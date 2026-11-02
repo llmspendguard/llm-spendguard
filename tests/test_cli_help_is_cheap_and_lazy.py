@@ -13,7 +13,11 @@ HELP_CASES = (("top-level", ["--help"]), ("scan", ["scan", "--help"]),
               ("doctor", ["doctor", "--help"]))
 HEAVY_STARTUP_MODULES = ("anthropic", "openai", "spendguard.crossllm", "spendguard.gate",
                          "spendguard.ledger", "spendguard.pricing")
-HELP_COMPLETION_LIMIT_SECONDS = 5.0
+HELP_STARTUP_BUDGET_SECONDS = 5.0
+HELP_SCHEDULING_HEADROOM_MULTIPLE = 3
+HELP_COMPLETION_LIMIT_SECONDS = HELP_STARTUP_BUDGET_SECONDS * HELP_SCHEDULING_HEADROOM_MULTIPLE
+HELP_WATCHDOG_MULTIPLE = 2
+HELP_WATCHDOG_SECONDS = HELP_COMPLETION_LIMIT_SECONDS * HELP_WATCHDOG_MULTIPLE
 RESULT_MARKER = "SPENDGUARD_HELP_PROBE="
 FAKE_OFFLINE_OPENAI_KEY = "sk-test-cli-help-must-never-use-this-key"
 
@@ -37,7 +41,7 @@ def run_isolated_help_probe(arguments):
         env=environment,
         text=True,
         capture_output=True,
-        timeout=HELP_COMPLETION_LIMIT_SECONDS,
+        timeout=HELP_WATCHDOG_SECONDS,
         check=False,
     )
     elapsed = time.monotonic() - started

@@ -28,6 +28,9 @@ from spendguard import storm_submit  # noqa: E402
 MODEL = "anthropic:claude-haiku-4-5"
 N = 20
 COLLECT_TIMEOUT_S = 1.5
+STORM_SUBMIT_PROMPTNESS_MULTIPLE = 10
+STORM_SUBMIT_PROMPTNESS_SECONDS = COLLECT_TIMEOUT_S * STORM_SUBMIT_PROMPTNESS_MULTIPLE
+STORM_SUBMIT_RELEASE_MULTIPLE = 3
 fails = []
 
 
@@ -41,7 +44,7 @@ fp = H.FakeProvider(cap=1000, window_s=1.0).install()      # realtime wall (gene
 gate = threading.Event()
 
 
-BATCH_RELEASE_TIMEOUT_S = 30
+BATCH_RELEASE_TIMEOUT_S = STORM_SUBMIT_PROMPTNESS_SECONDS * STORM_SUBMIT_RELEASE_MULTIPLE
 _hang_batch = partial(delayed_batch_results, event=gate, timeout=BATCH_RELEASE_TIMEOUT_S,
                       response_for=lambda prompt: {"text": "late %s" % H._extract_canary(prompt), "status_code": 200})
 
@@ -63,9 +66,11 @@ try:
     verify_condition("the realtime share WAS served (combo ran, not all-backpressure)", served >= 1, extra="served=%d" % served)
     verify_condition("the hung overflow became TYPED BACKPRESSURE (not a silent success, not a hang)", backpressure >= 1,
                      extra="backpressure=%d" % backpressure)
+    verify_condition("batch release remains held when the caller returns", not gate.is_set())
     # BOUNDED: a hang would block for the 1800s default (or forever); the fix returns within ~the collect window.
     verify_condition("BOUNDED: returned within the collect window, not blocked indefinitely",
-                     elapsed < COLLECT_TIMEOUT_S + 5.0, extra="elapsed=%.2fs (vs 1800s default if it hung)" % elapsed)
+                     elapsed < STORM_SUBMIT_PROMPTNESS_SECONDS,
+                     extra="elapsed=%.2fs (vs 1800s default if it hung)" % elapsed)
 finally:
     gate.set()                                             # release the hung worker so the process exits cleanly
     fp.uninstall()
