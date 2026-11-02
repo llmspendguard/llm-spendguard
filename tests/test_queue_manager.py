@@ -2,6 +2,7 @@
 import datetime
 import json
 import os
+import plistlib
 import sys
 import tempfile
 
@@ -231,9 +232,33 @@ def test_first_queue_manager_install_cleans_without_processing_and_reinstall_is_
     clean_calls = []
     monkeypatch.setattr(lane_queue, "manage_queue_tick",
                         lambda **kwargs: clean_calls.append(kwargs) or {"mode": "execute", "process": {}})
-    monkeypatch.setattr(fleet.subprocess, "run", lambda *args, **kwargs: type("Result", (), {"returncode": 0})())
+    launchctl_calls = []
+
+    def record_queue_scheduler_launchctl(command, **kwargs):
+        launchctl_calls.append(command)
+        return type("Result", (), {"returncode": 0})()
+
+    monkeypatch.setattr(fleet.subprocess, "run", record_queue_scheduler_launchctl)
     fleet.install_periodic_launchd_fleet_jobs()
+    queue_plist = tmp_path.joinpath(*fleet.FLEET_LAUNCHD_DIRECTORY_PARTS) / (
+        fleet.QUEUE_MANAGE_LAUNCHD_LABEL + fleet.FLEET_LAUNCHD_PLIST_SUFFIX)
+    emitted = plistlib.loads(queue_plist.read_bytes())
+    assert emitted["ProgramArguments"][1:3] == ["queue-manage", "--execute"]
+    assert emitted["ProgramArguments"][0] == str(fleet.pathlib.Path(sys.executable).with_name("spendguard"))
+    assert emitted["StartInterval"] == fleet.QUEUE_MANAGE_LAUNCHD_INTERVAL_S
+    installed_stat = queue_plist.stat()
     fleet.install_periodic_launchd_fleet_jobs()
+    assert queue_plist.stat().st_mtime_ns == installed_stat.st_mtime_ns
+    assert not any(command[1] == "bootout" for command in launchctl_calls)
+    assert clean_calls == [{"execute": True, "process": False}]
+    emitted["ProgramArguments"].remove("--execute")
+    queue_plist.write_bytes(plistlib.dumps(emitted))
+    launchctl_calls.clear()
+    fleet.install_periodic_launchd_fleet_jobs()
+    queue_commands = [command for command in launchctl_calls
+                      if any(fleet.QUEUE_MANAGE_LAUNCHD_LABEL in argument for argument in command)]
+    assert [command[1] for command in queue_commands] == ["bootout", "bootstrap", "kickstart"]
+    assert plistlib.loads(queue_plist.read_bytes())["ProgramArguments"][1:3] == ["queue-manage", "--execute"]
     assert clean_calls == [{"execute": True, "process": False}]
 
 
@@ -246,3 +271,14 @@ def test_fleet_install_guards_skip_clean_pass(monkeypatch):
     monkeypatch.setenv(fleet.FLEET_TEST_ISOLATION_ENV, "1")
     assert fleet.install_periodic_launchd_fleet_jobs() == []
     assert clean_calls == []
+
+
+if __name__ == "__main__":
+    from pathlib import Path
+
+    from pytest import MonkeyPatch
+
+    with tempfile.TemporaryDirectory() as queue_scheduler_test_directory, MonkeyPatch.context() as scheduler_patches:
+        test_first_queue_manager_install_cleans_without_processing_and_reinstall_is_idempotent(
+            scheduler_patches, Path(queue_scheduler_test_directory))
+    print("queue scheduler emitted plist, idempotence, and update reload: PASS")

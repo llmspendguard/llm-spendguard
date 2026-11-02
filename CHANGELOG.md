@@ -4,6 +4,14 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 
 ## [Unreleased]
 
+## [0.16.24] — 2026-11-01
+
+Fix queue maintenance's silent incremental-vacuum no-op on legacy auto-vacuum NONE databases. Maintenance
+uses full VACUUM when these files exceed the freelist policy, preserving retained rows and failing safely
+on writer contention. A real temporary-file RED→GREEN
+regression proves a manager tick shrinks the file and restores maintenance readiness. The existing deployment
+installer's queue schedule gains emitted-plist and update coverage.
+
 ## [0.16.23] — 2026-11-01
 
 Arm the protected-lane leak tripwire in the capability readiness manifest. Selfcheck now fails on protected

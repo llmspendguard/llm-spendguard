@@ -71,6 +71,9 @@ QUEUE_STALE_DAYS_DEFAULT = 1.0  # hook classifications describe the triggering e
 QUEUE_MANAGER_IDLE_ROUNDS_DEFAULT = 1
 QUEUE_MANAGER_MAX_ITERS_DEFAULT = 100
 QUEUE_VACUUM_PAGES_DEFAULT = 8192
+QUEUE_RECLAIM_BUSY_TIMEOUT_MS = 100
+QUEUE_RECLAIM_TIMEOUT_S_DEFAULT = 30.0
+QUEUE_RECLAIM_PROGRESS_OPS = 1000
 QUEUE_SIZE_LIMIT_BYTES_DEFAULT = 2 * 1024 * 1024 * 1024
 QUEUE_FREELIST_RATIO_LIMIT_DEFAULT = 0.40
 QUEUE_OLD_TERMINAL_LIMIT_DEFAULT = 0
@@ -1355,15 +1358,32 @@ def _reclaim_queue_freelist(vacuum_pages=None):
     with _queue_op() as queue_connection:
         page_size = int(queue_connection.execute("PRAGMA page_size").fetchone()[0])
         freelist_before = int(queue_connection.execute("PRAGMA freelist_count").fetchone()[0])
-        pages_to_reclaim = min(pages, freelist_before)
-        for _ in range(pages_to_reclaim):
-            before_step = int(queue_connection.execute("PRAGMA freelist_count").fetchone()[0])
-            queue_connection.execute("PRAGMA incremental_vacuum(1)")
-            after_step = int(queue_connection.execute("PRAGMA freelist_count").fetchone()[0])
-            if after_step >= before_step:
-                break
-        queue_connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-        freelist_after = int(queue_connection.execute("PRAGMA freelist_count").fetchone()[0])
+        previous_timeout = int(queue_connection.execute("PRAGMA busy_timeout").fetchone()[0])
+        queue_connection.execute(f"PRAGMA busy_timeout={QUEUE_RECLAIM_BUSY_TIMEOUT_MS}")
+        reclaim_deadline = time.monotonic() + float(_qcfg("queue_reclaim_timeout_s", QUEUE_RECLAIM_TIMEOUT_S_DEFAULT))
+        queue_connection.set_progress_handler(lambda: time.monotonic() >= reclaim_deadline,
+                                              QUEUE_RECLAIM_PROGRESS_OPS)
+        try:
+            page_count = int(queue_connection.execute("PRAGMA page_count").fetchone()[0])
+            ratio_limit = float(_qcfg("queue_freelist_ratio_limit", QUEUE_FREELIST_RATIO_LIMIT_DEFAULT))
+            if (not queue_connection.execute("PRAGMA auto_vacuum").fetchone()[0]
+                    and page_count and freelist_before / page_count > ratio_limit):
+                # Incremental vacuum cannot reclaim pages in a legacy NONE file.
+                # VACUUM acquires SQLite's writer lock itself; a competing writer
+                # makes it fail within the short timeout without altering rows.
+                queue_connection.execute("VACUUM")
+            pages_to_reclaim = min(pages, freelist_before)
+            for _ in range(pages_to_reclaim):
+                before_step = int(queue_connection.execute("PRAGMA freelist_count").fetchone()[0])
+                queue_connection.execute("PRAGMA incremental_vacuum(1)")
+                after_step = int(queue_connection.execute("PRAGMA freelist_count").fetchone()[0])
+                if after_step >= before_step:
+                    break
+            queue_connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            freelist_after = int(queue_connection.execute("PRAGMA freelist_count").fetchone()[0])
+        finally:
+            queue_connection.set_progress_handler(None, 0)
+            queue_connection.execute(f"PRAGMA busy_timeout={previous_timeout}")
     bytes_after = os.path.getsize(database_path) if os.path.exists(database_path) else 0
     physical_bytes_reclaimed = max(0, bytes_before - bytes_after)
     logical_bytes_reclaimed = max(0, freelist_before - freelist_after) * page_size
