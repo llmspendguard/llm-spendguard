@@ -151,7 +151,9 @@ def _durable_execution_directory(execution_id, root=None):
 @contextlib.contextmanager
 def _locked_durable_execution(execution_id, root=None):
     directory = _durable_execution_directory(execution_id, root)
-    with (directory / EXECUTION_LOCK_FILENAME).open("a") as lock:
+    # Initialization owns lock creation. A detached observer may poll while a
+    # completed execution is being reclaimed; acquiring must never resurrect it.
+    with (directory / EXECUTION_LOCK_FILENAME).open("r+") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         yield directory
 
@@ -238,6 +240,7 @@ def begin_durable_execution(metadata=None):
     execution_id = uuid.uuid4().hex
     directory = _durable_execution_directory(execution_id)
     directory.mkdir(parents=True)
+    (directory / EXECUTION_LOCK_FILENAME).touch(exist_ok=False)
     owner = psutil.Process((metadata or {}).get("owner_pid"))
     state = {"execution_id": execution_id, "state": "running", "owner_pid": owner.pid,
              "owner_birth": owner.create_time(), "metadata": metadata or {}, "exit_code": None}
@@ -496,8 +499,13 @@ def _observe_durable_execution(execution_id, root, interval):
         ready.flush()
         os.fsync(ready.fileno())
     while True:
-        with _locked_durable_execution(execution_id, root):
-            record = json.loads((directory / EXECUTION_STATE_FILENAME).read_text())
+        try:
+            with _locked_durable_execution(execution_id, root):
+                record = json.loads((directory / EXECUTION_STATE_FILENAME).read_text())
+        except FileNotFoundError:
+            # Reclamation may remove either file between observer polls. There
+            # is no execution left to observe, and no file may be recreated.
+            return
         metadata = record.get("metadata", {})
         if record["state"] != "running":
             if not metadata.get("job_id"):
