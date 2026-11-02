@@ -16,8 +16,18 @@ import sys, argparse, datetime
 from collections import defaultdict
 
 from . import config, pricing
+from . import reconcile_openai
 from .reconcile_openai import load_key, fetch_batches, day as oai_day
 from . import reconcile_anthropic as anth
+
+# One monthly pull may legitimately span several sequential HTTP requests. Four OpenAI request-timeout units
+# allow 120s: enough for Anthropic's 90s per-request timeout plus margin, GPU's 20s timeout, and the observed
+# ~22s + 6s + 15s typical pulls, while still putting a finite wall-clock backstop around unbounded pagination.
+REPORT_SOURCE_FETCH_SEQUENTIAL_TIMEOUT_ALLOWANCE = 4
+REPORT_SOURCE_FETCH_DEADLINE_S = (
+    reconcile_openai.BATCH_HTTP_TIMEOUT_S * REPORT_SOURCE_FETCH_SEQUENTIAL_TIMEOUT_ALLOWANCE
+)
+REPORT_SOURCE_FETCH_WORKER_COUNT = 3
 def openai_by_day(since=None):
     """{day: $} of OpenAI batch spend + a pending-request count. `since` (YYYY-MM-DD) page-bounds the underlying
     /batches pull to the window the caller needs (the report only shows today/7d/month) — a huge saving vs pulling
@@ -238,18 +248,48 @@ def produce_periodic_spend_report(*, alert_threshold: float | None = None, email
 
 def _fetch_sources_concurrently(month_start):
     """Run the report's three INDEPENDENT provider pulls at once (they share no state) and return their results as
-    (oai, pending, an, an_models, gpu, gpu_err). Wall-clock becomes the slowest single pull instead of the sum.
+    (oai, pending, an, an_models, gpu, gpu_err). A whole-collector deadline bounds pagination and wedged pulls;
+    otherwise wall-clock becomes the slowest single pull instead of the sum.
     Error semantics are preserved exactly: the batch pulls re-raise on failure (as the sequential version did, so a
     missing key still fails the report loudly), while gpu_by_day already returns its own ({}, note) on any error."""
     import concurrent.futures as cf
-    with cf.ThreadPoolExecutor(max_workers=3, thread_name_prefix="sg-report") as ex:
+    import time
+
+    ex = cf.ThreadPoolExecutor(max_workers=REPORT_SOURCE_FETCH_WORKER_COUNT, thread_name_prefix="sg-report")
+    completed_normally = False
+    try:
         f_oai = ex.submit(openai_by_day, since=month_start)      # page-bound to the window (was all-history)
         f_an = ex.submit(anth.cost_by_day, since=month_start)    # this month onward; cache-backed + incremental
         f_gpu = ex.submit(gpu_by_day, month_start)               # vast.ai instance GETs (free); returns ({}, err) on failure
-        oai, pending = f_oai.result()                            # .result() re-raises in the caller — same as sequential
-        an, an_models = f_an.result()
-        gpu, gpu_err = f_gpu.result()
-    return oai, pending, an, an_models, gpu, gpu_err
+        source_futures = {
+            "OpenAI": f_oai,
+            "Anthropic": f_an,
+            "GPU": f_gpu,
+        }
+        deadline = time.monotonic() + REPORT_SOURCE_FETCH_DEADLINE_S
+
+        def result_with_collector_deadline(source_future):
+            remaining_s = max(0.0, deadline - time.monotonic())
+            return source_future.result(timeout=remaining_s)
+
+        try:
+            oai, pending = result_with_collector_deadline(f_oai)  # real pull errors re-raise unchanged
+            an, an_models = result_with_collector_deadline(f_an)
+            gpu, gpu_err = result_with_collector_deadline(f_gpu)
+        except cf.TimeoutError as timeout_error:
+            hung_sources = ", ".join(
+                source_name for source_name, source_future in source_futures.items() if not source_future.done()
+            )
+            raise _WatchdogFired(
+                f"spend report source fetch exceeded {REPORT_SOURCE_FETCH_DEADLINE_S:g}s collector deadline; "
+                f"hung source(s): {hung_sources}"
+            ) from timeout_error
+        completed_normally = True
+        return oai, pending, an, an_models, gpu, gpu_err
+    finally:
+        # Python cannot preempt a running thread. Non-blocking shutdown guarantees the collector can abort without
+        # re-joining a wedged pull; the normal path still drains the pool fully.
+        ex.shutdown(wait=completed_normally, cancel_futures=not completed_normally)
 
 
 def generate_report(a):
