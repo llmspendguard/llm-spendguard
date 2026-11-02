@@ -136,7 +136,7 @@ def reserve(key, limits, est_tokens=0, deadline_s=30.0, clock=time.time, sleep=t
             from .ledger_read import ledger_request_scope
             with ledger_request_scope(deadline_s=remaining):
                 ok, wait = run_ledger_write(
-                    lambda: _commit_rate_window_reservation(key, limits, est_tokens, clock))
+                    lambda: _commit_rate_window_reservation(key, limits, est_tokens, clock), deadline_at=reservation_expiry)
         except LedgerReadError as error:
             raise RateDeadline(f"'{key}' shared rate reservation deadline exhausted") from error
         except sqlite3.OperationalError:                 # C: transient lock/busy — RETRY within the deadline, do NOT

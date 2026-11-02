@@ -448,19 +448,50 @@ def effective_ledger_admission_deadline(deadline_at=None):
 
 
 @contextmanager
-def ledger_evidence_persistence_scope():
+def ledger_evidence_persistence_scope(*, parent_scope=None, deadline_s=None):
     """Give mandatory charge recovery its own bounded, uncancelled lifetime.
 
-    Only recovery writes may detach from a caller's expired/abandoned request.
-    Optional waits and replay drains must continue to inherit that request.
+    Recovery defaults to detaching from an expired/abandoned request. Ordinary
+    serialized writes supply a cancellation parent and their operation budget;
+    they inherit abandonment, never the parent's consumed wall-clock time.
     """
-    persistence_scope = LedgerRequestReadScope(config.LEDGER_EVIDENCE_PERSISTENCE_BUDGET_S)
+    persistence_scope = LedgerRequestReadScope(
+        config.LEDGER_EVIDENCE_PERSISTENCE_BUDGET_S if deadline_s is None else deadline_s,
+        parent_scope=parent_scope)
+    persistence_scope.require_ledger_request_live()
     persistence_token = _LEDGER_ACTIVE_REQUEST_SCOPE.set(persistence_scope)
     try:
         yield persistence_scope
     finally:
         persistence_scope.cancel_ledger_request()
         _LEDGER_ACTIVE_REQUEST_SCOPE.reset(persistence_token)
+
+
+_ledger_active_write_scope = ContextVar("ledger_active_write_scope", default=None)
+
+
+@contextmanager
+def ledger_serialized_write_scope(*, deadline_at=None):
+    """Start a write budget once, preserving cancellation and nested expiry."""
+    active_write = _ledger_active_write_scope.get()
+    if active_write is not None:
+        if deadline_at is not None:
+            active_write.deadline_at = min(active_write.deadline_at, deadline_at)
+        yield active_write
+        return
+    parent = current_ledger_request_scope()
+    budget_s = config.LEDGER_EVIDENCE_PERSISTENCE_BUDGET_S
+    if parent is not None:
+        parent.require_ledger_request_live()
+        budget_s = min(budget_s, parent.deadline_s)
+    with ledger_evidence_persistence_scope(parent_scope=parent, deadline_s=budget_s) as scope:
+        if deadline_at is not None:
+            scope.deadline_at = min(scope.deadline_at, deadline_at)
+        token = _ledger_active_write_scope.set(scope)
+        try:
+            yield scope
+        finally:
+            _ledger_active_write_scope.reset(token)
 
 
 @contextmanager

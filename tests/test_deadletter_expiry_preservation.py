@@ -97,29 +97,29 @@ def test_deadline_tail_keeps_original_bytes_and_retries(tmp_path):
     assert retry_path.read_text() == ""
 
 
-def test_expired_primary_charge_preserves_complete_spool_evidence(tmp_path):
+def test_cancelled_primary_charge_preserves_complete_spool_evidence(tmp_path):
     retry_path = tmp_path / (__name__ + "-recovery.jsonl")
     emergency_path = tmp_path / (__name__ + "-emergency.jsonl")
     with patch.object(budget, "spend_event_retry_paths", return_value=(retry_path, emergency_path)):
-        with ledger_read.ledger_request_scope(deadline_s=DEADLETTER_EXPIRY_BUDGET_S) as expired_scope:
-            expired_scope.deadline_at = time.monotonic()
+        with ledger_read.ledger_request_scope(deadline_s=DEADLETTER_EXPIRY_BUDGET_S) as cancelled_scope:
+            cancelled_scope.cancel_ledger_request()
             budget._record_spend_event(__name__, __name__, "realtime", DEADLETTER_EXPIRY_EVENT_COST)
-            assert ledger_read.current_ledger_request_scope() is expired_scope
+            assert ledger_read.current_ledger_request_scope() is cancelled_scope
     evidence = json.loads(retry_path.read_text())
     assert evidence["cost"] == DEADLETTER_EXPIRY_EVENT_COST
     assert evidence["event"]["usd"] == DEADLETTER_EXPIRY_EVENT_COST
     assert evidence["event"]["billed"] == 1
-    assert "LedgerQueryDeadline" in evidence["error"]
+    assert "LedgerRequestAbandoned" in evidence["error"]
     assert not emergency_path.exists()
 
 
-def test_expired_charge_uses_emergency_spool_when_home_append_fails(tmp_path):
+def test_cancelled_charge_uses_emergency_spool_when_home_append_fails(tmp_path):
     home_path = tmp_path / (__name__ + "-home-directory")
     home_path.mkdir()
     emergency_path = tmp_path / (__name__ + "-fallback.jsonl")
     with patch.object(budget, "spend_event_retry_paths", return_value=(home_path, emergency_path)):
-        with ledger_read.ledger_request_scope(deadline_s=DEADLETTER_EXPIRY_BUDGET_S) as expired_scope:
-            expired_scope.deadline_at = time.monotonic()
+        with ledger_read.ledger_request_scope(deadline_s=DEADLETTER_EXPIRY_BUDGET_S) as cancelled_scope:
+            cancelled_scope.cancel_ledger_request()
             budget._record_spend_event(__name__, __name__, "realtime", DEADLETTER_EXPIRY_EVENT_COST)
     assert json.loads(emergency_path.read_text())["event"]["usd"] == DEADLETTER_EXPIRY_EVENT_COST
 
