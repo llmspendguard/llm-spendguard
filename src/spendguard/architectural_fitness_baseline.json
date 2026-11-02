@@ -1713,11 +1713,11 @@
           },
           "src/spendguard/storm_coalescer.py": {
             "max_cc": 24,
-            "mi": 33.5630615814814
+            "mi": 30.15302067138812
           },
           "src/spendguard/storm_route.py": {
             "max_cc": 11,
-            "mi": 60.94003876928755
+            "mi": 59.80546381562603
           },
           "src/spendguard/storm_submit.py": {
             "max_cc": 31,
@@ -1855,7 +1855,8 @@
     "reviewed_lane_queue_maintenance_size_guard": "2026-11-01: Reviewed assess_lane_queue_maintenance_readiness in full; its measured MI cost is essential to enforce the lane-queue maintenance size, freelist-ratio, and old-terminal-count readiness guard.",
     "reviewed_ledger_writer_bounded_shutdown_drain": "2026-11-01: close_ledger_writers now bounds its shutdown drain with a derived timeout and warns once on undrained jobs so a stuck admitted write cannot hang interpreter exit. The worst function (_serve_ledger_write_jobs) is untouched and max CC is unchanged; only whole-file MI fell from the few added fail-closed drain/timeout lines, which are essential and not extractable. Regenerated as a zero-margin ceiling in the CI exact interpreter (python 3.12.15, linux/amd64).",
     "reviewed_report_collector_deadline": "2026-11-01: _fetch_sources_concurrently adds a whole-collector deadline plus hung-source diagnostics and a non-blocking fail-closed ex.shutdown(cancel_futures=...) so a wedged provider pull cannot hang report generation. Max CC is unchanged (generate_report remains the CC-33 maximum, untouched; the new collector is only CC 4); the whole-file MI fell purely from ~30 essential, non-extractable lines, so it is recorded as a zero-margin ceiling measured in the CI exact interpreter (python 3.12.15, linux/amd64).",
-    "reviewed_delegate_cancel_retention_dir_guard": "delegate_worktrees cyclomatic complexity rises by one branch because the cancel-retention path now guards on the retained worktree directory actually existing before persisting its metadata: a retained worktree is only recorded when its directory is present on disk, so a cancelled/failed delegate can no longer leave a dangling metadata entry pointing at a directory that was never materialized. The added conditional is the fix itself (reviewed in PR #277, axis-4 delegate cancel-retention); the measured CC/MI shift is recorded here rather than refactored away because collapsing the guard would reintroduce the dangling-metadata defect."
+    "reviewed_delegate_cancel_retention_dir_guard": "delegate_worktrees cyclomatic complexity rises by one branch because the cancel-retention path now guards on the retained worktree directory actually existing before persisting its metadata: a retained worktree is only recorded when its directory is present on disk, so a cancelled/failed delegate can no longer leave a dangling metadata entry pointing at a directory that was never materialized. The added conditional is the fix itself (reviewed in PR #277, axis-4 delegate cancel-retention); the measured CC/MI shift is recorded here rather than refactored away because collapsing the guard would reintroduce the dangling-metadata defect.",
+    "reviewed_storm_realtime_per_item_deadline": "storm_coalescer and storm_route whole-file maintainability fell slightly because the realtime coalescing path now applies a coordinator-derived per-item deadline to each callback it drives: a slow or wedged realtime callback can no longer stall the storm coalescer indefinitely, so the fan-out bounds its waits and fails closed on an exceeded per-item budget (reviewed in PR #273, axis-4 site 2/5). The added fail-closed deadline/timeout lines are essential and not extractable without reintroducing the unbounded-wait defect; max cyclomatic complexity of the worst functions is not what regressed, only whole-file MI from the few added bounded-wait lines. Regenerated as a zero-margin ceiling in the CI exact interpreter (python 3.12.15, linux/amd64)."
   },
   "duplication": {
     "duplicate_lines": 303,

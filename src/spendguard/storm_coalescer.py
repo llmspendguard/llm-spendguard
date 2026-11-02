@@ -30,7 +30,7 @@ import logging
 import traceback
 import threading
 import time
-from concurrent.futures import Future, InvalidStateError, ThreadPoolExecutor
+from concurrent.futures import Future, InvalidStateError, ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 
 from . import queue_planner
 
@@ -80,7 +80,7 @@ class StormCoalescer:
 
     def __init__(self, *, execute_realtime, execute_batch, sustainable_rate_per_s, horizon_s,
                  idle_gap_s=0.01, max_wait_s=1.0, realtime_concurrency=8, route_concurrency=4,
-                 batch_concurrency=4, provider="?", batch_refill_depth=1):
+                 batch_concurrency=4, provider="?", batch_refill_depth=1, realtime_timeout_for=None):
         if not callable(execute_realtime) or not callable(execute_batch):
             raise ValueError("execute_realtime and execute_batch are REQUIRED callables (no silent default)")
         if not (sustainable_rate_per_s > 0 and math.isfinite(sustainable_rate_per_s)):
@@ -93,6 +93,7 @@ class StormCoalescer:
             raise ValueError("idle_gap_s and max_wait_s must be > 0; got idle_gap_s=%r max_wait_s=%r"
                              % (idle_gap_s, max_wait_s))
         self._execute_realtime = execute_realtime
+        self._realtime_timeout_for = realtime_timeout_for
         self._execute_batch = execute_batch
         self.sustainable_rate_per_s = float(sustainable_rate_per_s)
         self.horizon_s = float(horizon_s)
@@ -107,7 +108,8 @@ class StormCoalescer:
         self._seq = 0
         self._stop = False
         self._planner = None
-        self._rt_pool = ThreadPoolExecutor(max_workers=int(realtime_concurrency), thread_name_prefix="storm-rt")
+        self._realtime_concurrency = int(realtime_concurrency)
+        self._rt_pool = ThreadPoolExecutor(max_workers=self._realtime_concurrency, thread_name_prefix="storm-rt")
         self._route_pool = ThreadPoolExecutor(max_workers=int(route_concurrency), thread_name_prefix="storm-route")
         self._batch_pool = ThreadPoolExecutor(max_workers=int(batch_concurrency), thread_name_prefix="storm-batch")
         self._inflight = []              # routing/batch futures, so close() can drain to completion (N:N on shutdown)
@@ -118,6 +120,7 @@ class StormCoalescer:
         self.cohorts = 0
         self.realtime_served = 0
         self.realtime_429_rerouted = 0
+        self.realtime_timeout_rerouted = 0
         self.batch_served = 0
         self.batch_jobs = 0
         self.close_abandoned = 0        # futures close() stopped waiting on at its drain deadline — SURFACED, never silent
@@ -283,30 +286,63 @@ class StormCoalescer:
             return []
         reroute = []
         rl_lock = threading.Lock()
+        coordinator_timed_out_sequences = set()
+        callback_budgets = [float(self._realtime_timeout_for(p.req)) if self._realtime_timeout_for else self.horizon_s
+                            for p in pend]
+        if not all(budget > 0 and math.isfinite(budget) for budget in callback_budgets):
+            raise ValueError("realtime callback budget must be finite and positive")
+        pacing_budget_s = (len(pend) - 1) / self.sustainable_rate_per_s
+        coordinator_started_at = time.monotonic()
+        realtime_deadlines = {
+            p.seq: min(coordinator_started_at + pacing_budget_s
+            + (index // self._realtime_concurrency) * max(callback_budgets) + budget,
+                       getattr(p.req, "deadline_at", None) or math.inf)
+            for index, (p, budget) in enumerate(zip(pend, callback_budgets))
+        }
 
         def _serve_one_realtime(p):
             try:
                 self._pacer.wait()
+                with rl_lock:
+                    if p.seq in coordinator_timed_out_sequences:
+                        return
+                    if time.monotonic() >= realtime_deadlines[p.seq]:
+                        reroute.append(p)
+                        return
                 r = self._execute_realtime(p.req)
             except BaseException as e:                              # a worker exception is THIS item's failure, not the cohort's
                 r = {"text": None, "error": "realtime: %s" % (str(e)[:120]), "status_code": None}
-            if _is_rate_limited(r) or (isinstance(r, dict) and r.get("error")):
-                with rl_lock:
+            with rl_lock:
+                if p.seq in coordinator_timed_out_sequences:
+                    return                                            # coordinator handed this item to batch; never double-resolve
+                if _is_rate_limited(r) or (isinstance(r, dict) and r.get("error")):
                     reroute.append(p)                              # 429 or error → batch (never surface, never silent success)
-                return
-            with self._lock:
-                self.realtime_served += 1
-            self._set(p, r, "realtime")
+                    return
+                with self._lock:
+                    self.realtime_served += 1
+                self._set(p, r, "realtime")
 
         futs = [self._rt_pool.submit(_serve_one_realtime, p) for p in pend]
-        for f in futs:
+        realtime_timeout_count = 0
+        for p, f in zip(pend, futs):
             try:
-                f.result()
+                f.result(timeout=max(0.0, realtime_deadlines[p.seq] - time.monotonic()))
+            except FutureTimeoutError:
+                with rl_lock:
+                    if not f.done():
+                        coordinator_timed_out_sequences.add(p.seq)
+                        reroute.append(p)
+                        realtime_timeout_count += 1
             except BaseException:
                 pass                                               # the worker already resolved/collected its own item
         if reroute:
             with self._lock:
-                self.realtime_429_rerouted += len(reroute)
+                self.realtime_429_rerouted += len(reroute) - realtime_timeout_count
+                self.realtime_timeout_rerouted += realtime_timeout_count
+        if realtime_timeout_count:
+            import sys as _sys
+            print("[spendguard] storm_coalescer realtime deadline reached for provider %s — REROUTED %d "
+                  "hung/slow callback(s) to batch." % (self.provider, realtime_timeout_count), file=_sys.stderr)
         return reroute
 
     def _run_batch_overflow(self, pend, depth):
