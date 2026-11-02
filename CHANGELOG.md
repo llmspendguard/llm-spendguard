@@ -4,6 +4,26 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 
 ## [Unreleased]
 
+## [0.16.22] — 2026-11-02
+
+Theme: the codex-daemon-broker OFFLINE flake family is closed at the root — a reclamation cleanup race, not the broker.
+
+### Stop the execution observer resurrecting a reclaimed archive lock (#282)
+The intermittent offline-CI failure surfaced as a codex-daemon-broker WARNING ("offline server died after producing
+work; refusing request"), but that warning was incidental. The real exit-1 (recovered from the original failed CI
+job log) was `shutil.rmtree` cleanup raising `OSError: Directory not empty` on a completed execution's directory.
+Root cause: `_locked_durable_execution` opened the per-execution lock with mode `"a"`, which *creates* the file when
+absent, so the detached execution observer's poll re-created `execution.lock` mid-`rmtree` and `rmdir` then hit a
+non-empty directory.
+
+- The lock now opens `"r+"` (requires an existing file) — acquisition can never resurrect a reclaimed execution.
+- `begin_durable_execution` `touch()`es the lock exactly once at init; initialization solely owns lock creation.
+- The observer returns cleanly on `FileNotFoundError` — if reclamation removed either file there is nothing left to
+  observe and no file may be recreated. Ordinary persistence errors still surface; broker behaviour is unchanged.
+- Un-regressable deterministic guard (`tests/test_execution_observer_reclamation_boundary.py`) forces the exact
+  observer↔rmtree ordering with events (no sleeps); proven RED before the fix (ENOTEMPTY) and GREEN after. The
+  original adversarial partial-evidence test is unchanged.
+
 ## [0.16.21] — 2026-11-02
 
 Theme: the busy-connection / ledger-read-expiry timing flake family is closed at the root and made un-regressable.
