@@ -4,6 +4,13 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 
 ## [Unreleased]
 
+## [0.16.25] — 2026-11-01
+
+Arm the effort learn-loop readiness gate with all six offline frontier, best-value selection, bakeoff,
+titration, recorded-effort and panel auto-application checks. A RED→GREEN regression requires the manifest
+entry, runs the real checks to PASS and proves an injected failing script makes the gate FAIL. Correct the
+stale quality-at-best-cost challenge row to describe the wired bakeoff loop and its readiness guard.
+
 ## [0.16.24] — 2026-11-01
 
 Fix queue maintenance's silent incremental-vacuum no-op on legacy auto-vacuum NONE databases. Maintenance
