@@ -1445,7 +1445,7 @@
           },
           "src/spendguard/ledger_writer.py": {
             "max_cc": 18,
-            "mi": 24.736594780297587
+            "mi": 24.45057858321519
           },
           "src/spendguard/litellm_adapter.py": {
             "max_cc": 16,
@@ -1853,6 +1853,7 @@
     "reviewed_delegate_result_contract_dict_wrap": "Records the measured per-file complexity cost of read_delegate_job_result always returning a state-bearing dict (wrapping a non-dict terminal result_payload), which adds one isinstance branch to the terminal-result contract.",
     "reviewed_effective_dated_pricing_integrity": "2026-11-01: Effective-dated pricing adds essential interval selection and validation plus immutable record-time rate provenance across calls, catalog authoring, cost integrity, ledger, model catalog, and pricing. Readability extractions isolate history updates, date normalization, interval validation, stamped-rate reconstruction, and ledger rate stamping; the remaining measured CC/MI reflects required half-open interval, legacy compatibility, nullable provenance, and fail-closed integrity branches.",
     "reviewed_lane_queue_maintenance_size_guard": "2026-11-01: Reviewed assess_lane_queue_maintenance_readiness in full; its measured MI cost is essential to enforce the lane-queue maintenance size, freelist-ratio, and old-terminal-count readiness guard.",
+    "reviewed_ledger_writer_bounded_shutdown_drain": "2026-11-01: close_ledger_writers now bounds its shutdown drain with a derived timeout and warns once on undrained jobs so a stuck admitted write cannot hang interpreter exit. The worst function (_serve_ledger_write_jobs) is untouched and max CC is unchanged; only whole-file MI fell from the few added fail-closed drain/timeout lines, which are essential and not extractable. Regenerated as a zero-margin ceiling in the CI exact interpreter (python 3.12.15, linux/amd64).",
     "reviewed_report_collector_deadline": "2026-11-01: _fetch_sources_concurrently adds a whole-collector deadline plus hung-source diagnostics and a non-blocking fail-closed ex.shutdown(cancel_futures=...) so a wedged provider pull cannot hang report generation. Max CC is unchanged (generate_report remains the CC-33 maximum, untouched; the new collector is only CC 4); the whole-file MI fell purely from ~30 essential, non-extractable lines, so it is recorded as a zero-margin ceiling measured in the CI exact interpreter (python 3.12.15, linux/amd64)."
   },
   "duplication": {
