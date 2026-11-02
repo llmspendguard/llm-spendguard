@@ -4,6 +4,33 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 
 ## [Unreleased]
 
+## [0.16.28] — 2026-11-02
+
+The ambient request-scope deadline no longer refuses ledger operations centrally, at the two root gates (#291) —
+the last fix in the #288→#289→#291 arc, closing the live `spendguard delegate` wedge for every entry path rather
+than one caller at a time. The MCP `do_POST` opens an ambient `ledger_request_scope` whose absolute 5s deadline
+spans the *whole* request, including a multi-second classify LLM call unrelated to the ledger. After that span,
+`effective_ledger_admission_deadline()` (connection-open / content-retention / dead-letter admission) and
+`require_ledger_writer_request_live()` (raw writer-lease acquisition), and independently the managed cursor's
+connection-tuning SQL, all refused instantly with `LedgerQueryDeadline` — the printed 5.0s being the scope
+CONSTANT, an instant refusal, not elapsed op time. This is unsatisfiable by design: a request legitimately spends
+seconds in non-ledger work before any ledger op begins.
+
+Fix (Option 1, central): the gates distinguish ambient *cancellation ownership* from *ledger-operation budgets*.
+Admission and managed statements start a fresh per-operation budget (`now + budget`) after non-ledger work; query,
+serialized-write, and persistence scopes keep their own absolute expiry; raw writer-lease acquisition is bounded by
+its own lease+write time without binding a context scope across a borrowed connection's lifetime. A new execute on
+a reused cursor starts a fresh statement budget while continuation fetches retain their original expiry. This fixes
+all four entry classes (budget read, write-lease, connection-open/content-retention, dead-letter drain) at once,
+without moving the classify call or patching retention/dead-letter callers individually.
+
+Both real protections remain, each with a negative control: genuine request abandonment (client disconnect /
+explicit cancel) still aborts in-flight work; a genuinely slow read still trips its progress handler and a blocked
+write still fails its own lease/write timeout. A durable spend write that genuinely cannot complete is retained as
+dead-letter evidence for retry, never dropped because a timer elapsed. A new readiness gate
+`ambient-scope-never-refuses-ledger-ops` (manifest item 27) makes this un-regressable, with a RED→GREEN guard
+(4/11 checks fail on pre-fix main → 11/11 pass) covering all four entry classes plus the negative controls.
+
 ## [0.16.27] — 2026-11-02
 
 Ledger writes budget their own operation time, not the ambient MCP request scope's absolute wall-clock (#289) —
