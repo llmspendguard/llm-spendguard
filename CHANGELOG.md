@@ -4,6 +4,28 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 
 ## [Unreleased]
 
+## [0.16.21] — 2026-11-02
+
+Theme: the busy-connection / ledger-read-expiry timing flake family is closed at the root and made un-regressable.
+
+### Close the busy-connection/read-expiry timing flake family (#281)
+One root cause underlay a recurring CI flake + production-log-spam family: wall-clock ledger read/expiry deadlines
+sized for a quiet machine were crossed under CPU starvation (a packed CI runner or a busy box), so tests asserting a
+timing upper bound flaked and a benign background expiry sweep spammed WARNING logs. Fixed in three layers, made
+un-regressable:
+
+- **Observability** — the self-healing managed-read-expiry deferral ("deferred: connection busy; retry scheduled")
+  logs at DEBUG, not WARNING, via a module-level SSOT message constant
+  (`MANAGED_READ_EXPIRY_DEFERRED_LOG_MESSAGE`). Terminal `LedgerQueryDeadline`/`LedgerReadTimeout` paths are
+  unchanged and still surface.
+- **Budget SSOT** — the read-family budgets derive from the one base `config.LEDGER_READ_TIME_BUDGET_S`; the
+  genuinely-independent connect/write/busy/WAL/read-busy/disconnect knobs are marked deliberate so they are not
+  collapsed into the base.
+- **Starvation-tolerant tests** — the raced promptness upper bounds across the ledger-timing family scale by the
+  existing `runner_budget_scale` calibration; lower, typed-error and behavioral assertions are retained. An AST
+  ratchet (`tests/test_no_raced_wallclock_timing_bounds.py`) forbids a new un-scaled raced wall-clock bound with a
+  shrink-only allowlist, and two deterministic proofs lock in the scale and the DEBUG-vs-WARNING contract.
+
 ## [0.16.18] — 2026-10-31
 
 Theme: a completed codex delegation is never reported failed by the request-lifetime 5s ledger-read deadline.
