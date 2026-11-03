@@ -17,7 +17,7 @@ PROJECTION_GUARD_READ_ROOTS = {
 }
 PROJECTION_GUARD_SOURCE_RELATIVE_PATHS = {
     "budget": Path("budget.py"),
-    "calls": Path("calls.py"),
+    "calls": Path("store/call_corpus/calls.py"),
     "gate": Path("gate.py"),
     "receipt": Path("analyze/spend_reporting/receipt.py"),
 }

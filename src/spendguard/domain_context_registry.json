@@ -8,9 +8,18 @@
       "surface_module": "spendguard.store.reference_data",
       "layer": "L0",
       "backing_modules": [
-        "pricing", "catalog_price_authoring", "model_catalog", "catalog", "lane_registry",
-        "lane_catalog", "reasoning_equivalence", "money_scale", "sync", "sync_capabilities",
-        "refresh", "models"
+        "pricing",
+        "catalog_price_authoring",
+        "model_catalog",
+        "catalog",
+        "lane_registry",
+        "lane_catalog",
+        "reasoning_equivalence",
+        "money_scale",
+        "sync",
+        "sync_capabilities",
+        "refresh",
+        "models"
       ],
       "published_names": []
     },
@@ -21,7 +30,9 @@
       "package": "spendguard.store.configuration",
       "surface_module": "spendguard.store.configuration",
       "layer": "L0",
-      "notes": ["config is currently L1/in-SCC; L0 is its target layer after the split"],
+      "notes": [
+        "config is currently L1/in-SCC; L0 is its target layer after the split"
+      ],
       "backing_modules": [
         "store.configuration.config_schema",
         "store.configuration.config"
@@ -147,10 +158,14 @@
       "surface_module": "spendguard.store.money_ledger",
       "layer": "L0",
       "backing_modules": [
-        "store.money_ledger.ledger", "store.money_ledger.ledger_writer",
-        "store.money_ledger.ledger_schema_migrations", "store.money_ledger.schema_indexes",
-        "store.money_ledger.ledger_fork_locks", "store.money_ledger.ledger_daily_rollup",
-        "store.money_ledger.ledger_wal_maintenance", "store.money_ledger.ledger_deadletter",
+        "store.money_ledger.ledger",
+        "store.money_ledger.ledger_writer",
+        "store.money_ledger.ledger_schema_migrations",
+        "store.money_ledger.schema_indexes",
+        "store.money_ledger.ledger_fork_locks",
+        "store.money_ledger.ledger_daily_rollup",
+        "store.money_ledger.ledger_wal_maintenance",
+        "store.money_ledger.ledger_deadletter",
         "store.money_ledger.migrate_charges"
       ],
       "published_names": []
@@ -163,36 +178,92 @@
       "surface_module": "spendguard.store.spend_search",
       "layer": "L1",
       "backing_modules": [
-        "store.spend_search.ledger_read", "store.spend_search.ledger_request_cursor",
+        "store.spend_search.ledger_read",
+        "store.spend_search.ledger_request_cursor",
         "store.spend_search.ledger_deadline_polling"
       ],
       "published_names": [
-        "LedgerDeadlinePolling", "LedgerQueryDeadline", "LedgerReadError", "LedgerReadOpenError",
-        "LedgerReadRequest", "LedgerReadRow", "LedgerReadSchemaError", "LedgerReadTableAbsent",
-        "LedgerReadTimeout", "LedgerReadTooLarge", "LedgerRequestAbandoned", "LedgerRequestReadScope",
-        "LedgerSQLReadRequest", "LedgerSettlementIncomplete", "ManagedReadExpiryCoordinator",
-        "ManagedRequestCursorState", "ManagedStatementParserFactsCoordinator",
-        "admit_managed_cursor_step_lock", "bind_ledger_query_deadline", "consumer_empty_spend_compatibility",
-        "count_lane_prompts", "count_recent_call_tests", "current_ledger_request_scope",
-        "effective_ledger_admission_deadline", "intersect_ledger_operation_deadlines",
-        "ledger_evidence_persistence_scope", "ledger_query_work_scope", "ledger_read_metrics",
-        "ledger_read_table_exists", "ledger_request_scope", "ledger_serialized_write_scope",
-        "read_advisor_evidence", "read_bakeoff_measurements", "read_calibration_actuals",
-        "read_calibration_calls", "read_calibration_summary", "read_call_cost_summary", "read_call_flow",
-        "read_call_intent_cost", "read_call_lane_outcomes", "read_call_max_rowid",
-        "read_call_metered_intents", "read_call_output_means", "read_cc_attribution_evidence",
-        "read_cc_conversation_cost", "read_cc_conversation_turns", "read_cc_overflow_conversations",
-        "read_cc_residency_totals", "read_cc_spend_overview", "read_cc_top_conversations",
-        "read_conversation_spend_since", "read_cost_integrity_buckets", "read_delegate_overage_evidence",
-        "read_filtered_ledger_count", "read_incomplete_call_settlements", "read_intent_model_usage",
-        "read_invoice_overage_months", "read_known_call_intents", "read_lane_cumulative_tokens",
-        "read_lane_fallback_costs", "read_lane_recent_counts", "read_lane_subscription_calls",
-        "read_lane_token_metrics", "read_ledger_count", "read_ledger_event", "read_ledger_rows",
-        "read_ledger_sql", "read_prompt_lint_evidence", "read_realized_adoptions",
-        "read_realized_call_rates", "read_receipt_lane_activity", "read_receipt_truncation_groups",
-        "read_recent_calls", "read_recorded_call_intents", "read_recorded_call_total",
-        "read_recording_gap_cells", "read_represented_call_cell", "read_routing_history_report",
-        "read_spend_aggregates", "read_spend_events", "read_spend_since"
+        "LedgerDeadlinePolling",
+        "LedgerQueryDeadline",
+        "LedgerReadError",
+        "LedgerReadOpenError",
+        "LedgerReadRequest",
+        "LedgerReadRow",
+        "LedgerReadSchemaError",
+        "LedgerReadTableAbsent",
+        "LedgerReadTimeout",
+        "LedgerReadTooLarge",
+        "LedgerRequestAbandoned",
+        "LedgerRequestReadScope",
+        "LedgerSQLReadRequest",
+        "LedgerSettlementIncomplete",
+        "ManagedReadExpiryCoordinator",
+        "ManagedRequestCursorState",
+        "ManagedStatementParserFactsCoordinator",
+        "admit_managed_cursor_step_lock",
+        "bind_ledger_query_deadline",
+        "consumer_empty_spend_compatibility",
+        "count_lane_prompts",
+        "count_recent_call_tests",
+        "current_ledger_request_scope",
+        "effective_ledger_admission_deadline",
+        "intersect_ledger_operation_deadlines",
+        "ledger_evidence_persistence_scope",
+        "ledger_query_work_scope",
+        "ledger_read_metrics",
+        "ledger_read_table_exists",
+        "ledger_request_scope",
+        "ledger_serialized_write_scope",
+        "read_advisor_evidence",
+        "read_bakeoff_measurements",
+        "read_calibration_actuals",
+        "read_calibration_calls",
+        "read_calibration_summary",
+        "read_call_cost_summary",
+        "read_call_flow",
+        "read_call_intent_cost",
+        "read_call_lane_outcomes",
+        "read_call_max_rowid",
+        "read_call_metered_intents",
+        "read_call_output_means",
+        "read_cc_attribution_evidence",
+        "read_cc_conversation_cost",
+        "read_cc_conversation_turns",
+        "read_cc_overflow_conversations",
+        "read_cc_residency_totals",
+        "read_cc_spend_overview",
+        "read_cc_top_conversations",
+        "read_conversation_spend_since",
+        "read_cost_integrity_buckets",
+        "read_delegate_overage_evidence",
+        "read_filtered_ledger_count",
+        "read_incomplete_call_settlements",
+        "read_intent_model_usage",
+        "read_invoice_overage_months",
+        "read_known_call_intents",
+        "read_lane_cumulative_tokens",
+        "read_lane_fallback_costs",
+        "read_lane_recent_counts",
+        "read_lane_subscription_calls",
+        "read_lane_token_metrics",
+        "read_ledger_count",
+        "read_ledger_event",
+        "read_ledger_rows",
+        "read_ledger_sql",
+        "read_prompt_lint_evidence",
+        "read_realized_adoptions",
+        "read_realized_call_rates",
+        "read_receipt_lane_activity",
+        "read_receipt_truncation_groups",
+        "read_recent_calls",
+        "read_recorded_call_intents",
+        "read_recorded_call_total",
+        "read_recording_gap_cells",
+        "read_represented_call_cell",
+        "read_routing_history_report",
+        "read_spend_aggregates",
+        "read_spend_events",
+        "read_spend_since"
       ]
     },
     {
@@ -203,8 +274,12 @@
       "surface_module": "spendguard.store.call_corpus",
       "layer": "L1",
       "backing_modules": [
-        "calls", "callio", "content_retention", "content_compression",
-        "content_compression_backfill", "routing_audit"
+        "store.call_corpus.calls",
+        "store.call_corpus.callio",
+        "store.call_corpus.content_retention",
+        "store.call_corpus.content_compression",
+        "store.call_corpus.content_compression_backfill",
+        "store.call_corpus.routing_audit"
       ],
       "published_names": []
     },
@@ -216,9 +291,23 @@
       "surface_module": "spendguard.generate.spend_capture",
       "layer": "L1",
       "backing_modules": [
-        "bedrock_adapter", "litellm_adapter", "vertex_adapter", "http_capture", "otel_ingest",
-        "claudecode", "codex", "chat", "compaction", "sources", "scan", "backfill",
-        "gpu_port", "lambda_adapter", "modal_adapter", "runpod_adapter", "resources"
+        "bedrock_adapter",
+        "litellm_adapter",
+        "vertex_adapter",
+        "http_capture",
+        "otel_ingest",
+        "claudecode",
+        "codex",
+        "chat",
+        "compaction",
+        "sources",
+        "scan",
+        "backfill",
+        "gpu_port",
+        "lambda_adapter",
+        "modal_adapter",
+        "runpod_adapter",
+        "resources"
       ],
       "published_names": []
     },
@@ -230,9 +319,19 @@
       "surface_module": "spendguard.generate.execution",
       "layer": "L1",
       "backing_modules": [
-        "vendor_call", "submit", "batch_tracker", "subscription_exec", "codex_exec",
-        "kimi_exec", "zai_exec", "antigravity_exec", "subscription_cli_results",
-        "provider_plugins", "provider_kit", "adapters", "openai_batch_cli"
+        "vendor_call",
+        "submit",
+        "batch_tracker",
+        "subscription_exec",
+        "codex_exec",
+        "kimi_exec",
+        "zai_exec",
+        "antigravity_exec",
+        "subscription_cli_results",
+        "provider_plugins",
+        "provider_kit",
+        "adapters",
+        "openai_batch_cli"
       ],
       "published_names": []
     },
@@ -244,18 +343,49 @@
       "surface_module": "spendguard.generate.work_integrity",
       "layer": "L1",
       "backing_modules": [
-        "generate.work_integrity.item_ledger", "generate.work_integrity.job_fingerprint",
-        "generate.work_integrity.output_contract", "generate.work_integrity.llm_files",
-        "generate.work_integrity.work_integrity", "generate.work_integrity.bulk_resilience"
+        "generate.work_integrity.item_ledger",
+        "generate.work_integrity.job_fingerprint",
+        "generate.work_integrity.output_contract",
+        "generate.work_integrity.llm_files",
+        "generate.work_integrity.work_integrity",
+        "generate.work_integrity.bulk_resilience"
       ],
       "published_names": [
-        "ANSWERED", "BulkResilienceRefused", "FINGERPRINT_KEY", "ITEM_LEDGER_LOGGER", "ItemLedger",
-        "JobMethodUndecided", "JobPlanDrift", "METHOD_PARTS", "MODEL", "PLAN", "PROMPT",
-        "PartialFileError", "REFUSED", "RETRY_ROUNDS", "Result", "UNRESOLVED", "WorkIntegrityProof",
-        "WorkIntegrityViolation", "as_obj_lenient", "attach_many", "attach_whole", "check_envelope",
-        "check_item", "check_items_against_contract", "compare_fingerprints", "compute_job_fingerprint",
-        "contract_hash", "data_signature", "describe", "guard_resume", "needs_enforcement",
-        "read_fingerprint", "require_resilient", "wellformed_contract", "write_fingerprint"
+        "ANSWERED",
+        "BulkResilienceRefused",
+        "FINGERPRINT_KEY",
+        "ITEM_LEDGER_LOGGER",
+        "ItemLedger",
+        "JobMethodUndecided",
+        "JobPlanDrift",
+        "METHOD_PARTS",
+        "MODEL",
+        "PLAN",
+        "PROMPT",
+        "PartialFileError",
+        "REFUSED",
+        "RETRY_ROUNDS",
+        "Result",
+        "UNRESOLVED",
+        "WorkIntegrityProof",
+        "WorkIntegrityViolation",
+        "as_obj_lenient",
+        "attach_many",
+        "attach_whole",
+        "check_envelope",
+        "check_item",
+        "check_items_against_contract",
+        "compare_fingerprints",
+        "compute_job_fingerprint",
+        "contract_hash",
+        "data_signature",
+        "describe",
+        "guard_resume",
+        "needs_enforcement",
+        "read_fingerprint",
+        "require_resilient",
+        "wellformed_contract",
+        "write_fingerprint"
       ]
     },
     {
@@ -266,8 +396,17 @@
       "surface_module": "spendguard.manage.admission",
       "layer": "L1",
       "backing_modules": [
-        "bulkgate", "escalation_ladder", "plan_admission", "model_preflight", "disk_guard",
-        "agent_spawn_gate", "weekly_cap_guard", "residency_gate", "semcache", "gate", "budget"
+        "bulkgate",
+        "escalation_ladder",
+        "plan_admission",
+        "model_preflight",
+        "disk_guard",
+        "agent_spawn_gate",
+        "weekly_cap_guard",
+        "residency_gate",
+        "semcache",
+        "gate",
+        "budget"
       ],
       "published_names": []
     },
@@ -279,8 +418,14 @@
       "surface_module": "spendguard.manage.routing",
       "layer": "L1",
       "backing_modules": [
-        "route_utility", "route_economics", "route_horizon", "cascade", "best_value",
-        "lane_balance", "tier_config", "whole_job"
+        "route_utility",
+        "route_economics",
+        "route_horizon",
+        "cascade",
+        "best_value",
+        "lane_balance",
+        "tier_config",
+        "whole_job"
       ],
       "published_names": []
     },
@@ -292,11 +437,27 @@
       "surface_module": "spendguard.manage.token_operations",
       "layer": "L1",
       "backing_modules": [
-        "dispatch", "xp_rate_window", "lane_queue", "queue_planner", "storm_coalescer",
-        "storm_submit", "storm_route", "delegate_router", "delegate_jobs", "execution_journal",
-        "delegate_worker", "delegate_worktrees", "process_group_reaper", "warm_stdio_daemon",
-        "codex_daemon", "codex_daemon_broker", "codex_broker_owner", "kimi_daemon",
-        "resource_state", "lane_recovery", "comprehend"
+        "dispatch",
+        "xp_rate_window",
+        "lane_queue",
+        "queue_planner",
+        "storm_coalescer",
+        "storm_submit",
+        "storm_route",
+        "delegate_router",
+        "delegate_jobs",
+        "execution_journal",
+        "delegate_worker",
+        "delegate_worktrees",
+        "process_group_reaper",
+        "warm_stdio_daemon",
+        "codex_daemon",
+        "codex_daemon_broker",
+        "codex_broker_owner",
+        "kimi_daemon",
+        "resource_state",
+        "lane_recovery",
+        "comprehend"
       ],
       "published_names": []
     },
@@ -308,7 +469,11 @@
       "surface_module": "spendguard.analyze.cost_estimation",
       "layer": "L1",
       "backing_modules": [
-        "estimate", "calibrate", "expected_output", "content_tokens", "provider_tokens",
+        "estimate",
+        "calibrate",
+        "expected_output",
+        "content_tokens",
+        "provider_tokens",
         "estimate_divergence"
       ],
       "published_names": []
@@ -321,8 +486,13 @@
       "surface_module": "spendguard.analyze.treasury",
       "layer": "L1-L2",
       "backing_modules": [
-        "balances", "lane_quota", "subscription_headroom_surfaces", "lane_economics",
-        "lane_value", "overage", "lane_quota_cost"
+        "balances",
+        "lane_quota",
+        "subscription_headroom_surfaces",
+        "lane_economics",
+        "lane_value",
+        "overage",
+        "lane_quota_cost"
       ],
       "published_names": []
     },
@@ -334,9 +504,24 @@
       "surface_module": "spendguard.analyze.measurement",
       "layer": "L2",
       "backing_modules": [
-        "measurement", "bakeoff", "compare", "experiment", "equivalence", "requirement_judge",
-        "stability", "effort_titration", "reliability", "lane_servability", "route_realized",
-        "realized", "guard", "cacheaudit", "cachetest", "prompts", "review", "lane_eligibility"
+        "measurement",
+        "bakeoff",
+        "compare",
+        "experiment",
+        "equivalence",
+        "requirement_judge",
+        "stability",
+        "effort_titration",
+        "reliability",
+        "lane_servability",
+        "route_realized",
+        "realized",
+        "guard",
+        "cacheaudit",
+        "cachetest",
+        "prompts",
+        "review",
+        "lane_eligibility"
       ],
       "published_names": []
     },
@@ -348,8 +533,16 @@
       "surface_module": "spendguard.analyze.learning",
       "layer": "L2",
       "backing_modules": [
-        "learn", "validate", "lane_bandit", "intent_model_prior", "advise", "advisor",
-        "conv", "history", "bootstrap", "brief"
+        "learn",
+        "validate",
+        "lane_bandit",
+        "intent_model_prior",
+        "advise",
+        "advisor",
+        "conv",
+        "history",
+        "bootstrap",
+        "brief"
       ],
       "published_names": []
     },
@@ -361,9 +554,21 @@
       "surface_module": "spendguard.analyze.reconciliation",
       "layer": "L3",
       "backing_modules": [
-        "reconcile", "ledger_sync", "reconcile_openai", "reconcile_anthropic", "reconcile_calls",
-        "reconcile_estimate_stage", "reconcile_gap_ownership", "reconcile_maintenance_owner",
-        "realtime_oracle", "trust", "cost_integrity", "anomaly", "attribution", "tag", "workdone",
+        "reconcile",
+        "ledger_sync",
+        "reconcile_openai",
+        "reconcile_anthropic",
+        "reconcile_calls",
+        "reconcile_estimate_stage",
+        "reconcile_gap_ownership",
+        "reconcile_maintenance_owner",
+        "realtime_oracle",
+        "trust",
+        "cost_integrity",
+        "anomaly",
+        "attribution",
+        "tag",
+        "workdone",
         "truth"
       ],
       "published_names": []
@@ -417,14 +622,21 @@
       "surface_module": "spendguard.analyze.assurance",
       "layer": "L3",
       "backing_modules": [
-        "analyze.assurance.audit", "analyze.assurance.token_caps",
-        "analyze.assurance.estimate_literals", "analyze.assurance.verdict_ledger",
-        "analyze.assurance.keys_audit", "analyze.assurance.coverage",
-        "analyze.assurance.consumer_audit", "analyze.assurance.metadata_audit",
-        "analyze.assurance.verify", "analyze.assurance.architectural_fitness",
-        "analyze.assurance.capability_readiness", "analyze.assurance.capability_readiness_gates",
+        "analyze.assurance.audit",
+        "analyze.assurance.token_caps",
+        "analyze.assurance.estimate_literals",
+        "analyze.assurance.verdict_ledger",
+        "analyze.assurance.keys_audit",
+        "analyze.assurance.coverage",
+        "analyze.assurance.consumer_audit",
+        "analyze.assurance.metadata_audit",
+        "analyze.assurance.verify",
+        "analyze.assurance.architectural_fitness",
+        "analyze.assurance.capability_readiness",
+        "analyze.assurance.capability_readiness_gates",
         "analyze.assurance.external_standard_readiness",
-        "analyze.assurance.ledger_performance_benchmark", "analyze.assurance.source_compact",
+        "analyze.assurance.ledger_performance_benchmark",
+        "analyze.assurance.source_compact",
         "analyze.assurance.import_behavior_snapshot"
       ],
       "published_names": []
@@ -436,7 +648,15 @@
       "package": "spendguard.egress",
       "surface_module": "spendguard.egress",
       "layer": "L3",
-      "backing_modules": ["saas", "deid", "signal", "share", "emit", "notify", "focus_export"],
+      "backing_modules": [
+        "saas",
+        "deid",
+        "signal",
+        "share",
+        "emit",
+        "notify",
+        "focus_export"
+      ],
       "published_names": []
     },
     {
@@ -447,8 +667,19 @@
       "surface_module": "spendguard.platform",
       "layer": "L4",
       "backing_modules": [
-        "_version", "release", "distribution", "distribution_daemon", "manifest", "fleet",
-        "schedule", "setup", "lanes", "runner", "remote", "offline_python_build", "launchd_labels"
+        "_version",
+        "release",
+        "distribution",
+        "distribution_daemon",
+        "manifest",
+        "fleet",
+        "schedule",
+        "setup",
+        "lanes",
+        "runner",
+        "remote",
+        "offline_python_build",
+        "launchd_labels"
       ],
       "published_names": []
     },
@@ -460,28 +691,105 @@
       "surface_module": "spendguard.interface",
       "layer": "L4",
       "backing_modules": [
-        "cli", "__main__", "mcp_server", "mcp_fd_lifecycle", "serve", "crossllm",
-        "capability_registry", "capability_cli_projection_models", "capability_cli_parsing",
-        "capability_cli_callable_generation", "capability_cli_dispatch_generation",
-        "capability_cli_help_generation", "capability_surface_generation", "capability_documentation",
-        "cli_arguments", "ui", "__init__"
+        "cli",
+        "__main__",
+        "mcp_server",
+        "mcp_fd_lifecycle",
+        "serve",
+        "crossllm",
+        "capability_registry",
+        "capability_cli_projection_models",
+        "capability_cli_parsing",
+        "capability_cli_callable_generation",
+        "capability_cli_dispatch_generation",
+        "capability_cli_help_generation",
+        "capability_surface_generation",
+        "capability_documentation",
+        "cli_arguments",
+        "ui",
+        "__init__"
       ],
       "published_names": []
     }
   ],
   "split_modules": {
-    "__init__": {"home_context": "surfaces", "secondary_contexts": ["admission", "spend_capture"]},
-    "adapters": {"home_context": "execution", "secondary_contexts": ["token_operations", "routing", "reference_data"]},
-    "gate": {"home_context": "admission", "secondary_contexts": ["spend_capture"]},
-    "budget": {"home_context": "admission", "secondary_contexts": ["money_ledger"]},
-    "config": {"home_context": "configuration", "secondary_contexts": ["money_ledger", "execution", "call_corpus"]},
-    "models": {"home_context": "reference_data", "secondary_contexts": ["execution"]},
-    "whole_job": {"home_context": "routing", "secondary_contexts": ["token_operations"]},
-    "lane_quota_cost": {"home_context": "treasury", "secondary_contexts": ["admission"]},
-    "truth": {"home_context": "reconciliation", "secondary_contexts": ["federation_egress"]},
-    "receipt": {"home_context": "spend_reporting", "secondary_contexts": ["platform"]},
-    "openai_batch_cli": {"home_context": "execution", "secondary_contexts": ["surfaces"]},
-    "resources": {"home_context": "spend_capture", "secondary_contexts": ["reconciliation"]}
+    "__init__": {
+      "home_context": "surfaces",
+      "secondary_contexts": [
+        "admission",
+        "spend_capture"
+      ]
+    },
+    "adapters": {
+      "home_context": "execution",
+      "secondary_contexts": [
+        "token_operations",
+        "routing",
+        "reference_data"
+      ]
+    },
+    "gate": {
+      "home_context": "admission",
+      "secondary_contexts": [
+        "spend_capture"
+      ]
+    },
+    "budget": {
+      "home_context": "admission",
+      "secondary_contexts": [
+        "money_ledger"
+      ]
+    },
+    "config": {
+      "home_context": "configuration",
+      "secondary_contexts": [
+        "money_ledger",
+        "execution",
+        "call_corpus"
+      ]
+    },
+    "models": {
+      "home_context": "reference_data",
+      "secondary_contexts": [
+        "execution"
+      ]
+    },
+    "whole_job": {
+      "home_context": "routing",
+      "secondary_contexts": [
+        "token_operations"
+      ]
+    },
+    "lane_quota_cost": {
+      "home_context": "treasury",
+      "secondary_contexts": [
+        "admission"
+      ]
+    },
+    "truth": {
+      "home_context": "reconciliation",
+      "secondary_contexts": [
+        "federation_egress"
+      ]
+    },
+    "receipt": {
+      "home_context": "spend_reporting",
+      "secondary_contexts": [
+        "platform"
+      ]
+    },
+    "openai_batch_cli": {
+      "home_context": "execution",
+      "secondary_contexts": [
+        "surfaces"
+      ]
+    },
+    "resources": {
+      "home_context": "spend_capture",
+      "secondary_contexts": [
+        "reconciliation"
+      ]
+    }
   },
   "domain_legacy_path_shims": [
     {
@@ -677,6 +985,36 @@
     {
       "legacy_module": "spendguard.migrate_charges",
       "current_module": "spendguard.store.money_ledger.migrate_charges",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.calls",
+      "current_module": "spendguard.store.call_corpus.calls",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.callio",
+      "current_module": "spendguard.store.call_corpus.callio",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.content_retention",
+      "current_module": "spendguard.store.call_corpus.content_retention",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.content_compression",
+      "current_module": "spendguard.store.call_corpus.content_compression",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.content_compression_backfill",
+      "current_module": "spendguard.store.call_corpus.content_compression_backfill",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.routing_audit",
+      "current_module": "spendguard.store.call_corpus.routing_audit",
       "moved_in_phase": 3
     }
   ],

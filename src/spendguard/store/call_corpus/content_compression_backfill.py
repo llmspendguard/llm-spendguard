@@ -1,9 +1,9 @@
 """Resumable, bounded-memory compression backfill for local retained content."""
 
-from .capability_cli_parsing import add_registered_cli_argument
+from ...capability_cli_parsing import add_registered_cli_argument
 import argparse
 
-from . import config
+from ... import config
 from .content_compression import COMPRESSED_TEXT_PREFIX, compress_retained_text
 
 

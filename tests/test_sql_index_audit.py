@@ -30,6 +30,7 @@ fails = []
 
 # ── create the full schema exactly as production code does ──
 from _script_checks import record_script_check
+import spendguard as spendguard_package  # noqa: E402
 from spendguard import calls, bulkgate, learn, budget, calibrate, guard, config  # noqa: E402
 from spendguard.ledger import SpendLedger  # noqa: E402
 
@@ -123,19 +124,24 @@ for migration_query in ALLOWED_EXACT_SCAN_QUERIES:
        not sql_index_scan_is_registered(migration_query + " AND intent=1"))
 
 queries = set()
-for path in glob.glob(os.path.join(os.path.dirname(calls.__file__), "*.py")):
-    tree = ast.parse(open(path).read(), filename=path)
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Constant) or not isinstance(node.value, str):
-            continue
-        literal = node.value.strip()
-        if not re.match(r"(?:SELECT|DELETE FROM|UPDATE)\s", literal, re.I):
-            continue
-        q = re.sub(r"\{[^}]*\}", "1", literal).strip()          # f-string holes → harmless literal
-        q = re.sub(r"\s+", " ", q)
-        q = q.replace("?", "1")                                  # bind slots → harmless EXPLAIN literals
-        if " FROM " in q.upper() or q.upper().startswith(("DELETE", "UPDATE")):
-            queries.add(q)
+SQL_INDEX_AUDIT_SOURCE_DIRECTORIES = {
+    os.path.dirname(spendguard_package.__file__),
+    os.path.dirname(calls.__file__),
+}
+for source_directory in SQL_INDEX_AUDIT_SOURCE_DIRECTORIES:
+    for path in glob.glob(os.path.join(source_directory, "*.py")):
+        tree = ast.parse(open(path).read(), filename=path)
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Constant) or not isinstance(node.value, str):
+                continue
+            literal = node.value.strip()
+            if not re.match(r"(?:SELECT|DELETE FROM|UPDATE)\s", literal, re.I):
+                continue
+            q = re.sub(r"\{[^}]*\}", "1", literal).strip()          # f-string holes → harmless literal
+            q = re.sub(r"\s+", " ", q)
+            q = q.replace("?", "1")                                  # bind slots → harmless EXPLAIN literals
+            if " FROM " in q.upper() or q.upper().startswith(("DELETE", "UPDATE")):
+                queries.add(q)
 
 planned, skipped, offenders = 0, 0, []
 for q in sorted(queries):

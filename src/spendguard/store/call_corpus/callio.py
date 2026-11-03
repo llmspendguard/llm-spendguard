@@ -13,13 +13,13 @@ confidence interval, not every request. Shares the spendguard db. Quality is wri
 judge (advisor.reconstruct_advisor_history). RLock — reentrant.
 """
 
-from .capability_cli_parsing import add_registered_cli_argument
+from ...capability_cli_parsing import add_registered_cli_argument
 import json, threading, datetime
 import logging
 import traceback
-from . import config
-from .ledger_fork_locks import new_fork_reset_ledger_state
-from .ledger_writer import best_effort_ledger_function, serialize_ledger_function
+from ... import config
+from ...ledger_fork_locks import new_fork_reset_ledger_state
+from ...ledger_writer import best_effort_ledger_function, serialize_ledger_function
 from .content_compression import compress_retained_text
 
 _lock = new_fork_reset_ledger_state(globals(), "_lock", threading.RLock)
@@ -158,7 +158,7 @@ def record_io_sample(intent, provider, model, batch, custom_id, prompt, output, 
     # different task and must be excluded — but a full prompt with a cut OUTPUT stays perfectly replayable (the output
     # is regenerated). Conflating the two would wrongly exclude a usable prompt. The warning still fires on either cut.
     _trunc = 0
-    from . import bulkgate
+    from ... import bulkgate
     _reply_truncated = bulkgate.is_truncated(finish_reason)
     try:
         with _lock:
@@ -324,7 +324,7 @@ def link_conversations(tdir=None, turns=10):
     """Stamp each recovered per-request row with the conversation that spawned its batch + the RICH pre/post
     context (~`turns` message turns before AND after the batch mention — the why/outcome, not a one-liner). The
     call→conversation join is the batch id. Re-links (overwrites) so old one-line snippets upgrade. Returns rows."""
-    from . import conv
+    from ... import conv
     ctxs = conv.batch_contexts(tdir, turns=turns)
     return _apply_callio_conversation_links(ctxs)
 
@@ -356,7 +356,7 @@ def linked_sample(limit=5):
 
 # ─────────────────────────── provider retrieval (free) ───────────────────────────
 def _runs_with_intent():
-    from . import learn
+    from ... import learn
     with learn.config.ledger_op('learn', learn._ensure_insights_schema) as ledger_read_handle:
         rows = ledger_read_handle.execute(
             "SELECT id, label, attrs FROM graph_nodes WHERE type='run' ORDER BY ts DESC").fetchall()
@@ -467,7 +467,7 @@ def fetch_anthropic(client, batch_id, intent, model, cap, sample_n, jsonl_inputs
         txt = "".join(blk.text for blk in r.message.content if getattr(blk, "type", None) == "text")
         out_tok = getattr(getattr(r.message, "usage", None), "output_tokens", None)
         try:                                              # batch-LINE truncation: anthropic stop_reason states the fact
-            from . import bulkgate
+            from ... import bulkgate
             if not (intent or "").startswith("spendguard:"):
                 bulkgate.note_response(bulkgate.sig(model or "", template_id=intent or None), model or "",
                                        out_tok, finish_reason=getattr(r.message, "stop_reason", None))
@@ -488,7 +488,7 @@ def fetch_history(cap=DEFAULT_CAP, sample_n=None, limit_batches=None):
     exactly like a batch about to be submitted, and it duly estimated them as new spend — one read-only pass
     wrote $359.63 of charges for work that had already been billed months earlier, and the daily cap then
     blocked every real call. "Zero token cost" in this docstring was true and still produced a bill."""
-    from . import budget
+    from ... import budget
     with budget.reading_history("callio.fetch_history"):
         # `is None`: sample_n=0 asks for NO samples and used to become `cap`, i.e. the maximum. The caller
         # most likely to pass 0 is one that has decided not to sample this batch at all.
@@ -720,7 +720,7 @@ def collect_chat_tasks(batch_ids, intent, model, require_ready=True, record_io=F
         measured["token_usage_complete"] = measured["in_tok"] is not None and measured["out_tok"] is not None
         out["usage"] = measured
     if len(ready) == 1:                              # one aggregate maps unambiguously to one provisional booking
-        from . import budget, calls, pricing
+        from ... import budget, calls, pricing
         try:
             actual = (None if not measured["token_usage_complete"] else
                       pricing.batch_cost(model, measured["in_tok"], measured["out_tok"], measured["cache_read"]))
@@ -811,7 +811,7 @@ def collect_message_batch(batch_ids, intent, model, require_ready=True, record_i
                 record_io_sample(intent, "anthropic", model, bid, cid, "", text, in_tok=in_tok, out_tok=out_tok)
             out["results"][cid] = text
             out["collected"] += 1
-        from . import budget, calls, pricing
+        from ... import budget, calls, pricing
         if batch_in_tok is None or batch_out_tok is None:
             config.warn_once("[spendguard] batch usage/value unknown: missing token telemetry; monetary estimate retained")
             continue

@@ -11,18 +11,18 @@ Shares the SQLite db with budget (config.db_path()), table `calls`. RLock — re
 hold it and call _calls_db() which re-acquires).
 """
 
-from .capability_cli_parsing import add_registered_cli_argument
+from ...capability_cli_parsing import add_registered_cli_argument
 import os, datetime, threading, hashlib, inspect, contextlib, uuid
 import logging
 from decimal import Decimal, localcontext
 from typing import Optional
 
-from . import config
-from .ledger_fork_locks import new_fork_reset_ledger_state
-from .schema_indexes import ensure_ordered_index_coverage
-from .ledger_schema_migrations import (own_spend_ledger_schema_reads, nano_schema_migration_completed,
+from ... import config
+from ...ledger_fork_locks import new_fork_reset_ledger_state
+from ...schema_indexes import ensure_ordered_index_coverage
+from ...ledger_schema_migrations import (own_spend_ledger_schema_reads, nano_schema_migration_completed,
                      record_nano_schema_migration_completion, CALL_NANO_SCHEMA_MIGRATION)
-from .money_scale import NANO_USD_PER_USD, real_usd_to_nano_usd, nano_usd_to_usd, assert_nano_total_matches
+from ...money_scale import NANO_USD_PER_USD, real_usd_to_nano_usd, nano_usd_to_usd, assert_nano_total_matches
 
 CALL_OBSERVATION_NANO_COLUMNS = {column: f"{column}_nano" for column in ("cost", "input_cost_floor")}
 
@@ -38,7 +38,7 @@ def _stamp_call_price_rates(connection, call_id, model, kind, timestamp):
     """Snapshot the effective token rates on a newly written call; never rewrites historical rows."""
     if not model or kind not in ("realtime", "batch"):
         return
-    from . import pricing
+    from ... import pricing
     try:
         rates = pricing.price(model, as_of=str(timestamp)[:10])
     except pricing.PriceUnknownError:
@@ -269,7 +269,7 @@ def recorded_intents(min_calls=1, limit=200):
     """Distinct job-type intents in the ledger with >= min_calls recorded calls, most-used first — the known label
     set an untagged prompt can be classified against (best_value's intent inference). $0, read-only; [] on any error."""
     try:
-        from . import ledger_read
+        from ... import ledger_read
         rows = ledger_read.read_recorded_call_intents(min_calls, limit)
         return [r[0] for r in rows]
     except Exception:
@@ -307,7 +307,7 @@ def context(intent: Optional[str] = None, chain: Optional[str] = None, contract=
         _local.contract = prev_contract
         _local.contract_tally = prev_tally     # nested flows keep their own tally; none leaks past its block
         try:
-            from . import receipt
+            from ... import receipt
             receipt.emit_flow(ctx.get("intent"), ctx.get("chain"), start, contract=tally)
         except Exception:
             pass
@@ -320,7 +320,7 @@ def check_output(text):
     if c is None or not text:
         return
     try:
-        from . import output_contract
+        from ... import output_contract
         ok, salvaged, why = output_contract.check_item(text, c)
         t = getattr(_local, "contract_tally", None)
         if t is None:
@@ -347,7 +347,7 @@ def contract_tally():
 # ── flow aggregation (powers the per-flow receipt; degrades gracefully when call-logging is off) ──
 def _flow_start_usd() -> float:
     try:
-        from . import budget
+        from ... import budget
         return budget.spent_all_time()                     # running billed-$ to date, O(1) (memoized) — not a full re-scan
     except Exception:
         return 0.0
@@ -357,7 +357,7 @@ def _max_rowid() -> int:
     if not call_recording_consent_enabled():
         return 0
     try:
-        from . import ledger_read
+        from ... import ledger_read
         # A flow watermark before the first logged call is zero; this observer never creates schema.
         from pathlib import Path
         if not Path(config.db_path()).exists() or not ledger_read.ledger_read_table_exists(ledger_read.LEDGER_CALLS_TABLE):
@@ -373,7 +373,7 @@ def flow_agg(since_rowid: int = 0, chain: Optional[str] = None):
     if not call_recording_consent_enabled():
         return None
     try:
-        from . import ledger_read
+        from ... import ledger_read
         row = ledger_read.read_call_flow(since_rowid, chain)
         if not row or not row[0]:
             return None
@@ -417,7 +417,7 @@ def _ensure_call_observation_schema(c):
     c.execute("SAVEPOINT call_observation_nano_schema")
     try:
         _initialize_call_observation_nano_schema(c)
-        from .ledger import _initialize_spend_event_nano_schema
+        from ...ledger import _initialize_spend_event_nano_schema
         _initialize_spend_event_nano_schema(c)
         c.execute("RELEASE SAVEPOINT call_observation_nano_schema")
     except BaseException:
@@ -571,7 +571,7 @@ def _resolve_attribution(model, cost, intent, chain, project, call_class=None, o
     chain = chain or ctx.get("chain")
     if project is None:                                  # attribute to the repo the same way the money ledger does
         try:
-            from . import budget
+            from ... import budget
             project = budget._project()
         except Exception:
             project = None
@@ -579,7 +579,7 @@ def _resolve_attribution(model, cost, intent, chain, project, call_class=None, o
     if resolved_class not in _CALL_CLASSES:
         raise ValueError(f"call_class must be one of {sorted(_CALL_CLASSES)}; got {resolved_class!r}")
     resolved_session = origin_session or ctx.get("origin_session") or _ORIGIN_SESSION
-    from .budget import normalize_ledger_project_id
+    from ...budget import normalize_ledger_project_id
     return (intent, chain, (normalize_ledger_project_id(project) or None), resolved_class,
             resolved_session)   # lowercased project_primary for clean joins
 
@@ -611,7 +611,7 @@ def _call_settlement_values(provider, model, kind, cost, in_tok, out_tok,
     settlement_complete = cost is not None
     if not settlement_complete and input_cost_floor is None and in_tok is not None:
         try:
-            from . import pricing
+            from ... import pricing
             if kind == "subscription":
                 input_cost_floor = 0.0
             else:
@@ -636,7 +636,7 @@ def _out_tok_sanity_ceiling(model):
       2. the context WINDOW (a call cannot output more tokens than the window holds), else
       3. _UNIVERSAL_OUT_TOK_SANITY (no call today emits this many — anything above is a bug, whatever the model).
     Returns (bound:int, basis:str). Never raises; a catalog hiccup degrades to the universal bound, never to 'no bound'."""
-    from . import model_catalog as _mc
+    from ... import model_catalog as _mc
     try:
         v = _mc.published_ceiling(model)
         if v:
@@ -658,7 +658,7 @@ def serialize_call_observation_mutation(function=None, *, capture_application_ca
     signature = inspect.signature(function)
     @functools.wraps(function)
     def invoke_call_observation_mutation(*args, **kwargs):
-        from .ledger_writer import run_ledger_write, current_ledger_writer_connection
+        from ...ledger_writer import run_ledger_write, current_ledger_writer_connection
         if current_ledger_writer_connection() is not None:
             return run_ledger_write(lambda: function(*args, **kwargs))
         if capture_application_caller:
@@ -782,14 +782,14 @@ def record_call(provider, model, kind, cost, in_tok=0, out_tok=0, latency=None,
                 config.warn_once(f"[spendguard] calls: suspect per-call out_tok {int(out_tok or 0)} for {model} "
                                  f"({_basis} {int(_ceil)}) — flagged, not trusted as a per-call fact")
         except Exception as _sce:
-            from . import gate as _scg
+            from ... import gate as _scg
             if _scg.is_deliberate_stop(_sce):    # a spend/deadline/containment stop HALTS — never swallowed into a flag
                 raise
             suspect = None                       # a pure catalog-read hiccup never blocks recording the call
         with _lock:
             # A provider-declared cutoff is authoritative per-call quality evidence. Assign it only while the new
             # row is written (never migrate/backfill old rows), with a distinct source protected from later feedback.
-            from . import bulkgate
+            from ... import bulkgate
             _truncation_quality = bulkgate.is_truncated(finish)
             from . import routing_audit
             audit_connection = _calls_db()
@@ -950,7 +950,7 @@ def _link_used(chain, current_prompt):
     return None
 
 
-from .budget import budget_projection_snapshot
+from ...budget import budget_projection_snapshot
 
 
 @budget_projection_snapshot
@@ -966,8 +966,8 @@ def intent_spend(intent, window_s=86400):
     cut = (datetime.datetime.now(datetime.timezone.utc)
            - datetime.timedelta(seconds=max(1, int(window_s)))).isoformat(timespec="seconds")
     try:
-        from . import ledger_read
-        from . import budget
+        from ... import ledger_read
+        from ... import budget
         connection = budget._ledger()._conn
         available_columns = {column[1] for column in connection.execute("PRAGMA table_info(calls)")}
         incomplete = ledger_read._read_incomplete_settlement_totals(
@@ -997,7 +997,7 @@ def intent_spend(intent, window_s=86400):
 
 def cost_summary(intent=None):
     """Per (intent, model): calls, $ total, %good, and cost-per-good-result."""
-    from . import ledger_read
+    from ... import ledger_read
     return [row.values for row in ledger_read.read_call_cost_summary(intent)]
 
 
@@ -1015,7 +1015,7 @@ def mean_out_by_executor_model(intent, call_class=None, origin_session=None):
     if not intent:
         return out
     try:
-        from . import ledger_read
+        from ... import ledger_read
         rows = ledger_read.read_call_output_means(intent, call_class, origin_session)
         for row in rows:
             ex, model, avg_out, n = row.values
@@ -1036,7 +1036,7 @@ def lane_model_outcomes(executor, since=None, call_class=None):
     if not executor:
         return out
     try:
-        from . import ledger_read
+        from ... import ledger_read
         rows = ledger_read.read_call_lane_outcomes(executor, since, call_class)
         for row in rows:
             model, outcome, n, last_ts = row.values
@@ -1071,7 +1071,7 @@ def metered_realtime_by_intent(since):
     if not since:
         return out
     try:
-        from . import ledger_read
+        from ... import ledger_read
         rows = ledger_read.read_call_metered_intents(since)
         for row in rows:
             intent, model, n, usd, in_tok, avg_in = row.values
@@ -1100,7 +1100,7 @@ def tested_recently(intent, model=None, days=14, kinds=("realtime",)):
         # into the past and stale evidence passes the test-first gate; east of it, real recent tests
         # vanish. Either way the comparison succeeds and returns a confident wrong answer.
         since = (_dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(days=int(days))).isoformat()
-        from . import ledger_read
+        from ... import ledger_read
         from pathlib import Path
         if not Path(config.db_path()).exists() or not ledger_read.ledger_read_table_exists(ledger_read.LEDGER_CALLS_TABLE):
             return False

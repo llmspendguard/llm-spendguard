@@ -39,7 +39,13 @@
     "spendguard.ledger_daily_rollup": "spendguard.store.money_ledger.ledger_daily_rollup",
     "spendguard.ledger_wal_maintenance": "spendguard.store.money_ledger.ledger_wal_maintenance",
     "spendguard.ledger_deadletter": "spendguard.store.money_ledger.ledger_deadletter",
-    "spendguard.migrate_charges": "spendguard.store.money_ledger.migrate_charges"
+    "spendguard.migrate_charges": "spendguard.store.money_ledger.migrate_charges",
+    "spendguard.calls": "spendguard.store.call_corpus.calls",
+    "spendguard.callio": "spendguard.store.call_corpus.callio",
+    "spendguard.content_retention": "spendguard.store.call_corpus.content_retention",
+    "spendguard.content_compression": "spendguard.store.call_corpus.content_compression",
+    "spendguard.content_compression_backfill": "spendguard.store.call_corpus.content_compression_backfill",
+    "spendguard.routing_audit": "spendguard.store.call_corpus.routing_audit"
   },
   "entry_points": {
     "package_import": {
@@ -427,6 +433,7 @@
     "spendguard.analyze.assurance.ledger_performance_benchmark",
     "spendguard.analyze.assurance.source_compact",
     "spendguard.analyze.assurance.import_behavior_snapshot",
-    "spendguard.store.money_ledger"
+    "spendguard.store.money_ledger",
+    "spendguard.store.call_corpus"
   ]
 }

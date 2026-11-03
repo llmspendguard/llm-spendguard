@@ -9,10 +9,10 @@ import json
 import logging
 import threading
 
-from . import config
-from .ledger_fork_locks import new_fork_reset_ledger_state
-from .config_schema import SETTINGS
-from .schema_indexes import ensure_ordered_index_coverage
+from ... import config
+from ...ledger_fork_locks import new_fork_reset_ledger_state
+from ...config_schema import SETTINGS
+from ...schema_indexes import ensure_ordered_index_coverage
 from .content_compression import compress_retained_text
 
 
