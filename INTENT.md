@@ -14,6 +14,30 @@ capped plan, or delegate a self-contained task to another provider's CLI. It als
 dashboards, org rollups, savings claims — has any value. Every number is cross-checked against **ground truth**
 (the provider's actual bill + known repos), never against fixtures rigged to pass.
 
+**The lens — the FinOps agent for AI compute.** The north star is one governance layer that sits between any caller
+— human · agent · code — and **all AI compute**, and does four things so every user reliably and easily gets the
+best result at the best economics:
+
+- **OBSERVE all** — every call and every dollar recorded, transparent, attributed.
+- **ENSURE all** — test/eval and capability-aware routing so no real cost is wasted (never pay for an unusable
+  shape; never pay twice; estimate before spend; fail closed).
+- **OPTIMIZE all** — best-value across the full surface: realtime + batch, $0 subscription lanes + metered, and
+  **remote compute** (GPU fleets like Vast.ai) — not tokens alone. "FinOps for tokens" is really **FinOps for AI
+  compute**; the three REAL-$ components (API + Subscription + Remote) are exactly that scope.
+- **ADVISE** — proactively suggest how to use spendguard itself so callers reach best-value the easiest, most
+  robust way (not just answer when asked).
+
+**Reliability is the load-bearing adoption invariant — a cross-cutting guarantee, not one feature.** The value is
+"one way to call AI compute," but no caller can be *forced* to route through a single seam; they align only if
+spendguard is **provably 100% reliable** and never makes the result worse. So reliability is proven across every
+surface, not asserted — and the way adoption is won is **measured-then-enforced, or made the obviously-correct
+choice by the value it delivers.** Every promise above (observed · ensured · optimized · reliable · saved) must be
+a FACT the system proves — a measured loop, a gate, a guard — because a $0 attribution that is wrong is worth less
+than nothing, and advice that doesn't actually save is noise. The current reliability gap this is closing: a strict
+schema a $0 lane can't guarantee used to churn and fall back reactively (the caller's `metered_only=True` band-aid);
+capability-aware routing + the whole-job contract (`run_jobs(jobs, goal)`) move that decision into spendguard so the
+caller states intent, not routing params.
+
 **What it does.**
 1. **Gates every LLM/embeddings call.** `import spendguard; spendguard.require()` fails **closed** — ungoverned code
    can't run silently. Estimate-before-spend on every paid batch; never hardcode a price (only `pricing.py`).
