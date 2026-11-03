@@ -29,8 +29,8 @@ import datetime
 import hashlib
 import json
 
-from . import advisor, calls, config, gate, models
-from .ledger_writer import best_effort_ledger_function
+from ... import advisor, calls, config, gate, models
+from ...ledger_writer import best_effort_ledger_function
 
 _INFER_OUT = 80          # the intent classifier returns one tiny JSON label ({"intent": "<known-label>"|null}); a small,
 #                          named output cap (not a call-site magic number) — and adapters.call self-heals a truncation anyway
@@ -133,7 +133,7 @@ def _evidence_fingerprint(intent):
         # NOT silent: a persistent fingerprint-read failure means the pick cache is bypassed every call (re-derived
         # fresh) — correct, but worth surfacing once so a broken cost_summary is visible, not a mystery slowdown.
         try:
-            from . import config
+            from ... import config
             config.warn_once("[spendguard] best-value: evidence fingerprint unreadable (%s) — the model-pick cache "
                              "is bypassed (each call re-derives fresh; nothing stale is served)" % type(e).__name__)
         except Exception:
@@ -232,7 +232,7 @@ def _infer_intent(prompt):
     key = hashlib.sha256(prompt.encode("utf-8", "replace")).hexdigest()
     if key in _intent_cache:
         return _intent_cache[key]
-    from . import calls, adapters, config
+    from ... import calls, adapters, config
     result = None
     known = calls.recorded_intents(min_calls=3)                # only intents with enough evidence to be worth routing to
     if known:
@@ -242,7 +242,7 @@ def _infer_intent(prompt):
         _schema = {"type": "object", "additionalProperties": False, "required": ["intent"],
                    "properties": {"intent": {"type": ["string", "null"]}}}
         try:
-            from . import plan_admission
+            from ... import plan_admission
             _judge = plan_admission.ready_meta_model(config.advisor_judge_model())  # off a capped plan to a READY provider
             with calls.context(intent="spendguard:infer-intent"):
                 r = adapters.call(_judge,

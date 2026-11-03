@@ -34,8 +34,8 @@ CONTRACT
 Estimate-first, fail-closed on unknown cost, no silent loss, decisions are economics (not regex) — the doctrines apply.
 """
 
-from .capability_cli_parsing import add_registered_cli_argument
-from . import route_economics, config
+from ...capability_cli_parsing import add_registered_cli_argument
+from ... import route_economics, config
 
 
 _REALTIME, _BATCH = "realtime", "batch"
@@ -72,7 +72,7 @@ def _strict_schema_planning_constraint(items, goal, resolved_model):
     adapters derives the vendor capability from its request dialect SSOT.  The model is the one economics already
     resolved; this helper never performs a second model-selection pass.
     """
-    from . import adapters, output_contract
+    from ... import adapters, output_contract
     must_enforce = any(output_contract.needs_enforcement(job.get("schema")) for job in items)
     suppressed = any(job.get("no_metered_fallback") or job.get("refuse_billed") for job in items)
     suppressed = suppressed or bool((goal or {}).get("no_metered_fallback") or (goal or {}).get("refuse_billed"))
@@ -82,7 +82,7 @@ def _strict_schema_planning_constraint(items, goal, resolved_model):
 
 def _record_set_schema_decision(intent, model, suppressed):
     """Record the set planner's capability decision in the same audit stream as the per-call router."""
-    from . import guard
+    from ... import guard
     guard.record_decision(intent=intent, requested_model=model, chosen_model=model,
                           counterfactual_usd=None, actual_usd=None, saved_usd=0, basis="capability",
                           why=("strict-schema→enforce-suppressed(set):no_metered_fallback" if suppressed
@@ -91,7 +91,7 @@ def _record_set_schema_decision(intent, model, suppressed):
 
 def _metered_schema_group_estimate(model, n, in_tok, out_tok):
     """Price the enforcing realtime leg from the canonical pricing SSOT; unknown inputs remain honestly unpriced."""
-    from . import pricing
+    from ... import pricing
     if not model or out_tok is None:
         return None
     try:
@@ -103,7 +103,7 @@ def _metered_schema_group_estimate(model, n, in_tok, out_tok):
 
 def _configured_batch_schema_provider():
     """Provider of the planner's configured batch leg, resolved from config rather than duplicated as a literal."""
-    from . import adapters
+    from ... import adapters
     batch_model = config._cfg_get("advisor", "batch_model", None)
     return adapters.provider_for(batch_model) if batch_model else None
 
@@ -122,7 +122,7 @@ def _method_for(intent, n, goal, in_tok, out_tok, items=None):
         est = float(est) if est is not None else None
         rec_path = rec.get("path") or "lane_only"
     except Exception as e:
-        from . import gate
+        from ... import gate
         if gate.is_deliberate_stop(e):
             raise                                 # a DELIBERATE refusal to estimate (spend stop / EstimateNotGrounded /
             #                                       containment) HALTS — never downgraded to "unknown cost, proceed"
@@ -209,7 +209,7 @@ def _horizon_plan(groups, goal):
             out[a["intent"]]["est"] = estimate
         return out or None
     except Exception as e:
-        from . import gate
+        from ... import gate
         if gate.is_deliberate_stop(e):
             raise                                     # a spend/estimate stop HALTS — never downgraded to "fall back"
         return None
@@ -293,7 +293,7 @@ def run_jobs(jobs, goal=None, checkpoint=None):
                     "receipt": {"refused_code": "budget_exceeded",
                                 "refused": "estimate $%.4f exceeds budget_usd $%.4f (no spend)"
                                 % (planned["priced_est_usd"], float(budget)), "est_usd": planned["priced_est_usd"]}}
-    from .work_integrity import WorkIntegrityProof
+    from ...work_integrity import WorkIntegrityProof
     expected = [j["id"] for items in planned["groups"].values() for j in items]
     proof = WorkIntegrityProof("never-lose-work")
     proof.assert_work_partition(expected, [expected])   # duplicate ids must stop BEFORE any paid execution
@@ -345,7 +345,7 @@ def _default_checkpoint():
     results (the chunk-never-single-shot rule) — even when the caller passes no checkpoint of their own."""
     import datetime
     import os
-    from . import config
+    from ... import config
     d = os.path.join(getattr(config, "HOME", os.path.expanduser("~/.spendguard")), "whole_job")
     os.makedirs(d, exist_ok=True)
     return os.path.join(d, "run-%s.jsonl" % datetime.datetime.now().strftime("%Y%m%dT%H%M%S%f"))
@@ -420,7 +420,7 @@ def _run_batch_group(intent, items, goal, budget_remaining):
     submission FAILED (surfaced by run_jobs, never discarded). Eligibility is decided STRUCTURALLY (the provider), not
     by parsing an error string. The cap is the remaining budget (submit_chat_tasks estimates→caps→submits through the
     ONE guarded chokepoint)."""
-    from . import adapters, config, submit as _submit
+    from ... import adapters, config, submit as _submit
     model = config.advisor_model()                    # v1: the account's advisor model (an OpenAI id rides the Batch API)
     if adapters.provider_for(model) != "openai":      # structural eligibility — the Batch API serves only OpenAI ids
         return {"batch_id": None, "eligible": False, "intent": intent}
@@ -446,7 +446,7 @@ def collect_jobs(pending):
     anomalies under '<batch_id>-anomalies', and a handle with no batch_id under 'handle-<i>' — so NOTHING is dropped
     (each row is a unit of work). $ is booked by callio.collect_chat_tasks under each handle's intent (attribution
     preserved). A DELIBERATE stop (spend refusal / deadline) propagates — never downgraded to 'keep going'."""
-    from . import callio, gate
+    from ... import callio, gate
     out = {}
     for idx, h in enumerate(pending or []):
         bid = h.get("batch_id")
@@ -472,7 +472,7 @@ def collect_jobs(pending):
         if res.get("anomalies"):                       # rows with a missing/unparseable custom_id — surfaced, not dropped
             out["%s-anomalies" % bid] = {"kind": "anomalies", "anomalies": res["anomalies"], "intent": intent}
         if h.get("job_ids") is not None and not res.get("not_ready"):
-            from .work_integrity import WorkIntegrityProof
+            from ...work_integrity import WorkIntegrityProof
             succeeded, failed = res.get("results") or {}, res.get("failed") or {}
             missing = [jid for jid in h["job_ids"] if jid not in succeeded and jid not in failed]
             for jid in missing:

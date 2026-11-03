@@ -18,7 +18,7 @@ config (advisor.*), never magic here.
 """
 import time
 
-from . import config
+from ... import config
 
 
 def _fmt_tok_short(n):
@@ -97,7 +97,7 @@ def _protect_policy():
     for discretionary work once it is ahead of pace — its remaining allowance is preserved for its window, for the
     work only IT can do (e.g. Claude Max weekly, when interactive coding can't run anywhere else). Default: no
     protection — 'maximize', every plan filled to ~100% of its window. General: any user marks any plan to protect."""
-    from . import lane_economics
+    from ... import lane_economics
     def _p(lane):
         return lane_economics.pace_policy(lane) in ("protect", "conservative")
     return _p
@@ -112,19 +112,19 @@ def rank_lanes(rows, cooling=None, now=None, pace_by=None, protect=None, auth_ov
     PACE-aware: `pace_by` {lane: pace_headroom} (default: lane_economics.pace_by_lane) — behind-pace plans score
     higher (fill the paid capacity before reset); a PROTECTED plan that is ahead of pace is held out (`protect`)."""
     if cooling is None:
-        from . import resource_state
+        from ... import resource_state
         cooling = lambda ln: resource_state.cooling(resource_state.lane_key(ln))
     if pace_by is None:
         try:
-            from . import lane_economics
+            from ... import lane_economics
             pace_by = lane_economics.pace_by_lane(rows, now=now)
         except Exception:
             pace_by = {}
     if protect is None:
         protect = _protect_policy()
-    from . import config
+    from ... import config
     shed = config.shed_lanes()   # SSOT shared with plan_admission — the operator's "route discretionary work OFF these"
-    from . import lane_quota_cost
+    from ... import lane_quota_cost
     quota_costs = lane_quota_cost.measured_lane_token_cost()
     measured_costs = [v["tokens_per_call"] for v in quota_costs.values()
                       if v.get("basis") == "measured" and v.get("tokens_per_call")]
@@ -153,7 +153,7 @@ def rank_lanes(rows, cooling=None, now=None, pace_by=None, protect=None, auth_ov
         # capped (a can't-know is not a no). reserve defaults to 0.0 = use fully, shed only at exactly 0%.
         _rp = r.get("remaining_pct")
         if _rp is not None:
-            from . import lane_economics
+            from ... import lane_economics
             _reserve = lane_economics.pace_reserve_frac(r["lane"])
             if (float(_rp) / 100.0) <= _reserve:
                 out.append({**base, "available": False, "score": None,
@@ -217,7 +217,7 @@ def _metered_available(provider, est_cost):
     """Can this metered provider cover a call costing ~est_cost? (available, why). on_demand/payg reloads → always
     yes. sunk_pool → only if the available balance covers it. unknown balance → yes (a can't-check is not a block).
     None est_cost → yes (nothing to gate on)."""
-    from . import balances
+    from ... import balances
     try:
         b = balances.vendor_balance(provider)
     except Exception:
@@ -239,7 +239,7 @@ def rank_metered(candidates, est_in, est_out):
     pricing.realtime_cost; normalized across the AVAILABLE candidates so the cheapest scores highest and all sit in
     (0,1] below any live lane. Order: affordable (cheapest first) → unpriced → unavailable last. Callers route to the
     first available=True."""
-    from . import pricing
+    from ... import pricing
     rows = []
     for spec in candidates:
         prov = spec.split(":", 1)[0]
@@ -305,7 +305,7 @@ def breach_decision(policy=None):
     if pol != "downgrade":
         return "refuse", None, "on_breach=refuse (fail-closed)"
     try:
-        from . import lanes
+        from ... import lanes
         top = next((d for d in rank_lanes(lanes.lane_headroom(do_fetch=False)) if d.get("available")), None)
         if top:
             return "downgrade", top["lane"], f"route to the {top['lane']} plan ($0) instead — {top['why']}"
@@ -350,7 +350,7 @@ def rank_for_tier(tier, est_in=0, est_out=0, lane_rows=None, cooling=None, now=N
     metered. Each: {kind 'lane'|'metered', target, provider, available, score, why}. The caller routes to the FIRST
     available=True. This is the single entry point that makes balance AUTOMATIC: no pinned model, no per-caller lane
     logic — name a group you declared, the economics pick the plan. Empty when the group is undeclared (advisor.tiers)."""
-    from . import lanes as _lanes, lane_catalog, adapters
+    from ... import lanes as _lanes, lane_catalog, adapters
     rows = list(lane_rows if lane_rows is not None else _lanes.lane_headroom(do_fetch=False))
     # each lane's model FOR THIS group (its cheap model for `cheap`, strong for `strong`) — None if it serves none.
     tier_lane_model = {}

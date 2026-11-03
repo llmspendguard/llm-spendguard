@@ -12,7 +12,7 @@ paid capacity. Ash's conversation-mining idea (limit-signals in Claude Code tran
 Numbers come from the receipt's OWN per-source est-value cache, re-windowed the same way — so they MATCH the receipt
 rather than being a parallel computation that could disagree.
 """
-from . import config, adapters, bulk_resilience
+from ... import config, adapters, bulk_resilience
 
 
 BulkResilienceRefused = bulk_resilience.BulkResilienceRefused
@@ -73,7 +73,7 @@ def _recent_calls_by_lane(hours=24):
     being worked' proxy when the provider's true quota isn't API-exposed — it is what stops the router piling
     every overflow onto the cheapest-$ lane. Best-effort → {} on any error (the caller then falls back to the
     $-value order, never breaks)."""
-    from . import ledger_read
+    from ... import ledger_read
     try:
         rows = ledger_read.read_lane_recent_counts(hours)
         return {row[0]: int(row[1]) for row in rows}
@@ -102,7 +102,7 @@ def lane_utilization():
     "fee_is_default", "asof"}, state ∈ {idle, warm, hot}. Reuses receipt._receipt_aggregate_cache_path / _rewindow / _plan_usd so the
     figures equal the receipt's (and inherit its stale-cache guard: `fresh=False` means the number could be a frozen
     earlier-month value and must be refreshed, never shown as current)."""
-    from . import receipt
+    from ... import receipt
     import json
     try:
         data = json.loads(receipt._receipt_aggregate_cache_path().read_text()).get("est_value_by_source") or {}
@@ -144,14 +144,14 @@ def idle_lanes():
     lane doing thousands of calls reads idle on the $ gauge but is spending its plan; volume spreads those). Cooling
     lanes are excluded. NO CLI call in this hot path — the snapshot is read from disk (refreshed out-of-band); with
     no snapshot yet, every lane is 'unknown' and this degrades EXACTLY to the old volume-only order."""
-    from . import lanes as _lanes, route_utility
+    from ... import lanes as _lanes, route_utility
     idle = [l for l in lane_utilization()["lanes"] if l["state"] == "idle"]
     # unknown-headroom lanes keep the volume proxy: pre-sort by it so rank_lanes preserves that order for the Nones
     idle = sorted(idle, key=lambda l: (l.get("calls_recent", 0), l["utilization"] if l["utilization"] is not None else 0.0))
     snap = {r["lane"]: r for r in _lanes.lane_headroom(do_fetch=False)}       # persisted; no CLI in the routing hot path
     rows = [snap.get(l["lane"], {"lane": l["lane"], "provider": l["provider"], "known": False,
                                  "remaining_pct": None, "reset_ts": None}) for l in idle]
-    from . import lane_economics
+    from ... import lane_economics
     # A prompt-metered lane whose SELF-USE cap is reached is held back from discretionary overflow — its stops-dead
     # prompt budget is reserved for real coding (spendguard only spends what it can see it spending).
     return [d["lane"] for d in route_utility.rank_lanes(rows)
@@ -232,10 +232,10 @@ def delegate(task, system=None, lanes=None, reasoning="low", max_tokens=None, in
     lane's prompt, validates the reply locally (output_contract), and falls back to that model's metered API (strict
     on OpenAI/Anthropic) if a lane's output is off-shape. The JSON answer stays in `text`. (A schema request skips
     the text-only lane bandit and uses this cheapest-idle path, which still gets adapters-level lane arbitrage.)"""
-    from . import adapters, calls
+    from ... import adapters, calls
     intent = intent or "spendguard:delegate"
     if enqueue:                                   # durable fire-and-forget: park it for the drainer, don't run now
-        from . import lane_queue
+        from ... import lane_queue
         pri = lane_queue.PRIORITY_INTERACTIVE if priority is None else int(priority)
         qid = lane_queue.enqueue(intent, task, system=system, reasoning=reasoning, priority=pri)
         return {"queued": qid, "intent": intent, "priority": pri, "text": None, "lane": None,
@@ -247,7 +247,7 @@ def delegate(task, system=None, lanes=None, reasoning="low", max_tokens=None, in
         # bandit_call is TEXT-only — a schema request skips it and takes the adapters.call path below, which folds
         # the shape into the lane prompt, validates locally, and falls back to the (strict) API if off-shape.
         try:
-            from . import lane_bandit
+            from ... import lane_bandit
             r = lane_bandit.bandit_call(intent, task, system=system, reasoning=reasoning)
             if r and r.get("text"):
                 import sys as _sb
@@ -316,7 +316,7 @@ def _bulk_arms(intent, lanes=None):
     proven total loser for this intent); that is a natural boundary, not a tuned threshold. Untried lanes are kept
     optimistically (explore), cooling lanes skipped. Spreading bulk across every remaining good lane is what makes it
     fast — they run in PARALLEL — so this returns the whole good set, not a single winner."""
-    from . import lane_bandit, lane_catalog
+    from ... import lane_bandit, lane_catalog
     st = lane_bandit.arm_stats(intent)
     best = {}
     for arm in lane_catalog.arms(lanes or config._cfg_get("advisor", "delegate_lanes", None)):
@@ -341,7 +341,7 @@ def quality_equivalent_free_substitutes(intent, primary_model, excluded=None):
     is intersected with the intent's propose→confirm registry, so neither an unapproved model nor a cold prior can
     enter failover. `route_utility.rank_lanes` then orders those agentically-approved arms by provider headroom.
     """
-    from . import advisor, lane_catalog, lanes as lane_status, route_utility
+    from ... import advisor, lane_catalog, lanes as lane_status, route_utility
     blocked = set(excluded or ())
     primary_provider = adapters.provider_for(primary_model)
     primary_lane = adapters._LANES.get(primary_provider, (None,))[0]
@@ -361,7 +361,7 @@ def quality_equivalent_free_substitutes(intent, primary_model, excluded=None):
         provider = adapters.provider_for(spec)
         lane = adapters._LANES.get(provider, (None,))[0]
         use_name = spec.split(":", 1)[1] if ":" in spec else spec
-        from . import plan_admission
+        from ... import plan_admission
         if (not lane or lane == primary_lane or lane in blocked or not plan_admission._ready(lane)
                 or (spec not in approved and use_name not in approved)):
             continue
@@ -385,7 +385,7 @@ def _arm_fallback_pricey(lane, use_name):
     OUTPUT tokens) — it classifies opus/sol as pricey and gemini/glm as fine. A pricing hiccup reads as NOT pricey (the
     guard never blocks a call on its OWN failure)."""
     try:
-        from . import model_catalog as _mc, lane_catalog
+        from ... import model_catalog as _mc, lane_catalog
         prov = lane_catalog.lane_provider(lane)
         p = _mc.model_price(f"{prov}:{use_name}") or _mc.model_price(use_name)
         rate = (p or {}).get("out")                                          # published $/1M OUTPUT tokens (a price LOOKUP, not a cost estimate — output dominates a runaway)
@@ -415,7 +415,7 @@ def _arity_checked(row, task, expect_ids):
     if not (expect_ids and _row_succeeded(row)):
         return row
     try:
-        from . import output_contract
+        from ... import output_contract
         _exp = expect_ids(task) if callable(expect_ids) else expect_ids
         if _exp:
             _ok, _det = output_contract.check_envelope(row["text"], _exp)
@@ -595,7 +595,7 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None,
     import threading as _th
     import time as _time
     import concurrent.futures as _cf
-    from . import adapters, calls, dispatch, lane_catalog
+    from ... import adapters, calls, dispatch, lane_catalog
 
     _bulk_who = (calls.current() or {}).get("who") or calls.caller()   # ORIGINATING caller, captured on THIS submitting
     #   thread (the app frame is on the stack here). The lane/API worker threads below have no app frame, so carry who
@@ -619,11 +619,11 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None,
     if strategy is not None and strategy != "auto":
         raise ValueError("bulk_delegate(strategy=…): expected 'auto' or None, got %r" % (strategy,))
     if strategy == "auto" and images_for is None and not callable(model_for):
-        from . import gate as _g0
+        from ... import gate as _g0
         _auto_stops = tuple(_g0.deliberate_stop_types())
         if lanes is None and not tier:
             try:
-                from . import lane_economics as _le
+                from ... import lane_economics as _le
                 _fill = [x["lane"] for x in lane_utilization().get("lanes", [])
                          if x.get("state") != "hot" and not _le.prompt_lane_reserved(x["lane"])]
                 if _fill:
@@ -692,7 +692,7 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None,
     # bulkgate is imported DIRECTLY (not guarded into 'off'): if the safety gate itself cannot load, that is a real
     # failure and must FAIL CLOSED — silently substituting 'off' would let an un-proven fan of thousands run.
     if not force:
-        from . import bulkgate as _bg
+        from ... import bulkgate as _bg
         _bmode = _bg.mode()
         if _bmode != "off" and len(tasks) >= _bg.preview_max():
             _st = (_bg.gate_status(gate_sig) if gate_sig else
@@ -785,7 +785,7 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None,
         # keeps its stops-dead budget for real coding, so it must not take DISCRETIONARY bulk overflow — and the
         # tier= path draws from lane_catalog.lanes(), which would otherwise ride a protected lane's cheap model.
         # Filter in ONE place so BOTH tier and _bulk_arms honor it; fail closed (error rows, never widen onto one).
-        from . import lane_economics
+        from ... import lane_economics
         _reserved = sorted({a[0] for a in arms if lane_economics.prompt_lane_reserved(a[0])})
         if _reserved:
             arms = [a for a in arms if a[0] not in _reserved]
@@ -795,7 +795,7 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None,
                                   f"its prompt budget is held for real coding, not discretionary bulk). Re-run when "
                                   f"a lane frees up, or widen advisor.delegate_lanes."} for _ in tasks])
 
-        from . import lane_quota_cost as _lane_quota_cost
+        from ... import lane_quota_cost as _lane_quota_cost
         allowed_names = _lane_quota_cost.apply_anthropic_avoidance(
             [arm[0] for arm in arms], auth_over_quota=auth_over_quota)
         arms = [arm for arm in arms if arm[0] in allowed_names]
@@ -897,7 +897,7 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None,
     _hedge_ms = int(hedge_ms if hedge_ms is not None else dispatch._limit("lane_hedge_ms", 0))
 
     _MAX_IMAGE_BYTES = 32 * 1024 * 1024               # bound raw image bytes so a giant file is a LOUD row, not an OOM
-    from . import gate as _gate
+    from ... import gate as _gate
     _STOP_TYPES = tuple(_gate.deliberate_stop_types())  # includes DispatchTimeout — fail CLOSED (no degrading fallback)
 
     def _image_too_big(imgs):
@@ -924,7 +924,7 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None,
         _vm = (model_for(task) if callable(model_for) else None) or vision_model
         _p = prompt_for(task) if callable(prompt_for) else task
         _raw = _vm.split(":", 1)[1] if (_vm and ":" in _vm) else (_vm or "?")
-        from . import vendor_call as _vc                  # lazy: canonical outcome KIND for class-aware queue retry
+        from ... import vendor_call as _vc                  # lazy: canonical outcome KIND for class-aware queue retry
         _b = {"text": None, "lane": "api", "use_name": _raw, "model": _vm, "billed": False}
         # no_model / no_image / oversized-image are DETERMINISTIC preflight failures — the call was never made and a
         # retry fails identically (these are the caller/config bugs, not transient faults). Stamp PREFLIGHT_UNMET so
@@ -1112,7 +1112,7 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None,
         # unfunded / deadline_exceeded / truncated / empty / schema_violation / ok) so the durable queue can retry
         # CLASS-AWARE: lane_queue.settle re-enqueues only a TRANSIENT (RETRYABLE) outcome and fails a DETERMINISTIC one
         # fast. Derived by the ONE classifier the realtime chokepoint also uses, so batch and realtime never drift.
-        from . import vendor_call as _vc
+        from ... import vendor_call as _vc
         _outcome = _vc._classify(r)[0]
         row = {"text": (r.get("text") or None), "lane": served_lane, "use_name": served_model, "outcome": _outcome,
                "model": f"{served_prov}:{served_model}", "billed": bool(r.get("cost")), "cost": r.get("cost"),  # actual $ → D
@@ -1310,11 +1310,11 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None,
             # batch model → batch_submit stays None → misses fall through to batch_eligible below: an uncapped
             # auto-submit never happens by omission. A submit ERROR (incl. a non-OpenAI model) RAISES here so the
             # existing handler leaves those misses batch_eligible with a loud notice — never falsely "queued".
-            from . import config as _config
+            from ... import config as _config
             _bm = batch_model or _config._cfg_get("advisor", "batch_model", None)
             if _bm:
                 _bcap = batch_cap if batch_cap is not None else _config._cfg_get("advisor", "batch_cap_usd", None)
-                from . import submit as _submit_mod
+                from ... import submit as _submit_mod
 
                 def batch_submit(_miss, _m=_bm, _cap=_bcap, _sm=_submit_mod):
                     _r = _sm.submit_chat_tasks(_miss, _m, system=system, schema=schema,
@@ -1362,7 +1362,7 @@ def estimate_fan(tasks, intent, system=None, lanes=None, tier=None, out_est=None
         else `out_est`, else a config nominal — `out_basis` says which so the estimate is auditable.
     Mirrors crossllm's "budget_usd is None → estimate only, never spends" pattern for the lane fan."""
     import hashlib as _hl
-    from . import adapters, lane_catalog, lane_economics, bulkgate, pricing, config, provider_tokens
+    from ... import adapters, lane_catalog, lane_economics, bulkgate, pricing, config, provider_tokens
 
     tasks = list(tasks)
     n_tasks = len(tasks)
@@ -1427,7 +1427,7 @@ def estimate_fan(tasks, intent, system=None, lanes=None, tier=None, out_est=None
             est += float(pricing.realtime_cost(model, in_tok, out_tok, provider=prov) or 0.0)   # metered fallback price
         except (KeyError, TypeError, ValueError):        # no price card → count it, exclude from the ceiling (never $0-hide)
             n_unpriced += 1
-    from . import lane_quota_cost
+    from ... import lane_quota_cost
     quota = lane_quota_cost.quota_preflight(
         lane_quota_cost.planned_round_robin_lane_calls(n_distinct, [arm[0] for arm in arms]),
         intent=intent, auth_over_quota=True)
@@ -1505,7 +1505,7 @@ def bandit_list_coverage():
     once sat in a live config and nothing said so — axis-4). {list_key: {entries, unmatched, seen_n, read_ok}} per
     configured list; unmatched is None when the ledger could not be read. Read-only, $0 — surfaced by `spendguard doctor`."""
     import sqlite3
-    from . import ledger_read
+    from ... import ledger_read
     seen, read_ok = [], True
     try:
         seen = [row[0] for row in ledger_read.read_known_call_intents(include_internal=True)]
@@ -1578,7 +1578,7 @@ def route_decision(intent, model, reactive=False):
         # the primary's own lane; never a cooling arm. Quality is LEARNED from bake-offs (`delegate` / `--bakeoff`);
         # this side just EXPLOITS what's known + explores untried. Empty allowlist ⇒ main-path routing stays inert.
         try:
-            from .advisor import META as _META
+            from ...advisor import META as _META
         except Exception:
             _META = "spendguard"
         _bandit_on = str(config._cfg_get("advisor", "lane_bandit", False)).strip().lower() in ("1", "true", "yes", "on")
@@ -1594,7 +1594,7 @@ def route_decision(intent, model, reactive=False):
             _eligible = _intent_listed(intent, config._cfg_get("advisor", "bandit_intents", None))
         if _bandit_on and not str(intent).startswith(_META) and _eligible:
             try:
-                from . import lane_bandit, lane_catalog, lane_economics
+                from ... import lane_bandit, lane_catalog, lane_economics
                 _prim_lane = adapters._LANES.get(adapters.provider_for(model), (None,))[0]
                 # exclude the primary lane AND any prompt-metered lane whose self-use cap is reached (reserve its
                 # stops-dead prompt budget for real coding rather than spend it on discretionary bandit work)
@@ -1697,7 +1697,7 @@ def propose_substitutes(intent, primary_model, candidates=None):
     if not cands:
         return {"acceptable": [], "rationale": "no idle-lane candidate models configured (set advisor.lane_models)",
                 "pending": pending_for(intent)}
-    from . import calls
+    from ... import calls
     judge = config._cfg_get("advisor", "judge_model", None) or config.advisor_judge_model()
     prompt = (f"INTENT: {intent}\nPRIMARY model (currently used): {primary_model}\n"
               f"CANDIDATE substitute models on idle plans: {cands}\n\n"
@@ -1707,7 +1707,7 @@ def propose_substitutes(intent, primary_model, candidates=None):
         # model than the judge we attribute the decision to (measurement-identity integrity)
         r = adapters.call(judge, prompt, system=_PROPOSE_SYS, schema=_PROPOSE_SCHEMA, max_tokens=_PROPOSE_OUT,
                           no_substitution=True)
-    from . import output_contract
+    from ... import output_contract
     obj, _ = output_contract.as_obj_lenient((r or {}).get("text") or "")   # lenient: malformed judge reply → (None,False), never raises
     acceptable = [c for c in cands if isinstance(obj, dict) and c in (obj.get("acceptable") or [])]  # only real candidate ids
     rationale = (obj.get("rationale") if isinstance(obj, dict) else "") or ""
@@ -1747,7 +1747,7 @@ def adapt_system(intent, target_model, system, model=None):
     if not system.strip():
         result = {"adapted_system": "", "changed": False, "note": "no system prompt to adapt"}
     else:
-        from . import calls, output_contract
+        from ... import calls, output_contract
         prompt = (f"TARGET model: {target_model}\nINTENT: {intent}\n\nSYSTEM PROMPT TO ADAPT:\n{system}\n\n"   # WHOLE
                   # prompt — adapting a version truncated at 8000 chars drops the tail of the instructions; an
                   # over-window prompt is refused loudly by adapters.call, never clipped.

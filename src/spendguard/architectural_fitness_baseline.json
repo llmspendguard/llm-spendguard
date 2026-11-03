@@ -12,7 +12,6 @@
     "backfill.py",
     "bakeoff.py",
     "bedrock_adapter.py",
-    "best_value.py",
     "bootstrap.py",
     "brief.py",
     "budget.py",
@@ -27,7 +26,6 @@
     "capability_documentation.py",
     "capability_registry.py",
     "capability_surface_generation.py",
-    "cascade.py",
     "catalog.py",
     "catalog_price_authoring.py",
     "chat.py",
@@ -68,7 +66,6 @@
     "intent_model_prior.py",
     "kimi_daemon.py",
     "lambda_adapter.py",
-    "lane_balance.py",
     "lane_bandit.py",
     "lane_catalog.py",
     "lane_eligibility.py",
@@ -116,10 +113,7 @@
     "resource_state.py",
     "resources.py",
     "review.py",
-    "route_economics.py",
-    "route_horizon.py",
     "route_realized.py",
-    "route_utility.py",
     "runner.py",
     "runpod_adapter.py",
     "scan.py",
@@ -135,7 +129,6 @@
     "sync.py",
     "sync_capabilities.py",
     "tag.py",
-    "tier_config.py",
     "trust.py",
     "truth.py",
     "ui.py",
@@ -143,7 +136,6 @@
     "vertex_adapter.py",
     "warm_stdio_daemon.py",
     "weekly_cap_guard.py",
-    "whole_job.py",
     "workdone.py",
     "xp_rate_window.py"
   ],
@@ -382,7 +374,7 @@
             "max_cc": 11,
             "mi": 70.88212201841873
           },
-          "src/spendguard/best_value.py": {
+          "src/spendguard/manage/routing/best_value.py": {
             "max_cc": 27,
             "mi": 52.868440332551494
           },
@@ -446,7 +438,7 @@
             "max_cc": 18,
             "mi": 21.647400062518287
           },
-          "src/spendguard/cascade.py": {
+          "src/spendguard/manage/routing/cascade.py": {
             "max_cc": 25,
             "mi": 59.17462817490093
           },
@@ -694,7 +686,7 @@
             "max_cc": 13,
             "mi": 74.8997143705544
           },
-          "src/spendguard/lane_balance.py": {
+          "src/spendguard/manage/routing/lane_balance.py": {
             "max_cc": 117,
             "mi": 0.0
           },
@@ -946,11 +938,11 @@
             "max_cc": 12,
             "mi": 49.0267487779889
           },
-          "src/spendguard/route_economics.py": {
+          "src/spendguard/manage/routing/route_economics.py": {
             "max_cc": 29,
             "mi": 39.53850196386189
           },
-          "src/spendguard/route_horizon.py": {
+          "src/spendguard/manage/routing/route_horizon.py": {
             "max_cc": 47,
             "mi": 34.35506439931096
           },
@@ -958,7 +950,7 @@
             "max_cc": 4,
             "mi": 65.52491089544914
           },
-          "src/spendguard/route_utility.py": {
+          "src/spendguard/manage/routing/route_utility.py": {
             "max_cc": 44,
             "mi": 38.97136073734599
           },
@@ -1130,7 +1122,7 @@
             "max_cc": 7,
             "mi": 67.18510085275686
           },
-          "src/spendguard/tier_config.py": {
+          "src/spendguard/manage/routing/tier_config.py": {
             "max_cc": 40,
             "mi": 46.65539030471832
           },
@@ -1166,7 +1158,7 @@
             "max_cc": 23,
             "mi": 26.06034807848355
           },
-          "src/spendguard/whole_job.py": {
+          "src/spendguard/manage/routing/whole_job.py": {
             "max_cc": 27,
             "mi": 25.64598378308811
           },
@@ -1382,7 +1374,7 @@
             "max_cc": 11,
             "mi": 70.88212201841873
           },
-          "src/spendguard/best_value.py": {
+          "src/spendguard/manage/routing/best_value.py": {
             "max_cc": 27,
             "mi": 52.868440332551494
           },
@@ -1446,7 +1438,7 @@
             "max_cc": 18,
             "mi": 21.647400062518287
           },
-          "src/spendguard/cascade.py": {
+          "src/spendguard/manage/routing/cascade.py": {
             "max_cc": 25,
             "mi": 58.95170767312015
           },
@@ -1694,7 +1686,7 @@
             "max_cc": 13,
             "mi": 74.8997143705544
           },
-          "src/spendguard/lane_balance.py": {
+          "src/spendguard/manage/routing/lane_balance.py": {
             "max_cc": 117,
             "mi": 0.0
           },
@@ -1946,11 +1938,11 @@
             "max_cc": 12,
             "mi": 48.64262788372663
           },
-          "src/spendguard/route_economics.py": {
+          "src/spendguard/manage/routing/route_economics.py": {
             "max_cc": 29,
             "mi": 39.53850196386189
           },
-          "src/spendguard/route_horizon.py": {
+          "src/spendguard/manage/routing/route_horizon.py": {
             "max_cc": 47,
             "mi": 34.35506439931096
           },
@@ -1958,7 +1950,7 @@
             "max_cc": 4,
             "mi": 64.7666115595946
           },
-          "src/spendguard/route_utility.py": {
+          "src/spendguard/manage/routing/route_utility.py": {
             "max_cc": 44,
             "mi": 38.634981583543684
           },
@@ -2130,7 +2122,7 @@
             "max_cc": 7,
             "mi": 67.03821908557403
           },
-          "src/spendguard/tier_config.py": {
+          "src/spendguard/manage/routing/tier_config.py": {
             "max_cc": 40,
             "mi": 46.42709771081143
           },
@@ -2166,7 +2158,7 @@
             "max_cc": 23,
             "mi": 25.828706117665153
           },
-          "src/spendguard/whole_job.py": {
+          "src/spendguard/manage/routing/whole_job.py": {
             "max_cc": 27,
             "mi": 25.64598378308811
           },
@@ -6184,7 +6176,7 @@
   ],
   "max_largest_scc_size": 142,
   "max_cyclic_edge_count": 943,
-  "max_legacy_shim_count": 78,
+  "max_legacy_shim_count": 86,
   "recorded_cross_context_nonsurface_imports": [
     [
       "spendguard",
@@ -6236,7 +6228,7 @@
     ],
     [
       "spendguard.generate.execution.adapters",
-      "spendguard.best_value"
+      "spendguard.manage.routing.best_value"
     ],
     [
       "spendguard.generate.execution.adapters",
@@ -6296,7 +6288,7 @@
     ],
     [
       "spendguard.generate.execution.adapters",
-      "spendguard.lane_balance"
+      "spendguard.manage.routing.lane_balance"
     ],
     [
       "spendguard.generate.execution.adapters",
@@ -6400,7 +6392,7 @@
     ],
     [
       "spendguard.advise",
-      "spendguard.route_economics"
+      "spendguard.manage.routing.route_economics"
     ],
     [
       "spendguard.advise",
@@ -6667,35 +6659,35 @@
       "spendguard.gate"
     ],
     [
-      "spendguard.best_value",
+      "spendguard.manage.routing.best_value",
       "spendguard.generate.execution.adapters"
     ],
     [
-      "spendguard.best_value",
+      "spendguard.manage.routing.best_value",
       "spendguard.advisor"
     ],
     [
-      "spendguard.best_value",
+      "spendguard.manage.routing.best_value",
       "spendguard.store.call_corpus.calls"
     ],
     [
-      "spendguard.best_value",
+      "spendguard.manage.routing.best_value",
       "spendguard.store.configuration.config"
     ],
     [
-      "spendguard.best_value",
+      "spendguard.manage.routing.best_value",
       "spendguard.gate"
     ],
     [
-      "spendguard.best_value",
+      "spendguard.manage.routing.best_value",
       "spendguard.store.money_ledger.ledger_writer"
     ],
     [
-      "spendguard.best_value",
+      "spendguard.manage.routing.best_value",
       "spendguard.models"
     ],
     [
-      "spendguard.best_value",
+      "spendguard.manage.routing.best_value",
       "spendguard.plan_admission"
     ],
     [
@@ -7047,35 +7039,35 @@
       "spendguard.lane_queue"
     ],
     [
-      "spendguard.cascade",
+      "spendguard.manage.routing.cascade",
       "spendguard.store.call_corpus.calls"
     ],
     [
-      "spendguard.cascade",
+      "spendguard.manage.routing.cascade",
       "spendguard.capability_cli_parsing"
     ],
     [
-      "spendguard.cascade",
+      "spendguard.manage.routing.cascade",
       "spendguard.equivalence"
     ],
     [
-      "spendguard.cascade",
+      "spendguard.manage.routing.cascade",
       "spendguard.experiment"
     ],
     [
-      "spendguard.cascade",
+      "spendguard.manage.routing.cascade",
       "spendguard.guard"
     ],
     [
-      "spendguard.cascade",
+      "spendguard.manage.routing.cascade",
       "spendguard.models"
     ],
     [
-      "spendguard.cascade",
+      "spendguard.manage.routing.cascade",
       "spendguard.pricing"
     ],
     [
-      "spendguard.cascade",
+      "spendguard.manage.routing.cascade",
       "spendguard.ui"
     ],
     [
@@ -7248,7 +7240,7 @@
     ],
     [
       "spendguard.cli",
-      "spendguard.lane_balance"
+      "spendguard.manage.routing.lane_balance"
     ],
     [
       "spendguard.cli",
@@ -7452,7 +7444,7 @@
     ],
     [
       "spendguard.comprehend",
-      "spendguard.lane_balance"
+      "spendguard.manage.routing.lane_balance"
     ],
     [
       "spendguard.comprehend",
@@ -7672,7 +7664,7 @@
     ],
     [
       "spendguard.crossllm",
-      "spendguard.lane_balance"
+      "spendguard.manage.routing.lane_balance"
     ],
     [
       "spendguard.crossllm",
@@ -7724,7 +7716,7 @@
     ],
     [
       "spendguard.delegate_router",
-      "spendguard.lane_balance"
+      "spendguard.manage.routing.lane_balance"
     ],
     [
       "spendguard.delegate_router",
@@ -8120,7 +8112,7 @@
     ],
     [
       "spendguard.gate",
-      "spendguard.lane_balance"
+      "spendguard.manage.routing.lane_balance"
     ],
     [
       "spendguard.gate",
@@ -8156,7 +8148,7 @@
     ],
     [
       "spendguard.gate",
-      "spendguard.route_utility"
+      "spendguard.manage.routing.route_utility"
     ],
     [
       "spendguard.gate",
@@ -8172,7 +8164,7 @@
     ],
     [
       "spendguard.gate",
-      "spendguard.tier_config"
+      "spendguard.manage.routing.tier_config"
     ],
     [
       "spendguard.gpu_port",
@@ -8327,95 +8319,95 @@
       "spendguard.store.configuration.config"
     ],
     [
-      "spendguard.lane_balance",
+      "spendguard.manage.routing.lane_balance",
       "spendguard.generate.execution.adapters"
     ],
     [
-      "spendguard.lane_balance",
+      "spendguard.manage.routing.lane_balance",
       "spendguard.advisor"
     ],
     [
-      "spendguard.lane_balance",
+      "spendguard.manage.routing.lane_balance",
       "spendguard.generate.work_integrity.bulk_resilience"
     ],
     [
-      "spendguard.lane_balance",
+      "spendguard.manage.routing.lane_balance",
       "spendguard.bulkgate"
     ],
     [
-      "spendguard.lane_balance",
+      "spendguard.manage.routing.lane_balance",
       "spendguard.store.call_corpus.calls"
     ],
     [
-      "spendguard.lane_balance",
+      "spendguard.manage.routing.lane_balance",
       "spendguard.store.configuration.config"
     ],
     [
-      "spendguard.lane_balance",
+      "spendguard.manage.routing.lane_balance",
       "spendguard.dispatch"
     ],
     [
-      "spendguard.lane_balance",
+      "spendguard.manage.routing.lane_balance",
       "spendguard.gate"
     ],
     [
-      "spendguard.lane_balance",
+      "spendguard.manage.routing.lane_balance",
       "spendguard.lane_bandit"
     ],
     [
-      "spendguard.lane_balance",
+      "spendguard.manage.routing.lane_balance",
       "spendguard.lane_catalog"
     ],
     [
-      "spendguard.lane_balance",
+      "spendguard.manage.routing.lane_balance",
       "spendguard.analyze.treasury.lane_economics"
     ],
     [
-      "spendguard.lane_balance",
+      "spendguard.manage.routing.lane_balance",
       "spendguard.lane_queue"
     ],
     [
-      "spendguard.lane_balance",
+      "spendguard.manage.routing.lane_balance",
       "spendguard.analyze.treasury.lane_quota_cost"
     ],
     [
-      "spendguard.lane_balance",
+      "spendguard.manage.routing.lane_balance",
       "spendguard.lanes"
     ],
     [
-      "spendguard.lane_balance",
+      "spendguard.manage.routing.lane_balance",
       "spendguard.store.spend_search.ledger_read"
     ],
     [
-      "spendguard.lane_balance",
+      "spendguard.manage.routing.lane_balance",
       "spendguard.model_catalog"
     ],
     [
-      "spendguard.lane_balance",
+      "spendguard.manage.routing.lane_balance",
       "spendguard.generate.work_integrity.output_contract"
     ],
     [
-      "spendguard.lane_balance",
+      "spendguard.manage.routing.lane_balance",
       "spendguard.plan_admission"
     ],
     [
-      "spendguard.lane_balance",
+      "spendguard.manage.routing.lane_balance",
       "spendguard.pricing"
     ],
     [
-      "spendguard.lane_balance",
+      "spendguard.manage.routing.lane_balance",
       "spendguard.analyze.cost_estimation.provider_tokens"
     ],
     [
-      "spendguard.lane_balance",
+      "spendguard.manage.routing.lane_balance",
       "spendguard.analyze.spend_reporting.receipt"
     ],
     [
-      "spendguard.lane_balance",
+      "spendguard.manage.routing.lane_balance",
       "spendguard.generate.execution.submit"
     ],
     [
-      "spendguard.lane_balance",
+      "spendguard.manage.routing.lane_balance",
       "spendguard.generate.execution.vendor_call"
     ],
     [
@@ -8440,7 +8432,7 @@
     ],
     [
       "spendguard.lane_bandit",
-      "spendguard.lane_balance"
+      "spendguard.manage.routing.lane_balance"
     ],
     [
       "spendguard.lane_bandit",
@@ -8460,7 +8452,7 @@
     ],
     [
       "spendguard.lane_bandit",
-      "spendguard.route_utility"
+      "spendguard.manage.routing.route_utility"
     ],
     [
       "spendguard.lane_catalog",
@@ -8472,7 +8464,7 @@
     ],
     [
       "spendguard.lane_catalog",
-      "spendguard.route_utility"
+      "spendguard.manage.routing.route_utility"
     ],
     [
       "spendguard.lane_catalog",
@@ -8484,7 +8476,7 @@
     ],
     [
       "spendguard.analyze.treasury.lane_economics",
-      "spendguard.lane_balance"
+      "spendguard.manage.routing.lane_balance"
     ],
     [
       "spendguard.analyze.treasury.lane_economics",
@@ -8540,7 +8532,7 @@
     ],
     [
       "spendguard.lane_queue",
-      "spendguard.lane_balance"
+      "spendguard.manage.routing.lane_balance"
     ],
     [
       "spendguard.lane_queue",
@@ -8672,7 +8664,7 @@
     ],
     [
       "spendguard.lanes",
-      "spendguard.lane_balance"
+      "spendguard.manage.routing.lane_balance"
     ],
     [
       "spendguard.lanes",
@@ -8724,11 +8716,11 @@
     ],
     [
       "spendguard.lanes",
-      "spendguard.route_utility"
+      "spendguard.manage.routing.route_utility"
     ],
     [
       "spendguard.lanes",
-      "spendguard.tier_config"
+      "spendguard.manage.routing.tier_config"
     ],
     [
       "spendguard.learn",
@@ -9024,11 +9016,11 @@
     ],
     [
       "spendguard.mcp_server",
-      "spendguard.route_economics"
+      "spendguard.manage.routing.route_economics"
     ],
     [
       "spendguard.mcp_server",
-      "spendguard.route_horizon"
+      "spendguard.manage.routing.route_horizon"
     ],
     [
       "spendguard.mcp_server",
@@ -9040,7 +9032,7 @@
     ],
     [
       "spendguard.mcp_server",
-      "spendguard.whole_job"
+      "spendguard.manage.routing.whole_job"
     ],
     [
       "spendguard.measurement",
@@ -9188,7 +9180,7 @@
     ],
     [
       "spendguard.plan_admission",
-      "spendguard.lane_balance"
+      "spendguard.manage.routing.lane_balance"
     ],
     [
       "spendguard.plan_admission",
@@ -9212,7 +9204,7 @@
     ],
     [
       "spendguard.plan_admission",
-      "spendguard.route_utility"
+      "spendguard.manage.routing.route_utility"
     ],
     [
       "spendguard.pricing",
@@ -9324,7 +9316,7 @@
     ],
     [
       "spendguard.queue_planner",
-      "spendguard.route_economics"
+      "spendguard.manage.routing.route_economics"
     ],
     [
       "spendguard.realized",
@@ -9843,51 +9835,51 @@
       "spendguard.ui"
     ],
     [
-      "spendguard.route_economics",
+      "spendguard.manage.routing.route_economics",
       "spendguard.capability_cli_parsing"
     ],
     [
-      "spendguard.route_economics",
+      "spendguard.manage.routing.route_economics",
       "spendguard.store.configuration.config"
     ],
     [
-      "spendguard.route_economics",
+      "spendguard.manage.routing.route_economics",
       "spendguard.analyze.cost_estimation.expected_output"
     ],
     [
-      "spendguard.route_economics",
+      "spendguard.manage.routing.route_economics",
       "spendguard.analyze.treasury.lane_economics"
     ],
     [
-      "spendguard.route_economics",
+      "spendguard.manage.routing.route_economics",
       "spendguard.pricing"
     ],
     [
-      "spendguard.route_horizon",
+      "spendguard.manage.routing.route_horizon",
       "spendguard.capability_cli_parsing"
     ],
     [
-      "spendguard.route_horizon",
+      "spendguard.manage.routing.route_horizon",
       "spendguard.store.configuration.config"
     ],
     [
-      "spendguard.route_horizon",
+      "spendguard.manage.routing.route_horizon",
       "spendguard.analyze.cost_estimation.expected_output"
     ],
     [
-      "spendguard.route_horizon",
+      "spendguard.manage.routing.route_horizon",
       "spendguard.analyze.treasury.lane_economics"
     ],
     [
-      "spendguard.route_horizon",
+      "spendguard.manage.routing.route_horizon",
       "spendguard.model_catalog"
     ],
     [
-      "spendguard.route_horizon",
+      "spendguard.manage.routing.route_horizon",
       "spendguard.pricing"
     ],
     [
-      "spendguard.route_horizon",
+      "spendguard.manage.routing.route_horizon",
       "spendguard.queue_planner"
     ],
     [
@@ -9903,39 +9895,39 @@
       "spendguard.store.spend_search.ledger_read"
     ],
     [
-      "spendguard.route_utility",
+      "spendguard.manage.routing.route_utility",
       "spendguard.generate.execution.adapters"
     ],
     [
-      "spendguard.route_utility",
+      "spendguard.manage.routing.route_utility",
       "spendguard.analyze.treasury.balances"
     ],
     [
-      "spendguard.route_utility",
+      "spendguard.manage.routing.route_utility",
       "spendguard.store.configuration.config"
     ],
     [
-      "spendguard.route_utility",
+      "spendguard.manage.routing.route_utility",
       "spendguard.lane_catalog"
     ],
     [
-      "spendguard.route_utility",
+      "spendguard.manage.routing.route_utility",
       "spendguard.analyze.treasury.lane_economics"
     ],
     [
-      "spendguard.route_utility",
+      "spendguard.manage.routing.route_utility",
       "spendguard.analyze.treasury.lane_quota_cost"
     ],
     [
-      "spendguard.route_utility",
+      "spendguard.manage.routing.route_utility",
       "spendguard.lanes"
     ],
     [
-      "spendguard.route_utility",
+      "spendguard.manage.routing.route_utility",
       "spendguard.pricing"
     ],
     [
-      "spendguard.route_utility",
+      "spendguard.manage.routing.route_utility",
       "spendguard.resource_state"
     ],
     [
@@ -10176,7 +10168,7 @@
     ],
     [
       "spendguard.setup",
-      "spendguard.tier_config"
+      "spendguard.manage.routing.tier_config"
     ],
     [
       "spendguard.egress.share",
@@ -10375,31 +10367,31 @@
       "spendguard.store.money_ledger.ledger_writer"
     ],
     [
-      "spendguard.tier_config",
+      "spendguard.manage.routing.tier_config",
       "spendguard.generate.execution.adapters"
     ],
     [
-      "spendguard.tier_config",
+      "spendguard.manage.routing.tier_config",
       "spendguard.capability_cli_parsing"
     ],
     [
-      "spendguard.tier_config",
+      "spendguard.manage.routing.tier_config",
       "spendguard.store.configuration.config"
     ],
     [
-      "spendguard.tier_config",
+      "spendguard.manage.routing.tier_config",
       "spendguard.gate"
     ],
     [
-      "spendguard.tier_config",
+      "spendguard.manage.routing.tier_config",
       "spendguard.lane_catalog"
     ],
     [
-      "spendguard.tier_config",
+      "spendguard.manage.routing.tier_config",
       "spendguard.lanes"
     ],
     [
-      "spendguard.tier_config",
+      "spendguard.manage.routing.tier_config",
       "spendguard.pricing"
     ],
     [
@@ -10567,43 +10559,43 @@
       "spendguard.store.spend_search.ledger_read"
     ],
     [
-      "spendguard.whole_job",
+      "spendguard.manage.routing.whole_job",
       "spendguard.generate.execution.adapters"
     ],
     [
-      "spendguard.whole_job",
+      "spendguard.manage.routing.whole_job",
       "spendguard.store.call_corpus.callio"
     ],
     [
-      "spendguard.whole_job",
+      "spendguard.manage.routing.whole_job",
       "spendguard.capability_cli_parsing"
     ],
     [
-      "spendguard.whole_job",
+      "spendguard.manage.routing.whole_job",
       "spendguard.store.configuration.config"
     ],
     [
-      "spendguard.whole_job",
+      "spendguard.manage.routing.whole_job",
       "spendguard.gate"
     ],
     [
-      "spendguard.whole_job",
+      "spendguard.manage.routing.whole_job",
       "spendguard.guard"
     ],
     [
-      "spendguard.whole_job",
+      "spendguard.manage.routing.whole_job",
       "spendguard.generate.work_integrity.output_contract"
     ],
     [
-      "spendguard.whole_job",
+      "spendguard.manage.routing.whole_job",
       "spendguard.pricing"
     ],
     [
-      "spendguard.whole_job",
+      "spendguard.manage.routing.whole_job",
       "spendguard.generate.execution.submit"
     ],
     [
-      "spendguard.whole_job",
+      "spendguard.manage.routing.whole_job",
       "spendguard.generate.work_integrity.work_integrity"
     ],
     [

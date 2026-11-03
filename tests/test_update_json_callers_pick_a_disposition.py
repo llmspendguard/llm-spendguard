@@ -24,6 +24,8 @@ _MOVED_CLUSTER_A_PATHS = {
     "submit.py": ("generate", "execution", "submit.py"),
     "vendor_call.py": ("generate", "execution", "vendor_call.py"),
     "saas.py": ("egress", "saas.py"),
+    "tier_config.py": ("manage", "routing", "tier_config.py"),
+    "lane_balance.py": ("manage", "routing", "lane_balance.py"),
 }
 
 # The files whose update_json callers were fixed in cluster A. Every update_json call in these files must carry a

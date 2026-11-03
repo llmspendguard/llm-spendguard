@@ -418,14 +418,14 @@
       "surface_module": "spendguard.manage.routing",
       "layer": "L1",
       "backing_modules": [
-        "route_utility",
-        "route_economics",
-        "route_horizon",
-        "cascade",
-        "best_value",
-        "lane_balance",
-        "tier_config",
-        "whole_job"
+        "manage.routing.route_utility",
+        "manage.routing.route_economics",
+        "manage.routing.route_horizon",
+        "manage.routing.cascade",
+        "manage.routing.best_value",
+        "manage.routing.lane_balance",
+        "manage.routing.tier_config",
+        "manage.routing.whole_job"
       ],
       "published_names": []
     },
@@ -1180,6 +1180,46 @@
     {
       "legacy_module": "spendguard.openai_batch_cli",
       "current_module": "spendguard.generate.execution.openai_batch_cli",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.route_utility",
+      "current_module": "spendguard.manage.routing.route_utility",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.route_economics",
+      "current_module": "spendguard.manage.routing.route_economics",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.route_horizon",
+      "current_module": "spendguard.manage.routing.route_horizon",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.cascade",
+      "current_module": "spendguard.manage.routing.cascade",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.best_value",
+      "current_module": "spendguard.manage.routing.best_value",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.lane_balance",
+      "current_module": "spendguard.manage.routing.lane_balance",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.tier_config",
+      "current_module": "spendguard.manage.routing.tier_config",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.whole_job",
+      "current_module": "spendguard.manage.routing.whole_job",
       "moved_in_phase": 3
     }
   ],

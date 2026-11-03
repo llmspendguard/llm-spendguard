@@ -12,9 +12,9 @@ ineffective for the intent (the denylist). WORKLOAD spend (real intent → your 
 (reasoning etc.) auto-applied via models.apply_call_params inside the caller.
 """
 
-from .capability_cli_parsing import add_registered_cli_argument
+from ...capability_cli_parsing import add_registered_cli_argument
 import re
-from . import equivalence, models as M
+from ... import equivalence, models as M
 
 
 def _wants_json(prompt):
@@ -32,7 +32,7 @@ def default_verify(prompt, output):
 
 
 def _default_caller(model, prompt):
-    from . import experiment
+    from ... import experiment
     cost, _it, _ot, text = experiment._call(model, prompt, max_out=1500)
     return cost, text
 
@@ -78,7 +78,7 @@ def cascade(prompt, ladder, verify=None, intent=None, _caller=None):
     # guarded: serving below the top rung avoided the stronger model — rough estimate = same I/O at its rate
     try:
         if usable and served and served != usable[-1] and served_cost > 0:
-            from . import pricing, guard
+            from ... import pricing, guard
             # `is not None`, and each card fetched ONCE. `.get("out") or .get("in_")` silently swaps in the
             # INPUT price whenever a model's published output rate is 0.00 — which is exactly what an
             # embedding model's card says — so the saving was computed from two different axes and reported
@@ -112,13 +112,13 @@ def cmd(argv=None):
         bad = M.ineffective(m, a.intent) if a.intent else None
         print(f"  {'⊘' if bad else '·'} {m}" + (f"  (skipped — ineffective: {bad[0]})" if bad else ""))
     if not a.run:
-        from . import ui
+        from ... import ui
         ui.estimate_only(action="route a real call (needs --prompt / --prompt-file)", note="WORKLOAD spend")
         return 0
     prompt = a.prompt or (open(a.prompt_file).read() if a.prompt_file else None)
     if not prompt:
         print("  need --prompt or --prompt-file with --run."); return 1
-    from . import calls
+    from ... import calls
     with calls.context(intent=a.intent):              # WORKLOAD (real intent → your caps)
         r = cascade(prompt, usable, intent=a.intent)
     print(f"\n  served by: {r['model']}  ·  tried {r['n_tried']} rung(s)  ·  escalated through {r['escalations']}"

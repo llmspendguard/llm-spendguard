@@ -10,10 +10,10 @@ model in a group), turning a silent misconfiguration into an error when someone 
 route_utility owns the ROUTING (rank_for_tier); this module owns the DECLARATION + validation + CLI.
 """
 
-from .capability_cli_parsing import registered_cli_option_token
+from ...capability_cli_parsing import registered_cli_option_token
 import time
 
-from . import config, lane_catalog, route_utility
+from ... import config, lane_catalog, route_utility
 
 
 def _model_is_priced(model):
@@ -23,7 +23,7 @@ def _model_is_priced(model):
     NEVER swallowed into 'unpriced' — it propagates, so a governance signal can't be downgraded to 'keep going'."""
     if not model:
         return False
-    from . import pricing, gate
+    from ... import pricing, gate
     try:
         pricing.price(model)
         return True
@@ -98,7 +98,7 @@ def reachability_probe(save=True):
     CONSTRUCTION: a lane miss is an error, never a metered call. served = the lane answered (text, no error).
     Persists a snapshot (save) so doctor/tiers render it without re-probing. Returns
     {asof, rows:[{lane, model, tiers, served, error}]}."""
-    from . import adapters, gate, lanes
+    from ... import adapters, gate, lanes
     groups = route_utility.tiers()
     enabled = {ln["lane"] for ln in lanes.lanes_status()["lanes"] if ln["enabled"]}
     targets = {}                                         # (lane, model) -> the tiers that declare it (probe each once)

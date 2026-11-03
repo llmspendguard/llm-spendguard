@@ -26,10 +26,10 @@ hardcodes a price (pricing.py is the source) and degrades HONESTLY: a lane whose
 priced (no invented rate), and the recommendation falls to batch, said out loud in `why`.
 """
 
-from .capability_cli_parsing import add_registered_cli_argument
+from ...capability_cli_parsing import add_registered_cli_argument
 import datetime
 
-from . import pricing
+from ... import pricing
 
 
 def _days_until(reset_ts, now):
@@ -180,7 +180,7 @@ def lane_eff_by_provider(now=None):
     sustained ranking. Empty on any error (fail-open: the ranking then keeps its prior $0 lane, never crashes)."""
     out = {}
     try:
-        from . import lane_economics
+        from ... import lane_economics
         for e in lane_economics.economics():
             b = e.get("binding") if e.get("converged") else None
             if b and b.get("eff_usd_per_tok") is not None and e.get("provider"):
@@ -197,7 +197,7 @@ def lane_marginal_usd_per_tok(lane, now=None):
     axis a caller consults for a live routing choice, distinct from the steady-state ranking rate above."""
     try:
         import datetime
-        from . import lane_economics
+        from ... import lane_economics
         now = now or datetime.datetime.now(datetime.timezone.utc)
         row = next((e for e in lane_economics.economics() if e.get("lane") == lane and e.get("converged")), None)
         b = (row or {}).get("binding")
@@ -215,7 +215,7 @@ def route_report(intent, n_tasks, *, in_tok=None, out_tok=None, lane=None, batch
     forces one), the BATCH model (`batch_model`, else config advisor.batch_model), the per-task token sizes (in_tok/
     out_tok, else out estimated via expected_output.expect(sig=intent) and in defaulted to out), and the reserve
     fraction (config advisor.route_reserve_frac, default 0.2). $0 — no call is made, only measured state is read."""
-    from . import lane_economics, config, expected_output
+    from ... import lane_economics, config, expected_output
     resolved = {"basis": {}}
 
     bm = batch_model or config._cfg_get("advisor", "batch_model", None)

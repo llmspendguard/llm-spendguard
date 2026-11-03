@@ -78,7 +78,15 @@
     "spendguard.provider_plugins": "spendguard.generate.execution.provider_plugins",
     "spendguard.provider_kit": "spendguard.generate.execution.provider_kit",
     "spendguard.adapters": "spendguard.generate.execution.adapters",
-    "spendguard.openai_batch_cli": "spendguard.generate.execution.openai_batch_cli"
+    "spendguard.openai_batch_cli": "spendguard.generate.execution.openai_batch_cli",
+    "spendguard.route_utility": "spendguard.manage.routing.route_utility",
+    "spendguard.route_economics": "spendguard.manage.routing.route_economics",
+    "spendguard.route_horizon": "spendguard.manage.routing.route_horizon",
+    "spendguard.cascade": "spendguard.manage.routing.cascade",
+    "spendguard.best_value": "spendguard.manage.routing.best_value",
+    "spendguard.lane_balance": "spendguard.manage.routing.lane_balance",
+    "spendguard.tier_config": "spendguard.manage.routing.tier_config",
+    "spendguard.whole_job": "spendguard.manage.routing.whole_job"
   },
   "entry_points": {
     "package_import": {
@@ -504,6 +512,14 @@
     "spendguard.generate.execution.provider_plugins",
     "spendguard.generate.execution.provider_kit",
     "spendguard.generate.execution.adapters",
-    "spendguard.generate.execution.openai_batch_cli"
+    "spendguard.generate.execution.openai_batch_cli",
+    "spendguard.manage.routing.route_utility",
+    "spendguard.manage.routing.route_economics",
+    "spendguard.manage.routing.route_horizon",
+    "spendguard.manage.routing.cascade",
+    "spendguard.manage.routing.best_value",
+    "spendguard.manage.routing.lane_balance",
+    "spendguard.manage.routing.tier_config",
+    "spendguard.manage.routing.whole_job"
   ]
 }

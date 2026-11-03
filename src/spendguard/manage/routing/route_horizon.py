@@ -24,10 +24,10 @@ window's capacity + the reset grid). It degrades HONESTLY — an unpriced batch/
 said out loud and the affected tokens are reported as `unpriced`, never invented at $0.
 """
 
-from .capability_cli_parsing import add_registered_cli_argument
+from ...capability_cli_parsing import add_registered_cli_argument
 import datetime
 
-from . import pricing, route_economics
+from ... import pricing, route_economics
 
 URGENT, DEFERRABLE = "urgent", "deferrable"
 
@@ -186,7 +186,7 @@ def should_batch_fan(provider, model, n, est_in=0, est_out=0, deadline_s=None):
     batch when that exceeds the window (deadline_s if given, else one rate-window = 1 min). FALSE for an uncurated
     vendor (no budget to reason about) and for a small fan that fits — never needlessly batched. Lazy, fail-safe."""
     try:
-        from . import model_catalog
+        from ... import model_catalog
         cap = model_catalog.rate_limit_for(model, provider=provider) or {}
     except Exception:
         return False
@@ -208,7 +208,7 @@ def chunk_for_batch(provider, n, max_per=None):
     max-requests, MB cap, enqueued-token cap, and the validated stage ceiling); this is not a second copy. Returns the
     list of chunk sizes summing to n. `max_per` overrides the stage ceiling. Fail-safe to a single chunk on error."""
     try:
-        from . import queue_planner
+        from ... import queue_planner
         return queue_planner.plan_batch_chunks(int(n), provider, stage_cap=max_per)["chunks"]
     except Exception:
         return [int(n)] if int(n) > 0 else []
@@ -219,7 +219,7 @@ def horizon_report(groups, *, lane=None, batch_model=None, realtime_model=None, 
     input + its basis (auditable, 'estimating' visible) — the horizon twin of route_economics.route_report. `groups`
     is [{intent, n, in_tok?, out_tok?, urgency?}]; a missing out_tok is estimated per-intent via expected_output, a
     missing in_tok defaults to out_tok. $0 — only measured state is read, no call is made."""
-    from . import lane_economics, config, expected_output
+    from ... import lane_economics, config, expected_output
     resolved = {"basis": {}}
     bm = batch_model or config._cfg_get("advisor", "batch_model", None)
     rm = realtime_model or config.advisor_model()
