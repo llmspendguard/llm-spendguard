@@ -9,6 +9,7 @@ from _pytest_fixture_bridge import align_test_startup_home, run_pytest_style
 
 align_test_startup_home(prefix=__name__)
 
+import spendguard
 from spendguard import config
 from spendguard.ledger_request_cursor import (
     MANAGED_READ_CLEANUP_DEFERRED,
@@ -16,7 +17,7 @@ from spendguard.ledger_request_cursor import (
     ManagedRequestCursorState,
 )
 
-DEFERRAL_SILENCE_LOGGER_NAME = config.__package__
+DEFERRAL_SILENCE_LOGGER_NAME = spendguard.__name__
 DEFERRAL_SILENCE_MEMORY_TARGET = ":memory:"
 
 

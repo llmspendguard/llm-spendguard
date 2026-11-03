@@ -37,15 +37,20 @@ def check(label, ok, extra=""):
 # Every other exemption is PER SITE, declared in the source with a `# raw-write-ok: <reason>` comment on a
 # line just above. A module-level allowlist would bless every FUTURE write in that file too, which is the
 # same "exempt once, exempt forever" shape that let four config.json writers accumulate unnoticed.
-ALLOWED_MODULES = {"config": "defines update_json and the atomic temp-file write it is built from"}
+CONFIGURATION_CONFIG_RELATIVE_PATH = pathlib.Path("store") / "configuration" / "config.py"
+ALLOWED_MODULES = {
+    CONFIGURATION_CONFIG_RELATIVE_PATH:
+        "defines update_json and the atomic temp-file write it is built from",
+}
 MARKER = "raw-write-ok:"
 BUDGET_MONEY_DELETE_OWNERS = frozenset(("ingest_remote", "clear_reconciled", "clear_readable_true_down"))
 BUDGET_SNAPSHOT_CALL_NAMES = frozenset(("snapshot_once", "snapshot"))
 
 print("-- no NEW module hand-rolls a whole-file JSON write --")
 offenders = {}
-for f in sorted(SRC.glob("*.py")):
-    if f.stem in ALLOWED_MODULES:
+source_files = sorted(SRC.glob("*.py")) + [SRC / CONFIGURATION_CONFIG_RELATIVE_PATH]
+for f in source_files:
+    if f.relative_to(SRC) in ALLOWED_MODULES:
         continue
     body = f.read_text()
     lines = body.splitlines()

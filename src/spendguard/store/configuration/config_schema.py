@@ -17,13 +17,13 @@ from pathlib import Path
 
 from . import config
 from .config import CODEX_POOL_SIZE_DEFAULT
-from .weekly_cap_guard import (
+from ...weekly_cap_guard import (
     WEEKLY_CAP_GUARD_BLOCKED_SPAWN_TOOLS_DEFAULT,
     WEEKLY_CAP_GUARD_ENABLED_DEFAULT,
     WEEKLY_CAP_GUARD_ON_UNKNOWN_DEFAULT,
     WEEKLY_CAP_GUARD_THRESHOLD_DEFAULT,
 )
-from .residency_gate import (
+from ...residency_gate import (
     RESIDENCY_HOOK_TIMEOUT_SECONDS_DEFAULT,
     RESIDENCY_JUDGE_OUTPUT_TOKENS_DEFAULT,
     RESIDENCY_JUDGE_RATIONALE_MAX_CHARS_DEFAULT,
@@ -38,7 +38,7 @@ from .residency_gate import (
 )
 
 from .config import DISK_GUARD_FLOOR_DEFAULT_BYTES, DISK_GUARD_FLOOR_ENV
-from .fleet import FLEET_RESTARTS_ENABLED_DEFAULT, FLEET_RESTARTS_ENABLED_ENV
+from ...fleet import FLEET_RESTARTS_ENABLED_DEFAULT, FLEET_RESTARTS_ENABLED_ENV
 
 
 def configured_agent_near_cap_threshold():

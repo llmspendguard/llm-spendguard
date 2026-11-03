@@ -6,7 +6,9 @@
     "spendguard.ledger_request_cursor": "spendguard.store.spend_search.ledger_request_cursor",
     "spendguard.report": "spendguard.analyze.spend_reporting.report",
     "spendguard.close": "spendguard.analyze.spend_reporting.close",
-    "spendguard.receipt": "spendguard.analyze.spend_reporting.receipt"
+    "spendguard.receipt": "spendguard.analyze.spend_reporting.receipt",
+    "spendguard.config": "spendguard.store.configuration.config",
+    "spendguard.config_schema": "spendguard.store.configuration.config_schema"
   },
   "entry_points": {
     "package_import": {
@@ -21,7 +23,7 @@
         "spendguard._version",
         "spendguard.pricing",
         "spendguard.model_catalog",
-        "spendguard.config",
+        "spendguard.store.configuration.config",
         "spendguard.ledger_fork_locks",
         "spendguard.gate",
         "spendguard.calls",
@@ -72,7 +74,7 @@
         "spendguard._version",
         "spendguard.pricing",
         "spendguard.model_catalog",
-        "spendguard.config",
+        "spendguard.store.configuration.config",
         "spendguard.ledger_fork_locks",
         "spendguard.gate",
         "spendguard.calls",
@@ -123,7 +125,7 @@
         "spendguard._version",
         "spendguard.pricing",
         "spendguard.model_catalog",
-        "spendguard.config",
+        "spendguard.store.configuration.config",
         "spendguard.ledger_fork_locks",
         "spendguard.gate",
         "spendguard.calls",
@@ -174,7 +176,7 @@
         "spendguard._version",
         "spendguard.pricing",
         "spendguard.model_catalog",
-        "spendguard.config",
+        "spendguard.store.configuration.config",
         "spendguard.ledger_fork_locks",
         "spendguard.gate",
         "spendguard.calls",
@@ -225,7 +227,7 @@
         "spendguard._version",
         "spendguard.pricing",
         "spendguard.model_catalog",
-        "spendguard.config",
+        "spendguard.store.configuration.config",
         "spendguard.ledger_fork_locks",
         "spendguard.gate",
         "spendguard.calls",
@@ -276,7 +278,7 @@
         "spendguard._version",
         "spendguard.pricing",
         "spendguard.model_catalog",
-        "spendguard.config",
+        "spendguard.store.configuration.config",
         "spendguard.ledger_fork_locks",
         "spendguard.gate",
         "spendguard.calls",
@@ -327,7 +329,7 @@
         "spendguard._version",
         "spendguard.pricing",
         "spendguard.model_catalog",
-        "spendguard.config",
+        "spendguard.store.configuration.config",
         "spendguard.ledger_fork_locks",
         "spendguard.gate",
         "spendguard.calls",
@@ -373,6 +375,7 @@
     "spendguard.analyze",
     "spendguard.analyze.spend_reporting",
     "spendguard.store",
+    "spendguard.store.configuration",
     "spendguard.store.spend_search"
   ]
 }

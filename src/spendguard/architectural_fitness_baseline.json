@@ -54,8 +54,6 @@
     "compaction.py",
     "compare.py",
     "comprehend.py",
-    "config.py",
-    "config_schema.py",
     "consumer_audit.py",
     "content_compression.py",
     "content_compression_backfill.py",
@@ -502,11 +500,11 @@
             "max_cc": 21,
             "mi": 39.06540928307973
           },
-          "src/spendguard/config.py": {
+          "src/spendguard/store/configuration/config.py": {
             "max_cc": 23,
             "mi": 0.0
           },
-          "src/spendguard/config_schema.py": {
+          "src/spendguard/store/configuration/config_schema.py": {
             "max_cc": 4,
             "mi": 69.9386487242984
           },
@@ -1502,11 +1500,11 @@
             "max_cc": 21,
             "mi": 38.987113926607044
           },
-          "src/spendguard/config.py": {
+          "src/spendguard/store/configuration/config.py": {
             "max_cc": 23,
             "mi": 0.0
           },
-          "src/spendguard/config_schema.py": {
+          "src/spendguard/store/configuration/config_schema.py": {
             "max_cc": 4,
             "mi": 69.9386487242984
           },
@@ -6256,7 +6254,7 @@
   ],
   "max_largest_scc_size": 142,
   "max_cyclic_edge_count": 943,
-  "max_legacy_shim_count": 6,
+  "max_legacy_shim_count": 8,
   "recorded_cross_context_nonsurface_imports": [
     [
       "spendguard",
@@ -6332,7 +6330,7 @@
     ],
     [
       "spendguard.adapters",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.adapters",
@@ -6456,7 +6454,7 @@
     ],
     [
       "spendguard.advise",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.advise",
@@ -6500,7 +6498,7 @@
     ],
     [
       "spendguard.advisor",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.advisor",
@@ -6520,11 +6518,11 @@
     ],
     [
       "spendguard.agent_spawn_gate",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.agent_spawn_gate",
-      "spendguard.config_schema"
+      "spendguard.store.configuration.config_schema"
     ],
     [
       "spendguard.agent_spawn_gate",
@@ -6536,7 +6534,7 @@
     ],
     [
       "spendguard.antigravity_exec",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.antigravity_exec",
@@ -6552,7 +6550,7 @@
     ],
     [
       "spendguard.architectural_fitness",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.attribution",
@@ -6568,7 +6566,7 @@
     ],
     [
       "spendguard.attribution",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.attribution",
@@ -6592,7 +6590,7 @@
     ],
     [
       "spendguard.audit",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.audit",
@@ -6656,7 +6654,7 @@
     ],
     [
       "spendguard.bakeoff",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.bakeoff",
@@ -6688,7 +6686,7 @@
     ],
     [
       "spendguard.balances",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.balances",
@@ -6704,7 +6702,7 @@
     ],
     [
       "spendguard.batch_tracker",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.batch_tracker",
@@ -6752,7 +6750,7 @@
     ],
     [
       "spendguard.best_value",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.best_value",
@@ -6784,7 +6782,7 @@
     ],
     [
       "spendguard.bootstrap",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.bootstrap",
@@ -6812,7 +6810,7 @@
     ],
     [
       "spendguard.brief",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.brief",
@@ -6836,7 +6834,7 @@
     ],
     [
       "spendguard.budget",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.budget",
@@ -6872,7 +6870,7 @@
     ],
     [
       "spendguard.bulk_resilience",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.bulkgate",
@@ -6892,7 +6890,7 @@
     ],
     [
       "spendguard.bulkgate",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.bulkgate",
@@ -6924,7 +6922,7 @@
     ],
     [
       "spendguard.cacheaudit",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.cacheaudit",
@@ -6952,7 +6950,7 @@
     ],
     [
       "spendguard.cachetest",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.cachetest",
@@ -6976,7 +6974,7 @@
     ],
     [
       "spendguard.calibrate",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.calibrate",
@@ -7020,7 +7018,7 @@
     ],
     [
       "spendguard.callio",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.callio",
@@ -7056,7 +7054,7 @@
     ],
     [
       "spendguard.calls",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.calls",
@@ -7112,7 +7110,7 @@
     ],
     [
       "spendguard.capability_readiness_gates",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.capability_readiness_gates",
@@ -7160,7 +7158,7 @@
     ],
     [
       "spendguard.catalog",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.catalog",
@@ -7172,7 +7170,7 @@
     ],
     [
       "spendguard.catalog_price_authoring",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.chat",
@@ -7192,7 +7190,7 @@
     ],
     [
       "spendguard.chat",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.chat",
@@ -7236,11 +7234,11 @@
     ],
     [
       "spendguard.claudecode",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.claudecode",
-      "spendguard.config_schema"
+      "spendguard.store.configuration.config_schema"
     ],
     [
       "spendguard.claudecode",
@@ -7288,7 +7286,7 @@
     ],
     [
       "spendguard.cli",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.cli",
@@ -7396,7 +7394,7 @@
     ],
     [
       "spendguard.codex",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.codex",
@@ -7412,7 +7410,7 @@
     ],
     [
       "spendguard.codex_broker_owner",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.codex_broker_owner",
@@ -7428,7 +7426,7 @@
     ],
     [
       "spendguard.codex_daemon",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.codex_daemon",
@@ -7444,7 +7442,7 @@
     ],
     [
       "spendguard.codex_daemon_broker",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.codex_daemon_broker",
@@ -7460,7 +7458,7 @@
     ],
     [
       "spendguard.codex_exec",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.codex_exec",
@@ -7480,7 +7478,7 @@
     ],
     [
       "spendguard.compaction",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.compaction",
@@ -7516,7 +7514,7 @@
     ],
     [
       "spendguard.comprehend",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.comprehend",
@@ -7535,51 +7533,51 @@
       "spendguard.pricing"
     ],
     [
-      "spendguard.config",
+      "spendguard.store.configuration.config",
       "spendguard.adapters"
     ],
     [
-      "spendguard.config",
+      "spendguard.store.configuration.config",
       "spendguard.codex_exec"
     ],
     [
-      "spendguard.config",
+      "spendguard.store.configuration.config",
       "spendguard.content_compression"
     ],
     [
-      "spendguard.config",
+      "spendguard.store.configuration.config",
       "spendguard.ledger_fork_locks"
     ],
     [
-      "spendguard.config",
+      "spendguard.store.configuration.config",
       "spendguard.store.spend_search.ledger_read"
     ],
     [
-      "spendguard.config",
+      "spendguard.store.configuration.config",
       "spendguard.store.spend_search.ledger_request_cursor"
     ],
     [
-      "spendguard.config",
+      "spendguard.store.configuration.config",
       "spendguard.ledger_wal_maintenance"
     ],
     [
-      "spendguard.config",
+      "spendguard.store.configuration.config",
       "spendguard.ledger_writer"
     ],
     [
-      "spendguard.config",
+      "spendguard.store.configuration.config",
       "spendguard.pricing"
     ],
     [
-      "spendguard.config_schema",
+      "spendguard.store.configuration.config_schema",
       "spendguard.fleet"
     ],
     [
-      "spendguard.config_schema",
+      "spendguard.store.configuration.config_schema",
       "spendguard.residency_gate"
     ],
     [
-      "spendguard.config_schema",
+      "spendguard.store.configuration.config_schema",
       "spendguard.weekly_cap_guard"
     ],
     [
@@ -7592,7 +7590,7 @@
     ],
     [
       "spendguard.consumer_audit",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.consumer_audit",
@@ -7612,15 +7610,15 @@
     ],
     [
       "spendguard.content_compression_backfill",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.content_retention",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.content_retention",
-      "spendguard.config_schema"
+      "spendguard.store.configuration.config_schema"
     ],
     [
       "spendguard.content_retention",
@@ -7636,7 +7634,7 @@
     ],
     [
       "spendguard.content_tokens",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.content_tokens",
@@ -7668,7 +7666,7 @@
     ],
     [
       "spendguard.conv",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.conv",
@@ -7712,7 +7710,7 @@
     ],
     [
       "spendguard.coverage",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.coverage",
@@ -7736,7 +7734,7 @@
     ],
     [
       "spendguard.crossllm",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.crossllm",
@@ -7760,11 +7758,11 @@
     ],
     [
       "spendguard.deid",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.delegate_jobs",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.delegate_router",
@@ -7780,7 +7778,7 @@
     ],
     [
       "spendguard.delegate_router",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.delegate_router",
@@ -7832,7 +7830,7 @@
     ],
     [
       "spendguard.disk_guard",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.dispatch",
@@ -7844,7 +7842,7 @@
     ],
     [
       "spendguard.dispatch",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.dispatch",
@@ -7868,11 +7866,11 @@
     ],
     [
       "spendguard.distribution",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.distribution",
-      "spendguard.config_schema"
+      "spendguard.store.configuration.config_schema"
     ],
     [
       "spendguard.distribution",
@@ -7880,7 +7878,7 @@
     ],
     [
       "spendguard.distribution_daemon",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.distribution_daemon",
@@ -7912,7 +7910,7 @@
     ],
     [
       "spendguard.effort_titration",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.effort_titration",
@@ -7948,7 +7946,7 @@
     ],
     [
       "spendguard.emit",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.equivalence",
@@ -7964,7 +7962,7 @@
     ],
     [
       "spendguard.escalation_ladder",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.estimate",
@@ -7988,7 +7986,7 @@
     ],
     [
       "spendguard.estimate_divergence",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.estimate_divergence",
@@ -8004,7 +8002,7 @@
     ],
     [
       "spendguard.estimate_literals",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.estimate_literals",
@@ -8012,7 +8010,7 @@
     ],
     [
       "spendguard.execution_journal",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.expected_output",
@@ -8048,7 +8046,7 @@
     ],
     [
       "spendguard.experiment",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.experiment",
@@ -8088,7 +8086,7 @@
     ],
     [
       "spendguard.fleet",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.fleet",
@@ -8148,7 +8146,7 @@
     ],
     [
       "spendguard.gate",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.gate",
@@ -8248,7 +8246,7 @@
     ],
     [
       "spendguard.gpu_port",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.gpu_port",
@@ -8264,7 +8262,7 @@
     ],
     [
       "spendguard.guard",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.guard",
@@ -8308,7 +8306,7 @@
     ],
     [
       "spendguard.http_capture",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.http_capture",
@@ -8316,7 +8314,7 @@
     ],
     [
       "spendguard.import_behavior_snapshot",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.import_behavior_snapshot",
@@ -8332,7 +8330,7 @@
     ],
     [
       "spendguard.intent_model_prior",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.intent_model_prior",
@@ -8356,7 +8354,7 @@
     ],
     [
       "spendguard.item_ledger",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.job_fingerprint",
@@ -8368,11 +8366,11 @@
     ],
     [
       "spendguard.keys_audit",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.kimi_daemon",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.kimi_daemon",
@@ -8380,7 +8378,7 @@
     ],
     [
       "spendguard.kimi_exec",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.kimi_exec",
@@ -8396,7 +8394,7 @@
     ],
     [
       "spendguard.lambda_adapter",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.lane_balance",
@@ -8420,7 +8418,7 @@
     ],
     [
       "spendguard.lane_balance",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.lane_balance",
@@ -8504,7 +8502,7 @@
     ],
     [
       "spendguard.lane_bandit",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.lane_bandit",
@@ -8540,7 +8538,7 @@
     ],
     [
       "spendguard.lane_catalog",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.lane_catalog",
@@ -8552,7 +8550,7 @@
     ],
     [
       "spendguard.lane_economics",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.lane_economics",
@@ -8580,7 +8578,7 @@
     ],
     [
       "spendguard.lane_eligibility",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.lane_eligibility",
@@ -8600,7 +8598,7 @@
     ],
     [
       "spendguard.lane_queue",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.lane_queue",
@@ -8648,7 +8646,7 @@
     ],
     [
       "spendguard.lane_quota_cost",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.lane_quota_cost",
@@ -8664,7 +8662,7 @@
     ],
     [
       "spendguard.lane_recovery",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.lane_recovery",
@@ -8684,7 +8682,7 @@
     ],
     [
       "spendguard.lane_servability",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.lane_servability",
@@ -8704,7 +8702,7 @@
     ],
     [
       "spendguard.lane_value",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.lane_value",
@@ -8736,7 +8734,7 @@
     ],
     [
       "spendguard.lanes",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.lanes",
@@ -8804,7 +8802,7 @@
     ],
     [
       "spendguard.learn",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.learn",
@@ -8816,7 +8814,7 @@
     ],
     [
       "spendguard.ledger",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.ledger",
@@ -8836,7 +8834,7 @@
     ],
     [
       "spendguard.ledger_deadletter",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.ledger_deadletter",
@@ -8844,7 +8842,7 @@
     ],
     [
       "spendguard.ledger_performance_benchmark",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.ledger_performance_benchmark",
@@ -8860,7 +8858,7 @@
     ],
     [
       "spendguard.store.spend_search.ledger_read",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.store.spend_search.ledger_read",
@@ -8880,7 +8878,7 @@
     ],
     [
       "spendguard.store.spend_search.ledger_request_cursor",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.store.spend_search.ledger_request_cursor",
@@ -8900,7 +8898,7 @@
     ],
     [
       "spendguard.ledger_sync",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.ledger_sync",
@@ -8932,7 +8930,7 @@
     ],
     [
       "spendguard.ledger_wal_maintenance",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.ledger_wal_maintenance",
@@ -8940,7 +8938,7 @@
     ],
     [
       "spendguard.ledger_writer",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.ledger_writer",
@@ -8960,7 +8958,7 @@
     ],
     [
       "spendguard.manifest",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.mcp_fd_lifecycle",
@@ -8968,7 +8966,7 @@
     ],
     [
       "spendguard.mcp_fd_lifecycle",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.mcp_fd_lifecycle",
@@ -9016,11 +9014,11 @@
     ],
     [
       "spendguard.mcp_server",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.mcp_server",
-      "spendguard.config_schema"
+      "spendguard.store.configuration.config_schema"
     ],
     [
       "spendguard.mcp_server",
@@ -9128,7 +9126,7 @@
     ],
     [
       "spendguard.measurement",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.measurement",
@@ -9164,7 +9162,7 @@
     ],
     [
       "spendguard.migrate_charges",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.migrate_charges",
@@ -9172,11 +9170,11 @@
     ],
     [
       "spendguard.modal_adapter",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.model_catalog",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.model_preflight",
@@ -9188,7 +9186,7 @@
     ],
     [
       "spendguard.model_preflight",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.model_preflight",
@@ -9200,7 +9198,7 @@
     ],
     [
       "spendguard.models",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.models",
@@ -9216,7 +9214,7 @@
     ],
     [
       "spendguard.notify",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.openai_batch_cli",
@@ -9244,7 +9242,7 @@
     ],
     [
       "spendguard.overage",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.overage",
@@ -9256,7 +9254,7 @@
     ],
     [
       "spendguard.plan_admission",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.plan_admission",
@@ -9296,7 +9294,7 @@
     ],
     [
       "spendguard.pricing",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.pricing",
@@ -9316,7 +9314,7 @@
     ],
     [
       "spendguard.prompts",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.prompts",
@@ -9364,7 +9362,7 @@
     ],
     [
       "spendguard.provider_tokens",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.provider_tokens",
@@ -9388,7 +9386,7 @@
     ],
     [
       "spendguard.queue_planner",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.queue_planner",
@@ -9404,7 +9402,7 @@
     ],
     [
       "spendguard.realized",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.realized",
@@ -9412,7 +9410,7 @@
     ],
     [
       "spendguard.realtime_oracle",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.realtime_oracle",
@@ -9436,7 +9434,7 @@
     ],
     [
       "spendguard.reasoning_equivalence",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.reasoning_equivalence",
@@ -9472,7 +9470,7 @@
     ],
     [
       "spendguard.analyze.spend_reporting.receipt",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.analyze.spend_reporting.receipt",
@@ -9544,7 +9542,7 @@
     ],
     [
       "spendguard.reconcile_anthropic",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.reconcile_anthropic",
@@ -9560,7 +9558,7 @@
     ],
     [
       "spendguard.reconcile_estimate_stage",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.reconcile_estimate_stage",
@@ -9584,7 +9582,7 @@
     ],
     [
       "spendguard.reconcile_maintenance_owner",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.reconcile_maintenance_owner",
@@ -9600,7 +9598,7 @@
     ],
     [
       "spendguard.reconcile_openai",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.reconcile_openai",
@@ -9620,7 +9618,7 @@
     ],
     [
       "spendguard.refresh",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.release",
@@ -9628,7 +9626,7 @@
     ],
     [
       "spendguard.release",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.reliability",
@@ -9652,7 +9650,7 @@
     ],
     [
       "spendguard.reliability",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.reliability",
@@ -9724,7 +9722,7 @@
     ],
     [
       "spendguard.analyze.spend_reporting.report",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.analyze.spend_reporting.report",
@@ -9780,7 +9778,7 @@
     ],
     [
       "spendguard.requirement_judge",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.residency_gate",
@@ -9808,11 +9806,11 @@
     ],
     [
       "spendguard.residency_gate",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.residency_gate",
-      "spendguard.config_schema"
+      "spendguard.store.configuration.config_schema"
     ],
     [
       "spendguard.residency_gate",
@@ -9820,7 +9818,7 @@
     ],
     [
       "spendguard.resource_state",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.resources",
@@ -9840,7 +9838,7 @@
     ],
     [
       "spendguard.resources",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.resources",
@@ -9896,7 +9894,7 @@
     ],
     [
       "spendguard.review",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.review",
@@ -9920,7 +9918,7 @@
     ],
     [
       "spendguard.route_economics",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.route_economics",
@@ -9940,7 +9938,7 @@
     ],
     [
       "spendguard.route_horizon",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.route_horizon",
@@ -9968,7 +9966,7 @@
     ],
     [
       "spendguard.route_realized",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.route_realized",
@@ -9984,7 +9982,7 @@
     ],
     [
       "spendguard.route_utility",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.route_utility",
@@ -10024,11 +10022,11 @@
     ],
     [
       "spendguard.runner",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.runpod_adapter",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.saas",
@@ -10068,7 +10066,7 @@
     ],
     [
       "spendguard.saas",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.saas",
@@ -10144,7 +10142,7 @@
     ],
     [
       "spendguard.schedule",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.semcache",
@@ -10160,7 +10158,7 @@
     ],
     [
       "spendguard.semcache",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.semcache",
@@ -10216,11 +10214,11 @@
     ],
     [
       "spendguard.setup",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.setup",
-      "spendguard.config_schema"
+      "spendguard.store.configuration.config_schema"
     ],
     [
       "spendguard.setup",
@@ -10272,7 +10270,7 @@
     ],
     [
       "spendguard.signal",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.signal",
@@ -10296,11 +10294,11 @@
     ],
     [
       "spendguard.sources",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.sources",
-      "spendguard.config_schema"
+      "spendguard.store.configuration.config_schema"
     ],
     [
       "spendguard.sources",
@@ -10356,7 +10354,7 @@
     ],
     [
       "spendguard.submit",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.submit",
@@ -10388,7 +10386,7 @@
     ],
     [
       "spendguard.subscription_exec",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.subscription_exec",
@@ -10404,11 +10402,11 @@
     ],
     [
       "spendguard.subscription_headroom_surfaces",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.sync",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.sync",
@@ -10420,7 +10418,7 @@
     ],
     [
       "spendguard.sync_capabilities",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.sync_capabilities",
@@ -10456,7 +10454,7 @@
     ],
     [
       "spendguard.tier_config",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.tier_config",
@@ -10484,7 +10482,7 @@
     ],
     [
       "spendguard.token_caps",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.token_caps",
@@ -10500,7 +10498,7 @@
     ],
     [
       "spendguard.trust",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.trust",
@@ -10552,7 +10550,7 @@
     ],
     [
       "spendguard.vendor_call",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.vendor_call",
@@ -10580,7 +10578,7 @@
     ],
     [
       "spendguard.verdict_ledger",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.verify",
@@ -10592,7 +10590,7 @@
     ],
     [
       "spendguard.verify",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.verify",
@@ -10620,7 +10618,7 @@
     ],
     [
       "spendguard.warm_stdio_daemon",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.weekly_cap_guard",
@@ -10628,7 +10626,7 @@
     ],
     [
       "spendguard.weekly_cap_guard",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.weekly_cap_guard",
@@ -10652,7 +10650,7 @@
     ],
     [
       "spendguard.whole_job",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.whole_job",
@@ -10700,7 +10698,7 @@
     ],
     [
       "spendguard.workdone",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.workdone",
@@ -10720,7 +10718,7 @@
     ],
     [
       "spendguard.xp_rate_window",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.xp_rate_window",
@@ -10732,7 +10730,7 @@
     ],
     [
       "spendguard.zai_exec",
-      "spendguard.config"
+      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.zai_exec",
@@ -10752,5 +10750,6 @@
     ]
   ],
   "reviewed_phase_3_spend_search_shims": "Phase 3 spend-search move adds three reviewed lazy identity-preserving compatibility shims.",
-  "reviewed_phase_3_spend_reporting_shims": "Phase 3 spend-reporting move adds three reviewed lazy identity-preserving compatibility shims."
+  "reviewed_phase_3_spend_reporting_shims": "Phase 3 spend-reporting move adds three reviewed lazy identity-preserving compatibility shims.",
+  "reviewed_phase_3_configuration_shims": "Phase 3 configuration move adds two reviewed lazy identity-preserving compatibility shims."
 }
