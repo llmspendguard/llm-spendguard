@@ -9,7 +9,7 @@ its ledger against the truth rows this machine pushes. `--csv` writes the local 
 CLI: `spendguard close [--month YYYY-MM] [--csv PATH]`. Zero LLM spend.
 """
 
-from .capability_cli_parsing import add_registered_cli_argument
+from ...capability_cli_parsing import add_registered_cli_argument
 import datetime
 
 
@@ -26,7 +26,7 @@ def build_close(month):
     provider truth. For the OPEN month with ≥5 observed days, forecast = MTD + remaining calendar days ×
     the observed daily median (p50) / 90th-percentile (p90) — a RUN-RATE projection, labeled as such
     (it extrapolates the month's own daily distribution; it does not model planned jobs)."""
-    from . import truth
+    from ... import truth
     start, end = month_window(month)
     per = {}
     days = {}
@@ -106,7 +106,7 @@ def main(argv=None):
             print(f"  run-rate forecast: month-end ~${f['p50_usd']:,.2f} (p50) … ${f['p90_usd']:,.2f} (p90) "
                   f"— {f['days_observed']} observed days × {f['remaining_days']} remaining (extrapolation, not a plan)")
         try:                                        # accounted-vs-provider completeness for the open month
-            from . import ledger_sync
+            from ... import ledger_sync
             line = ledger_sync.leak_line(month_window(a.month)[0])
             if line:
                 print("  " + line)
@@ -117,7 +117,7 @@ def main(argv=None):
         print("  truth above is ACCOUNT-wide: on a shared account, each org's /statements residual includes")
         print("  its sibling orgs' spend. Machine-accounted vs provider for the open month:")
         try:
-            from . import ledger_sync
+            from ... import ledger_sync
             line = ledger_sync.leak_line(month_window(a.month)[0])
             print("  " + (line or "leak line unavailable"))
         except Exception:

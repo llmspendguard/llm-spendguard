@@ -11,14 +11,14 @@ Scope: BATCH spend both providers + GPU consumption from currently-visible vast.
 (e.g. Opus LOINC judge) needs an Admin key — noted in output; destroyed GPU instances aren't per-instance billed.
 """
 
-from .capability_cli_parsing import add_registered_cli_argument
+from ...capability_cli_parsing import add_registered_cli_argument
 import sys, argparse, datetime
 from collections import defaultdict
 
-from . import config, pricing
-from . import reconcile_openai
-from .reconcile_openai import load_key, fetch_batches, day as oai_day
-from . import reconcile_anthropic as anth
+from ... import config, pricing
+from ... import reconcile_openai
+from ...reconcile_openai import load_key, fetch_batches, day as oai_day
+from ... import reconcile_anthropic as anth
 
 # One monthly pull may legitimately span several sequential HTTP requests. Four OpenAI request-timeout units
 # allow 120s: enough for Anthropic's 90s per-request timeout plus margin, GPU's 20s timeout, and the observed
@@ -64,7 +64,7 @@ def gpu_by_day(since):
     account top-up total (which is lumpy + cross-org on a shared account)."""
     import datetime
     try:
-        from . import resources
+        from ... import resources
         since_ts = datetime.datetime.strptime(since, "%Y-%m-%d").replace(tzinfo=datetime.timezone.utc).timestamp()
         bd = defaultdict(float)
         for r in resources.vast_gpu_accounting_rows_by_day(since_ts=since_ts):
@@ -81,9 +81,9 @@ def admin_billed_realtime_total(since=None):
     realtime is the gate's inline true-up, verified by `spendguard coverage`, not a provider call). Realtime is split
     out via OpenAI's per-row `batch` flag and Anthropic's `service_tier`."""
     import datetime as _dt, json as _j, urllib.request as _u, urllib.parse as _p
-    from .config import api_key
-    from .pricing import realtime_cost
-    from .resources import _norm_model
+    from ...config import api_key
+    from ...pricing import realtime_cost
+    from ...resources import _norm_model
     since = since or config.month_start_utc()
     total, any_key = 0.0, False
 
@@ -225,7 +225,7 @@ def produce_periodic_spend_report(*, alert_threshold: float | None = None, email
     text = buf.getvalue()
     print(text, end="")
     if a.email:
-        from . import notify
+        from ... import notify
         if not notify.is_configured():
             print("  email not configured — skipping (set up a sender: see README → 'Email the report')")
         else:
@@ -238,7 +238,7 @@ def produce_periodic_spend_report(*, alert_threshold: float | None = None, email
                 print(f"  EMAIL FAILED: {e}")
     # roll up to the team/org server if connected + due (respects saas.sync_interval; safe no-op otherwise)
     try:
-        from . import saas
+        from ... import saas
         if saas.ready()[0]:
             print(f"  saas sync: {saas.sync(if_due=True)}")
     except Exception:
@@ -299,7 +299,7 @@ def generate_report(a):
     # The THREE provider pulls (OpenAI batches, Anthropic batches, vast.ai GPU) are independent I/O — run them
     # concurrently so the wall-clock is the SLOWEST single pull, not their sum (~22+6+15s back-to-back → ~max).
     oai, pending, an, an_models, gpu, gpu_err = _fetch_sources_concurrently(month_start)
-    from . import gate
+    from ... import gate
     rt, _rt_models = gate.realtime_by_day(since=month_start)  # real-time spend the gate logged (local file — fast, kept inline)
 
     # transform (pure) → the report rows + grand total; the alert threshold tracks the last row (grand total).
@@ -322,7 +322,7 @@ def generate_report(a):
     if pending:
         print(f"  ({pending:,} OpenAI requests in flight — not yet metered)")
     print("  NOTE: real-time = only calls made through the gate (this venv); other-host real-time still needs an Admin key.")
-    from . import budget
+    from ... import budget
     mt, mw, mm = (budget.meta_spent_since(tstr), budget.meta_spent_since(week_start), budget.meta_spent_since(month_start))
     if mt or mw or mm:
         print(f"{'spendguard meta (advisor)':<30}{'$%.2f' % mt:>11}{'$%.2f' % mw:>12}{'$%.2f' % mm:>12}   (own cap; not in TOTAL)")
@@ -338,7 +338,7 @@ def generate_report(a):
     # tool a failed provider/ledger read is UNKNOWN and must be surfaced, not silently treated as clean.
     leaked = None
     try:
-        from . import ledger_sync
+        from ... import ledger_sync
         c = ledger_sync._compute(month_start)
         leaked = c["leak"]
         line = ledger_sync.leak_line(month_start)
@@ -349,7 +349,7 @@ def generate_report(a):
 
     # ── daily anomaly check (the automated gut: both 2× P0s were "today looks about double") ──
     try:
-        from . import anomaly
+        from ... import anomaly
         for ln in anomaly.lines({"OpenAI batch": oai, "Anthropic batch": an,
                                  "Real-time": rt, "Remote compute (GPU)": gpu}, tstr):
             print(ln)
@@ -358,21 +358,21 @@ def generate_report(a):
 
     # ── realized efficiency (measured) + auto-fresh learnings (caged, cadence-gated) ──
     try:
-        from . import realized as _realized
+        from ... import realized as _realized
         rres = _realized.sync_to_guarded()
         if rres.get("synced_usd"):
             print(f"  realized efficiency: ${rres['synced_usd']:,.2f} newly measured across {rres['intents']} intent(s) → guarded(source=realized)")
     except Exception:
         pass                                        # measurement must never break the report
     try:
-        from . import review as _review
+        from ... import review as _review
         fres = _review.auto_fresh()
         if fres.get("ran"):
             print(f"  learnings auto-refreshed ({fres['mode']}) — caged under caps.meta")
     except Exception:
         pass
     try:
-        from . import calibrate as _calibrate
+        from ... import calibrate as _calibrate
         pres = _calibrate.pair()                    # join logged job predictions to captured actuals
         if pres.get("paired"):
             print(f"  calibration: {pres['paired']} job prediction(s) paired to actuals → estimator sharpened")
@@ -385,7 +385,7 @@ def generate_report(a):
 
     # ── top learnings (the advisor's confidence-scored insights) ──
     try:
-        from . import learn
+        from ... import learn
         ins = learn.insights(min_conf=0.7)
         if ins:
             print("\nTOP LEARNINGS (spendguard advisor):")

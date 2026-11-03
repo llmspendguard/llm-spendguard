@@ -250,8 +250,39 @@
       "package": "spendguard.analyze.spend_reporting",
       "surface_module": "spendguard.analyze.spend_reporting",
       "layer": "L3",
-      "backing_modules": ["report", "close", "receipt"],
-      "published_names": []
+      "backing_modules": [
+        "analyze.spend_reporting.report",
+        "analyze.spend_reporting.close",
+        "analyze.spend_reporting.receipt"
+      ],
+      "published_names": [
+        "ReceiptPlanAllocationRefused",
+        "admin_billed_realtime_total",
+        "build_close",
+        "build_rows",
+        "cli",
+        "emit_flow",
+        "generate_report",
+        "gpu_by_day",
+        "install_cli",
+        "level",
+        "main",
+        "month_window",
+        "openai_by_day",
+        "produce_periodic_spend_report",
+        "render_flow",
+        "render_intent_spend_receipt",
+        "render_line",
+        "render_tally",
+        "render_tree",
+        "stamp_est_value",
+        "stamp_remote",
+        "sum_window",
+        "tally",
+        "to_csv",
+        "truncation_remedy",
+        "windows"
+      ]
     },
     {
       "id": "assurance",
@@ -336,6 +367,21 @@
     {
       "legacy_module": "spendguard.ledger_request_cursor",
       "current_module": "spendguard.store.spend_search.ledger_request_cursor",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.report",
+      "current_module": "spendguard.analyze.spend_reporting.report",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.close",
+      "current_module": "spendguard.analyze.spend_reporting.close",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.receipt",
+      "current_module": "spendguard.analyze.spend_reporting.receipt",
       "moved_in_phase": 3
     }
   ],

@@ -46,7 +46,6 @@
     "claudecode.py",
     "cli.py",
     "cli_arguments.py",
-    "close.py",
     "codex.py",
     "codex_broker_owner.py",
     "codex_daemon.py",
@@ -157,7 +156,6 @@
     "realized.py",
     "realtime_oracle.py",
     "reasoning_equivalence.py",
-    "receipt.py",
     "reconcile.py",
     "reconcile_anthropic.py",
     "reconcile_calls.py",
@@ -169,7 +167,6 @@
     "release.py",
     "reliability.py",
     "remote.py",
-    "report.py",
     "requirement_judge.py",
     "residency_gate.py",
     "resource_state.py",
@@ -469,7 +466,7 @@
             "max_cc": 3,
             "mi": 71.93900342409701
           },
-          "src/spendguard/close.py": {
+          "src/spendguard/analyze/spend_reporting/close.py": {
             "max_cc": 13,
             "mi": 58.5433270588104
           },
@@ -897,7 +894,7 @@
             "max_cc": 18,
             "mi": 46.47025113759904
           },
-          "src/spendguard/receipt.py": {
+          "src/spendguard/analyze/spend_reporting/receipt.py": {
             "max_cc": 53,
             "mi": 0.0
           },
@@ -945,7 +942,7 @@
             "max_cc": 26,
             "mi": 49.869055626025805
           },
-          "src/spendguard/report.py": {
+          "src/spendguard/analyze/spend_reporting/report.py": {
             "max_cc": 33,
             "mi": 36.733245319007324
           },
@@ -1469,7 +1466,7 @@
             "max_cc": 3,
             "mi": 71.93900342409701
           },
-          "src/spendguard/close.py": {
+          "src/spendguard/analyze/spend_reporting/close.py": {
             "max_cc": 13,
             "mi": 57.98036833856071
           },
@@ -1897,7 +1894,7 @@
             "max_cc": 18,
             "mi": 46.335870385043656
           },
-          "src/spendguard/receipt.py": {
+          "src/spendguard/analyze/spend_reporting/receipt.py": {
             "max_cc": 53,
             "mi": 0.0
           },
@@ -1945,7 +1942,7 @@
             "max_cc": 26,
             "mi": 49.680205169070675
           },
-          "src/spendguard/report.py": {
+          "src/spendguard/analyze/spend_reporting/report.py": {
             "max_cc": 33,
             "mi": 36.41847602568639
           },
@@ -6259,7 +6256,7 @@
   ],
   "max_largest_scc_size": 142,
   "max_cyclic_edge_count": 943,
-  "max_legacy_shim_count": 3,
+  "max_legacy_shim_count": 6,
   "recorded_cross_context_nonsurface_imports": [
     [
       "spendguard",
@@ -7003,7 +7000,7 @@
     ],
     [
       "spendguard.calibrate",
-      "spendguard.receipt"
+      "spendguard.analyze.spend_reporting.receipt"
     ],
     [
       "spendguard.calibrate",
@@ -7103,7 +7100,7 @@
     ],
     [
       "spendguard.calls",
-      "spendguard.receipt"
+      "spendguard.analyze.spend_reporting.receipt"
     ],
     [
       "spendguard.calls",
@@ -7203,7 +7200,7 @@
     ],
     [
       "spendguard.chat",
-      "spendguard.receipt"
+      "spendguard.analyze.spend_reporting.receipt"
     ],
     [
       "spendguard.chat",
@@ -7259,7 +7256,7 @@
     ],
     [
       "spendguard.claudecode",
-      "spendguard.receipt"
+      "spendguard.analyze.spend_reporting.receipt"
     ],
     [
       "spendguard.claudecode",
@@ -7378,15 +7375,15 @@
       "spendguard.warm_stdio_daemon"
     ],
     [
-      "spendguard.close",
+      "spendguard.analyze.spend_reporting.close",
       "spendguard.capability_cli_parsing"
     ],
     [
-      "spendguard.close",
+      "spendguard.analyze.spend_reporting.close",
       "spendguard.ledger_sync"
     ],
     [
-      "spendguard.close",
+      "spendguard.analyze.spend_reporting.close",
       "spendguard.truth"
     ],
     [
@@ -7407,7 +7404,7 @@
     ],
     [
       "spendguard.codex",
-      "spendguard.receipt"
+      "spendguard.analyze.spend_reporting.receipt"
     ],
     [
       "spendguard.codex",
@@ -8223,7 +8220,7 @@
     ],
     [
       "spendguard.gate",
-      "spendguard.receipt"
+      "spendguard.analyze.spend_reporting.receipt"
     ],
     [
       "spendguard.gate",
@@ -8483,7 +8480,7 @@
     ],
     [
       "spendguard.lane_balance",
-      "spendguard.receipt"
+      "spendguard.analyze.spend_reporting.receipt"
     ],
     [
       "spendguard.lane_balance",
@@ -8575,7 +8572,7 @@
     ],
     [
       "spendguard.lane_economics",
-      "spendguard.receipt"
+      "spendguard.analyze.spend_reporting.receipt"
     ],
     [
       "spendguard.lane_eligibility",
@@ -8719,7 +8716,7 @@
     ],
     [
       "spendguard.lane_value",
-      "spendguard.receipt"
+      "spendguard.analyze.spend_reporting.receipt"
     ],
     [
       "spendguard.lane_value",
@@ -8927,7 +8924,7 @@
     ],
     [
       "spendguard.ledger_sync",
-      "spendguard.report"
+      "spendguard.analyze.spend_reporting.report"
     ],
     [
       "spendguard.ledger_sync",
@@ -9087,7 +9084,7 @@
     ],
     [
       "spendguard.mcp_server",
-      "spendguard.receipt"
+      "spendguard.analyze.spend_reporting.receipt"
     ],
     [
       "spendguard.mcp_server",
@@ -9446,95 +9443,95 @@
       "spendguard.vendor_call"
     ],
     [
-      "spendguard.receipt",
+      "spendguard.analyze.spend_reporting.receipt",
       "spendguard.adapters"
     ],
     [
-      "spendguard.receipt",
+      "spendguard.analyze.spend_reporting.receipt",
       "spendguard.budget"
     ],
     [
-      "spendguard.receipt",
+      "spendguard.analyze.spend_reporting.receipt",
       "spendguard.calls"
     ],
     [
-      "spendguard.receipt",
+      "spendguard.analyze.spend_reporting.receipt",
       "spendguard.capability_cli_parsing"
     ],
     [
-      "spendguard.receipt",
+      "spendguard.analyze.spend_reporting.receipt",
       "spendguard.claudecode"
     ],
     [
-      "spendguard.receipt",
+      "spendguard.analyze.spend_reporting.receipt",
       "spendguard.codex"
     ],
     [
-      "spendguard.receipt",
+      "spendguard.analyze.spend_reporting.receipt",
       "spendguard.compaction"
     ],
     [
-      "spendguard.receipt",
+      "spendguard.analyze.spend_reporting.receipt",
       "spendguard.config"
     ],
     [
-      "spendguard.receipt",
+      "spendguard.analyze.spend_reporting.receipt",
       "spendguard.guard"
     ],
     [
-      "spendguard.receipt",
+      "spendguard.analyze.spend_reporting.receipt",
       "spendguard.lane_queue"
     ],
     [
-      "spendguard.receipt",
+      "spendguard.analyze.spend_reporting.receipt",
       "spendguard.lane_value"
     ],
     [
-      "spendguard.receipt",
+      "spendguard.analyze.spend_reporting.receipt",
       "spendguard.learn"
     ],
     [
-      "spendguard.receipt",
+      "spendguard.analyze.spend_reporting.receipt",
       "spendguard.ledger"
     ],
     [
-      "spendguard.receipt",
+      "spendguard.analyze.spend_reporting.receipt",
       "spendguard.store.spend_search.ledger_read"
     ],
     [
-      "spendguard.receipt",
+      "spendguard.analyze.spend_reporting.receipt",
       "spendguard.ledger_writer"
     ],
     [
-      "spendguard.receipt",
+      "spendguard.analyze.spend_reporting.receipt",
       "spendguard.model_catalog"
     ],
     [
-      "spendguard.receipt",
+      "spendguard.analyze.spend_reporting.receipt",
       "spendguard.money_scale"
     ],
     [
-      "spendguard.receipt",
+      "spendguard.analyze.spend_reporting.receipt",
       "spendguard.plan_admission"
     ],
     [
-      "spendguard.receipt",
+      "spendguard.analyze.spend_reporting.receipt",
       "spendguard.pricing"
     ],
     [
-      "spendguard.receipt",
+      "spendguard.analyze.spend_reporting.receipt",
       "spendguard.reliability"
     ],
     [
-      "spendguard.receipt",
+      "spendguard.analyze.spend_reporting.receipt",
       "spendguard.residency_gate"
     ],
     [
-      "spendguard.receipt",
+      "spendguard.analyze.spend_reporting.receipt",
       "spendguard.saas"
     ],
     [
-      "spendguard.receipt",
+      "spendguard.analyze.spend_reporting.receipt",
       "spendguard.sources"
     ],
     [
@@ -9710,67 +9707,67 @@
       "spendguard.resources"
     ],
     [
-      "spendguard.report",
+      "spendguard.analyze.spend_reporting.report",
       "spendguard.anomaly"
     ],
     [
-      "spendguard.report",
+      "spendguard.analyze.spend_reporting.report",
       "spendguard.budget"
     ],
     [
-      "spendguard.report",
+      "spendguard.analyze.spend_reporting.report",
       "spendguard.calibrate"
     ],
     [
-      "spendguard.report",
+      "spendguard.analyze.spend_reporting.report",
       "spendguard.capability_cli_parsing"
     ],
     [
-      "spendguard.report",
+      "spendguard.analyze.spend_reporting.report",
       "spendguard.config"
     ],
     [
-      "spendguard.report",
+      "spendguard.analyze.spend_reporting.report",
       "spendguard.gate"
     ],
     [
-      "spendguard.report",
+      "spendguard.analyze.spend_reporting.report",
       "spendguard.learn"
     ],
     [
-      "spendguard.report",
+      "spendguard.analyze.spend_reporting.report",
       "spendguard.ledger_sync"
     ],
     [
-      "spendguard.report",
+      "spendguard.analyze.spend_reporting.report",
       "spendguard.notify"
     ],
     [
-      "spendguard.report",
+      "spendguard.analyze.spend_reporting.report",
       "spendguard.pricing"
     ],
     [
-      "spendguard.report",
+      "spendguard.analyze.spend_reporting.report",
       "spendguard.realized"
     ],
     [
-      "spendguard.report",
+      "spendguard.analyze.spend_reporting.report",
       "spendguard.reconcile_anthropic"
     ],
     [
-      "spendguard.report",
+      "spendguard.analyze.spend_reporting.report",
       "spendguard.reconcile_openai"
     ],
     [
-      "spendguard.report",
+      "spendguard.analyze.spend_reporting.report",
       "spendguard.resources"
     ],
     [
-      "spendguard.report",
+      "spendguard.analyze.spend_reporting.report",
       "spendguard.review"
     ],
     [
-      "spendguard.report",
+      "spendguard.analyze.spend_reporting.report",
       "spendguard.saas"
     ],
     [
@@ -9859,7 +9856,7 @@
     ],
     [
       "spendguard.resources",
-      "spendguard.receipt"
+      "spendguard.analyze.spend_reporting.receipt"
     ],
     [
       "spendguard.resources",
@@ -10243,7 +10240,7 @@
     ],
     [
       "spendguard.setup",
-      "spendguard.receipt"
+      "spendguard.analyze.spend_reporting.receipt"
     ],
     [
       "spendguard.setup",
@@ -10511,7 +10508,7 @@
     ],
     [
       "spendguard.trust",
-      "spendguard.report"
+      "spendguard.analyze.spend_reporting.report"
     ],
     [
       "spendguard.trust",
@@ -10523,7 +10520,7 @@
     ],
     [
       "spendguard.truth",
-      "spendguard.report"
+      "spendguard.analyze.spend_reporting.report"
     ],
     [
       "spendguard.truth",
@@ -10754,5 +10751,6 @@
       "spendguard.subscription_headroom_surfaces"
     ]
   ],
-  "reviewed_phase_3_spend_search_shims": "Phase 3 spend-search move adds three reviewed lazy identity-preserving compatibility shims."
+  "reviewed_phase_3_spend_search_shims": "Phase 3 spend-search move adds three reviewed lazy identity-preserving compatibility shims.",
+  "reviewed_phase_3_spend_reporting_shims": "Phase 3 spend-reporting move adds three reviewed lazy identity-preserving compatibility shims."
 }

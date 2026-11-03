@@ -14,6 +14,12 @@ PROJECTION_GUARD_READ_ROOTS = {
     "gate": set(),
     "receipt": set(),
 }
+PROJECTION_GUARD_SOURCE_RELATIVE_PATHS = {
+    "budget": Path("budget.py"),
+    "calls": Path("calls.py"),
+    "gate": Path("gate.py"),
+    "receipt": Path("analyze/spend_reporting/receipt.py"),
+}
 PROJECTION_GUARD_CONSUMERS = {
     "budget": {"exceeded", "meta_exceeded", "external_exceeded"},
     "gate": {"_budget_check", "_meta_gate", "gate_external", "_intent_door_gate",
@@ -157,7 +163,7 @@ def inspect_budget_projection_category_ownership(ledger_source, budget_source):
 
 
 def run_budget_projection_seam_source_guard():
-    sources = {module: (PROJECTION_GUARD_PACKAGE / f"{module}.py").read_text()
+    sources = {module: (PROJECTION_GUARD_PACKAGE / PROJECTION_GUARD_SOURCE_RELATIVE_PATHS[module]).read_text()
                for module in PROJECTION_GUARD_READ_ROOTS}
     checked, failures, unreviewed = inspect_budget_projection_seam_sources(sources)
     ledger_source = (PROJECTION_GUARD_PACKAGE / "ledger.py").read_text()

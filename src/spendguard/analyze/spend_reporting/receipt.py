@@ -24,7 +24,7 @@ Cost: a local sqlite read + a small JSON read. Safe to emit always; it never spe
 """
 from __future__ import annotations
 
-from .capability_cli_parsing import registered_cli_option_token
+from ...capability_cli_parsing import registered_cli_option_token
 
 import datetime as _dt
 import json
@@ -35,9 +35,9 @@ import sys
 import time
 from typing import Optional
 
-from . import config
-from .money_scale import NANO_USD_PER_USD
-from .sources import CLAUDE_CODE_SOURCE, CLAUDE_CHAT_SOURCE, CODEX_SOURCE
+from ... import config
+from ...money_scale import NANO_USD_PER_USD
+from ...sources import CLAUDE_CODE_SOURCE, CLAUDE_CHAT_SOURCE, CODEX_SOURCE
 
 LEVELS = ("off", "footer", "flow", "verbose")
 _CACHE = "receipt_cache.json"          # under SPENDGUARD_HOME — est-value windows stamped by cc/chat/sync
@@ -152,7 +152,7 @@ def stamp_est_value(rows, source: str = CLAUDE_CODE_SOURCE) -> None:
         p = _receipt_aggregate_cache_path()
         p.parent.mkdir(parents=True, exist_ok=True)
         # THROUGH THE ONE WRITER: an unreadable cache used to discard every other source's est-value.
-        from . import config as _c
+        from ... import config as _c
         _c.update_json(p, lambda d: d.setdefault("est_value_by_source", {}).update({source: acc}),
                        reason="est-value")
     except Exception:
@@ -166,9 +166,9 @@ def _receipt_est_records():
     Numeric TEXT is cast per row before aggregation, independently of every real-dollar column.
     """
     import sqlite3
-    from .ledger_read import _ledger_read_connection, consumer_empty_spend_compatibility
-    from .sources import receipt_source_family
-    from .ledger import SpendLedger
+    from ...ledger_read import _ledger_read_connection, consumer_empty_spend_compatibility
+    from ...sources import receipt_source_family
+    from ...ledger import SpendLedger
 
     records = {}
     try:
@@ -297,7 +297,7 @@ def _routed_lane_value():
     try:
         data = json.loads(_receipt_aggregate_cache_path().read_text()).get("routed_lane_value") or {}
         month = _windows()[2]
-        from . import adapters
+        from ... import adapters
         active = {name for name, _module in adapters._LANES.values()}
         for lane in active:
             rec = data.get(lane) or {}
@@ -318,7 +318,7 @@ def _lane_activity(since=None):
     served these prompts ($0 billed), and now the receipt can name it instead of it being invisible. Cheap indexed
     read; {} on any error or on an older db written before the executor column existed (guarded, never raises)."""
     since = since or _windows()[2]
-    from . import ledger_read
+    from ... import ledger_read
     try:
         rows = ledger_read.read_receipt_lane_activity(since)
         return {r[0]: {"calls": r[1], "in_tok": r[2], "out_tok": r[3]} for r in rows if r[0]}
@@ -337,7 +337,7 @@ def _basis_line():
     ceiling is not wrong, but reading it as money already spent IS — and nothing on the receipt used to say
     which was which. Unlabelled legacy rows are shown as unlabelled, never quietly counted as billed."""
     try:
-        from . import budget
+        from ... import budget
         b = budget.by_basis(_windows()[2])
     except Exception:
         return []
@@ -359,7 +359,7 @@ def _unpriced_lines():
     real usage whose price is unknown. Both stay out of the total; both must be visible, because a silent $0
     is a claim that the work was free — and that is the one thing we know it wasn't."""
     try:
-        from . import budget, model_catalog, pricing
+        from ... import budget, model_catalog, pricing
         rows = [row for row in budget.unpriced_since(_windows()[2])
                 if not model_catalog.billing_exempt(row["model"])]
     except Exception:
@@ -401,7 +401,7 @@ def _truncated_lines():
     as 'no findings' rather than 'no answer' — so it is worse than a visible failure. It was invisible here
     because it sits inside a legitimate-looking total."""
     try:
-        from .ledger_read import _ledger_read_connection
+        from ...ledger_read import _ledger_read_connection
         with _ledger_read_connection() as c:
             return _truncation_rows(c)
     except Exception:
@@ -440,7 +440,7 @@ def truncation_remedy(c, model):
     that crashes hides the whole tally to report one hint.
     """
     try:
-        from . import pricing
+        from ... import pricing
         ceiling = int(pricing.max_output_tokens(model) or 0)
     except Exception:
         ceiling = 0
@@ -483,7 +483,7 @@ def truncation_remedy(c, model):
 
 
 def _truncation_rows(c):
-    from . import ledger_read
+    from ... import ledger_read
     try:
         since = _windows()[2]
         rows = ledger_read.read_receipt_truncation_groups(since)
@@ -523,7 +523,7 @@ def _quarantine_lines():
     """Impossible estimates the gate caught, shown BELOW the total they are excluded from. Silence here would
     be its own dishonesty: the row exists, it was almost counted as money, and the reader should know both."""
     try:
-        from . import budget
+        from ... import budget
         rows = budget.quarantined_since(_windows()[2])
     except Exception:
         return []
@@ -558,7 +558,7 @@ def _asof_label(ev):
     # `spendguard lanevalue`. A source that is NEITHER (a typo, a retired source) gets NO invented command — a
     # plausible-but-wrong remedy the reader runs and sees unchanged is worse than none. dict.fromkeys de-dups in order.
     try:
-        from . import lane_value
+        from ... import lane_value
         _valued = lane_value.ledger_valued_lanes()
     except Exception:
         _valued = set()
@@ -638,7 +638,7 @@ def _external_tally():
     (stamped async by resources.sync into the cache), external cost is recorded straight to the ledger, so this reads
     it live. None on any error (never break the receipt over a bookkeeping read)."""
     try:
-        from . import budget
+        from ... import budget
         today, week, month = _windows()
         w = {}
         for k, since in (("today", today), ("week", week), ("month", month)):
@@ -666,7 +666,7 @@ def tally(project=None, conv=None) -> dict:
     api = {"today": None, "week": None, "month": None}
     gaps = []
     try:
-        from . import budget
+        from ... import budget
         # THE SCOPE IS PASSED THROUGH. tally() took `project` and `conv` and used NEITHER, while
         # budget.spent_since has supported both all along — so `tally(project=repo)`, which is how the
         # per-repo receipt is built, returned the GLOBAL total under a per-repo heading. The number the
@@ -677,7 +677,7 @@ def tally(project=None, conv=None) -> dict:
     except Exception as error:
         gaps.append(f"CAPTURE GAP: ledger read unavailable: {error!r}")
     try:
-        from . import ledger_read
+        from ... import ledger_read
         pending_settlements = ledger_read.read_incomplete_call_settlements(month, project=project)
         if pending_settlements["n"]:
             gaps.append(f"INCOMPLETE SETTLEMENT: {pending_settlements['n']} calls have unreported output usage; "
@@ -718,7 +718,7 @@ def tally(project=None, conv=None) -> dict:
            "subscription_assumed": sub_assumed,
            "est_value": est_value}
     try:
-        from . import budget as _budget
+        from ... import budget as _budget
         pending = [str(path) for path in _budget.spend_event_retry_paths()
                    if path.exists() and path.stat().st_size]
         if pending:
@@ -829,7 +829,7 @@ def _queue_seg() -> str:
     """Durable lane-queue backlog for the receipt: 'N pending · M leased' when work is waiting to drain onto idle
     lanes, else '' (nothing queued). Guarded — a queue read never breaks the receipt."""
     try:
-        from . import lane_queue
+        from ... import lane_queue
         d = lane_queue.queue_depth() or {}
         bits = [f"{d[k]} {k}" for k in ("pending", "leased", "failed") if d.get(k)]
         return " · ".join(bits)
@@ -869,7 +869,7 @@ def _tally_lines(t: dict) -> list:
     if seg:                                        # WHICH plan served spendguard's own work — the inline lane visibility
         lines.append(f":: lanes serving your work (mo): {seg}  ($0 billed — a plan served these, not the metered API)")
     try:
-        from . import plan_admission
+        from ... import plan_admission
         risky = [r for r in plan_admission.risks() if r.get("at_risk")]
         for r in risky:
             why = "PAID OVERAGE" if r.get("paid_overage") else f"{r.get('remaining_pct')}% remaining"
@@ -901,7 +901,7 @@ def _lane_health_alert():
     the cached health state, so a red lane surfaces in every conversation's receipt without a new sweep. NEVER
     raises: a receipt must not break over a health read."""
     try:
-        from . import reliability
+        from ... import reliability
         return reliability.health_alert()
     except Exception:
         return None
@@ -971,7 +971,7 @@ def _conv_repos(conv=None, cwd=None):
     """The repo(s) THIS conversation is relevant to (collapsed view): the cwd repo + any the conversation touched."""
     repos = set()
     try:
-        from . import budget
+        from ... import budget
         repos |= set(budget.projects_for_conv(conv or budget._conv()))
         cp = _project_for_cwd(cwd) if cwd else (budget._project() or None)
         if cp:
@@ -985,7 +985,7 @@ def _all_repos():
     """Every repo with billed charges OR plan-value (expanded view)."""
     repos = set()
     try:
-        from . import budget
+        from ... import budget
         repos |= set(budget.all_projects())
     except Exception:
         pass
@@ -1087,7 +1087,7 @@ def _render_scope(scope_all=False, conv=None, cwd=None, line=False, top=12, brea
 def _conv_org():
     """The org this conversation/connection belongs to (the repo's .spendguard.json org) — the default tree scope."""
     try:
-        from . import saas
+        from ... import saas
         return (saas.saas_connection().get("org") or "").strip().lower() or None
     except Exception:
         return None
@@ -1162,7 +1162,7 @@ def _saved_lines(t: dict) -> list:
     counterfactual is never blurred into a measured number, and a sanity ratio vs the (real + est-value) baseline
     FLAGS a vanity figure rather than hiding it. Empty when nothing has been guarded yet."""
     try:
-        from . import guard
+        from ... import guard
         month = _windows()[2]
         s = guard.saved_since(month)
     except Exception:
@@ -1249,7 +1249,7 @@ def render_flow(flow: dict, lvl: str, t: Optional[dict] = None) -> str:
 def _learned_tip(intent: Optional[str]) -> Optional[str]:
     """A relevant learned insight for this intent, if the advisor has one cheaply. Best-effort; None otherwise."""
     try:
-        from . import learn
+        from ... import learn
         fn = getattr(learn, "quick_tip", None)
         if fn:
             return fn(intent)
@@ -1306,7 +1306,7 @@ def emit_flow(intent, chain, start, contract=None) -> None:
     unparseable is the same DONE-not-CORRECT failure the batch gate was fixed for."""
     try:
         try:                                      # a flow may have just delegated to a ledger-valued lane; freshen it
-            from . import lane_value
+            from ... import lane_value
             lane_value.refresh_lane_value_if_stale()
         except Exception:
             pass
@@ -1318,13 +1318,13 @@ def emit_flow(intent, chain, start, contract=None) -> None:
         start_rid, start_usd = (start or (0, 0.0))
         agg = None
         try:
-            from . import calls
+            from ... import calls
             agg = calls.flow_agg(start_rid, chain)
         except Exception:
             pass
         actual = None
         try:
-            from . import budget
+            from ... import budget
             actual = max(0.0, budget.spent_all_time() - (start_usd or 0.0))   # memoized baseline (matches the flow-enter snapshot)
         except Exception:
             pass
@@ -1346,7 +1346,7 @@ def emit_flow(intent, chain, start, contract=None) -> None:
                 "caller": (agg or {}).get("caller")}
         proj = None                                  # scope the tally to THIS flow's repo (the relevant scope)
         try:
-            from . import budget
+            from ... import budget
             proj = budget._project() or None
         except Exception:
             pass
@@ -1360,14 +1360,14 @@ _STATUSLINE_CACHE_S = 10        # the status line renders often; recompute the (
 
 
 def _statusline_cache_path():
-    from . import config
+    from ... import config
     return config.HOME / "statusline_tally.cache"
 
 
 def _write_statusline_cache(line):
     """Persist the rendered tally line for the FAST status line (spendguard/statusline.py) to read with no import.
     The per-turn --stop-hook writes it, so a status line that repaints many times between turns is a cheap file read."""
-    from .ledger_writer import ledger_bulk_scope_matches
+    from ...ledger_writer import ledger_bulk_scope_matches
     if ledger_bulk_scope_matches(config.db_path()):
         return
     try:
@@ -1381,7 +1381,7 @@ def _cached_tally_line():
     the cached line is returned. So even the heavy `spendguard receipt --statusline` path does the tally work (ledger
     read + lane-value refresh) at most once per window. The FAST path (the standalone statusline.py the installer
     writes) skips this whole process — it reads the cache directly with no spendguard import."""
-    from .ledger_writer import ledger_bulk_scope_matches
+    from ...ledger_writer import ledger_bulk_scope_matches
     if ledger_bulk_scope_matches(config.db_path()):
         # Show live pending state only to its scope; never reuse or publish a
         # cross-scope rendered tally while its inputs are uncommitted.
@@ -1393,7 +1393,7 @@ def _cached_tally_line():
     except Exception:
         pass
     try:                                          # cache MISS → refresh the ledger-valued lanes, then recompute + store
-        from . import lane_value
+        from ... import lane_value
         lane_value.refresh_lane_value_if_stale()
     except Exception:
         pass
@@ -1406,8 +1406,8 @@ def _compaction_hint():
     """{threshold_tokens, k} for the status-line compaction nudge: the config re-read-context threshold + the MEASURED
     compaction ratio (a ledger query via claudecode). Account-level, not per-session. The --stop-hook calls this every
     turn, so it SELF-CACHES for an hour (k barely moves). Best-effort → safe defaults; never raises."""
-    from . import config
-    from .ledger_writer import ledger_bulk_scope_matches
+    from ... import config
+    from ...ledger_writer import ledger_bulk_scope_matches
     pending_compaction_scope = ledger_bulk_scope_matches(config.db_path())
     hp = config.HOME / "compaction_hint.json"
     try:
@@ -1421,10 +1421,10 @@ def _compaction_hint():
         thr = 100000
     k = None
     try:
-        from . import compaction
+        from ... import compaction
         kk, _kn = compaction.measured_explicit_compaction_ratio()             # REAL per-event k× (pre/post) once compactions are recorded
         if not kk:
-            from . import claudecode
+            from ... import claudecode
             kk, _kn = claudecode.measured_compaction_ratio()   # else the ledger context-drop heuristic
         k = round(float(kk), 1) if kk else None
     except Exception:
@@ -1456,7 +1456,7 @@ def _nudge_should_fire(home, session_key, ctx, threshold):
     clears the session's mark (a compaction / fresh start resets it) and returns False. State writes go through
     config.update_json (atomic, backed up, refuses a corrupt file) — never a hand-rolled whole-file write.
     Hook-safe: any read/write failure fails to False (stay silent) rather than raising or looping."""
-    from . import config
+    from ... import config
     path = _nudge_state_path(home)
     try:
         state = {}
@@ -1536,7 +1536,7 @@ def _compaction_nudge(info, home, once=False):
         # the lever) is a $0 drill-down on `spendguard claude-code context --conv <id>`.
         dollar = ""
         try:
-            from . import claudecode
+            from ... import claudecode
             _rate = claudecode._cache_read_rate(model) if model else None
             if _rate is not None:
                 dollar = " (~$%.2f/turn re-read)" % (ctx * _rate)
@@ -1626,7 +1626,7 @@ def render_intent_spend_receipt(*, today_only: bool = False, week_only: bool = F
                                 all_time: bool = False, since_override: str | None = None,
                                 as_json: bool = False) -> int:
     """Render the existing intent totals using the exact countable receipt filter."""
-    from . import budget
+    from ... import budget
     today, week, month = _windows()
     since, wlabel = month, "month-to-date"
     if today_only:
@@ -1664,7 +1664,7 @@ def cli(args) -> int:
     args = list(args or [])
     if registered_cli_option_token('receipt/--statusline') not in args:                # the statusline path refreshes lazily inside _cached_tally_line (on a
         try:                                       # cache MISS only), so a cached repaint does NO refresh; every other
-            from . import lane_value               # receipt path keeps refreshing up front exactly as before
+            from ... import lane_value               # receipt path keeps refreshing up front exactly as before
             lane_value.refresh_lane_value_if_stale()
         except Exception:
             pass
@@ -1674,7 +1674,7 @@ def cli(args) -> int:
 
     def _cur_project():
         try:
-            from . import budget
+            from ... import budget
             return budget._project() or None
         except Exception:
             return None
@@ -1701,12 +1701,12 @@ def cli(args) -> int:
             _msg = _line
             _hook_context = None
             try:
-                from . import config as _cfg, compaction
-                from . import claudecode as _cc_residency
+                from ... import config as _cfg, compaction
+                from ... import claudecode as _cc_residency
                 _sid = info.get("session_id") or info.get("sessionId")
                 _codex_host = os.getenv("SPENDGUARD_HOOK_HOST") == "codex"
                 if _codex_host:
-                    from .codex import codex_hook_context_trajectory
+                    from ...codex import codex_hook_context_trajectory
                     try:
                         _trajectory = codex_hook_context_trajectory(info)
                         _res_lines = [f"Codex residency: {_trajectory['current']:,} current input tokens; "
@@ -1738,7 +1738,7 @@ def cli(args) -> int:
                     info = json.loads(sys.stdin.read() or "{}")
                 except Exception:
                     info = {}
-            from . import compaction
+            from ... import compaction
             compaction.record_precompact(info)
             print(json.dumps({"suppressOutput": True}))
             return 0
@@ -1751,7 +1751,7 @@ def cli(args) -> int:
                     info = json.loads(sys.stdin.read() or "{}")
                 except Exception:
                     info = {}
-            from . import compaction
+            from ... import compaction
             compaction.record_sessionstart(info)
             if info.get("source") == "compact":
                 digest = compaction.preservation_digest(info)
@@ -1781,7 +1781,7 @@ def cli(args) -> int:
                 except Exception:
                     pass
             prefix = "  ·  ".join(bits)
-            from . import config as _cfg
+            from ... import config as _cfg
             _nudge = _compaction_nudge(info, str(_cfg.HOME))
             print((prefix + "  ·  " if prefix else "") + _cached_tally_line() + ("  ·  " + _nudge if _nudge else ""))
             return 0
@@ -1794,7 +1794,7 @@ def cli(args) -> int:
         if scope and not _est_tree(scope):
             scope = None
         print(render_tree(scope_org=scope, project=None if registered_cli_option_token('receipt/--all') in args else _cur_project()))
-        from . import claudecode as _cc_residency
+        from ... import claudecode as _cc_residency
         print("\nRESIDENCY (latest Claude Code session)")
         for _res_line in _cc_residency.residency_summary_lines():
             print("  " + _res_line)
@@ -1894,7 +1894,7 @@ def _install_claude_code(remove=False):
     config.update_json(p, lambda _d: cfg)
     # The residency nudge is another Claude Code receipt/context surface. Install it through this same host
     # integration entrypoint so one reversible command owns all of spendguard's Claude Code hooks.
-    from .residency_gate import install_residency_gate
+    from ...residency_gate import install_residency_gate
     install_residency_gate(settings_path=p, uninstall=remove, executable=sg)
     print(f"{action} spendguard receipts for Claude Code → {p}")
     print("  restart Claude Code to apply" + ("" if remove else "  (status-line footer + per-turn notice)")

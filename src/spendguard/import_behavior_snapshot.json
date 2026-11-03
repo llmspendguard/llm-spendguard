@@ -3,7 +3,10 @@
   "name_normalization": {
     "spendguard.ledger_read": "spendguard.store.spend_search.ledger_read",
     "spendguard.ledger_deadline_polling": "spendguard.store.spend_search.ledger_deadline_polling",
-    "spendguard.ledger_request_cursor": "spendguard.store.spend_search.ledger_request_cursor"
+    "spendguard.ledger_request_cursor": "spendguard.store.spend_search.ledger_request_cursor",
+    "spendguard.report": "spendguard.analyze.spend_reporting.report",
+    "spendguard.close": "spendguard.analyze.spend_reporting.close",
+    "spendguard.receipt": "spendguard.analyze.spend_reporting.receipt"
   },
   "entry_points": {
     "package_import": {
@@ -367,6 +370,8 @@
   "migration_scaffold_executed_module_allowlist": [
     "spendguard.domain_context_surface",
     "spendguard.domain_legacy_path_shim",
+    "spendguard.analyze",
+    "spendguard.analyze.spend_reporting",
     "spendguard.store",
     "spendguard.store.spend_search"
   ]

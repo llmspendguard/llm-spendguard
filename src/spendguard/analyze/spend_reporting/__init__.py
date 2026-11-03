@@ -1,3 +1,30 @@
 from spendguard.domain_context_surface import install_domain_context_surface
 
-install_domain_context_surface(globals(), {})
+install_domain_context_surface(globals(), {
+    "ReceiptPlanAllocationRefused": "spendguard.analyze.spend_reporting.receipt:ReceiptPlanAllocationRefused",
+    "admin_billed_realtime_total": "spendguard.analyze.spend_reporting.report:admin_billed_realtime_total",
+    "build_close": "spendguard.analyze.spend_reporting.close:build_close",
+    "build_rows": "spendguard.analyze.spend_reporting.report:build_rows",
+    "cli": "spendguard.analyze.spend_reporting.receipt:cli",
+    "emit_flow": "spendguard.analyze.spend_reporting.receipt:emit_flow",
+    "generate_report": "spendguard.analyze.spend_reporting.report:generate_report",
+    "gpu_by_day": "spendguard.analyze.spend_reporting.report:gpu_by_day",
+    "install_cli": "spendguard.analyze.spend_reporting.receipt:install_cli",
+    "level": "spendguard.analyze.spend_reporting.receipt:level",
+    "main": "spendguard.analyze.spend_reporting.report:main",
+    "month_window": "spendguard.analyze.spend_reporting.close:month_window",
+    "openai_by_day": "spendguard.analyze.spend_reporting.report:openai_by_day",
+    "produce_periodic_spend_report": "spendguard.analyze.spend_reporting.report:produce_periodic_spend_report",
+    "render_flow": "spendguard.analyze.spend_reporting.receipt:render_flow",
+    "render_intent_spend_receipt": "spendguard.analyze.spend_reporting.receipt:render_intent_spend_receipt",
+    "render_line": "spendguard.analyze.spend_reporting.receipt:render_line",
+    "render_tally": "spendguard.analyze.spend_reporting.receipt:render_tally",
+    "render_tree": "spendguard.analyze.spend_reporting.receipt:render_tree",
+    "stamp_est_value": "spendguard.analyze.spend_reporting.receipt:stamp_est_value",
+    "stamp_remote": "spendguard.analyze.spend_reporting.receipt:stamp_remote",
+    "sum_window": "spendguard.analyze.spend_reporting.report:sum_window",
+    "tally": "spendguard.analyze.spend_reporting.receipt:tally",
+    "to_csv": "spendguard.analyze.spend_reporting.close:to_csv",
+    "truncation_remedy": "spendguard.analyze.spend_reporting.receipt:truncation_remedy",
+    "windows": "spendguard.analyze.spend_reporting.report:windows",
+})

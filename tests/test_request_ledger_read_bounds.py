@@ -14,6 +14,7 @@ REQUEST_LEDGER_OFFLINE_CONNECTION_FUNCTIONS = {("budget", "snapshot")}
 REQUEST_LEDGER_MOVED_MODULE_PATHS = {
     "ledger_read": ("store", "spend_search", "ledger_read.py"),
     "ledger_request_cursor": ("store", "spend_search", "ledger_request_cursor.py"),
+    "receipt": ("analyze", "spend_reporting", "receipt.py"),
 }
 REQUEST_LEDGER_REQUIRED_EDGES = {
     "ledger_read": {
