@@ -46,7 +46,7 @@ def usage():
 
 def usage_report():
     """Documented CLI-server quota; missing local server configuration is a named gap."""
-    from . import subscription_headroom_surfaces as surfaces
+    from ... import subscription_headroom_surfaces as surfaces
     settings = surfaces.subscription_surface_settings("kimi_code", "SPENDGUARD_KIMI_USAGE_URL")
     settings, token, discovery_gap = discover_kimi_server_surface(settings)
     if discovery_gap:
@@ -129,7 +129,7 @@ def _bin():
     ~/.kimi-code/bin) — daemons run with a minimal PATH that misses it. No shutil.which fast-path (the
     resolve-cli-binary drift): resolve_cli already does pin → PATH → well-known dirs, so a pin at a missing binary
     fails LOUD instead of falling through to whatever `kimi` is on PATH."""
-    from . import config
+    from ... import config
     return config.resolve_cli("kimi", "SPENDGUARD_KIMI_BIN")
 
 
@@ -168,7 +168,7 @@ def _daemon_enabled():
     SPENDGUARD_KIMI_DAEMON wins, else config advisor.kimi_daemon. Default ON so batch/comprehension fan-out pays the
     ACP startup once and subsequent turns are warm; either setting can opt out. A daemon failure falls through to the
     cold `-p` path, so enabling it changes LATENCY, never AVAILABILITY."""
-    from . import config
+    from ... import config
     v = os.getenv("SPENDGUARD_KIMI_DAEMON")
     if v is not None:
         return v.strip().lower() not in ("0", "false", "no", "off")
@@ -221,7 +221,7 @@ def run_prompt(prompt, system=None, model=None, timeout=TIMEOUT_S, reasoning=Non
     `model` is mapped to the matching plan alias and forwarded
     to `-m` (an unknown id → the CLI default; a bad alias makes kimi exit non-zero → the caller falls back to the
     metered API). Tokens are ESTIMATED (len//4) — the CLI emits no usage — for the est-value axis only; $0 billed."""
-    from . import execution_journal
+    from ... import execution_journal
     kimi_exec_durable_dispatch_id = execution_journal.current_durable_execution_id()
     kimi_exec_delegate_process_runner = (execution_journal.run_durable_delegate_subprocess
                                if kimi_exec_durable_dispatch_id else subprocess.run)
@@ -233,7 +233,7 @@ def run_prompt(prompt, system=None, model=None, timeout=TIMEOUT_S, reasoning=Non
     full = (f"{system.strip()}\n\n{prompt}" if system else prompt)
     # ACP has a neutral workspace and cannot execute a delegated repo-editing job.
     if not agentic and _daemon_enabled() and _warm_model_eligible(model):
-        from . import kimi_daemon
+        from ... import kimi_daemon
         from .subscription_cli_results import kimi_warm_prompt_result
         warm_result = kimi_warm_prompt_result(
             full, model, reasoning, timeout, kimi_exec_durable_dispatch_id, kimi_daemon.run_warm,
@@ -246,7 +246,7 @@ def run_prompt(prompt, system=None, model=None, timeout=TIMEOUT_S, reasoning=Non
     alias = _kimi_model_alias(model)
     if alias:
         cmd += ["-m", alias]
-    from . import config
+    from ... import config
     env = config.lane_exec_env(exe)   # strip EVERY provider's metered key and expose the CLI's co-located runtime; a
     #                                   kimi lane must never carry MOONSHOT_API_KEY (that would bill the metered API)
     t0 = time.time()

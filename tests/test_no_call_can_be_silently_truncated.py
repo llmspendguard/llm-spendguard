@@ -54,7 +54,7 @@ def check(name, cond, detail=""):
 print("-- STRUCTURE: the call path carries no default cap --")
 # Read the real signatures out of the real file. Reflection on the imported function would also work, but
 # parsing the source proves the SOURCE is clean, which is what a reviewer and a future editor both see.
-_tree = ast.parse((SRC / "adapters.py").read_text())
+_tree = ast.parse((SRC / "generate/execution/adapters.py").read_text())
 _defaults = {}
 for n in ast.walk(_tree):
     if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)):

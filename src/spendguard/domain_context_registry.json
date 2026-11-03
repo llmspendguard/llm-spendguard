@@ -319,19 +319,19 @@
       "surface_module": "spendguard.generate.execution",
       "layer": "L1",
       "backing_modules": [
-        "vendor_call",
-        "submit",
-        "batch_tracker",
-        "subscription_exec",
-        "codex_exec",
-        "kimi_exec",
-        "zai_exec",
-        "antigravity_exec",
-        "subscription_cli_results",
-        "provider_plugins",
-        "provider_kit",
-        "adapters",
-        "openai_batch_cli"
+        "generate.execution.vendor_call",
+        "generate.execution.submit",
+        "generate.execution.batch_tracker",
+        "generate.execution.subscription_exec",
+        "generate.execution.codex_exec",
+        "generate.execution.kimi_exec",
+        "generate.execution.zai_exec",
+        "generate.execution.antigravity_exec",
+        "generate.execution.subscription_cli_results",
+        "generate.execution.provider_plugins",
+        "generate.execution.provider_kit",
+        "generate.execution.adapters",
+        "generate.execution.openai_batch_cli"
       ],
       "published_names": []
     },
@@ -1115,6 +1115,71 @@
     {
       "legacy_module": "spendguard.focus_export",
       "current_module": "spendguard.egress.focus_export",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.vendor_call",
+      "current_module": "spendguard.generate.execution.vendor_call",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.submit",
+      "current_module": "spendguard.generate.execution.submit",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.batch_tracker",
+      "current_module": "spendguard.generate.execution.batch_tracker",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.subscription_exec",
+      "current_module": "spendguard.generate.execution.subscription_exec",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.codex_exec",
+      "current_module": "spendguard.generate.execution.codex_exec",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.kimi_exec",
+      "current_module": "spendguard.generate.execution.kimi_exec",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.zai_exec",
+      "current_module": "spendguard.generate.execution.zai_exec",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.antigravity_exec",
+      "current_module": "spendguard.generate.execution.antigravity_exec",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.subscription_cli_results",
+      "current_module": "spendguard.generate.execution.subscription_cli_results",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.provider_plugins",
+      "current_module": "spendguard.generate.execution.provider_plugins",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.provider_kit",
+      "current_module": "spendguard.generate.execution.provider_kit",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.adapters",
+      "current_module": "spendguard.generate.execution.adapters",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.openai_batch_cli",
+      "current_module": "spendguard.generate.execution.openai_batch_cli",
       "moved_in_phase": 3
     }
   ],

@@ -22,7 +22,7 @@ from . import adapters, provider_plugins
 def run_conformance(activate, *, name, sample_model=None, kind="adapter"):
     """Run all checks; returns [(check, ok, detail)]. No network, no spend."""
     results = []
-    from . import gate
+    from ... import gate
     before_gate = len(gate.INTERCEPTORS) + len(gate.RT_INTERCEPTORS) + len(getattr(gate, "_EXTRA", []))
 
     try:
@@ -42,7 +42,7 @@ def run_conformance(activate, *, name, sample_model=None, kind="adapter"):
 
     if sample_model is not None:
         try:
-            from . import pricing
+            from ... import pricing
             pricing.price(sample_model)
             results.append(("priced", True, f"pricing.price({sample_model!r}) resolves"))
         except Exception as e:

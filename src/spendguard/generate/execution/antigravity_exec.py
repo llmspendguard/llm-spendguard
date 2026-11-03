@@ -53,7 +53,7 @@ def _bin():
     ~/.local/bin, where the Antigravity installer places it) — daemons run with a minimal PATH that misses it.
     Delegating outright (no shutil.which fast-path) so an explicit pin is never overridden by a stray PATH binary,
     matching codex_exec._bin()."""
-    from . import config
+    from ... import config
     return config.resolve_cli("agy", "SPENDGUARD_AGY_BIN")
 
 
@@ -89,7 +89,7 @@ def model_ids(timeout_s=30):
     if not available():
         return []
     try:
-        from . import config
+        from ... import config
         exe = _bin()
         p = subprocess.run([exe, "models"], capture_output=True, text=True, timeout=timeout_s,
                            env=config.lane_exec_env(exe))
@@ -207,7 +207,7 @@ def _fetch_agy_usage_report():
     if not executable:
         report["reason"] = "agy_cli_not_available"
         return report
-    from . import config
+    from ... import config
     try:
         completed = subprocess.run([executable, "-p", "/usage", "--output-format", "text", "--print-timeout",
                                     AGY_USAGE_PRINT_TIMEOUT], capture_output=True, text=True,
@@ -230,13 +230,13 @@ def usage():
     parse failed → ordinary lane handling). Cached via lane_quota.cached_usage: TTL + reset-boundary invalidation
     (past a cached snapshot's soonest reset the quota has refilled, so a stale-EXHAUSTED read never masks a
     recovered lane), so a burst of lane failures costs ONE $0 CLI round-trip."""
-    from . import lane_quota
+    from ... import lane_quota
     return lane_quota.cached_usage(_usage_cache, _USAGE_TTL_S, _fetch_usage)
 
 
 def agy_headroom_report():
     """Cached Gemini quota report with provider-specific UNKNOWN reasons."""
-    from . import subscription_headroom_surfaces as surfaces
+    from ... import subscription_headroom_surfaces as surfaces
     return surfaces.cached_subscription_surface_report(_usage_report_cache, _USAGE_TTL_S, _fetch_agy_usage_report)
 
 
@@ -280,7 +280,7 @@ def run_prompt(prompt, system=None, model=None, timeout=TIMEOUT_S, reasoning=Non
     given (an agy id like gemini-3.7-flash-high); an id agy does not serve exits non-zero → API fallback.
     Protocol parameters reasoning/max_tokens remain accepted but not enforced: effort rides the model suffix,
     and agy has no one-shot output cap. Agentic mode changes workspace/tool permissions, not those guarantees."""
-    from . import execution_journal
+    from ... import execution_journal
     antigravity_exec_durable_dispatch_id = execution_journal.current_durable_execution_id()
     antigravity_exec_delegate_process_runner = (execution_journal.run_durable_delegate_subprocess
                                if antigravity_exec_durable_dispatch_id else subprocess.run)
@@ -290,7 +290,7 @@ def run_prompt(prompt, system=None, model=None, timeout=TIMEOUT_S, reasoning=Non
     if not exe:
         return {"error": "agy (Antigravity CLI) not found"}
     full = (f"{system.strip()}\n\n{prompt}" if system else prompt)
-    from . import config
+    from ... import config
     env = config.lane_exec_env(exe)   # strip EVERY provider's metered key and expose the CLI's co-located runtime; the
     #                                   gemini lane must never carry ANTHROPIC_API_KEY (Claude tokens) or any other
     cmd = [exe, "-p", full, "--output-format", "json", "--disable-slash-commands"]

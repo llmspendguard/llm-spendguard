@@ -26,12 +26,12 @@
     "symbol": "_llm_lookup",
     "kwarg": "max_tokens"
   },
-  "spendguard/vendor_call.py::discover_efforts::max_tokens=16": {
+  "spendguard/generate/execution/vendor_call.py::discover_efforts::max_tokens=16": {
     "verdict": "harmless_probe",
     "why": "The call sends a fixed \"Reply: OK\" prompt and the code only reads r.get(\"error\") to test which reasoning-effort values connect, discarding the actual reply content.",
     "model": "claude-opus-4-8",
     "value": 16,
-    "file": "spendguard/vendor_call.py",
+    "file": "spendguard/generate/execution/vendor_call.py",
     "symbol": "discover_efforts",
     "kwarg": "max_tokens"
   },

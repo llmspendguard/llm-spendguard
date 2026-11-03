@@ -72,7 +72,7 @@ assert not unreviewed, unreviewed
 assert len(edges) == len(REVIEWED), "reviewed edge removed/duplicated; re-review the call graph"
 
 # Inspect the actual ladder and the two dispatch entrances, not a one-file keyword claim.
-adapter_tree = ast.parse((ROOT / "src/spendguard/adapters.py").read_text())
+adapter_tree = ast.parse((ROOT / "src/spendguard/generate/execution/adapters.py").read_text())
 once = next(n for n in ast.walk(adapter_tree) if isinstance(n, ast.FunctionDef) and n.name == "_call_once")
 names = [(ast.unparse(n.func), n.lineno) for n in ast.walk(once) if isinstance(n, ast.Call)]
 line = dict(names)

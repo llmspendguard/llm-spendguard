@@ -51,7 +51,7 @@ def usage():
 
 def usage_report():
     """Read-only quota monitor using the existing coding-plan credential."""
-    from . import subscription_headroom_surfaces as surfaces
+    from ... import subscription_headroom_surfaces as surfaces
     settings = surfaces.subscription_surface_settings("zai_coding", "SPENDGUARD_ZAI_USAGE_URL")
     return surfaces.cached_subscription_surface_report(_usage_cache, _USAGE_TTL_S, lambda:
         surfaces.read_subscription_surface_report(settings, _key(), TIMEOUT_S, surfaces.parse_zai_subscription_surface))
@@ -61,7 +61,7 @@ _FALLBACK_MAX_TOKENS = 16384
 
 
 def _base_url():
-    from . import config
+    from ... import config
     try:
         return str(config._cfg_get("zai_coding", "base_url", DEFAULT_BASE_URL) or DEFAULT_BASE_URL)
     except Exception:
@@ -69,7 +69,7 @@ def _base_url():
 
 
 def _key():
-    from . import config
+    from ... import config
     # Prefer the explicit coding-plan token. Fall back to the account's z.ai key: on an ACTIVE GLM Coding Plan
     # the same account key draws on the plan when it hits the coding endpoint. This is safe for accounting — a
     # key with NO plan gets an auth/quota error from api/anthropic (metered billing lives on the separate
@@ -109,7 +109,7 @@ def run_prompt(prompt, system=None, model=None, timeout=TIMEOUT_S, reasoning=Non
     if the enriched call fails, it retries ONCE WITHOUT thinking (thinking is the one optional enrichment here) —
     so a lane whose endpoint/model does not accept the param never breaks, it degrades to a plain completion. The
     text extraction keeps only text blocks, so any returned `thinking` blocks are naturally ignored."""
-    from . import execution_journal
+    from ... import execution_journal
     zai_durable_dispatch_id = execution_journal.current_durable_execution_id()
     key = _key()
     if not key:
@@ -121,14 +121,14 @@ def run_prompt(prompt, system=None, model=None, timeout=TIMEOUT_S, reasoning=Non
         try:
             mt = _output_budget(mdl)
         except Exception as e:
-            from . import gate as _g
+            from ... import gate as _g
             if _g.is_deliberate_stop(e):
                 raise                                     # a deliberate stop (refusal/deadline) must PROPAGATE, not be masked
             mt = _FALLBACK_MAX_TOKENS
     body = {"model": mdl, "max_tokens": mt, "messages": [{"role": "user", "content": prompt}]}
     if system:
         body["system"] = system
-    from . import config, models as _mdl
+    from ... import config, models as _mdl
     _tb = _mdl.thinking_budget(mdl, reasoning, mt) if reasoning else None
     if _tb:
         body["thinking"] = {"type": "enabled", "budget_tokens": _tb}

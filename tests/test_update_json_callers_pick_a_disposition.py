@@ -21,6 +21,8 @@ _SRC = pathlib.Path(__file__).resolve().parent.parent / "src" / "spendguard"
 _MOVED_CLUSTER_A_PATHS = {
     "balances.py": ("analyze", "treasury", "balances.py"),
     "calibrate.py": ("analyze", "cost_estimation", "calibrate.py"),
+    "submit.py": ("generate", "execution", "submit.py"),
+    "vendor_call.py": ("generate", "execution", "vendor_call.py"),
     "saas.py": ("egress", "saas.py"),
 }
 

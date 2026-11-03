@@ -34,7 +34,7 @@ import time
 import logging
 import threading
 import contextlib
-from .execution_journal import (
+from ...execution_journal import (
     _protect_durable_execution_io,
     capture_execution_codex_thread as capture_execution_codex_thread,
     hold_execution_codex_session as hold_execution_codex_session,
@@ -146,7 +146,7 @@ def _run_cold_codex_with_reaper(cmd, timeout, env, cwd):
     deliberately left alone. There is no global signature-based sweep.
     """
     import psutil
-    from . import config, execution_journal
+    from ... import config, execution_journal
     child_environment = {**env, config.CODEX_LEASE_ACTIVE_ENV: "1"}
     dispatch_id = execution_journal.current_durable_execution_id()
     captured = {}
@@ -300,7 +300,7 @@ def _bin():
     # a tool whose whole premise is never silently substituting one thing for another. resolve_cli already
     # does the PATH lookup (pin → PATH → well-known dirs), so nothing is lost by delegating outright, and a
     # pin that points at a missing binary now fails LOUD instead of falling through to a different binary.
-    from . import config
+    from ... import config
     return config.resolve_cli("codex", "SPENDGUARD_CODEX_BIN")
 
 
@@ -324,7 +324,7 @@ def auth_status(timeout=20):
         exe = _bin()                               # INSIDE the try: _bin() "fails LOUD" (raises) on a pinned
         if not exe:                                # SPENDGUARD_CODEX_BIN that points at a missing binary — that must
             return {"authed": None}                # become an honest {"authed": None}, never propagate (docstring: Never raises)
-        from . import config
+        from ... import config
         env = config.lane_exec_env(exe)
         r = subprocess.run([exe, "login", "status"], capture_output=True, text=True, timeout=timeout, env=env)
         if r.returncode == 0:
@@ -379,7 +379,7 @@ def auth_status(timeout=20):
 
 def _codex_thread_from_events(stdout):
     """Extract the documented thread.started event without interpreting prose."""
-    from .execution_journal import parse_execution_codex_thread
+    from ...execution_journal import parse_execution_codex_thread
     return parse_execution_codex_thread(stdout)
 
 
@@ -454,7 +454,7 @@ def _daemon_enabled():
     SPENDGUARD_CODEX_DAEMON wins, else config advisor.codex_daemon. Default ON so agentic delegation pays the daemon
     startup once and subsequent turns are warm. Disabling it refuses execution: cold processes cannot honor
     the broker's global worker cap."""
-    from . import config
+    from ... import config
     v = os.getenv("SPENDGUARD_CODEX_DAEMON")
     if v is not None:
         return v.strip().lower() not in ("0", "false", "no", "off")
@@ -559,7 +559,7 @@ def _codex_usage_report_uncached():
     report = {"buckets": None, "source": CODEX_APP_SERVER_RATE_LIMITS_METHOD, "reason": None,
               "n": CODEX_USAGE_UNKNOWN_SAMPLE_COUNT, "window": None, "uncertainty": "provider_data_unknown"}
     try:
-        from . import codex_daemon
+        from ... import codex_daemon
         response = codex_daemon.read_rate_limits(timeout=codex_daemon.RATE_LIMITS_READ_TIMEOUT_S)
         if not isinstance(response, dict) or response.get("error"):
             report["reason"] = "codex_warm_pool_rate_limits_unavailable"
@@ -581,7 +581,7 @@ def _codex_usage_report_uncached():
 
 def codex_headroom_report():
     """Cached structured report from Codex's authenticated account/rateLimits/read control method."""
-    from . import subscription_headroom_surfaces as surfaces
+    from ... import subscription_headroom_surfaces as surfaces
     return surfaces.cached_subscription_surface_report(_usage_cache, _USAGE_TTL_S, _codex_usage_report_uncached)
 
 
@@ -661,13 +661,13 @@ def run_cold_prompt(prompt, model=None, thread=None, reasoning=None, sandbox="re
     executable = _bin()
     if not executable:
         return {"error": "codex CLI unavailable for cold reentrancy diversion"}
-    from . import config
+    from ... import config
     environment = config.lane_exec_env(executable)
     resolved_timeout = TIMEOUT_S if timeout is None else timeout
     neutral_cwd = None
     leased_thread = thread
     if leased_thread:
-        from .execution_journal import hold_execution_codex_session as register_codex_session_lease
+        from ...execution_journal import hold_execution_codex_session as register_codex_session_lease
         register_codex_session_lease(leased_thread, os.getpid())
     try:
         if cwd is None:
@@ -710,7 +710,7 @@ def run_cold_prompt(prompt, model=None, thread=None, reasoning=None, sandbox="re
                     "latency": round(time.time() - started_at, 2), "effort": effort}
     finally:
         if leased_thread:
-            from .execution_journal import settle_execution_codex_session as settle_codex_session_lease
+            from ...execution_journal import settle_execution_codex_session as settle_codex_session_lease
             settle_codex_session_lease(leased_thread, os.getpid(), release=True)
         if neutral_cwd:
             shutil.rmtree(neutral_cwd, ignore_errors=True)
@@ -729,7 +729,7 @@ def _run_prompt_in_cwd(prompt, system=None, model=None, timeout=TIMEOUT_S, reaso
                                        reasoning=reasoning, cwd=cwd)
     # The broker is the sole admission point for read-only/meta work. Failure must never start an uncounted cold process.
     if _daemon_enabled():
-        from . import codex_daemon, execution_journal
+        from ... import codex_daemon, execution_journal
         _full = (f"{system.strip()}\n\n{prompt}" if system else prompt)
         _t0 = time.time()
         try:
@@ -761,9 +761,9 @@ def _run_agentic_codex_exec(prompt, system=None, model=None, timeout=TIMEOUT_S, 
     executable = _bin()
     if not executable:
         return {"error": "codex CLI unavailable for delegated workspace execution"}
-    from . import config
+    from ... import config
     environment = config.lane_exec_env(executable)
-    from . import execution_journal
+    from ... import execution_journal
     dispatch_id = execution_journal.current_durable_execution_id()
     if dispatch_id is None:
         dispatch_id = execution_journal.begin_durable_execution({"provider": "codex", "cwd": os.fspath(cwd)})

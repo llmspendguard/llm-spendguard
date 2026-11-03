@@ -55,7 +55,7 @@ def _bin():
     # `claude` existed on PATH — an explicit pin overridden by whatever was lying around, in a tool whose premise is
     # never silently substituting one thing for another. resolve_cli already does pin → PATH → well-known dirs, so a
     # pin at a missing binary now fails LOUD instead of falling through to a different binary.
-    from . import config
+    from ... import config
     return config.resolve_cli("claude", "SPENDGUARD_CLAUDE_BIN")
 
 
@@ -77,7 +77,7 @@ def auth_status(timeout=20):
 
     def _logged_in():
         """The CLI's own loggedIn bool from one `claude auth status`, or None (unparseable/error/absent field)."""
-        from . import config
+        from ... import config
         r = subprocess.run([exe, "auth", "status"], capture_output=True, text=True,
                            timeout=timeout, env=config.lane_exec_env(exe))
         li = json.loads((r.stdout or "").strip()).get("loggedIn")   # `claude auth status` emits JSON (a fixed shape)
@@ -171,7 +171,7 @@ def _fetch_usage():
     exe = _bin()
     if not exe:
         return None
-    from . import config
+    from ... import config
     r = subprocess.run([exe, "-p", "/usage"], capture_output=True, text=True, timeout=45,
                        env=config.lane_exec_env(exe))
     return _parse_usage_claude((r.stdout or "") + "\n" + (r.stderr or "")) if r.returncode == 0 else None
@@ -181,7 +181,7 @@ def usage():
     """This lane's plan quota parsed into buckets [{bucket, remaining_pct, reset_ts}], or None (claude CLI absent /
     call or parse failed → quota UNKNOWN, ordinary handling). Cached via lane_quota.cached_usage (TTL +
     reset-boundary invalidation). $0 — a pure status command, no model call."""
-    from . import lane_quota
+    from ... import lane_quota
     return lane_quota.cached_usage(_usage_cache, _USAGE_TTL_S, _fetch_usage)
 
 
@@ -189,7 +189,7 @@ def run_prompt(prompt, system=None, model=None, timeout=TIMEOUT_S, reasoning=Non
     """→ {text, in_tok, out_tok, latency, error} from one headless plan-billed completion. `model` = the
     API model id the caller would have used — mapped to the matching plan tier so subscription execution
     never upgrades a haiku-class meta prompt to the default (top) tier."""
-    from . import execution_journal
+    from ... import execution_journal
     subscription_exec_durable_dispatch_id = execution_journal.current_durable_execution_id()
     subscription_exec_delegate_process_runner = (execution_journal.run_durable_delegate_subprocess
                                if subscription_exec_durable_dispatch_id else subprocess.run)
@@ -202,7 +202,7 @@ def run_prompt(prompt, system=None, model=None, timeout=TIMEOUT_S, reasoning=Non
         cmd += ["--model", alias]
     if system:
         cmd += ["--append-system-prompt", system]
-    from . import config
+    from ... import config
     env = config.lane_exec_env(exe)   # strip EVERY provider's metered key/auth-token/base-url and expose its runtime
     #                                   serves this; the claude-code lane must never fall back onto a metered
     #                                   ANTHROPIC key (that would bill Claude for "$0 plan" work), nor carry another
@@ -254,13 +254,13 @@ def run_prompt(prompt, system=None, model=None, timeout=TIMEOUT_S, reasoning=Non
     if _in_cli > 0:
         _in = _in_cli
     else:
-        from . import content_tokens as _ct
+        from ... import content_tokens as _ct
         _in = _ct.count_tokens((system + "\n\n" + prompt) if system else prompt, provider="anthropic", model=alias)
         _estimated = True
     if _out_cli > 0:
         _out = _out_cli
     else:
-        from . import content_tokens as _ct
+        from ... import content_tokens as _ct
         _out = _ct.count_tokens(text, provider="anthropic", model=alias)
         _estimated = True
     res = {"text": text, "in_tok": _in, "out_tok": _out, "latency": time.time() - t0, "error": None}

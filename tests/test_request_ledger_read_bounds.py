@@ -14,6 +14,7 @@ REQUEST_LEDGER_OFFLINE_CONNECTION_FUNCTIONS = {("budget", "snapshot")}
 REQUEST_LEDGER_MOVED_MODULE_PATHS = {
     "lane_quota_cost": ("analyze", "treasury", "lane_quota_cost.py"),
     "calibrate": ("analyze", "cost_estimation", "calibrate.py"),
+    "batch_tracker": ("generate", "execution", "batch_tracker.py"),
     "callio": ("store", "call_corpus", "callio.py"),
     "config": ("store", "configuration", "config.py"),
     "ledger": ("store", "money_ledger", "ledger.py"),

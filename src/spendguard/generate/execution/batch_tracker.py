@@ -28,9 +28,9 @@ double-processed. A deliberate spend/deadline stop always propagates.
 import threading
 import time
 
-from . import config
-from .ledger_fork_locks import new_fork_reset_ledger_state
-from .ledger_writer import best_effort_ledger_function, serialize_ledger_function
+from ... import config
+from ...ledger_fork_locks import new_fork_reset_ledger_state
+from ...ledger_writer import best_effort_ledger_function, serialize_ledger_function
 
 # OpenAI Batch completion window (grounded from the docs, 2026-09-27: processed within 24h). Used as the DEFAULT expiry
 # when a caller gives none, so a batch that never resolves is failed-over instead of hanging forever. A named constant
@@ -91,7 +91,7 @@ def register_batch(batch_id, provider, model, intent, n_rows, *, expires_at=None
     exp = float(expires_at) if expires_at is not None else now + _DEFAULT_WINDOW_S
     try:
         if task_ids is None:
-            from . import lane_queue
+            from ... import lane_queue
             rows = lane_queue.batched_rows(batch_id)
             if rows is not None and len(rows) == int(n_rows or 0):
                 task_ids = [r["id"] for r in rows]
@@ -107,7 +107,7 @@ def register_batch(batch_id, provider, model, intent, n_rows, *, expires_at=None
             _jobs_db().commit()
         return batch_id
     except Exception as e:
-        from . import gate
+        from ... import gate
         if gate.is_deliberate_stop(e):
             raise
         config.rollback_ledger_conn("batch_jobs")
@@ -141,7 +141,7 @@ def _existing_offload_batch(offload_key, provider):
     retries) — never swallowed into a blind submit, which is the duplicate hazard this removes."""
     if provider != "openai":
         return None
-    from . import callio
+    from ... import callio
     # No age boundary: lane_queue row ids are AUTOINCREMENT (never reused), so the offload key is globally unique to this
     # row-set — a batch carrying it is THIS offload's batch at any age, and adopting it (rather than capping by time and
     # re-submitting a completed-but-stale batch after a long outage) is what keeps it exactly-once. The scan is
@@ -178,7 +178,7 @@ def _pending_lookup(offload_key):
     an UNREADABLE record must never be mistaken for 'no prior submit', because a CONFIRMED record read as None would
     authorize a fresh paid batch and DUPLICATE the one it already holds. (submit_offload turns the raise into a reconcile
     error so the drain retries rather than blind-submitting.)"""
-    from . import provider_tokens as _pt
+    from ... import provider_tokens as _pt
     try:
         with config.ledger_op('batch_jobs', _ensure_batch_jobs_schema) as ledger_read_handle:
             row = ledger_read_handle.execute(
@@ -201,7 +201,7 @@ def _pending_note(offload_key, provider, model, intent, n_rows):
     stale record for the key and stamps a FRESH created_ts (the floor the orphan scan bounds itself to). Returns
     created_ts. A stop/lock propagates; any other write error RAISES — without a durable pending record the submit
     cannot be made exactly-once, so the caller MUST refuse rather than blind-submit (fail closed, never a double-pay)."""
-    from . import provider_tokens as _pt
+    from ... import provider_tokens as _pt
     now = time.time()
     try:
         with _lock:
@@ -223,7 +223,7 @@ def _pending_confirm(offload_key, batch_id):
     """Record the batch_id the provider returned (pending → confirmed). After this a crash-retry adopts by local lookup,
     no provider scan. Best-effort: a stop/lock propagates; any other error is logged, NOT fatal — the batch_id is also on
     the queue rows (mark_batched) and re-findable by the orphan scan, so a lost confirm never loses the batch."""
-    from . import provider_tokens as _pt
+    from ... import provider_tokens as _pt
     try:
         with _lock:
             _jobs_db().execute("UPDATE offload_pending SET batch_id=?, updated_ts=? WHERE offload_key=?",
@@ -241,7 +241,7 @@ def _pending_confirm(offload_key, batch_id):
 @best_effort_ledger_function
 def _pending_clear(offload_key):
     """Remove a pending record (its batch is dead/expired, so a legitimate re-offer submits fresh). Best-effort."""
-    from . import provider_tokens as _pt
+    from ... import provider_tokens as _pt
     try:
         with _lock:
             _jobs_db().execute("DELETE FROM offload_pending WHERE offload_key=?", (offload_key,))
@@ -275,7 +275,7 @@ def _recover_orphan_message_batch(row_ids, created_floor, client=None):
     Ceiling-bounded: a scan that cannot reach the window end RAISES (a truncated 'none' would DUPLICATE). $0 (a control-
     plane list + at most one finished-result line per candidate). A deliberate spend/deadline stop propagates."""
     import time
-    from . import callio
+    from ... import callio
     client = client or callio._anthropic_client()
     want = set(str(r) for r in (row_ids or []))
     if not want:
@@ -336,7 +336,7 @@ def _existing_offload_message_batch(offload_key, row_ids):
     rec = _pending_lookup(offload_key)
     if not rec:
         return None                                        # no prior attempt → submit fresh
-    from . import callio, gate
+    from ... import callio, gate
     client = callio._anthropic_client()
     if rec.get("batch_id"):
         try:
@@ -382,7 +382,7 @@ def submit_offload(intent, rows, batch_model, *, cap_dollars=None, expires_at=No
     record). Anthropic batches carry NO metadata, so the key lives in a LOCAL pending record written BEFORE the paid
     create, and the create-then-crash window is recovered by scanning the provider for a batch carrying these rows'
     (globally-unique) custom_ids — an in-flight one that can't yet be confirmed is HELD, never resubmitted."""
-    from . import submit as _submit, lane_queue, gate, adapters, bulk_resilience
+    from ... import submit as _submit, lane_queue, gate, adapters, bulk_resilience
     rows = list(rows or [])
     if not rows:
         return {"batch_id": None, "marked": 0, "error": "no rows"}
@@ -480,7 +480,7 @@ def _open_jobs(limit):
         return [{"batch_id": r[0], "intent": r[1], "attempts": r[2], "expires_at": r[3], "status": r[4]}
                 for r in rows]
     except Exception as e:
-        from . import gate
+        from ... import gate
         if gate.is_deliberate_stop(e):
             raise
         config.rollback_ledger_conn("batch_jobs")
@@ -495,7 +495,7 @@ def _set_status(batch_id, status, last_error=None):
                                (status, last_error, time.time(), batch_id))
             _jobs_db().commit()
     except Exception as e:
-        from . import gate
+        from ... import gate
         if gate.is_deliberate_stop(e):
             raise
         config.rollback_ledger_conn("batch_jobs")
@@ -509,7 +509,7 @@ def _fail_over(bid, rows, why, attempts):
     planner may re-offer these rows to a fresh batch later (a re-decision). CRASH-SAFE: the caller marked the job
     'failing' (durable) BEFORE calling this, so a crash mid-move is resumed next poll — requeue_from_batch is a no-op on
     rows already moved, nothing is double-processed, and the label always ends 'failed'. Loud."""
-    from . import lane_queue
+    from ... import lane_queue
     reason = "batch %s %s after %d attempt(s) — re-queued realtime (batch offload failed over)" % (bid, why, attempts)
     moved = lane_queue.requeue_from_batch([r["id"] for r in rows], reason) if rows else 0
     # F5: only CLOSE the job (status 'failed', which drops it from _open_jobs) once NO rows remain queued_batch under
@@ -545,7 +545,7 @@ def poll(limit=200, now=None):
          _fail_over (rows → realtime, LOUD) → 'failed'; still running → left open; a row-read hiccup → left open + named.
     Returns {settled_rows, jobs_open, jobs_settled, jobs_failed, jobs_resumed, errors}. $0 (status + the already-billed
     collect). A deliberate spend/deadline stop propagates."""
-    from . import lane_queue, callio, gate
+    from ... import lane_queue, callio, gate
     now = now or time.time()
     out = {"settled_rows": 0, "jobs_open": 0, "jobs_settled": 0, "jobs_failed": 0, "jobs_resumed": 0, "errors": []}
     try:
@@ -606,8 +606,8 @@ def assert_batch_terminal_manifest(batch_id):
     completeness. New offloads record all submitted ids, including failed marks.
     """
     import json
-    from . import lane_queue
-    from .work_integrity import WorkIntegrityProof
+    from ... import lane_queue
+    from ...work_integrity import WorkIntegrityProof
     with config.ledger_op('batch_jobs', _ensure_batch_jobs_schema) as ledger_read_handle:
         row = ledger_read_handle.execute("SELECT task_ids FROM batch_jobs WHERE batch_id=?", (batch_id,)).fetchone()
     if row is None or row[0] is None:
@@ -637,7 +637,7 @@ def status():
         out["total"] = sum(v for k, v in out.items() if k != "total")
         return out
     except Exception as e:
-        from . import gate
+        from ... import gate
         if gate.is_deliberate_stop(e):
             raise
         config.rollback_ledger_conn("batch_jobs")

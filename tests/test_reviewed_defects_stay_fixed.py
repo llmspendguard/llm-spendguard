@@ -407,7 +407,7 @@ check("_pctl and calibrate._quantile agree", bulkgate._pctl([1, 2, 3, 4], 0.5) =
 
 # codex_exec._bin consulted PATH BEFORE the env pin, silently ignoring an explicit $SPENDGUARD_CODEX_BIN.
 check("codex_exec._bin has no shutil.which fast path ahead of the pin",
-      'if shutil.which("codex")' not in (SRC / "codex_exec.py").read_text())
+      'if shutil.which("codex")' not in (SRC / "generate/execution/codex_exec.py").read_text())
 
 # modal_adapter.account_total returned None for an empty window, conflating a real $0 with an unreadable bill.
 check("modal account_total distinguishes an unreadable bill from a $0 window",

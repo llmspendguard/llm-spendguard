@@ -27,7 +27,7 @@ import concurrent.futures as cf
 import threading
 import time
 
-from . import config
+from ... import config
 
 # The kinds. Exactly one is a success; the rest are failures with a reason attached.
 OK = "ok"
@@ -341,7 +341,7 @@ def call(vendor, model, prompt, *, deadline_s, purpose="", system=None, max_toke
     # A deadline below what the class demonstrably needs is the same defect as a cap below what it produces:
     # deterministic, self-inflicted, and paid for (the input bills whether or not you wait for the answer).
     try:
-        from . import bulkgate
+        from ... import bulkgate
         _lat = bulkgate.latency(sig=class_sig(model, purpose), model=model)
         _need = (float(_lat.get("p95") or 0)
                  if _lat and (_lat.get("n") or 0) >= MIN_BOUND_OBS else 0.0)
@@ -373,11 +373,11 @@ def call(vendor, model, prompt, *, deadline_s, purpose="", system=None, max_toke
     # base64 image is not miscounted as its raw text length, and a prose doc that fits is not false-refused by a
     # chars/4 over-count) — a per-request input above the published context window is a physical bound.
     try:
-        from . import pricing
+        from ... import pricing
         window = pricing.max_input_tokens(model)
         text = (system or "") + "\n" + (prompt or "")
         try:
-            from .gate import _content_tokens
+            from ...gate import _content_tokens
             approx_in = _content_tokens(text, provider=vendor, model=model)
         except Exception:
             approx_in = len(text) // 4      # rail fallback if the tokenizer is unavailable — never leaves the window unchecked
@@ -409,7 +409,7 @@ def call(vendor, model, prompt, *, deadline_s, purpose="", system=None, max_toke
     _ctx = None
     if purpose:
         try:
-            from . import calls as _calls
+            from ... import calls as _calls
             _ctx = _calls.context(intent=purpose, chain=run_id())
             _ctx.__enter__()
         except Exception:
@@ -420,7 +420,7 @@ def call(vendor, model, prompt, *, deadline_s, purpose="", system=None, max_toke
     # per vendor/lane so a fan QUEUES instead of thrashing; a saturated $0 lane SHEDS to its metered twin (the same
     # destination a lane ERROR reaches in _call_once — burst behaves like isolation); a saturated METERED vendor, or
     # no_metered_fallback, is an honest DEADLINE, never a silent success. It sits at the attribution chokepoint.
-    from . import dispatch
+    from ... import dispatch
     _adm = dispatch.admit(vendor, model, deadline_s, no_metered_fallback=no_metered_fallback, shed=False)
     if not _adm.ok:
         _adm.release()
@@ -438,7 +438,7 @@ def call(vendor, model, prompt, *, deadline_s, purpose="", system=None, max_toke
     # budget, so a hard stop could not stop anything — the run that found this thought it had spent $1.98
     # while the ledger recorded $13.12. The Result now carries what the CALL cost, not what its last try cost.
     billed = 0.0
-    from . import calls as _cl                            # per-attempt ledger linkage (root_call/attempt in context)
+    from ... import calls as _cl                            # per-attempt ledger linkage (root_call/attempt in context)
     _root_id = os.urandom(8).hex()                        # ROOT ledger id for THIS logical call — every try links to it
     try:
         for attempt in range(1, max(1, int(attempts)) + 1):
@@ -496,7 +496,7 @@ def call(vendor, model, prompt, *, deadline_s, purpose="", system=None, max_toke
     # reliability rate and contributes nothing to the timing distribution.
     if last is not None and (last.ok or last.kind == DEADLINE_EXCEEDED):
         try:
-            from . import bulkgate
+            from ... import bulkgate
             bulkgate.note_latency(class_sig(model, purpose), model, last.latency, in_chars=len(prompt or ""),
                                   hit_deadline=(last.kind == DEADLINE_EXCEEDED))
         except Exception:
@@ -531,7 +531,7 @@ def _attempt(vendor, model, prompt, system, max_tokens, budget_s, schema=None, r
     # no intent for exactly this reason, and the `caller` column showed `threading.py:run:1024` — the worker
     # frame — because the stack walk also happens on the wrong thread.
     try:
-        from . import calls as _c
+        from ... import calls as _c
         _parent_ctx = dict(_c.current() or {})
         _parent_caller = _parent_ctx.get("who") or _c.caller()
     except Exception:
@@ -541,7 +541,7 @@ def _attempt(vendor, model, prompt, system, max_tokens, budget_s, schema=None, r
     def _run():
         if _parent_ctx or _parent_caller:
             try:
-                from . import calls as _c2
+                from ... import calls as _c2
                 _c2.set_context(intent=_parent_ctx.get("intent"), chain=_parent_ctx.get("chain"),
                                 who=_parent_caller, root_call=_parent_ctx.get("root_call"),
                                 attempt=_parent_ctx.get("attempt"), call_class=_parent_ctx.get("call_class"),
@@ -564,7 +564,7 @@ def _attempt(vendor, model, prompt, system, max_tokens, budget_s, schema=None, r
             # ONE canonical authority (gate.is_deliberate_stop — the SSOT that owns which exceptions are refusals, so a
             # new refusal subclass is covered without editing anything here) and MARK the result, so _classify →
             # GATE_REFUSED (non-retryable, .text raises) instead of transport_error re-run against the same cap.
-            from . import gate as _g
+            from ... import gate as _g
             box["r"] = {"error": f"{type(e).__name__}: {e}", "text": None,
                         "error_type": type(e).__name__, "deliberate_stop": _g.is_deliberate_stop(e)}
 
@@ -582,7 +582,7 @@ def _attempt(vendor, model, prompt, system, max_tokens, budget_s, schema=None, r
 def _apply_schema(res, schema):
     """Validate an ok result against the caller's declared shape. A violation is a FAILURE carrying the
     offending payload — never a silent {}."""
-    from . import output_contract
+    from ... import output_contract
     ok, _salvaged, why = output_contract.check_item(res._text, schema)
     if ok:
         return res
@@ -613,7 +613,7 @@ class JobLock:
     reclaimed; a live one is refused rather than silently shared."""
 
     def __init__(self, job, repo=None):
-        from . import budget
+        from ... import budget
         self.name = f"{(repo or budget._project() or 'repo')}:{job}"
         self.path = config.HOME / ("lock-" + hashlib.sha256(self.name.encode()).hexdigest()[:12] + ".json")
 
@@ -727,7 +727,7 @@ def served_check(vendor, model):
     this, serves() would live-confirm an agy id against the METERED /models, not find it, and wrongly call a
     perfectly-served lane id 'stale' — so the live confirm runs ONLY when a metered list exists and misses (a lane
     id absent from the metered namespace is expected, never stale)."""
-    from . import catalog
+    from ... import catalog
     ids = catalog.live_model_ids(vendor)               # cached METERED served ids (dispatch form), or None if not cached
     lane_ids = catalog.lane_model_ids(vendor)          # cached SUBSCRIPTION-LANE ids (agy's own namespace), or None
     if ids is None and lane_ids is None:
@@ -752,7 +752,7 @@ def closest_served(vendor, stale_model):
     if not live:
         return None, []
     try:
-        from . import pricing
+        from ... import pricing
         resolved, _ = pricing._same_model_as_ours([stale_model], live, run=True, fact_key="served_id")
         return resolved.get(stale_model), live
     except Exception as e:
@@ -760,7 +760,7 @@ def closest_served(vendor, stale_model):
         # deadline — must PROPAGATE, never be downgraded to 'uncorrectable' (which would let a caller keep spending
         # past the very cap that fired). The CONCEPT is named in one place; any other failure (transient/lookup) →
         # correction unknown, and the $0 served fast-path already passed so the caller still has the live list.
-        from . import gate
+        from ... import gate
         if isinstance(e, gate.deliberate_stop_types()):
             raise
         return None, live
@@ -792,7 +792,7 @@ def served_substitute(vendor, requested):
     import re as _re
     if served_check(vendor, requested) in ("served", "unchecked"):
         return requested, None                        # already callable (or can't-check) — nothing to resolve
-    from . import catalog, models as _models
+    from ... import catalog, models as _models
     rec = _models.facts(requested).get("served_substitute")
     if rec is not None:                               # judged before ("" = judged: NO good substitute — a real answer)
         val, src = rec[0], (rec[2] if len(rec) > 2 else "")
@@ -801,7 +801,7 @@ def served_substitute(vendor, requested):
     cands = sorted(set(catalog.live_model_ids(vendor) or []) | set(catalog.lane_model_ids(vendor) or []))
     if not cands:
         return requested, None                        # no served id to choose from → dispatch errors honestly
-    from . import adapters, calls, config, gate, plan_admission, pricing
+    from ... import adapters, calls, config, gate, plan_admission, pricing
 
     # ECONOMIC BOUND for the substitute: the requested model's RATE is the cost the caller implicitly ACCEPTED by
     # naming it (the ANCHOR). Rank every candidate by its MEASURED per-token rate from the pricing catalog — a
@@ -979,7 +979,7 @@ def discover_efforts(vendor, model, refresh=False):
     #                                    never heal it — else the probe self-heals and discovery learns the opposite.
     ok, rejected, unknown = [], [], []
     try:
-        from . import calls                            # imported at use (this file tags every internal call locally)
+        from ... import calls                            # imported at use (this file tags every internal call locally)
         # spendguard's OWN capability probe — tag it META so the tiny accepted-effort call it makes lands in the meta
         # ledger (gate._meta_intent routes spendguard:* there), never workload '(none)'. Without this the probe fired a
         # PAID call with NO intent — the "NO intent → (none)" attribution gap seen on the metered / effort-discovery
@@ -1096,7 +1096,7 @@ def class_sig(model, purpose):
     once: every call silently fell through to the published ceiling or to `unknown`. A measured system whose
     measurement is looked up under the wrong key is indistinguishable from one that never measured anything,
     and it fails quietly in the direction of guessing."""
-    from . import bulkgate
+    from ... import bulkgate
     return bulkgate.sig(model, template_id=purpose or None)
 
 
@@ -1143,7 +1143,7 @@ def time_budget(vendor, model, sig=None, default_s=None, in_chars=None):
         and sets a floor instead.
     Precedence, measured first: this class on this model -> this model anywhere -> the caller's own number ->
     (None, "unknown"), which the caller must answer for rather than have a guess invented for them."""
-    from . import bulkgate
+    from ... import bulkgate
     # A SUBSCRIPTION LANE IS SLOWER THAN THE METERED PATH the latency was measured on — a CLI cold-start +
     # context injection runs 60-120s where the metered call is ~10s — so a metered-derived budget ABANDONS a
     # live lane call. MEASURED on a real panel: opus/gpt on the Claude Code / Codex lanes hit deadline_exceeded
@@ -1178,10 +1178,10 @@ def time_budget(vendor, model, sig=None, default_s=None, in_chars=None):
     # the ceiling; replaced by the measured p99 as soon as observations land.
     reason_floor = 0.0
     try:
-        from . import models as _m
+        from ... import models as _m
         if _m.reasons_by_default(model):
             import os as _os
-            from . import config as _cfg
+            from ... import config as _cfg
             reason_floor = min(DEADLINE_CEIL_S, float(
                 _os.getenv("SPENDGUARD_ADVISOR_REASONING_DEADLINE_FLOOR_S")
                 or _cfg._cfg_get("advisor", "reasoning_deadline_floor_s", REASONING_DEADLINE_FLOOR_S)
@@ -1205,7 +1205,7 @@ def _fan_budget_tracker(budget_usd, n_vendors):
     allow() is checked BEFORE each vendor call (False once the running total reaches the ceiling → that call is
     skipped, not spent), record(r) adds a completed result's cost to the total. Thread-safe for the pool."""
     import threading as _th
-    from . import config as _cfg
+    from ... import config as _cfg
     try:
         ceiling = float(budget_usd) if budget_usd is not None else float(_cfg._cfg_get("caps", "fan_usd", None) or _cfg.cap())
     except Exception:
@@ -1314,7 +1314,7 @@ def first_ok(vendors, prompt, *, deadline_s, need=1, purpose="", system=None, sc
         # Waiting drains paid work; it never cancels a request.
         pool.shutdown(wait=wait_for_inflight)
         if wait_for_inflight:
-            from . import gate
+            from ... import gate
             for future in futs:
                 try:
                     outcome = future.result()

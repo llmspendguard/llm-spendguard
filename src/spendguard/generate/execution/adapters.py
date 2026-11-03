@@ -12,7 +12,7 @@ import threading
 import functools
 import contextlib
 import sys
-from . import config, pricing
+from ... import config, pricing
 
 SPENDGUARD_IMPORT_NAME = "spendguard"
 
@@ -91,14 +91,14 @@ def provider_base_model(provider):
     can't be baked in; same-provider by construction, so a consensus panel keeps its vendor identity."""
     prov = (provider or "").strip().lower()
     try:
-        from . import config as _cfg
+        from ... import config as _cfg
         m = (_cfg._cfg_get("advisor", "provider_base_model", {}) or {}).get(prov)
         if m:
             return m
     except Exception:
         pass
     try:
-        from . import model_catalog as _mc
+        from ... import model_catalog as _mc
         return _mc.provider_base(prov) or None
     except Exception:
         return None
@@ -114,7 +114,7 @@ def safe_input_chars(model, intent=None, reply_tokens=8000, prompt_tokens=1500, 
     lane-usage target. Returns None when NO context is known (the caller keeps its own conservative default — never a
     guessed number). chars_per_token is deliberately conservative (3.0; English prose is ~3.6+), so the estimate never
     overshoots a real window."""
-    from . import model_catalog as _mc
+    from ... import model_catalog as _mc
     ctxs = []
     cw = _mc.context_window(model)
     if cw:
@@ -147,10 +147,10 @@ def _executor():
 # cooldown so a burst of meta prompts doesn't hammer a dead lane — during cooldown calls go straight
 # to the caged API. Provider-respecting on purpose: a claude-model prompt never silently runs on the
 # ChatGPT plan (or vice versa) — the recorded model must be the model that answered.
-from . import lane_registry
+from ... import lane_registry
 _LANES = lane_registry.provider_lane_map()   # {provider: (lane, exec_module_name)} — DERIVED from the ONE lane
 #                                              registry (add a lane THERE, not here); the name is imported in _lane_for.
-from . import resource_state   # AXIS-1 of the resource_state migration: cooldowns now live in the unified store
+from ... import resource_state   # AXIS-1 of the resource_state migration: cooldowns now live in the unified store
 _sub_guard = threading.local()   # one-hop lane-substitution guard: while a substitute call is in flight (proactive OR
                                  # reactive), no nested substitution — a substitute failing does not chain to a third.
 _resolve_guard = threading.local()  # while the agentic model-RESOLVER's own advisor call is in flight, dispatch does
@@ -206,7 +206,7 @@ def _lane_cool(lane, seconds=None, reason=""):
     # The reason codes are the ones THIS function was passed (mechanical), never a judgement about an error. Fail-safe.
     if reason == "down":
         try:
-            from . import reliability
+            from ... import reliability
             reliability.note_lane_down(lane, reason)
         except Exception:
             pass
@@ -248,13 +248,13 @@ def _surface_lane_down(lane, err):
     OPERATOR by _lane_cool → reliability.note_lane_down (surfaced by `spendguard doctor` / `lanes`), and work is never
     lost. An operator watching a live batch can opt in with advisor.lane_call_alerts=on. Best-effort, never raises."""
     try:
-        from . import config as _cfg
+        from ... import config as _cfg
         if str(_cfg._cfg_get("advisor", "lane_call_alerts", "off")).lower() not in ("on", "1", "true", "yes", "warn"):
             return                                        # DEFAULT OFF — the consumer never sees a lane on the call path
         if not _lane_announce.take(lane):
             return                                        # already surfaced within the window (a stale entry re-surfaces)
         import sys as _sysd
-        from . import reliability
+        from ... import reliability
         hint = reliability.lane_login_hint(lane)
         msg = (f"[spendguard] {lane} lane could not serve (the executor errored): {str(err)[:80]} — cooled and "
                f"rerouting (other $0 lanes first, then metered) so work is not lost.")
@@ -273,7 +273,7 @@ def _lane_chatter(msg):
     The operator's durable view of lane health is `spendguard doctor` / `lanes` + the recorded lane_health rows
     (reliability.note_lane_*). An operator watching a live batch opts in with advisor.lane_call_alerts=on. Never raises."""
     try:
-        from . import config as _cfg
+        from ... import config as _cfg
         if str(_cfg._cfg_get("advisor", "lane_call_alerts", "off")).lower() not in ("on", "1", "true", "yes", "warn"):
             return
         import sys as _sysc
@@ -289,7 +289,7 @@ def _surface_lane_auth(lane, cmd):
     row + a throttled one-time macOS alert that SELF-HEALS on the lane's next success) and shown by `spendguard doctor`.
     An operator can opt into live call-path alerts with advisor.lane_call_alerts=on. Best-effort, never raises."""
     try:
-        from . import config as _cfg
+        from ... import config as _cfg
         if str(_cfg._cfg_get("advisor", "lane_call_alerts", "off")).lower() not in ("on", "1", "true", "yes", "warn"):
             return                                        # DEFAULT OFF — the consumer never sees a lane on the call path
         if not _lane_announce.take(lane):
@@ -300,7 +300,7 @@ def _surface_lane_auth(lane, cmd):
         if cmd:
             msg += f" Restore $0: {cmd}"
         else:
-            from . import reliability
+            from ... import reliability
             hint = reliability.lane_login_hint(lane)
             if hint:
                 msg += f" Re-activate: {hint}"
@@ -312,7 +312,7 @@ def _surface_lane_auth(lane, cmd):
 def _authoritative_lane_auth_status(lane):
     """Read current lane auth without the routing cache; logout alerts must never consume stale state."""
     try:
-        from . import lanes
+        from ... import lanes
         return lanes.lane_auth_status(lane, ttl=0)
     except Exception:
         return None
@@ -325,7 +325,7 @@ def _surface_confirmed_lane_logout(lane, auth_status):
     relogin_command = auth_status.get("cmd") or ""
     _surface_lane_auth(lane, relogin_command)
     try:
-        from . import reliability
+        from ... import reliability
         reliability.note_lane_auth_down(lane, relogin_command)
     except Exception:
         pass
@@ -361,7 +361,7 @@ def _lane_note_ok(lane, prompt):
     handles that size. Lives in the resource_state store's size_ceiling axis (persistent, survives processes)."""
     resource_state.note_proven_good(resource_state.lane_key(lane), len(prompt or ""))
     try:                                             # a SERVED call RESOLVES any event-down for this lane — the recovery
-        from . import reliability                     # signal that clears the health row + makes the next down a fresh
+        from ... import reliability                     # signal that clears the health row + makes the next down a fresh
         reliability.note_lane_ok(lane)               # blip (not read as a sustained outage). Best-effort; never blocks a call.
     except Exception:
         pass
@@ -417,7 +417,7 @@ def _learn_from_fallback(lane_name, prompt, api_failed, model=None, transient=Fa
         _lane_model_cool(lane_name, model)          # retryable — back off THIS model on THIS lane, NOT a permanent
         if _repeat_miss:
             try:
-                from . import catalog as _cat_un
+                from ... import catalog as _cat_un
                 # UNION with the lane's existing unserved set — merge_lane_observation REPLACES lane_unserved[lane]
                 # with what we pass (it is written for a full re-measurement), so passing only [model] would clobber
                 # any models already recorded unserved. served=[] keeps the prior served set (minus this model).
@@ -426,7 +426,7 @@ def _learn_from_fallback(lane_name, prompt, api_failed, model=None, transient=Fa
             except Exception:
                 pass
         try:                                        # a REPEATED model-miss may be a PERMANENT plan drop (codex 0.160.1
-            from . import lane_servability as _ls_fb  # dropped gpt-5.6-sol) — re-measure this lane's servability so the
+            from ... import lane_servability as _ls_fb  # dropped gpt-5.6-sol) — re-measure this lane's servability so the
             _ls_fb.maybe_refresh_on_failure(lane_name)  # drop is recorded + shouted within a throttle window, not all day
         except Exception:
             pass                                    # the trigger is a bonus; a miss must never fail over it
@@ -609,7 +609,7 @@ def generation_support_details(provider, model):
         for a reasoning model (reasons_by_default) and determinism there rests on seed where the vendor has it.
     Returns ``(supported, unavailable_reason)``; the caller records both any dropped knobs and why the installed
     SDK contract could not be inspected.  The reason is None when the contract was inspectable."""
-    from . import models as _gm
+    from ... import models as _gm
     support = set()
     if not _gm.reasons_by_default(model):                 # non-reasoning: sampling knobs are honored
         support |= {"temperature", "top_p"}
@@ -669,7 +669,7 @@ def generation(temperature=None, top_p=None, seed=None):
         with adapters.generation(temperature=0, seed=20261008):
             bakeoff("vocab-ab", candidates=[...], run=True)   # every arm's call is deterministic + metered
     """
-    from . import calls as _c
+    from ... import calls as _c
     prev = (_c.current() or {}).get("gen_params")
     merged = dict(prev or {})
     for k, v in (("temperature", temperature), ("top_p", top_p), ("seed", seed)):
@@ -748,7 +748,7 @@ def _book_substitution(r):
         cost = r.get("cost")
         if cost is None:                                 # errored/refused → nothing ran, nothing to book
             return
-        from . import pricing, guard, calls as _cbk
+        from ... import pricing, guard, calls as _cbk
         actual = float(cost or 0.0)
         try:
             base = (None if r.get("in_tok") is None or r.get("out_tok") is None
@@ -842,7 +842,7 @@ def _default_reasoning_is_best_value():
     v = os.getenv("SPENDGUARD_DEFAULT_REASONING")
     if v is not None:
         return v.strip().lower() == "best-value"
-    from . import config
+    from ... import config
     return str(config._cfg_get("advisor", "default_reasoning", "") or "").strip().lower() == "best-value"
 
 
@@ -857,7 +857,7 @@ def _route_through_queue_enabled():
     v = os.getenv("SPENDGUARD_ROUTE_THROUGH_QUEUE")
     if v is not None:
         return v.strip().lower() in ("1", "true", "yes", "on")
-    from . import config
+    from ... import config
     return bool(config._cfg_get("advisor", "route_through_queue", True))
 
 
@@ -872,7 +872,7 @@ def _manage_all_enabled():
     v = os.getenv("SPENDGUARD_DISPATCH_MANAGE_ALL")
     if v is not None:
         return v.strip().lower() in ("1", "true", "yes", "on")
-    from . import config
+    from ... import config
     return bool(config._cfg_get("dispatch", "manage_all", True))
 
 
@@ -1045,7 +1045,7 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
                     str), cause (the underlying error behind a generic wrapper — 'Connection error.' ←
                     'ConnectTimeout'), retry_after (seconds, if the provider sent one)."""
     try:
-        from . import fleet as _fleet            # UPDATE PROPAGATION: track this consumer's loaded code so a deploy can
+        from ... import fleet as _fleet            # UPDATE PROPAGATION: track this consumer's loaded code so a deploy can
         _fleet.register_consumer()               #   see + restart it if it is stale. Once-per-process (cheap no-op after); never raises.
     except Exception:
         pass
@@ -1126,7 +1126,7 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
     _model_contract_error = _model_selection_contract_error(
         model, reasoning, intent, sig, metered_only, no_substitution, measurement, _probe)
     if _model_contract_error:
-        from .gate import ModelSelectionContractRefused
+        from ...gate import ModelSelectionContractRefused
         raise ModelSelectionContractRefused(_model_contract_error)
 
     # Unnamed measurement → refused above; labelled best-value → router picks; every other unnamed call → cheap chat.
@@ -1148,7 +1148,7 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
     # because a silently-varying governed result is a wrong-result risk; a knob coming from measurement=True OR a
     # deliberate scoped/config default is an EXPLICIT, auditable opt-in and is allowed. Runs ONCE at the top (skipped on
     # the _no_guard re-entry _call_guarded makes); the RESOLVED values then ride **kw down to _call_once on both entries.
-    from . import calls as _gen_ctx
+    from ... import calls as _gen_ctx
     _ctx_now = _gen_ctx.current() or {}
     _ctx_gen = {k: v for k, v in (_ctx_now.get("gen_params") or {}).items() if v is not None}
     _cfg_gen = _generation_config_defaults()
@@ -1197,7 +1197,7 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
     # vendor. Consumed here (not forwarded), so the _call_guarded → call(_no_guard=True) recursion below never
     # re-assembles. attach_many fails closed (PartialFileError) — a partial file never reaches a provider.
     if files:
-        from . import llm_files
+        from ... import llm_files
         _block, _ = llm_files.attach_many(files)
         prompt = _block + "\n" + prompt
     if images:
@@ -1222,7 +1222,7 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
             if _rid and _rid != _rraw:                 # a served substitute was chosen → use it, record the swap
                 _resolved_from, _resolution, model = f"{_rprov}:{_rraw}", _rreason, f"{_rprov}:{_rid}"
         except Exception as _rex:
-            from . import gate as _rgate
+            from ... import gate as _rgate
             if isinstance(_rex, _rgate.deliberate_stop_types()):
                 raise                                  # a spend/budget refusal or deadline HALTS — never a silent guess
             # unknown provider / resolver hiccup → leave the id UNCHANGED and proceed (the honest unresolved path)
@@ -1235,7 +1235,7 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
     # so the work stays $0. Recorded via _resolved_from/_resolution exactly like served_substitute — never silent.
     if _route and not _probe and not getattr(_resolve_guard, "on", False):
         try:
-            from . import catalog as _cat_ld
+            from ... import catalog as _cat_ld
             _ldprov = provider_for(model)
             _ldraw = model.split(":", 1)[1] if ":" in model else model
             _ldlane = _LANES.get(_ldprov, (None, None))[0]
@@ -1243,7 +1243,7 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
                 if no_substitution or measurement:
                     metered_only = True                    # pin the literal id to the metered API (it serves it) — never swap a measurement
                 else:
-                    from . import lane_servability as _ld_ls
+                    from ... import lane_servability as _ld_ls
                     _ldsub, _ldwhy = _ld_ls.lane_served_substitute(_ldlane, _ldraw)
                     if _ldsub and _ldsub != _ldraw:
                         if _resolved_from is None:
@@ -1274,10 +1274,10 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
     if isinstance(reasoning, str) and reasoning.strip().lower() == "best-value":
         reasoning = None                               # consume the sentinel regardless of the outcome below
         if not _probe and not getattr(_resolve_guard, "on", False):
-            from . import gate as _bvg                 # imported OUTSIDE the try so the deliberate-stop except below
+            from ... import gate as _bvg                 # imported OUTSIDE the try so the deliberate-stop except below
             #                                            can ALWAYS be evaluated (never a NameError on an import hiccup)
             try:
-                from . import best_value as _bv, calls as _bvc
+                from ... import best_value as _bv, calls as _bvc
                 _bv_intent = intent or (_bvc.current() or {}).get("intent") or sig
                 # FLOOR-PRESERVING PIN — best-value must be floor-IMPROVING, never floor-LOWERING. The global DEFAULT
                 # (advisor.default_reasoning=best-value, INHERITED by a call that pinned model= and never asked for a
@@ -1305,7 +1305,7 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
                 # non-vision call skips this entirely. `is not True` → keep on False OR None (unknown), never assume.
                 _vision_block = False
                 if images and _cand != model:
-                    from . import model_catalog as _mc_v
+                    from ... import model_catalog as _mc_v
                     if _mc_v.vision_capable(_cand) is not True:
                         _vision_block = True
                 if _vision_block:
@@ -1317,20 +1317,20 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
                     # warn_once, not print: this advisory fired on EVERY best-value call, so the lane-drain daemon
                     # wrote it ~once/call into its log (part of the 15MB lane-drain.log, 2026-10-08). Dedup is per
                     # distinct message, and the message carries the intent/models, so distinct intents still each show.
-                    from . import config as _cfgbv
+                    from ... import config as _cfgbv
                     _cfgbv.warn_once(f"[spendguard] {_bv_why} (was {_bv_from})")
             elif _pick is not None and _pick.get("why"):
-                from . import config as _cfgbv
+                from ... import config as _cfgbv
                 _cfgbv.warn_once(f"[spendguard] {_pick['why']}")           # honest no-pick: keep the named model (once)
     # PLAN-AXIS ADMISSION: billed-$ caps cannot see a $0 subscription call. A labelled, unpinned call is discretionary;
     # when its plan is capped/on paid overage, route only through the pre-confirmed semantic substitute registry. If
     # none is READY, refuse — never fail open onto the exhausted lane. Caller pins remain the hard contract above.
     _plan_redirect = None
     if (intent or sig) and not _caller_model_pin and not _probe and not images:
-        from . import plan_admission as _pa
+        from ... import plan_admission as _pa
         _plan_redirect = _pa.decide(model, intent or sig, auth_over_quota=auth_over_quota)
         if _plan_redirect.get("action") == "refuse":
-            from . import calls as _refused_calls, config as _refused_config, routing_audit as _refused_audit
+            from ... import calls as _refused_calls, config as _refused_config, routing_audit as _refused_audit
             _refused_call_id = _refused_config.uid()
             _refused_snapshot = _refused_audit.build_routing_snapshot(
                 intent=intent or sig, plan_decision=_plan_redirect, best_value_pick=_pick)
@@ -1355,14 +1355,14 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
     # close (a PAID call with no intent is invisible to advise/denylists/rollups). Set it for the dispatch and restore
     # the prior context EXACTLY afterwards, so it never leaks past this call. An ambient context intent WINS — the
     # caller's explicit `with calls.context(...)` is never overridden — and a $0/lane call is tagged the same way.
-    from . import calls as _sig_ctx
+    from ... import calls as _sig_ctx
     _ctx_before = dict(_sig_ctx.current() or {})
     _retained_call_id = _ctx_before.get("root_call")
     if not _retained_call_id and not _no_guard and not _probe:
-        from . import config as _retention_config
+        from ... import config as _retention_config
         _retained_call_id = _retention_config.uid()
         _sig_ctx.set_context(root_call=_retained_call_id, attempt=1)
-    from . import routing_audit as _routing_audit
+    from ... import routing_audit as _routing_audit
     _sig_ctx.set_context(
         routing_snapshot=_routing_audit.build_routing_snapshot(
             intent=intent or sig or _ctx_before.get("intent"),
@@ -1421,7 +1421,7 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
     #     a lone call must NEVER be silently moved to the paid API to escape a busy lane (surprise spend) — it queues
     #     within its deadline, else returns a typed deadline dict. (_manage_all_enabled() is checked LAST — a config
     #     read — so unlabelled / held / probe / _no_guard calls short-circuit before paying for it.)
-    from . import dispatch
+    from ... import dispatch
     _governed = bool(aliases.pop("governed", False))
     _conn_tries = aliases.pop("_conn_tries", None)      # UNIVERSAL connection-429 retransmit budget (the serial/managed
     _t_conn0 = aliases.pop("_t_conn0", None) or time.time()   # twin of the fan re-admit loop); _t_conn0 bounds it by deadline
@@ -1447,13 +1447,13 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
         #                            realtime/batch executor re-dispatches WITHOUT the gen knobs (they would silently
         #                            vanish) and a batch divert changes the call's conditions — exactly what a
         #                            reproducible A/B is controlling for. The knobs force the exact metered call below.
-        from . import storm_route as _sr
+        from ... import storm_route as _sr
         _routed_result = _sr.route(model, prompt, intent or sig, system=system, reasoning=reasoning,
                                    schema=schema, timeout_s=timeout_s)
         if _routed_result is not None:
             _sig_ctx._local.ctx = _ctx_before            # returning early — restore the caller's context exactly
             _routed_result["call_id"] = _routed_result.get("call_id") or _retained_call_id
-            from . import content_retention as _routed_content_retention
+            from ... import content_retention as _routed_content_retention
             _routed_content_retention.record_governed_call_content(
                 _routed_result.get("call_id"), prompt, system, dict(_routed_result))
             # A SUCCESS routes home. A coalescer ERROR ({text:None}/error set — e.g. a NO-REPLY) must NOT be returned as
@@ -1465,7 +1465,7 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
                 return _routed_result                    # genuine success → home
             if not _no_guard and not _probe and _routed_result.get("error"):
                 try:
-                    from . import vendor_call as _vcr, calls as _rcr
+                    from ... import vendor_call as _vcr, calls as _rcr
                     _oc_r, _ = _vcr._classify(_routed_result)
                     _rcr.record_call(_routed_result.get("provider") or provider_for(model),
                                      _routed_result.get("model") or model, "realtime",
@@ -1518,7 +1518,7 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
         _route_guard.on = True
     try:
         if _routed:
-            from . import lane_queue as _route_lq
+            from ... import lane_queue as _route_lq
             _qrid = _route_lq.record_open(intent or sig, prompt)
         try:
             if _storm_deadline_at is not None:
@@ -1547,7 +1547,7 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
         if _routed:
             _route_guard.on = False             # always clear the re-entry guard (even if record_open raised a stop)
             if _qrid is not None:
-                from . import lane_queue as _route_lq2
+                from ... import lane_queue as _route_lq2
                 _route_lq2.record_close(_qrid, r if isinstance(r, dict) else {"error": "call produced no result"})
     # TIER-3 — PROVIDER BASE-MODEL FALLBACK (the last hop of lane->metered->base). When the chosen model's whole
     # lane->metered attempt STILL errored on an AVAILABILITY failure, retry the SAME provider's RELIABLE BASE model so
@@ -1566,7 +1566,7 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
     # (the base model shares the same account limits).
     if (isinstance(r, dict) and r.get("status_code") in (429, 529)
             and not _no_guard and not _probe and not dispatch.holding()):
-        from . import config as _cfgm
+        from ... import config as _cfgm
         _ct = _conn_tries if _conn_tries is not None else int(_cfgm._cfg_get("dispatch", "conn_retry_max", 8))
         if _ct > 0 and (not timeout_s or (time.time() - _t_conn0) < float(timeout_s)):
             return call(model, prompt, max_tokens=max_tokens, system=system, reasoning=reasoning, schema=schema,
@@ -1636,7 +1636,7 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
         # sees None, not the silent-nothing that reads as "the model had little to say").
         if schema is not None and r.get("text") and not r.get("error"):
             try:
-                from . import output_contract as _oc
+                from ... import output_contract as _oc
                 _obj, _ = _oc._as_obj(r["text"])
                 r["parsed"] = _obj if isinstance(_obj, (dict, list)) else None
             except Exception:
@@ -1648,7 +1648,7 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
         # capture per call), never a probe, only a SERVED (no-error) call. capture_live is opt-in, workload-only,
         # bounded, LOUD where it stops, and NEVER raises into the call.
         if not _no_guard and not _probe and not r.get("error"):
-            from . import callio, calls as _cap_ctx
+            from ... import callio, calls as _cap_ctx
             # INTENT resolution MUST match the cost-attribution intent that advise / bakeoff / effort-titrate key
             # on: the calls.context intent FIRST, `sig` only as a fallback — identical to `_eff_intent` in
             # _call_guarded. The reverse (sig-first) recorded a caller that sets BOTH — e.g. honestreview's judge
@@ -1670,7 +1670,7 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
         # capture_live above), metadata only (no prompt/output body), and it NEVER raises into the call.
         if not _no_guard and not _probe and r.get("error"):
             try:
-                from . import vendor_call as _vc, calls as _rc
+                from ... import vendor_call as _vc, calls as _rc
                 _oc, _ = _vc._classify(r)
                 _rc.record_call(r.get("provider") or provider_for(model), r.get("model") or model, "realtime",
                                 float(r.get("cost") or 0.0), in_tok=r.get("in_tok") or 0,
@@ -1683,12 +1683,12 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
             except Exception:
                 pass
         if not _no_guard and not _probe:
-            from . import content_retention as _content_retention
+            from ... import content_retention as _content_retention
             _content_retention.record_governed_call_content(
                 r.get("call_id"), prompt, system, dict(r))
     if (not _no_guard and intent and isinstance(r, dict) and r.get("lane_recovery")
             and (r.get("error") or not (r.get("text") or "").strip())):
-        from . import gate as _exhausted_recovery_gate
+        from ... import gate as _exhausted_recovery_gate
         raise _exhausted_recovery_gate.SpendGateRefused(
             f"free recovery and same-provider metered recovery exhausted for {model}")
     return r
@@ -1708,7 +1708,7 @@ def structured_reply(r):
         return obj
     if obj is None and r.get("text"):
         try:
-            from . import output_contract as _oc
+            from ... import output_contract as _oc
             obj, _ = _oc._as_obj(r["text"])
         except Exception:
             obj = None
@@ -1767,7 +1767,7 @@ EMBED_CHECKPOINT_INFLIGHT_GRACE_SECONDS = (
 
 
 def _embed_checkpoint_dir():
-    from .distribution import mark_distribution_ephemeral_dir
+    from ...distribution import mark_distribution_ephemeral_dir
     return mark_distribution_ephemeral_dir(config.HOME / EMBED_CHECKPOINT_DIRNAME)
 
 
@@ -1826,7 +1826,7 @@ def _chat_default_model():
     ov = config._cfg_get("advisor", "default_model", None)
     if ov:
         return ov
-    from . import model_catalog
+    from ... import model_catalog
     embedding_ids = {model_id for _provider, model_id in model_catalog.embedding_models(None)}
     rows = []
     for record_id, record in model_catalog.all_records().items():
@@ -1836,7 +1836,7 @@ def _chat_default_model():
         if capabilities.get("mode") == "chat" and model_id not in embedding_ids and price_in is not None:
             rows.append((price_in, model_id))
     if not rows:
-        from .gate import ModelSelectionContractRefused
+        from ...gate import ModelSelectionContractRefused
         raise ModelSelectionContractRefused(
             "no priced chat model in the model catalog and no advisor.default_model configured — cannot choose a "
             "default for an unnamed call. Set advisor.default_model or repair the model catalog (the pricing SSOT).")
@@ -1853,7 +1853,7 @@ def _embed_default_model():
         ov = config._cfg_get("advisor", "embed_model", None)
         if ov:
             return ov
-        from . import model_catalog
+        from ... import model_catalog
         oai = model_catalog.embedding_models("openai")
         return oai[0][1] if oai else _DEFAULT_EMBED_MODEL     # (provider, model_id), cheapest input first
     except Exception:
@@ -1917,7 +1917,7 @@ def embed(texts, model=None, *, dimensions=None, max_batch=None, timeout_s=None,
     {i, reason}; it is never a SILENTLY short list — a None + a failed[] entry, or an explicit error. Re-run to
     retry only the failed items (the checkpoint already holds the rest)."""
     import json as _json, hashlib as _hl
-    from . import gate as _gp
+    from ... import gate as _gp
     model = model or _embed_default_model()
     prov = _gp._provider_of(model)               # provider_for (prefix) → priced catalog; the canonical resolver
     raw = model.split(":", 1)[1] if ":" in model else model
@@ -1931,7 +1931,7 @@ def embed(texts, model=None, *, dimensions=None, max_batch=None, timeout_s=None,
         return base
     keys = [_hl.sha256(t.encode("utf-8", "replace")).hexdigest() for t in items]
     _n = max(1, int(max_batch or _EMBED_MAX_BATCH))
-    from . import model_catalog as _mc
+    from ... import model_catalog as _mc
     _ceiling = _mc.embed_batch_ceiling(raw)                        # provider-enforced cap from the catalog SSOT (None if uncurated)
     if _ceiling and _n > _ceiling:
         _n = _ceiling                                             # a caller CANNOT exceed it by accident — over the cap 400s the
@@ -1957,7 +1957,7 @@ def embed(texts, model=None, *, dimensions=None, max_batch=None, timeout_s=None,
         except FileNotFoundError:
             pass
     _extra = {"dimensions": dimensions} if dimensions else {}
-    from . import gate as _g
+    from ... import gate as _g
     _stop = _g.deliberate_stop_types()
     try:
         c = _oai_compat_client(prov, timeout_s)
@@ -2134,7 +2134,7 @@ def embed_batch(texts, model=None, *, dimensions=None, jsonl_path=None, cap_doll
     /batches — its async batch is a separate native API) returns a clear error pointing to embed() (chunked
     realtime) until its native batch path is wired — a LOUD boundary, never a silent metered fallback."""
     import json as _json, hashlib as _hl
-    from . import gate as _gp
+    from ... import gate as _gp
     model = model or _embed_default_model()
     prov = _gp._provider_of(model)               # provider_for (prefix) → priced catalog; the canonical resolver
     raw = model.split(":", 1)[1] if ":" in model else model
@@ -2161,7 +2161,7 @@ def embed_batch(texts, model=None, *, dimensions=None, jsonl_path=None, cap_doll
                                      submit=submit, endpoint="/v1/embeddings", preflight=preflight)
         return {**base, "batch_id": bid, "jsonl": jsonl_path}
     except Exception as e:
-        from . import gate as _g2
+        from ... import gate as _g2
         if isinstance(e, _g2.deliberate_stop_types()):
             raise                                                     # a cap refusal HALTS — never a silent partial
         return {**base, "jsonl": jsonl_path, "error": str(e)[:200]}
@@ -2180,7 +2180,7 @@ def embed_compare(texts, models=None, *, sample=None):
 
     Returns {sample_n, models: [{model, dims, rate_per_1m, n_failed, error}],
              agreement: [{a, b, structure_corr, pairs}]}."""
-    from . import pricing as _pr
+    from ... import pricing as _pr
 
     def _cosine_sim(a, b):
         dot = sum(x * y for x, y in zip(a, b))
@@ -2204,7 +2204,7 @@ def embed_compare(texts, models=None, *, sample=None):
         # DEFAULT A/B slate from the catalog SSOT (no hardcoded embedding ids): the OpenAI default + the cheapest
         # embedding model of every OTHER embedding-capable provider (gemini, voyage, …). Adding a provider's embedder to
         # the catalog auto-joins this comparison; it is never a literal here.
-        from . import model_catalog as _mc
+        from ... import model_catalog as _mc
         _default = _embed_default_model()
         models, _seen = [_default], {(_mc.provider_of(_default) or "openai")}
         for _prov, _mid in _mc.embedding_models():
@@ -2406,10 +2406,10 @@ def _learn_success_limits(provider, resp):
     try:
         _tpm, _rpm = _ratelimit_from_resp(resp)
         if _tpm or _rpm:
-            from . import dispatch as _d
+            from ... import dispatch as _d
             _d.learn_rate_limit(provider, tpm=_tpm, rpm=_rpm, source="success-header")
     except Exception as _e:
-        from . import gate as _g
+        from ... import gate as _g
         if _g.is_deliberate_stop(_e):
             raise
         # else: a successful, PAID response is never discarded for a best-effort side-effect
@@ -2503,7 +2503,7 @@ def _load_image(img):
     through, so an image is loaded ONCE and reused by both the input estimate and the request build). Dimensions
     come from the header (content_tokens) — None when unreadable, which the token estimate handles with a flat
     fallback rather than mis-counting the base64 as text (the base64-as-tokens error)."""
-    from . import content_tokens as _ct
+    from ... import content_tokens as _ct
     if isinstance(img, dict) and img.get("data_uri"):
         return img
     if isinstance(img, str) and img.startswith("data:"):
@@ -2527,7 +2527,7 @@ def _load_image(img):
 def _image_input_tokens(images, provider, model):
     """INPUT tokens the images add, via content_tokens' provider-aware per-image rule (Anthropic (w×h)/750, OpenAI
     tiles) — NOT the text tokenizer. A flat fallback when dimensions are unreadable."""
-    from . import content_tokens as _ct
+    from ... import content_tokens as _ct
     total = 0
     for info in images:
         if info.get("w") and info.get("h"):
@@ -2579,7 +2579,7 @@ def _compose_gemini_reasoning(model_id, reasoning):
         return base + "-" + tier
     if existing:                                         # already tier-suffixed → agy serves it, keep it
         return model_id
-    from . import lane_catalog                           # a BARE base id → the lane's default served tier, never
+    from ... import lane_catalog                           # a BARE base id → the lane's default served tier, never
     return base + "-" + (lane_catalog.quirk("gemini").get("default") or "medium")   # the bare id agy rejects
 
 
@@ -2602,7 +2602,7 @@ def _served_dated_id(provider, model_id):
     hop. Unchanged when the list is absent, the bare id is already served, or no dated variant exists (then
     served_check still flags it 'stale' and the runtime resolver takes over)."""
     try:
-        from . import catalog
+        from ... import catalog
         ids = catalog.live_model_ids(provider)             # cached metered served ids (dispatch form), or None
         if not ids or model_id in ids:
             return model_id                                # no list, or already served → nothing to resolve
@@ -2618,7 +2618,7 @@ def metered_fallback_id(provider, use_name):
     authoritative. This reader then layers only runtime facts on top: Gemini's fixed-format reasoning suffix becomes
     a parameter, and the live served-list may upgrade a bare metered alias to its dated form. Unknown compatibility
     ids degrade to the pre-catalog behavior instead of breaking. Returns (metered_id, reasoning_level_or_None)."""
-    from . import model_catalog
+    from ... import model_catalog
     rec = model_catalog.model_record(use_name)
     if rec is None:
         if provider == "gemini":
@@ -2635,7 +2635,7 @@ def _cacheable_system(system):
     both need ~1024 tokens for a cache block to form; the shared minimum lives in cacheaudit._MIN_CACHE_TOKENS."""
     if not system:
         return False
-    from . import cacheaudit
+    from ... import cacheaudit
     try:
         import tiktoken
         n = len(tiktoken.get_encoding("o200k_base").encode(system))
@@ -2662,7 +2662,7 @@ def _est_call_tokens(prompt, system, out_tokens, model=None, intent=None):
     n_out = int(out_tokens) if out_tokens else 0
     if not n_out and model and intent:                   # unpinned → pace on the LEARNED per-intent output, not nominal
         try:
-            from . import expected_output
+            from ... import expected_output
             n_out = int((expected_output.expect(model, sig=intent) or (0,))[0] or 0)
         except Exception:
             n_out = 0
@@ -2747,9 +2747,9 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
     # Only a strict-capable meter improves enforcement; compat vendors retain their free lane. An explicit
     # no-metered-fallback guarantee retains the free lane too, where prompt-shaping + local validation enforce it.
     if _lane and schema is not None and schema_capability(prov) == SCHEMA_STRICT:
-        from . import output_contract as _oc_cap
+        from ... import output_contract as _oc_cap
         if _oc_cap.needs_enforcement(schema):
-            from . import guard, calls as _schema_calls
+            from ... import guard, calls as _schema_calls
             guard.record_decision(intent=(_schema_calls.current() or {}).get("intent"),
                                   requested_model=model, chosen_model=model,
                                   counterfactual_usd=None, actual_usd=None, saved_usd=0,
@@ -2764,7 +2764,7 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
             raw, base["model"], reasoning = _bare, _bare, (reasoning or _tier)   # the tier rides `reasoning` below
     if _lane:
         lane_name, lane_mod = _lane
-        from . import lane_quota_cost as _lane_quota_cost
+        from ... import lane_quota_cost as _lane_quota_cost
         _lane_quota_cost.apply_anthropic_avoidance([lane_name], auth_over_quota=auth_over_quota)
         _token_cost = _lane_quota_cost.measured_lane_token_cost(intent).get(lane_name) or {}
         _projected_tokens = _token_cost.get("tokens_per_call")
@@ -2810,7 +2810,7 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
                                              reasoning=reasoning, max_tokens=max_tokens)   # hand the lane the guarded budget
                     #                                                                        so the escalation ladder can RAISE its cap
                 except Exception as _le:                   # a lane MUST return an {error} dict, never raise — but a lane
-                    from . import gate as _glane
+                    from ... import gate as _glane
                     if _glane.is_deliberate_stop(_le):     # a DELIBERATE stop (deadline / refusal / containment) HALTS —
                         raise                              # never swallowed into an error dict and then retried below
                     _s = {"error": f"{lane_name} lane raised {type(_le).__name__}: {str(_le)[:120]}",
@@ -2818,7 +2818,7 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
                 if not isinstance(_s, dict):               # a non-dict is also a broken contract → treat it as an error
                     _s = {"error": f"{lane_name} lane returned {type(_s).__name__}, not a result dict"}
                 if not _s.get("error") and schema is not None:
-                    from . import output_contract as _recovery_contract
+                    from ... import output_contract as _recovery_contract
                     if not _recovery_contract.check_item((_s.get("text") or "").strip(), schema)[0]:
                         if _json_reasks_used < lane_recovery.recovery_setting("lane_json_reask", 1):
                             _json_reasks_used += 1
@@ -2827,13 +2827,13 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
                         _s = {**_s, "error": "lane output did not satisfy requested shape", "shape_miss": True}
                 return _s
         try:                                          # count once per logical lane call, never on the transient retry
-            from . import bulkgate, calls
+            from ... import bulkgate, calls
             intent = (calls.current().get("intent") or "")
             if not intent.startswith("spendguard:"):
                 bulkgate.check_realtime(bulkgate.sig(raw or "", template_id=intent or None), raw or "", never_block=True)
         except Exception:
             pass                                      # fail-open — a burst nudge must never break a legit lane call
-        from . import lane_recovery
+        from ... import lane_recovery
         _recovery = lane_recovery.LaneRecoveryProof(lane_name)
         s = lane_recovery.retry_free_lane(_call_lane, _recovery)
         # A "$0 plan reply" is only a real answer if it has CONTENT and — when a shape was requested — SATISFIES it.
@@ -2845,7 +2845,7 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
         _shape_ok = True
         if _txt and schema is not None:
             try:
-                from . import output_contract
+                from ... import output_contract
                 _shape_ok = bool(output_contract.check_item(_txt, schema)[0])   # same validator the caller uses
             except Exception:
                 _shape_ok = True                       # a validator that ITSELF errors is not the lane's fault → keep
@@ -2860,7 +2860,7 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
             # actually applied (`s['effort']`); fall back to the requested tier only for a lane that reports none.
             _applied_eff = s.get("effort") if s.get("effort") is not None else reasoning
             try:
-                from . import calls, vendor_call as _vc
+                from ... import calls, vendor_call as _vc
                 calls.record_call(prov, raw, "subscription", 0.0,
                              in_tok=s.get("in_tok", 0), out_tok=s.get("out_tok"), latency=s.get("latency"),
                              finish=s.get("finish_reason"),
@@ -2928,7 +2928,7 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
             if _no_sub or getattr(_sub_guard, "on", False):
                 return None
             try:
-                from . import lane_balance, calls as _calls, plan_admission as _recovery_admission
+                from ... import lane_balance, calls as _calls, plan_admission as _recovery_admission
                 _intent = (_calls.current() or {}).get("intent")
                 _free_subs = lane_balance.quality_equivalent_free_substitutes(_intent, model,
                                                                               excluded=[lane_name])
@@ -2939,21 +2939,21 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
                     if _ready_alt:
                         _free_subs = [_ready_alt[1]]
             except Exception as _quality_error:
-                from . import gate as _quality_gate
+                from ... import gate as _quality_gate
                 if _quality_gate.is_deliberate_stop(_quality_error):
                     raise
                 _recovery.recovery_event("bug", decision="shed evidence unavailable", error=str(_quality_error))
                 raise lane_recovery.LaneRecoveryViolation("cannot establish free substitute availability") from _quality_error
             for _rsub in _free_subs:
                 _rsub_lane = _LANES.get(provider_for(_rsub), (None,))[0]
-                from . import plan_admission as _recovery_admission
+                from ... import plan_admission as _recovery_admission
                 if not _rsub_lane or not _recovery_admission._ready(_rsub_lane):
                     continue
                 _rwhy = "measured quality holds; $0 lane before metered fallback"
                 _lane_chatter(f"[spendguard] lane-balance REACTIVE: {lane_name} lane failed → {_rsub} ({_rwhy})")
                 _sub_guard.on = True
                 try:
-                    from . import calls as _redirect_calls
+                    from ... import calls as _redirect_calls
                     with _redirect_calls.redirect_context(model, "fallback ladder: " + _rwhy, _rsub_lane):
                         _rr = call(_rsub, prompt, max_tokens=max_tokens, system=system, reasoning=reasoning,
                                    schema=schema, timeout_s=timeout_s, no_metered_fallback=True)
@@ -2977,7 +2977,7 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
             return _shed_free_recovery() or _primary_result
         # Reuse the durable synchronous queue. Re-probe the primary directly so its cooldown cannot
         # turn a recoverable transport failure into a paid skip. No running invocation is cancelled.
-        from . import lane_queue, calls as _recovery_calls
+        from ... import lane_queue, calls as _recovery_calls
         _recovery.recovery_event("queue")
         _held = lane_queue.hold_free_recovery(
             (_recovery_calls.current() or {}).get("intent") or "lane-recovery", prompt, _poll_free_recovery,
@@ -3008,7 +3008,7 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
         # $0 (cached) and wrapped so a map hiccup degrades to the prior behaviour, never breaks the fallback.
         _fb_model, _fb_reasoning = model, reasoning
         try:
-            from . import reasoning_equivalence as _re, lane_catalog as _lc
+            from ... import reasoning_equivalence as _re, lane_catalog as _lc
             _base_m, _suf_lv = _lc.parse_use_name(raw, lane_name)      # split any agy reasoning suffix off the id
             _cell = _re.resolve_metered(lane_name, _base_m, reasoning or _suf_lv)
             _fb_reasoning = _cell["metered_effort"]                    # EQUAL, proven-lesser, or rounded-up (never less)
@@ -3019,7 +3019,7 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
         _last_ready = _shed_free_recovery()
         if _last_ready is not None:
             return _last_ready
-        from . import reliability as _recovery_health, gate as _recovery_gate
+        from ... import reliability as _recovery_health, gate as _recovery_gate
         if any(r.get("kind") == "metered" and r.get("resource") == prov
                for r in _recovery_health.health_reds()):
             raise _recovery_gate.SpendGateRefused(
@@ -3032,7 +3032,7 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
         # down. The SUCCESS row is written by gate._record_rt DURING this dispatch (on this thread), so scope it via the
         # thread-local context; ALSO stamp the returned dict so a FAILED fallback (recorded later in the outer call) and
         # any consumer reading the result carry the same fact. A plain fact (the lane name), never a judgement about why.
-        from . import calls as _calls_ff
+        from ... import calls as _calls_ff
         with _calls_ff.fell_from_context(lane_name, reason=_lane_reason), _calls_ff.redirect_context(
                 model, "lane-unavailable: metered fallback", "api"):
             out = _call_once(_fb_model, prompt, max_tokens=max_tokens, system=system, reasoning=_fb_reasoning,
@@ -3084,7 +3084,7 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
     # a meaning call, never string distance). 'unchecked' (no synced list, or discovery unavailable) proceeds: a
     # can't-check is never a rejection. `raw` is already respelled to the bare metered id for gemini above.
     try:
-        from . import vendor_call as _vc, catalog as _catalog
+        from ... import vendor_call as _vc, catalog as _catalog
     except Exception:
         _vc = None                                     # packaging edge — nothing to validate against; skip silently
     if _vc is not None:
@@ -3161,7 +3161,7 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
             # It CONFLICTS with a forced-tool schema on anthropic, so it is applied ONLY when schema is None; when
             # both are asked for, thinking is suppressed with a one-time notice (never a silent 400). No fact → no
             # thinking (the honest 'default until measured' behaviour). Fail-open below strips it on any rejection.
-            from . import models as _mdl
+            from ... import models as _mdl
             _tb = _mdl.thinking_budget(raw, reasoning, max_tokens) if reasoning else None
             if schema is not None:
                 kw.update(json_schema_request("anthropic", schema))
@@ -3184,7 +3184,7 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
             def _anth_msg(_kw):                               # one final message; timeout_s bounds it at wall-clock
                 if timeout_s:
                     _abox = {}
-                    from . import calls as _actx
+                    from ... import calls as _actx
                     _apctx = dict(_actx.current() or {})      # CARRY the thread-local intent/chain + caller across the
                     _acaller = _actx.caller()                 #   daemon boundary: the gated SDK records this call FROM
                     #   the daemon below, whose context is EMPTY and whose stack is threading.py:run — so without this
@@ -3216,7 +3216,7 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
                         except Exception:
                             pass
                         try:
-                            from . import bulkgate as _bg_dc   # #3: cut mid-generation → invisible waste (see OpenAI path)
+                            from ... import bulkgate as _bg_dc   # #3: cut mid-generation → invisible waste (see OpenAI path)
                             _bg_dc.note_deadline_cancel(model, timeout_s)
                         except (ImportError, AttributeError):
                             pass                             # note_deadline_cancel itself never raises; guard only the import
@@ -3329,7 +3329,7 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
             # shape from the name would answer '?' and drop their measured facts on the floor.
             if reasoning:
                 try:                                       # STANDARD ordinal (minimal|low|medium|high) → this model's
-                    from . import models as _mfn           # VERIFIED reasoning_effort value (only the floor varies per model)
+                    from ... import models as _mfn           # VERIFIED reasoning_effort value (only the floor varies per model)
                     _eff = _mfn.normalize_reasoning(raw, reasoning)
                 except Exception:
                     _eff = reasoning
@@ -3345,7 +3345,7 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
                     # surfaces facts models.py already holds (the floor + reasons_by_default) plus the caller's pin.
                     _eff_requested = reasoning     # what the caller asked for — surfaced per-call so spendrails/warden can read it
                     try:
-                        from . import models as _mA, bulkgate as _bgeff
+                        from ... import models as _mA, bulkgate as _bgeff
                         if str(reasoning).strip().lower() == "minimal" and _eff != "minimal" \
                                 and _mA.reasons_by_default(raw):
                             _eff_unhonored = True    # the pin could not be honored (per-call flag → a caller can abort on it)
@@ -3384,7 +3384,7 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
                         except Exception:
                             pass
             try:
-                from . import models as _mf
+                from ... import models as _mf
                 _mf.apply_call_params(raw, okw, dialect="openai")
             except Exception:
                 pass                                        # a missing fact store must not break the call
@@ -3417,7 +3417,7 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
                 if not timeout_s:
                     return _finish_create(_raw_create(**cw))
                 _box = {}
-                from . import calls as _octx
+                from ... import calls as _octx
                 _opctx = dict(_octx.current() or {})          # CARRY intent/chain + caller across the daemon boundary
                 _ocaller = _octx.caller()                     #   (see the anthropic branch): the gated SDK / http_capture
                 #   records this call FROM the daemon, whose context is EMPTY and whose stack is threading.py:run —
@@ -3447,7 +3447,7 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
                     except Exception:
                         pass
                     try:
-                        from . import bulkgate as _bg_dc     # #3: cut MID-generation → provider bills what it generated
+                        from ... import bulkgate as _bg_dc     # #3: cut MID-generation → provider bills what it generated
                         _bg_dc.note_deadline_cancel(model, timeout_s)   # (reasoning tokens → nothing), invisible to the
                     except (ImportError, AttributeError):     # local ledger. Surface it; note_deadline_cancel never raises.
                         pass
@@ -3458,7 +3458,7 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
             # ONE param-name authority (models.tokens_param) — the Batch door reads the SAME function via
             # apply_call_params, so the primary send can never drift from it again (the gpt-6.1-sol 400 storm). The
             # heal ladder below still tries the other spelling if the provider rejects this one.
-            from . import models as _mtp
+            from ... import models as _mtp
             _primary_tok = _mtp.tokens_param(raw, dialect="openai")
             try:                                              # chat dialect → max_completion_tokens; ladder heals exceptions
                 r = _bounded_create(**{_primary_tok: max_tokens}, **okw)
@@ -3468,7 +3468,7 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
                 # MENTIONED a parameter (a validation error listing the whole request, a message quoting the
                 # body back) took the retry path and silently dropped a parameter the caller asked for —
                 # and the schema being dropped is precisely how "required" fields come back as zeros.
-                from . import models as _mp, gate as _og
+                from ... import models as _mp, gate as _og
                 if isinstance(e, _CallDeadline):
                     raise                                   # a WALL-CLOCK deadline HALTS — it is a timeout, not a param to drop
                 if isinstance(e, _og.deliberate_stop_types()):
@@ -3528,7 +3528,7 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
                         # a batch builder reads) sends the right value with no 400. Only if healing finds nothing do
                         # we fall through to the drop below (degrade to the model's default effort). Skipped while
                         # discover_efforts is probing (_heal_guard) — a probe must be DROPPED so it reads as rejected.
-                        from . import models as _mh, gate as _hg
+                        from ... import models as _mh, gate as _hg
                         _pre = okw.get("reasoning_effort")
                         if _mh.heal_reasoning(raw, okw, e):
                             try:
@@ -3600,7 +3600,7 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
         # must PROPAGATE out of the metered path — never be swallowed into the {error, error_type} dict below, which a
         # caller can fail-open on (the deliberate-refusal doctrine). This is the metered twin of the lane path's re-raise
         # (_call_lane @ L2018) and the 429-learn re-raise just below; the catch-all was the one remaining hole.
-        from . import gate as _gds
+        from ... import gate as _gds
         if _gds.is_deliberate_stop(e):
             raise
         # error_type is the exception CLASS name — a structured signal (like an HTTP status or sqlite_errorname),
@@ -3610,7 +3610,7 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
         _status, _perr, _retry = _exc_detail(e)
         if _status in (429, 529):                       # a provider rate limit / overload → PACE the governor when the
             try:                                        # vendor sent its limit headers (tpm/rpm + Retry-After). We do NOT
-                from . import dispatch as _dispatch     # subtype the 429 here — guessing connection-vs-token from header
+                from ... import dispatch as _dispatch     # subtype the 429 here — guessing connection-vs-token from header
                 _tpm_seen, _rpm_seen = _ratelimit_from_resp(getattr(e, "response", None))   # presence is a meaning call;
                 try:                                    # the CONGESTION backoff (shrink the concurrency window) is applied
                     _ra_s = float(_retry) if _retry else None   # UNIFORMLY to ANY 429 in _call_guarded, and tpm/rpm pacing
@@ -3619,7 +3619,7 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
                 _dispatch.learn_rate_limit(prov, tpm=_tpm_seen, rpm=_rpm_seen, retry_after_s=_ra_s,
                                            source=f"{_status}-header")
             except Exception as _le:
-                from . import gate as _lg
+                from ... import gate as _lg
                 if _lg.is_deliberate_stop(_le):         # a propagated spend refusal / deadline is NEVER swallowed
                     raise
                 # else best-effort: a transient learn failure never turns the 429 result into a crash
@@ -3707,13 +3707,13 @@ def output_budget(model, requested=None, internal_tiny=False, vendor=None, bound
     # conservative, no-truncation-below-floor default that is also safe for a no-heal lane (which can't recover a 400 on
     # an over-large budget). Publishing the real max (the price data) is how an unknown model earns a higher ceiling.
     ceiling = int(pricing.output_ceiling(vendor, model, TOKEN_FLOOR))
-    from . import calls as _budget_context
+    from ... import calls as _budget_context
     bounded_structured = bounded_structured or bool(_budget_context.current().get("bounded_structured"))
     if bounded_structured and not internal_tiny:
-        from . import models
+        from ... import models
         if models.reasons_by_default(model) or models.profile(model.split(":")[-1]).get("reasoning_effort_ok"):
             floor = int(config._cfg_get("bulkgate", "bounded_reasoning_output_floor", BOUNDED_REASONING_OUTPUT_FLOOR))
-            from . import bulkgate
+            from ... import bulkgate
             required = max(floor, bulkgate._reasoning_out_estimate() + REASONING_VISIBLE_RESERVE)
             if ceiling < required:
                 raise ValueError(f"{model}: output ceiling {ceiling} cannot reserve bounded reasoning budget {required}; "
@@ -3746,7 +3746,7 @@ def _heal_token_budget(create_fn, start_budget, model):
         except Exception:
             continue                                   # still refused at this budget → keep halving
         try:
-            from . import models as _mm, pricing as _pr
+            from ... import models as _mm, pricing as _pr
             # PLAUSIBILITY GUARD: LEARN a ceiling ONLY for a model whose real limit is UNKNOWN to the catalog. When
             # the published limits cache already knows it, THAT is authoritative — a heal landing below it is a
             # transient artifact (a non-budget 400 that happened to clear at budget/2), which is exactly the
@@ -3786,7 +3786,7 @@ def _input_fits(model, prompt, system, images=None):
     passes (never silently, the detail says so). A swallow inside this guard is worse than anywhere else (it
     disables the very check whose presence the reader trusts), so the failure path says so OUT LOUD."""
     try:
-        from . import vendor_call, pricing
+        from ... import vendor_call, pricing
         vendor = provider_for(model)
         raw = model.split(":", 1)[1] if ":" in model else model
         text = (system or "") + "\n" + (prompt or "")
@@ -3800,7 +3800,7 @@ def _input_fits(model, prompt, system, images=None):
         win = pricing.max_input_tokens(raw)
         if win and (len(text) > int(win) or img_tok):
             try:
-                from .gate import _content_tokens      # the exact tokenizer the gate already counts input with — one source
+                from ...gate import _content_tokens      # the exact tokenizer the gate already counts input with — one source
                 tok = _content_tokens(text, provider=vendor, model=raw) + img_tok
             except Exception:
                 tok = len(text) // 4 + img_tok         # rail fallback if the tokenizer is unavailable — the window still gets checked
@@ -3823,7 +3823,7 @@ def _input_fits(model, prompt, system, images=None):
         # The guard failing is not the payload failing, so the call proceeds — the provider will reject an oversized
         # request itself (worse error, not a wrong answer). Said OUT LOUD: a silent "check unavailable" is
         # indistinguishable from "checked and fine", which is how this function once passed a payload unchecked.
-        from . import config as _cfg
+        from ... import config as _cfg
         _cfg.warn_once(f"[spendguard] the input-size check FAILED for {model} ({type(e).__name__}: "
                        f"{str(e)[:60]}) — the payload was NOT checked. This is a bug in the check.")
         return True, f"input check unavailable ({type(e).__name__})"
@@ -3847,7 +3847,7 @@ def _call_guarded(model, prompt, max_tokens=None, sig=None, retries=2, **kw):
     _no_sub = kw.pop("_no_sub", False)
     _probe = kw.pop("_probe", False)                       # a reachability/connectivity probe: keep it tiny + fast,
     #                                                        never floored to reasoning headroom or grown on an empty
-    from . import bulkgate
+    from ... import bulkgate
     # AUTO-APPLY the learned reasoning EFFORT for this (intent, model) — the effort twin of the reasoning-budget floor
     # below. ONLY when the caller set no explicit effort (an explicit reasoning always wins) and this is not a probe or
     # an internal resolver/heal call. A None fact leaves reasoning unset → the model's FAMILY FLOOR stands downstream
@@ -3855,7 +3855,7 @@ def _call_guarded(model, prompt, max_tokens=None, sig=None, retries=2, **kw):
     if kw.get("reasoning") is None and not _probe and not getattr(_resolve_guard, "on", False) \
             and not getattr(_heal_guard, "on", False):
         try:
-            from . import models as _mte, calls as _cte
+            from ... import models as _mte, calls as _cte
             _eff_intent = (_cte.current() or {}).get("intent") or sig
             _learned_eff = _mte.effort_for(model, _eff_intent) if _eff_intent else None
             if _learned_eff:
@@ -3869,7 +3869,7 @@ def _call_guarded(model, prompt, max_tokens=None, sig=None, retries=2, **kw):
     # Default OFF: no confirmed substitute for the intent → route_decision returns None → nothing changes.
     if not _no_sub and not getattr(_sub_guard, "on", False):
         try:
-            from . import lane_balance, calls
+            from ... import lane_balance, calls
             _sub, _why = lane_balance.route_decision((calls.current() or {}).get("intent"), model)
         except Exception:
             _sub, _why = None, ""
@@ -3887,13 +3887,13 @@ def _call_guarded(model, prompt, max_tokens=None, sig=None, retries=2, **kw):
                   f"(recorded as {_sub}{'; prompt adapted' if _adapt is not None else ''})", file=_sys.stderr)
             _sub_guard.on = True                   # one hop: the substitute must not itself substitute (proactive OR reactive)
             try:
-                from . import calls as _redirect_calls
+                from ... import calls as _redirect_calls
                 _sub_lane = _LANES.get(provider_for(_sub), (None,))[0]
                 with _redirect_calls.redirect_context(model, "load-balance: " + str(_why), _sub_lane):
                     r = _call_guarded(_sub, prompt, max_tokens=max_tokens, sig=sig, retries=retries,
                                       _no_sub=True, **_subkw)
             except Exception as _se:               # a substitute that RAISES (transport/etc.) must not sink the call —
-                from . import gate as _gsub
+                from ... import gate as _gsub
                 if _gsub.is_deliberate_stop(_se):  # …but a SpendGateRefused / deadline / containment HALTS: it is NEVER
                     raise                          # swallowed into a substitute error and continued on the original.
                 r = {"error": f"substitute {_sub} raised: {type(_se).__name__}: {str(_se)[:130]}",
@@ -3927,7 +3927,7 @@ def _call_guarded(model, prompt, max_tokens=None, sig=None, retries=2, **kw):
     # is fixed in output_contract._check_schema, which now validates unions.) Deterministic FORMAT check, not a judgement.
     _schema_kw = kw.get("schema")
     if _schema_kw is not None:
-        from . import output_contract as _oc_wf
+        from ... import output_contract as _oc_wf
         _wf = _oc_wf.wellformed_contract(_schema_kw)
         if _wf:
             return {"provider": provider_for(model), "model": model, "text": None, "in_tok": 0, "out_tok": 0,
@@ -3958,7 +3958,7 @@ def _call_guarded(model, prompt, max_tokens=None, sig=None, retries=2, **kw):
     # reasoning-floor / clamp branches all collapse into this one call. An internal tiny probe keeps its deliberate value.
     if _explicit and not _internal_tiny:
         _warn_once_caller_maxtokens(sig or model, int(max_tokens))    # caller cap IGNORED — spendguard sets the ceiling
-    from . import calls as _bounded_context
+    from ... import calls as _bounded_context
     if (kw.get("schema") or _bounded_context.current().get("bounded_structured")) and kw.get("reasoning") is None and not _internal_tiny:
         kw["reasoning"] = "minimal"  # bounded structured work uses the provider-normalized lowest effort
     max_tokens = output_budget(model, requested=max_tokens, internal_tiny=_internal_tiny,
@@ -3974,7 +3974,7 @@ def _call_guarded(model, prompt, max_tokens=None, sig=None, retries=2, **kw):
         r = call(model, prompt, max_tokens=budget, _no_guard=True, no_substitution=_no_sub, **kw)
         if r.get("error"):
             if _win_vendor and r.get("status_code") in (429, 529):   # ANY rate-limit/overload → CONGESTION backoff: shrink
-                from . import dispatch as _dsp       # this vendor's dynamic connection window (universal — NOT subtyped);
+                from ... import dispatch as _dsp       # this vendor's dynamic connection window (universal — NOT subtyped);
                 _dsp.shrink_connection_window(_win_vendor)   # the single window-LOSS point (its own handler propagates a stop)
             return {**r, "truncated": None}                   # an errored call was not truncated, it failed
         trunc = bulkgate.is_truncated(r.get("finish_reason"), r.get("out_tok"), budget)
@@ -4013,7 +4013,7 @@ def _call_guarded(model, prompt, max_tokens=None, sig=None, retries=2, **kw):
                 pass                                          # telemetry must not break the call
         if not trunc:
             if _win_vendor:                    # ACK (a clean, non-truncated success) → AIMD-grow the vendor's connection
-                from . import dispatch as _dspg   # window toward the default (its own handler propagates a stop)
+                from ... import dispatch as _dspg   # window toward the default (its own handler propagates a stop)
                 _dspg.grow_connection_window(_win_vendor)
             return {**r, "truncated": False, "max_tokens_used": budget}
         attempt += 1

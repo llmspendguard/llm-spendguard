@@ -25,7 +25,7 @@ _B_PINS = [
 # C: (file, enclosing-func, callee-name, required kw present — any value). realtime_cost must receive provider=.
 _C_PROVIDER = [
     ("gate.py", "_rt_precheck", "realtime_cost"),
-    ("adapters.py", "_call_once", "realtime_cost"),
+    ("generate/execution/adapters.py", "_call_once", "realtime_cost"),
     ("experiment.py", "_call", "realtime_cost"),
 ]
 

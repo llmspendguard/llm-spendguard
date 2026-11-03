@@ -18,7 +18,7 @@ submit); fetch polls batches.retrieve and, on completion, downloads the output (
 stay visible. Nothing hardcoded: tasks/jsonl, system, model, cap, avg-out, max-out, batch id, out path are args.
 """
 
-from .capability_cli_parsing import add_registered_cli_argument
+from ...capability_cli_parsing import add_registered_cli_argument
 import argparse
 import os
 import sys
@@ -41,7 +41,7 @@ def submit_batch_jsonl(rest):
     add_registered_cli_argument(ap, 'batch-submit/openai_batch_cli.submit_batch_jsonl/ap/--intent')
     add_registered_cli_argument(ap, 'batch-submit/openai_batch_cli.submit_batch_jsonl/ap/--chain')
     a = ap.parse_args(rest)
-    from . import submit, calls
+    from ... import submit, calls
     _built = None
     try:
         if a.tasks:
@@ -107,7 +107,7 @@ def download_completed_batch_output(*, batch_id: str, out: str, force: bool = Fa
     a = SimpleNamespace(batch_id=batch_id, out=out, force=force, intent=intent, chain=chain)
     from openai import OpenAI
     from .submit import _api_key
-    from . import calls
+    from ... import calls
     client = OpenAI(api_key=_api_key("OPENAI_API_KEY"))
     with calls.context(intent=a.intent, chain=a.chain):
         return _fetch_under_context(client, a)

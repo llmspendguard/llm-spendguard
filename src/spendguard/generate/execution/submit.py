@@ -22,10 +22,10 @@ import math
 import time
 import traceback
 
-from .pricing import batch_cost, realtime_cost, normalize
-from . import bulk_resilience
+from ...pricing import batch_cost, realtime_cost, normalize
+from ... import bulk_resilience
 
-from .config import HOME as _HOME, api_key as _api_key
+from ...config import HOME as _HOME, api_key as _api_key
 AUDIT_DIR = str(_HOME)
 CHAT_BATCH_REQUEST_FILENAME = "requests.jsonl"
 CHAT_BATCH_REQUEST_DIRECTORY_PREFIX = "spendguard-batch-req-"
@@ -56,7 +56,7 @@ def _count_tokens(text, model):
     MEASURED per-provider o200k→native factor (provider_tokens). This is what makes an anthropic/gemini/glm
     estimate honest instead of an OpenAI-tokenizer proxy. Signature is unchanged (text, model) so every caller —
     bakeoff, effort_titration, experiment — improves at once. Fail-open all the way down (never raises)."""
-    from . import provider_tokens, adapters
+    from ... import provider_tokens, adapters
     _warn_if_no_tiktoken()                            # the input count authorizes spend — a char/4 proxy must be loud
     try:
         prov = adapters.provider_for(model)
@@ -80,7 +80,7 @@ def estimate_submission_jsonl_cost(jsonl_path, model, batch=True, avg_out_tokens
     OUTPUT is estimated by the measured/declared/ceiling basis (expected_output.batch_output_estimate, keyed by
     `intent`), NOT the send ceiling — the ceiling over-stated ~100x and made the cap unusable. A caller's measured
     `avg_out_tokens` still overrides (the 'measured avg' basis); absent it, the per-model basis is named honestly."""
-    from . import content_tokens, expected_output
+    from ... import content_tokens, expected_output
     n = 0
     in_tok = 0
     out_est = 0        # Σ per-request EXPECTED output (measured/declared/ceiling basis) — the realistic estimate, NOT the ceiling
@@ -200,7 +200,7 @@ def build_chat_batch_jsonl(tasks_path, model, system=None, max_out=None, reasoni
     non-OpenAI model (the OpenAI Batch API serves only OpenAI ids) and a task line missing custom_id/content —
     fail-closed, never a silent drop; a partial temp is unlinked on any error."""
     import json, os, tempfile
-    from . import models, adapters
+    from ... import models, adapters
     prov = adapters.provider_for(model)
     if prov != "openai":
         raise ValueError(f"build_chat_batch_jsonl: the OpenAI /v1/chat/completions Batch API serves only OpenAI "
@@ -410,7 +410,7 @@ def guarded_submit(jsonl_path, model, cap_dollars, batch=True, avg_out_tokens=No
     import hashlib as _hashlib
     _tag = _hashlib.sha256(os.path.abspath(jsonl_path).encode()).hexdigest()[:8]
     audit_path = os.path.join(AUDIT_DIR, f"{os.path.basename(jsonl_path)}.{_tag}.gate.json")
-    from . import config
+    from ... import config
     config.update_json(audit_path, lambda _d: rec,      # a gate AUDIT record; losing it loses the trail
                        quarantine_unparseable=True)     # so a corrupt prior audit is moved aside (kept .corrupt) and the
     #                                                     current record STILL persists before submission — never a silent decline
@@ -452,7 +452,7 @@ def guarded_submit(jsonl_path, model, cap_dollars, batch=True, avg_out_tokens=No
     # passed the gate — submit via OpenAI, with the intent on the recording context so the gate's provisional batch
     # row (recorded synchronously inside the gated files.create) attributes to it, not '(none)'. Save + restore the
     # caller's exact context so the intent set here never leaks into a later call on this thread.
-    from . import calls as _calls
+    from ... import calls as _calls
     _prev_ctx = dict(_calls.current())
     _calls.set_context(intent=intent, defer_batch_booking=True)
     try:
@@ -468,7 +468,7 @@ def guarded_submit(jsonl_path, model, cap_dollars, batch=True, avg_out_tokens=No
         _extra = {"metadata": metadata} if metadata else {}
         b = client.batches.create(input_file_id=f.id, endpoint=endpoint, completion_window="24h", **_extra,
                                   **_batch_admission_options(deadline_at, "create"))
-        from . import gate as _gate
+        from ... import gate as _gate
         _gate.record_accepted_batch_estimate({**est, "provider": "openai", "model": est["model"]})
     except BatchAdmissionDeadlineRefused:
         raise
@@ -487,7 +487,7 @@ def guarded_submit(jsonl_path, model, cap_dollars, batch=True, avg_out_tokens=No
 
 def _assign_batch_ordinals(tasks):
     """Assign identity before sharding, so each shard preserves the whole-set ordinal."""
-    from .work_integrity import WorkIntegrityProof
+    from ...work_integrity import WorkIntegrityProof
     items = [{**task, "custom_id": str(task.get("custom_id", "task-%d" % i))}
              if isinstance(task, dict) else {"custom_id": "task-%d" % i, "content": task}
              for i, task in enumerate(tasks or [])]
@@ -555,7 +555,7 @@ def submit_chat_tasks(tasks, model, *, system=None, schema=None, reasoning="mini
     # record of this submit attributes to the caller's intent, not '(none)': the build-time models.resolve_effort
     # discovery probes, the gate's provisional batch row, and the http_capture control-plane events. Restored in the
     # finally so the intent never leaks into a later call on this thread.
-    from . import calls as _calls
+    from ... import calls as _calls
     _prev_ctx = dict(_calls.current())
     if intent:
         _calls.set_context(intent=intent)
@@ -578,7 +578,7 @@ def submit_chat_tasks(tasks, model, *, system=None, schema=None, reasoning="mini
                              preflight=preflight, force=force, avg_out_tokens=avg_out_tokens)   # a caller's MEASURED per-request output
         return {**base, "batch_id": bid, "jsonl": req_path, "requests": n}
     except Exception as e:
-        from . import gate as _g
+        from ... import gate as _g
         if isinstance(e, _g.deliberate_stop_types()):
             raise                                    # a cap refusal HALTS — never a silent partial submission
         return {**base, "error": str(e)[:200]}
@@ -613,7 +613,7 @@ def build_message_batch_requests(tasks, model, *, system=None, max_out=None, sch
     Anthropic REQUIRES max_tokens, so it is always present), the caller's `max_out` is warned+ignored (billed on ACTUAL
     tokens, so the ceiling is free and no reasoning/JSON reply can silently truncate). Refuses a non-Anthropic model
     and a task with no content — fail-closed, never a silent drop."""
-    from . import models, adapters
+    from ... import models, adapters
     prov = adapters.provider_for(model)
     if prov != "anthropic":
         raise ValueError(f"build_message_batch_requests: the Anthropic Message Batches API serves only Anthropic "
@@ -699,7 +699,7 @@ def submit_message_batch(tasks, model, *, system=None, schema=None, max_out=None
     # Set intent + the DECLARED output on the recording CONTEXT for the whole submit, so the gate's provisional row (fired
     # inside the gated create) attributes to intent AND the gate's at-create estimate uses the same declared basis.
     # Restored in the finally so neither leaks into a later call on this thread.
-    from . import calls as _calls, gate
+    from ... import calls as _calls, gate
     _prev_ctx = dict(_calls.current())
     _calls.set_context(intent=intent, batch_expected_out=expected_out_tokens, defer_batch_booking=True)
     try:
@@ -749,7 +749,7 @@ def submit_message_batch(tasks, model, *, system=None, schema=None, max_out=None
               f"Collect with callio.collect_message_batch({b.id!r}, intent, {model!r}).")
         return {**out, "batch_id": b.id}
     except Exception as e:
-        from . import gate as _g
+        from ... import gate as _g
         if isinstance(e, _g.deliberate_stop_types()):
             raise                                    # a cap refusal / deadline HALTS — never a silent realtime fallback
         return {**base, "error": str(e)[:200]}

@@ -18,14 +18,14 @@ WORK_REVIEWED = {
     ("scripts/reliability/batch_loop_live_proof.py", "estimate_only", "submit.submit_chat_tasks"): 1,
     ("scripts/reliability/batch_loop_live_proof.py", "submit_and_track", "submit.submit_chat_tasks"): 1,
     ("scripts/reliability/batch_loop_live_proof.py", "_await_and_collect", "callio.collect_chat_tasks"): 1,
-    ("src/spendguard/adapters.py", "_call_once", "lane_queue.hold_free_recovery"): 1,
-    ("src/spendguard/adapters.py", "call", "_route_lq2.record_close"): 1,
-    ("src/spendguard/batch_tracker.py", "submit_offload", "lane_queue.mark_batched"): 2,
-    ("src/spendguard/batch_tracker.py", "_fail_over", "lane_queue.requeue_from_batch"): 1,
-    ("src/spendguard/batch_tracker.py", "poll", "lane_queue.collect_batched"): 1,
-    ("src/spendguard/batch_tracker.py", "submit_offload", "submit_offload"): 1,
-    ("src/spendguard/batch_tracker.py", "submit_offload", "_submit.submit_message_batch"): 1,
-    ("src/spendguard/batch_tracker.py", "submit_offload", "_submit.submit_chat_tasks"): 1,
+    ("src/spendguard/generate/execution/adapters.py", "_call_once", "lane_queue.hold_free_recovery"): 1,
+    ("src/spendguard/generate/execution/adapters.py", "call", "_route_lq2.record_close"): 1,
+    ("src/spendguard/generate/execution/batch_tracker.py", "submit_offload", "lane_queue.mark_batched"): 2,
+    ("src/spendguard/generate/execution/batch_tracker.py", "_fail_over", "lane_queue.requeue_from_batch"): 1,
+    ("src/spendguard/generate/execution/batch_tracker.py", "poll", "lane_queue.collect_batched"): 1,
+    ("src/spendguard/generate/execution/batch_tracker.py", "submit_offload", "submit_offload"): 1,
+    ("src/spendguard/generate/execution/batch_tracker.py", "submit_offload", "_submit.submit_message_batch"): 1,
+    ("src/spendguard/generate/execution/batch_tracker.py", "submit_offload", "_submit.submit_chat_tasks"): 1,
     ("src/spendguard/lane_balance.py", "batch_submit", "_sm.submit_chat_tasks"): 1,
     ("src/spendguard/lane_queue.py", "hold_free_recovery", "record_close"): 1,
     ("src/spendguard/lane_queue.py", "collect_batched", "callio.collect_message_batch"): 1,
@@ -33,14 +33,14 @@ WORK_REVIEWED = {
     ("src/spendguard/lane_queue.py", "_drain_locked", "batch_tracker.submit_offload"): 1,
     ("src/spendguard/storm_submit.py", "_run_durable_batch", "_bt.submit_offload"): 1,
     ("src/spendguard/storm_submit.py", "_run_durable_batch", "_lq.collect_batched"): 1,
-    ("src/spendguard/submit.py", "submit_chat_tasks", "submit_chat_tasks"): 1,
-    ("src/spendguard/submit.py", "submit_message_batch", "submit_message_batch"): 1,
+    ("src/spendguard/generate/execution/submit.py", "submit_chat_tasks", "submit_chat_tasks"): 1,
+    ("src/spendguard/generate/execution/submit.py", "submit_message_batch", "submit_message_batch"): 1,
     ("src/spendguard/whole_job.py", "_run_batch_group", "_submit.submit_chat_tasks"): 1,
     ("src/spendguard/whole_job.py", "collect_jobs", "callio.collect_chat_tasks"): 1,
     ("src/spendguard/whole_job.py", "run_jobs", "_persist_pending"): 1,
 }
 STATE_WRITES_REVIEWED = {
-    ("src/spendguard/batch_tracker.py", "_set_status"): 1,
+    ("src/spendguard/generate/execution/batch_tracker.py", "_set_status"): 1,
     ("src/spendguard/lane_queue.py", "dedup_pending_against_done"): 1,
     ("src/spendguard/lane_queue.py", "settle"): 2,
     ("src/spendguard/lane_queue.py", "lease"): 2,
@@ -107,7 +107,7 @@ assert unreadable, "unparseable input was silently accepted"
 
 # Review commit order and evidence, rather than accepting a proof imported but never used.
 queue_tree = ast.parse((ROOT / "src/spendguard/lane_queue.py").read_text())
-tracker_tree = ast.parse((ROOT / "src/spendguard/batch_tracker.py").read_text())
+tracker_tree = ast.parse((ROOT / "src/spendguard/generate/execution/batch_tracker.py").read_text())
 job_tree = ast.parse((ROOT / "src/spendguard/whole_job.py").read_text())
 functions = {n.name: n for tree in (queue_tree, tracker_tree, job_tree) for n in ast.walk(tree)
              if isinstance(n, ast.FunctionDef)}

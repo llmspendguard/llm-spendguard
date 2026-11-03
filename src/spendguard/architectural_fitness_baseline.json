@@ -4,16 +4,13 @@
   "recorded_legacy_flat_modules": [
     "__main__.py",
     "_version.py",
-    "adapters.py",
     "advise.py",
     "advisor.py",
     "agent_spawn_gate.py",
     "anomaly.py",
-    "antigravity_exec.py",
     "attribution.py",
     "backfill.py",
     "bakeoff.py",
-    "batch_tracker.py",
     "bedrock_adapter.py",
     "best_value.py",
     "bootstrap.py",
@@ -41,7 +38,6 @@
     "codex_broker_owner.py",
     "codex_daemon.py",
     "codex_daemon_broker.py",
-    "codex_exec.py",
     "compaction.py",
     "compare.py",
     "comprehend.py",
@@ -71,7 +67,6 @@
     "http_capture.py",
     "intent_model_prior.py",
     "kimi_daemon.py",
-    "kimi_exec.py",
     "lambda_adapter.py",
     "lane_balance.py",
     "lane_bandit.py",
@@ -96,14 +91,11 @@
     "models.py",
     "money_scale.py",
     "offline_python_build.py",
-    "openai_batch_cli.py",
     "otel_ingest.py",
     "plan_admission.py",
     "pricing.py",
     "process_group_reaper.py",
     "prompts.py",
-    "provider_kit.py",
-    "provider_plugins.py",
     "queue_planner.py",
     "realized.py",
     "realtime_oracle.py",
@@ -140,9 +132,6 @@
     "storm_coalescer.py",
     "storm_route.py",
     "storm_submit.py",
-    "submit.py",
-    "subscription_cli_results.py",
-    "subscription_exec.py",
     "sync.py",
     "sync_capabilities.py",
     "tag.py",
@@ -151,14 +140,12 @@
     "truth.py",
     "ui.py",
     "validate.py",
-    "vendor_call.py",
     "vertex_adapter.py",
     "warm_stdio_daemon.py",
     "weekly_cap_guard.py",
     "whole_job.py",
     "workdone.py",
-    "xp_rate_window.py",
-    "zai_exec.py"
+    "xp_rate_window.py"
   ],
   "layer_contract": {
     "independent_foundations": [
@@ -208,7 +195,7 @@
       "line": 48
     },
     {
-      "path": "src/spendguard/vendor_call.py",
+      "path": "src/spendguard/generate/execution/vendor_call.py",
       "name": "n_vendors",
       "message": "unused variable 'n_vendors'",
       "reason": "Compatibility parameter retained by _fan_budget_tracker; existing callers pass vendor count but shared-budget reservation now operates on token allocation.",
@@ -239,7 +226,7 @@
             "max_cc": 0,
             "mi": 100.0
           },
-          "src/spendguard/adapters.py": {
+          "src/spendguard/generate/execution/adapters.py": {
             "max_cc": 247,
             "mi": 0.0
           },
@@ -367,7 +354,7 @@
             "max_cc": 7,
             "mi": 71.02439595935184
           },
-          "src/spendguard/antigravity_exec.py": {
+          "src/spendguard/generate/execution/antigravity_exec.py": {
             "max_cc": 18,
             "mi": 50.48267079784406
           },
@@ -387,7 +374,7 @@
             "max_cc": 17,
             "mi": 44.30921065898892
           },
-          "src/spendguard/batch_tracker.py": {
+          "src/spendguard/generate/execution/batch_tracker.py": {
             "max_cc": 37,
             "mi": 30.431804375621986
           },
@@ -503,7 +490,7 @@
             "max_cc": 17,
             "mi": 21.026037017456613
           },
-          "src/spendguard/codex_exec.py": {
+          "src/spendguard/generate/execution/codex_exec.py": {
             "max_cc": 18,
             "mi": 18.420720204206486
           },
@@ -699,7 +686,7 @@
             "max_cc": 30,
             "mi": 53.46804979520682
           },
-          "src/spendguard/kimi_exec.py": {
+          "src/spendguard/generate/execution/kimi_exec.py": {
             "max_cc": 24,
             "mi": 44.95088065727963
           },
@@ -835,7 +822,7 @@
             "max_cc": 9,
             "mi": 51.72342577474964
           },
-          "src/spendguard/openai_batch_cli.py": {
+          "src/spendguard/generate/execution/openai_batch_cli.py": {
             "max_cc": 11,
             "mi": 63.31893735110742
           },
@@ -867,11 +854,11 @@
             "max_cc": 69,
             "mi": 42.1937791045013
           },
-          "src/spendguard/provider_kit.py": {
+          "src/spendguard/generate/execution/provider_kit.py": {
             "max_cc": 8,
             "mi": 71.42390592091552
           },
-          "src/spendguard/provider_plugins.py": {
+          "src/spendguard/generate/execution/provider_plugins.py": {
             "max_cc": 7,
             "mi": 85.68059769720976
           },
@@ -1115,15 +1102,15 @@
             "max_cc": 31,
             "mi": 57.58697740496773
           },
-          "src/spendguard/submit.py": {
+          "src/spendguard/generate/execution/submit.py": {
             "max_cc": 26,
             "mi": 25.357478823244634
           },
-          "src/spendguard/subscription_cli_results.py": {
+          "src/spendguard/generate/execution/subscription_cli_results.py": {
             "max_cc": 12,
             "mi": 64.69232676353167
           },
-          "src/spendguard/subscription_exec.py": {
+          "src/spendguard/generate/execution/subscription_exec.py": {
             "max_cc": 26,
             "mi": 52.549214777873864
           },
@@ -1163,7 +1150,7 @@
             "max_cc": 18,
             "mi": 51.86366926798887
           },
-          "src/spendguard/vendor_call.py": {
+          "src/spendguard/generate/execution/vendor_call.py": {
             "max_cc": 43,
             "mi": 5.548913231913586
           },
@@ -1191,7 +1178,7 @@
             "max_cc": 15,
             "mi": 61.8753803545072
           },
-          "src/spendguard/zai_exec.py": {
+          "src/spendguard/generate/execution/zai_exec.py": {
             "max_cc": 22,
             "mi": 59.845459267185056
           },
@@ -1239,7 +1226,7 @@
             "max_cc": 0,
             "mi": 100.0
           },
-          "src/spendguard/adapters.py": {
+          "src/spendguard/generate/execution/adapters.py": {
             "max_cc": 247,
             "mi": 0.0
           },
@@ -1367,7 +1354,7 @@
             "max_cc": 7,
             "mi": 70.79046594533779
           },
-          "src/spendguard/antigravity_exec.py": {
+          "src/spendguard/generate/execution/antigravity_exec.py": {
             "max_cc": 18,
             "mi": 50.48267079784406
           },
@@ -1387,7 +1374,7 @@
             "max_cc": 17,
             "mi": 44.12875407505603
           },
-          "src/spendguard/batch_tracker.py": {
+          "src/spendguard/generate/execution/batch_tracker.py": {
             "max_cc": 37,
             "mi": 30.431804375621986
           },
@@ -1503,7 +1490,7 @@
             "max_cc": 17,
             "mi": 21.026037017456613
           },
-          "src/spendguard/codex_exec.py": {
+          "src/spendguard/generate/execution/codex_exec.py": {
             "max_cc": 18,
             "mi": 18.40491755798936
           },
@@ -1699,7 +1686,7 @@
             "max_cc": 30,
             "mi": 53.46804979520682
           },
-          "src/spendguard/kimi_exec.py": {
+          "src/spendguard/generate/execution/kimi_exec.py": {
             "max_cc": 24,
             "mi": 44.95088065727963
           },
@@ -1835,7 +1822,7 @@
             "max_cc": 9,
             "mi": 51.72342577474964
           },
-          "src/spendguard/openai_batch_cli.py": {
+          "src/spendguard/generate/execution/openai_batch_cli.py": {
             "max_cc": 11,
             "mi": 63.046946874326494
           },
@@ -1867,11 +1854,11 @@
             "max_cc": 69,
             "mi": 42.140705104566536
           },
-          "src/spendguard/provider_kit.py": {
+          "src/spendguard/generate/execution/provider_kit.py": {
             "max_cc": 8,
             "mi": 71.42390592091552
           },
-          "src/spendguard/provider_plugins.py": {
+          "src/spendguard/generate/execution/provider_plugins.py": {
             "max_cc": 7,
             "mi": 85.68059769720976
           },
@@ -2115,15 +2102,15 @@
             "max_cc": 31,
             "mi": 57.58697740496773
           },
-          "src/spendguard/submit.py": {
+          "src/spendguard/generate/execution/submit.py": {
             "max_cc": 26,
             "mi": 25.144578083593554
           },
-          "src/spendguard/subscription_cli_results.py": {
+          "src/spendguard/generate/execution/subscription_cli_results.py": {
             "max_cc": 12,
             "mi": 64.69232676353167
           },
-          "src/spendguard/subscription_exec.py": {
+          "src/spendguard/generate/execution/subscription_exec.py": {
             "max_cc": 26,
             "mi": 52.549214777873864
           },
@@ -2163,7 +2150,7 @@
             "max_cc": 18,
             "mi": 51.629739253974826
           },
-          "src/spendguard/vendor_call.py": {
+          "src/spendguard/generate/execution/vendor_call.py": {
             "max_cc": 43,
             "mi": 5.443208545770559
           },
@@ -2191,7 +2178,7 @@
             "max_cc": 15,
             "mi": 61.8753803545072
           },
-          "src/spendguard/zai_exec.py": {
+          "src/spendguard/generate/execution/zai_exec.py": {
             "max_cc": 22,
             "mi": 59.845459267185056
           },
@@ -6182,8 +6169,8 @@
     ]
   ],
   "recorded_dynamic_spendguard_imports": [
-    "src/spendguard/adapters.py:447",
-    "src/spendguard/adapters.py:2743",
+    "src/spendguard/generate/execution/adapters.py:447",
+    "src/spendguard/generate/execution/adapters.py:2743",
     "src/spendguard/delegate_router.py:227",
     "src/spendguard/delegate_router.py:481",
     "src/spendguard/gate.py:2707",
@@ -6197,7 +6184,7 @@
   ],
   "max_largest_scc_size": 142,
   "max_cyclic_edge_count": 943,
-  "max_legacy_shim_count": 65,
+  "max_legacy_shim_count": 78,
   "recorded_cross_context_nonsurface_imports": [
     [
       "spendguard",
@@ -6248,139 +6235,139 @@
       "spendguard.vertex_adapter"
     ],
     [
-      "spendguard.adapters",
+      "spendguard.generate.execution.adapters",
       "spendguard.best_value"
     ],
     [
-      "spendguard.adapters",
+      "spendguard.generate.execution.adapters",
       "spendguard.bulkgate"
     ],
     [
-      "spendguard.adapters",
+      "spendguard.generate.execution.adapters",
       "spendguard.cacheaudit"
     ],
     [
-      "spendguard.adapters",
+      "spendguard.generate.execution.adapters",
       "spendguard.store.call_corpus.callio"
     ],
     [
-      "spendguard.adapters",
+      "spendguard.generate.execution.adapters",
       "spendguard.store.call_corpus.calls"
     ],
     [
-      "spendguard.adapters",
+      "spendguard.generate.execution.adapters",
       "spendguard.catalog"
     ],
     [
-      "spendguard.adapters",
+      "spendguard.generate.execution.adapters",
       "spendguard.store.configuration.config"
     ],
     [
-      "spendguard.adapters",
+      "spendguard.generate.execution.adapters",
       "spendguard.store.call_corpus.content_retention"
     ],
     [
-      "spendguard.adapters",
+      "spendguard.generate.execution.adapters",
       "spendguard.analyze.cost_estimation.content_tokens"
     ],
     [
-      "spendguard.adapters",
+      "spendguard.generate.execution.adapters",
       "spendguard.dispatch"
     ],
     [
-      "spendguard.adapters",
+      "spendguard.generate.execution.adapters",
       "spendguard.distribution"
     ],
     [
-      "spendguard.adapters",
+      "spendguard.generate.execution.adapters",
       "spendguard.analyze.cost_estimation.expected_output"
     ],
     [
-      "spendguard.adapters",
+      "spendguard.generate.execution.adapters",
       "spendguard.fleet"
     ],
     [
-      "spendguard.adapters",
+      "spendguard.generate.execution.adapters",
       "spendguard.gate"
     ],
     [
-      "spendguard.adapters",
+      "spendguard.generate.execution.adapters",
       "spendguard.guard"
     ],
     [
-      "spendguard.adapters",
+      "spendguard.generate.execution.adapters",
       "spendguard.lane_balance"
     ],
     [
-      "spendguard.adapters",
+      "spendguard.generate.execution.adapters",
       "spendguard.lane_catalog"
     ],
     [
-      "spendguard.adapters",
+      "spendguard.generate.execution.adapters",
       "spendguard.lane_queue"
     ],
     [
-      "spendguard.adapters",
+      "spendguard.generate.execution.adapters",
       "spendguard.analyze.treasury.lane_quota_cost"
     ],
     [
-      "spendguard.adapters",
+      "spendguard.generate.execution.adapters",
       "spendguard.lane_recovery"
     ],
     [
-      "spendguard.adapters",
+      "spendguard.generate.execution.adapters",
       "spendguard.lane_registry"
     ],
     [
-      "spendguard.adapters",
+      "spendguard.generate.execution.adapters",
       "spendguard.lane_servability"
     ],
     [
-      "spendguard.adapters",
+      "spendguard.generate.execution.adapters",
       "spendguard.lanes"
     ],
     [
-      "spendguard.adapters",
+      "spendguard.generate.execution.adapters",
       "spendguard.generate.work_integrity.llm_files"
     ],
     [
-      "spendguard.adapters",
+      "spendguard.generate.execution.adapters",
       "spendguard.model_catalog"
     ],
     [
-      "spendguard.adapters",
+      "spendguard.generate.execution.adapters",
       "spendguard.models"
     ],
     [
-      "spendguard.adapters",
+      "spendguard.generate.execution.adapters",
       "spendguard.generate.work_integrity.output_contract"
     ],
     [
-      "spendguard.adapters",
+      "spendguard.generate.execution.adapters",
       "spendguard.plan_admission"
     ],
     [
-      "spendguard.adapters",
+      "spendguard.generate.execution.adapters",
       "spendguard.pricing"
     ],
     [
-      "spendguard.adapters",
+      "spendguard.generate.execution.adapters",
       "spendguard.reasoning_equivalence"
     ],
     [
-      "spendguard.adapters",
+      "spendguard.generate.execution.adapters",
       "spendguard.reliability"
     ],
     [
-      "spendguard.adapters",
+      "spendguard.generate.execution.adapters",
       "spendguard.resource_state"
     ],
     [
-      "spendguard.adapters",
+      "spendguard.generate.execution.adapters",
       "spendguard.store.call_corpus.routing_audit"
     ],
     [
-      "spendguard.adapters",
+      "spendguard.generate.execution.adapters",
       "spendguard.storm_route"
     ],
     [
@@ -6421,7 +6408,7 @@
     ],
     [
       "spendguard.advisor",
-      "spendguard.adapters"
+      "spendguard.generate.execution.adapters"
     ],
     [
       "spendguard.advisor",
@@ -6449,7 +6436,7 @@
     ],
     [
       "spendguard.advisor",
-      "spendguard.submit"
+      "spendguard.generate.execution.submit"
     ],
     [
       "spendguard.advisor",
@@ -6476,19 +6463,19 @@
       "spendguard.store.spend_search.ledger_read"
     ],
     [
-      "spendguard.antigravity_exec",
+      "spendguard.generate.execution.antigravity_exec",
       "spendguard.store.configuration.config"
     ],
     [
-      "spendguard.antigravity_exec",
+      "spendguard.generate.execution.antigravity_exec",
       "spendguard.execution_journal"
     ],
     [
-      "spendguard.antigravity_exec",
+      "spendguard.generate.execution.antigravity_exec",
       "spendguard.analyze.treasury.lane_quota"
     ],
     [
-      "spendguard.antigravity_exec",
+      "spendguard.generate.execution.antigravity_exec",
       "spendguard.analyze.treasury.subscription_headroom_surfaces"
     ],
     [
@@ -6497,7 +6484,7 @@
     ],
     [
       "spendguard.attribution",
-      "spendguard.adapters"
+      "spendguard.generate.execution.adapters"
     ],
     [
       "spendguard.attribution",
@@ -6521,7 +6508,7 @@
     ],
     [
       "spendguard.analyze.assurance.audit",
-      "spendguard.adapters"
+      "spendguard.generate.execution.adapters"
     ],
     [
       "spendguard.analyze.assurance.audit",
@@ -6573,7 +6560,7 @@
     ],
     [
       "spendguard.bakeoff",
-      "spendguard.adapters"
+      "spendguard.generate.execution.adapters"
     ],
     [
       "spendguard.bakeoff",
@@ -6609,11 +6596,11 @@
     ],
     [
       "spendguard.bakeoff",
-      "spendguard.submit"
+      "spendguard.generate.execution.submit"
     ],
     [
       "spendguard.analyze.treasury.balances",
-      "spendguard.adapters"
+      "spendguard.generate.execution.adapters"
     ],
     [
       "spendguard.analyze.treasury.balances",
@@ -6636,39 +6623,39 @@
       "spendguard.plan_admission"
     ],
     [
-      "spendguard.batch_tracker",
+      "spendguard.generate.execution.batch_tracker",
       "spendguard.generate.work_integrity.bulk_resilience"
     ],
     [
-      "spendguard.batch_tracker",
+      "spendguard.generate.execution.batch_tracker",
       "spendguard.store.call_corpus.callio"
     ],
     [
-      "spendguard.batch_tracker",
+      "spendguard.generate.execution.batch_tracker",
       "spendguard.store.configuration.config"
     ],
     [
-      "spendguard.batch_tracker",
+      "spendguard.generate.execution.batch_tracker",
       "spendguard.gate"
     ],
     [
-      "spendguard.batch_tracker",
+      "spendguard.generate.execution.batch_tracker",
       "spendguard.lane_queue"
     ],
     [
-      "spendguard.batch_tracker",
+      "spendguard.generate.execution.batch_tracker",
       "spendguard.store.money_ledger.ledger_fork_locks"
     ],
     [
-      "spendguard.batch_tracker",
+      "spendguard.generate.execution.batch_tracker",
       "spendguard.store.money_ledger.ledger_writer"
     ],
     [
-      "spendguard.batch_tracker",
+      "spendguard.generate.execution.batch_tracker",
       "spendguard.analyze.cost_estimation.provider_tokens"
     ],
     [
-      "spendguard.batch_tracker",
+      "spendguard.generate.execution.batch_tracker",
       "spendguard.generate.work_integrity.work_integrity"
     ],
     [
@@ -6681,7 +6668,7 @@
     ],
     [
       "spendguard.best_value",
-      "spendguard.adapters"
+      "spendguard.generate.execution.adapters"
     ],
     [
       "spendguard.best_value",
@@ -6737,7 +6724,7 @@
     ],
     [
       "spendguard.brief",
-      "spendguard.adapters"
+      "spendguard.generate.execution.adapters"
     ],
     [
       "spendguard.brief",
@@ -6769,7 +6756,7 @@
     ],
     [
       "spendguard.budget",
-      "spendguard.adapters"
+      "spendguard.generate.execution.adapters"
     ],
     [
       "spendguard.budget",
@@ -6817,7 +6804,7 @@
     ],
     [
       "spendguard.bulkgate",
-      "spendguard.adapters"
+      "spendguard.generate.execution.adapters"
     ],
     [
       "spendguard.bulkgate",
@@ -6873,11 +6860,11 @@
     ],
     [
       "spendguard.cacheaudit",
-      "spendguard.submit"
+      "spendguard.generate.execution.submit"
     ],
     [
       "spendguard.cachetest",
-      "spendguard.adapters"
+      "spendguard.generate.execution.adapters"
     ],
     [
       "spendguard.cachetest",
@@ -6901,7 +6888,7 @@
     ],
     [
       "spendguard.cachetest",
-      "spendguard.submit"
+      "spendguard.generate.execution.submit"
     ],
     [
       "spendguard.cachetest",
@@ -7093,11 +7080,11 @@
     ],
     [
       "spendguard.catalog",
-      "spendguard.adapters"
+      "spendguard.generate.execution.adapters"
     ],
     [
       "spendguard.catalog",
-      "spendguard.antigravity_exec"
+      "spendguard.generate.execution.antigravity_exec"
     ],
     [
       "spendguard.catalog",
@@ -7109,7 +7096,7 @@
     ],
     [
       "spendguard.catalog",
-      "spendguard.vendor_call"
+      "spendguard.generate.execution.vendor_call"
     ],
     [
       "spendguard.catalog_price_authoring",
@@ -7117,7 +7104,7 @@
     ],
     [
       "spendguard.chat",
-      "spendguard.adapters"
+      "spendguard.generate.execution.adapters"
     ],
     [
       "spendguard.chat",
@@ -7157,7 +7144,7 @@
     ],
     [
       "spendguard.claudecode",
-      "spendguard.adapters"
+      "spendguard.generate.execution.adapters"
     ],
     [
       "spendguard.claudecode",
@@ -7209,11 +7196,11 @@
     ],
     [
       "spendguard.cli",
-      "spendguard.adapters"
+      "spendguard.generate.execution.adapters"
     ],
     [
       "spendguard.cli",
-      "spendguard.batch_tracker"
+      "spendguard.generate.execution.batch_tracker"
     ],
     [
       "spendguard.cli",
@@ -7225,7 +7212,7 @@
     ],
     [
       "spendguard.cli",
-      "spendguard.codex_exec"
+      "spendguard.generate.execution.codex_exec"
     ],
     [
       "spendguard.cli",
@@ -7365,7 +7352,7 @@
     ],
     [
       "spendguard.codex_daemon",
-      "spendguard.codex_exec"
+      "spendguard.generate.execution.codex_exec"
     ],
     [
       "spendguard.codex_daemon",
@@ -7381,7 +7368,7 @@
     ],
     [
       "spendguard.codex_daemon_broker",
-      "spendguard.codex_exec"
+      "spendguard.generate.execution.codex_exec"
     ],
     [
       "spendguard.codex_daemon_broker",
@@ -7396,24 +7383,24 @@
       "spendguard.release"
     ],
     [
-      "spendguard.codex_exec",
+      "spendguard.generate.execution.codex_exec",
       "spendguard.codex_daemon"
     ],
     [
-      "spendguard.codex_exec",
+      "spendguard.generate.execution.codex_exec",
       "spendguard.store.configuration.config"
     ],
     [
-      "spendguard.codex_exec",
+      "spendguard.generate.execution.codex_exec",
       "spendguard.execution_journal"
     ],
     [
-      "spendguard.codex_exec",
+      "spendguard.generate.execution.codex_exec",
       "spendguard.analyze.treasury.subscription_headroom_surfaces"
     ],
     [
       "spendguard.compaction",
-      "spendguard.adapters"
+      "spendguard.generate.execution.adapters"
     ],
     [
       "spendguard.compaction",
@@ -7437,7 +7424,7 @@
     ],
     [
       "spendguard.compare",
-      "spendguard.adapters"
+      "spendguard.generate.execution.adapters"
     ],
     [
       "spendguard.compare",
@@ -7477,11 +7464,11 @@
     ],
     [
       "spendguard.store.configuration.config",
-      "spendguard.adapters"
+      "spendguard.generate.execution.adapters"
     ],
     [
       "spendguard.store.configuration.config",
-      "spendguard.codex_exec"
+      "spendguard.generate.execution.codex_exec"
     ],
     [
       "spendguard.store.configuration.config",
@@ -7525,7 +7512,7 @@
     ],
     [
       "spendguard.analyze.assurance.consumer_audit",
-      "spendguard.adapters"
+      "spendguard.generate.execution.adapters"
     ],
     [
       "spendguard.analyze.assurance.consumer_audit",
@@ -7573,7 +7560,7 @@
     ],
     [
       "spendguard.analyze.cost_estimation.content_tokens",
-      "spendguard.adapters"
+      "spendguard.generate.execution.adapters"
     ],
     [
       "spendguard.analyze.cost_estimation.content_tokens",
@@ -7585,7 +7572,7 @@
     ],
     [
       "spendguard.conv",
-      "spendguard.adapters"
+      "spendguard.generate.execution.adapters"
     ],
     [
       "spendguard.conv",
@@ -7633,7 +7620,7 @@
     ],
     [
       "spendguard.conv",
-      "spendguard.submit"
+      "spendguard.generate.execution.submit"
     ],
     [
       "spendguard.conv",
@@ -7649,7 +7636,7 @@
     ],
     [
       "spendguard.analyze.assurance.coverage",
-      "spendguard.adapters"
+      "spendguard.generate.execution.adapters"
     ],
     [
       "spendguard.analyze.assurance.coverage",
@@ -7669,7 +7656,7 @@
     ],
     [
       "spendguard.crossllm",
-      "spendguard.adapters"
+      "spendguard.generate.execution.adapters"
     ],
     [
       "spendguard.crossllm",
@@ -7697,7 +7684,7 @@
     ],
     [
       "spendguard.crossllm",
-      "spendguard.vendor_call"
+      "spendguard.generate.execution.vendor_call"
     ],
     [
       "spendguard.egress.deid",
@@ -7777,7 +7764,7 @@
     ],
     [
       "spendguard.dispatch",
-      "spendguard.adapters"
+      "spendguard.generate.execution.adapters"
     ],
     [
       "spendguard.dispatch",
@@ -7833,7 +7820,7 @@
     ],
     [
       "spendguard.effort_titration",
-      "spendguard.adapters"
+      "spendguard.generate.execution.adapters"
     ],
     [
       "spendguard.effort_titration",
@@ -7881,7 +7868,7 @@
     ],
     [
       "spendguard.effort_titration",
-      "spendguard.submit"
+      "spendguard.generate.execution.submit"
     ],
     [
       "spendguard.egress.emit",
@@ -7893,7 +7880,7 @@
     ],
     [
       "spendguard.equivalence",
-      "spendguard.adapters"
+      "spendguard.generate.execution.adapters"
     ],
     [
       "spendguard.equivalence",
@@ -7921,7 +7908,7 @@
     ],
     [
       "spendguard.analyze.cost_estimation.estimate_divergence",
-      "spendguard.adapters"
+      "spendguard.generate.execution.adapters"
     ],
     [
       "spendguard.analyze.cost_estimation.estimate_divergence",
@@ -7937,7 +7924,7 @@
     ],
     [
       "spendguard.analyze.assurance.estimate_literals",
-      "spendguard.adapters"
+      "spendguard.generate.execution.adapters"
     ],
     [
       "spendguard.analyze.assurance.estimate_literals",
@@ -7969,7 +7956,7 @@
     ],
     [
       "spendguard.experiment",
-      "spendguard.adapters"
+      "spendguard.generate.execution.adapters"
     ],
     [
       "spendguard.experiment",
@@ -8005,7 +7992,7 @@
     ],
     [
       "spendguard.experiment",
-      "spendguard.submit"
+      "spendguard.generate.execution.submit"
     ],
     [
       "spendguard.experiment",
@@ -8069,7 +8056,7 @@
     ],
     [
       "spendguard.gate",
-      "spendguard.adapters"
+      "spendguard.generate.execution.adapters"
     ],
     [
       "spendguard.gate",
@@ -8157,7 +8144,7 @@
     ],
     [
       "spendguard.gate",
-      "spendguard.provider_plugins"
+      "spendguard.generate.execution.provider_plugins"
     ],
     [
       "spendguard.gate",
@@ -8197,7 +8184,7 @@
     ],
     [
       "spendguard.guard",
-      "spendguard.adapters"
+      "spendguard.generate.execution.adapters"
     ],
     [
       "spendguard.guard",
@@ -8265,7 +8252,7 @@
     ],
     [
       "spendguard.intent_model_prior",
-      "spendguard.adapters"
+      "spendguard.generate.execution.adapters"
     ],
     [
       "spendguard.intent_model_prior",
@@ -8293,7 +8280,7 @@
     ],
     [
       "spendguard.intent_model_prior",
-      "spendguard.submit"
+      "spendguard.generate.execution.submit"
     ],
     [
       "spendguard.generate.work_integrity.item_ledger",
@@ -8317,22 +8304,22 @@
     ],
     [
       "spendguard.kimi_daemon",
-      "spendguard.kimi_exec"
+      "spendguard.generate.execution.kimi_exec"
     ],
     [
-      "spendguard.kimi_exec",
+      "spendguard.generate.execution.kimi_exec",
       "spendguard.store.configuration.config"
     ],
     [
-      "spendguard.kimi_exec",
+      "spendguard.generate.execution.kimi_exec",
       "spendguard.execution_journal"
     ],
     [
-      "spendguard.kimi_exec",
+      "spendguard.generate.execution.kimi_exec",
       "spendguard.kimi_daemon"
     ],
     [
-      "spendguard.kimi_exec",
+      "spendguard.generate.execution.kimi_exec",
       "spendguard.analyze.treasury.subscription_headroom_surfaces"
     ],
     [
@@ -8341,7 +8328,7 @@
     ],
     [
       "spendguard.lane_balance",
-      "spendguard.adapters"
+      "spendguard.generate.execution.adapters"
     ],
     [
       "spendguard.lane_balance",
@@ -8425,15 +8412,15 @@
     ],
     [
       "spendguard.lane_balance",
-      "spendguard.submit"
+      "spendguard.generate.execution.submit"
     ],
     [
       "spendguard.lane_balance",
-      "spendguard.vendor_call"
+      "spendguard.generate.execution.vendor_call"
     ],
     [
       "spendguard.lane_bandit",
-      "spendguard.adapters"
+      "spendguard.generate.execution.adapters"
     ],
     [
       "spendguard.lane_bandit",
@@ -8477,7 +8464,7 @@
     ],
     [
       "spendguard.lane_catalog",
-      "spendguard.adapters"
+      "spendguard.generate.execution.adapters"
     ],
     [
       "spendguard.lane_catalog",
@@ -8489,7 +8476,7 @@
     ],
     [
       "spendguard.lane_catalog",
-      "spendguard.vendor_call"
+      "spendguard.generate.execution.vendor_call"
     ],
     [
       "spendguard.analyze.treasury.lane_economics",
@@ -8529,11 +8516,11 @@
     ],
     [
       "spendguard.lane_queue",
-      "spendguard.adapters"
+      "spendguard.generate.execution.adapters"
     ],
     [
       "spendguard.lane_queue",
-      "spendguard.batch_tracker"
+      "spendguard.generate.execution.batch_tracker"
     ],
     [
       "spendguard.lane_queue",
@@ -8581,7 +8568,7 @@
     ],
     [
       "spendguard.lane_queue",
-      "spendguard.vendor_call"
+      "spendguard.generate.execution.vendor_call"
     ],
     [
       "spendguard.lane_queue",
@@ -8613,7 +8600,7 @@
     ],
     [
       "spendguard.lane_servability",
-      "spendguard.adapters"
+      "spendguard.generate.execution.adapters"
     ],
     [
       "spendguard.lane_servability",
@@ -8633,11 +8620,11 @@
     ],
     [
       "spendguard.lane_servability",
-      "spendguard.vendor_call"
+      "spendguard.generate.execution.vendor_call"
     ],
     [
       "spendguard.analyze.treasury.lane_value",
-      "spendguard.adapters"
+      "spendguard.generate.execution.adapters"
     ],
     [
       "spendguard.analyze.treasury.lane_value",
@@ -8665,7 +8652,7 @@
     ],
     [
       "spendguard.lanes",
-      "spendguard.adapters"
+      "spendguard.generate.execution.adapters"
     ],
     [
       "spendguard.lanes",
@@ -8921,7 +8908,7 @@
     ],
     [
       "spendguard.mcp_server",
-      "spendguard.adapters"
+      "spendguard.generate.execution.adapters"
     ],
     [
       "spendguard.mcp_server",
@@ -8937,7 +8924,7 @@
     ],
     [
       "spendguard.mcp_server",
-      "spendguard.batch_tracker"
+      "spendguard.generate.execution.batch_tracker"
     ],
     [
       "spendguard.mcp_server",
@@ -8949,7 +8936,7 @@
     ],
     [
       "spendguard.mcp_server",
-      "spendguard.codex_exec"
+      "spendguard.generate.execution.codex_exec"
     ],
     [
       "spendguard.mcp_server",
@@ -9097,7 +9084,7 @@
     ],
     [
       "spendguard.analyze.assurance.metadata_audit",
-      "spendguard.vendor_call"
+      "spendguard.generate.execution.vendor_call"
     ],
     [
       "spendguard.store.money_ledger.migrate_charges",
@@ -9121,7 +9108,7 @@
     ],
     [
       "spendguard.model_preflight",
-      "spendguard.adapters"
+      "spendguard.generate.execution.adapters"
     ],
     [
       "spendguard.model_preflight",
@@ -9137,7 +9124,7 @@
     ],
     [
       "spendguard.model_preflight",
-      "spendguard.vendor_call"
+      "spendguard.generate.execution.vendor_call"
     ],
     [
       "spendguard.models",
@@ -9153,18 +9140,18 @@
     ],
     [
       "spendguard.models",
-      "spendguard.vendor_call"
+      "spendguard.generate.execution.vendor_call"
     ],
     [
       "spendguard.egress.notify",
       "spendguard.store.configuration.config"
     ],
     [
-      "spendguard.openai_batch_cli",
+      "spendguard.generate.execution.openai_batch_cli",
       "spendguard.store.call_corpus.calls"
     ],
     [
-      "spendguard.openai_batch_cli",
+      "spendguard.generate.execution.openai_batch_cli",
       "spendguard.capability_cli_parsing"
     ],
     [
@@ -9193,7 +9180,7 @@
     ],
     [
       "spendguard.plan_admission",
-      "spendguard.adapters"
+      "spendguard.generate.execution.adapters"
     ],
     [
       "spendguard.plan_admission",
@@ -9229,7 +9216,7 @@
     ],
     [
       "spendguard.pricing",
-      "spendguard.adapters"
+      "spendguard.generate.execution.adapters"
     ],
     [
       "spendguard.pricing",
@@ -9245,7 +9232,7 @@
     ],
     [
       "spendguard.prompts",
-      "spendguard.adapters"
+      "spendguard.generate.execution.adapters"
     ],
     [
       "spendguard.prompts",
@@ -9276,16 +9263,16 @@
       "spendguard.pricing"
     ],
     [
-      "spendguard.provider_kit",
+      "spendguard.generate.execution.provider_kit",
       "spendguard.gate"
     ],
     [
-      "spendguard.provider_kit",
+      "spendguard.generate.execution.provider_kit",
       "spendguard.pricing"
     ],
     [
       "spendguard.analyze.cost_estimation.provider_tokens",
-      "spendguard.adapters"
+      "spendguard.generate.execution.adapters"
     ],
     [
       "spendguard.analyze.cost_estimation.provider_tokens",
@@ -9325,7 +9312,7 @@
     ],
     [
       "spendguard.queue_planner",
-      "spendguard.adapters"
+      "spendguard.generate.execution.adapters"
     ],
     [
       "spendguard.queue_planner",
@@ -9369,11 +9356,11 @@
     ],
     [
       "spendguard.reasoning_equivalence",
-      "spendguard.adapters"
+      "spendguard.generate.execution.adapters"
     ],
     [
       "spendguard.reasoning_equivalence",
-      "spendguard.codex_exec"
+      "spendguard.generate.execution.codex_exec"
     ],
     [
       "spendguard.reasoning_equivalence",
@@ -9381,11 +9368,11 @@
     ],
     [
       "spendguard.reasoning_equivalence",
-      "spendguard.vendor_call"
+      "spendguard.generate.execution.vendor_call"
     ],
     [
       "spendguard.analyze.spend_reporting.receipt",
-      "spendguard.adapters"
+      "spendguard.generate.execution.adapters"
     ],
     [
       "spendguard.analyze.spend_reporting.receipt",
@@ -9573,7 +9560,7 @@
     ],
     [
       "spendguard.reliability",
-      "spendguard.adapters"
+      "spendguard.generate.execution.adapters"
     ],
     [
       "spendguard.reliability",
@@ -9713,7 +9700,7 @@
     ],
     [
       "spendguard.requirement_judge",
-      "spendguard.adapters"
+      "spendguard.generate.execution.adapters"
     ],
     [
       "spendguard.requirement_judge",
@@ -9729,7 +9716,7 @@
     ],
     [
       "spendguard.residency_gate",
-      "spendguard.adapters"
+      "spendguard.generate.execution.adapters"
     ],
     [
       "spendguard.residency_gate",
@@ -9765,7 +9752,7 @@
     ],
     [
       "spendguard.resources",
-      "spendguard.adapters"
+      "spendguard.generate.execution.adapters"
     ],
     [
       "spendguard.resources",
@@ -9813,7 +9800,7 @@
     ],
     [
       "spendguard.review",
-      "spendguard.adapters"
+      "spendguard.generate.execution.adapters"
     ],
     [
       "spendguard.review",
@@ -9849,7 +9836,7 @@
     ],
     [
       "spendguard.review",
-      "spendguard.submit"
+      "spendguard.generate.execution.submit"
     ],
     [
       "spendguard.review",
@@ -9917,7 +9904,7 @@
     ],
     [
       "spendguard.route_utility",
-      "spendguard.adapters"
+      "spendguard.generate.execution.adapters"
     ],
     [
       "spendguard.route_utility",
@@ -10089,7 +10076,7 @@
     ],
     [
       "spendguard.semcache",
-      "spendguard.adapters"
+      "spendguard.generate.execution.adapters"
     ],
     [
       "spendguard.semcache",
@@ -10121,7 +10108,7 @@
     ],
     [
       "spendguard.serve",
-      "spendguard.adapters"
+      "spendguard.generate.execution.adapters"
     ],
     [
       "spendguard.serve",
@@ -10145,7 +10132,7 @@
     ],
     [
       "spendguard.setup",
-      "spendguard.adapters"
+      "spendguard.generate.execution.adapters"
     ],
     [
       "spendguard.setup",
@@ -10229,7 +10216,7 @@
     ],
     [
       "spendguard.sources",
-      "spendguard.adapters"
+      "spendguard.generate.execution.adapters"
     ],
     [
       "spendguard.sources",
@@ -10253,11 +10240,11 @@
     ],
     [
       "spendguard.sources",
-      "spendguard.provider_plugins"
+      "spendguard.generate.execution.provider_plugins"
     ],
     [
       "spendguard.stability",
-      "spendguard.adapters"
+      "spendguard.generate.execution.adapters"
     ],
     [
       "spendguard.stability",
@@ -10265,15 +10252,15 @@
     ],
     [
       "spendguard.storm_route",
-      "spendguard.adapters"
+      "spendguard.generate.execution.adapters"
     ],
     [
       "spendguard.storm_submit",
-      "spendguard.adapters"
+      "spendguard.generate.execution.adapters"
     ],
     [
       "spendguard.storm_submit",
-      "spendguard.batch_tracker"
+      "spendguard.generate.execution.batch_tracker"
     ],
     [
       "spendguard.storm_submit",
@@ -10285,62 +10272,62 @@
     ],
     [
       "spendguard.storm_submit",
-      "spendguard.submit"
+      "spendguard.generate.execution.submit"
     ],
     [
-      "spendguard.submit",
+      "spendguard.generate.execution.submit",
       "spendguard.generate.work_integrity.bulk_resilience"
     ],
     [
-      "spendguard.submit",
+      "spendguard.generate.execution.submit",
       "spendguard.store.call_corpus.calls"
     ],
     [
-      "spendguard.submit",
+      "spendguard.generate.execution.submit",
       "spendguard.store.configuration.config"
     ],
     [
-      "spendguard.submit",
+      "spendguard.generate.execution.submit",
       "spendguard.analyze.cost_estimation.content_tokens"
     ],
     [
-      "spendguard.submit",
+      "spendguard.generate.execution.submit",
       "spendguard.analyze.cost_estimation.expected_output"
     ],
     [
-      "spendguard.submit",
+      "spendguard.generate.execution.submit",
       "spendguard.gate"
     ],
     [
-      "spendguard.submit",
+      "spendguard.generate.execution.submit",
       "spendguard.models"
     ],
     [
-      "spendguard.submit",
+      "spendguard.generate.execution.submit",
       "spendguard.pricing"
     ],
     [
-      "spendguard.submit",
+      "spendguard.generate.execution.submit",
       "spendguard.analyze.cost_estimation.provider_tokens"
     ],
     [
-      "spendguard.submit",
+      "spendguard.generate.execution.submit",
       "spendguard.generate.work_integrity.work_integrity"
     ],
     [
-      "spendguard.subscription_exec",
+      "spendguard.generate.execution.subscription_exec",
       "spendguard.store.configuration.config"
     ],
     [
-      "spendguard.subscription_exec",
+      "spendguard.generate.execution.subscription_exec",
       "spendguard.analyze.cost_estimation.content_tokens"
     ],
     [
-      "spendguard.subscription_exec",
+      "spendguard.generate.execution.subscription_exec",
       "spendguard.execution_journal"
     ],
     [
-      "spendguard.subscription_exec",
+      "spendguard.generate.execution.subscription_exec",
       "spendguard.analyze.treasury.lane_quota"
     ],
     [
@@ -10389,7 +10376,7 @@
     ],
     [
       "spendguard.tier_config",
-      "spendguard.adapters"
+      "spendguard.generate.execution.adapters"
     ],
     [
       "spendguard.tier_config",
@@ -10417,7 +10404,7 @@
     ],
     [
       "spendguard.analyze.assurance.token_caps",
-      "spendguard.adapters"
+      "spendguard.generate.execution.adapters"
     ],
     [
       "spendguard.analyze.assurance.token_caps",
@@ -10476,47 +10463,47 @@
       "spendguard.pricing"
     ],
     [
-      "spendguard.vendor_call",
+      "spendguard.generate.execution.vendor_call",
       "spendguard.budget"
     ],
     [
-      "spendguard.vendor_call",
+      "spendguard.generate.execution.vendor_call",
       "spendguard.bulkgate"
     ],
     [
-      "spendguard.vendor_call",
+      "spendguard.generate.execution.vendor_call",
       "spendguard.store.call_corpus.calls"
     ],
     [
-      "spendguard.vendor_call",
+      "spendguard.generate.execution.vendor_call",
       "spendguard.catalog"
     ],
     [
-      "spendguard.vendor_call",
+      "spendguard.generate.execution.vendor_call",
       "spendguard.store.configuration.config"
     ],
     [
-      "spendguard.vendor_call",
+      "spendguard.generate.execution.vendor_call",
       "spendguard.dispatch"
     ],
     [
-      "spendguard.vendor_call",
+      "spendguard.generate.execution.vendor_call",
       "spendguard.gate"
     ],
     [
-      "spendguard.vendor_call",
+      "spendguard.generate.execution.vendor_call",
       "spendguard.models"
     ],
     [
-      "spendguard.vendor_call",
+      "spendguard.generate.execution.vendor_call",
       "spendguard.generate.work_integrity.output_contract"
     ],
     [
-      "spendguard.vendor_call",
+      "spendguard.generate.execution.vendor_call",
       "spendguard.plan_admission"
     ],
     [
-      "spendguard.vendor_call",
+      "spendguard.generate.execution.vendor_call",
       "spendguard.pricing"
     ],
     [
@@ -10525,7 +10512,7 @@
     ],
     [
       "spendguard.analyze.assurance.verify",
-      "spendguard.adapters"
+      "spendguard.generate.execution.adapters"
     ],
     [
       "spendguard.analyze.assurance.verify",
@@ -10581,7 +10568,7 @@
     ],
     [
       "spendguard.whole_job",
-      "spendguard.adapters"
+      "spendguard.generate.execution.adapters"
     ],
     [
       "spendguard.whole_job",
@@ -10613,7 +10600,7 @@
     ],
     [
       "spendguard.whole_job",
-      "spendguard.submit"
+      "spendguard.generate.execution.submit"
     ],
     [
       "spendguard.whole_job",
@@ -10625,7 +10612,7 @@
     ],
     [
       "spendguard.workdone",
-      "spendguard.adapters"
+      "spendguard.generate.execution.adapters"
     ],
     [
       "spendguard.workdone",
@@ -10672,23 +10659,23 @@
       "spendguard.store.money_ledger.ledger_writer"
     ],
     [
-      "spendguard.zai_exec",
+      "spendguard.generate.execution.zai_exec",
       "spendguard.store.configuration.config"
     ],
     [
-      "spendguard.zai_exec",
+      "spendguard.generate.execution.zai_exec",
       "spendguard.execution_journal"
     ],
     [
-      "spendguard.zai_exec",
+      "spendguard.generate.execution.zai_exec",
       "spendguard.gate"
     ],
     [
-      "spendguard.zai_exec",
+      "spendguard.generate.execution.zai_exec",
       "spendguard.models"
     ],
     [
-      "spendguard.zai_exec",
+      "spendguard.generate.execution.zai_exec",
       "spendguard.analyze.treasury.subscription_headroom_surfaces"
     ]
   ],
