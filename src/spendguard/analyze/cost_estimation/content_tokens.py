@@ -33,7 +33,7 @@ import math
 import struct
 import sys
 
-from . import config
+from ... import config
 
 # ── provider token geometry ───────────────────────────────────────────────────
 # Named constants, not magic numbers. These are TOKEN-COUNTING rules (how many tokens a picture is worth),
@@ -196,7 +196,7 @@ def _openai_tile_cost(model):
     if not model:
         return OPENAI_TILE_COST_DEFAULT
     try:
-        from . import pricing
+        from ... import pricing
         canon = pricing.normalize(model)
     except Exception:
         canon = str(model).strip()
@@ -226,7 +226,7 @@ def _wire_kind(provider):
     if not provider:
         return _DEFAULT_WIRE_KIND
     try:
-        from . import adapters
+        from ... import adapters
         spec = adapters.PROVIDERS.get(str(provider).strip().lower())
     except Exception:
         spec = None

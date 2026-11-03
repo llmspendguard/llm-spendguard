@@ -29,12 +29,12 @@ FAIL-OPEN: token estimation must never break a call. tiktoken absent → a per-p
 (spend refusal / dispatch deadline / a locked accounting period) is the one thing NOT swallowed — it propagates.
 """
 
-from .capability_cli_parsing import registered_cli_option_token
+from ...capability_cli_parsing import registered_cli_option_token
 import json
 import statistics
 import threading
-from . import config
-from .ledger_writer import serialize_ledger_function
+from ... import config
+from ...ledger_writer import serialize_ledger_function
 
 # The last-resort char→token ratio, used ONLY when tiktoken is entirely absent AND no measured ratio exists for
 # the provider. Documented, not silent: ~4 chars/token is the classic English-prose rule of thumb this replaces.
@@ -115,7 +115,7 @@ def _stop_or_locked(e):
     A superset of the canonical predicate because this module also touches the ledger, whose locked-period refusal
     is a deliberate stop too. Lazy imports keep the module low in the import graph; any hiccup → not a stop."""
     try:
-        from . import gate, ledger
+        from ... import gate, ledger
         return gate.is_deliberate_stop(e) or isinstance(e, ledger.LockedError)
     except Exception:
         return False
@@ -129,7 +129,7 @@ def _load_factors():
     global _factor_cache
     loaded = {}
     try:
-        from . import budget
+        from ... import budget
         with config.ledger_op('_factors_db', _ensure_provider_factor_schema) as db:
             with budget._lock:
                 rows = db.execute("SELECT provider,factor,confidence,why,char_ratio,n,stats,ts FROM token_factors").fetchall()
@@ -261,7 +261,7 @@ def _choose_factors_agentically(stats_by_provider, model):
     confidence + rationale. Returns ({provider: {factor, confidence, why}}, cost). A DELIBERATE stop propagates; any
     other failure returns (None, cost) so the caller can leave those providers on the neutral proxy (never a
     mechanical substitute dressed as the judged choice). The WHOLE panel is sent (never truncated)."""
-    from . import adapters, calls, config
+    from ... import adapters, calls, config
     model = model or config.advisor_model()
     prompt = "Per-provider token-ratio statistics (ratio = provider_in_tok / o200k_count):\n" + json.dumps(
         stats_by_provider, indent=2, sort_keys=True) + "\n\nChoose a factor for each provider listed."
@@ -291,7 +291,7 @@ def _choose_factors_agentically(stats_by_provider, model):
 def _estimate_choice_cost(stats_by_provider, model=None):
     """$0 estimate of the ONE factor-choice meta call, for --dry-run (the estimate-first discipline). A DELIBERATE
     stop from pricing (EstimateNotGrounded / a refusal) PROPAGATES — it is not masked into a None estimate."""
-    from . import config, pricing, adapters
+    from ... import config, pricing, adapters
     model = model or config.advisor_model()
     prompt = _FACTOR_SYS + "\n" + json.dumps(stats_by_provider, sort_keys=True)
     in_tok = count_text(prompt, provider=adapters.provider_for(model), model=model)
@@ -321,7 +321,7 @@ def calibrate(store=True, model=None):
     if enc is None:
         return {"ok": False, "note": "tiktoken unavailable — cannot compute an o200k base to calibrate against; "
                                      "estimates use the measured char ratio only."}
-    from . import callio
+    from ... import callio
     rows = []
     try:
         with callio.config.ledger_op('callio', callio._ensure_callio_schema) as ledger_read_handle:
@@ -395,7 +395,7 @@ def calibrate(store=True, model=None):
 
 @serialize_ledger_function
 def _persist_provider_factor_choice(provider, choice, statistics_row, timestamp):
-    from . import budget
+    from ... import budget
     db = _factors_db()
     with budget._lock:
         db.execute("INSERT INTO token_factors (provider,factor,confidence,why,char_ratio,n,stats,ts) "

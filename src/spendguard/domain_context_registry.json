@@ -469,12 +469,12 @@
       "surface_module": "spendguard.analyze.cost_estimation",
       "layer": "L1",
       "backing_modules": [
-        "estimate",
-        "calibrate",
-        "expected_output",
-        "content_tokens",
-        "provider_tokens",
-        "estimate_divergence"
+        "analyze.cost_estimation.estimate",
+        "analyze.cost_estimation.calibrate",
+        "analyze.cost_estimation.expected_output",
+        "analyze.cost_estimation.content_tokens",
+        "analyze.cost_estimation.provider_tokens",
+        "analyze.cost_estimation.estimate_divergence"
       ],
       "published_names": []
     },
@@ -1015,6 +1015,36 @@
     {
       "legacy_module": "spendguard.routing_audit",
       "current_module": "spendguard.store.call_corpus.routing_audit",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.estimate",
+      "current_module": "spendguard.analyze.cost_estimation.estimate",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.calibrate",
+      "current_module": "spendguard.analyze.cost_estimation.calibrate",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.expected_output",
+      "current_module": "spendguard.analyze.cost_estimation.expected_output",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.content_tokens",
+      "current_module": "spendguard.analyze.cost_estimation.content_tokens",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.provider_tokens",
+      "current_module": "spendguard.analyze.cost_estimation.provider_tokens",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.estimate_divergence",
+      "current_module": "spendguard.analyze.cost_estimation.estimate_divergence",
       "moved_in_phase": 3
     }
   ],

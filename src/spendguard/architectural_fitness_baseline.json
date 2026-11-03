@@ -23,7 +23,6 @@
     "bulkgate.py",
     "cacheaudit.py",
     "cachetest.py",
-    "calibrate.py",
     "capability_cli_callable_generation.py",
     "capability_cli_dispatch_generation.py",
     "capability_cli_help_generation.py",
@@ -47,7 +46,6 @@
     "compaction.py",
     "compare.py",
     "comprehend.py",
-    "content_tokens.py",
     "conv.py",
     "cost_integrity.py",
     "crossllm.py",
@@ -66,10 +64,7 @@
     "emit.py",
     "equivalence.py",
     "escalation_ladder.py",
-    "estimate.py",
-    "estimate_divergence.py",
     "execution_journal.py",
-    "expected_output.py",
     "experiment.py",
     "fleet.py",
     "focus_export.py",
@@ -119,7 +114,6 @@
     "prompts.py",
     "provider_kit.py",
     "provider_plugins.py",
-    "provider_tokens.py",
     "queue_planner.py",
     "realized.py",
     "realtime_oracle.py",
@@ -443,7 +437,7 @@
             "max_cc": 33,
             "mi": 51.39788798944255
           },
-          "src/spendguard/calibrate.py": {
+          "src/spendguard/analyze/cost_estimation/calibrate.py": {
             "max_cc": 24,
             "mi": 12.468441018546837
           },
@@ -539,7 +533,7 @@
             "max_cc": 21,
             "mi": 39.06540928307973
           },
-          "src/spendguard/content_tokens.py": {
+          "src/spendguard/analyze/cost_estimation/content_tokens.py": {
             "max_cc": 17,
             "mi": 39.62361733337912
           },
@@ -619,11 +613,11 @@
             "max_cc": 12,
             "mi": 61.13344146053853
           },
-          "src/spendguard/estimate.py": {
+          "src/spendguard/analyze/cost_estimation/estimate.py": {
             "max_cc": 32,
             "mi": 50.506173527922066
           },
-          "src/spendguard/estimate_divergence.py": {
+          "src/spendguard/analyze/cost_estimation/estimate_divergence.py": {
             "max_cc": 12,
             "mi": 69.00470814762058
           },
@@ -631,7 +625,7 @@
             "max_cc": 23,
             "mi": 12.536718980712662
           },
-          "src/spendguard/expected_output.py": {
+          "src/spendguard/analyze/cost_estimation/expected_output.py": {
             "max_cc": 24,
             "mi": 58.90544946287266
           },
@@ -895,7 +889,7 @@
             "max_cc": 7,
             "mi": 85.68059769720976
           },
-          "src/spendguard/provider_tokens.py": {
+          "src/spendguard/analyze/cost_estimation/provider_tokens.py": {
             "max_cc": 23,
             "mi": 36.69155733755533
           },
@@ -1443,7 +1437,7 @@
             "max_cc": 33,
             "mi": 50.84226846972301
           },
-          "src/spendguard/calibrate.py": {
+          "src/spendguard/analyze/cost_estimation/calibrate.py": {
             "max_cc": 24,
             "mi": 12.26506252737109
           },
@@ -1539,7 +1533,7 @@
             "max_cc": 21,
             "mi": 38.987113926607044
           },
-          "src/spendguard/content_tokens.py": {
+          "src/spendguard/analyze/cost_estimation/content_tokens.py": {
             "max_cc": 17,
             "mi": 39.62361733337912
           },
@@ -1619,11 +1613,11 @@
             "max_cc": 12,
             "mi": 61.13344146053853
           },
-          "src/spendguard/estimate.py": {
+          "src/spendguard/analyze/cost_estimation/estimate.py": {
             "max_cc": 32,
             "mi": 49.83716499642146
           },
-          "src/spendguard/estimate_divergence.py": {
+          "src/spendguard/analyze/cost_estimation/estimate_divergence.py": {
             "max_cc": 12,
             "mi": 69.00470814762058
           },
@@ -1631,7 +1625,7 @@
             "max_cc": 23,
             "mi": 12.536718980712662
           },
-          "src/spendguard/expected_output.py": {
+          "src/spendguard/analyze/cost_estimation/expected_output.py": {
             "max_cc": 24,
             "mi": 58.80727569095695
           },
@@ -1895,7 +1889,7 @@
             "max_cc": 7,
             "mi": 85.68059769720976
           },
-          "src/spendguard/provider_tokens.py": {
+          "src/spendguard/analyze/cost_estimation/provider_tokens.py": {
             "max_cc": 23,
             "mi": 36.626221325416864
           },
@@ -6217,7 +6211,7 @@
   ],
   "max_largest_scc_size": 142,
   "max_cyclic_edge_count": 943,
-  "max_legacy_shim_count": 45,
+  "max_legacy_shim_count": 51,
   "recorded_cross_context_nonsurface_imports": [
     [
       "spendguard",
@@ -6301,7 +6295,7 @@
     ],
     [
       "spendguard.adapters",
-      "spendguard.content_tokens"
+      "spendguard.analyze.cost_estimation.content_tokens"
     ],
     [
       "spendguard.adapters",
@@ -6313,7 +6307,7 @@
     ],
     [
       "spendguard.adapters",
-      "spendguard.expected_output"
+      "spendguard.analyze.cost_estimation.expected_output"
     ],
     [
       "spendguard.adapters",
@@ -6409,7 +6403,7 @@
     ],
     [
       "spendguard.advise",
-      "spendguard.calibrate"
+      "spendguard.analyze.cost_estimation.calibrate"
     ],
     [
       "spendguard.advise",
@@ -6557,7 +6551,7 @@
     ],
     [
       "spendguard.analyze.assurance.audit",
-      "spendguard.expected_output"
+      "spendguard.analyze.cost_estimation.expected_output"
     ],
     [
       "spendguard.analyze.assurance.audit",
@@ -6685,7 +6679,7 @@
     ],
     [
       "spendguard.batch_tracker",
-      "spendguard.provider_tokens"
+      "spendguard.analyze.cost_estimation.provider_tokens"
     ],
     [
       "spendguard.batch_tracker",
@@ -6845,7 +6839,7 @@
     ],
     [
       "spendguard.bulkgate",
-      "spendguard.calibrate"
+      "spendguard.analyze.cost_estimation.calibrate"
     ],
     [
       "spendguard.bulkgate",
@@ -6928,43 +6922,43 @@
       "spendguard.ui"
     ],
     [
-      "spendguard.calibrate",
+      "spendguard.analyze.cost_estimation.calibrate",
       "spendguard.bulkgate"
     ],
     [
-      "spendguard.calibrate",
+      "spendguard.analyze.cost_estimation.calibrate",
       "spendguard.capability_cli_parsing"
     ],
     [
-      "spendguard.calibrate",
+      "spendguard.analyze.cost_estimation.calibrate",
       "spendguard.store.configuration.config"
     ],
     [
-      "spendguard.calibrate",
+      "spendguard.analyze.cost_estimation.calibrate",
       "spendguard.deid"
     ],
     [
-      "spendguard.calibrate",
+      "spendguard.analyze.cost_estimation.calibrate",
       "spendguard.store.spend_search.ledger_read"
     ],
     [
-      "spendguard.calibrate",
+      "spendguard.analyze.cost_estimation.calibrate",
       "spendguard.store.money_ledger.ledger_writer"
     ],
     [
-      "spendguard.calibrate",
+      "spendguard.analyze.cost_estimation.calibrate",
       "spendguard.money_scale"
     ],
     [
-      "spendguard.calibrate",
+      "spendguard.analyze.cost_estimation.calibrate",
       "spendguard.pricing"
     ],
     [
-      "spendguard.calibrate",
+      "spendguard.analyze.cost_estimation.calibrate",
       "spendguard.analyze.spend_reporting.receipt"
     ],
     [
-      "spendguard.calibrate",
+      "spendguard.analyze.cost_estimation.calibrate",
       "spendguard.saas"
     ],
     [
@@ -7481,7 +7475,7 @@
     ],
     [
       "spendguard.comprehend",
-      "spendguard.expected_output"
+      "spendguard.analyze.cost_estimation.expected_output"
     ],
     [
       "spendguard.comprehend",
@@ -7592,15 +7586,15 @@
       "spendguard.store.money_ledger.schema_indexes"
     ],
     [
-      "spendguard.content_tokens",
+      "spendguard.analyze.cost_estimation.content_tokens",
       "spendguard.adapters"
     ],
     [
-      "spendguard.content_tokens",
+      "spendguard.analyze.cost_estimation.content_tokens",
       "spendguard.store.configuration.config"
     ],
     [
-      "spendguard.content_tokens",
+      "spendguard.analyze.cost_estimation.content_tokens",
       "spendguard.pricing"
     ],
     [
@@ -7777,7 +7771,7 @@
     ],
     [
       "spendguard.delegate_router",
-      "spendguard.provider_tokens"
+      "spendguard.analyze.cost_estimation.provider_tokens"
     ],
     [
       "spendguard.delegate_router",
@@ -7928,31 +7922,31 @@
       "spendguard.store.configuration.config"
     ],
     [
-      "spendguard.estimate",
+      "spendguard.analyze.cost_estimation.estimate",
       "spendguard.capability_cli_parsing"
     ],
     [
-      "spendguard.estimate",
+      "spendguard.analyze.cost_estimation.estimate",
       "spendguard.models"
     ],
     [
-      "spendguard.estimate",
+      "spendguard.analyze.cost_estimation.estimate",
       "spendguard.pricing"
     ],
     [
-      "spendguard.estimate_divergence",
+      "spendguard.analyze.cost_estimation.estimate_divergence",
       "spendguard.adapters"
     ],
     [
-      "spendguard.estimate_divergence",
+      "spendguard.analyze.cost_estimation.estimate_divergence",
       "spendguard.store.call_corpus.calls"
     ],
     [
-      "spendguard.estimate_divergence",
+      "spendguard.analyze.cost_estimation.estimate_divergence",
       "spendguard.store.configuration.config"
     ],
     [
-      "spendguard.estimate_divergence",
+      "spendguard.analyze.cost_estimation.estimate_divergence",
       "spendguard.generate.work_integrity.output_contract"
     ],
     [
@@ -7976,15 +7970,15 @@
       "spendguard.store.configuration.config"
     ],
     [
-      "spendguard.expected_output",
+      "spendguard.analyze.cost_estimation.expected_output",
       "spendguard.bulkgate"
     ],
     [
-      "spendguard.expected_output",
+      "spendguard.analyze.cost_estimation.expected_output",
       "spendguard.models"
     ],
     [
-      "spendguard.expected_output",
+      "spendguard.analyze.cost_estimation.expected_output",
       "spendguard.pricing"
     ],
     [
@@ -8097,7 +8091,7 @@
     ],
     [
       "spendguard.gate",
-      "spendguard.calibrate"
+      "spendguard.analyze.cost_estimation.calibrate"
     ],
     [
       "spendguard.gate",
@@ -8113,7 +8107,7 @@
     ],
     [
       "spendguard.gate",
-      "spendguard.content_tokens"
+      "spendguard.analyze.cost_estimation.content_tokens"
     ],
     [
       "spendguard.gate",
@@ -8133,11 +8127,11 @@
     ],
     [
       "spendguard.gate",
-      "spendguard.estimate_divergence"
+      "spendguard.analyze.cost_estimation.estimate_divergence"
     ],
     [
       "spendguard.gate",
-      "spendguard.expected_output"
+      "spendguard.analyze.cost_estimation.expected_output"
     ],
     [
       "spendguard.gate",
@@ -8437,7 +8431,7 @@
     ],
     [
       "spendguard.lane_balance",
-      "spendguard.provider_tokens"
+      "spendguard.analyze.cost_estimation.provider_tokens"
     ],
     [
       "spendguard.lane_balance",
@@ -8589,7 +8583,7 @@
     ],
     [
       "spendguard.lane_queue",
-      "spendguard.provider_tokens"
+      "spendguard.analyze.cost_estimation.provider_tokens"
     ],
     [
       "spendguard.lane_queue",
@@ -9304,43 +9298,43 @@
       "spendguard.pricing"
     ],
     [
-      "spendguard.provider_tokens",
+      "spendguard.analyze.cost_estimation.provider_tokens",
       "spendguard.adapters"
     ],
     [
-      "spendguard.provider_tokens",
+      "spendguard.analyze.cost_estimation.provider_tokens",
       "spendguard.budget"
     ],
     [
-      "spendguard.provider_tokens",
+      "spendguard.analyze.cost_estimation.provider_tokens",
       "spendguard.store.call_corpus.callio"
     ],
     [
-      "spendguard.provider_tokens",
+      "spendguard.analyze.cost_estimation.provider_tokens",
       "spendguard.store.call_corpus.calls"
     ],
     [
-      "spendguard.provider_tokens",
+      "spendguard.analyze.cost_estimation.provider_tokens",
       "spendguard.capability_cli_parsing"
     ],
     [
-      "spendguard.provider_tokens",
+      "spendguard.analyze.cost_estimation.provider_tokens",
       "spendguard.store.configuration.config"
     ],
     [
-      "spendguard.provider_tokens",
+      "spendguard.analyze.cost_estimation.provider_tokens",
       "spendguard.gate"
     ],
     [
-      "spendguard.provider_tokens",
+      "spendguard.analyze.cost_estimation.provider_tokens",
       "spendguard.store.money_ledger.ledger"
     ],
     [
-      "spendguard.provider_tokens",
+      "spendguard.analyze.cost_estimation.provider_tokens",
       "spendguard.store.money_ledger.ledger_writer"
     ],
     [
-      "spendguard.provider_tokens",
+      "spendguard.analyze.cost_estimation.provider_tokens",
       "spendguard.pricing"
     ],
     [
@@ -9677,7 +9671,7 @@
     ],
     [
       "spendguard.analyze.spend_reporting.report",
-      "spendguard.calibrate"
+      "spendguard.analyze.cost_estimation.calibrate"
     ],
     [
       "spendguard.analyze.spend_reporting.report",
@@ -9809,7 +9803,7 @@
     ],
     [
       "spendguard.resources",
-      "spendguard.expected_output"
+      "spendguard.analyze.cost_estimation.expected_output"
     ],
     [
       "spendguard.resources",
@@ -9885,7 +9879,7 @@
     ],
     [
       "spendguard.route_economics",
-      "spendguard.expected_output"
+      "spendguard.analyze.cost_estimation.expected_output"
     ],
     [
       "spendguard.route_economics",
@@ -9905,7 +9899,7 @@
     ],
     [
       "spendguard.route_horizon",
-      "spendguard.expected_output"
+      "spendguard.analyze.cost_estimation.expected_output"
     ],
     [
       "spendguard.route_horizon",
@@ -10009,7 +10003,7 @@
     ],
     [
       "spendguard.saas",
-      "spendguard.calibrate"
+      "spendguard.analyze.cost_estimation.calibrate"
     ],
     [
       "spendguard.saas",
@@ -10321,11 +10315,11 @@
     ],
     [
       "spendguard.submit",
-      "spendguard.content_tokens"
+      "spendguard.analyze.cost_estimation.content_tokens"
     ],
     [
       "spendguard.submit",
-      "spendguard.expected_output"
+      "spendguard.analyze.cost_estimation.expected_output"
     ],
     [
       "spendguard.submit",
@@ -10341,7 +10335,7 @@
     ],
     [
       "spendguard.submit",
-      "spendguard.provider_tokens"
+      "spendguard.analyze.cost_estimation.provider_tokens"
     ],
     [
       "spendguard.submit",
@@ -10353,7 +10347,7 @@
     ],
     [
       "spendguard.subscription_exec",
-      "spendguard.content_tokens"
+      "spendguard.analyze.cost_estimation.content_tokens"
     ],
     [
       "spendguard.subscription_exec",

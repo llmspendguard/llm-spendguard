@@ -18,6 +18,9 @@ Structural ($0, AST — parsing, not a judgement of meaning). No import of spend
 import sys, ast, pathlib
 
 _SRC = pathlib.Path(__file__).resolve().parent.parent / "src" / "spendguard"
+_MOVED_CLUSTER_A_PATHS = {
+    "calibrate.py": ("analyze", "cost_estimation", "calibrate.py"),
+}
 
 # The files whose update_json callers were fixed in cluster A. Every update_json call in these files must carry a
 # disposition. (config.py is NOT here: it DEFINES update_json and its one call-site returns the value to its caller.)
@@ -59,7 +62,8 @@ def main():
     if any(isinstance(node, ast.Try) for node in ast.walk(refresh_writer)):
         fails.append("refresh.py: catalog author refusals must propagate to the caller")
     for fname in _CLUSTER_A_FILES:
-        p = _SRC / fname
+        p = (_SRC.joinpath(*_MOVED_CLUSTER_A_PATHS[fname])
+             if fname in _MOVED_CLUSTER_A_PATHS else _SRC / fname)
         if not p.exists():
             fails.append(f"{fname}: MISSING (cluster-A file list is stale — rename/retire it here)")
             continue

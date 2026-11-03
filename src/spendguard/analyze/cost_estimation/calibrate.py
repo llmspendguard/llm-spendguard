@@ -35,18 +35,18 @@ axis can aggregate server-side (the SaaS key is org-scoped) — a follow-on, not
 CLI: spendguard calibrate {predict,show,pair,backtest}
 """
 
-from .capability_cli_parsing import add_registered_cli_argument
+from ...capability_cli_parsing import add_registered_cli_argument
 import json
 import os
 import sqlite3
 import time
 import datetime
 
-from . import pricing
+from ... import pricing
 from decimal import Decimal, localcontext
 import logging
-from .ledger_writer import best_effort_ledger_function, current_ledger_writer_connection, serialize_ledger_function
-from .money_scale import real_usd_to_nano_usd, nano_usd_to_usd, assert_nano_total_matches
+from ...ledger_writer import best_effort_ledger_function, current_ledger_writer_connection, serialize_ledger_function
+from ...money_scale import real_usd_to_nano_usd, nano_usd_to_usd, assert_nano_total_matches
 
 COST_PREDICTION_NANO_COLUMNS = {column: f"{column}_nano" for column in ("predicted_usd", "actual_usd",)}
 
@@ -121,7 +121,7 @@ def _pair_horizon_s():
 
 
 def _con():
-    from . import config
+    from ... import config
     if current_ledger_writer_connection() is not None:
         return config.pooled_ledger_conn("cost_predictions", _ensure_cost_predictions_schema)
     return config.fresh_ledger_conn(_ensure_cost_predictions_schema)
@@ -153,7 +153,7 @@ def _identity():
     """(user, project) this install attributes predictions to — from saas config, never hardcoded."""
     user = project = None
     try:
-        from . import saas, config
+        from ... import saas, config
         user = saas.contributor()
         project = config.saas_config().get("project")
     except Exception:
@@ -206,7 +206,7 @@ def _chain_from_obs(named_obs):
 def _fill_obs(label, model, as_of=None):
     """FILL = out_tok / max_tokens from gate_calls. Levels: exact (sig of label+model) → model → global.
     gate_calls keys by sig (hash of model+template), so the exact cell is recomputed, not stored."""
-    from . import bulkgate, config
+    from ... import bulkgate, config
     epoch_cut = None
     if as_of:
         dt = datetime.datetime.fromisoformat(as_of.replace("Z", "+00:00"))
@@ -237,7 +237,7 @@ def _fill_obs(label, model, as_of=None):
 def _calls_rows(label, model, transport, as_of=None):
     """calls rows for a cell (workload only, priced, tokenized). model matched post-normalize in python
     because the corpus stores raw ids (e.g. dated snapshots) while callers pass canonical names."""
-    from . import ledger_read
+    from ... import ledger_read
     want = pricing.normalize(model) if model else None
     rows = []
     try:
@@ -309,7 +309,7 @@ def _in_ratio_obs(label, model, as_of=None):
 def _org_cells():
     """The cached org aggregate (list of cells) or []. Written by fetch_shared(); age is reported
     by show(), not enforced — a stale org prior still beats a naive one, and local stats dominate."""
-    from . import config
+    from ... import config
     try:
         return json.loads((config.HOME / ORG_CACHE).read_text()).get("cells") or []
     except Exception:
@@ -462,7 +462,7 @@ def pair(now=None):
     now = time.time() if now is None else now
     horizon = _pair_horizon_s()
     con = _con()
-    from . import ledger_read
+    from ... import ledger_read
     paired = expired = pending = 0
     try:
         preds = con.execute("SELECT job_id, ts, label, model FROM cost_predictions "
@@ -511,7 +511,7 @@ def backtest(as_json=False, min_cell=MIN_CELL_BACKTEST):
       calibrated = estimate(…, as_of=train end) with the SAME inputs.
     The deck is stacked FOR naive on input; the learned win must come from output-fill, transport
     and residual — exactly the claimed error sources. Ship gate: calibrated beats naive overall."""
-    from . import ledger_read
+    from ... import ledger_read
     try:
         raw = [row.values for row in ledger_read.read_calibration_calls(META_PREFIX + "%", backtest=True)]
     except ledger_read.LedgerReadOpenError:
@@ -592,7 +592,7 @@ def cell_stats(as_of=None):
 
     def scrub(label):
         try:
-            from . import deid
+            from ... import deid
             return deid.redact(label)[:120]
         except Exception:
             # FAIL CLOSED toward privacy: if de-identification itself is unavailable (import error / unexpected crash),
@@ -609,7 +609,7 @@ def cell_stats(as_of=None):
                           "transport": transport or "", "quantity": quantity, "n": len(vals),
                           "p50": round(_quantile(vals, P_LO), 6), "p90": round(_quantile(vals, P_HI), 6)})
 
-    from . import ledger_read
+    from ... import ledger_read
     try:
         pairs = [row.values for row in ledger_read.read_calibration_calls(META_PREFIX + "%", distinct_cells=True)]
     except ledger_read.LedgerReadOpenError:
@@ -636,14 +636,14 @@ def cell_stats(as_of=None):
 def push_shared():
     """Package this install's calibration statistics and push them to the org server (visibility-gated,
     de-id'd labels, statistics only). Everyone contributes; everyone's prior improves."""
-    from . import saas
+    from ... import saas
     return saas.push_calibration(cell_stats())
 
 
 def fetch_shared():
     """Pull the org-aggregated calibration (n-weighted across members) and cache it — estimate() then
     shrinks local stats toward the ORG's experience instead of the naive assumption."""
-    from . import saas, config
+    from ... import saas, config
     r = saas.fetch_calibration()
     cells = r.get("cells") or []
     if cells:
@@ -662,7 +662,7 @@ def calibration_summary_lines(max_lines=4):
     exactly what estimate() reports per prediction.)"""
     lines = []
     try:
-        from . import config
+        from ... import config
         con = config.open_ledger_connection(config.db_path(), timeout=10, tune=False)
         try:
             q = ("SELECT model, COUNT(*), AVG(CAST(out_tok AS REAL)/max_tokens) FROM gate_calls "
@@ -680,8 +680,8 @@ def calibration_summary_lines(max_lines=4):
 
 def show(label=None):
     """Print the calibration state — what has been learned, at what confidence."""
-    from . import config
-    from . import ledger_read
+    from ... import config
+    from ... import ledger_read
     try:
         cells = ledger_read.read_calibration_summary(META_PREFIX + "%", label)
     except ledger_read.LedgerReadOpenError:
@@ -693,7 +693,7 @@ def show(label=None):
     if not cells:
         print("  nothing labeled yet — run `spendguard backfill`, or set calls.context(intent=…) in your jobs.")
     else:
-        from . import receipt
+        from ... import receipt
         print(f"{'activity':<28}{'model':<24}{'kind':<9}{'rows':>5}{'$ hist':>10}")
         for row in cells:
             it, m, k, n, usd = row.values

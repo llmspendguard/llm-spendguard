@@ -45,7 +45,13 @@
     "spendguard.content_retention": "spendguard.store.call_corpus.content_retention",
     "spendguard.content_compression": "spendguard.store.call_corpus.content_compression",
     "spendguard.content_compression_backfill": "spendguard.store.call_corpus.content_compression_backfill",
-    "spendguard.routing_audit": "spendguard.store.call_corpus.routing_audit"
+    "spendguard.routing_audit": "spendguard.store.call_corpus.routing_audit",
+    "spendguard.estimate": "spendguard.analyze.cost_estimation.estimate",
+    "spendguard.calibrate": "spendguard.analyze.cost_estimation.calibrate",
+    "spendguard.expected_output": "spendguard.analyze.cost_estimation.expected_output",
+    "spendguard.content_tokens": "spendguard.analyze.cost_estimation.content_tokens",
+    "spendguard.provider_tokens": "spendguard.analyze.cost_estimation.provider_tokens",
+    "spendguard.estimate_divergence": "spendguard.analyze.cost_estimation.estimate_divergence"
   },
   "entry_points": {
     "package_import": {
@@ -434,6 +440,13 @@
     "spendguard.analyze.assurance.source_compact",
     "spendguard.analyze.assurance.import_behavior_snapshot",
     "spendguard.store.money_ledger",
-    "spendguard.store.call_corpus"
+    "spendguard.store.call_corpus",
+    "spendguard.analyze.cost_estimation",
+    "spendguard.analyze.cost_estimation.estimate",
+    "spendguard.analyze.cost_estimation.calibrate",
+    "spendguard.analyze.cost_estimation.expected_output",
+    "spendguard.analyze.cost_estimation.content_tokens",
+    "spendguard.analyze.cost_estimation.provider_tokens",
+    "spendguard.analyze.cost_estimation.estimate_divergence"
   ]
 }

@@ -21,11 +21,11 @@ TWO ways to supply the token model (get these from your tiny test, see runbook):
          --packs 1,30 --cap-dollars 200
 """
 
-from .capability_cli_parsing import add_registered_cli_argument
+from ...capability_cli_parsing import add_registered_cli_argument
 import json, math, argparse
 
-from . import models
-from .pricing import price, normalize
+from ... import models
+from ...pricing import price, normalize
 
 # minimum cacheable prefix (tokens) — below this, prompt caching silently does nothing — is a MODEL FACT owned by
 # models.py (the family cache rules); read it via models.cache_min rather than keep a second, drift-prone copy here

@@ -62,7 +62,7 @@ def _pairs():
     allowlist silently dropping evidence. Pairing commits its updates, so this
     consumer owns a fresh connection without taking ownership of a pooled writer.
     """
-    from . import calibrate, config
+    from ... import calibrate, config
     try:
         # pair() refreshes persisted joins and returns COUNTS, not the joined rows.
         calibrate.pair()
@@ -79,7 +79,7 @@ def _pairs():
 
 def adjudicate_grounding(pair, model=None):
     """Was THIS estimate grounded? Agentic — the answer depends on how the number was produced."""
-    from . import adapters, calls, config, output_contract
+    from ... import adapters, calls, config, output_contract
     model = model or config.advisor_model()
     body = json.dumps({k: v for k, v in dict(pair).items() if k not in ("prompt", "output")}, default=str)
     with calls.context(intent="spendguard:estimate-divergence"):
