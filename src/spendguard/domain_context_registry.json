@@ -1,0 +1,301 @@
+{
+  "contexts": [
+    {
+      "id": "reference_data",
+      "name": "Reference Data: Pricing & Model Catalog",
+      "kind": "STORE",
+      "package": "spendguard.store.reference_data",
+      "surface_module": "spendguard.store.reference_data",
+      "layer": "L0",
+      "backing_modules": [
+        "pricing", "catalog_price_authoring", "model_catalog", "catalog", "lane_registry",
+        "lane_catalog", "reasoning_equivalence", "money_scale", "sync", "sync_capabilities",
+        "refresh", "models"
+      ],
+      "published_names": []
+    },
+    {
+      "id": "configuration",
+      "name": "Configuration",
+      "kind": "STORE",
+      "package": "spendguard.store.configuration",
+      "surface_module": "spendguard.store.configuration",
+      "layer": "L0",
+      "notes": ["config is currently L1/in-SCC; L0 is its target layer after the split"],
+      "backing_modules": ["config_schema", "config"],
+      "published_names": []
+    },
+    {
+      "id": "money_ledger",
+      "name": "Money Ledger",
+      "kind": "STORE",
+      "package": "spendguard.store.money_ledger",
+      "surface_module": "spendguard.store.money_ledger",
+      "layer": "L0",
+      "backing_modules": [
+        "ledger", "ledger_writer", "ledger_schema_migrations", "schema_indexes",
+        "ledger_fork_locks", "ledger_daily_rollup", "ledger_wal_maintenance",
+        "ledger_deadletter", "migrate_charges"
+      ],
+      "published_names": []
+    },
+    {
+      "id": "spend_search",
+      "name": "Spend Search",
+      "kind": "STORE",
+      "package": "spendguard.store.spend_search",
+      "surface_module": "spendguard.store.spend_search",
+      "layer": "L1",
+      "backing_modules": ["ledger_read", "ledger_request_cursor", "ledger_deadline_polling"],
+      "published_names": []
+    },
+    {
+      "id": "call_corpus",
+      "name": "Call Corpus & Content Retention",
+      "kind": "STORE",
+      "package": "spendguard.store.call_corpus",
+      "surface_module": "spendguard.store.call_corpus",
+      "layer": "L1",
+      "backing_modules": [
+        "calls", "callio", "content_retention", "content_compression",
+        "content_compression_backfill", "routing_audit"
+      ],
+      "published_names": []
+    },
+    {
+      "id": "spend_capture",
+      "name": "Spend Capture & Ingestion",
+      "kind": "GENERATE",
+      "package": "spendguard.generate.spend_capture",
+      "surface_module": "spendguard.generate.spend_capture",
+      "layer": "L1",
+      "backing_modules": [
+        "bedrock_adapter", "litellm_adapter", "vertex_adapter", "http_capture", "otel_ingest",
+        "claudecode", "codex", "chat", "compaction", "sources", "scan", "backfill",
+        "gpu_port", "lambda_adapter", "modal_adapter", "runpod_adapter", "resources"
+      ],
+      "published_names": []
+    },
+    {
+      "id": "execution",
+      "name": "Execution",
+      "kind": "GENERATE",
+      "package": "spendguard.generate.execution",
+      "surface_module": "spendguard.generate.execution",
+      "layer": "L1",
+      "backing_modules": [
+        "vendor_call", "submit", "batch_tracker", "subscription_exec", "codex_exec",
+        "kimi_exec", "zai_exec", "antigravity_exec", "subscription_cli_results",
+        "provider_plugins", "provider_kit", "adapters", "openai_batch_cli"
+      ],
+      "published_names": []
+    },
+    {
+      "id": "work_integrity",
+      "name": "Work Integrity",
+      "kind": "GENERATE",
+      "package": "spendguard.generate.work_integrity",
+      "surface_module": "spendguard.generate.work_integrity",
+      "layer": "L1",
+      "backing_modules": [
+        "item_ledger", "job_fingerprint", "output_contract", "llm_files", "work_integrity",
+        "bulk_resilience"
+      ],
+      "published_names": []
+    },
+    {
+      "id": "admission",
+      "name": "Admission & Enforcement",
+      "kind": "ACTIVELY-MANAGE",
+      "package": "spendguard.manage.admission",
+      "surface_module": "spendguard.manage.admission",
+      "layer": "L1",
+      "backing_modules": [
+        "bulkgate", "escalation_ladder", "plan_admission", "model_preflight", "disk_guard",
+        "agent_spawn_gate", "weekly_cap_guard", "residency_gate", "semcache", "gate", "budget"
+      ],
+      "published_names": []
+    },
+    {
+      "id": "routing",
+      "name": "Routing",
+      "kind": "ACTIVELY-MANAGE",
+      "package": "spendguard.manage.routing",
+      "surface_module": "spendguard.manage.routing",
+      "layer": "L1",
+      "backing_modules": [
+        "route_utility", "route_economics", "route_horizon", "cascade", "best_value",
+        "lane_balance", "tier_config", "whole_job"
+      ],
+      "published_names": []
+    },
+    {
+      "id": "token_operations",
+      "name": "Token Operations",
+      "kind": "ACTIVELY-MANAGE",
+      "package": "spendguard.manage.token_operations",
+      "surface_module": "spendguard.manage.token_operations",
+      "layer": "L1",
+      "backing_modules": [
+        "dispatch", "xp_rate_window", "lane_queue", "queue_planner", "storm_coalescer",
+        "storm_submit", "storm_route", "delegate_router", "delegate_jobs", "execution_journal",
+        "delegate_worker", "delegate_worktrees", "process_group_reaper", "warm_stdio_daemon",
+        "codex_daemon", "codex_daemon_broker", "codex_broker_owner", "kimi_daemon",
+        "resource_state", "lane_recovery", "comprehend"
+      ],
+      "published_names": []
+    },
+    {
+      "id": "cost_estimation",
+      "name": "Cost Estimation",
+      "kind": "ANALYZE",
+      "package": "spendguard.analyze.cost_estimation",
+      "surface_module": "spendguard.analyze.cost_estimation",
+      "layer": "L1",
+      "backing_modules": [
+        "estimate", "calibrate", "expected_output", "content_tokens", "provider_tokens",
+        "estimate_divergence"
+      ],
+      "published_names": []
+    },
+    {
+      "id": "treasury",
+      "name": "Treasury / Valuation",
+      "kind": "ANALYZE",
+      "package": "spendguard.analyze.treasury",
+      "surface_module": "spendguard.analyze.treasury",
+      "layer": "L1-L2",
+      "backing_modules": [
+        "balances", "lane_quota", "subscription_headroom_surfaces", "lane_economics",
+        "lane_value", "overage", "lane_quota_cost"
+      ],
+      "published_names": []
+    },
+    {
+      "id": "measurement",
+      "name": "Measurement & Experimentation",
+      "kind": "ANALYZE",
+      "package": "spendguard.analyze.measurement",
+      "surface_module": "spendguard.analyze.measurement",
+      "layer": "L2",
+      "backing_modules": [
+        "measurement", "bakeoff", "compare", "experiment", "equivalence", "requirement_judge",
+        "stability", "effort_titration", "reliability", "lane_servability", "route_realized",
+        "realized", "guard", "cacheaudit", "cachetest", "prompts", "review", "lane_eligibility"
+      ],
+      "published_names": []
+    },
+    {
+      "id": "learning",
+      "name": "Learning & Advisory",
+      "kind": "ANALYZE",
+      "package": "spendguard.analyze.learning",
+      "surface_module": "spendguard.analyze.learning",
+      "layer": "L2",
+      "backing_modules": [
+        "learn", "validate", "lane_bandit", "intent_model_prior", "advise", "advisor",
+        "conv", "history", "bootstrap", "brief"
+      ],
+      "published_names": []
+    },
+    {
+      "id": "reconciliation",
+      "name": "Reconciliation & Attribution",
+      "kind": "ANALYZE",
+      "package": "spendguard.analyze.reconciliation",
+      "surface_module": "spendguard.analyze.reconciliation",
+      "layer": "L3",
+      "backing_modules": [
+        "reconcile", "ledger_sync", "reconcile_openai", "reconcile_anthropic", "reconcile_calls",
+        "reconcile_estimate_stage", "reconcile_gap_ownership", "reconcile_maintenance_owner",
+        "realtime_oracle", "trust", "cost_integrity", "anomaly", "attribution", "tag", "workdone",
+        "truth"
+      ],
+      "published_names": []
+    },
+    {
+      "id": "spend_reporting",
+      "name": "Spend Reporting",
+      "kind": "ANALYZE",
+      "package": "spendguard.analyze.spend_reporting",
+      "surface_module": "spendguard.analyze.spend_reporting",
+      "layer": "L3",
+      "backing_modules": ["report", "close", "receipt"],
+      "published_names": []
+    },
+    {
+      "id": "assurance",
+      "name": "Assurance & Self-Verification",
+      "kind": "ANALYZE",
+      "package": "spendguard.analyze.assurance",
+      "surface_module": "spendguard.analyze.assurance",
+      "layer": "L3",
+      "backing_modules": [
+        "audit", "token_caps", "estimate_literals", "verdict_ledger", "keys_audit", "coverage",
+        "consumer_audit", "metadata_audit", "verify", "architectural_fitness",
+        "capability_readiness", "capability_readiness_gates", "external_standard_readiness",
+        "ledger_performance_benchmark", "source_compact", "import_behavior_snapshot"
+      ],
+      "published_names": []
+    },
+    {
+      "id": "federation_egress",
+      "name": "Federation & Egress",
+      "kind": "EGRESS",
+      "package": "spendguard.egress",
+      "surface_module": "spendguard.egress",
+      "layer": "L3",
+      "backing_modules": ["saas", "deid", "signal", "share", "emit", "notify", "focus_export"],
+      "published_names": []
+    },
+    {
+      "id": "platform",
+      "name": "Platform: Install, Fleet & Release",
+      "kind": "PLATFORM",
+      "package": "spendguard.platform",
+      "surface_module": "spendguard.platform",
+      "layer": "L4",
+      "backing_modules": [
+        "_version", "release", "distribution", "distribution_daemon", "manifest", "fleet",
+        "schedule", "setup", "lanes", "runner", "remote", "offline_python_build", "launchd_labels"
+      ],
+      "published_names": []
+    },
+    {
+      "id": "surfaces",
+      "name": "Surfaces",
+      "kind": "INTERFACE",
+      "package": "spendguard.interface",
+      "surface_module": "spendguard.interface",
+      "layer": "L4",
+      "backing_modules": [
+        "cli", "__main__", "mcp_server", "mcp_fd_lifecycle", "serve", "crossllm",
+        "capability_registry", "capability_cli_projection_models", "capability_cli_parsing",
+        "capability_cli_callable_generation", "capability_cli_dispatch_generation",
+        "capability_cli_help_generation", "capability_surface_generation", "capability_documentation",
+        "cli_arguments", "ui", "__init__"
+      ],
+      "published_names": []
+    }
+  ],
+  "split_modules": {
+    "__init__": {"home_context": "surfaces", "secondary_contexts": ["admission", "spend_capture"]},
+    "adapters": {"home_context": "execution", "secondary_contexts": ["token_operations", "routing", "reference_data"]},
+    "gate": {"home_context": "admission", "secondary_contexts": ["spend_capture"]},
+    "budget": {"home_context": "admission", "secondary_contexts": ["money_ledger"]},
+    "config": {"home_context": "configuration", "secondary_contexts": ["money_ledger", "execution", "call_corpus"]},
+    "models": {"home_context": "reference_data", "secondary_contexts": ["execution"]},
+    "whole_job": {"home_context": "routing", "secondary_contexts": ["token_operations"]},
+    "lane_quota_cost": {"home_context": "treasury", "secondary_contexts": ["admission"]},
+    "truth": {"home_context": "reconciliation", "secondary_contexts": ["federation_egress"]},
+    "receipt": {"home_context": "spend_reporting", "secondary_contexts": ["platform"]},
+    "openai_batch_cli": {"home_context": "execution", "secondary_contexts": ["surfaces"]},
+    "resources": {"home_context": "spend_capture", "secondary_contexts": ["reconciliation"]}
+  },
+  "unassigned_modules": [
+    {
+      "module": "domain_context_surface",
+      "reason": "Phase 2a shared scaffolding mechanism added after the authoritative 221-module taxonomy corpus."
+    }
+  ]
+}

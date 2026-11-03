@@ -950,6 +950,110 @@
           "src/spendguard/import_behavior_snapshot.py": {
             "max_cc": 7,
             "mi": 33.34139961456779
+          },
+          "src/spendguard/analyze/__init__.py": {
+            "max_cc": 0,
+            "mi": 100.0
+          },
+          "src/spendguard/analyze/assurance/__init__.py": {
+            "max_cc": 0,
+            "mi": 100.0
+          },
+          "src/spendguard/analyze/cost_estimation/__init__.py": {
+            "max_cc": 0,
+            "mi": 100.0
+          },
+          "src/spendguard/analyze/learning/__init__.py": {
+            "max_cc": 0,
+            "mi": 100.0
+          },
+          "src/spendguard/analyze/measurement/__init__.py": {
+            "max_cc": 0,
+            "mi": 100.0
+          },
+          "src/spendguard/analyze/reconciliation/__init__.py": {
+            "max_cc": 0,
+            "mi": 100.0
+          },
+          "src/spendguard/analyze/spend_reporting/__init__.py": {
+            "max_cc": 0,
+            "mi": 100.0
+          },
+          "src/spendguard/analyze/treasury/__init__.py": {
+            "max_cc": 0,
+            "mi": 100.0
+          },
+          "src/spendguard/domain_context_surface.py": {
+            "max_cc": 4,
+            "mi": 59.55709970063236
+          },
+          "src/spendguard/egress/__init__.py": {
+            "max_cc": 0,
+            "mi": 100.0
+          },
+          "src/spendguard/generate/__init__.py": {
+            "max_cc": 0,
+            "mi": 100.0
+          },
+          "src/spendguard/generate/execution/__init__.py": {
+            "max_cc": 0,
+            "mi": 100.0
+          },
+          "src/spendguard/generate/spend_capture/__init__.py": {
+            "max_cc": 0,
+            "mi": 100.0
+          },
+          "src/spendguard/generate/work_integrity/__init__.py": {
+            "max_cc": 0,
+            "mi": 100.0
+          },
+          "src/spendguard/interface/__init__.py": {
+            "max_cc": 0,
+            "mi": 100.0
+          },
+          "src/spendguard/manage/__init__.py": {
+            "max_cc": 0,
+            "mi": 100.0
+          },
+          "src/spendguard/manage/admission/__init__.py": {
+            "max_cc": 0,
+            "mi": 100.0
+          },
+          "src/spendguard/manage/routing/__init__.py": {
+            "max_cc": 0,
+            "mi": 100.0
+          },
+          "src/spendguard/manage/token_operations/__init__.py": {
+            "max_cc": 0,
+            "mi": 100.0
+          },
+          "src/spendguard/platform/__init__.py": {
+            "max_cc": 0,
+            "mi": 100.0
+          },
+          "src/spendguard/store/__init__.py": {
+            "max_cc": 0,
+            "mi": 100.0
+          },
+          "src/spendguard/store/call_corpus/__init__.py": {
+            "max_cc": 0,
+            "mi": 100.0
+          },
+          "src/spendguard/store/configuration/__init__.py": {
+            "max_cc": 0,
+            "mi": 100.0
+          },
+          "src/spendguard/store/money_ledger/__init__.py": {
+            "max_cc": 0,
+            "mi": 100.0
+          },
+          "src/spendguard/store/reference_data/__init__.py": {
+            "max_cc": 0,
+            "mi": 100.0
+          },
+          "src/spendguard/store/spend_search/__init__.py": {
+            "max_cc": 0,
+            "mi": 100.0
           }
         },
         "measured_extremes": {
@@ -996,8 +1100,8 @@
             "mi": 50.48267079784406
           },
           "src/spendguard/architectural_fitness.py": {
-            "max_cc": 31,
-            "mi": 20.935514428828085
+            "max_cc": 32,
+            "mi": 5.666994428760786
           },
           "src/spendguard/attribution.py": {
             "max_cc": 26,
@@ -1838,6 +1942,114 @@
           "src/spendguard/process_group_reaper.py": {
             "max_cc": 9,
             "mi": 73.39668068181851
+          },
+          "src/spendguard/analyze/__init__.py": {
+            "max_cc": 0,
+            "mi": 100.0
+          },
+          "src/spendguard/analyze/assurance/__init__.py": {
+            "max_cc": 0,
+            "mi": 100.0
+          },
+          "src/spendguard/analyze/cost_estimation/__init__.py": {
+            "max_cc": 0,
+            "mi": 100.0
+          },
+          "src/spendguard/analyze/learning/__init__.py": {
+            "max_cc": 0,
+            "mi": 100.0
+          },
+          "src/spendguard/analyze/measurement/__init__.py": {
+            "max_cc": 0,
+            "mi": 100.0
+          },
+          "src/spendguard/analyze/reconciliation/__init__.py": {
+            "max_cc": 0,
+            "mi": 100.0
+          },
+          "src/spendguard/analyze/spend_reporting/__init__.py": {
+            "max_cc": 0,
+            "mi": 100.0
+          },
+          "src/spendguard/analyze/treasury/__init__.py": {
+            "max_cc": 0,
+            "mi": 100.0
+          },
+          "src/spendguard/domain_context_surface.py": {
+            "max_cc": 4,
+            "mi": 59.55709970063236
+          },
+          "src/spendguard/egress/__init__.py": {
+            "max_cc": 0,
+            "mi": 100.0
+          },
+          "src/spendguard/generate/__init__.py": {
+            "max_cc": 0,
+            "mi": 100.0
+          },
+          "src/spendguard/generate/execution/__init__.py": {
+            "max_cc": 0,
+            "mi": 100.0
+          },
+          "src/spendguard/generate/spend_capture/__init__.py": {
+            "max_cc": 0,
+            "mi": 100.0
+          },
+          "src/spendguard/generate/work_integrity/__init__.py": {
+            "max_cc": 0,
+            "mi": 100.0
+          },
+          "src/spendguard/import_behavior_snapshot.py": {
+            "max_cc": 7,
+            "mi": 33.34139961456779
+          },
+          "src/spendguard/interface/__init__.py": {
+            "max_cc": 0,
+            "mi": 100.0
+          },
+          "src/spendguard/manage/__init__.py": {
+            "max_cc": 0,
+            "mi": 100.0
+          },
+          "src/spendguard/manage/admission/__init__.py": {
+            "max_cc": 0,
+            "mi": 100.0
+          },
+          "src/spendguard/manage/routing/__init__.py": {
+            "max_cc": 0,
+            "mi": 100.0
+          },
+          "src/spendguard/manage/token_operations/__init__.py": {
+            "max_cc": 0,
+            "mi": 100.0
+          },
+          "src/spendguard/platform/__init__.py": {
+            "max_cc": 0,
+            "mi": 100.0
+          },
+          "src/spendguard/store/__init__.py": {
+            "max_cc": 0,
+            "mi": 100.0
+          },
+          "src/spendguard/store/call_corpus/__init__.py": {
+            "max_cc": 0,
+            "mi": 100.0
+          },
+          "src/spendguard/store/configuration/__init__.py": {
+            "max_cc": 0,
+            "mi": 100.0
+          },
+          "src/spendguard/store/money_ledger/__init__.py": {
+            "max_cc": 0,
+            "mi": 100.0
+          },
+          "src/spendguard/store/reference_data/__init__.py": {
+            "max_cc": 0,
+            "mi": 100.0
+          },
+          "src/spendguard/store/spend_search/__init__.py": {
+            "max_cc": 0,
+            "mi": 100.0
           }
         },
         "measured_extremes": {
@@ -1866,7 +2078,8 @@
     "reviewed_protected_lane_leak_readiness": "Reviewed complete readiness gate body: reuses CLI probe and its terminal constants, captures the whole report, honestly exempts absent offline ledgers, and preserves uncertain states. The added live-state wrapper lowers module maintainability index; no existing function complexity or global ratchet is relaxed.",
     "reviewed_cycle_magnitude_ratchet": "Phase 0 adds measured cycle-magnitude ceilings, explicit tightening, and complementary gate diagnostics without changing the import graph.",
     "reviewed_phase2d_dynamic_import_ratchet": "Phase 2d extends the existing AST import graph and unresolved dynamic-import ratchet without changing runtime behavior.",
-    "reviewed_import_behavior_snapshot_harness": "Reviewed the complete import-behavior snapshot harness: subprocess isolation, deterministic module-order capture, SDK wrapper-state invariants, name normalization, and explicit atomic regeneration."
+    "reviewed_import_behavior_snapshot_harness": "Reviewed the complete import-behavior snapshot harness: subprocess isolation, deterministic module-order capture, SDK wrapper-state invariants, name normalization, and explicit atomic regeneration.",
+    "reviewed_phase_2a_domain_context_skeleton": "2026-11-02: Reviewed the additive Phase 2a domain-context package skeleton, shared lazy PEP-562 surface, and empty namespace initializers; no existing module moved or rewired. The same fail-closed measurement exposed and records two pre-existing baseline gaps: import_behavior_snapshot.py at its current measured body and architectural_fitness.py as reviewed existing low-MI debt, not an improvement or relaxed threshold."
   },
   "duplication": {
     "duplicate_lines": 303,

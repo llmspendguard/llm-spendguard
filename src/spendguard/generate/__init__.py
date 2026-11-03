@@ -1,0 +1,1 @@
+"""Generation capability-kind namespace."""
