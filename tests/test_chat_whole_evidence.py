@@ -27,6 +27,15 @@ EVIDENCE_GUARD_TAXONOMY = {"orgs": [], "teams": [], "projects": []}
 EVIDENCE_GUARD_REPLY = json.dumps(dict(story="complete", insights=[], orgs=[], teams=[], projects=[]))
 
 
+def verify_chat_digest_stores_whole_first_user():
+    long_first_user = "FIRST-USER-" + "u" * EVIDENCE_GUARD_FIELD_LENGTH
+    conv = {"uuid": "digest-whole", "name": "whole title", "summary": "whole summary", "updated_at": "2026-01-01"}
+    detail = {"model": EVIDENCE_GUARD_MODEL, "chat_messages": [
+        {"sender": "human", "created_at": "2026-01-01T00:00:00Z", "text": long_first_user}]}
+    digest = chat._digest_conv(conv, detail, {})
+    assert digest["first_user"] == long_first_user, (len(digest["first_user"]), len(long_first_user))
+
+
 def verify_chat_whole_judgement_fields_and_chunks():
     corpus = [dict(uuid=f"evidence-{i}", title=f"TITLE-{i}-" + "t" * EVIDENCE_GUARD_FIELD_LENGTH,
                    summary=f"SUMMARY-{i}-" + "s" * EVIDENCE_GUARD_FIELD_LENGTH,
@@ -146,8 +155,9 @@ def verify_chat_provider_limits_bound_plan_before_spend():
 
 
 if __name__ == "__main__":
+    verify_chat_digest_stores_whole_first_user()
     verify_chat_whole_judgement_fields_and_chunks()
     verify_chat_incomplete_structured_reply_is_named_gap()
     verify_chat_truncated_allocation_never_assigns()
     verify_chat_provider_limits_bound_plan_before_spend()
-    print("OK chat whole evidence, multi-call coverage, caged estimates, named gaps, incomplete JSON guard")
+    print("OK chat whole evidence, digest guard, multi-call coverage, caged estimates, named gaps, incomplete JSON guard")

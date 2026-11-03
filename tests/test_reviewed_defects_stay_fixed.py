@@ -559,6 +559,7 @@ check("...and says to check the basis instead", "CHECK THE BASIS" in _eo.__doc__
 import subprocess as _reviewed_chat_subprocess
 _REVIEWED_CHAT_GUARDS = {
     "test_chat_whole_evidence.py": (
+        "digest: _digest_conv stores the whole first_user, no silent 300-char cut",
         "story: whole titles/summaries and all conversations, including beyond the old fifty cap",
         "discover: whole selected fields, chunked reconciliation, and explicit sampling gap",
         "allocation: whole title/summary/first-user evidence",
