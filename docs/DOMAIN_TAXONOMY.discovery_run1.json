@@ -1,0 +1,590 @@
+{
+ "domains": [
+  {
+   "name": "Reference Data: Pricing & Model Catalog",
+   "capability_kind": "STORE",
+   "layer": "L0",
+   "responsibility": "Denominations and exchange rates: canonical prices, authored per-model facts and capabilities, lane/registry SSOTs, money scale, and the sync/refresh paths that author them.",
+   "modules": [
+    "pricing.py",
+    "catalog_price_authoring.py",
+    "model_catalog.py",
+    "catalog.py",
+    "lane_registry.py",
+    "lane_catalog.py",
+    "reasoning_equivalence.py",
+    "money_scale.py",
+    "sync.py",
+    "sync_capabilities.py",
+    "refresh.py"
+   ]
+  },
+  {
+   "name": "Configuration",
+   "capability_kind": "STORE",
+   "layer": "L0",
+   "responsibility": "Declarative settings registry and resolved runtime config (paths, knobs, key loading).",
+   "modules": [
+    "config_schema.py"
+   ]
+  },
+  {
+   "name": "Money Ledger",
+   "capability_kind": "STORE",
+   "layer": "L0",
+   "responsibility": "Money truth: spend_events schema, single-owner hash-chained writer, migrations, indexes, fork-safe locks, rollups, WAL upkeep, dead-letter replay, legacy-charge migration.",
+   "modules": [
+    "ledger.py",
+    "ledger_writer.py",
+    "ledger_schema_migrations.py",
+    "schema_indexes.py",
+    "ledger_fork_locks.py",
+    "ledger_daily_rollup.py",
+    "ledger_wal_maintenance.py",
+    "ledger_deadletter.py",
+    "migrate_charges.py"
+   ]
+  },
+  {
+   "name": "Spend Search",
+   "capability_kind": "STORE",
+   "layer": "L1",
+   "responsibility": "Bounded, admission-counted, read-only ledger queries with per-request deadlines shared by every skin.",
+   "modules": [
+    "ledger_read.py",
+    "ledger_request_cursor.py",
+    "ledger_deadline_polling.py"
+   ]
+  },
+  {
+   "name": "Call Corpus & Content Retention",
+   "capability_kind": "STORE",
+   "layer": "L1",
+   "responsibility": "MISSING in seed. Per-call context/quality corpus (calls, call_io), age-bounded complete content tier, lossless compression, routing-audit metadata. Distinct system of record from money: it holds prompts/outputs and evidence, not $.",
+   "modules": [
+    "calls.py",
+    "callio.py",
+    "content_retention.py",
+    "content_compression.py",
+    "content_compression_backfill.py",
+    "routing_audit.py"
+   ]
+  },
+  {
+   "name": "Spend Capture & Ingestion",
+   "capability_kind": "GENERATE",
+   "layer": "L1",
+   "responsibility": "MISSING in seed. Turns spend that happens OUTSIDE spendguard's own execution into ledger/corpus rows: SDK/LiteLLM/HTTP/OTel capture, transcript miners (Claude Code, Codex, claude.ai), the transcript-source and GPU ports with their provider adapters, historical backfill, first-run scan.",
+   "modules": [
+    "bedrock_adapter.py",
+    "litellm_adapter.py",
+    "vertex_adapter.py",
+    "http_capture.py",
+    "otel_ingest.py",
+    "claudecode.py",
+    "codex.py",
+    "chat.py",
+    "compaction.py",
+    "sources.py",
+    "scan.py",
+    "backfill.py",
+    "gpu_port.py",
+    "lambda_adapter.py",
+    "modal_adapter.py",
+    "runpod_adapter.py"
+   ]
+  },
+  {
+   "name": "Execution",
+   "capability_kind": "GENERATE",
+   "layer": "L1",
+   "responsibility": "Spends tokens: provider registry and typed vendor calls, batch submit and batch-job lifecycle, and the subscription-lane executors (one-shot CLI runs on flat-fee plans), plus the provider plugin contract.",
+   "modules": [
+    "vendor_call.py",
+    "submit.py",
+    "batch_tracker.py",
+    "subscription_exec.py",
+    "codex_exec.py",
+    "kimi_exec.py",
+    "zai_exec.py",
+    "antigravity_exec.py",
+    "subscription_cli_results.py",
+    "provider_plugins.py",
+    "provider_kit.py"
+   ]
+  },
+  {
+   "name": "Work Integrity",
+   "capability_kind": "GENERATE",
+   "layer": "L1",
+   "responsibility": "MISSING in seed. Correctness contracts on produced work, independent of how it is routed: every item ends in a named state, resume never re-buys or reuses stale output, outputs match a declared shape, files enter prompts whole, exactly-once terminal journal, commit assertions, bulk resilience rule.",
+   "modules": [
+    "item_ledger.py",
+    "job_fingerprint.py",
+    "output_contract.py",
+    "llm_files.py",
+    "execution_journal.py",
+    "work_integrity.py",
+    "bulk_resilience.py"
+   ]
+  },
+  {
+   "name": "Cost Estimation",
+   "capability_kind": "ANALYZE",
+   "layer": "L1",
+   "responsibility": "MISSING in seed. Pre-spend projection: input/output token counting per provider and modality, naive estimate, learned calibration, estimate-vs-bill divergence. Sits BELOW admission (the gate consumes it) and is not post-hoc measurement.",
+   "modules": [
+    "estimate.py",
+    "calibrate.py",
+    "expected_output.py",
+    "content_tokens.py",
+    "provider_tokens.py",
+    "estimate_divergence.py"
+   ]
+  },
+  {
+   "name": "Admission & Enforcement",
+   "capability_kind": "ACTIVELY-MANAGE",
+   "layer": "L1",
+   "responsibility": "The allow/deny/defer decision per call or job: pre-submit cap gate, test-first/estimate-first bulk gate, escalation admission, exhausted-plan admission, model preflight, disk reserve, host-agent hooks (spawn, weekly cap, residency), and the cache short-circuit.",
+   "modules": [
+    "bulkgate.py",
+    "escalation_ladder.py",
+    "plan_admission.py",
+    "model_preflight.py",
+    "disk_guard.py",
+    "agent_spawn_gate.py",
+    "weekly_cap_guard.py",
+    "residency_gate.py",
+    "semcache.py"
+   ]
+  },
+  {
+   "name": "Routing",
+   "capability_kind": "ACTIVELY-MANAGE",
+   "layer": "L1",
+   "responsibility": "Which wallet pays: target utility scores, marginal-cost economic routing, horizon allocation across lane/batch/realtime, cascade escalation, best-value (model,effort) resolution, lane load sensing, bulk-tier routing config.",
+   "modules": [
+    "route_utility.py",
+    "route_economics.py",
+    "route_horizon.py",
+    "cascade.py",
+    "best_value.py",
+    "lane_balance.py",
+    "tier_config.py"
+   ]
+  },
+  {
+   "name": "Token Operations",
+   "capability_kind": "ACTIVELY-MANAGE",
+   "layer": "L1",
+   "responsibility": "Cross-call live resource management: dispatch governor, cross-process rate reservation, durable lane queue and predictive planner, storm coalescing, delegation (router, durable jobs, detached worker, worktree isolation, reaper), warm-daemon pools and broker, persisted per-resource state, lane fail-over evidence, corpus fan-out.",
+   "modules": [
+    "dispatch.py",
+    "xp_rate_window.py",
+    "lane_queue.py",
+    "queue_planner.py",
+    "storm_coalescer.py",
+    "storm_submit.py",
+    "storm_route.py",
+    "delegate_router.py",
+    "delegate_jobs.py",
+    "delegate_worker.py",
+    "delegate_worktrees.py",
+    "process_group_reaper.py",
+    "warm_stdio_daemon.py",
+    "codex_daemon.py",
+    "codex_daemon_broker.py",
+    "codex_broker_owner.py",
+    "kimi_daemon.py",
+    "resource_state.py",
+    "lane_recovery.py",
+    "comprehend.py"
+   ]
+  },
+  {
+   "name": "Treasury / Valuation",
+   "capability_kind": "ANALYZE",
+   "layer": "L1-L2 (read-side)",
+   "responsibility": "Values money at spend time: metered prepay balances (sunk vs auto-reload), plan quota and headroom (Stored-value), plan economics and $/token, plan value, paid overage (Arrears).",
+   "modules": [
+    "balances.py",
+    "lane_quota.py",
+    "subscription_headroom_surfaces.py",
+    "lane_economics.py",
+    "lane_value.py",
+    "overage.py"
+   ]
+  },
+  {
+   "name": "Measurement & Experimentation",
+   "capability_kind": "ANALYZE",
+   "layer": "L2",
+   "responsibility": "Produces empirical evidence: judged readings with provenance, bakeoffs, compare, A/B lab, equivalence ladder, requirement judge, stability, effort titration, reachability, servability, realized routing/efficiency, guarded-savings distribution, cache audit/test, prompt lint, practice review, lane eligibility.",
+   "modules": [
+    "measurement.py",
+    "bakeoff.py",
+    "compare.py",
+    "experiment.py",
+    "equivalence.py",
+    "requirement_judge.py",
+    "stability.py",
+    "effort_titration.py",
+    "reliability.py",
+    "lane_servability.py",
+    "route_realized.py",
+    "realized.py",
+    "guard.py",
+    "cacheaudit.py",
+    "cachetest.py",
+    "prompts.py",
+    "review.py",
+    "lane_eligibility.py"
+   ]
+  },
+  {
+   "name": "Learning & Advisory",
+   "capability_kind": "ANALYZE",
+   "layer": "L2",
+   "responsibility": "Turns evidence into learnings and advice: insights + temporal learning graph, re-validation, decaying contextual bandit, cold-start prior, deterministic and LLM advisors, post-event conversation/history mining, cold-start bootstrap, plan brief.",
+   "modules": [
+    "learn.py",
+    "validate.py",
+    "lane_bandit.py",
+    "intent_model_prior.py",
+    "advise.py",
+    "advisor.py",
+    "conv.py",
+    "history.py",
+    "bootstrap.py",
+    "brief.py"
+   ]
+  },
+  {
+   "name": "Reconciliation & Attribution",
+   "capability_kind": "ANALYZE",
+   "layer": "L3",
+   "responsibility": "Forensic accounting against provider truth (one reconcile loop + per-provider reconcilers, gap ownership, offline owner, admin-usage oracle, trust check, cost-axis integrity, anomaly z-scores) and the third axis: org\u2192team\u00d7project attribution, tagging, work-done context.",
+   "modules": [
+    "reconcile.py",
+    "ledger_sync.py",
+    "reconcile_openai.py",
+    "reconcile_anthropic.py",
+    "reconcile_calls.py",
+    "reconcile_estimate_stage.py",
+    "reconcile_gap_ownership.py",
+    "reconcile_maintenance_owner.py",
+    "realtime_oracle.py",
+    "trust.py",
+    "cost_integrity.py",
+    "anomaly.py",
+    "attribution.py",
+    "tag.py",
+    "workdone.py"
+   ]
+  },
+  {
+   "name": "Spend Reporting",
+   "capability_kind": "ANALYZE",
+   "layer": "L3",
+   "responsibility": "MISSING as a clean home in seed (it was implied in Surfaces). Owns report computation: unified daily/weekly/monthly report and monthly close statement. Not a facade: it computes totals.",
+   "modules": [
+    "report.py",
+    "close.py"
+   ]
+  },
+  {
+   "name": "Assurance & Self-Verification",
+   "capability_kind": "ANALYZE",
+   "layer": "L3",
+   "responsibility": "MISSING in seed. Checks spendguard's own code and installation, not money: price-literal and token-cap scans with a model-verdict store, key-shadow and venv coverage audits, consumer audit, metadata drift, forensic verify, architectural fitness, readiness gates, ledger benchmarks, source compaction for review.",
+   "modules": [
+    "audit.py",
+    "token_caps.py",
+    "estimate_literals.py",
+    "verdict_ledger.py",
+    "keys_audit.py",
+    "coverage.py",
+    "consumer_audit.py",
+    "metadata_audit.py",
+    "verify.py",
+    "architectural_fitness.py",
+    "capability_readiness.py",
+    "capability_readiness_gates.py",
+    "external_standard_readiness.py",
+    "ledger_performance_benchmark.py",
+    "source_compact.py"
+   ]
+  },
+  {
+   "name": "Federation & Egress",
+   "capability_kind": "EGRESS (missing kind)",
+   "layer": "L3",
+   "responsibility": "MISSING in seed (seed put orgsync in Surfaces). Everything that leaves the machine: client-side de-identification, SaaS seam, scrubbed efficiency signal and shared insights, event sinks, email, FOCUS export. Owns scrubbing/projection logic, so it cannot be a thin INTERFACE.",
+   "modules": [
+    "saas.py",
+    "deid.py",
+    "signal.py",
+    "share.py",
+    "emit.py",
+    "notify.py",
+    "focus_export.py"
+   ]
+  },
+  {
+   "name": "Platform: Install, Fleet & Release",
+   "capability_kind": "PLATFORM (missing kind)",
+   "layer": "L4 (operates the package)",
+   "responsibility": "MISSING in seed AND missing from the capability spine. Self-operation of the product: version SSOT, release green pointer, distribution attestation, manifest, fleet convergence, OS scheduler, init/config interview, lane activation, interpreter gating via run/remote, offline build provisioning, launchd labels.",
+   "modules": [
+    "_version.py",
+    "release.py",
+    "distribution.py",
+    "distribution_daemon.py",
+    "manifest.py",
+    "fleet.py",
+    "schedule.py",
+    "setup.py",
+    "lanes.py",
+    "runner.py",
+    "remote.py",
+    "offline_python_build.py",
+    "launchd_labels.py"
+   ]
+  },
+  {
+   "name": "Surfaces",
+   "capability_kind": "INTERFACE",
+   "layer": "L4",
+   "responsibility": "Thin facades over the capability SSOT: cli, __main__, MCP server and its descriptor lifecycle, HTTP serve, the stable ask() facade, capability registry and generated CLI/API/MCP/doc projections, shared UI strings.",
+   "modules": [
+    "cli.py",
+    "__main__.py",
+    "mcp_server.py",
+    "mcp_fd_lifecycle.py",
+    "serve.py",
+    "crossllm.py",
+    "capability_registry.py",
+    "capability_cli_projection_models.py",
+    "capability_cli_parsing.py",
+    "capability_cli_callable_generation.py",
+    "capability_cli_dispatch_generation.py",
+    "capability_cli_help_generation.py",
+    "capability_surface_generation.py",
+    "capability_documentation.py",
+    "cli_arguments.py",
+    "ui.py"
+   ]
+  }
+ ],
+ "missing_domains_found": [
+  {
+   "name": "Spend Capture & Ingestion",
+   "why": "Observing spend generated OUTSIDE spendguard (SDK/LiteLLM/HTTP/OTel capture, transcript miners, GPU port + adapters, backfill) is neither Execution (spends nothing) nor Ledger (it feeds it). v1/seed smeared these across Execution and Surfaces."
+  },
+  {
+   "name": "Call Corpus & Content Retention",
+   "why": "A second system of record (prompts/outputs/evidence) with its own privacy and retention rules; not money, so it cannot live in Ledger."
+  },
+  {
+   "name": "Cost Estimation",
+   "why": "Pre-spend projection consumed by the gate (gate->estimate_divergence, bulkgate->calibrate). The seed put calibrate in Measurement, which would make Admission depend on L2 and break the loop."
+  },
+  {
+   "name": "Work Integrity",
+   "why": "Item-completeness, resume fingerprinting, output contracts, exactly-once journal: correctness of produced work regardless of route. No seed domain owns correctness."
+  },
+  {
+   "name": "Learning & Advisory (split out of seed 'Measurement & Learning')",
+   "why": "The loop the prompt mandates names measurement and learning as separate stages; one domain hides the measurement->learning edge."
+  },
+  {
+   "name": "Spend Reporting",
+   "why": "report/close compute totals; putting them in Surfaces would violate rule 4."
+  },
+  {
+   "name": "Assurance & Self-Verification",
+   "why": "15 modules verify spendguard's OWN code/install (price-literal scans, token caps, readiness, fitness, verify). They analyze code, not money, so Reconciliation is not a clean fit."
+  },
+  {
+   "name": "Federation & Egress",
+   "why": "deid/saas/signal/share/emit/notify/focus_export own scrubbing and projection logic, so they are not thin INTERFACE. Needs a kind of its own (EGRESS)."
+  },
+  {
+   "name": "Platform: Install, Fleet & Release",
+   "why": "Version SSOT, green pointer, attestation, fleet convergence, scheduler, init, run/remote gating. None of the five capability kinds covers the product operating itself, so a sixth kind (PLATFORM) is missing from the spine."
+  }
+ ],
+ "split_modules": [
+  {
+   "module": "__init__.py",
+   "responsibilities": [
+    {
+     "domain": "Surfaces",
+     "what": "public API re-exports (spendguard.install, ask, \u2026)"
+    },
+    {
+     "domain": "Admission & Enforcement",
+     "what": "_load_public_api_and_install_gate / _auto_install: installs the gate as an import side effect"
+    },
+    {
+     "domain": "Spend Capture & Ingestion",
+     "what": "install_litellm / install_bedrock / install_vertex capture hooks"
+    }
+   ]
+  },
+  {
+   "module": "adapters.py",
+   "responsibilities": [
+    {
+     "domain": "Execution",
+     "what": "provider registry, call/structured_reply/vision/embed, SDK clients, deadlines, token-budget healing"
+    },
+    {
+     "domain": "Token Operations",
+     "what": "lane cooling, lane-model cooling, auth/logout surfacing, learned rate limits (live per-lane health state, belongs in resource_state)"
+    },
+    {
+     "domain": "Routing",
+     "what": "best-value default, route-through-queue / manage-all switches, fallback learning, substitution booking"
+    },
+    {
+     "domain": "Reference Data: Pricing & Model Catalog",
+     "what": "schema_capability / generation_support: per-model capability facts"
+    }
+   ]
+  },
+  {
+   "module": "gate.py",
+   "responsibilities": [
+    {
+     "domain": "Admission & Enforcement",
+     "what": "pre-submit estimate-vs-cap gate, kill switch"
+    },
+    {
+     "domain": "Spend Capture & Ingestion",
+     "what": "_record_rt realtime recording used by litellm/bedrock/vertex/http capture"
+    }
+   ]
+  },
+  {
+   "module": "budget.py",
+   "responsibilities": [
+    {
+     "domain": "Money Ledger",
+     "what": "legacy cross-process charges store (SQLite WAL)"
+    },
+    {
+     "domain": "Admission & Enforcement",
+     "what": "fleet-wide daily/monthly cap check before allowing spend"
+    }
+   ]
+  },
+  {
+   "module": "config.py",
+   "responsibilities": [
+    {
+     "domain": "Configuration",
+     "what": "paths, knobs, key resolution from env/.env"
+    },
+    {
+     "domain": "Money Ledger",
+     "what": "single-instance locks and ledger connection/WAL/cursor wiring it imports from ledger_* (should move behind the ledger)"
+    }
+   ]
+  },
+  {
+   "module": "models.py",
+   "responsibilities": [
+    {
+     "domain": "Reference Data: Pricing & Model Catalog",
+     "what": "verified per-model facts and quirks"
+    },
+    {
+     "domain": "Execution",
+     "what": "apply_call_params: shaping max_tokens/reasoning on each outgoing request"
+    }
+   ]
+  },
+  {
+   "module": "whole_job.py",
+   "responsibilities": [
+    {
+     "domain": "Routing",
+     "what": "choose batch vs lane vs metered per job, capability-matched"
+    },
+    {
+     "domain": "Token Operations",
+     "what": "enforce budget, execute the job set, return receipts"
+    }
+   ]
+  },
+  {
+   "module": "lane_quota_cost.py",
+   "responsibilities": [
+    {
+     "domain": "Treasury / Valuation",
+     "what": "measured lane token cost"
+    },
+    {
+     "domain": "Admission & Enforcement",
+     "what": "fail-closed plan-quota admission"
+    }
+   ]
+  },
+  {
+   "module": "truth.py",
+   "responsibilities": [
+    {
+     "domain": "Reconciliation & Attribution",
+     "what": "compute per-day provider-truth totals from usage/cost APIs"
+    },
+    {
+     "domain": "Federation & Egress",
+     "what": "push those totals to the org server"
+    }
+   ]
+  },
+  {
+   "module": "receipt.py",
+   "responsibilities": [
+    {
+     "domain": "Spend Reporting",
+     "what": "inline per-flow receipts and running tally"
+    },
+    {
+     "domain": "Platform: Install, Fleet & Release",
+     "what": "_install_claude_code: wiring Claude Code hooks (PreCompact etc.)"
+    }
+   ]
+  },
+  {
+   "module": "openai_batch_cli.py",
+   "responsibilities": [
+    {
+     "domain": "Execution",
+     "what": "build per-model batch request envelopes and submit/fetch"
+    },
+    {
+     "domain": "Surfaces",
+     "what": "batch-submit / batch-fetch command entry points"
+    }
+   ]
+  },
+  {
+   "module": "resources.py",
+   "responsibilities": [
+    {
+     "domain": "Spend Capture & Ingestion",
+     "what": "vast.ai GPU spend snapshot and day-splitting"
+    },
+    {
+     "domain": "Reconciliation & Attribution",
+     "what": "map GPU spend to org/team/project/contributor"
+    }
+   ]
+  }
+ ],
+ "homeless": [],
+ "notes": "SEED VERDICT: partially confirmed. Confirmed: the capability-kind spine; Ledger/Spend Search/Execution/Routing/Token Operations/Treasury/Reconciliation as real contexts; all 7 economics probes now have clean homes (lane_bandit->Learning & Advisory as the learning write-path; route_realized->Measurement; route_horizon->Routing; weekly_cap_guard->Admission; whole_job split Routing/Token Ops; lane_quota_cost split Treasury/Admission; overage->Treasury as the Arrears account, NOT Reconciliation, because overage.py is live status, not forensics). Refuted: (a) 10 domains is too few. 21 are needed, and 9 of them are missing from the seed; (b) Routing and Admission are different decisions (which wallet vs allow/deny) and are split; (c) best_value goes to Routing, not Treasury: it SELECTS (model,effort) from valuations, it does not value; (d) orgsync is not an interface; (e) the five kinds are incomplete: EGRESS and PLATFORM are missing. PHANTOM SEED MODULES: executors, bulk_delegate, utilization, determinism, money-ledger, connection pool, savings analytics do not exist in the 220-module corpus. Either they are planned or they were renamed (e.g. savings is guard.py, determinism lives in stability.py/adapters measurement=True). SPLITS: 12 real multi-responsibility modules (vs 106 flagged in v1). Biggest is adapters.py (~90 defs: execution + live lane-health state + routing defaults + capability facts). Its lane-cooling state should move into resource_state. ACYCLICITY IS VIOLATED TODAY: one 30-module SCC spans ledger, ledger_writer, ledger_read, budget, gate, config, config_schema, calls, fleet, distribution, distribution_daemon, manifest, setup, mcp_server, mcp_fd_lifecycle, receipt, residency_gate, weekly_cap_guard, lane_queue, the codex daemon/broker/exec stack, delegate_jobs/router, execution_journal, disk_guard, ledger_deadletter, ledger_request_cursor, ledger_wal_maintenance. Edges to cut, in order: budget<->gate and budget->distribution (move cap-check out of budget into Admission); config->ledger_* and config_schema->fleet/residency_gate/weekly_cap_guard (L0 must import nothing above it; invert to registration); ledger_writer->ledger_read and ledger_read->calls/budget (store-write must not import its search; read must not import corpus/admission); adapters->distribution and distribution_daemon->mcp_server (execution/platform must not import a surface); execution_journal<->delegate_jobs. META-LOOP: advisor, bakeoff, experiment, effort_titration, cacheaudit, cachetest, conv, review and intent_model_prior import submit (Execution), so analysis buys its own judge calls. This is a nested, meta-budgeted loop, not a violation of data flow, but at the import level it is a back-edge Execution<-Analyze. Expose a caged 'meta-call' port from Execution and depend on that. bulkgate->advisor is a real violation: Admission must consume a calibrated estimate, not the learning advisor. RULE 4 AT SCALE: 76 non-surface modules import capability_cli_parsing and define main(). The capability modules own their CLI, so the facades are not thin. Move main() bodies into generated projections. HUB: 185 modules import the package root `spendguard`, whose __init__ eagerly imports gate/calls/pricing/etc. and installs the gate on import. That makes every module transitively depend on everything; the __init__ split (facade vs auto-install side effect) is the single highest-leverage fix. Configuration has one wholly-owned module (config_schema) because config.py is split. This is intentional: config.py's ledger wiring is the defect."
+}
