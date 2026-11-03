@@ -1,0 +1,356 @@
+{
+  "schema_version": 1,
+  "name_normalization": {},
+  "entry_points": {
+    "package_import": {
+      "atexit_registrations": [
+        "spendguard.ledger_writer.close_ledger_writers",
+        "spendguard.gate._rt_flush"
+      ],
+      "executed_modules": [
+        "spendguard.capability_surface_generation",
+        "spendguard.capability_registry",
+        "spendguard.capability_cli_projection_models",
+        "spendguard._version",
+        "spendguard.pricing",
+        "spendguard.model_catalog",
+        "spendguard.config",
+        "spendguard.ledger_fork_locks",
+        "spendguard.gate",
+        "spendguard.calls",
+        "spendguard.capability_cli_parsing",
+        "spendguard.schema_indexes",
+        "spendguard.ledger_schema_migrations",
+        "spendguard.money_scale",
+        "spendguard.budget",
+        "spendguard.ledger_writer",
+        "spendguard.ledger_read",
+        "spendguard.ledger_deadline_polling",
+        "spendguard.ledger",
+        "spendguard.emit",
+        "spendguard.bulkgate",
+        "spendguard.crossllm",
+        "spendguard.vendor_call",
+        "spendguard.item_ledger",
+        "spendguard.escalation_ladder",
+        "spendguard.job_fingerprint",
+        "spendguard.litellm_adapter",
+        "spendguard.bedrock_adapter",
+        "spendguard.vertex_adapter",
+        "spendguard.provider_plugins",
+        "spendguard.http_capture",
+        "spendguard.fleet"
+      ],
+      "gate_installed": true,
+      "gate_unarmed_details": [],
+      "import_hooks": [
+        "spendguard.gate._GatePackagePostImportFinder"
+      ],
+      "logging_handlers": [],
+      "sdk_methods": {
+        "anthropic.resources.messages.batches.Batches.create": "gated",
+        "openai.resources.files.Files.create": "gated"
+      }
+    },
+    "module_main": {
+      "atexit_registrations": [
+        "spendguard.ledger_writer.close_ledger_writers",
+        "spendguard.gate._rt_flush"
+      ],
+      "executed_modules": [
+        "spendguard.capability_surface_generation",
+        "spendguard.capability_registry",
+        "spendguard.capability_cli_projection_models",
+        "spendguard._version",
+        "spendguard.pricing",
+        "spendguard.model_catalog",
+        "spendguard.config",
+        "spendguard.ledger_fork_locks",
+        "spendguard.gate",
+        "spendguard.calls",
+        "spendguard.capability_cli_parsing",
+        "spendguard.schema_indexes",
+        "spendguard.ledger_schema_migrations",
+        "spendguard.money_scale",
+        "spendguard.budget",
+        "spendguard.ledger_writer",
+        "spendguard.ledger_read",
+        "spendguard.ledger_deadline_polling",
+        "spendguard.ledger",
+        "spendguard.emit",
+        "spendguard.bulkgate",
+        "spendguard.crossllm",
+        "spendguard.vendor_call",
+        "spendguard.item_ledger",
+        "spendguard.escalation_ladder",
+        "spendguard.job_fingerprint",
+        "spendguard.litellm_adapter",
+        "spendguard.bedrock_adapter",
+        "spendguard.vertex_adapter",
+        "spendguard.provider_plugins",
+        "spendguard.http_capture",
+        "spendguard.fleet"
+      ],
+      "gate_installed": true,
+      "gate_unarmed_details": [],
+      "import_hooks": [
+        "spendguard.gate._GatePackagePostImportFinder"
+      ],
+      "logging_handlers": [],
+      "sdk_methods": {
+        "anthropic.resources.messages.batches.Batches.create": "gated",
+        "openai.resources.files.Files.create": "gated"
+      }
+    },
+    "sitecustomize_hook": {
+      "atexit_registrations": [
+        "spendguard.ledger_writer.close_ledger_writers",
+        "spendguard.gate._rt_flush"
+      ],
+      "executed_modules": [
+        "spendguard.capability_surface_generation",
+        "spendguard.capability_registry",
+        "spendguard.capability_cli_projection_models",
+        "spendguard._version",
+        "spendguard.pricing",
+        "spendguard.model_catalog",
+        "spendguard.config",
+        "spendguard.ledger_fork_locks",
+        "spendguard.gate",
+        "spendguard.calls",
+        "spendguard.capability_cli_parsing",
+        "spendguard.schema_indexes",
+        "spendguard.ledger_schema_migrations",
+        "spendguard.money_scale",
+        "spendguard.budget",
+        "spendguard.ledger_writer",
+        "spendguard.ledger_read",
+        "spendguard.ledger_deadline_polling",
+        "spendguard.ledger",
+        "spendguard.emit",
+        "spendguard.bulkgate",
+        "spendguard.crossllm",
+        "spendguard.vendor_call",
+        "spendguard.item_ledger",
+        "spendguard.escalation_ladder",
+        "spendguard.job_fingerprint",
+        "spendguard.litellm_adapter",
+        "spendguard.bedrock_adapter",
+        "spendguard.vertex_adapter",
+        "spendguard.provider_plugins",
+        "spendguard.http_capture",
+        "spendguard.fleet"
+      ],
+      "gate_installed": true,
+      "gate_unarmed_details": [],
+      "import_hooks": [
+        "spendguard.gate._GatePackagePostImportFinder"
+      ],
+      "logging_handlers": [],
+      "sdk_methods": {
+        "anthropic.resources.messages.batches.Batches.create": "gated",
+        "openai.resources.files.Files.create": "gated"
+      }
+    },
+    "usercustomize_hook": {
+      "atexit_registrations": [
+        "spendguard.ledger_writer.close_ledger_writers",
+        "spendguard.gate._rt_flush"
+      ],
+      "executed_modules": [
+        "spendguard.capability_surface_generation",
+        "spendguard.capability_registry",
+        "spendguard.capability_cli_projection_models",
+        "spendguard._version",
+        "spendguard.pricing",
+        "spendguard.model_catalog",
+        "spendguard.config",
+        "spendguard.ledger_fork_locks",
+        "spendguard.gate",
+        "spendguard.calls",
+        "spendguard.capability_cli_parsing",
+        "spendguard.schema_indexes",
+        "spendguard.ledger_schema_migrations",
+        "spendguard.money_scale",
+        "spendguard.budget",
+        "spendguard.ledger_writer",
+        "spendguard.ledger_read",
+        "spendguard.ledger_deadline_polling",
+        "spendguard.ledger",
+        "spendguard.emit",
+        "spendguard.bulkgate",
+        "spendguard.crossllm",
+        "spendguard.vendor_call",
+        "spendguard.item_ledger",
+        "spendguard.escalation_ladder",
+        "spendguard.job_fingerprint",
+        "spendguard.litellm_adapter",
+        "spendguard.bedrock_adapter",
+        "spendguard.vertex_adapter",
+        "spendguard.provider_plugins",
+        "spendguard.http_capture",
+        "spendguard.fleet"
+      ],
+      "gate_installed": true,
+      "gate_unarmed_details": [],
+      "import_hooks": [
+        "spendguard.gate._GatePackagePostImportFinder"
+      ],
+      "logging_handlers": [],
+      "sdk_methods": {
+        "anthropic.resources.messages.batches.Batches.create": "gated",
+        "openai.resources.files.Files.create": "gated"
+      }
+    },
+    "sdk_before_package": {
+      "atexit_registrations": [
+        "spendguard.ledger_writer.close_ledger_writers",
+        "spendguard.gate._rt_flush"
+      ],
+      "executed_modules": [
+        "spendguard.capability_surface_generation",
+        "spendguard.capability_registry",
+        "spendguard.capability_cli_projection_models",
+        "spendguard._version",
+        "spendguard.pricing",
+        "spendguard.model_catalog",
+        "spendguard.config",
+        "spendguard.ledger_fork_locks",
+        "spendguard.gate",
+        "spendguard.calls",
+        "spendguard.capability_cli_parsing",
+        "spendguard.schema_indexes",
+        "spendguard.ledger_schema_migrations",
+        "spendguard.money_scale",
+        "spendguard.budget",
+        "spendguard.ledger_writer",
+        "spendguard.ledger_read",
+        "spendguard.ledger_deadline_polling",
+        "spendguard.ledger",
+        "spendguard.emit",
+        "spendguard.bulkgate",
+        "spendguard.crossllm",
+        "spendguard.vendor_call",
+        "spendguard.item_ledger",
+        "spendguard.escalation_ladder",
+        "spendguard.job_fingerprint",
+        "spendguard.litellm_adapter",
+        "spendguard.bedrock_adapter",
+        "spendguard.vertex_adapter",
+        "spendguard.provider_plugins",
+        "spendguard.http_capture",
+        "spendguard.fleet"
+      ],
+      "gate_installed": true,
+      "gate_unarmed_details": [],
+      "import_hooks": [
+        "spendguard.gate._GatePackagePostImportFinder"
+      ],
+      "logging_handlers": [],
+      "sdk_methods": {
+        "anthropic.resources.messages.batches.Batches.create": "gated",
+        "openai.resources.files.Files.create": "gated"
+      }
+    },
+    "sdk_after_package": {
+      "atexit_registrations": [
+        "spendguard.ledger_writer.close_ledger_writers",
+        "spendguard.gate._rt_flush"
+      ],
+      "executed_modules": [
+        "spendguard.capability_surface_generation",
+        "spendguard.capability_registry",
+        "spendguard.capability_cli_projection_models",
+        "spendguard._version",
+        "spendguard.pricing",
+        "spendguard.model_catalog",
+        "spendguard.config",
+        "spendguard.ledger_fork_locks",
+        "spendguard.gate",
+        "spendguard.calls",
+        "spendguard.capability_cli_parsing",
+        "spendguard.schema_indexes",
+        "spendguard.ledger_schema_migrations",
+        "spendguard.money_scale",
+        "spendguard.budget",
+        "spendguard.ledger_writer",
+        "spendguard.ledger_read",
+        "spendguard.ledger_deadline_polling",
+        "spendguard.ledger",
+        "spendguard.emit",
+        "spendguard.bulkgate",
+        "spendguard.crossllm",
+        "spendguard.vendor_call",
+        "spendguard.item_ledger",
+        "spendguard.escalation_ladder",
+        "spendguard.job_fingerprint",
+        "spendguard.litellm_adapter",
+        "spendguard.bedrock_adapter",
+        "spendguard.vertex_adapter",
+        "spendguard.provider_plugins",
+        "spendguard.http_capture",
+        "spendguard.fleet"
+      ],
+      "gate_installed": true,
+      "gate_unarmed_details": [],
+      "import_hooks": [
+        "spendguard.gate._GatePackagePostImportFinder"
+      ],
+      "logging_handlers": [],
+      "sdk_methods": {
+        "anthropic.resources.messages.batches.Batches.create": "gated",
+        "openai.resources.files.Files.create": "gated"
+      }
+    },
+    "gate_submodule_import": {
+      "atexit_registrations": [
+        "spendguard.ledger_writer.close_ledger_writers",
+        "spendguard.gate._rt_flush"
+      ],
+      "executed_modules": [
+        "spendguard.capability_surface_generation",
+        "spendguard.capability_registry",
+        "spendguard.capability_cli_projection_models",
+        "spendguard._version",
+        "spendguard.pricing",
+        "spendguard.model_catalog",
+        "spendguard.config",
+        "spendguard.ledger_fork_locks",
+        "spendguard.gate",
+        "spendguard.calls",
+        "spendguard.capability_cli_parsing",
+        "spendguard.schema_indexes",
+        "spendguard.ledger_schema_migrations",
+        "spendguard.money_scale",
+        "spendguard.budget",
+        "spendguard.ledger_writer",
+        "spendguard.ledger_read",
+        "spendguard.ledger_deadline_polling",
+        "spendguard.ledger",
+        "spendguard.emit",
+        "spendguard.bulkgate",
+        "spendguard.crossllm",
+        "spendguard.vendor_call",
+        "spendguard.item_ledger",
+        "spendguard.escalation_ladder",
+        "spendguard.job_fingerprint",
+        "spendguard.litellm_adapter",
+        "spendguard.bedrock_adapter",
+        "spendguard.vertex_adapter",
+        "spendguard.provider_plugins",
+        "spendguard.http_capture",
+        "spendguard.fleet"
+      ],
+      "gate_installed": true,
+      "gate_unarmed_details": [],
+      "import_hooks": [
+        "spendguard.gate._GatePackagePostImportFinder"
+      ],
+      "logging_handlers": [],
+      "sdk_methods": {
+        "anthropic.resources.messages.batches.Batches.create": "gated",
+        "openai.resources.files.Files.create": "gated"
+      }
+    }
+  }
+}
