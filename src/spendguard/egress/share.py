@@ -14,9 +14,9 @@ community) that must be locally corroborated by `validate` before the advisor le
 CLI: `spendguard insights {list,export,import}`.
 """
 
-from .capability_cli_parsing import add_registered_cli_argument
+from ..capability_cli_parsing import add_registered_cli_argument
 import json
-from . import learn
+from .. import learn
 
 
 def _scrub_text(s, intent=None):

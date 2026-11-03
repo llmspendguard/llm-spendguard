@@ -26,7 +26,7 @@ The HTTP contract the server repo will implement (versioned under {url}/v1); ide
 All requests send `Authorization: Bearer <api_key>` and `X-Spendguard-Client: <version>`.
 """
 
-from .capability_cli_parsing import registered_cli_option_token
+from ..capability_cli_parsing import registered_cli_option_token
 import json
 import math
 import numbers
@@ -36,7 +36,7 @@ import urllib.request
 import urllib.error
 import urllib.parse
 
-from . import config
+from .. import config
 
 _INTERVAL_SECONDS = {"off": None, "hourly": 3600, "daily": 86400, "weekly": 604800}
 _LEDGER_NONNEGATIVE_NUMBER_FIELDS = (
@@ -51,7 +51,7 @@ def saas_connection():
 
 def _client_version():
     try:
-        from . import __version__
+        from .. import __version__
         return __version__
     except Exception:
         return "0"
@@ -165,7 +165,7 @@ def fetch_models(model=None, provider=None, timeout=8):
     try:
         r = _request("GET", "/v1/models" + ("?" + q if q else ""), timeout=timeout)
     except Exception as e:
-        from . import gate as _g
+        from .. import gate as _g
         if _g.is_deliberate_stop(e):
             raise                                    # a refusal/deadline is never downgraded to a silent fallback
         return None                                  # unconfigured / unreachable → the caller uses its local sync
@@ -183,8 +183,8 @@ def sync_catalog_overlay(timeout=8):
     untouched (never wipes a good overlay with nothing); a deliberate spend/deadline stop propagates. Returns the
     number of curated models written. Each record's embedded, source-owned as_of is preserved verbatim and never
     restamped by this client. $0 (a read)."""
-    from . import gate as _g
-    from .catalog_price_authoring import merge_synced_catalog_layer
+    from .. import gate as _g
+    from ..catalog_price_authoring import merge_synced_catalog_layer
     try:
         r = _request("GET", "/v1/models?curated=1", timeout=timeout)
     except Exception as e:
@@ -334,7 +334,7 @@ def _org_projects(org):
     if not org:
         return set()
     try:
-        from . import attribution
+        from .. import attribution
         ptmap = attribution.project_team_map(attribution.taxonomy()[0])
         return {p for p, (o, _t) in ptmap.items() if (o or "").lower() == str(org).lower()}
     except Exception:
@@ -486,7 +486,7 @@ def _rollup_rows(since=None):
     row as server_only, because the local read hiccuped. The ledger auto-creates, so by_dims returns [] on a fresh
     install; only a genuine locked/corrupt-DB failure reaches the except, and that must fail loud, not push nothing."""
     import sys as _sys
-    from . import budget
+    from .. import budget
     try:
         raw = budget.by_dims(since=since)
     except Exception as e:
@@ -505,7 +505,7 @@ def _guarded_rows(since=None):
       · a None scope (org configured but resolved to NO projects) is a MISCONFIGURATION surfaced loud — the push then
         sends nothing rather than over-sharing every project under an unresolved org (the fail-open leak)."""
     import sys as _sys
-    from . import guard
+    from .. import guard
     try:
         rows = guard.by_dims_guarded(since=since)
     except Exception as e:
@@ -585,7 +585,7 @@ def push_calibration(cells=None):
     if not cok:
         return {"skipped": cwhy}
     if cells is None:
-        from . import calibrate
+        from .. import calibrate
         cells = calibrate.cell_stats()
     if not cells:
         return {"skipped": "no calibration cells yet — run some gated work first"}
@@ -621,7 +621,7 @@ def push_workdone(since=None, by="month", dry=False):
     cok, cwhy = contributor_ok()
     if not cok:
         return {"skipped": cwhy}
-    from . import workdone, deid
+    from .. import workdone, deid
     flt = _project_filter(c)
     summaries = {str(k).lower(): v for k, v in workdone.load_summaries().items()}   # scrubbed "what was accomplished"
     work = []
@@ -666,7 +666,7 @@ def push_status(dry=False):
         return {"skipped": cwhy}
     gated, total_g, total = None, 0, 0
     try:
-        from . import setup
+        from .. import setup
         import sys as _sys
         _ver, has, enf = setup._probe(_sys.executable)     # clean-subprocess: does this interpreter auto-gate?
         if has:
@@ -675,7 +675,7 @@ def push_status(dry=False):
         pass
     drift = []
     try:                                                    # free, read-only OpenRouter price drift; tolerate offline
-        from . import pricing
+        from .. import pricing
         rows, _m, _t = pricing.cross_check_openrouter()
         for model, oi, ri, oo, ro, flag in rows:
             if flag == "DRIFT":
@@ -687,7 +687,7 @@ def push_status(dry=False):
         pass
     shed = decisions = overage_status = lane_usage = None
     try:                                                    # shed-effectiveness snapshot (scrubbed: lane names + counts
-        from . import guard                                 # + $ only, no prompts/paths/$spend). Powers the org "shed
+        from .. import guard                                 # + $ only, no prompts/paths/$spend). Powers the org "shed
         _s = guard.shed_summary()                           # effectiveness" panel. Upserted per member like the rest.
         if _s.get("n_sheds"):
             shed = {"n_sheds": _s["n_sheds"], "served_free_n": _s.get("served_free_n"), "paid_n": _s.get("paid_n"),
@@ -697,7 +697,7 @@ def push_status(dry=False):
         pass
     try:
         import datetime as _dt
-        from . import lanes
+        from .. import lanes
         by_lane = []
         for row in lanes.lane_headroom(do_fetch=False)[:16]:
             clean = {key: row[key] for key in
@@ -716,7 +716,7 @@ def push_status(dry=False):
     except Exception:
         pass
     try:
-        from . import overage
+        from .. import overage
         _o = overage.current_overage_status()
         by_month = [{"month": str(month), "billed_overage_usd": float(dollars)}
                     for month, dollars in list((_o.get("real_overage_by_month_usd") or {}).items())[:6]]
@@ -834,17 +834,17 @@ def run_commands(since=None):
         res = {}
         try:
             if kind in ("reconcile", "full"):
-                from . import ledger_sync
+                from .. import ledger_sync
                 rec = ledger_sync.reconcile_into_ledger(since=since)   # writes provider-truth gap into the ledger
                 res["coverage"] = rec["coverage"]
                 res["provider_total"] = rec["provider_total"]
                 res["leak_usd"] = rec["ungoverned"]                   # ungoverned = the gap surfaced
             if kind in ("retag", "full"):
-                from . import tag
+                from .. import tag
                 res["retagged"] = tag.retag_deterministic()
                 res["ambiguous"] = tag.ambiguous_count()   # remainder an LLM pass could resolve (gated, separate)
             if kind == "attribute":                        # ORG REQUEST: run the chat-attribution loop (consent-gated)
-                from . import chat as _chat
+                from .. import chat as _chat
                 pull_taxonomy()                            # adopt the org's canonical taxonomy first
                 if _chat._chat_enabled():
                     res["loop"] = _chat.loop(run=True, quiet=True)   # member already consented → run + sync
@@ -898,32 +898,32 @@ def sync(if_due=False, since=None):
     if not ok:
         return {"skipped": f"not connected: {reason}"}
     try:                                                  # record GPU instances EVERY run (cheap, free) so a frequent
-        from . import resources as _r                     # scheduler captures short-lived/destroyed instances even
+        from .. import resources as _r                     # scheduler captures short-lived/destroyed instances even
         _r.record_instance_history()                      # when the full push isn't due yet
     except Exception:
         pass
     prices = {}
     try:                                                  # keep the LiteLLM price layer fresh (self-limits to once per
-        from . import sync as _price_sync                 # pricing.refresh_days) so unit/ft:/new-model rates price
+        from .. import sync as _price_sync                 # pricing.refresh_days) so unit/ft:/new-model rates price
         prices = _price_sync.refresh_if_stale()           # themselves — rides this sync, no dedicated price scheduler
     except Exception:
         pass
     catalog_refresh = {}
     try:                                                  # and the live model-catalog (self-limits to once per
-        from . import catalog as _catalog                 # catalog.refresh_hours) so dispatch can catch a rotated/dead
+        from .. import catalog as _catalog                 # catalog.refresh_hours) so dispatch can catch a rotated/dead
         catalog_refresh = _catalog.refresh_catalog_if_stale()   # id at the call site — rides this sync, no scheduler
     except Exception as _ce:
         catalog_refresh = {"error": str(_ce)[:120]}       # SURFACED, never silent — a refresh that didn't happen
     #                                                       must be visible in the sync result (see out["catalog"])
     balances_refresh = {}
     try:                                                  # and per-vendor metered balances (self-limits to once per
-        from . import balances as _balances               # balances.refresh_hours) so routing can prefer idle
+        from .. import balances as _balances               # balances.refresh_hours) so routing can prefer idle
         balances_refresh = _balances.refresh_balances_if_stale()   # sunk-pool credit — rides this sync, no scheduler
     except Exception as _be:
         balances_refresh = {"error": str(_be)[:120]}      # SURFACED in out["balances"], never silent
     headroom_refresh = {}
     try:                                                  # and the per-lane QUOTA HEADROOM snapshot (self-limits to
-        from . import lanes as _lanes                     # once per lanes.headroom_refresh_hours) — what idle_lanes
+        from .. import lanes as _lanes                     # once per lanes.headroom_refresh_hours) — what idle_lanes
         headroom_refresh = _lanes.refresh_headroom_if_stale()   # reads to rank overflow by real headroom, no scheduler
     except Exception as _he:
         headroom_refresh = {"error": str(_he)[:120]}      # SURFACED in out["headroom"], never silent
@@ -935,14 +935,14 @@ def sync(if_due=False, since=None):
     if not cok:
         return {"skipped": cwhy}   # one clear message, not three skip-notes
     try:
-        from . import ledger_sync
+        from .. import ledger_sync
         ledger_sync.reconcile_into_ledger(since=since)   # batch provider-truth gap → ledger
         ledger_sync.reconcile_realtime(since=since)      # gate's realtime history (realtime_log) → ledger
     except Exception:
         pass
     # work-done needs no gap-fill reconcile: it's re-derived from git + the call corpus (complete, idempotent push).
     try:                                                  # remote-compute (vast.ai GPU) → same org/project as LLM
-        from . import resources as _resources
+        from .. import resources as _resources
         res = _resources.sync()
     except Exception as e:
         res = {"skipped": f"resources unavailable: {str(e)[:80]}"}
@@ -950,7 +950,7 @@ def sync(if_due=False, since=None):
     # double-count signature. The 2x prod incident is exactly what this stops at the source.
     tg = {}
     try:
-        from . import trust
+        from .. import trust
         tg = trust.trust_report(since=since, with_server=False)
         if tg.get("ledger_verdict", {}).get("level") == "alarm":
             return {"skipped": "TRUST GATE — push blocked", "trust": tg["ledger_verdict"]["msg"],
@@ -963,17 +963,17 @@ def sync(if_due=False, since=None):
            "prices": prices, "catalog": catalog_refresh, "balances": balances_refresh, "headroom": headroom_refresh,
            "policy": pull_policy()}     # pull the org/team's effective caps so the gate applies them (advisory/enforced)
     try:                                                  # provider-truth totals (keys stay local) → the server's
-        from . import truth as _truth                     # monthly close statement reconciles ledger vs these
+        from .. import truth as _truth                     # monthly close statement reconciles ledger vs these
         out["truth"] = _truth.push_truth(since=since)
     except Exception as e:
         out["truth"] = {"skipped": f"truth push: {str(e)[:80]}"}
     try:                                                  # claude.ai chat attribution loop (only if opted in)
-        from . import chat as _chat
+        from .. import chat as _chat
         out["chat"] = _chat.loop(run=True, quiet=True) if _chat._chat_enabled() else {"skipped": "chat not enabled"}
     except Exception as e:
         out["chat"] = {"skipped": f"chat loop: {str(e)[:80]}"}
     try:                                                  # ledger-valued lanes (gemini/zai) plan VALUE → the est-value
-        from . import lane_value as _lane_value           # dashboards (the client half of the server's EST_VALUE_CHANNELS)
+        from .. import lane_value as _lane_value           # dashboards (the client half of the server's EST_VALUE_CHANNELS)
         out["lane_value"] = _lane_value.sync()
     except Exception as e:
         out["lane_value"] = {"skipped": f"lane_value sync: {str(e)[:80]}"}
@@ -983,17 +983,17 @@ def sync(if_due=False, since=None):
         #                                                   the separate `spendguard signal push`; now it rides the sync
         #                                                   so intent-level cost+quality flows on the normal cadence.
     except Exception as e:
-        from . import gate as _g
+        from .. import gate as _g
         if _g.is_deliberate_stop(e):
             raise                                         # a spend refusal / deadline HALTS the sync — never downgraded
         out["signal"] = {"skipped": f"signal push: {str(e)[:80]}"}
     try:                                                  # AUTO-FRESH living insights vs the CURRENT corpus every
-        from . import validate as _validate               # sync (cheap, deterministic, NO LLM) — re-checks each
+        from .. import validate as _validate               # sync (cheap, deterministic, NO LLM) — re-checks each
         out["validated"] = _validate.validate(verbose=False)   # learning: corroborate / contradict / decay-if-stale,
     except Exception:                                     # so stale advice sinks without a manual `spendguard validate`.
         pass
     try:                                                  # FORENSIC SELF-CHECK rides the sync: with the catalog now
-        from . import verify as _verify                   # fresh, confirm every money path still holds — model ids
+        from .. import verify as _verify                   # fresh, confirm every money path still holds — model ids
         _vd = _verify.verify_system(probe=False)          # served+priced · failover map · keys · economics ($0)
         _bad = {"bad_model_ids": [r["spec"] for r in _vd["preflight"] if not r["usable"]],
                 "broken_failover": [r["lane"] for r in _vd["fallback"] if not r["ok"]],
@@ -1051,7 +1051,7 @@ def crosscheck(since=None):
     local = {r["uid"]: r for r in _rollup_rows(since=since)}        # LLM ledger rows (actual-$)
     gpu_ok = True                                                   # can we VERIFY GPU rows this run?
     try:                                                            # + GPU rows (resilient: a vast.ai flake → history)
-        from . import resources
+        from .. import resources
         gpu_rows = resources.sync(dry=True).get("day_totals", [])
         for r in gpu_rows:
             local[r["uid"]] = r
@@ -1141,7 +1141,7 @@ def cmd(argv=None):
         except Exception as e:
             print(f"push failed: {e}"); return 1
     if sub == "reconcile":                            # reconcile the LOCAL ledger to provider-billed truth (free)
-        from . import ledger_sync
+        from .. import ledger_sync
         print("reconcile:", ledger_sync.reconcile_into_ledger())
         return 0
     if sub == "reattribute":                          # correct charges whose provider disagrees with the registry
@@ -1151,14 +1151,14 @@ def cmd(argv=None):
         # provider billing PER PROVIDER, so that mis-attribution makes one provider look over-billed and
         # another under-billed forever. The fix existed, was tested, was documented, and could not be run.
         # Dry by default, like every other mutation here: `--apply` to write.
-        from . import budget
+        from .. import budget
         r = budget.reattribute_providers(apply=registered_cli_option_token('saas/--apply') in argv)
         print(f"reattribute: {r}")
         if not (registered_cli_option_token('saas/--apply') in argv):
             print("  (dry run — nothing written. Re-run with --apply to correct the rows.)")
         return 0
     if sub == "audit":                                # triple-check completeness: every batch accounted (free)
-        from . import ledger_sync
+        from .. import ledger_sync
         import json as _j
         print(_j.dumps(ledger_sync.audit_completeness(), indent=2))
         return 0

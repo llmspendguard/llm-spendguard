@@ -87,7 +87,7 @@ def _engine(explicit=None):
     if env:
         return env.strip().lower()
     try:
-        from . import config
+        from .. import config
         return str(config._cfg_get("deid", "engine", "regex")).strip().lower()
     except Exception:
         return "regex"
@@ -114,7 +114,7 @@ def _floor(text, entities=None):
 
 
 def _warn_once(msg):
-    from . import config
+    from .. import config
     config.warn_once(msg, prefix="[spendguard.deid] ")   # one registry; gate.py had its own copy + own set
 
 

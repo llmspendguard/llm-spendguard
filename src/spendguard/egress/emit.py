@@ -18,7 +18,7 @@ are never slowed. Callbacks run inline — keep them fast.
 """
 import json, os, threading, queue, datetime, urllib.request
 from typing import Any, Callable
-from . import config
+from .. import config
 
 _callbacks = []
 _q = None
@@ -162,7 +162,7 @@ def envelope(event):
     e.setdefault("id", uuid.uuid4().hex)
     e.setdefault("ts", datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"))
     try:
-        from . import budget as _budget
+        from .. import budget as _budget
         e.setdefault("conv_id", _budget._conv())
         e.setdefault("project", _budget._project())
     except Exception:

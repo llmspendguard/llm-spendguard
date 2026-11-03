@@ -48,7 +48,6 @@
     "conv.py",
     "cost_integrity.py",
     "crossllm.py",
-    "deid.py",
     "delegate_jobs.py",
     "delegate_router.py",
     "delegate_worker.py",
@@ -60,13 +59,11 @@
     "domain_context_surface.py",
     "domain_legacy_path_shim.py",
     "effort_titration.py",
-    "emit.py",
     "equivalence.py",
     "escalation_ladder.py",
     "execution_journal.py",
     "experiment.py",
     "fleet.py",
-    "focus_export.py",
     "gate.py",
     "gpu_port.py",
     "guard.py",
@@ -98,7 +95,6 @@
     "model_preflight.py",
     "models.py",
     "money_scale.py",
-    "notify.py",
     "offline_python_build.py",
     "openai_batch_cli.py",
     "otel_ingest.py",
@@ -134,14 +130,11 @@
     "route_utility.py",
     "runner.py",
     "runpod_adapter.py",
-    "saas.py",
     "scan.py",
     "schedule.py",
     "semcache.py",
     "serve.py",
     "setup.py",
-    "share.py",
-    "signal.py",
     "sources.py",
     "stability.py",
     "storm_coalescer.py",
@@ -542,7 +535,7 @@
             "max_cc": 27,
             "mi": 38.22041457736147
           },
-          "src/spendguard/deid.py": {
+          "src/spendguard/egress/deid.py": {
             "max_cc": 11,
             "mi": 61.206448796592674
           },
@@ -594,7 +587,7 @@
             "max_cc": 0,
             "mi": 100.0
           },
-          "src/spendguard/emit.py": {
+          "src/spendguard/egress/emit.py": {
             "max_cc": 11,
             "mi": 57.44704323569343
           },
@@ -630,7 +623,7 @@
             "max_cc": 26,
             "mi": 0.0
           },
-          "src/spendguard/focus_export.py": {
+          "src/spendguard/egress/focus_export.py": {
             "max_cc": 23,
             "mi": 58.40270188659878
           },
@@ -834,7 +827,7 @@
             "max_cc": 8,
             "mi": 66.35068211769804
           },
-          "src/spendguard/notify.py": {
+          "src/spendguard/egress/notify.py": {
             "max_cc": 9,
             "mi": 62.365455196795004
           },
@@ -990,7 +983,7 @@
             "max_cc": 22,
             "mi": 68.37130155170505
           },
-          "src/spendguard/saas.py": {
+          "src/spendguard/egress/saas.py": {
             "max_cc": 39,
             "mi": 0.0
           },
@@ -1014,11 +1007,11 @@
             "max_cc": 47,
             "mi": 0.0
           },
-          "src/spendguard/share.py": {
+          "src/spendguard/egress/share.py": {
             "max_cc": 10,
             "mi": 57.064145261941704
           },
-          "src/spendguard/signal.py": {
+          "src/spendguard/egress/signal.py": {
             "max_cc": 22,
             "mi": 52.382591807655835
           },
@@ -1542,7 +1535,7 @@
             "max_cc": 27,
             "mi": 38.080579061310864
           },
-          "src/spendguard/deid.py": {
+          "src/spendguard/egress/deid.py": {
             "max_cc": 11,
             "mi": 61.11579083959757
           },
@@ -1594,7 +1587,7 @@
             "max_cc": 0,
             "mi": 100.0
           },
-          "src/spendguard/emit.py": {
+          "src/spendguard/egress/emit.py": {
             "max_cc": 11,
             "mi": 57.44704323569343
           },
@@ -1630,7 +1623,7 @@
             "max_cc": 26,
             "mi": 0.0
           },
-          "src/spendguard/focus_export.py": {
+          "src/spendguard/egress/focus_export.py": {
             "max_cc": 23,
             "mi": 58.40270188659878
           },
@@ -1834,7 +1827,7 @@
             "max_cc": 8,
             "mi": 66.35068211769804
           },
-          "src/spendguard/notify.py": {
+          "src/spendguard/egress/notify.py": {
             "max_cc": 9,
             "mi": 62.365455196795004
           },
@@ -1990,7 +1983,7 @@
             "max_cc": 22,
             "mi": 68.37130155170505
           },
-          "src/spendguard/saas.py": {
+          "src/spendguard/egress/saas.py": {
             "max_cc": 39,
             "mi": 0.0
           },
@@ -2014,11 +2007,11 @@
             "max_cc": 47,
             "mi": 0.0
           },
-          "src/spendguard/share.py": {
+          "src/spendguard/egress/share.py": {
             "max_cc": 10,
             "mi": 56.81372493182233
           },
-          "src/spendguard/signal.py": {
+          "src/spendguard/egress/signal.py": {
             "max_cc": 22,
             "mi": 51.96146984645848
           },
@@ -6204,7 +6197,7 @@
   ],
   "max_largest_scc_size": 142,
   "max_cyclic_edge_count": 943,
-  "max_legacy_shim_count": 58,
+  "max_legacy_shim_count": 65,
   "recorded_cross_context_nonsurface_imports": [
     [
       "spendguard",
@@ -6224,7 +6217,7 @@
     ],
     [
       "spendguard",
-      "spendguard.emit"
+      "spendguard.egress.emit"
     ],
     [
       "spendguard",
@@ -6928,7 +6921,7 @@
     ],
     [
       "spendguard.analyze.cost_estimation.calibrate",
-      "spendguard.deid"
+      "spendguard.egress.deid"
     ],
     [
       "spendguard.analyze.cost_estimation.calibrate",
@@ -6952,7 +6945,7 @@
     ],
     [
       "spendguard.analyze.cost_estimation.calibrate",
-      "spendguard.saas"
+      "spendguard.egress.saas"
     ],
     [
       "spendguard.store.call_corpus.callio",
@@ -7112,7 +7105,7 @@
     ],
     [
       "spendguard.catalog",
-      "spendguard.saas"
+      "spendguard.egress.saas"
     ],
     [
       "spendguard.catalog",
@@ -7152,7 +7145,7 @@
     ],
     [
       "spendguard.chat",
-      "spendguard.saas"
+      "spendguard.egress.saas"
     ],
     [
       "spendguard.chat",
@@ -7208,7 +7201,7 @@
     ],
     [
       "spendguard.claudecode",
-      "spendguard.saas"
+      "spendguard.egress.saas"
     ],
     [
       "spendguard.claudecode",
@@ -7356,7 +7349,7 @@
     ],
     [
       "spendguard.codex",
-      "spendguard.saas"
+      "spendguard.egress.saas"
     ],
     [
       "spendguard.codex_broker_owner",
@@ -7707,7 +7700,7 @@
       "spendguard.vendor_call"
     ],
     [
-      "spendguard.deid",
+      "spendguard.egress.deid",
       "spendguard.store.configuration.config"
     ],
     [
@@ -7891,11 +7884,11 @@
       "spendguard.submit"
     ],
     [
-      "spendguard.emit",
+      "spendguard.egress.emit",
       "spendguard.budget"
     ],
     [
-      "spendguard.emit",
+      "spendguard.egress.emit",
       "spendguard.store.configuration.config"
     ],
     [
@@ -8055,19 +8048,19 @@
       "spendguard.warm_stdio_daemon"
     ],
     [
-      "spendguard.focus_export",
+      "spendguard.egress.focus_export",
       "spendguard.budget"
     ],
     [
-      "spendguard.focus_export",
+      "spendguard.egress.focus_export",
       "spendguard.capability_cli_parsing"
     ],
     [
-      "spendguard.focus_export",
+      "spendguard.egress.focus_export",
       "spendguard.store.money_ledger.ledger"
     ],
     [
-      "spendguard.focus_export",
+      "spendguard.egress.focus_export",
       "spendguard.store.spend_search.ledger_read"
     ],
     [
@@ -8116,7 +8109,7 @@
     ],
     [
       "spendguard.gate",
-      "spendguard.emit"
+      "spendguard.egress.emit"
     ],
     [
       "spendguard.gate",
@@ -8180,7 +8173,7 @@
     ],
     [
       "spendguard.gate",
-      "spendguard.saas"
+      "spendguard.egress.saas"
     ],
     [
       "spendguard.gate",
@@ -8200,7 +8193,7 @@
     ],
     [
       "spendguard.gpu_port",
-      "spendguard.saas"
+      "spendguard.egress.saas"
     ],
     [
       "spendguard.guard",
@@ -8668,7 +8661,7 @@
     ],
     [
       "spendguard.analyze.treasury.lane_value",
-      "spendguard.saas"
+      "spendguard.egress.saas"
     ],
     [
       "spendguard.lanes",
@@ -8876,7 +8869,7 @@
     ],
     [
       "spendguard.ledger_sync",
-      "spendguard.saas"
+      "spendguard.egress.saas"
     ],
     [
       "spendguard.store.money_ledger.ledger_wal_maintenance",
@@ -9163,7 +9156,7 @@
       "spendguard.vendor_call"
     ],
     [
-      "spendguard.notify",
+      "spendguard.egress.notify",
       "spendguard.store.configuration.config"
     ],
     [
@@ -9476,7 +9469,7 @@
     ],
     [
       "spendguard.analyze.spend_reporting.receipt",
-      "spendguard.saas"
+      "spendguard.egress.saas"
     ],
     [
       "spendguard.analyze.spend_reporting.receipt",
@@ -9688,7 +9681,7 @@
     ],
     [
       "spendguard.analyze.spend_reporting.report",
-      "spendguard.notify"
+      "spendguard.egress.notify"
     ],
     [
       "spendguard.analyze.spend_reporting.report",
@@ -9716,7 +9709,7 @@
     ],
     [
       "spendguard.analyze.spend_reporting.report",
-      "spendguard.saas"
+      "spendguard.egress.saas"
     ],
     [
       "spendguard.requirement_judge",
@@ -9812,7 +9805,7 @@
     ],
     [
       "spendguard.resources",
-      "spendguard.saas"
+      "spendguard.egress.saas"
     ],
     [
       "spendguard.resources",
@@ -9979,107 +9972,107 @@
       "spendguard.store.configuration.config"
     ],
     [
-      "spendguard.saas",
+      "spendguard.egress.saas",
       "spendguard"
     ],
     [
-      "spendguard.saas",
+      "spendguard.egress.saas",
       "spendguard.attribution"
     ],
     [
-      "spendguard.saas",
+      "spendguard.egress.saas",
       "spendguard.analyze.treasury.balances"
     ],
     [
-      "spendguard.saas",
+      "spendguard.egress.saas",
       "spendguard.budget"
     ],
     [
-      "spendguard.saas",
+      "spendguard.egress.saas",
       "spendguard.analyze.cost_estimation.calibrate"
     ],
     [
-      "spendguard.saas",
+      "spendguard.egress.saas",
       "spendguard.capability_cli_parsing"
     ],
     [
-      "spendguard.saas",
+      "spendguard.egress.saas",
       "spendguard.catalog"
     ],
     [
-      "spendguard.saas",
+      "spendguard.egress.saas",
       "spendguard.catalog_price_authoring"
     ],
     [
-      "spendguard.saas",
+      "spendguard.egress.saas",
       "spendguard.chat"
     ],
     [
-      "spendguard.saas",
+      "spendguard.egress.saas",
       "spendguard.store.configuration.config"
     ],
     [
-      "spendguard.saas",
+      "spendguard.egress.saas",
       "spendguard.gate"
     ],
     [
-      "spendguard.saas",
+      "spendguard.egress.saas",
       "spendguard.guard"
     ],
     [
-      "spendguard.saas",
+      "spendguard.egress.saas",
       "spendguard.analyze.treasury.lane_value"
     ],
     [
-      "spendguard.saas",
+      "spendguard.egress.saas",
       "spendguard.lanes"
     ],
     [
-      "spendguard.saas",
+      "spendguard.egress.saas",
       "spendguard.ledger_sync"
     ],
     [
-      "spendguard.saas",
+      "spendguard.egress.saas",
       "spendguard.analyze.treasury.overage"
     ],
     [
-      "spendguard.saas",
+      "spendguard.egress.saas",
       "spendguard.pricing"
     ],
     [
-      "spendguard.saas",
+      "spendguard.egress.saas",
       "spendguard.resources"
     ],
     [
-      "spendguard.saas",
+      "spendguard.egress.saas",
       "spendguard.setup"
     ],
     [
-      "spendguard.saas",
+      "spendguard.egress.saas",
       "spendguard.sync"
     ],
     [
-      "spendguard.saas",
+      "spendguard.egress.saas",
       "spendguard.tag"
     ],
     [
-      "spendguard.saas",
+      "spendguard.egress.saas",
       "spendguard.trust"
     ],
     [
-      "spendguard.saas",
+      "spendguard.egress.saas",
       "spendguard.truth"
     ],
     [
-      "spendguard.saas",
+      "spendguard.egress.saas",
       "spendguard.validate"
     ],
     [
-      "spendguard.saas",
+      "spendguard.egress.saas",
       "spendguard.analyze.assurance.verify"
     ],
     [
-      "spendguard.saas",
+      "spendguard.egress.saas",
       "spendguard.workdone"
     ],
     [
@@ -10192,46 +10185,46 @@
     ],
     [
       "spendguard.setup",
-      "spendguard.saas"
+      "spendguard.egress.saas"
     ],
     [
       "spendguard.setup",
       "spendguard.tier_config"
     ],
     [
-      "spendguard.share",
+      "spendguard.egress.share",
       "spendguard.capability_cli_parsing"
     ],
     [
-      "spendguard.share",
+      "spendguard.egress.share",
       "spendguard.learn"
     ],
     [
-      "spendguard.signal",
+      "spendguard.egress.signal",
       "spendguard.backfill"
     ],
     [
-      "spendguard.signal",
+      "spendguard.egress.signal",
       "spendguard.store.call_corpus.callio"
     ],
     [
-      "spendguard.signal",
+      "spendguard.egress.signal",
       "spendguard.capability_cli_parsing"
     ],
     [
-      "spendguard.signal",
+      "spendguard.egress.signal",
       "spendguard.store.configuration.config"
     ],
     [
-      "spendguard.signal",
+      "spendguard.egress.signal",
       "spendguard.conv"
     ],
     [
-      "spendguard.signal",
+      "spendguard.egress.signal",
       "spendguard.pricing"
     ],
     [
-      "spendguard.signal",
+      "spendguard.egress.signal",
       "spendguard.reconcile_openai"
     ],
     [
@@ -10376,7 +10369,7 @@
     ],
     [
       "spendguard.sync_capabilities",
-      "spendguard.saas"
+      "spendguard.egress.saas"
     ],
     [
       "spendguard.tag",
@@ -10460,7 +10453,7 @@
     ],
     [
       "spendguard.trust",
-      "spendguard.saas"
+      "spendguard.egress.saas"
     ],
     [
       "spendguard.truth",
@@ -10472,7 +10465,7 @@
     ],
     [
       "spendguard.truth",
-      "spendguard.saas"
+      "spendguard.egress.saas"
     ],
     [
       "spendguard.validate",
@@ -10660,7 +10653,7 @@
     ],
     [
       "spendguard.workdone",
-      "spendguard.saas"
+      "spendguard.egress.saas"
     ],
     [
       "spendguard.workdone",

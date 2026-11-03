@@ -5,13 +5,13 @@ the spend." Per (project · intent · model): cost (from batch billing) + qualit
 Build: `spendguard signal` (preview) / `spendguard signal push` (→ /v1/signal, this repo's project, via its key).
 """
 
-from .capability_cli_parsing import registered_cli_option_token
+from ..capability_cli_parsing import registered_cli_option_token
 import datetime
 
 
 def build_signals(since=None):
     """Per (project, intent, model) signal rows from the recovered call corpus + batch costs + quality."""
-    from . import config,  callio, backfill, conv
+    from .. import config,  callio, backfill, conv
     since = since or config.month_start_utc()
     bcost = {}
     for _prov, model, cost, _it, _ot, day, bid in (backfill._openai_rows() + backfill._anthropic_rows()):
@@ -77,9 +77,9 @@ def _cancelled_billed():
     COMPLETED before a cancel (the protocol's cautionary case), so this spend is real. AGENTIC project attribution.
     Shared by build_signals() — which EXCLUDES these bids from the live aggregate so they're not double-counted — and
     cancellation_rows(), which surfaces them as waste. OpenAI GET (free); returns {} if unreachable."""
-    from . import conv, pricing
+    from .. import conv, pricing
     try:
-        from .reconcile_openai import load_key, fetch_batches
+        from ..reconcile_openai import load_key, fetch_batches
         batches = list(fetch_batches(load_key()))
     except Exception:
         return {}

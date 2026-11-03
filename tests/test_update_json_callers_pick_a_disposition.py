@@ -21,6 +21,7 @@ _SRC = pathlib.Path(__file__).resolve().parent.parent / "src" / "spendguard"
 _MOVED_CLUSTER_A_PATHS = {
     "balances.py": ("analyze", "treasury", "balances.py"),
     "calibrate.py": ("analyze", "cost_estimation", "calibrate.py"),
+    "saas.py": ("egress", "saas.py"),
 }
 
 # The files whose update_json callers were fixed in cluster A. Every update_json call in these files must carry a

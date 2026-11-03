@@ -649,13 +649,13 @@
       "surface_module": "spendguard.egress",
       "layer": "L3",
       "backing_modules": [
-        "saas",
-        "deid",
-        "signal",
-        "share",
-        "emit",
-        "notify",
-        "focus_export"
+        "egress.saas",
+        "egress.deid",
+        "egress.signal",
+        "egress.share",
+        "egress.emit",
+        "egress.notify",
+        "egress.focus_export"
       ],
       "published_names": []
     },
@@ -1080,6 +1080,41 @@
     {
       "legacy_module": "spendguard.lane_quota_cost",
       "current_module": "spendguard.analyze.treasury.lane_quota_cost",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.saas",
+      "current_module": "spendguard.egress.saas",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.deid",
+      "current_module": "spendguard.egress.deid",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.signal",
+      "current_module": "spendguard.egress.signal",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.share",
+      "current_module": "spendguard.egress.share",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.emit",
+      "current_module": "spendguard.egress.emit",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.notify",
+      "current_module": "spendguard.egress.notify",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.focus_export",
+      "current_module": "spendguard.egress.focus_export",
       "moved_in_phase": 3
     }
   ],

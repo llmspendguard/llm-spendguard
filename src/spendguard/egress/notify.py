@@ -18,7 +18,7 @@ import urllib.request
 import urllib.error
 from email.message import EmailMessage
 
-from . import config
+from .. import config
 
 
 def _recipients(to):
