@@ -15,7 +15,7 @@ if not os.environ.get("SPENDGUARD_CHAT_REFRESH_GUARD_CHILD"):
                                  SPENDGUARD_TEST_ISOLATED="1", SPENDGUARD_CHAT_REFRESH_GUARD_CHILD="1")
         sys.exit(subprocess.call([sys.executable, __file__], env=refresh_guard_env))
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "src"))
-from spendguard import chat, saas
+from spendguard import chat, config, saas
 
 REFRESH_GUARD_ORG = "refresh-guard-org"
 REFRESH_GUARD_UPDATED = "refresh-guard-updated"
@@ -47,8 +47,8 @@ def verify_chat_refresh_durable_named_gaps():
 
     with patch.object(chat, "_cookies", return_value=REFRESH_GUARD_COOKIE), \
          patch.object(chat, "_resolve_org", return_value=REFRESH_GUARD_ORG), \
-         patch.object(chat, "_load_state", return_value=initial), \
-         patch.object(chat, "_save_state", side_effect=lambda st: snapshots.append(copy.deepcopy(st))), \
+         patch.object(config, "load_state", return_value=initial), \
+         patch.object(config, "save_state", side_effect=lambda name, st: snapshots.append(copy.deepcopy(st))), \
          patch.object(chat, "CHAT_FETCH_PAGE_SIZE", len([REFRESH_GUARD_NO_UUID, REFRESH_GUARD_GOOD, REFRESH_GUARD_BAD])), \
          patch.object(chat, "_digest_conv", side_effect=refresh_guard_digest), \
          patch.object(chat, "_api", side_effect=refresh_guard_api):
@@ -65,9 +65,9 @@ def verify_chat_refresh_durable_named_gaps():
 
 def verify_chat_refresh_cap_and_safe_sync():
     cap_page = [REFRESH_GUARD_GOOD, REFRESH_GUARD_BAD]
-    with patch.object(chat, "_load_state", return_value={"orgs": {}, "convs": {}}), \
+    with patch.object(config, "load_state", return_value={"orgs": {}, "convs": {}}), \
          patch.object(chat, "_resolve_org", return_value=REFRESH_GUARD_ORG), \
-         patch.object(chat, "_save_state"), \
+         patch.object(config, "save_state"), \
          patch.object(chat, "_api", side_effect=[[], cap_page]):
         _, info = chat.refresh_chat_conversations(ck=REFRESH_GUARD_COOKIE, max_new=0)
     assert info["capped"] and info["max_new"] == 0 and info["more"]
@@ -75,9 +75,9 @@ def verify_chat_refresh_cap_and_safe_sync():
     assert "max_new=0" in chat._chat_refresh_gap_notice(info)
     # A short page ending exactly at max_new still reached the user-visible cap;
     # it cannot quietly become an authoritative replacement snapshot.
-    with patch.object(chat, "_load_state", return_value={"orgs": {}, "convs": {}}), \
+    with patch.object(config, "load_state", return_value={"orgs": {}, "convs": {}}), \
          patch.object(chat, "_resolve_org", return_value=REFRESH_GUARD_ORG), \
-         patch.object(chat, "_save_state"), \
+         patch.object(config, "save_state"), \
          patch.object(chat, "_digest_conv", return_value=dict(REFRESH_GUARD_GOOD, v=chat._DIGEST_V)), \
          patch.object(chat, "_api", side_effect=[[], [REFRESH_GUARD_GOOD], {}]):
         _, exact_info = chat.refresh_chat_conversations(ck=REFRESH_GUARD_COOKIE, max_new=len([REFRESH_GUARD_GOOD]))

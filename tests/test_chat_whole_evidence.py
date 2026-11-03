@@ -43,8 +43,8 @@ def verify_chat_whole_judgement_fields_and_chunks():
                 "synth_output_tokens": EVIDENCE_GUARD_OUTPUT_BUDGET}.get(key, default)
 
     with contextlib.ExitStack() as guards:
-        guards.enter_context(patch.object(chat, "_load_state", return_value={"convs": {c["uuid"]: c for c in corpus}}))
-        guards.enter_context(patch.object(chat, "_save_state"))
+        guards.enter_context(patch.object(config, "load_state", return_value={"convs": {c["uuid"]: c for c in corpus}}))
+        guards.enter_context(patch.object(config, "save_state"))
         guards.enter_context(patch.object(chat, "_convs_in_range", return_value=corpus))
         guards.enter_context(patch.object(chat, "_taxonomy", return_value=(EVIDENCE_GUARD_TAXONOMY, True)))
         guards.enter_context(patch.object(chat, "_toklen", side_effect=len))
@@ -105,8 +105,8 @@ def verify_chat_truncated_allocation_never_assigns():
     for metadata in ({"finish_reason": "length"}, {"truncated": True}, {"out_tok": allocation_budget}):
         conv = {"uuid": "guard-unassigned", "title": "whole title", "summary": "whole summary"}
         state = {"convs": {conv["uuid"]: conv}}
-        with patch.object(chat, "_load_state", return_value=state), \
-             patch.object(chat, "_save_state") as allocation_save, \
+        with patch.object(config, "load_state", return_value=state), \
+             patch.object(config, "save_state") as allocation_save, \
              patch.object(chat, "_taxonomy", return_value=(EVIDENCE_GUARD_TAXONOMY, True)), \
              patch.object(config, "_cfg_get", side_effect=lambda section, key, default=None: default), \
              patch.object(config, "advisor_model", return_value=EVIDENCE_GUARD_MODEL), \
@@ -136,7 +136,7 @@ def verify_chat_provider_limits_bound_plan_before_spend():
         assert all(len("system" + prompt) <= EVIDENCE_GUARD_PROVIDER_INPUT_BUDGET for prompt in plan[0])
         assert all(any(record in prompt for prompt in plan[0]) for record in whole_records)
         with patch.object(pricing, "max_output_tokens", return_value=EVIDENCE_GUARD_OUTPUT_BUDGET - 1), \
-             patch.object(chat, "_load_state", return_value={}), \
+             patch.object(config, "load_state", return_value={}), \
              patch.object(chat, "_convs_in_range", return_value=[{"title": whole_records[0], "summary": "whole"}]), \
              patch.object(config, "advisor_model", return_value=EVIDENCE_GUARD_MODEL), \
              contextlib.redirect_stdout(io.StringIO()) as provider_gap_output:

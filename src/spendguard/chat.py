@@ -322,27 +322,6 @@ def _digest_conv(conv, detail, projmap, prev=None):
             "allocation": prev.get("allocation", []), "classify_conf": prev.get("classify_conf", 0)}
 
 
-# ── state (watermark + digest cache) ─────────────────────────────────────────────────────────────────────────────
-def _state_path():
-    return config.state_path("chat")     # one naming rule for every adapter
-
-
-def _load_state():
-    """This adapter's persisted state, or its own empty shape. FOUR copies of this existed, each a bare
-    `except: return {...}` — which is also how a TRUNCATED state file (from the non-atomic writes that used
-    to sit opposite them) presented as "nothing saved yet" rather than as damage."""
-    return config.load_state("chat", {"orgs": {}, "convs": {}})
-
-
-def _save_state(st):
-    """Persist this adapter's state. THREE byte-identical copies of this existed (chat, claudecode, codex),
-    each non-atomic and each swallowing its own failure — so a crash mid-write left a TRUNCATED state file
-    that the loader's bare `except: return {}` then reported as "no state", and a save that never happened
-    looked exactly like one that did. config.save_state writes atomically, keeps an Emacs-style `~` backup,
-    quarantines a corrupt file instead of wedging on it, and says so when it cannot write."""
-    return config.save_state("chat", st)
-
-
 CHAT_FETCH_PAGE_SIZE = 50
 CHAT_FETCH_DEFAULT_MAX_NEW = 100000
 
@@ -363,7 +342,7 @@ def refresh_chat_conversations(ck=None, max_new=CHAT_FETCH_DEFAULT_MAX_NEW, days
     already-digested rows are skipped from the durable cache on the next invocation.
     """
     ck = ck or _cookies()
-    st = _load_state()
+    st = config.load_state("chat", {"orgs": {}, "convs": {}})
     org = _resolve_org(ck)
     projmap = {}
     try:
@@ -418,7 +397,7 @@ def refresh_chat_conversations(ck=None, max_new=CHAT_FETCH_DEFAULT_MAX_NEW, days
                 newest = ua
         # Durable page checkpoint, deliberately retaining the pre-traversal watermark.
         orgs_state[org] = {"since": since or "", "name": org, "incomplete": True}
-        _save_state(st)
+        config.save_state("chat", st)
         offset += CHAT_FETCH_PAGE_SIZE
         if stop or len(page) < CHAT_FETCH_PAGE_SIZE:
             break
@@ -430,7 +409,7 @@ def refresh_chat_conversations(ck=None, max_new=CHAT_FETCH_DEFAULT_MAX_NEW, days
     orgs_state[org] = {"since": (since or "") if incomplete else (newest or since or ""),
                        "name": org, "incomplete": incomplete}
     st["last_run"] = datetime.datetime.now().isoformat(timespec="seconds")
-    _save_state(st)
+    config.save_state("chat", st)
     info = {"org": org, "fetched": fetched, "skipped": skipped, "more": more, "cached": len(convs),
             "max_new": max_new, "capped": capped,
             "incomplete": incomplete, "rejections": rejections}
@@ -486,7 +465,7 @@ def _convs_in_range(st, days=None):
 
 # ── views ────────────────────────────────────────────────────────────────────────────────────────────────────────
 def show_chat_report(days=None, refresh=True):
-    st = _load_state()
+    st = config.load_state("chat", {"orgs": {}, "convs": {}})
     if refresh:
         try:
             st, info = refresh_chat_conversations(days=days if days else None, full=not days and not st.get("convs"))
@@ -537,7 +516,7 @@ def show_chat_report(days=None, refresh=True):
 def show_by_project(days=None):
     """PROJECT-first pivot — projects are orthogonal, so flip the lens: each project, with the org/team scopes that
     flow INTO it. Same data as `show`, pivoted (proves the orthogonal dimension is bidirectional in the UI)."""
-    rows = _day_rows(_load_state(), days)
+    rows = _day_rows(config.load_state("chat", {"orgs": {}, "convs": {}}), days)
     if not rows:
         print("no cached conversations — run `spendguard chat show` first.")
         return 0
@@ -562,7 +541,7 @@ def day_totals(member_ref, org_label=None):
     split per project by allocation. `team` lets the server attribute to the org→team scope; `tags` keeps the team
     for back-compat ingest. If org_label is given, only matching (or unclassified) conversations are included."""
     rows = {}
-    for r in _day_rows(_load_state()):
+    for r in _day_rows(config.load_state("chat", {"orgs": {}, "convs": {}})):
         # THE `and r["org"]` GUARD LEAKED ACROSS ORGS. It made the comparison run only for rows that already
         # HAVE an org, so a conversation the classifier left unclassified skipped the filter entirely and was
         # pushed under whatever org this connection happens to be — the exact opposite of routing. An absent
@@ -645,7 +624,7 @@ def _iso_period(day, by):
 def show_chat_work(by="week", days=None):
     """claude.ai chat WORK DONE — per-conversation rows (title + auto-summary + value) bucketed by period (day rows
     fold into the period; a multi-day conversation contributes to each day it was active)."""
-    rows = _day_rows(_load_state(), days)
+    rows = _day_rows(config.load_state("chat", {"orgs": {}, "convs": {}}), days)
     if not rows:
         print("no cached conversations — run `spendguard chat show` first (it refreshes).")
         return 0
@@ -771,7 +750,7 @@ def _chat_execute_evidence_plan(model, plan, system, prefix, intent):
 def story(by="week", days=7, run=False):
     """Caged synth over the period's chat conversations → narrative STORY + private WORK INSIGHTS. Estimate-first."""
     from . import ui
-    convs = _convs_in_range(_load_state(), days)
+    convs = _convs_in_range(config.load_state("chat", {"orgs": {}, "convs": {}}), days)
     if not convs:
         print("no cached conversations in range — run `spendguard chat show` first.")
         return 0
@@ -833,7 +812,7 @@ def _taxonomy():
             orgs.add(cemail.split("@", 1)[1].split(".")[0])
     except Exception:
         pass
-    for d in _load_state().get("convs", {}).values():
+    for d in config.load_state("chat", {"orgs": {}, "convs": {}}).get("convs", {}).values():
         if d.get("ai_project"):
             projects.add(d["ai_project"])
     try:
@@ -897,7 +876,7 @@ def discover_taxonomy(run=False, days=None, sample=None, apply=True):
     """AGENTICALLY propose the org→project taxonomy from the conversation corpus (caged, estimate-first). Writes the
     proposal to config chat.taxonomy (review/edit it), so classification doesn't depend on hand-written config."""
     from . import ui
-    st = _load_state()
+    st = config.load_state("chat", {"orgs": {}, "convs": {}})
     convs = _convs_in_range(st, days) if days else list(st.get("convs", {}).values())
     convs = sorted(convs, key=lambda d: -d.get("value", 0))
     if sample:
@@ -952,7 +931,7 @@ def discover_taxonomy(run=False, days=None, sample=None, apply=True):
         config.save_config(lambda cfg: cfg.setdefault("chat", {}).update({"taxonomy": taxo}),
                            reason="chat-taxonomy")
         print("\n  ✓ written to config.json chat.taxonomy — review/edit, then `chat classify --reclassify --run`.")
-    stx = _load_state(); stx["last_discover"] = datetime.datetime.now().isoformat(timespec="seconds"); _save_state(stx)
+    stx = config.load_state("chat", {"orgs": {}, "convs": {}}); stx["last_discover"] = datetime.datetime.now().isoformat(timespec="seconds"); config.save_state("chat", stx)
     print(f"  (caged cost ${(r.get('cost') or 0):.4f}; intent spendguard:categorize)")
     return 0
 
@@ -989,7 +968,7 @@ def classify_chat_allocations(run=False, days=None, recls=False, batch_size=25):
     """Agentically assign (org, project) to conversations from their content. Caged (spendguard:categorize),
     estimate-first. Only classifies UNCLASSIFIED conversations unless --reclassify."""
     from . import adapters, calls, ui
-    st = _load_state()
+    st = config.load_state("chat", {"orgs": {}, "convs": {}})
     convs = _convs_in_range(st, days) if days else list(st.get("convs", {}).values())
     todo = [c for c in convs if recls or not c.get("org") and not c.get("project")]
     if not todo:
@@ -1052,7 +1031,7 @@ def classify_chat_allocations(run=False, days=None, recls=False, batch_size=25):
                               else (it.get("project") or "").strip() or tgt.get("ai_project", ""))
             tgt["classify_conf"] = int(it.get("confidence") or 0)
             assigned += 1
-    _save_state(st)
+    config.save_state("chat", st)
     print(f"\n  classified {assigned}/{len(todo)} conversations into org → team × project[allocation].")
     print("  `chat show` / `chat work` now grouped by org/team/project; values split per allocation.")
     return 0
@@ -1099,14 +1078,14 @@ def loop(run=False, force_discover=False, quiet=False):
             steps.append(f"classify deferred: {str(e)[:80]}")
     else:
         steps.append("classify: nothing new")
-    st = _load_state()
+    st = config.load_state("chat", {"orgs": {}, "convs": {}})
     auto = bool(config._cfg_get("chat", "auto_taxonomy", False))
     if force_discover or (_discover_due(st) and auto):
         try:
             discover_taxonomy(run=run, apply=auto)
             if run:
-                st = _load_state(); st["last_discover"] = datetime.datetime.now().isoformat(timespec="seconds")
-                _save_state(st)
+                st = config.load_state("chat", {"orgs": {}, "convs": {}}); st["last_discover"] = datetime.datetime.now().isoformat(timespec="seconds")
+                config.save_state("chat", st)
                 if auto:
                     classify_chat_allocations(run=run, recls=True)
                     steps.append("taxonomy: discovered + reallocated (auto)")
@@ -1121,7 +1100,7 @@ def loop(run=False, force_discover=False, quiet=False):
         steps.append(f"sync: {res.get('accepted', res.get('skipped', res))}")
     except Exception as e:
         steps.append(f"sync: {str(e)[:80]}")
-    st = _load_state(); st["last_loop"] = datetime.datetime.now().isoformat(timespec="seconds"); _save_state(st)
+    st = config.load_state("chat", {"orgs": {}, "convs": {}}); st["last_loop"] = datetime.datetime.now().isoformat(timespec="seconds"); config.save_state("chat", st)
     result = {"ran": run, "steps": steps}
     if not quiet:
         print(f"chat loop {'(run)' if run else '(dry — add --run to execute caged steps)'}:")
@@ -1183,7 +1162,7 @@ def show_chat_adapter_status():
             print("      VALUE totals leave — never chat content. Decline by ignoring / `chat disable`.)")
     except Exception:
         pass
-    st = _load_state()
+    st = config.load_state("chat", {"orgs": {}, "convs": {}})
     print(f"  cached conversations: {len(st.get('convs', {}))} · last loop: {st.get('last_loop', 'never')}")
     org = config._cfg_get("chat", "org_taxonomy", None)
     if isinstance(org, dict):
