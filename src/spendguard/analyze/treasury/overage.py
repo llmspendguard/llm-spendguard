@@ -7,7 +7,7 @@ from pathlib import Path
 import threading
 import time
 
-from . import claudecode, config, ledger_read
+from ... import claudecode, config, ledger_read
 
 # In-process TTL memo. The underlying probe (_compute_overage_status → claudecode._overage_events) re-reads EVERY
 # claude-code transcript on each call (~10s on a large history), and it sits on plan_admission's hot path: a

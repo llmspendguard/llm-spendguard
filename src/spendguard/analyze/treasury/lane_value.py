@@ -19,13 +19,13 @@ priced at what the metered API would have charged; $0 billed, because a flat-fee
 """
 from __future__ import annotations
 
-from .capability_cli_parsing import registered_cli_option_token
+from ...capability_cli_parsing import registered_cli_option_token
 
 import datetime as _dt
 import json
 import time
 
-from . import config
+from ... import config
 
 _WINDOW_DAYS = 40           # retain per-day detail long enough to re-bucket a current-month view
 _REFRESH_MAX_AGE_S = 180    # the receipt path calls refresh_lane_value_if_stale(); only re-price when older than this
@@ -42,7 +42,7 @@ def _channel_for(executor: str) -> str:
 
 def ledger_valued_lanes() -> set:
     """Every active subscription-lane executor, derived from the routing registry."""
-    from . import adapters
+    from ... import adapters
     return {name for name, _mod in adapters._LANES.values()}
 
 
@@ -51,7 +51,7 @@ def _subscription_rows(since: str, valued: set):
     lanes since `since`. Read-only, its own short-lived connection (closed on every path). [] on any error."""
     if not valued:
         return []
-    from . import ledger_read
+    from ... import ledger_read
     try:
         return [row.values for row in ledger_read.read_lane_subscription_calls(since, valued)]
     except ledger_read.LedgerSettlementIncomplete:
@@ -66,16 +66,16 @@ def stamp_from_ledger(window_days: int = _WINDOW_DAYS) -> dict:
     Returns {executor: month_value_usd}, with None when a lane has current-month activity containing an unpriceable
     call. This store is deliberately separate from the miners' transcript-value cache. Best-effort; never raises.
     """
-    from . import ledger_read
+    from ... import ledger_read
     out = {}
     try:
-        from . import receipt
+        from ... import receipt
         valued = ledger_valued_lanes()
         if not valued:
             return out
         since = (receipt._utc_today() - _dt.timedelta(days=window_days)).strftime("%Y-%m-%d")
         by_lane = {}
-        from . import lane_catalog
+        from ... import lane_catalog
         for ex, ts, prov, model, in_tok, out_tok, project in _subscription_rows(since, valued):
             day = (ts or "")[:10]
             try:
@@ -113,7 +113,7 @@ def stamp_from_ledger(window_days: int = _WINDOW_DAYS) -> dict:
 def _mark_stamped() -> None:
     """Record WHEN the ledger lanes were last priced, so refresh_lane_value_if_stale can cheap-skip until stale."""
     try:
-        from . import receipt
+        from ... import receipt
         p = receipt._receipt_aggregate_cache_path()
         p.parent.mkdir(parents=True, exist_ok=True)
         config.update_json(p, lambda d: d.__setitem__("lane_value_asof", time.time()) or d, reason="lane-value")
@@ -125,7 +125,7 @@ def refresh_lane_value_if_stale(max_age_s: int = _REFRESH_MAX_AGE_S) -> None:
     """Re-price registered lanes when stale or when cached lane values are absent. Called from the every-turn
     receipt path; fresh, populated caches stay on the single-read fast path. Best-effort."""
     try:
-        from . import receipt
+        from ... import receipt
         p = receipt._receipt_aggregate_cache_path()
         last = 0
         lane_values = None
@@ -151,7 +151,7 @@ def day_totals(member_ref, window_days: int = _WINDOW_DAYS):
     lane). Same pricing, shaped for the org dashboard so gemini/zai plan usage is visible THERE, not just locally —
     the client half of the server's EST_VALUE_CHANNELS. [] on no rows/error. day_totals is the est-value-source
     PROTOCOL (chat/claudecode implement it too), dispatched by each source's own sync."""
-    from . import lane_catalog, receipt
+    from ... import lane_catalog, receipt
     valued = ledger_valued_lanes()
     if not valued:
         return []
@@ -189,7 +189,7 @@ def sync(dry=False):
     dashboard's work-done / unit-economics count them (the client twin of the server's EST_VALUE_CHANNELS). Filters to
     THIS connection's owned projects (no cross-attribution); declares a per-channel replace so re-syncs never stack.
     Runs inside `saas sync` (hourly via launchd). Best-effort; never raises out."""
-    from . import saas
+    from ... import saas
     c = saas.saas_connection()
     if c.get("visibility", "private") == "private":
         return {"skipped": "visibility=private"}

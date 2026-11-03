@@ -51,7 +51,14 @@
     "spendguard.expected_output": "spendguard.analyze.cost_estimation.expected_output",
     "spendguard.content_tokens": "spendguard.analyze.cost_estimation.content_tokens",
     "spendguard.provider_tokens": "spendguard.analyze.cost_estimation.provider_tokens",
-    "spendguard.estimate_divergence": "spendguard.analyze.cost_estimation.estimate_divergence"
+    "spendguard.estimate_divergence": "spendguard.analyze.cost_estimation.estimate_divergence",
+    "spendguard.balances": "spendguard.analyze.treasury.balances",
+    "spendguard.lane_quota": "spendguard.analyze.treasury.lane_quota",
+    "spendguard.subscription_headroom_surfaces": "spendguard.analyze.treasury.subscription_headroom_surfaces",
+    "spendguard.lane_economics": "spendguard.analyze.treasury.lane_economics",
+    "spendguard.lane_value": "spendguard.analyze.treasury.lane_value",
+    "spendguard.overage": "spendguard.analyze.treasury.overage",
+    "spendguard.lane_quota_cost": "spendguard.analyze.treasury.lane_quota_cost"
   },
   "entry_points": {
     "package_import": {
@@ -447,6 +454,14 @@
     "spendguard.analyze.cost_estimation.expected_output",
     "spendguard.analyze.cost_estimation.content_tokens",
     "spendguard.analyze.cost_estimation.provider_tokens",
-    "spendguard.analyze.cost_estimation.estimate_divergence"
+    "spendguard.analyze.cost_estimation.estimate_divergence",
+    "spendguard.analyze.treasury",
+    "spendguard.analyze.treasury.balances",
+    "spendguard.analyze.treasury.lane_quota",
+    "spendguard.analyze.treasury.subscription_headroom_surfaces",
+    "spendguard.analyze.treasury.lane_economics",
+    "spendguard.analyze.treasury.lane_value",
+    "spendguard.analyze.treasury.overage",
+    "spendguard.analyze.treasury.lane_quota_cost"
   ]
 }

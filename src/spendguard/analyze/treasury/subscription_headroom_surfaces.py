@@ -28,8 +28,8 @@ class SubscriptionHeadroomDataGap(ValueError):
 
 
 def subscription_surface_settings(section, url_env):
-    from . import config
-    defaults = json.loads(importlib.resources.files(__package__).joinpath(SURFACE_CONFIG_RESOURCE).read_text())[section]
+    from ... import config
+    defaults = json.loads(importlib.resources.files(__package__.partition(".")[0]).joinpath(SURFACE_CONFIG_RESOURCE).read_text())[section]
     return {**defaults, "url": os.environ.get(url_env) or config._cfg_get(section, "usage_url", defaults.get("url"))}
 
 
@@ -101,7 +101,7 @@ def read_subscription_surface_report(settings, token, timeout, parser):
     if not token:
         report["reason"] = "usage_auth_not_configured"
         return report
-    from . import config
+    from ... import config
     try:
         request = urllib.request.Request(settings["url"], headers={"Authorization": settings["auth_prefix"] + token})
         with urllib.request.urlopen(request, context=config.ssl_context(), timeout=timeout) as response:

@@ -486,13 +486,13 @@
       "surface_module": "spendguard.analyze.treasury",
       "layer": "L1-L2",
       "backing_modules": [
-        "balances",
-        "lane_quota",
-        "subscription_headroom_surfaces",
-        "lane_economics",
-        "lane_value",
-        "overage",
-        "lane_quota_cost"
+        "analyze.treasury.balances",
+        "analyze.treasury.lane_quota",
+        "analyze.treasury.subscription_headroom_surfaces",
+        "analyze.treasury.lane_economics",
+        "analyze.treasury.lane_value",
+        "analyze.treasury.overage",
+        "analyze.treasury.lane_quota_cost"
       ],
       "published_names": []
     },
@@ -1045,6 +1045,41 @@
     {
       "legacy_module": "spendguard.estimate_divergence",
       "current_module": "spendguard.analyze.cost_estimation.estimate_divergence",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.balances",
+      "current_module": "spendguard.analyze.treasury.balances",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.lane_quota",
+      "current_module": "spendguard.analyze.treasury.lane_quota",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.subscription_headroom_surfaces",
+      "current_module": "spendguard.analyze.treasury.subscription_headroom_surfaces",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.lane_economics",
+      "current_module": "spendguard.analyze.treasury.lane_economics",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.lane_value",
+      "current_module": "spendguard.analyze.treasury.lane_value",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.overage",
+      "current_module": "spendguard.analyze.treasury.overage",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.lane_quota_cost",
+      "current_module": "spendguard.analyze.treasury.lane_quota_cost",
       "moved_in_phase": 3
     }
   ],

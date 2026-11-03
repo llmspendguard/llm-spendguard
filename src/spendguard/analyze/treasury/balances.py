@@ -21,13 +21,13 @@ never re-pays for the extraction. Billed axis: the balance FETCH is $0 (a GET); 
 a few tenths of a cent of metered LLM, recorded under intent spendguard:balance-read.
 """
 
-from .capability_cli_parsing import registered_cli_option_token
+from ...capability_cli_parsing import registered_cli_option_token
 import os
 import json
 import hashlib
 import datetime
 
-from . import config
+from ... import config
 
 BALANCE_CACHE = str(config.HOME / "balances.json")
 DEFAULT_REFRESH_HOURS = 6            # balances move with usage → shorter TTL than the model catalog
@@ -92,7 +92,7 @@ def _spend_since(vendor, as_of):
     spend reconcile mirrors against provider truth. None (NOT 0.0) when the ledger can't be read: a can't-read must
     NOT read as 'no spend', or declared_balance would report the FULL declared amount as available (overstating money
     in the unsafe direction) — the module's invariant is that a gap stays 'unknown', never a fabricated number."""
-    from . import budget
+    from ... import budget
     try:
         rows = budget.by_provider_day(since=str(as_of)[:10])
     except Exception:
@@ -149,7 +149,7 @@ def fetch_balance_raw(vendor, timeout_s=15):
     ep = _endpoints().get(vendor)
     if not ep:
         return None
-    from . import adapters
+    from ... import adapters
     spec = adapters.PROVIDERS.get(vendor) or {}
     key = config.api_key(spec.get("key_env") or "")
     if not key:
@@ -172,13 +172,13 @@ def extract_available(vendor, raw, run=True):
     map). run=False estimates only (no spend). On any failure returns available=None (source stays 'unknown' —
     never a fabricated number). The WHOLE response is shown to the model (a balance body is tiny; never truncate
     what an LLM must read, or the balance/expiry field could be the part cut off)."""
-    from . import adapters, calls
+    from ... import adapters, calls
     prompt = (f"Vendor: {vendor}\nIts account-balance API returned this JSON:\n{json.dumps(raw)}\n\n"
               "Report the spendable available balance now.")
     try:
         if not run:
             return {"available": None, "currency": None, "expiring": None, "note": "estimate-only"}
-        from . import plan_admission
+        from ... import plan_admission
         _meta = plan_admission.ready_meta_model(config.advisor_model())   # off a capped plan to a READY provider
         with calls.context(intent="spendguard:balance-read"):
             # NO hardcoded cap: the reply IS content (the balance number), so a literal max_tokens would be a cap on

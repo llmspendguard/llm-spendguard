@@ -1,7 +1,7 @@
 """Measured lane token cost and fail-closed plan-quota admission."""
 import os
 
-from . import config, lane_economics, lane_registry, lanes, ledger_read
+from ... import config, lane_economics, lane_registry, lanes, ledger_read
 
 MIN_SAMPLES_FOR_MEASURED = 5
 MAX_PLAN_FRACTION_DEFAULT = 0.05

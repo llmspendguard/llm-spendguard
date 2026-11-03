@@ -19,6 +19,7 @@ import sys, ast, pathlib
 
 _SRC = pathlib.Path(__file__).resolve().parent.parent / "src" / "spendguard"
 _MOVED_CLUSTER_A_PATHS = {
+    "balances.py": ("analyze", "treasury", "balances.py"),
     "calibrate.py": ("analyze", "cost_estimation", "calibrate.py"),
 }
 

@@ -33,7 +33,7 @@ report can show what the plan SAVED versus paying per-token.
 """
 import time
 
-from . import config
+from ... import config
 
 # Per-(lane, bucket) sample history, persisted cross-process; bounded so state never grows without limit.
 _SAMPLES_STATE = "lane_economics_samples"
@@ -55,7 +55,7 @@ def _cum_tokens_by_executor():
     """{executor: cumulative in+out tokens over ALL recorded calls}. The cap estimate only ever uses the DIFFERENCE
     between two samples of this within one window, so an all-time baseline is fine (it cancels). Best-effort → {} on
     any error (the caller then simply records no fresh sample; it never breaks the headroom refresh)."""
-    from . import ledger_read
+    from ... import ledger_read
     try:
         rows = ledger_read.read_lane_cumulative_tokens()
         return {row[0]: int(row[1]) if row[1] is not None else None for row in rows}
@@ -187,7 +187,7 @@ def economics(headroom_rows=None, fee_by_lane=None):
     remaining_abs, used_abs, eff_usd_per_tok, waste_at_reset, reset_ts}], binding, converged}. `binding` is the
     bucket dict with the FEWEST absolute tokens left (what throttles first); it carries the lane-headline remaining_abs.
     fee_by_lane overrides the config fee (test seam)."""
-    from . import lanes, lane_balance
+    from ... import lanes, lane_balance
     rows = list(headroom_rows if headroom_rows is not None else lanes.lane_headroom(do_fetch=False))
     total_fee, _fee_default = _plan_total_fee()
     n_lanes = len([r for r in rows]) or 1
@@ -316,7 +316,7 @@ def _plan_total_fee():
     """(total_monthly_plan_fee, is_default) — reuse the receipt's plan total so this equals what `lanes --balance`
     already shows. Best-effort → (0.0, True) so the model degrades to $/token=None rather than raising."""
     try:
-        from . import receipt
+        from ... import receipt
         fee, default = receipt._plan_usd()
         return float(fee), bool(default)
     except Exception:
@@ -327,7 +327,7 @@ def _metered_floor_cost(in_tok, out_tok):
     """(cost, model) — what `in_tok`+`out_tok` WOULD cost on the cheapest SUNK-pool metered model available, so the
     report can show the $ a plan SAVED vs paying per token (#5). Ranks the declared sunk pools by realtime price on a
     nominal split; None when nothing is priceable. Uses pricing only — no network, no LLM."""
-    from . import pricing, balances
+    from ... import pricing, balances
     best = None
     for vendor, model in _sunk_pool_models().items():
         try:
@@ -384,7 +384,7 @@ def _prompt_budget(lane):
 def _prompts_consumed(lane, window_days):
     """Count of prompts SPENDGUARD sent to `lane` in the trailing window_days (one call = one prompt). This is a LOWER
     BOUND on true quota use — the user's direct coding on the same plan is invisible here. Best-effort → 0 on error."""
-    from . import ledger_read
+    from ... import ledger_read
     try:
         return ledger_read.count_lane_prompts(lane, window_days)
     except Exception:
@@ -394,7 +394,7 @@ def _prompts_consumed(lane, window_days):
 def _tokens_per_prompt(lane):
     """Measured mean (in+out) tokens per prompt for this lane's calls, or None if it has run none. Reflects the SIZE of
     the prompts spendguard sent — which is exactly the number that turns a $/prompt into a $/token."""
-    from . import ledger_read
+    from ... import ledger_read
     try:
         row = ledger_read.read_lane_token_metrics(lane)
         n, t = row["n"], row["total"]
@@ -452,7 +452,7 @@ def _used_split(lane):
     """(in_frac, out_frac) — this lane's real input/output token mix from the calls it has run, so the metered
     cross-check prices the SAME shape of traffic it actually served. (0.5, 0.5) when nothing is recorded yet (a
     neutral split, never a fabricated skew)."""
-    from . import ledger_read
+    from ... import ledger_read
     try:
         row = ledger_read.read_lane_token_metrics(lane)
         i, o = row["input"], row["output"]
