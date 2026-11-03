@@ -57,6 +57,27 @@ access it ONLY through that surface, never by importing its internal modules.** 
   surface is typically its package `__init__` or one named facade module; naming all 21 is the first step of the cure
   (§3). This mirrors the global **capability-SSOT** doctrine — declare once, access through the published surface.
 
+**Ports-and-adapters alignment (agreed 2026-11-03).** This taxonomy is deliberately aligned to a ports-and-adapters
+(hexagonal) architecture, and the surface above is the contract that makes it so:
+
+- **The surface module is the SOLE sanctioned seam into a context — for both internal (peer-context) and external
+  (cli/mcp/api/http adapter) callers.** All calls into a domain route through its one published surface; nothing
+  outside the context reaches a backing module directly. The boundary gate measures every violation of this as debt.
+- **Internal hexagon = these 21 domain surfaces. External hexagon = the capability-SSOT** (cli/mcp/api/http generated
+  from one registry as driving adapters). They are distinct programs; an external adapter must call a domain *surface*,
+  never a backing module — enforced by the same boundary gate.
+- **Surfaces start *observed*, then get *curated*.** During the migration a context's `published_names` is seeded from
+  what callers already import (safe — nothing breaks). Each surface is then curated into a *designed*, intentional API
+  in a later per-domain pass — designed for current **and** reasonably anticipated future needs, not merely today's
+  observed imports.
+- **This is a static seam, not runtime isolation.** Enforcement is the import-time boundary gate; during migration the
+  legacy `sys.modules` path shims still let code reach in, and the gate *counts* those unsanctioned paths rather than
+  physically blocking them (the pragmatic choice for Python). Driving the counted debt to 0 is the end state.
+- **Dependency *inversion* is out of scope here and reserved for Phase 4**, applied only to the SCC edges that must
+  invert to become acyclic — contexts are not gold-plated with abstract ports where a published facade suffices. This
+  section delivers the *single-seam-per-domain + enforcement* half; designed-ports, acyclicity/inversion, and
+  external-adapter wiring are named follow-on programs, not silent assumptions.
+
 ---
 
 ## 1. The 21 bounded contexts

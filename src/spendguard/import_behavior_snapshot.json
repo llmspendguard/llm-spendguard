@@ -1,6 +1,10 @@
 {
   "schema_version": 1,
-  "name_normalization": {},
+  "name_normalization": {
+    "spendguard.ledger_read": "spendguard.store.spend_search.ledger_read",
+    "spendguard.ledger_deadline_polling": "spendguard.store.spend_search.ledger_deadline_polling",
+    "spendguard.ledger_request_cursor": "spendguard.store.spend_search.ledger_request_cursor"
+  },
   "entry_points": {
     "package_import": {
       "atexit_registrations": [
@@ -44,6 +48,7 @@
       "gate_installed": true,
       "gate_unarmed_details": [],
       "import_hooks": [
+        "spendguard.domain_legacy_path_shim.DomainLegacyPathAliasFinder",
         "spendguard.gate._GatePackagePostImportFinder"
       ],
       "logging_handlers": [],
@@ -94,6 +99,7 @@
       "gate_installed": true,
       "gate_unarmed_details": [],
       "import_hooks": [
+        "spendguard.domain_legacy_path_shim.DomainLegacyPathAliasFinder",
         "spendguard.gate._GatePackagePostImportFinder"
       ],
       "logging_handlers": [],
@@ -144,6 +150,7 @@
       "gate_installed": true,
       "gate_unarmed_details": [],
       "import_hooks": [
+        "spendguard.domain_legacy_path_shim.DomainLegacyPathAliasFinder",
         "spendguard.gate._GatePackagePostImportFinder"
       ],
       "logging_handlers": [],
@@ -194,6 +201,7 @@
       "gate_installed": true,
       "gate_unarmed_details": [],
       "import_hooks": [
+        "spendguard.domain_legacy_path_shim.DomainLegacyPathAliasFinder",
         "spendguard.gate._GatePackagePostImportFinder"
       ],
       "logging_handlers": [],
@@ -244,6 +252,7 @@
       "gate_installed": true,
       "gate_unarmed_details": [],
       "import_hooks": [
+        "spendguard.domain_legacy_path_shim.DomainLegacyPathAliasFinder",
         "spendguard.gate._GatePackagePostImportFinder"
       ],
       "logging_handlers": [],
@@ -294,6 +303,7 @@
       "gate_installed": true,
       "gate_unarmed_details": [],
       "import_hooks": [
+        "spendguard.domain_legacy_path_shim.DomainLegacyPathAliasFinder",
         "spendguard.gate._GatePackagePostImportFinder"
       ],
       "logging_handlers": [],
@@ -344,6 +354,7 @@
       "gate_installed": true,
       "gate_unarmed_details": [],
       "import_hooks": [
+        "spendguard.domain_legacy_path_shim.DomainLegacyPathAliasFinder",
         "spendguard.gate._GatePackagePostImportFinder"
       ],
       "logging_handlers": [],
@@ -352,5 +363,11 @@
         "openai.resources.files.Files.create": "gated"
       }
     }
-  }
+  },
+  "migration_scaffold_executed_module_allowlist": [
+    "spendguard.domain_context_surface",
+    "spendguard.domain_legacy_path_shim",
+    "spendguard.store",
+    "spendguard.store.spend_search"
+  ]
 }

@@ -48,6 +48,12 @@ def load_architectural_context_registry(root):
 
 def measure_architectural_boundary_violations(edges, registry):
     """Return cross-context non-surface edges and edges lacking complete context coverage."""
+    shim_map = {
+        declaration[ARCHITECTURAL_LEGACY_SHIM_MODULE_KEY]:
+            declaration[ARCHITECTURAL_CURRENT_SHIM_MODULE_KEY]
+        for declaration in registry.get(ARCHITECTURAL_LEGACY_SHIM_REGISTRY_KEY, ())
+    }
+    edges = collapse_architectural_shim_edges(edges, shim_map)
     package = registry["contexts"][0]["surface_module"].split(".", 1)[0]
     home_contexts = {
         module: declaration["home_context"]
@@ -98,7 +104,10 @@ def regenerate_architectural_boundary_baseline(root):
     registry = load_architectural_context_registry(root)
     units = collect_architectural_source_units(root, settings)
     measured, unassigned = measure_architectural_boundary_violations(
-        collect_architectural_import_edges(units), registry,
+        collect_architectural_import_edges(units, legacy_modules={
+            declaration[ARCHITECTURAL_LEGACY_SHIM_MODULE_KEY]
+            for declaration in registry.get(ARCHITECTURAL_LEGACY_SHIM_REGISTRY_KEY, ())
+        }), registry,
     )
     recorded = {tuple(edge) for edge in settings.get(ARCHITECTURAL_BOUNDARY_BASELINE_KEY, ())}
     if recorded and not set(measured) < recorded:
@@ -221,9 +230,10 @@ def architectural_dynamic_import_is_unresolved(node, *, package, root_package):
     )
 
 
-def collect_architectural_import_edges(units):
+def collect_architectural_import_edges(units, legacy_modules=()):
     """Resolve absolute and relative Python imports, including deferred imports."""
     edges = {name: set() for name in units}
+    legacy_modules = set(legacy_modules)
     root_package = min(units, key=lambda candidate: (candidate.count("."), len(candidate))).split(".")[0]
     for name, (path, tree) in units.items():
         package = name if path.stem == "__init__" else name.rpartition(".")[0]
@@ -236,7 +246,11 @@ def collect_architectural_import_edges(units):
                 if base:
                     for alias in node.names:
                         imported_module = base + "." + alias.name
-                        candidates.append(imported_module if imported_module in units else base)
+                        candidates.append(
+                            imported_module
+                            if imported_module in units or imported_module in legacy_modules
+                            else base
+                        )
             elif isinstance(node, ast.Call):
                 target = resolve_architectural_dynamic_import_target(
                     node, package=package, root_package=root_package,
@@ -244,7 +258,9 @@ def collect_architectural_import_edges(units):
                 if target:
                     candidates.append(target)
             for candidate in candidates:
-                if candidate in units and candidate != name:
+                if candidate in legacy_modules:
+                    edges.setdefault(candidate, set())
+                if candidate in edges and candidate != name:
                     edges[name].add(candidate)
                 elif candidate == name and isinstance(node, ast.Import):
                     edges[name].add(candidate)
@@ -330,17 +346,48 @@ def collapse_architectural_shim_edges(edges, shim_map):
     return collapsed_edges
 
 
+def measure_architectural_cyclic_edge_ratchet(edges, recorded_edges, shim_map):
+    """Compare cyclic edges in the canonical current-module namespace."""
+    logical_magnitude = measure_architectural_cycle_magnitude(
+        collapse_architectural_shim_edges(edges, shim_map)
+    )
+    normalized_recorded_edges = {
+        (shim_map.get(source, source), shim_map.get(target, target))
+        for source, target in recorded_edges
+    }
+    return {
+        "magnitude": logical_magnitude,
+        "recorded_edges": normalized_recorded_edges,
+        "violations": logical_magnitude["cyclic_edges"] - normalized_recorded_edges,
+    }
+
+
+def resolve_architectural_layer_contract(edges, contract, package, shim_map):
+    """Resolve declared foundations to current modules and validate layer scope."""
+    foundations = {
+        shim_map.get(module, module)
+        for module in contract["independent_foundations"]
+    }
+    applications = {
+        module for module in set(edges) - foundations - {package}
+        if not any(foundation.startswith(module + ".") for foundation in foundations)
+    }
+    if not foundations <= set(edges) or not applications:
+        raise ValueError("Layer contract scope is missing a declared foundation or application layer")
+    return foundations, applications
+
+
 def regenerate_architectural_cycle_magnitude_baseline(root):
     """Explicitly tighten cycle-magnitude ceilings to the current measurement."""
     root = Path(root).resolve()
     settings = load_architectural_fitness_baseline(root)
     units = collect_architectural_source_units(root, settings)
-    edges = collect_architectural_import_edges(units)
     registry = load_architectural_context_registry(root)
     shim_map = {
         declaration[ARCHITECTURAL_LEGACY_SHIM_MODULE_KEY]: declaration[ARCHITECTURAL_CURRENT_SHIM_MODULE_KEY]
         for declaration in registry.get(ARCHITECTURAL_LEGACY_SHIM_REGISTRY_KEY, ())
     }
+    edges = collect_architectural_import_edges(units, legacy_modules=shim_map)
     magnitude = measure_architectural_cycle_magnitude(collapse_architectural_shim_edges(edges, shim_map))
     dynamic_imports = sorted(collect_unresolved_architectural_dynamic_imports(units, root))
     measured_ceilings = {
@@ -546,9 +593,15 @@ def run_architectural_fitness_gate(*, context, invariant):
         detail = ""
         if invariant in {"cycles", "layers", "boundaries"}:
             units = collect_architectural_source_units(root, settings)
-            edges = collect_architectural_import_edges(units)
+            registry = load_architectural_context_registry(root)
+            shim_declarations = registry.get(ARCHITECTURAL_LEGACY_SHIM_REGISTRY_KEY, ())
+            shim_map = {
+                declaration[ARCHITECTURAL_LEGACY_SHIM_MODULE_KEY]:
+                    declaration[ARCHITECTURAL_CURRENT_SHIM_MODULE_KEY]
+                for declaration in shim_declarations
+            }
+            edges = collect_architectural_import_edges(units, legacy_modules=shim_map)
             if invariant == "boundaries":
-                registry = load_architectural_context_registry(root)
                 measured, unassigned = measure_architectural_boundary_violations(edges, registry)
                 recorded = {tuple(edge) for edge in settings[ARCHITECTURAL_BOUNDARY_BASELINE_KEY]}
                 violations = sorted(set(measured) - recorded)
@@ -558,20 +611,16 @@ def run_architectural_fitness_gate(*, context, invariant):
                     f"unreviewed context coverage edges={len(unassigned)}."
                 )
             elif invariant == "cycles":
-                registry = load_architectural_context_registry(root)
-                shim_declarations = registry.get(ARCHITECTURAL_LEGACY_SHIM_REGISTRY_KEY, ())
-                shim_map = {
-                    declaration[ARCHITECTURAL_LEGACY_SHIM_MODULE_KEY]: declaration[ARCHITECTURAL_CURRENT_SHIM_MODULE_KEY]
-                    for declaration in shim_declarations
-                }
                 physical_magnitude = measure_architectural_cycle_magnitude(edges)
-                logical_magnitude = measure_architectural_cycle_magnitude(
-                    collapse_architectural_shim_edges(edges, shim_map)
+                cyclic_ratchet = measure_architectural_cyclic_edge_ratchet(
+                    edges,
+                    {tuple(edge) for edge in settings["recorded_cyclic_edges"]},
+                    shim_map,
                 )
+                logical_magnitude = cyclic_ratchet["magnitude"]
                 components = logical_magnitude["components"]
                 cyclic_edges = logical_magnitude["cyclic_edges"]
-                recorded_edges = {tuple(edge) for edge in settings["recorded_cyclic_edges"]}
-                violations = sorted(cyclic_edges - recorded_edges)
+                violations = sorted(cyclic_ratchet["violations"])
                 dynamic_imports = collect_unresolved_architectural_dynamic_imports(units, root)
                 recorded_dynamic_imports = set(settings[ARCHITECTURAL_DYNAMIC_IMPORT_BASELINE_KEY])
                 violations.extend(
@@ -612,13 +661,13 @@ def run_architectural_fitness_gate(*, context, invariant):
                 )
             else:
                 contract = settings["layer_contract"]
-                foundations = set(contract["independent_foundations"])
-                applications = set(edges) - foundations - {settings["package"]}
-                if not foundations <= set(edges) or not applications:
-                    raise ValueError("Layer contract scope is missing a declared foundation or application layer")
+                layer_edges = collapse_architectural_shim_edges(edges, shim_map)
+                foundations, applications = resolve_architectural_layer_contract(
+                    layer_edges, contract, settings["package"], shim_map,
+                )
                 for foundation in sorted(foundations):
                     violations.extend(f"Foundation {foundation} imports package module {target}"
-                                      for target in sorted(edges[foundation]))
+                                      for target in sorted(layer_edges[foundation]))
                 configuration = "\n".join((
                     "[importlinter]", f"root_package = {settings['package']}",
                     "[importlinter:contract:architectural-foundations]",

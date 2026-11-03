@@ -6,6 +6,10 @@ one canonical, verifiable price table.
 
     import spendguard; spendguard.install(cap=75)   # gate every batch in this process
 """
+from .domain_legacy_path_shim import install_packaged_domain_legacy_path_finder
+
+install_packaged_domain_legacy_path_finder()
+
 # `estimate` is EXPORTED AS estimate_cost, deliberately. This package contains a MODULE named
 # spendguard.estimate (the measure-a-sample-then-project path), and re-exporting pricing's function under
 # the same bare name shadowed it — so `from spendguard import estimate` handed you a function, and which

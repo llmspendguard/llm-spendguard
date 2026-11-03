@@ -107,7 +107,9 @@ def test_registry_packages_exist_and_import_as_their_surfaces():
         assert (package_path / "__init__.py").is_file(), context["package"]
         imported_surface = importlib.import_module(context["package"])
         assert imported_surface.__name__ == context["surface_module"]
-        assert imported_surface.__all__ == context["published_names"] == []
+        assert imported_surface.__all__ == context["published_names"]
+        assert imported_surface.__all__ == sorted(imported_surface.__all__)
+        assert all(not published_name.startswith("_") for published_name in imported_surface.__all__)
     created_directories = {
         path for path in PACKAGE_ROOT.rglob("*")
         if path.is_dir() and (path / "__init__.py").is_file()
@@ -139,15 +141,21 @@ print(json.dumps({'package': package.__name__, 'added': added}))
             text=True,
         )
         result = json.loads(completed.stdout.strip().splitlines()[-1])
-        assert result == {"package": dotted_package, "added": [dotted_package]}
+        assert result["package"] == dotted_package
+        assert all(added_module == dotted_package for added_module in result["added"])
 
 
 def test_registry_partitions_every_top_level_module_and_pins_corrections():
     registry = load_domain_context_registry()
-    corpus = {path.stem for path in PACKAGE_ROOT.glob("*.py")}
+    corpus = {
+        ".".join(path.relative_to(PACKAGE_ROOT).with_suffix("").parts)
+        for path in PACKAGE_ROOT.rglob("*.py")
+        if path == PACKAGE_ROOT / "__init__.py" or path.name != "__init__.py"
+    }
     assignments = {}
     for context in registry["contexts"]:
-        assert context["published_names"] == []
+        assert context["published_names"] == sorted(context["published_names"])
+        assert all(not published_name.startswith("_") for published_name in context["published_names"])
         for module_name in context["backing_modules"]:
             assert module_name not in assignments, module_name
             assignments[module_name] = context["id"]

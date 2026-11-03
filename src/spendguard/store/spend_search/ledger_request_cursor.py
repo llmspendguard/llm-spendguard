@@ -13,8 +13,9 @@ import weakref
 from contextlib import contextmanager
 from collections import OrderedDict
 
-from spendguard import config, ledger_read
-from spendguard.ledger_deadline_polling import LedgerDeadlinePolling
+from ... import config
+from . import ledger_read
+from .ledger_deadline_polling import LedgerDeadlinePolling
 
 _REQUEST_CURSOR_WRITE_ACTIONS = frozenset((
     sqlite3.SQLITE_INSERT, sqlite3.SQLITE_UPDATE, sqlite3.SQLITE_DELETE,
@@ -52,7 +53,7 @@ def admit_managed_cursor_step_lock(step_lock, *, retained_deadline=None):
         finally:
             step_lock.release()
     else:
-        from .ledger_writer import deadline_ledger_writer_lock
+        from ...ledger_writer import deadline_ledger_writer_lock
         with deadline_ledger_writer_lock(step_lock, deadline_at=retained_deadline):
             yield
 

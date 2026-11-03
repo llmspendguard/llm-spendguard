@@ -46,8 +46,38 @@
       "package": "spendguard.store.spend_search",
       "surface_module": "spendguard.store.spend_search",
       "layer": "L1",
-      "backing_modules": ["ledger_read", "ledger_request_cursor", "ledger_deadline_polling"],
-      "published_names": []
+      "backing_modules": [
+        "store.spend_search.ledger_read", "store.spend_search.ledger_request_cursor",
+        "store.spend_search.ledger_deadline_polling"
+      ],
+      "published_names": [
+        "LedgerDeadlinePolling", "LedgerQueryDeadline", "LedgerReadError", "LedgerReadOpenError",
+        "LedgerReadRequest", "LedgerReadRow", "LedgerReadSchemaError", "LedgerReadTableAbsent",
+        "LedgerReadTimeout", "LedgerReadTooLarge", "LedgerRequestAbandoned", "LedgerRequestReadScope",
+        "LedgerSQLReadRequest", "LedgerSettlementIncomplete", "ManagedReadExpiryCoordinator",
+        "ManagedRequestCursorState", "ManagedStatementParserFactsCoordinator",
+        "admit_managed_cursor_step_lock", "bind_ledger_query_deadline", "consumer_empty_spend_compatibility",
+        "count_lane_prompts", "count_recent_call_tests", "current_ledger_request_scope",
+        "effective_ledger_admission_deadline", "intersect_ledger_operation_deadlines",
+        "ledger_evidence_persistence_scope", "ledger_query_work_scope", "ledger_read_metrics",
+        "ledger_read_table_exists", "ledger_request_scope", "ledger_serialized_write_scope",
+        "read_advisor_evidence", "read_bakeoff_measurements", "read_calibration_actuals",
+        "read_calibration_calls", "read_calibration_summary", "read_call_cost_summary", "read_call_flow",
+        "read_call_intent_cost", "read_call_lane_outcomes", "read_call_max_rowid",
+        "read_call_metered_intents", "read_call_output_means", "read_cc_attribution_evidence",
+        "read_cc_conversation_cost", "read_cc_conversation_turns", "read_cc_overflow_conversations",
+        "read_cc_residency_totals", "read_cc_spend_overview", "read_cc_top_conversations",
+        "read_conversation_spend_since", "read_cost_integrity_buckets", "read_delegate_overage_evidence",
+        "read_filtered_ledger_count", "read_incomplete_call_settlements", "read_intent_model_usage",
+        "read_invoice_overage_months", "read_known_call_intents", "read_lane_cumulative_tokens",
+        "read_lane_fallback_costs", "read_lane_recent_counts", "read_lane_subscription_calls",
+        "read_lane_token_metrics", "read_ledger_count", "read_ledger_event", "read_ledger_rows",
+        "read_ledger_sql", "read_prompt_lint_evidence", "read_realized_adoptions",
+        "read_realized_call_rates", "read_receipt_lane_activity", "read_receipt_truncation_groups",
+        "read_recent_calls", "read_recorded_call_intents", "read_recorded_call_total",
+        "read_recording_gap_cells", "read_represented_call_cell", "read_routing_history_report",
+        "read_spend_aggregates", "read_spend_events", "read_spend_since"
+      ]
     },
     {
       "id": "call_corpus",
@@ -292,7 +322,23 @@
     "openai_batch_cli": {"home_context": "execution", "secondary_contexts": ["surfaces"]},
     "resources": {"home_context": "spend_capture", "secondary_contexts": ["reconciliation"]}
   },
-  "domain_legacy_path_shims": [],
+  "domain_legacy_path_shims": [
+    {
+      "legacy_module": "spendguard.ledger_read",
+      "current_module": "spendguard.store.spend_search.ledger_read",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.ledger_deadline_polling",
+      "current_module": "spendguard.store.spend_search.ledger_deadline_polling",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.ledger_request_cursor",
+      "current_module": "spendguard.store.spend_search.ledger_request_cursor",
+      "moved_in_phase": 3
+    }
+  ],
   "unassigned_modules": [
     {
       "module": "domain_context_surface",

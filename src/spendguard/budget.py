@@ -42,7 +42,10 @@ def finite_budget_projection(project):
 
 def _budget_snapshot_generation_observer():
     """Keep SQLite's connection-relative commit counter on a read-only owner."""
-    from .ledger_read import _consumer_ledger_read_target, effective_ledger_admission_deadline
+    from .store.spend_search.ledger_read import (
+        _consumer_ledger_read_target,
+        effective_ledger_admission_deadline,
+    )
     path = pathlib.Path(config.db_path()).resolve()
     read_target = _consumer_ledger_read_target(path)
     # Empty-install compatibility owns a transient database until the real ledger
@@ -72,12 +75,14 @@ def _budget_snapshot_generation_observer():
 def budget_projection_reader(*, deadline_s=None, rollup_eligible=True):
     """Use committed WAL snapshots independently of pending writer work."""
     from .ledger import SpendLedger
-    from .ledger_read import (_ledger_read_connection, consumer_empty_spend_compatibility,
-                              SPEND_EVENT_READ_COLUMNS, DEFAULT_LEDGER_READ_TIME_BUDGET_S,
-                              LedgerReadTimeout, LedgerReadError, LedgerReadOpenError, LedgerRequestAbandoned,
-                              LedgerSettlementIncomplete, LedgerQueryDeadline,
-                              LEDGER_READ_SQLITE_PRIMARY_CODE_MASK,
-                              effective_ledger_admission_deadline)
+    from .store.spend_search.ledger_read import (
+        _ledger_read_connection, consumer_empty_spend_compatibility,
+        SPEND_EVENT_READ_COLUMNS, DEFAULT_LEDGER_READ_TIME_BUDGET_S,
+        LedgerReadTimeout, LedgerReadError, LedgerReadOpenError, LedgerRequestAbandoned,
+        LedgerSettlementIncomplete, LedgerQueryDeadline,
+        LEDGER_READ_SQLITE_PRIMARY_CODE_MASK,
+        effective_ledger_admission_deadline,
+    )
     time_budget = DEFAULT_LEDGER_READ_TIME_BUDGET_S if deadline_s is None else deadline_s
     if not math.isfinite(time_budget) or time_budget <= 0:
         raise LedgerQueryDeadline(time_budget)
@@ -149,7 +154,7 @@ def budget_projection_snapshot(read_projection):
                 _LEDGER_TL.read_ledger = previous
     return read_budget_projection_snapshot
 
-from .ledger_read import bind_ledger_query_deadline
+from .store.spend_search.ledger_read import bind_ledger_query_deadline
 
 _conn = None
 BUDGET_AUXILIARY_POOL_KEY = "budget_auxiliary_reads"

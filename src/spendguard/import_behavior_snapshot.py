@@ -72,12 +72,13 @@ def normalize_import_behavior_module_name(module_name, name_normalization):
     return normalized
 
 
-def normalize_import_behavior_entry(entry, name_normalization):
+def normalize_import_behavior_entry(entry, name_normalization, executed_module_allowlist=()):
     """Normalize only module-bearing fields, preserving observed ordering."""
     normalized = dict(entry)
     normalized["executed_modules"] = [
         normalize_import_behavior_module_name(name, name_normalization)
         for name in entry["executed_modules"]
+        if name not in executed_module_allowlist
     ]
     normalized["atexit_registrations"] = [
         normalize_import_behavior_module_name(name, name_normalization)
@@ -94,10 +95,14 @@ def normalize_import_behavior_entry(entry, name_normalization):
     return normalized
 
 
-def import_behavior_entries_match(expected, actual, name_normalization):
+def import_behavior_entries_match(
+    expected, actual, name_normalization, executed_module_allowlist=(),
+):
     """Compare complete entries after applying the reviewed move table to both."""
-    return normalize_import_behavior_entry(expected, name_normalization) == normalize_import_behavior_entry(
-        actual, name_normalization
+    return normalize_import_behavior_entry(
+        expected, name_normalization, executed_module_allowlist,
+    ) == normalize_import_behavior_entry(
+        actual, name_normalization, executed_module_allowlist,
     )
 
 

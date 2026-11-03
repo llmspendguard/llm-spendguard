@@ -6,6 +6,7 @@ from pathlib import Path
 import sys
 import tempfile
 from types import ModuleType
+import warnings
 
 from spendguard.architectural_fitness import (
     ARCHITECTURAL_BOUNDARY_SHIM_KEY,
@@ -13,6 +14,7 @@ from spendguard.architectural_fitness import (
 )
 from spendguard.domain_context_surface import install_domain_context_surface
 from spendguard.domain_legacy_path_shim import (
+    DomainLegacyPathAliasFinder,
     install_declared_domain_legacy_path_shims,
     install_domain_legacy_path_shim,
 )
@@ -32,7 +34,8 @@ PHASE2C_SURFACE_NAME = "published_sentinel"
 PHASE2C_MISSING_ATTRIBUTE = "missing_sentinel"
 PHASE2C_INITIAL_EXECUTION_COUNT = 0
 PHASE2C_SINGLE_EXECUTION_COUNT = 1
-PHASE2C_DECLARED_SHIM_COUNT = 0
+PHASE2C_DECLARED_SHIM_COUNT = 3
+PHASE2C_UNDECLARED_MODULE = f"{PHASE2C_FIXTURE_PACKAGE}.undeclared_module"
 
 
 def write_phase2c_fixture_package(directory):
@@ -126,6 +129,35 @@ def test_phase2c_shim_installation_is_idempotent():
             clear_phase2c_fixture_modules()
 
 
+def test_phase3_lazy_finder_defers_execution_and_preserves_identity():
+    with tempfile.TemporaryDirectory() as directory:
+        write_phase2c_fixture_package(directory)
+        sys.path.insert(0, directory)
+        finder = DomainLegacyPathAliasFinder(
+            {PHASE2C_LEGACY_MODULE: PHASE2C_CURRENT_MODULE}
+        )
+        sys.meta_path.insert(0, finder)
+        try:
+            assert finder.find_spec(PHASE2C_UNDECLARED_MODULE, None) is None
+            assert PHASE2C_CURRENT_MODULE not in sys.modules
+            with warnings.catch_warnings(record=True) as caught_warnings:
+                warnings.simplefilter("always", DeprecationWarning)
+                legacy_module = importlib.import_module(PHASE2C_LEGACY_MODULE)
+            current_module = importlib.import_module(PHASE2C_CURRENT_MODULE)
+            assert_phase2c_same_module_identity(legacy_module, current_module)
+            assert current_module.execution_count == PHASE2C_SINGLE_EXECUTION_COUNT
+            fixture_parent = importlib.import_module(PHASE2C_FIXTURE_PACKAGE)
+            assert fixture_parent.legacy_module is current_module
+            assert any(
+                issubclass(warning.category, DeprecationWarning)
+                for warning in caught_warnings
+            )
+        finally:
+            sys.meta_path.remove(finder)
+            sys.path.remove(directory)
+            clear_phase2c_fixture_modules()
+
+
 def test_phase2c_surface_exports_resolve_and_bad_attribute_goes_red():
     backing_module = ModuleType("phase2c_surface_backing")
     backing_sentinel = object()
@@ -169,11 +201,23 @@ def test_phase2c_live_registry_drives_resolution_and_boundary_exemptions():
     assert len(declared_shims) == PHASE2C_DECLARED_SHIM_COUNT
 
 
+def test_live_context_published_names_resolve_and_are_public():
+    registry = json.loads(PHASE2C_REGISTRY_PATH.read_text())
+    for context in registry["contexts"]:
+        surface = importlib.import_module(context["surface_module"])
+        assert surface.__all__ == context["published_names"]
+        for published_name in context["published_names"]:
+            assert not published_name.startswith("_")
+            getattr(surface, published_name)
+
+
 test_phase2c_shim_identity_and_wrong_mechanism_red_proof()
 test_phase2c_shim_refuses_live_shadow()
 test_phase2c_shim_installation_is_idempotent()
+test_phase3_lazy_finder_defers_execution_and_preserves_identity()
 test_phase2c_surface_exports_resolve_and_bad_attribute_goes_red()
 test_phase2c_live_registry_drives_resolution_and_boundary_exemptions()
+test_live_context_published_names_resolve_and_are_public()
 print(
     f"[OK] Phase 2c exports resolve across {PHASE2C_DECLARED_SHIM_COUNT} declared legacy shims"
 )

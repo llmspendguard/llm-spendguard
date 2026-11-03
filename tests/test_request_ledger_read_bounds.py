@@ -11,6 +11,10 @@ REQUEST_LEDGER_READER_MODULES = (
     "callio", "learn", "models", "best_value", "calibrate", "semcache", "batch_tracker",
 )
 REQUEST_LEDGER_OFFLINE_CONNECTION_FUNCTIONS = {("budget", "snapshot")}
+REQUEST_LEDGER_MOVED_MODULE_PATHS = {
+    "ledger_read": ("store", "spend_search", "ledger_read.py"),
+    "ledger_request_cursor": ("store", "spend_search", "ledger_request_cursor.py"),
+}
 REQUEST_LEDGER_REQUIRED_EDGES = {
     "ledger_read": {
         "_ledger_bounded_read_handle": ("managed_ledger_read_connection", "set_progress_handler", "rollback", "__exit__"),
@@ -91,8 +95,16 @@ def _assert_request_ledger_connection_graph(trees):
 class RequestLedgerReadBoundsGraphGuards(unittest.TestCase):
     def test_request_ledger_read_graph_and_unbounded_mutation(self):
         modules = set(REQUEST_LEDGER_READER_MODULES) | set(REQUEST_LEDGER_REQUIRED_EDGES)
-        trees = {module: ast.parse((REQUEST_LEDGER_SOURCE_ROOT / (module + ".py")).read_text())
-                 for module in modules}
+        trees = {
+            module: ast.parse(
+                (
+                    REQUEST_LEDGER_SOURCE_ROOT.joinpath(*REQUEST_LEDGER_MOVED_MODULE_PATHS[module])
+                    if module in REQUEST_LEDGER_MOVED_MODULE_PATHS
+                    else REQUEST_LEDGER_SOURCE_ROOT / (module + ".py")
+                ).read_text()
+            )
+            for module in modules
+        }
         _assert_request_ledger_connection_graph(trees)
         # A missing coordinator or native reset must be rejected even when the
         # remaining managed-reader graph is unchanged.

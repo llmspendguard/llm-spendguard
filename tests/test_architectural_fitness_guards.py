@@ -16,11 +16,13 @@ from spendguard.architectural_fitness import (
     load_architectural_context_registry,
     measure_architectural_boundary_violations,
     measure_architectural_cycle_magnitude,
+    measure_architectural_cyclic_edge_ratchet,
     measure_architectural_complexity,
     measure_architectural_duplication,
     regenerate_architectural_legacy_flat_module_baseline,
     regenerate_architectural_complexity_baseline,
     regenerate_architectural_legacy_shim_count_baseline,
+    resolve_architectural_layer_contract,
     run_architectural_fitness_gate,
     select_architectural_interpreter_baseline,
 )
@@ -51,6 +53,7 @@ ARCHITECTURAL_FIXTURE_BETA_SURFACE = "spendguard.store.fixture_beta"
 ARCHITECTURAL_FIXTURE_UNASSIGNED_MODULE = "spendguard.fixture_infrastructure"
 ARCHITECTURAL_FIXTURE_LEGACY_MODULE = "spendguard.fixture_moved"
 ARCHITECTURAL_FIXTURE_CURRENT_MODULE = "spendguard.store.fixture_moved"
+ARCHITECTURAL_FIXTURE_MOVED_RELATIVE_MODULE = "store.fixture_moved"
 ARCHITECTURAL_FIXTURE_FLAT_MODULE = "fixture_new_code.py"
 ARCHITECTURAL_FIXTURE_RECORDED_FLAT_MODULE = "fixture_legacy_code.py"
 ARCHITECTURAL_FIXTURE_NESTED_KIND = "store"
@@ -294,19 +297,144 @@ def test_boundary_exemptions_are_green(edge, registry, expected_unassigned):
     assert tuple(unassigned) == expected_unassigned
 
 
+def test_moved_module_cross_context_out_edge_is_not_exempted_by_legacy_shim():
+    """A shim exempts only its nonexistent legacy source, never the moved module's real source."""
+    registry = architectural_boundary_fixture_registry(
+        exempt_sources=(ARCHITECTURAL_FIXTURE_LEGACY_MODULE,),
+    )
+    registry["contexts"][0]["backing_modules"] = [ARCHITECTURAL_FIXTURE_MOVED_RELATIVE_MODULE]
+    moved_out_edge = (ARCHITECTURAL_FIXTURE_CURRENT_MODULE, ARCHITECTURAL_FIXTURE_BETA_MODULE)
+    violations, unassigned = measure_architectural_boundary_violations(
+        {moved_out_edge[0]: {moved_out_edge[1]}}, registry,
+    )
+    assert violations == [moved_out_edge]
+    assert unassigned == []
+
+    shim_map = {ARCHITECTURAL_FIXTURE_LEGACY_MODULE: ARCHITECTURAL_FIXTURE_CURRENT_MODULE}
+    buggy_registry = dict(registry)
+    buggy_registry["boundary_exempt_shim_modules"] = [
+        shim_map.get(source, source)
+        for source in registry["boundary_exempt_shim_modules"]
+    ]
+    buggy_violations, _ = measure_architectural_boundary_violations(
+        {moved_out_edge[0]: {moved_out_edge[1]}}, buggy_registry,
+    )
+    assert buggy_violations == []
+
+
+def test_boundary_measurement_is_move_neutral_under_declared_shim_rename():
+    """Moving one module renames both edge endpoints without changing boundary debt."""
+    legacy_registry = architectural_boundary_fixture_registry()
+    legacy_registry["contexts"][0]["backing_modules"] = [
+        ARCHITECTURAL_FIXTURE_LEGACY_MODULE.rsplit(".", 1)[-1],
+    ]
+    pre_move_edges = {
+        ARCHITECTURAL_FIXTURE_LEGACY_MODULE: {ARCHITECTURAL_FIXTURE_BETA_MODULE},
+        ARCHITECTURAL_FIXTURE_BETA_MODULE: {ARCHITECTURAL_FIXTURE_LEGACY_MODULE},
+    }
+    pre_move_violations, pre_move_unassigned = measure_architectural_boundary_violations(
+        pre_move_edges, legacy_registry,
+    )
+
+    current_registry = architectural_boundary_fixture_registry(
+        exempt_sources=(ARCHITECTURAL_FIXTURE_LEGACY_MODULE,),
+    )
+    current_registry["contexts"][0]["backing_modules"] = [ARCHITECTURAL_FIXTURE_MOVED_RELATIVE_MODULE]
+    rename = {ARCHITECTURAL_FIXTURE_LEGACY_MODULE: ARCHITECTURAL_FIXTURE_CURRENT_MODULE}
+    post_move_edges = {
+        rename.get(source, source): {rename.get(target, target) for target in targets}
+        for source, targets in pre_move_edges.items()
+    }
+    post_move_violations, post_move_unassigned = measure_architectural_boundary_violations(
+        post_move_edges, current_registry,
+    )
+    renamed_pre_move_violations = {
+        (rename.get(source, source), rename.get(target, target))
+        for source, target in pre_move_violations
+    }
+    assert set(post_move_violations) == renamed_pre_move_violations
+    assert len(post_move_violations) == len(pre_move_violations)
+    assert pre_move_unassigned == post_move_unassigned == []
+
+
 def test_real_package_cycle_magnitude_stays_within_recorded_ceilings():
     """The production package cannot silently grow its cyclic import hairball."""
     repository = Path(__file__).resolve().parents[1]
     settings = load_architectural_fitness_baseline(repository)
-    edges = collect_architectural_import_edges(collect_architectural_source_units(repository, settings))
     registry = load_architectural_context_registry(repository)
     shim_map = {
         declaration["legacy_module"]: declaration["current_module"]
         for declaration in registry["domain_legacy_path_shims"]
     }
+    edges = collect_architectural_import_edges(
+        collect_architectural_source_units(repository, settings), legacy_modules=shim_map,
+    )
     magnitude = measure_architectural_cycle_magnitude(collapse_architectural_shim_edges(edges, shim_map))
     assert magnitude["largest_scc_size"] <= settings["max_largest_scc_size"]
     assert magnitude["cyclic_edge_count"] <= settings["max_cyclic_edge_count"]
+
+
+def test_cyclic_edge_ratchet_is_move_neutral_and_buggy_comparison_goes_red():
+    """A declared move renames both measured and recorded cycle-edge endpoints."""
+    peer = ARCHITECTURAL_FIXTURE_BETA_MODULE
+    shim_map = {ARCHITECTURAL_FIXTURE_LEGACY_MODULE: ARCHITECTURAL_FIXTURE_CURRENT_MODULE}
+    measured_edges = {
+        ARCHITECTURAL_FIXTURE_CURRENT_MODULE: {peer},
+        peer: {ARCHITECTURAL_FIXTURE_CURRENT_MODULE},
+    }
+    recorded_edges = {
+        (ARCHITECTURAL_FIXTURE_LEGACY_MODULE, peer),
+        (peer, ARCHITECTURAL_FIXTURE_LEGACY_MODULE),
+    }
+    ratchet = measure_architectural_cyclic_edge_ratchet(measured_edges, recorded_edges, shim_map)
+    renamed_recorded = {
+        (shim_map.get(source, source), shim_map.get(target, target))
+        for source, target in recorded_edges
+    }
+    assert ratchet["violations"] == set()
+    assert ratchet["magnitude"]["cyclic_edges"] == renamed_recorded
+    buggy_violations = ratchet["magnitude"]["cyclic_edges"] - recorded_edges
+    assert buggy_violations
+
+
+def test_real_cycle_gate_uses_move_neutral_ratchet_with_exact_recorded_set():
+    """The selfcheck-registered gate and suite share the production ratchet entry."""
+    repository = Path(__file__).resolve().parents[1]
+    settings = load_architectural_fitness_baseline(repository)
+    registry = load_architectural_context_registry(repository)
+    shim_map = {
+        declaration["legacy_module"]: declaration["current_module"]
+        for declaration in registry["domain_legacy_path_shims"]
+    }
+    edges = collect_architectural_import_edges(
+        collect_architectural_source_units(repository, settings), legacy_modules=shim_map,
+    )
+    ratchet = measure_architectural_cyclic_edge_ratchet(
+        edges, {tuple(edge) for edge in settings["recorded_cyclic_edges"]}, shim_map,
+    )
+    assert ratchet["violations"] == set()
+    assert ratchet["magnitude"]["cyclic_edges"] == ratchet["recorded_edges"]
+    assert run_architectural_fitness_gate(
+        context={"repo_root": repository}, invariant="cycles",
+    ).status == "PASS"
+
+
+def test_layer_contract_foundation_move_is_resolved_and_stale_path_goes_red():
+    """A moved foundation remains the same layer node only with its declared rename."""
+    shim_map = {ARCHITECTURAL_FIXTURE_LEGACY_MODULE: ARCHITECTURAL_FIXTURE_CURRENT_MODULE}
+    edges = {
+        ARCHITECTURAL_FIXTURE_CURRENT_MODULE: set(),
+        ARCHITECTURAL_FIXTURE_CURRENT_MODULE.rpartition(".")[0]: set(),
+        ARCHITECTURAL_FIXTURE_APPLICATION: {ARCHITECTURAL_FIXTURE_CURRENT_MODULE},
+    }
+    contract = {"independent_foundations": [ARCHITECTURAL_FIXTURE_LEGACY_MODULE]}
+    foundations, applications = resolve_architectural_layer_contract(
+        edges, contract, "spendguard", shim_map,
+    )
+    assert foundations == {ARCHITECTURAL_FIXTURE_CURRENT_MODULE}
+    assert applications == {ARCHITECTURAL_FIXTURE_APPLICATION}
+    with pytest.raises(ValueError, match="missing a declared foundation"):
+        resolve_architectural_layer_contract(edges, contract, "spendguard", {})
 
 
 def test_shim_collapse_merges_split_module_and_restores_presplit_magnitude():
@@ -661,6 +789,12 @@ if __name__ == "__main__":
     print("context boundaries: INTRA / SURFACE / UNASSIGNED / SHIM GREEN")
     test_real_package_cycle_magnitude_stays_within_recorded_ceilings()
     print("cycle magnitude: REAL PACKAGE WITHIN MEASURED CEILINGS")
+    test_cyclic_edge_ratchet_is_move_neutral_and_buggy_comparison_goes_red()
+    print("cyclic edge move: COLLAPSED GREEN / UNCOLLAPSED RED")
+    test_real_cycle_gate_uses_move_neutral_ratchet_with_exact_recorded_set()
+    print("cycle selfcheck parity: ZERO VIOLATIONS / EXACT RECORDED SET")
+    test_layer_contract_foundation_move_is_resolved_and_stale_path_goes_red()
+    print("layer foundation move: RESOLVED GREEN / STALE RED")
     test_shim_collapse_merges_split_module_and_restores_presplit_magnitude()
     print("shim collapse: PHYSICAL NODES MERGED / PRESPLIT MAGNITUDE RESTORED")
     with tempfile.TemporaryDirectory() as logical_magnitude_directory:

@@ -121,11 +121,8 @@
     "ledger.py",
     "ledger_daily_rollup.py",
     "ledger_deadletter.py",
-    "ledger_deadline_polling.py",
     "ledger_fork_locks.py",
     "ledger_performance_benchmark.py",
-    "ledger_read.py",
-    "ledger_request_cursor.py",
     "ledger_schema_migrations.py",
     "ledger_sync.py",
     "ledger_wal_maintenance.py",
@@ -228,7 +225,7 @@
   "layer_contract": {
     "independent_foundations": [
       "spendguard.capability_cli_projection_models",
-      "spendguard.ledger_deadline_polling",
+      "spendguard.store.spend_search.ledger_deadline_polling",
       "spendguard.launchd_labels"
     ],
     "reason": "These actual foundation modules own immutable parser data, pure deadline cadence, and launchd label constants; each currently depends only on the standard library. Prevent application/surface imports into these foundations. Broader core/surface separation is not claimed: config and pricing currently import adapters/calls."
@@ -294,7 +291,7 @@
         "files": {
           "src/spendguard/__init__.py": {
             "max_cc": 7,
-            "mi": 69.9898864455406
+            "mi": 69.75727282103949
           },
           "src/spendguard/__main__.py": {
             "max_cc": 0,
@@ -752,7 +749,7 @@
             "max_cc": 24,
             "mi": 29.928244183948888
           },
-          "src/spendguard/ledger_deadline_polling.py": {
+          "src/spendguard/store/spend_search/ledger_deadline_polling.py": {
             "max_cc": 3,
             "mi": 85.66475876502862
           },
@@ -760,11 +757,11 @@
             "max_cc": 2,
             "mi": 100.0
           },
-          "src/spendguard/ledger_read.py": {
+          "src/spendguard/store/spend_search/ledger_read.py": {
             "max_cc": 27,
             "mi": 0.0
           },
-          "src/spendguard/ledger_request_cursor.py": {
+          "src/spendguard/store/spend_search/ledger_request_cursor.py": {
             "max_cc": 34,
             "mi": 29.582462009186894
           },
@@ -1174,7 +1171,7 @@
           },
           "src/spendguard/import_behavior_snapshot.py": {
             "max_cc": 7,
-            "mi": 33.34139961456779
+            "mi": 33.06306979055757
           },
           "src/spendguard/analyze/__init__.py": {
             "max_cc": 0,
@@ -1214,7 +1211,7 @@
           },
           "src/spendguard/domain_legacy_path_shim.py": {
             "max_cc": 6,
-            "mi": 54.497888561495074
+            "mi": 41.66662944278332
           },
           "src/spendguard/egress/__init__.py": {
             "max_cc": 0,
@@ -1294,7 +1291,7 @@
         "files": {
           "src/spendguard/__init__.py": {
             "max_cc": 7,
-            "mi": 69.88520378693086
+            "mi": 69.65485361584167
           },
           "src/spendguard/__main__.py": {
             "max_cc": 0,
@@ -1752,7 +1749,7 @@
             "max_cc": 24,
             "mi": 29.928244183948888
           },
-          "src/spendguard/ledger_deadline_polling.py": {
+          "src/spendguard/store/spend_search/ledger_deadline_polling.py": {
             "max_cc": 3,
             "mi": 85.66475876502862
           },
@@ -1760,11 +1757,11 @@
             "max_cc": 2,
             "mi": 100.0
           },
-          "src/spendguard/ledger_read.py": {
+          "src/spendguard/store/spend_search/ledger_read.py": {
             "max_cc": 27,
             "mi": 0.0
           },
-          "src/spendguard/ledger_request_cursor.py": {
+          "src/spendguard/store/spend_search/ledger_request_cursor.py": {
             "max_cc": 34,
             "mi": 29.582462009186894
           },
@@ -2210,7 +2207,7 @@
           },
           "src/spendguard/domain_legacy_path_shim.py": {
             "max_cc": 6,
-            "mi": 54.497888561495074
+            "mi": 41.66662944278332
           },
           "src/spendguard/egress/__init__.py": {
             "max_cc": 0,
@@ -2234,7 +2231,7 @@
           },
           "src/spendguard/import_behavior_snapshot.py": {
             "max_cc": 7,
-            "mi": 33.34139961456779
+            "mi": 33.06306979055757
           },
           "src/spendguard/interface/__init__.py": {
             "max_cc": 0,
@@ -2315,7 +2312,8 @@
     "reviewed_phase_2a_domain_context_skeleton": "2026-11-02: Reviewed the additive Phase 2a domain-context package skeleton, shared lazy PEP-562 surface, and empty namespace initializers; no existing module moved or rewired. The same fail-closed measurement exposed and records two pre-existing baseline gaps: import_behavior_snapshot.py at its current measured body and architectural_fitness.py as reviewed existing low-MI debt, not an improvement or relaxed threshold.",
     "reviewed_phase_2b_context_boundary_gate": "2026-11-02: Reviewed the complete additive Phase 2b context-boundary measurement, shrink-only baseline regeneration, gate diagnostics, registry coverage accounting, and declared shim-source exemption. The same source was independently measured with Radon 6.0.1 under Python 3.11 and 3.12; only architectural_fitness.py changes, with max CC 34 and MI 1.0061817599352973 under both supported interpreters.",
     "reviewed_phase_2d_shim_ratchets": "Phase 2d shim-collapsed logical magnitude and reviewed shim-count ratchets.",
-    "reviewed_no_new_toplevel_flat_module": "Phase 2e adds the measured no-new-top-level-flat-module placement ratchet, strict-subset regeneration, and baseline gate branch; the complete architectural_fitness.py change was reviewed and independently measured under both supported Python minors."
+    "reviewed_no_new_toplevel_flat_module": "Phase 2e adds the measured no-new-top-level-flat-module placement ratchet, strict-subset regeneration, and baseline gate branch; the complete architectural_fitness.py change was reviewed and independently measured under both supported Python minors.",
+    "reviewed_phase_3_spend_search_move": "Phase 3 spend_search move reviewed under Python 3.11 and 3.12"
   },
   "duplication": {
     "duplicate_lines": 303,
@@ -6261,7 +6259,7 @@
   ],
   "max_largest_scc_size": 142,
   "max_cyclic_edge_count": 943,
-  "max_legacy_shim_count": 0,
+  "max_legacy_shim_count": 3,
   "recorded_cross_context_nonsurface_imports": [
     [
       "spendguard",
@@ -6465,7 +6463,7 @@
     ],
     [
       "spendguard.advise",
-      "spendguard.ledger_read"
+      "spendguard.store.spend_search.ledger_read"
     ],
     [
       "spendguard.advise",
@@ -6537,7 +6535,7 @@
     ],
     [
       "spendguard.agent_spawn_gate",
-      "spendguard.ledger_read"
+      "spendguard.store.spend_search.ledger_read"
     ],
     [
       "spendguard.antigravity_exec",
@@ -6821,7 +6819,7 @@
     ],
     [
       "spendguard.brief",
-      "spendguard.ledger_read"
+      "spendguard.store.spend_search.ledger_read"
     ],
     [
       "spendguard.brief",
@@ -6865,7 +6863,7 @@
     ],
     [
       "spendguard.budget",
-      "spendguard.ledger_read"
+      "spendguard.store.spend_search.ledger_read"
     ],
     [
       "spendguard.budget",
@@ -6989,7 +6987,7 @@
     ],
     [
       "spendguard.calibrate",
-      "spendguard.ledger_read"
+      "spendguard.store.spend_search.ledger_read"
     ],
     [
       "spendguard.calibrate",
@@ -7077,7 +7075,7 @@
     ],
     [
       "spendguard.calls",
-      "spendguard.ledger_read"
+      "spendguard.store.spend_search.ledger_read"
     ],
     [
       "spendguard.calls",
@@ -7253,7 +7251,7 @@
     ],
     [
       "spendguard.claudecode",
-      "spendguard.ledger_read"
+      "spendguard.store.spend_search.ledger_read"
     ],
     [
       "spendguard.claudecode",
@@ -7337,7 +7335,7 @@
     ],
     [
       "spendguard.cli",
-      "spendguard.ledger_read"
+      "spendguard.store.spend_search.ledger_read"
     ],
     [
       "spendguard.cli",
@@ -7437,7 +7435,7 @@
     ],
     [
       "spendguard.codex_daemon",
-      "spendguard.ledger_read"
+      "spendguard.store.spend_search.ledger_read"
     ],
     [
       "spendguard.codex_daemon_broker",
@@ -7453,7 +7451,7 @@
     ],
     [
       "spendguard.codex_daemon_broker",
-      "spendguard.ledger_read"
+      "spendguard.store.spend_search.ledger_read"
     ],
     [
       "spendguard.codex_daemon_broker",
@@ -7557,11 +7555,11 @@
     ],
     [
       "spendguard.config",
-      "spendguard.ledger_read"
+      "spendguard.store.spend_search.ledger_read"
     ],
     [
       "spendguard.config",
-      "spendguard.ledger_request_cursor"
+      "spendguard.store.spend_search.ledger_request_cursor"
     ],
     [
       "spendguard.config",
@@ -7705,7 +7703,7 @@
     ],
     [
       "spendguard.cost_integrity",
-      "spendguard.ledger_read"
+      "spendguard.store.spend_search.ledger_read"
     ],
     [
       "spendguard.cost_integrity",
@@ -7813,7 +7811,7 @@
     ],
     [
       "spendguard.delegate_router",
-      "spendguard.ledger_read"
+      "spendguard.store.spend_search.ledger_read"
     ],
     [
       "spendguard.delegate_router",
@@ -7925,7 +7923,7 @@
     ],
     [
       "spendguard.effort_titration",
-      "spendguard.ledger_read"
+      "spendguard.store.spend_search.ledger_read"
     ],
     [
       "spendguard.effort_titration",
@@ -8125,7 +8123,7 @@
     ],
     [
       "spendguard.focus_export",
-      "spendguard.ledger_read"
+      "spendguard.store.spend_search.ledger_read"
     ],
     [
       "spendguard.gate",
@@ -8205,7 +8203,7 @@
     ],
     [
       "spendguard.gate",
-      "spendguard.ledger_read"
+      "spendguard.store.spend_search.ledger_read"
     ],
     [
       "spendguard.gate",
@@ -8273,7 +8271,7 @@
     ],
     [
       "spendguard.guard",
-      "spendguard.ledger_read"
+      "spendguard.store.spend_search.ledger_read"
     ],
     [
       "spendguard.guard",
@@ -8461,7 +8459,7 @@
     ],
     [
       "spendguard.lane_balance",
-      "spendguard.ledger_read"
+      "spendguard.store.spend_search.ledger_read"
     ],
     [
       "spendguard.lane_balance",
@@ -8569,7 +8567,7 @@
     ],
     [
       "spendguard.lane_economics",
-      "spendguard.ledger_read"
+      "spendguard.store.spend_search.ledger_read"
     ],
     [
       "spendguard.lane_economics",
@@ -8625,7 +8623,7 @@
     ],
     [
       "spendguard.lane_queue",
-      "spendguard.ledger_read"
+      "spendguard.store.spend_search.ledger_read"
     ],
     [
       "spendguard.lane_queue",
@@ -8665,7 +8663,7 @@
     ],
     [
       "spendguard.lane_quota_cost",
-      "spendguard.ledger_read"
+      "spendguard.store.spend_search.ledger_read"
     ],
     [
       "spendguard.lane_recovery",
@@ -8717,7 +8715,7 @@
     ],
     [
       "spendguard.lane_value",
-      "spendguard.ledger_read"
+      "spendguard.store.spend_search.ledger_read"
     ],
     [
       "spendguard.lane_value",
@@ -8825,7 +8823,7 @@
     ],
     [
       "spendguard.ledger",
-      "spendguard.ledger_read"
+      "spendguard.store.spend_search.ledger_read"
     ],
     [
       "spendguard.ledger",
@@ -8845,7 +8843,7 @@
     ],
     [
       "spendguard.ledger_deadletter",
-      "spendguard.ledger_read"
+      "spendguard.store.spend_search.ledger_read"
     ],
     [
       "spendguard.ledger_performance_benchmark",
@@ -8856,39 +8854,39 @@
       "spendguard.ledger"
     ],
     [
-      "spendguard.ledger_read",
+      "spendguard.store.spend_search.ledger_read",
       "spendguard.budget"
     ],
     [
-      "spendguard.ledger_read",
+      "spendguard.store.spend_search.ledger_read",
       "spendguard.calls"
     ],
     [
-      "spendguard.ledger_read",
+      "spendguard.store.spend_search.ledger_read",
       "spendguard.config"
     ],
     [
-      "spendguard.ledger_read",
+      "spendguard.store.spend_search.ledger_read",
       "spendguard.ledger"
     ],
     [
-      "spendguard.ledger_read",
+      "spendguard.store.spend_search.ledger_read",
       "spendguard.ledger_writer"
     ],
     [
-      "spendguard.ledger_read",
+      "spendguard.store.spend_search.ledger_read",
       "spendguard.money_scale"
     ],
     [
-      "spendguard.ledger_read",
+      "spendguard.store.spend_search.ledger_read",
       "spendguard.pricing"
     ],
     [
-      "spendguard.ledger_request_cursor",
+      "spendguard.store.spend_search.ledger_request_cursor",
       "spendguard.config"
     ],
     [
-      "spendguard.ledger_request_cursor",
+      "spendguard.store.spend_search.ledger_request_cursor",
       "spendguard.ledger_writer"
     ],
     [
@@ -8941,7 +8939,7 @@
     ],
     [
       "spendguard.ledger_wal_maintenance",
-      "spendguard.ledger_read"
+      "spendguard.store.spend_search.ledger_read"
     ],
     [
       "spendguard.ledger_writer",
@@ -8953,7 +8951,7 @@
     ],
     [
       "spendguard.ledger_writer",
-      "spendguard.ledger_read"
+      "spendguard.store.spend_search.ledger_read"
     ],
     [
       "spendguard.litellm_adapter",
@@ -8981,7 +8979,7 @@
     ],
     [
       "spendguard.mcp_fd_lifecycle",
-      "spendguard.ledger_read"
+      "spendguard.store.spend_search.ledger_read"
     ],
     [
       "spendguard.mcp_server",
@@ -9065,7 +9063,7 @@
     ],
     [
       "spendguard.mcp_server",
-      "spendguard.ledger_read"
+      "spendguard.store.spend_search.ledger_read"
     ],
     [
       "spendguard.mcp_server",
@@ -9137,7 +9135,7 @@
     ],
     [
       "spendguard.measurement",
-      "spendguard.ledger_read"
+      "spendguard.store.spend_search.ledger_read"
     ],
     [
       "spendguard.measurement",
@@ -9253,7 +9251,7 @@
     ],
     [
       "spendguard.overage",
-      "spendguard.ledger_read"
+      "spendguard.store.spend_search.ledger_read"
     ],
     [
       "spendguard.plan_admission",
@@ -9329,7 +9327,7 @@
     ],
     [
       "spendguard.prompts",
-      "spendguard.ledger_read"
+      "spendguard.store.spend_search.ledger_read"
     ],
     [
       "spendguard.prompts",
@@ -9413,7 +9411,7 @@
     ],
     [
       "spendguard.realized",
-      "spendguard.ledger_read"
+      "spendguard.store.spend_search.ledger_read"
     ],
     [
       "spendguard.realtime_oracle",
@@ -9501,7 +9499,7 @@
     ],
     [
       "spendguard.receipt",
-      "spendguard.ledger_read"
+      "spendguard.store.spend_search.ledger_read"
     ],
     [
       "spendguard.receipt",
@@ -9561,7 +9559,7 @@
     ],
     [
       "spendguard.reconcile_calls",
-      "spendguard.ledger_read"
+      "spendguard.store.spend_search.ledger_read"
     ],
     [
       "spendguard.reconcile_estimate_stage",
@@ -9573,7 +9571,7 @@
     ],
     [
       "spendguard.reconcile_estimate_stage",
-      "spendguard.ledger_read"
+      "spendguard.store.spend_search.ledger_read"
     ],
     [
       "spendguard.reconcile_gap_ownership",
@@ -9593,7 +9591,7 @@
     ],
     [
       "spendguard.reconcile_maintenance_owner",
-      "spendguard.ledger_read"
+      "spendguard.store.spend_search.ledger_read"
     ],
     [
       "spendguard.reconcile_maintenance_owner",
@@ -9673,7 +9671,7 @@
     ],
     [
       "spendguard.reliability",
-      "spendguard.ledger_read"
+      "spendguard.store.spend_search.ledger_read"
     ],
     [
       "spendguard.reliability",
@@ -9821,7 +9819,7 @@
     ],
     [
       "spendguard.residency_gate",
-      "spendguard.ledger_read"
+      "spendguard.store.spend_search.ledger_read"
     ],
     [
       "spendguard.resource_state",
@@ -9977,7 +9975,7 @@
     ],
     [
       "spendguard.route_realized",
-      "spendguard.ledger_read"
+      "spendguard.store.spend_search.ledger_read"
     ],
     [
       "spendguard.route_utility",
@@ -10445,7 +10443,7 @@
     ],
     [
       "spendguard.tag",
-      "spendguard.ledger_read"
+      "spendguard.store.spend_search.ledger_read"
     ],
     [
       "spendguard.tag",
@@ -10641,7 +10639,7 @@
     ],
     [
       "spendguard.weekly_cap_guard",
-      "spendguard.ledger_read"
+      "spendguard.store.spend_search.ledger_read"
     ],
     [
       "spendguard.whole_job",
@@ -10729,7 +10727,7 @@
     ],
     [
       "spendguard.xp_rate_window",
-      "spendguard.ledger_read"
+      "spendguard.store.spend_search.ledger_read"
     ],
     [
       "spendguard.xp_rate_window",
@@ -10755,5 +10753,6 @@
       "spendguard.zai_exec",
       "spendguard.subscription_headroom_surfaces"
     ]
-  ]
+  ],
+  "reviewed_phase_3_spend_search_shims": "Phase 3 spend-search move adds three reviewed lazy identity-preserving compatibility shims."
 }
