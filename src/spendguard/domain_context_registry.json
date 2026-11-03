@@ -292,10 +292,15 @@
     "openai_batch_cli": {"home_context": "execution", "secondary_contexts": ["surfaces"]},
     "resources": {"home_context": "spend_capture", "secondary_contexts": ["reconciliation"]}
   },
+  "domain_legacy_path_shims": [],
   "unassigned_modules": [
     {
       "module": "domain_context_surface",
       "reason": "Phase 2a shared scaffolding mechanism added after the authoritative 221-module taxonomy corpus."
+    },
+    {
+      "module": "domain_legacy_path_shim",
+      "reason": "Phase 2c shared compatibility mechanism added after the authoritative 221-module taxonomy corpus."
     }
   ]
 }

@@ -18,14 +18,14 @@ EXPECTED_CONTEXT_COUNT = 21
 EXPECTED_KIND_COUNT = 7
 EXPECTED_UNIQUE_PACKAGE_DIRECTORY_COUNT = 25
 EXPECTED_TAXONOMY_CORPUS_COUNT = 221
-EXPECTED_LIVE_CORPUS_COUNT = 222
+EXPECTED_LIVE_CORPUS_COUNT = 223
 FIXTURE_BACKING_MODULE_NAME = "domain_context_lazy_fixture_backing"
 FIXTURE_PUBLISHED_NAME = "public_value"
 FIXTURE_BACKING_ATTRIBUTE_NAME = "BACKING_VALUE"
 FIXTURE_BACKING_VALUE = "resolved-only-on-access"
 FIXTURE_MISSING_ATTRIBUTE_NAME = "missing_value"
 FIXTURE_PRIVATE_PUBLISHED_NAME = "_private_value"
-SANCTIONED_INFRASTRUCTURE_GAP = "domain_context_surface"
+SANCTIONED_INFRASTRUCTURE_GAPS = {"domain_context_surface", "domain_legacy_path_shim"}
 CORRECTED_CONFIGURATION_MODULE = "config"
 CORRECTED_TOKEN_OPERATIONS_MODULE = "execution_journal"
 
@@ -157,7 +157,7 @@ def test_registry_partitions_every_top_level_module_and_pins_corrections():
     assert set(assignments) | set(gaps) == corpus
     assert len(assignments) == EXPECTED_TAXONOMY_CORPUS_COUNT
     assert len(corpus) == EXPECTED_LIVE_CORPUS_COUNT
-    assert gaps.keys() == {SANCTIONED_INFRASTRUCTURE_GAP}
+    assert gaps.keys() == SANCTIONED_INFRASTRUCTURE_GAPS
     assert assignments[CORRECTED_CONFIGURATION_MODULE] == "configuration"
     assert assignments[CORRECTED_TOKEN_OPERATIONS_MODULE] == "token_operations"
 

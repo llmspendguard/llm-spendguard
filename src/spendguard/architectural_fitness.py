@@ -23,6 +23,8 @@ ARCHITECTURAL_DYNAMIC_IMPORT_BASELINE_KEY = "recorded_dynamic_spendguard_imports
 ARCHITECTURAL_BOUNDARY_BASELINE_KEY = "recorded_cross_context_nonsurface_imports"
 ARCHITECTURAL_BOUNDARY_SHIM_KEY = "boundary_exempt_shim_modules"
 ARCHITECTURAL_CONTEXT_REGISTRY_RESOURCE = "domain_context_registry.json"
+ARCHITECTURAL_LEGACY_SHIM_REGISTRY_KEY = "domain_legacy_path_shims"
+ARCHITECTURAL_LEGACY_SHIM_MODULE_KEY = "legacy_module"
 
 
 def load_architectural_fitness_baseline(root):
@@ -33,7 +35,12 @@ def load_architectural_fitness_baseline(root):
 def load_architectural_context_registry(root):
     """Read the reviewed module-to-context and access-surface registry."""
     path = Path(root) / ARCHITECTURAL_PACKAGE_RELATIVE_ROOT / ARCHITECTURAL_CONTEXT_REGISTRY_RESOURCE
-    return json.loads(path.read_text())
+    registry = json.loads(path.read_text())
+    registry[ARCHITECTURAL_BOUNDARY_SHIM_KEY] = sorted(
+        declaration[ARCHITECTURAL_LEGACY_SHIM_MODULE_KEY]
+        for declaration in registry.get(ARCHITECTURAL_LEGACY_SHIM_REGISTRY_KEY, ())
+    )
+    return registry
 
 
 def measure_architectural_boundary_violations(edges, registry):
@@ -77,7 +84,6 @@ def regenerate_architectural_boundary_baseline(root):
     root = Path(root).resolve()
     settings = load_architectural_fitness_baseline(root)
     registry = load_architectural_context_registry(root)
-    registry[ARCHITECTURAL_BOUNDARY_SHIM_KEY] = settings.get(ARCHITECTURAL_BOUNDARY_SHIM_KEY, [])
     units = collect_architectural_source_units(root, settings)
     measured, unassigned = measure_architectural_boundary_violations(
         collect_architectural_import_edges(units), registry,
@@ -447,7 +453,6 @@ def run_architectural_fitness_gate(*, context, invariant):
             edges = collect_architectural_import_edges(units)
             if invariant == "boundaries":
                 registry = load_architectural_context_registry(root)
-                registry[ARCHITECTURAL_BOUNDARY_SHIM_KEY] = settings.get(ARCHITECTURAL_BOUNDARY_SHIM_KEY, [])
                 measured, unassigned = measure_architectural_boundary_violations(edges, registry)
                 recorded = {tuple(edge) for edge in settings[ARCHITECTURAL_BOUNDARY_BASELINE_KEY]}
                 violations = sorted(set(measured) - recorded)
