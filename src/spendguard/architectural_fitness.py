@@ -17,6 +17,8 @@ ARCHITECTURAL_BASELINE_RESOURCE = "architectural_fitness_baseline.json"
 ARCHITECTURAL_PACKAGE_RELATIVE_ROOT = Path("src") / "spendguard"
 ARCHITECTURAL_LAYER_CONFIGURATION_FILENAME = "architecture.ini"
 ARCHITECTURAL_COMPLEXITY_REVIEW_KEY_PREFIX = "reviewed_"
+ARCHITECTURAL_LARGEST_SCC_CEILING_KEY = "max_largest_scc_size"
+ARCHITECTURAL_CYCLIC_EDGE_CEILING_KEY = "max_cyclic_edge_count"
 
 
 def load_architectural_fitness_baseline(root):
@@ -96,6 +98,56 @@ def find_architectural_import_cycles(edges):
         if vertex not in index:
             visit_architectural_import_vertex(vertex)
     return sorted(components)
+
+
+def measure_architectural_cycle_magnitude(edges):
+    """Measure the largest cyclic component and all intra-component edges."""
+    components = find_architectural_import_cycles(edges)
+    cyclic_edges = {
+        (owner, target)
+        for component in components
+        for owner in component
+        for target in edges[owner]
+        if target in component
+    }
+    return {
+        "components": components,
+        "cyclic_edges": cyclic_edges,
+        "largest_scc_size": max(map(len, components), default=0),
+        "cyclic_edge_count": len(cyclic_edges),
+    }
+
+
+def regenerate_architectural_cycle_magnitude_baseline(root):
+    """Explicitly tighten cycle-magnitude ceilings to the current measurement."""
+    root = Path(root).resolve()
+    settings = load_architectural_fitness_baseline(root)
+    edges = collect_architectural_import_edges(collect_architectural_source_units(root, settings))
+    magnitude = measure_architectural_cycle_magnitude(edges)
+    measured_ceilings = {
+        ARCHITECTURAL_LARGEST_SCC_CEILING_KEY: magnitude["largest_scc_size"],
+        ARCHITECTURAL_CYCLIC_EDGE_CEILING_KEY: magnitude["cyclic_edge_count"],
+    }
+    existing_ceilings = {key: settings.get(key) for key in measured_ceilings}
+    if all(existing_ceilings[key] is not None and measured_ceilings[key] >= existing_ceilings[key]
+           for key in measured_ceilings):
+        return {"updated": False, **measured_ceilings}
+    baseline_path = root / ARCHITECTURAL_PACKAGE_RELATIVE_ROOT / ARCHITECTURAL_BASELINE_RESOURCE
+
+    def tighten_architectural_cycle_magnitude_baseline(data):
+        for key, measurement in measured_ceilings.items():
+            recorded = data.get(key)
+            if recorded is None or measurement < recorded:
+                data[key] = measurement
+
+    config.update_json(
+        baseline_path,
+        tighten_architectural_cycle_magnitude_baseline,
+        reason="architectural cycle magnitude ratchet regeneration",
+        keep_backups=0,
+        required=True,
+    )
+    return {"updated": True, **measured_ceilings}
 
 
 def measure_architectural_complexity(root, settings):
@@ -225,14 +277,35 @@ def run_architectural_fitness_gate(*, context, invariant):
         if invariant in {"cycles", "layers"}:
             edges = collect_architectural_import_edges(collect_architectural_source_units(root, settings))
             if invariant == "cycles":
-                components = find_architectural_import_cycles(edges)
-                cyclic_edges = {
-                    (owner, target) for component in components for owner in component
-                    for target in edges[owner] if target in component
-                }
+                magnitude = measure_architectural_cycle_magnitude(edges)
+                components = magnitude["components"]
+                cyclic_edges = magnitude["cyclic_edges"]
                 recorded_edges = {tuple(edge) for edge in settings["recorded_cyclic_edges"]}
                 violations = sorted(cyclic_edges - recorded_edges)
-                detail = f"No-new-cyclic-import-edge ratchet: {len(edges)} modules; {len(components)} existing cyclic components; {len(violations)} new cyclic edges. Full no-cycles remains reviewed N/A."
+                largest_scc_ceiling = settings[ARCHITECTURAL_LARGEST_SCC_CEILING_KEY]
+                cyclic_edge_ceiling = settings[ARCHITECTURAL_CYCLIC_EDGE_CEILING_KEY]
+                if magnitude["largest_scc_size"] > largest_scc_ceiling:
+                    violations.append(
+                        f"largest_scc_size: {magnitude['largest_scc_size']} exceeds {largest_scc_ceiling}"
+                    )
+                if magnitude["cyclic_edge_count"] > cyclic_edge_ceiling:
+                    violations.append(
+                        f"cyclic_edge_count: {magnitude['cyclic_edge_count']} exceeds {cyclic_edge_ceiling}"
+                    )
+                tightening = [
+                    key for key, current, ceiling in (
+                        ("largest_scc_size", magnitude["largest_scc_size"], largest_scc_ceiling),
+                        ("cyclic_edge_count", magnitude["cyclic_edge_count"], cyclic_edge_ceiling),
+                    ) if current < ceiling
+                ]
+                detail = (
+                    f"No-new-cyclic-import-edge ratchet: {len(edges)} modules; {len(components)} existing cyclic "
+                    f"components; {len(cyclic_edges)} cyclic edges; {len(violations)} violations. "
+                    f"Magnitude largest_scc_size={magnitude['largest_scc_size']}<={largest_scc_ceiling}, "
+                    f"cyclic_edge_count={magnitude['cyclic_edge_count']}<={cyclic_edge_ceiling}. "
+                    f"Explicit baseline tightening available for: {', '.join(tightening) or 'none'}. "
+                    "Full no-cycles remains reviewed N/A."
+                )
             else:
                 contract = settings["layer_contract"]
                 foundations = set(contract["independent_foundations"])

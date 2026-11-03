@@ -8,7 +8,10 @@ import tempfile
 import pytest
 
 from spendguard.architectural_fitness import (
+    collect_architectural_import_edges,
+    collect_architectural_source_units,
     load_architectural_fitness_baseline,
+    measure_architectural_cycle_magnitude,
     measure_architectural_complexity,
     measure_architectural_duplication,
     regenerate_architectural_complexity_baseline,
@@ -22,6 +25,9 @@ ARCHITECTURAL_FIXTURE_REVIEW_KEY = "reviewed_fixture_complexity_regression"
 ARCHITECTURAL_FIXTURE_SECOND_REVIEW_KEY = "reviewed_fixture_complexity_regression_second"
 ARCHITECTURAL_FIXTURE_REVIEW_JUSTIFICATION = "Scratch regression reviewed for the architectural guard proof."
 ARCHITECTURAL_FIXTURE_SECOND_REVIEW_JUSTIFICATION = "A distinct scratch regression received its own review."
+ARCHITECTURAL_FIXTURE_TWO_NODE_CEILING = 2
+ARCHITECTURAL_FIXTURE_THREE_NODE_CEILING = 3
+ARCHITECTURAL_FIXTURE_ONE_EDGE_CEILING = 1
 ARCHITECTURAL_FIXTURE_CLEAN_CORE = "def fixture_foundation_identity(value: int) -> int:\n    return value\n"
 ARCHITECTURAL_FIXTURE_CLEAN_APPLICATION = "def fixture_application_identity(value: str) -> str:\n    return value\n"
 ARCHITECTURAL_FIXTURE_NESTED_COMPLEXITY = "\n".join((
@@ -52,6 +58,64 @@ ARCHITECTURAL_FIXTURE_VIOLATIONS = {
     "dead": ("def fixture_foundation_identity(value: int) -> int:\n    return value\n    print(value)\n", None),
     "types": ("def fixture_foundation_identity(value: int) -> int:\n    return str(value)\n", None),
 }
+ARCHITECTURAL_CYCLE_GROWTH_CASES = (
+    (
+        {
+            "fixture_growth_alpha": "from . import fixture_growth_beta\n",
+            "fixture_growth_beta": "from . import fixture_growth_gamma\n",
+            "fixture_growth_gamma": "from . import fixture_growth_alpha\n",
+        },
+        ARCHITECTURAL_FIXTURE_TWO_NODE_CEILING,
+        ARCHITECTURAL_FIXTURE_THREE_NODE_CEILING,
+        "largest_scc_size",
+    ),
+    (
+        {
+            "fixture_growth_alpha": "from . import fixture_growth_beta\n",
+            "fixture_growth_beta": "from . import fixture_growth_alpha\n",
+        },
+        ARCHITECTURAL_FIXTURE_TWO_NODE_CEILING,
+        ARCHITECTURAL_FIXTURE_ONE_EDGE_CEILING,
+        "cyclic_edge_count",
+    ),
+)
+
+
+def test_real_package_cycle_magnitude_stays_within_recorded_ceilings():
+    """The production package cannot silently grow its cyclic import hairball."""
+    repository = Path(__file__).resolve().parents[1]
+    settings = load_architectural_fitness_baseline(repository)
+    edges = collect_architectural_import_edges(collect_architectural_source_units(repository, settings))
+    magnitude = measure_architectural_cycle_magnitude(edges)
+    assert magnitude["largest_scc_size"] <= settings["max_largest_scc_size"]
+    assert magnitude["cyclic_edge_count"] <= settings["max_cyclic_edge_count"]
+
+
+@pytest.mark.parametrize(
+    ("module_imports", "largest_scc_ceiling", "cyclic_edge_ceiling", "expected_violation"),
+    ARCHITECTURAL_CYCLE_GROWTH_CASES,
+    ids=("larger-scc", "more-cyclic-edges"),
+)
+def test_cycle_magnitude_gate_fails_when_independent_ceiling_grows(
+    tmp_path, module_imports, largest_scc_ceiling, cyclic_edge_ceiling, expected_violation,
+):
+    """Each magnitude ceiling independently turns the production gate red."""
+    repository = Path(__file__).resolve().parents[1]
+    settings = load_architectural_fitness_baseline(repository)
+    package = tmp_path / settings["source_root"]
+    package.mkdir(parents=True)
+    (package / "__init__.py").write_text("")
+    for module_name, source in module_imports.items():
+        (package / f"{module_name}.py").write_text(source)
+    edges = collect_architectural_import_edges(collect_architectural_source_units(tmp_path, settings))
+    magnitude = measure_architectural_cycle_magnitude(edges)
+    settings["recorded_cyclic_edges"] = [list(edge) for edge in sorted(magnitude["cyclic_edges"])]
+    settings["max_largest_scc_size"] = largest_scc_ceiling
+    settings["max_cyclic_edge_count"] = cyclic_edge_ceiling
+    (package / "architectural_fitness_baseline.json").write_text(json.dumps(settings))
+    red = run_architectural_fitness_gate(context={"repo_root": tmp_path}, invariant="cycles")
+    assert red.status == "FAIL", red
+    assert expected_violation in str(red.evidence), red
 
 
 def test_complexity_regeneration_preserves_active_ratchet(tmp_path):
@@ -195,6 +259,14 @@ def test_architectural_violation_red_then_restored_green(tmp_path, architectural
 
 
 if __name__ == "__main__":
+    test_real_package_cycle_magnitude_stays_within_recorded_ceilings()
+    print("cycle magnitude: REAL PACKAGE WITHIN MEASURED CEILINGS")
+    for architectural_growth_case in ARCHITECTURAL_CYCLE_GROWTH_CASES:
+        with tempfile.TemporaryDirectory() as architectural_growth_directory:
+            test_cycle_magnitude_gate_fails_when_independent_ceiling_grows(
+                Path(architectural_growth_directory), *architectural_growth_case,
+            )
+    print("cycle magnitude: LARGER SCC RED / MORE CYCLIC EDGES RED")
     with tempfile.TemporaryDirectory() as architectural_regeneration_directory:
         test_complexity_regeneration_preserves_active_ratchet(Path(architectural_regeneration_directory))
     print("complexity regeneration: SURGICAL / FAIL-CLOSED / IDEMPOTENT")
