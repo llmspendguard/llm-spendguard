@@ -10,9 +10,7 @@
     "agent_spawn_gate.py",
     "anomaly.py",
     "antigravity_exec.py",
-    "architectural_fitness.py",
     "attribution.py",
-    "audit.py",
     "backfill.py",
     "bakeoff.py",
     "balances.py",
@@ -34,8 +32,6 @@
     "capability_cli_parsing.py",
     "capability_cli_projection_models.py",
     "capability_documentation.py",
-    "capability_readiness.py",
-    "capability_readiness_gates.py",
     "capability_registry.py",
     "capability_surface_generation.py",
     "cascade.py",
@@ -53,14 +49,12 @@
     "compaction.py",
     "compare.py",
     "comprehend.py",
-    "consumer_audit.py",
     "content_compression.py",
     "content_compression_backfill.py",
     "content_retention.py",
     "content_tokens.py",
     "conv.py",
     "cost_integrity.py",
-    "coverage.py",
     "crossllm.py",
     "deid.py",
     "delegate_jobs.py",
@@ -79,11 +73,9 @@
     "escalation_ladder.py",
     "estimate.py",
     "estimate_divergence.py",
-    "estimate_literals.py",
     "execution_journal.py",
     "expected_output.py",
     "experiment.py",
-    "external_standard_readiness.py",
     "fleet.py",
     "focus_export.py",
     "gate.py",
@@ -91,9 +83,7 @@
     "guard.py",
     "history.py",
     "http_capture.py",
-    "import_behavior_snapshot.py",
     "intent_model_prior.py",
-    "keys_audit.py",
     "kimi_daemon.py",
     "kimi_exec.py",
     "lambda_adapter.py",
@@ -116,7 +106,6 @@
     "ledger_daily_rollup.py",
     "ledger_deadletter.py",
     "ledger_fork_locks.py",
-    "ledger_performance_benchmark.py",
     "ledger_schema_migrations.py",
     "ledger_sync.py",
     "ledger_wal_maintenance.py",
@@ -126,7 +115,6 @@
     "mcp_fd_lifecycle.py",
     "mcp_server.py",
     "measurement.py",
-    "metadata_audit.py",
     "migrate_charges.py",
     "modal_adapter.py",
     "model_catalog.py",
@@ -181,7 +169,6 @@
     "setup.py",
     "share.py",
     "signal.py",
-    "source_compact.py",
     "sources.py",
     "stability.py",
     "storm_coalescer.py",
@@ -195,14 +182,11 @@
     "sync_capabilities.py",
     "tag.py",
     "tier_config.py",
-    "token_caps.py",
     "trust.py",
     "truth.py",
     "ui.py",
     "validate.py",
     "vendor_call.py",
-    "verdict_ledger.py",
-    "verify.py",
     "vertex_adapter.py",
     "warm_stdio_daemon.py",
     "weekly_cap_guard.py",
@@ -314,7 +298,7 @@
             "max_cc": 18,
             "mi": 50.48267079784406
           },
-          "src/spendguard/architectural_fitness.py": {
+          "src/spendguard/analyze/assurance/architectural_fitness.py": {
             "max_cc": 37,
             "mi": 0.0
           },
@@ -322,7 +306,7 @@
             "max_cc": 26,
             "mi": 58.04126694582299
           },
-          "src/spendguard/audit.py": {
+          "src/spendguard/analyze/assurance/audit.py": {
             "max_cc": 19,
             "mi": 58.43745075341389
           },
@@ -414,11 +398,11 @@
             "max_cc": 15,
             "mi": 38.378263955416635
           },
-          "src/spendguard/capability_readiness.py": {
+          "src/spendguard/analyze/assurance/capability_readiness.py": {
             "max_cc": 14,
             "mi": 41.47786328660156
           },
-          "src/spendguard/capability_readiness_gates.py": {
+          "src/spendguard/analyze/assurance/capability_readiness_gates.py": {
             "max_cc": 14,
             "mi": 37.25447954793135
           },
@@ -502,7 +486,7 @@
             "max_cc": 4,
             "mi": 69.9386487242984
           },
-          "src/spendguard/consumer_audit.py": {
+          "src/spendguard/analyze/assurance/consumer_audit.py": {
             "max_cc": 42,
             "mi": 7.788017310654354
           },
@@ -530,7 +514,7 @@
             "max_cc": 19,
             "mi": 48.34992153195338
           },
-          "src/spendguard/coverage.py": {
+          "src/spendguard/analyze/assurance/coverage.py": {
             "max_cc": 16,
             "mi": 44.427822068294915
           },
@@ -590,7 +574,7 @@
             "max_cc": 12,
             "mi": 69.00470814762058
           },
-          "src/spendguard/estimate_literals.py": {
+          "src/spendguard/analyze/assurance/estimate_literals.py": {
             "max_cc": 20,
             "mi": 61.17881979232424
           },
@@ -606,7 +590,7 @@
             "max_cc": 32,
             "mi": 35.098998371583306
           },
-          "src/spendguard/external_standard_readiness.py": {
+          "src/spendguard/analyze/assurance/external_standard_readiness.py": {
             "max_cc": 77,
             "mi": 18.093123319957947
           },
@@ -650,7 +634,7 @@
             "max_cc": 11,
             "mi": 65.19280790945399
           },
-          "src/spendguard/keys_audit.py": {
+          "src/spendguard/analyze/assurance/keys_audit.py": {
             "max_cc": 9,
             "mi": 69.40525509641849
           },
@@ -794,7 +778,7 @@
             "max_cc": 19,
             "mi": 36.18241532204339
           },
-          "src/spendguard/metadata_audit.py": {
+          "src/spendguard/analyze/assurance/metadata_audit.py": {
             "max_cc": 18,
             "mi": 57.378150229145675
           },
@@ -1022,7 +1006,7 @@
             "max_cc": 22,
             "mi": 52.382591807655835
           },
-          "src/spendguard/source_compact.py": {
+          "src/spendguard/analyze/assurance/source_compact.py": {
             "max_cc": 16,
             "mi": 64.0542185418841
           },
@@ -1074,7 +1058,7 @@
             "max_cc": 40,
             "mi": 46.65539030471832
           },
-          "src/spendguard/token_caps.py": {
+          "src/spendguard/analyze/assurance/token_caps.py": {
             "max_cc": 19,
             "mi": 55.38819148712055
           },
@@ -1098,11 +1082,11 @@
             "max_cc": 43,
             "mi": 5.548913231913586
           },
-          "src/spendguard/verdict_ledger.py": {
+          "src/spendguard/analyze/assurance/verdict_ledger.py": {
             "max_cc": 11,
             "mi": 80.04986247715179
           },
-          "src/spendguard/verify.py": {
+          "src/spendguard/analyze/assurance/verify.py": {
             "max_cc": 21,
             "mi": 58.70752966938513
           },
@@ -1150,7 +1134,7 @@
             "max_cc": 12,
             "mi": 64.69232676353167
           },
-          "src/spendguard/ledger_performance_benchmark.py": {
+          "src/spendguard/analyze/assurance/ledger_performance_benchmark.py": {
             "max_cc": 19,
             "mi": 22.449277155991624
           },
@@ -1158,7 +1142,7 @@
             "max_cc": 9,
             "mi": 73.39668068181851
           },
-          "src/spendguard/import_behavior_snapshot.py": {
+          "src/spendguard/analyze/assurance/import_behavior_snapshot.py": {
             "max_cc": 7,
             "mi": 33.06306979055757
           },
@@ -1314,7 +1298,7 @@
             "max_cc": 18,
             "mi": 50.48267079784406
           },
-          "src/spendguard/architectural_fitness.py": {
+          "src/spendguard/analyze/assurance/architectural_fitness.py": {
             "max_cc": 37,
             "mi": 0.0
           },
@@ -1322,7 +1306,7 @@
             "max_cc": 26,
             "mi": 57.823471510010044
           },
-          "src/spendguard/audit.py": {
+          "src/spendguard/analyze/assurance/audit.py": {
             "max_cc": 19,
             "mi": 58.2145302516331
           },
@@ -1414,11 +1398,11 @@
             "max_cc": 15,
             "mi": 38.378263955416635
           },
-          "src/spendguard/capability_readiness.py": {
+          "src/spendguard/analyze/assurance/capability_readiness.py": {
             "max_cc": 14,
             "mi": 41.47786328660156
           },
-          "src/spendguard/capability_readiness_gates.py": {
+          "src/spendguard/analyze/assurance/capability_readiness_gates.py": {
             "max_cc": 14,
             "mi": 37.175859310739504
           },
@@ -1502,7 +1486,7 @@
             "max_cc": 4,
             "mi": 69.9386487242984
           },
-          "src/spendguard/consumer_audit.py": {
+          "src/spendguard/analyze/assurance/consumer_audit.py": {
             "max_cc": 42,
             "mi": 7.788017310654354
           },
@@ -1530,7 +1514,7 @@
             "max_cc": 19,
             "mi": 48.13044412823358
           },
-          "src/spendguard/coverage.py": {
+          "src/spendguard/analyze/assurance/coverage.py": {
             "max_cc": 16,
             "mi": 44.427822068294915
           },
@@ -1590,7 +1574,7 @@
             "max_cc": 12,
             "mi": 69.00470814762058
           },
-          "src/spendguard/estimate_literals.py": {
+          "src/spendguard/analyze/assurance/estimate_literals.py": {
             "max_cc": 20,
             "mi": 61.17881979232424
           },
@@ -1606,7 +1590,7 @@
             "max_cc": 32,
             "mi": 34.65440375053294
           },
-          "src/spendguard/external_standard_readiness.py": {
+          "src/spendguard/analyze/assurance/external_standard_readiness.py": {
             "max_cc": 77,
             "mi": 18.093123319957947
           },
@@ -1650,7 +1634,7 @@
             "max_cc": 11,
             "mi": 64.89203076752639
           },
-          "src/spendguard/keys_audit.py": {
+          "src/spendguard/analyze/assurance/keys_audit.py": {
             "max_cc": 9,
             "mi": 69.40525509641849
           },
@@ -1794,7 +1778,7 @@
             "max_cc": 19,
             "mi": 36.18241532204339
           },
-          "src/spendguard/metadata_audit.py": {
+          "src/spendguard/analyze/assurance/metadata_audit.py": {
             "max_cc": 18,
             "mi": 56.87500451564511
           },
@@ -2022,7 +2006,7 @@
             "max_cc": 22,
             "mi": 51.96146984645848
           },
-          "src/spendguard/source_compact.py": {
+          "src/spendguard/analyze/assurance/source_compact.py": {
             "max_cc": 16,
             "mi": 64.0542185418841
           },
@@ -2074,7 +2058,7 @@
             "max_cc": 40,
             "mi": 46.42709771081143
           },
-          "src/spendguard/token_caps.py": {
+          "src/spendguard/analyze/assurance/token_caps.py": {
             "max_cc": 19,
             "mi": 55.38819148712055
           },
@@ -2098,11 +2082,11 @@
             "max_cc": 43,
             "mi": 5.443208545770559
           },
-          "src/spendguard/verdict_ledger.py": {
+          "src/spendguard/analyze/assurance/verdict_ledger.py": {
             "max_cc": 11,
             "mi": 80.04986247715179
           },
-          "src/spendguard/verify.py": {
+          "src/spendguard/analyze/assurance/verify.py": {
             "max_cc": 21,
             "mi": 57.97842506914812
           },
@@ -2150,7 +2134,7 @@
             "max_cc": 12,
             "mi": 64.69232676353167
           },
-          "src/spendguard/ledger_performance_benchmark.py": {
+          "src/spendguard/analyze/assurance/ledger_performance_benchmark.py": {
             "max_cc": 19,
             "mi": 22.29606059471751
           },
@@ -2218,7 +2202,7 @@
             "max_cc": 0,
             "mi": 100.0
           },
-          "src/spendguard/import_behavior_snapshot.py": {
+          "src/spendguard/analyze/assurance/import_behavior_snapshot.py": {
             "max_cc": 7,
             "mi": 33.06306979055757
           },
@@ -6248,7 +6232,7 @@
   ],
   "max_largest_scc_size": 142,
   "max_cyclic_edge_count": 943,
-  "max_legacy_shim_count": 14,
+  "max_legacy_shim_count": 30,
   "recorded_cross_context_nonsurface_imports": [
     [
       "spendguard",
@@ -6543,7 +6527,7 @@
       "spendguard.subscription_headroom_surfaces"
     ],
     [
-      "spendguard.architectural_fitness",
+      "spendguard.analyze.assurance.architectural_fitness",
       "spendguard.store.configuration.config"
     ],
     [
@@ -6571,31 +6555,31 @@
       "spendguard.ui"
     ],
     [
-      "spendguard.audit",
+      "spendguard.analyze.assurance.audit",
       "spendguard.adapters"
     ],
     [
-      "spendguard.audit",
+      "spendguard.analyze.assurance.audit",
       "spendguard.calls"
     ],
     [
-      "spendguard.audit",
+      "spendguard.analyze.assurance.audit",
       "spendguard.capability_cli_parsing"
     ],
     [
-      "spendguard.audit",
+      "spendguard.analyze.assurance.audit",
       "spendguard.store.configuration.config"
     ],
     [
-      "spendguard.audit",
+      "spendguard.analyze.assurance.audit",
       "spendguard.expected_output"
     ],
     [
-      "spendguard.audit",
+      "spendguard.analyze.assurance.audit",
       "spendguard.pricing"
     ],
     [
-      "spendguard.audit",
+      "spendguard.analyze.assurance.audit",
       "spendguard.ui"
     ],
     [
@@ -7099,15 +7083,15 @@
       "spendguard.schema_indexes"
     ],
     [
-      "spendguard.capability_readiness_gates",
+      "spendguard.analyze.assurance.capability_readiness_gates",
       "spendguard.cli"
     ],
     [
-      "spendguard.capability_readiness_gates",
+      "spendguard.analyze.assurance.capability_readiness_gates",
       "spendguard.store.configuration.config"
     ],
     [
-      "spendguard.capability_readiness_gates",
+      "spendguard.analyze.assurance.capability_readiness_gates",
       "spendguard.lane_queue"
     ],
     [
@@ -7284,7 +7268,7 @@
     ],
     [
       "spendguard.cli",
-      "spendguard.consumer_audit"
+      "spendguard.analyze.assurance.consumer_audit"
     ],
     [
       "spendguard.cli",
@@ -7328,7 +7312,7 @@
     ],
     [
       "spendguard.cli",
-      "spendguard.metadata_audit"
+      "spendguard.analyze.assurance.metadata_audit"
     ],
     [
       "spendguard.cli",
@@ -7575,27 +7559,27 @@
       "spendguard.weekly_cap_guard"
     ],
     [
-      "spendguard.consumer_audit",
+      "spendguard.analyze.assurance.consumer_audit",
       "spendguard.adapters"
     ],
     [
-      "spendguard.consumer_audit",
+      "spendguard.analyze.assurance.consumer_audit",
       "spendguard.capability_cli_parsing"
     ],
     [
-      "spendguard.consumer_audit",
+      "spendguard.analyze.assurance.consumer_audit",
       "spendguard.store.configuration.config"
     ],
     [
-      "spendguard.consumer_audit",
+      "spendguard.analyze.assurance.consumer_audit",
       "spendguard.fleet"
     ],
     [
-      "spendguard.consumer_audit",
+      "spendguard.analyze.assurance.consumer_audit",
       "spendguard.release"
     ],
     [
-      "spendguard.consumer_audit",
+      "spendguard.analyze.assurance.consumer_audit",
       "spendguard.setup"
     ],
     [
@@ -7699,23 +7683,23 @@
       "spendguard.pricing"
     ],
     [
-      "spendguard.coverage",
+      "spendguard.analyze.assurance.coverage",
       "spendguard.adapters"
     ],
     [
-      "spendguard.coverage",
+      "spendguard.analyze.assurance.coverage",
       "spendguard.store.configuration.config"
     ],
     [
-      "spendguard.coverage",
+      "spendguard.analyze.assurance.coverage",
       "spendguard.fleet"
     ],
     [
-      "spendguard.coverage",
+      "spendguard.analyze.assurance.coverage",
       "spendguard.ledger"
     ],
     [
-      "spendguard.coverage",
+      "spendguard.analyze.assurance.coverage",
       "spendguard.setup"
     ],
     [
@@ -7868,7 +7852,7 @@
     ],
     [
       "spendguard.distribution",
-      "spendguard.consumer_audit"
+      "spendguard.analyze.assurance.consumer_audit"
     ],
     [
       "spendguard.distribution_daemon",
@@ -7987,19 +7971,19 @@
       "spendguard.generate.work_integrity.output_contract"
     ],
     [
-      "spendguard.estimate_literals",
+      "spendguard.analyze.assurance.estimate_literals",
       "spendguard.adapters"
     ],
     [
-      "spendguard.estimate_literals",
+      "spendguard.analyze.assurance.estimate_literals",
       "spendguard.calls"
     ],
     [
-      "spendguard.estimate_literals",
+      "spendguard.analyze.assurance.estimate_literals",
       "spendguard.store.configuration.config"
     ],
     [
-      "spendguard.estimate_literals",
+      "spendguard.analyze.assurance.estimate_literals",
       "spendguard.generate.work_integrity.output_contract"
     ],
     [
@@ -8063,11 +8047,11 @@
       "spendguard.ui"
     ],
     [
-      "spendguard.external_standard_readiness",
+      "spendguard.analyze.assurance.external_standard_readiness",
       "spendguard._version"
     ],
     [
-      "spendguard.external_standard_readiness",
+      "spendguard.analyze.assurance.external_standard_readiness",
       "spendguard.distribution"
     ],
     [
@@ -8200,7 +8184,7 @@
     ],
     [
       "spendguard.gate",
-      "spendguard.metadata_audit"
+      "spendguard.analyze.assurance.metadata_audit"
     ],
     [
       "spendguard.gate",
@@ -8307,11 +8291,11 @@
       "spendguard.gate"
     ],
     [
-      "spendguard.import_behavior_snapshot",
+      "spendguard.analyze.assurance.import_behavior_snapshot",
       "spendguard.store.configuration.config"
     ],
     [
-      "spendguard.import_behavior_snapshot",
+      "spendguard.analyze.assurance.import_behavior_snapshot",
       "spendguard.setup"
     ],
     [
@@ -8355,11 +8339,11 @@
       "spendguard.gate"
     ],
     [
-      "spendguard.keys_audit",
+      "spendguard.analyze.assurance.keys_audit",
       "spendguard.capability_cli_parsing"
     ],
     [
-      "spendguard.keys_audit",
+      "spendguard.analyze.assurance.keys_audit",
       "spendguard.store.configuration.config"
     ],
     [
@@ -8835,11 +8819,11 @@
       "spendguard.store.spend_search.ledger_read"
     ],
     [
-      "spendguard.ledger_performance_benchmark",
+      "spendguard.analyze.assurance.ledger_performance_benchmark",
       "spendguard.store.configuration.config"
     ],
     [
-      "spendguard.ledger_performance_benchmark",
+      "spendguard.analyze.assurance.ledger_performance_benchmark",
       "spendguard.ledger"
     ],
     [
@@ -9131,23 +9115,23 @@
       "spendguard.money_scale"
     ],
     [
-      "spendguard.metadata_audit",
+      "spendguard.analyze.assurance.metadata_audit",
       "spendguard.capability_cli_parsing"
     ],
     [
-      "spendguard.metadata_audit",
+      "spendguard.analyze.assurance.metadata_audit",
       "spendguard.pricing"
     ],
     [
-      "spendguard.metadata_audit",
+      "spendguard.analyze.assurance.metadata_audit",
       "spendguard.sync"
     ],
     [
-      "spendguard.metadata_audit",
+      "spendguard.analyze.assurance.metadata_audit",
       "spendguard.sync_capabilities"
     ],
     [
-      "spendguard.metadata_audit",
+      "spendguard.analyze.assurance.metadata_audit",
       "spendguard.vendor_call"
     ],
     [
@@ -10120,7 +10104,7 @@
     ],
     [
       "spendguard.saas",
-      "spendguard.verify"
+      "spendguard.analyze.assurance.verify"
     ],
     [
       "spendguard.saas",
@@ -10188,7 +10172,7 @@
     ],
     [
       "spendguard.serve",
-      "spendguard.metadata_audit"
+      "spendguard.analyze.assurance.metadata_audit"
     ],
     [
       "spendguard.serve",
@@ -10216,7 +10200,7 @@
     ],
     [
       "spendguard.setup",
-      "spendguard.consumer_audit"
+      "spendguard.analyze.assurance.consumer_audit"
     ],
     [
       "spendguard.setup",
@@ -10296,7 +10280,7 @@
     ],
     [
       "spendguard.sources",
-      "spendguard.coverage"
+      "spendguard.analyze.assurance.coverage"
     ],
     [
       "spendguard.sources",
@@ -10467,19 +10451,19 @@
       "spendguard.pricing"
     ],
     [
-      "spendguard.token_caps",
+      "spendguard.analyze.assurance.token_caps",
       "spendguard.adapters"
     ],
     [
-      "spendguard.token_caps",
+      "spendguard.analyze.assurance.token_caps",
       "spendguard.capability_cli_parsing"
     ],
     [
-      "spendguard.token_caps",
+      "spendguard.analyze.assurance.token_caps",
       "spendguard.store.configuration.config"
     ],
     [
-      "spendguard.token_caps",
+      "spendguard.analyze.assurance.token_caps",
       "spendguard.generate.work_integrity.output_contract"
     ],
     [
@@ -10571,39 +10555,39 @@
       "spendguard.pricing"
     ],
     [
-      "spendguard.verdict_ledger",
+      "spendguard.analyze.assurance.verdict_ledger",
       "spendguard.store.configuration.config"
     ],
     [
-      "spendguard.verify",
+      "spendguard.analyze.assurance.verify",
       "spendguard.adapters"
     ],
     [
-      "spendguard.verify",
+      "spendguard.analyze.assurance.verify",
       "spendguard.capability_cli_parsing"
     ],
     [
-      "spendguard.verify",
+      "spendguard.analyze.assurance.verify",
       "spendguard.store.configuration.config"
     ],
     [
-      "spendguard.verify",
+      "spendguard.analyze.assurance.verify",
       "spendguard.gate"
     ],
     [
-      "spendguard.verify",
+      "spendguard.analyze.assurance.verify",
       "spendguard.lane_catalog"
     ],
     [
-      "spendguard.verify",
+      "spendguard.analyze.assurance.verify",
       "spendguard.lane_economics"
     ],
     [
-      "spendguard.verify",
+      "spendguard.analyze.assurance.verify",
       "spendguard.model_preflight"
     ],
     [
-      "spendguard.verify",
+      "spendguard.analyze.assurance.verify",
       "spendguard.resource_state"
     ],
     [

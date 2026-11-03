@@ -114,7 +114,7 @@ ADJUDICATE_SCHEMA = ('{"verdict": "quoted_price" or "not_a_quote", "why": "<one 
 
 def adjudicate_literal(site, model=None):
     """Is this call a quoted price, or something else? Agentic — the answer is what the result is used for."""
-    from . import adapters, calls, config, output_contract
+    from ... import adapters, calls, config, output_contract
     model = model or config.advisor_model()
     with calls.context(intent="spendguard:estimate-literal"):
         r = adapters.call(

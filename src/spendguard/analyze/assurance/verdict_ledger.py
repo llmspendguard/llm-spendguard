@@ -36,7 +36,7 @@ def save_verdicts(repo_root, ledger_name, verdicts):
     """Sorted + atomic + backed up. A certificate replaced by a half-written file would silently
     un-certify everything it covered, so this goes through config.update_json like every other whole-file
     JSON write in this package."""
-    from . import config
+    from ... import config
     config.update_json(str(verdict_path(repo_root, ledger_name)),
                        lambda _d: dict(sorted(verdicts.items())))
 

@@ -1,7 +1,7 @@
 """Deterministic, subprocess-isolated audit of workspace LLM consumers."""
 from __future__ import annotations
 
-from .capability_cli_parsing import add_registered_cli_argument
+from ...capability_cli_parsing import add_registered_cli_argument
 
 import argparse
 import ast
@@ -10,7 +10,7 @@ import os
 from pathlib import Path
 import subprocess
 
-from . import adapters, config
+from ... import adapters, config
 
 CONSUMER_AUDIT_PROBE_TIMEOUT_SECONDS = 10.0
 CONSUMER_AUDIT_GIT_TIMEOUT_SECONDS = 5.0
@@ -239,7 +239,7 @@ def _checkout_for_module(module_path):
 
 
 def _live_pids(python_executable):
-    from . import fleet
+    from ... import fleet
     resolved = Path(python_executable).resolve()
     return sorted(
         row["pid"] for row in fleet.running_consumers(prune=False)
@@ -366,7 +366,7 @@ def _audit_consumer_venv(repository, venv, source_import_facts, repository_llm, 
         if dry_run:
             action = CONSUMER_AUDIT_ACTION_WOULD_ARM
         else:
-            from .setup import install_hook
+            from ...setup import install_hook
             if install_hook(os.fspath(venv), install_pkg=False) == 0:
                 action = CONSUMER_AUDIT_ACTION_ARMED
                 final_probe = probe_consumer_interpreter(python_executable)
@@ -417,7 +417,7 @@ def consumer_audit_command(argv=None, deployed_sha=None):
     add_registered_cli_argument(parser, 'consumer-audit/consumer_audit.consumer_audit_command/parser/--no-auto-arm')
     arguments = parser.parse_args(argv)
     if deployed_sha is None:
-        from .release import green_pointer
+        from ...release import green_pointer
         deployed_sha = (green_pointer() or {}).get("sha")
     if not deployed_sha:
         parser.error("no deployed sha; run spendguard deploy first")

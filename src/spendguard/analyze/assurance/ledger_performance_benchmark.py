@@ -13,8 +13,8 @@ import sqlite3
 import sys
 import time
 
-from . import config
-from .ledger import SpendLedger
+from ... import config
+from ...ledger import SpendLedger
 
 
 LEDGER_PERFORMANCE_BASELINE_RESOURCE = "ledger_performance_baseline.json"

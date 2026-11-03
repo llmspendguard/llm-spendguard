@@ -18,7 +18,7 @@ def assess_protected_lane_leak_readiness(*, context, hours=1.0, min_other_calls=
     """Arm the CLI's read-only tripwire on operator ledgers; offline installs have no ledger."""
     import contextlib
     import io
-    from . import cli, config
+    from ... import cli, config
 
     probe_path = Path(ledger_path if ledger_path is not None else config.db_path()).expanduser()
     window_evidence = f"hours={hours}"
@@ -43,7 +43,7 @@ def assess_lane_queue_maintenance_readiness(*, context, database_path=None, reta
                                             size_limit_bytes=None, freelist_ratio_limit=None,
                                             old_terminal_limit=None):
     """Fail readiness when the queue file or its retained terminal population breaches policy."""
-    from . import config, lane_queue
+    from ... import config, lane_queue
     queue_path = Path(database_path) if database_path is not None else Path(config.lane_queue_db_path())
     if not queue_path.is_file():
         return CapabilityReadinessEvidence("PASS", "Queue database is not present",

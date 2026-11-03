@@ -6,10 +6,10 @@ uncommented provider key that WOULD shadow the (possibly rotated) keys.env key a
 the FILES directly and flags the latent shadow before it bites. Read-only, $0, last-4 only.
 """
 
-from .capability_cli_parsing import registered_cli_option_token
+from ...capability_cli_parsing import registered_cli_option_token
 import json
 
-from . import config
+from ... import config
 
 
 def _render_dotenv_audit_lines(findings, ssot_path, scanned_n, paths):

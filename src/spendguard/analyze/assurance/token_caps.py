@@ -35,7 +35,7 @@ passing quietly. That is the whole point: to reintroduce this defect you would h
 model to certify it harmless AND commit the certificate. It cannot happen by forgetting.
 """
 
-from .capability_cli_parsing import registered_cli_option_token
+from ...capability_cli_parsing import registered_cli_option_token
 import ast
 import pathlib
 
@@ -204,7 +204,7 @@ def adjudicate_cap(site, model=None):
 
     Agentic because it is a judgement: the number alone cannot tell a discarded probe from a truncated
     answer, only what the surrounding code does with the reply can, and that is meaning."""
-    from . import adapters, config, output_contract
+    from ... import adapters, config, output_contract
     model = model or config.advisor_model()
     prompt = JUDGE_PROMPT.format(harmless=VERDICT_HARMLESS, content=VERDICT_CONTENT, **site)
     r = adapters.call(model, prompt, sig="spendguard:token-cap-judge",

@@ -45,7 +45,7 @@ class CapabilityReadinessOutcome:
 
 def load_capability_readiness_manifest():
     """Load the packaged declaration; a malformed manifest is a readiness failure."""
-    declaration = json.loads(files(__package__).joinpath(READINESS_MANIFEST_RESOURCE).read_text(encoding="utf-8"))
+    declaration = json.loads(files("spendguard").joinpath(READINESS_MANIFEST_RESOURCE).read_text(encoding="utf-8"))
     items = tuple(CapabilityReadinessItem(
         id=item["id"], description=item["description"], gate=item.get("gate"),
         arguments=item.get("arguments", {}), reason=item.get("reason", ""),

@@ -125,7 +125,7 @@ def assess_external_standard_subset(*, context, kind, reviews, policy):
     elif kind == "packaging":
         evidence.extend(verify_external_packaging_artifacts(root, policy))
     elif kind == "cli":
-        from ._version import __version__
+        from ..._version import __version__
         environment = os.environ.copy()
         environment.update(policy["environment"])
         for arguments in policy["help_arguments"]:
@@ -155,7 +155,7 @@ def assess_external_standard_subset(*, context, kind, reviews, policy):
 
 def verify_external_packaging_artifacts(root, policy):
     """Build both artifacts offline and import the wheel in a fresh isolated venv."""
-    from .distribution import distribution_policy, ensure_distribution_build_backend, ensure_distribution_build_pip
+    from ...distribution import distribution_policy, ensure_distribution_build_backend, ensure_distribution_build_pip
     settings = distribution_policy()
     with tempfile.TemporaryDirectory() as temporary:
         workspace = Path(temporary)

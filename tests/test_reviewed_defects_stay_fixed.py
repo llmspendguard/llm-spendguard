@@ -523,7 +523,7 @@ check("genuinely-binary input is handed back untouched, not mangled",
 # The audit globbed `<dir>/*.py` — TOP LEVEL ONLY — so from a repo root it scanned the few files that happen
 # to sit there and reported clean on a tree whose code is all one directory down. Made recursive, it
 # immediately found 14 literals it had never been able to see.
-_audit_src = (SRC / "audit.py").read_text()
+_audit_src = (SRC / "analyze" / "assurance" / "audit.py").read_text()
 check("the price audit recurses instead of scanning one directory", '"**", "*.py"' in _audit_src)
 check("...and names what it EXCLUDED, so a skipped tree is not a silent clean bill",
       "SKIPPED" in _audit_src and "Not scanned is not clean" in _audit_src)

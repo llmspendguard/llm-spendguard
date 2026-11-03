@@ -16,11 +16,11 @@ red. Run it on a cadence — it is the guarantee that lanes + metered + failover
 
 Nothing here is spent in the default ($0) mode; --probe makes one tiny real metered call per lane (~$0.0002 each)."""
 
-from .capability_cli_parsing import add_registered_cli_argument
+from ...capability_cli_parsing import add_registered_cli_argument
 
 import time
 
-from . import config, gate
+from ... import config, gate
 
 
 def _key_present(provider):
@@ -29,7 +29,7 @@ def _key_present(provider):
     the call. present is None when the provider is unknown or declares no key env (nothing to resolve). config.api_key
     returns "" for an absent key — it does not raise — so no exception handling stands between a missing key and its
     honest False here."""
-    from . import adapters
+    from ... import adapters
     spec = adapters.PROVIDERS.get(provider)
     if not spec:
         return None, None
@@ -44,7 +44,7 @@ def _probe_failover(lane, prompt="Reply with exactly: OK"):
     result came from the metered API (executor='api') with no error, then restore the prior cooldown state. One real,
     tiny metered call — the only honest proof that a down plan bills the API instead of stranding. Never clears a
     cooldown the lane already had (a real backoff must survive the probe)."""
-    from . import adapters, lane_catalog, resource_state
+    from ... import adapters, lane_catalog, resource_state
     prov = lane_catalog.lane_provider(lane)
     model = lane_catalog.configured_base(lane)
     if not prov or not model:
@@ -70,7 +70,7 @@ def verify_system(probe=False):
     ok is True only when every STRUCTURAL check passes (a model id callable-as-written or correctable, every lane's
     fallback id priced + served-or-unchecked, every lane provider key present) — and, when probe=True, every live
     failover reached the metered API. 'unchecked'/'measuring' states are NOT failures (a can't-know is not a no)."""
-    from . import lane_catalog, model_preflight, lane_economics
+    from ... import lane_catalog, model_preflight, lane_economics
 
     preflight = model_preflight.preflight_models(model_preflight.configured_specs())
     fallback = lane_catalog.audit_lane_fallback()

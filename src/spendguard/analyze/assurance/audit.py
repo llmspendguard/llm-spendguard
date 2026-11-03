@@ -15,10 +15,10 @@ so the one instruction here was the one thing guaranteed to fail. `-m` runs the 
 with the package context the imports need.
 """
 
-from .capability_cli_parsing import registered_cli_option_token
+from ...capability_cli_parsing import registered_cli_option_token
 import os, re, sys, glob, json
 
-from .pricing import PRICING
+from ...pricing import PRICING
 
 SCRIPTS = os.getenv("SPENDGUARD_AUDIT_DIR") or os.getcwd()  # dir of code to scan for stray price literals
 # Directory names excluded from the scan, overridable so the policy is not baked into the tool. Test trees
@@ -97,13 +97,13 @@ def deep(paths, pricing_table, run=False):
     judgement about what the code MEANS — so it goes to a model, with the pattern scan kept as the fast
     pass that runs first and never has the last word.
     """
-    from . import adapters, calls, pricing as _p, ui
+    from ... import adapters, calls, pricing as _p, ui
     model = _cfg_advisor()
     # OUTPUT COMES FROM expected_output, NOT A LITERAL. The input side was already measured (file
     # length / 4); the output side was `500`, a number nobody counted. That asymmetry is the whole
     # defect — output is where a reasoning model's hidden thinking lands, and no assumed figure sees
     # it. expect() returns the count AND names where it came from, so a quote can say so out loud.
-    from . import expected_output as _eo
+    from ... import expected_output as _eo
     _out, _basis = _eo.expect(model, sig="spendguard:audit-deep")
     try:
         _win = int(_p.max_input_tokens(model) or 0)
@@ -156,7 +156,7 @@ def deep(paths, pricing_table, run=False):
 
 
 def _cfg_advisor():
-    from . import config
+    from ... import config
     return config.advisor_model()
 
 

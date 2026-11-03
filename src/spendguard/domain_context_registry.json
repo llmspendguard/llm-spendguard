@@ -415,10 +415,15 @@
       "surface_module": "spendguard.analyze.assurance",
       "layer": "L3",
       "backing_modules": [
-        "audit", "token_caps", "estimate_literals", "verdict_ledger", "keys_audit", "coverage",
-        "consumer_audit", "metadata_audit", "verify", "architectural_fitness",
-        "capability_readiness", "capability_readiness_gates", "external_standard_readiness",
-        "ledger_performance_benchmark", "source_compact", "import_behavior_snapshot"
+        "analyze.assurance.audit", "analyze.assurance.token_caps",
+        "analyze.assurance.estimate_literals", "analyze.assurance.verdict_ledger",
+        "analyze.assurance.keys_audit", "analyze.assurance.coverage",
+        "analyze.assurance.consumer_audit", "analyze.assurance.metadata_audit",
+        "analyze.assurance.verify", "analyze.assurance.architectural_fitness",
+        "analyze.assurance.capability_readiness", "analyze.assurance.capability_readiness_gates",
+        "analyze.assurance.external_standard_readiness",
+        "analyze.assurance.ledger_performance_benchmark", "analyze.assurance.source_compact",
+        "analyze.assurance.import_behavior_snapshot"
       ],
       "published_names": []
     },
@@ -545,6 +550,86 @@
     {
       "legacy_module": "spendguard.bulk_resilience",
       "current_module": "spendguard.generate.work_integrity.bulk_resilience",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.audit",
+      "current_module": "spendguard.analyze.assurance.audit",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.token_caps",
+      "current_module": "spendguard.analyze.assurance.token_caps",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.estimate_literals",
+      "current_module": "spendguard.analyze.assurance.estimate_literals",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.verdict_ledger",
+      "current_module": "spendguard.analyze.assurance.verdict_ledger",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.keys_audit",
+      "current_module": "spendguard.analyze.assurance.keys_audit",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.coverage",
+      "current_module": "spendguard.analyze.assurance.coverage",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.consumer_audit",
+      "current_module": "spendguard.analyze.assurance.consumer_audit",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.metadata_audit",
+      "current_module": "spendguard.analyze.assurance.metadata_audit",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.verify",
+      "current_module": "spendguard.analyze.assurance.verify",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.architectural_fitness",
+      "current_module": "spendguard.analyze.assurance.architectural_fitness",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.capability_readiness",
+      "current_module": "spendguard.analyze.assurance.capability_readiness",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.capability_readiness_gates",
+      "current_module": "spendguard.analyze.assurance.capability_readiness_gates",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.external_standard_readiness",
+      "current_module": "spendguard.analyze.assurance.external_standard_readiness",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.ledger_performance_benchmark",
+      "current_module": "spendguard.analyze.assurance.ledger_performance_benchmark",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.source_compact",
+      "current_module": "spendguard.analyze.assurance.source_compact",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.import_behavior_snapshot",
+      "current_module": "spendguard.analyze.assurance.import_behavior_snapshot",
       "moved_in_phase": 3
     }
   ],

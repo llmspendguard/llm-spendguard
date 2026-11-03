@@ -24,10 +24,10 @@ judgement), so it is code, not an LLM call. It reports UNKNOWN separately from O
     from spendguard import metadata_audit; r = metadata_audit.backbone_health()   # {ok, cache, drift, ...}
 """
 
-from .capability_cli_parsing import add_registered_cli_argument
+from ...capability_cli_parsing import add_registered_cli_argument
 import argparse
 
-from . import pricing, sync, vendor_call
+from ... import pricing, sync, vendor_call
 
 # Named thresholds (values with a name; the audit's own limits, not call-site literals).
 MODEL_METADATA_STALE_DAYS = 14     # a limits cache older than this is stale enough to alarm (sync refreshes daily)
@@ -88,7 +88,7 @@ def _capability_health():
     `sync-capabilities --audit` can never disagree. Read-only, $0. Informational (does NOT fail `ok`): an uncovered
     bleeding-edge model is EXPECTED (LiteLLM hasn't caught up), not a fault."""
     import json
-    from . import sync_capabilities
+    from ... import sync_capabilities
     cap_models = 0
     try:
         with open(sync.CACHE) as fh:

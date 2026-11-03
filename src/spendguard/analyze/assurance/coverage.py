@@ -10,14 +10,14 @@ import os
 import glob
 import subprocess
 
-from .adapters import llm_capability_import_names
-from .setup import _PTH_SENTINEL, _SENTINEL
+from ...adapters import llm_capability_import_names
+from ...setup import _PTH_SENTINEL, _SENTINEL
 
 
 def _registry_venv_roots():
     """Return resolved, de-duplicated registry venv roots and whether the registry was readable."""
     try:
-        from . import fleet
+        from ... import fleet
         registered = fleet.registered_interpreters()
         roots = sorted({os.path.realpath(os.path.expanduser(row["venv_root"]))
                         for row in registered if row.get("venv_root")})
@@ -45,7 +45,7 @@ def _roots():
     if env:
         return [r for r in env.split(":") if r]
     try:
-        from . import config
+        from ... import config
         cfg = config._cfg_get("coverage", "roots", None)
         if cfg:
             return list(cfg) if isinstance(cfg, (list, tuple)) else [cfg]
@@ -161,7 +161,7 @@ def _ledger_code_crosscheck(rows, captured_sources):
 
 
 def _captured_spend_sources():
-    from .ledger import SpendLedger
+    from ...ledger import SpendLedger
     return SpendLedger().captured_spend_source_paths()
 
 

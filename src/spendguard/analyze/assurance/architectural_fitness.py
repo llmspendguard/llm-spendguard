@@ -10,7 +10,7 @@ import subprocess
 import sys
 import tempfile
 
-from . import config
+from ... import config
 from .capability_readiness import CapabilityReadinessEvidence
 
 ARCHITECTURAL_BASELINE_RESOURCE = "architectural_fitness_baseline.json"

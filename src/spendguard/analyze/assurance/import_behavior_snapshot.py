@@ -7,7 +7,7 @@ import subprocess
 import sys
 import tempfile
 
-from . import config
+from ... import config
 
 
 IMPORT_BEHAVIOR_SNAPSHOT_RESOURCE = "import_behavior_snapshot.json"
@@ -212,7 +212,7 @@ def _import_behavior_environment(root, probe_directory):
 
 
 def _write_import_behavior_startup_files(probe_directory, entry_point):
-    from .setup import _sitecustomize_hook_source
+    from ...setup import _sitecustomize_hook_source
 
     bootstrap = _import_behavior_bootstrap_source()
     sitecustomize_path = Path(probe_directory) / "sitecustomize.py"
