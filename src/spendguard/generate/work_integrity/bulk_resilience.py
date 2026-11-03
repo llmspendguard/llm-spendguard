@@ -2,7 +2,7 @@
 import os
 import sys
 
-from . import config
+from ... import config
 
 
 class BulkResilienceRefused(Exception):

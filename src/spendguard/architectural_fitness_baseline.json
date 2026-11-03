@@ -22,7 +22,6 @@
     "bootstrap.py",
     "brief.py",
     "budget.py",
-    "bulk_resilience.py",
     "bulkgate.py",
     "cacheaudit.py",
     "cachetest.py",
@@ -94,8 +93,6 @@
     "http_capture.py",
     "import_behavior_snapshot.py",
     "intent_model_prior.py",
-    "item_ledger.py",
-    "job_fingerprint.py",
     "keys_audit.py",
     "kimi_daemon.py",
     "kimi_exec.py",
@@ -125,7 +122,6 @@
     "ledger_wal_maintenance.py",
     "ledger_writer.py",
     "litellm_adapter.py",
-    "llm_files.py",
     "manifest.py",
     "mcp_fd_lifecycle.py",
     "mcp_server.py",
@@ -141,7 +137,6 @@
     "offline_python_build.py",
     "openai_batch_cli.py",
     "otel_ingest.py",
-    "output_contract.py",
     "overage.py",
     "plan_admission.py",
     "pricing.py",
@@ -212,7 +207,6 @@
     "warm_stdio_daemon.py",
     "weekly_cap_guard.py",
     "whole_job.py",
-    "work_integrity.py",
     "workdone.py",
     "xp_rate_window.py",
     "zai_exec.py"
@@ -368,7 +362,7 @@
             "max_cc": 35,
             "mi": 0.0
           },
-          "src/spendguard/bulk_resilience.py": {
+          "src/spendguard/generate/work_integrity/bulk_resilience.py": {
             "max_cc": 14,
             "mi": 52.61899109664354
           },
@@ -648,11 +642,11 @@
             "max_cc": 19,
             "mi": 57.89839645759348
           },
-          "src/spendguard/item_ledger.py": {
+          "src/spendguard/generate/work_integrity/item_ledger.py": {
             "max_cc": 10,
             "mi": 56.33061665308085
           },
-          "src/spendguard/job_fingerprint.py": {
+          "src/spendguard/generate/work_integrity/job_fingerprint.py": {
             "max_cc": 11,
             "mi": 65.19280790945399
           },
@@ -780,7 +774,7 @@
             "max_cc": 16,
             "mi": 66.76088145475661
           },
-          "src/spendguard/llm_files.py": {
+          "src/spendguard/generate/work_integrity/llm_files.py": {
             "max_cc": 6,
             "mi": 75.39097658823836
           },
@@ -844,7 +838,7 @@
             "max_cc": 15,
             "mi": 47.8920231927494
           },
-          "src/spendguard/output_contract.py": {
+          "src/spendguard/generate/work_integrity/output_contract.py": {
             "max_cc": 74,
             "mi": 27.696371885958474
           },
@@ -1128,7 +1122,7 @@
             "max_cc": 27,
             "mi": 25.64598378308811
           },
-          "src/spendguard/work_integrity.py": {
+          "src/spendguard/generate/work_integrity/work_integrity.py": {
             "max_cc": 9,
             "mi": 75.54347430315269
           },
@@ -1368,7 +1362,7 @@
             "max_cc": 35,
             "mi": 0.0
           },
-          "src/spendguard/bulk_resilience.py": {
+          "src/spendguard/generate/work_integrity/bulk_resilience.py": {
             "max_cc": 14,
             "mi": 52.61899109664354
           },
@@ -1648,11 +1642,11 @@
             "max_cc": 19,
             "mi": 57.81187819225719
           },
-          "src/spendguard/item_ledger.py": {
+          "src/spendguard/generate/work_integrity/item_ledger.py": {
             "max_cc": 10,
             "mi": 56.09668663906682
           },
-          "src/spendguard/job_fingerprint.py": {
+          "src/spendguard/generate/work_integrity/job_fingerprint.py": {
             "max_cc": 11,
             "mi": 64.89203076752639
           },
@@ -1780,7 +1774,7 @@
             "max_cc": 16,
             "mi": 66.76088145475661
           },
-          "src/spendguard/llm_files.py": {
+          "src/spendguard/generate/work_integrity/llm_files.py": {
             "max_cc": 6,
             "mi": 75.16805608645757
           },
@@ -1844,7 +1838,7 @@
             "max_cc": 15,
             "mi": 47.8920231927494
           },
-          "src/spendguard/output_contract.py": {
+          "src/spendguard/generate/work_integrity/output_contract.py": {
             "max_cc": 74,
             "mi": 27.66223244645354
           },
@@ -2128,7 +2122,7 @@
             "max_cc": 27,
             "mi": 25.64598378308811
           },
-          "src/spendguard/work_integrity.py": {
+          "src/spendguard/generate/work_integrity/work_integrity.py": {
             "max_cc": 9,
             "mi": 75.54347430315269
           },
@@ -6254,7 +6248,7 @@
   ],
   "max_largest_scc_size": 142,
   "max_cyclic_edge_count": 943,
-  "max_legacy_shim_count": 8,
+  "max_legacy_shim_count": 14,
   "recorded_cross_context_nonsurface_imports": [
     [
       "spendguard",
@@ -6286,11 +6280,11 @@
     ],
     [
       "spendguard",
-      "spendguard.item_ledger"
+      "spendguard.generate.work_integrity.item_ledger"
     ],
     [
       "spendguard",
-      "spendguard.job_fingerprint"
+      "spendguard.generate.work_integrity.job_fingerprint"
     ],
     [
       "spendguard",
@@ -6398,7 +6392,7 @@
     ],
     [
       "spendguard.adapters",
-      "spendguard.llm_files"
+      "spendguard.generate.work_integrity.llm_files"
     ],
     [
       "spendguard.adapters",
@@ -6410,7 +6404,7 @@
     ],
     [
       "spendguard.adapters",
-      "spendguard.output_contract"
+      "spendguard.generate.work_integrity.output_contract"
     ],
     [
       "spendguard.adapters",
@@ -6694,7 +6688,7 @@
     ],
     [
       "spendguard.batch_tracker",
-      "spendguard.bulk_resilience"
+      "spendguard.generate.work_integrity.bulk_resilience"
     ],
     [
       "spendguard.batch_tracker",
@@ -6726,7 +6720,7 @@
     ],
     [
       "spendguard.batch_tracker",
-      "spendguard.work_integrity"
+      "spendguard.generate.work_integrity.work_integrity"
     ],
     [
       "spendguard.bedrock_adapter",
@@ -6869,7 +6863,7 @@
       "spendguard.pricing"
     ],
     [
-      "spendguard.bulk_resilience",
+      "spendguard.generate.work_integrity.bulk_resilience",
       "spendguard.store.configuration.config"
     ],
     [
@@ -6910,7 +6904,7 @@
     ],
     [
       "spendguard.bulkgate",
-      "spendguard.output_contract"
+      "spendguard.generate.work_integrity.output_contract"
     ],
     [
       "spendguard.cacheaudit",
@@ -7090,7 +7084,7 @@
     ],
     [
       "spendguard.calls",
-      "spendguard.output_contract"
+      "spendguard.generate.work_integrity.output_contract"
     ],
     [
       "spendguard.calls",
@@ -7990,7 +7984,7 @@
     ],
     [
       "spendguard.estimate_divergence",
-      "spendguard.output_contract"
+      "spendguard.generate.work_integrity.output_contract"
     ],
     [
       "spendguard.estimate_literals",
@@ -8006,7 +8000,7 @@
     ],
     [
       "spendguard.estimate_literals",
-      "spendguard.output_contract"
+      "spendguard.generate.work_integrity.output_contract"
     ],
     [
       "spendguard.execution_journal",
@@ -8130,7 +8124,7 @@
     ],
     [
       "spendguard.gate",
-      "spendguard.bulk_resilience"
+      "spendguard.generate.work_integrity.bulk_resilience"
     ],
     [
       "spendguard.gate",
@@ -8353,11 +8347,11 @@
       "spendguard.submit"
     ],
     [
-      "spendguard.item_ledger",
+      "spendguard.generate.work_integrity.item_ledger",
       "spendguard.store.configuration.config"
     ],
     [
-      "spendguard.job_fingerprint",
+      "spendguard.generate.work_integrity.job_fingerprint",
       "spendguard.gate"
     ],
     [
@@ -8406,7 +8400,7 @@
     ],
     [
       "spendguard.lane_balance",
-      "spendguard.bulk_resilience"
+      "spendguard.generate.work_integrity.bulk_resilience"
     ],
     [
       "spendguard.lane_balance",
@@ -8462,7 +8456,7 @@
     ],
     [
       "spendguard.lane_balance",
-      "spendguard.output_contract"
+      "spendguard.generate.work_integrity.output_contract"
     ],
     [
       "spendguard.lane_balance",
@@ -8642,7 +8636,7 @@
     ],
     [
       "spendguard.lane_queue",
-      "spendguard.work_integrity"
+      "spendguard.generate.work_integrity.work_integrity"
     ],
     [
       "spendguard.lane_quota_cost",
@@ -10346,7 +10340,7 @@
     ],
     [
       "spendguard.submit",
-      "spendguard.bulk_resilience"
+      "spendguard.generate.work_integrity.bulk_resilience"
     ],
     [
       "spendguard.submit",
@@ -10382,7 +10376,7 @@
     ],
     [
       "spendguard.submit",
-      "spendguard.work_integrity"
+      "spendguard.generate.work_integrity.work_integrity"
     ],
     [
       "spendguard.subscription_exec",
@@ -10486,7 +10480,7 @@
     ],
     [
       "spendguard.token_caps",
-      "spendguard.output_contract"
+      "spendguard.generate.work_integrity.output_contract"
     ],
     [
       "spendguard.trust",
@@ -10566,7 +10560,7 @@
     ],
     [
       "spendguard.vendor_call",
-      "spendguard.output_contract"
+      "spendguard.generate.work_integrity.output_contract"
     ],
     [
       "spendguard.vendor_call",
@@ -10662,7 +10656,7 @@
     ],
     [
       "spendguard.whole_job",
-      "spendguard.output_contract"
+      "spendguard.generate.work_integrity.output_contract"
     ],
     [
       "spendguard.whole_job",
@@ -10674,10 +10668,10 @@
     ],
     [
       "spendguard.whole_job",
-      "spendguard.work_integrity"
+      "spendguard.generate.work_integrity.work_integrity"
     ],
     [
-      "spendguard.work_integrity",
+      "spendguard.generate.work_integrity.work_integrity",
       "spendguard.gate"
     ],
     [
@@ -10751,5 +10745,6 @@
   ],
   "reviewed_phase_3_spend_search_shims": "Phase 3 spend-search move adds three reviewed lazy identity-preserving compatibility shims.",
   "reviewed_phase_3_spend_reporting_shims": "Phase 3 spend-reporting move adds three reviewed lazy identity-preserving compatibility shims.",
-  "reviewed_phase_3_configuration_shims": "Phase 3 configuration move adds two reviewed lazy identity-preserving compatibility shims."
+  "reviewed_phase_3_configuration_shims": "Phase 3 configuration move adds two reviewed lazy identity-preserving compatibility shims.",
+  "reviewed_phase_3_work_integrity_shims": "Phase 3 work-integrity move adds six reviewed identity-preserving compatibility shims: two eager through finder-first installation and four lazy."
 }

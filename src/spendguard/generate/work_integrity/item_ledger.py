@@ -59,7 +59,7 @@ import os
 import time
 import traceback
 
-from . import config
+from ... import config
 
 ANSWERED, REFUSED, UNRESOLVED = "answered", "refused", "unresolved"
 

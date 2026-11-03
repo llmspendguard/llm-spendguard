@@ -5,7 +5,7 @@ These proofs own no storage, transport, retry, or scheduling mechanism.
 from dataclasses import dataclass, field
 from typing import Iterable
 
-from . import gate
+from ... import gate
 
 
 class WorkIntegrityViolation(gate.SpendGateRefused):

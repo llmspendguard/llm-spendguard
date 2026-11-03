@@ -242,10 +242,19 @@
       "surface_module": "spendguard.generate.work_integrity",
       "layer": "L1",
       "backing_modules": [
-        "item_ledger", "job_fingerprint", "output_contract", "llm_files", "work_integrity",
-        "bulk_resilience"
+        "generate.work_integrity.item_ledger", "generate.work_integrity.job_fingerprint",
+        "generate.work_integrity.output_contract", "generate.work_integrity.llm_files",
+        "generate.work_integrity.work_integrity", "generate.work_integrity.bulk_resilience"
       ],
-      "published_names": []
+      "published_names": [
+        "ANSWERED", "BulkResilienceRefused", "FINGERPRINT_KEY", "ITEM_LEDGER_LOGGER", "ItemLedger",
+        "JobMethodUndecided", "JobPlanDrift", "METHOD_PARTS", "MODEL", "PLAN", "PROMPT",
+        "PartialFileError", "REFUSED", "RETRY_ROUNDS", "Result", "UNRESOLVED", "WorkIntegrityProof",
+        "WorkIntegrityViolation", "as_obj_lenient", "attach_many", "attach_whole", "check_envelope",
+        "check_item", "check_items_against_contract", "compare_fingerprints", "compute_job_fingerprint",
+        "contract_hash", "data_signature", "describe", "guard_resume", "needs_enforcement",
+        "read_fingerprint", "require_resilient", "wellformed_contract", "write_fingerprint"
+      ]
     },
     {
       "id": "admission",
@@ -506,6 +515,36 @@
     {
       "legacy_module": "spendguard.config_schema",
       "current_module": "spendguard.store.configuration.config_schema",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.item_ledger",
+      "current_module": "spendguard.generate.work_integrity.item_ledger",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.job_fingerprint",
+      "current_module": "spendguard.generate.work_integrity.job_fingerprint",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.output_contract",
+      "current_module": "spendguard.generate.work_integrity.output_contract",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.llm_files",
+      "current_module": "spendguard.generate.work_integrity.llm_files",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.work_integrity",
+      "current_module": "spendguard.generate.work_integrity.work_integrity",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.bulk_resilience",
+      "current_module": "spendguard.generate.work_integrity.bulk_resilience",
       "moved_in_phase": 3
     }
   ],
