@@ -10,6 +10,7 @@ import pytest
 from spendguard.architectural_fitness import (
     collect_architectural_import_edges,
     collect_architectural_source_units,
+    collect_unresolved_architectural_dynamic_imports,
     load_architectural_fitness_baseline,
     measure_architectural_cycle_magnitude,
     measure_architectural_complexity,
@@ -28,6 +29,9 @@ ARCHITECTURAL_FIXTURE_SECOND_REVIEW_JUSTIFICATION = "A distinct scratch regressi
 ARCHITECTURAL_FIXTURE_TWO_NODE_CEILING = 2
 ARCHITECTURAL_FIXTURE_THREE_NODE_CEILING = 3
 ARCHITECTURAL_FIXTURE_ONE_EDGE_CEILING = 1
+ARCHITECTURAL_FIXTURE_DYNAMIC_OWNER = "fixture_dynamic_owner"
+ARCHITECTURAL_FIXTURE_DYNAMIC_TARGET = "fixture_dynamic_target"
+ARCHITECTURAL_FIXTURE_DYNAMIC_NAME = "dynamic_target_name"
 ARCHITECTURAL_FIXTURE_CLEAN_CORE = "def fixture_foundation_identity(value: int) -> int:\n    return value\n"
 ARCHITECTURAL_FIXTURE_CLEAN_APPLICATION = "def fixture_application_identity(value: str) -> str:\n    return value\n"
 ARCHITECTURAL_FIXTURE_NESTED_COMPLEXITY = "\n".join((
@@ -89,6 +93,60 @@ def test_real_package_cycle_magnitude_stays_within_recorded_ceilings():
     magnitude = measure_architectural_cycle_magnitude(edges)
     assert magnitude["largest_scc_size"] <= settings["max_largest_scc_size"]
     assert magnitude["cyclic_edge_count"] <= settings["max_cyclic_edge_count"]
+
+
+def test_literal_dynamic_import_is_counted_in_cycle_magnitude(tmp_path):
+    """A literal dynamic edge participates in the same SCC magnitude as static edges."""
+    repository = Path(__file__).resolve().parents[1]
+    settings = load_architectural_fitness_baseline(repository)
+    package = tmp_path / settings["source_root"]
+    package.mkdir(parents=True)
+    (package / "__init__.py").write_text("")
+    owner_name = settings["package"] + "." + ARCHITECTURAL_FIXTURE_DYNAMIC_OWNER
+    target_name = settings["package"] + "." + ARCHITECTURAL_FIXTURE_DYNAMIC_TARGET
+    (package / f"{ARCHITECTURAL_FIXTURE_DYNAMIC_OWNER}.py").write_text(
+        f'importlib.import_module("{target_name}")\nimport importlib\n'
+    )
+    (package / f"{ARCHITECTURAL_FIXTURE_DYNAMIC_TARGET}.py").write_text(
+        f"from . import {ARCHITECTURAL_FIXTURE_DYNAMIC_OWNER}\n"
+    )
+    edges = collect_architectural_import_edges(collect_architectural_source_units(tmp_path, settings))
+    magnitude = measure_architectural_cycle_magnitude(edges)
+    assert target_name in edges[owner_name]
+    assert magnitude["largest_scc_size"] == ARCHITECTURAL_FIXTURE_TWO_NODE_CEILING
+    assert magnitude["cyclic_edge_count"] == ARCHITECTURAL_FIXTURE_TWO_NODE_CEILING
+
+
+def test_new_nonliteral_dynamic_import_fails_until_recorded(tmp_path):
+    """An unresolved package dynamic import is red, then green only when explicitly recorded."""
+    repository = Path(__file__).resolve().parents[1]
+    settings = load_architectural_fitness_baseline(repository)
+    package = tmp_path / settings["source_root"]
+    package.mkdir(parents=True)
+    (package / "__init__.py").write_text("")
+    dynamic_source = package / f"{ARCHITECTURAL_FIXTURE_DYNAMIC_OWNER}.py"
+    dynamic_source.write_text(
+        "import importlib\n"
+        f"{ARCHITECTURAL_FIXTURE_DYNAMIC_NAME} = 'unused'\n"
+        f'importlib.import_module(f".{{{ARCHITECTURAL_FIXTURE_DYNAMIC_NAME}}}", __package__)\n'
+    )
+    settings["recorded_cyclic_edges"] = []
+    settings["recorded_dynamic_spendguard_imports"] = []
+    settings["max_largest_scc_size"] = 0
+    settings["max_cyclic_edge_count"] = 0
+    baseline_path = package / "architectural_fitness_baseline.json"
+    baseline_path.write_text(json.dumps(settings))
+    context = {"repo_root": tmp_path}
+    red = run_architectural_fitness_gate(context=context, invariant="cycles")
+    assert red.status == "FAIL", red
+    assert "unreviewed dynamic package import" in str(red.evidence), red
+    units = collect_architectural_source_units(tmp_path, settings)
+    recorded_call_sites = sorted(collect_unresolved_architectural_dynamic_imports(units, tmp_path))
+    assert len(recorded_call_sites) == 1
+    settings["recorded_dynamic_spendguard_imports"] = recorded_call_sites
+    baseline_path.write_text(json.dumps(settings))
+    green = run_architectural_fitness_gate(context=context, invariant="cycles")
+    assert green.status == "PASS", green
 
 
 @pytest.mark.parametrize(
@@ -261,6 +319,12 @@ def test_architectural_violation_red_then_restored_green(tmp_path, architectural
 if __name__ == "__main__":
     test_real_package_cycle_magnitude_stays_within_recorded_ceilings()
     print("cycle magnitude: REAL PACKAGE WITHIN MEASURED CEILINGS")
+    with tempfile.TemporaryDirectory() as literal_dynamic_directory:
+        test_literal_dynamic_import_is_counted_in_cycle_magnitude(Path(literal_dynamic_directory))
+    print("dynamic literal import: EDGE COUNTED / SCC MAGNITUDE COUNTED")
+    with tempfile.TemporaryDirectory() as unresolved_dynamic_directory:
+        test_new_nonliteral_dynamic_import_fails_until_recorded(Path(unresolved_dynamic_directory))
+    print("dynamic nonliteral import: NEW RED / RECORDED GREEN")
     for architectural_growth_case in ARCHITECTURAL_CYCLE_GROWTH_CASES:
         with tempfile.TemporaryDirectory() as architectural_growth_directory:
             test_cycle_magnitude_gate_fails_when_independent_ceiling_grows(

@@ -19,6 +19,7 @@ ARCHITECTURAL_LAYER_CONFIGURATION_FILENAME = "architecture.ini"
 ARCHITECTURAL_COMPLEXITY_REVIEW_KEY_PREFIX = "reviewed_"
 ARCHITECTURAL_LARGEST_SCC_CEILING_KEY = "max_largest_scc_size"
 ARCHITECTURAL_CYCLIC_EDGE_CEILING_KEY = "max_cyclic_edge_count"
+ARCHITECTURAL_DYNAMIC_IMPORT_BASELINE_KEY = "recorded_dynamic_spendguard_imports"
 
 
 def load_architectural_fitness_baseline(root):
@@ -42,9 +43,74 @@ def collect_architectural_source_units(root, settings):
     return units
 
 
+def resolve_architectural_dynamic_import_target(node, *, package, root_package):
+    """Resolve a literal package dynamic import, leaving semantic expressions unresolved."""
+    if not isinstance(node, ast.Call):
+        return None
+    callee = node.func
+    recognized = (
+        isinstance(callee, ast.Name) and callee.id in {"import_module", "__import__"}
+        or isinstance(callee, ast.Attribute) and isinstance(callee.value, ast.Name)
+        and callee.value.id == "importlib" and callee.attr == "import_module"
+    )
+    if not recognized:
+        return None
+    name_node = node.args[0] if node.args else next(
+        (keyword.value for keyword in node.keywords if keyword.arg == "name"), None,
+    )
+    if not isinstance(name_node, ast.Constant) or not isinstance(name_node.value, str):
+        return None
+    target = name_node.value
+    package_node = node.args[1] if len(node.args) > 1 else next(
+        (keyword.value for keyword in node.keywords if keyword.arg == "package"), None,
+    )
+    package_name = package if isinstance(package_node, ast.Name) and package_node.id == "__package__" else None
+    if isinstance(package_node, ast.Constant) and isinstance(package_node.value, str):
+        package_name = package_node.value
+    if target.startswith(".") and package_name:
+        target = importlib.util.resolve_name(target, package_name)
+    elif package_name and target != root_package and not target.startswith(root_package + "."):
+        target = package_name + "." + target
+    return target if target == root_package or target.startswith(root_package + ".") else None
+
+
+def architectural_dynamic_import_is_unresolved(node, *, package, root_package):
+    """Identify package-anchored dynamic imports whose target AST is not literal."""
+    if not isinstance(node, ast.Call):
+        return False
+    callee = node.func
+    recognized = (
+        isinstance(callee, ast.Name) and callee.id in {"import_module", "__import__"}
+        or isinstance(callee, ast.Attribute) and isinstance(callee.value, ast.Name)
+        and callee.value.id == "importlib" and callee.attr == "import_module"
+    )
+    if not recognized:
+        return False
+    name_node = node.args[0] if node.args else next(
+        (keyword.value for keyword in node.keywords if keyword.arg == "name"), None,
+    )
+    if name_node is None or isinstance(name_node, ast.Constant) and isinstance(name_node.value, str):
+        return False
+    package_node = node.args[1] if len(node.args) > 1 else next(
+        (keyword.value for keyword in node.keywords if keyword.arg == "package"), None,
+    )
+    anchored_package = (
+        isinstance(package_node, ast.Name) and package_node.id == "__package__"
+        or isinstance(package_node, ast.Constant) and package_node.value in {package, root_package}
+    )
+    literal_fragments = (
+        part.value for part in ast.walk(name_node)
+        if isinstance(part, ast.Constant) and isinstance(part.value, str)
+    )
+    return anchored_package or any(
+        fragment == root_package or fragment.startswith(root_package + ".") for fragment in literal_fragments
+    )
+
+
 def collect_architectural_import_edges(units):
     """Resolve absolute and relative Python imports, including deferred imports."""
     edges = {name: set() for name in units}
+    root_package = min(units, key=lambda candidate: (candidate.count("."), len(candidate))).split(".")[0]
     for name, (path, tree) in units.items():
         package = name if path.stem == "__init__" else name.rpartition(".")[0]
         for node in ast.walk(tree):
@@ -57,12 +123,31 @@ def collect_architectural_import_edges(units):
                     for alias in node.names:
                         imported_module = base + "." + alias.name
                         candidates.append(imported_module if imported_module in units else base)
+            elif isinstance(node, ast.Call):
+                target = resolve_architectural_dynamic_import_target(
+                    node, package=package, root_package=root_package,
+                )
+                if target:
+                    candidates.append(target)
             for candidate in candidates:
                 if candidate in units and candidate != name:
                     edges[name].add(candidate)
                 elif candidate == name and isinstance(node, ast.Import):
                     edges[name].add(candidate)
     return edges
+
+
+def collect_unresolved_architectural_dynamic_imports(units, root):
+    """Return stable call sites for package dynamic imports that cannot become graph edges."""
+    root = Path(root).resolve()
+    root_package = min(units, key=lambda candidate: (candidate.count("."), len(candidate))).split(".")[0]
+    findings = set()
+    for name, (path, tree) in units.items():
+        package = name if path.stem == "__init__" else name.rpartition(".")[0]
+        for node in ast.walk(tree):
+            if architectural_dynamic_import_is_unresolved(node, package=package, root_package=root_package):
+                findings.add(f"{path.resolve().relative_to(root).as_posix()}:{node.lineno}")
+    return findings
 
 
 def find_architectural_import_cycles(edges):
@@ -122,16 +207,23 @@ def regenerate_architectural_cycle_magnitude_baseline(root):
     """Explicitly tighten cycle-magnitude ceilings to the current measurement."""
     root = Path(root).resolve()
     settings = load_architectural_fitness_baseline(root)
-    edges = collect_architectural_import_edges(collect_architectural_source_units(root, settings))
+    units = collect_architectural_source_units(root, settings)
+    edges = collect_architectural_import_edges(units)
     magnitude = measure_architectural_cycle_magnitude(edges)
+    dynamic_imports = sorted(collect_unresolved_architectural_dynamic_imports(units, root))
     measured_ceilings = {
         ARCHITECTURAL_LARGEST_SCC_CEILING_KEY: magnitude["largest_scc_size"],
         ARCHITECTURAL_CYCLIC_EDGE_CEILING_KEY: magnitude["cyclic_edge_count"],
     }
     existing_ceilings = {key: settings.get(key) for key in measured_ceilings}
-    if all(existing_ceilings[key] is not None and measured_ceilings[key] >= existing_ceilings[key]
-           for key in measured_ceilings):
-        return {"updated": False, **measured_ceilings}
+    recorded_dynamic_imports = settings.get(ARCHITECTURAL_DYNAMIC_IMPORT_BASELINE_KEY)
+    dynamic_imports_tighten = recorded_dynamic_imports is None or set(dynamic_imports) < set(recorded_dynamic_imports)
+    ceilings_tighten = any(
+        existing_ceilings[key] is None or measured_ceilings[key] < existing_ceilings[key]
+        for key in measured_ceilings
+    )
+    if not ceilings_tighten and not dynamic_imports_tighten:
+        return {"updated": False, **measured_ceilings, "dynamic_imports": dynamic_imports}
     baseline_path = root / ARCHITECTURAL_PACKAGE_RELATIVE_ROOT / ARCHITECTURAL_BASELINE_RESOURCE
 
     def tighten_architectural_cycle_magnitude_baseline(data):
@@ -139,6 +231,9 @@ def regenerate_architectural_cycle_magnitude_baseline(root):
             recorded = data.get(key)
             if recorded is None or measurement < recorded:
                 data[key] = measurement
+        recorded = data.get(ARCHITECTURAL_DYNAMIC_IMPORT_BASELINE_KEY)
+        if recorded is None or set(dynamic_imports) < set(recorded):
+            data[ARCHITECTURAL_DYNAMIC_IMPORT_BASELINE_KEY] = dynamic_imports
 
     config.update_json(
         baseline_path,
@@ -147,7 +242,7 @@ def regenerate_architectural_cycle_magnitude_baseline(root):
         keep_backups=0,
         required=True,
     )
-    return {"updated": True, **measured_ceilings}
+    return {"updated": True, **measured_ceilings, "dynamic_imports": dynamic_imports}
 
 
 def measure_architectural_complexity(root, settings):
@@ -275,13 +370,20 @@ def run_architectural_fitness_gate(*, context, invariant):
         violations = []
         detail = ""
         if invariant in {"cycles", "layers"}:
-            edges = collect_architectural_import_edges(collect_architectural_source_units(root, settings))
+            units = collect_architectural_source_units(root, settings)
+            edges = collect_architectural_import_edges(units)
             if invariant == "cycles":
                 magnitude = measure_architectural_cycle_magnitude(edges)
                 components = magnitude["components"]
                 cyclic_edges = magnitude["cyclic_edges"]
                 recorded_edges = {tuple(edge) for edge in settings["recorded_cyclic_edges"]}
                 violations = sorted(cyclic_edges - recorded_edges)
+                dynamic_imports = collect_unresolved_architectural_dynamic_imports(units, root)
+                recorded_dynamic_imports = set(settings[ARCHITECTURAL_DYNAMIC_IMPORT_BASELINE_KEY])
+                violations.extend(
+                    f"unreviewed dynamic package import: {call_site}"
+                    for call_site in sorted(dynamic_imports - recorded_dynamic_imports)
+                )
                 largest_scc_ceiling = settings[ARCHITECTURAL_LARGEST_SCC_CEILING_KEY]
                 cyclic_edge_ceiling = settings[ARCHITECTURAL_CYCLIC_EDGE_CEILING_KEY]
                 if magnitude["largest_scc_size"] > largest_scc_ceiling:
@@ -303,6 +405,7 @@ def run_architectural_fitness_gate(*, context, invariant):
                     f"components; {len(cyclic_edges)} cyclic edges; {len(violations)} violations. "
                     f"Magnitude largest_scc_size={magnitude['largest_scc_size']}<={largest_scc_ceiling}, "
                     f"cyclic_edge_count={magnitude['cyclic_edge_count']}<={cyclic_edge_ceiling}. "
+                    f"Unresolved dynamic package imports={len(dynamic_imports)}; "
                     f"Explicit baseline tightening available for: {', '.join(tightening) or 'none'}. "
                     "Full no-cycles remains reviewed N/A."
                 )

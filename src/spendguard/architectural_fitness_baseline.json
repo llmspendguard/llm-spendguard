@@ -104,8 +104,8 @@
             "mi": 50.48267079784406
           },
           "src/spendguard/architectural_fitness.py": {
-            "max_cc": 31,
-            "mi": 18.39241667224773
+            "max_cc": 32,
+            "mi": 5.666994428760786
           },
           "src/spendguard/attribution.py": {
             "max_cc": 26,
@@ -1860,7 +1860,8 @@
     "reviewed_ledger_read_expiry_debug_demote_ssot": "Promoting the self-healing managed-read-expiry deferral log line to a module-level SSOT message\nconstant (MANAGED_READ_EXPIRY_DEFERRED_LOG_MESSAGE) and demoting it from WARNING to DEBUG marginally\nlowers this file's maintainability index (max CC unchanged at 34; MI 29.6357 -> 29.5825). The demote\nis a deliberate, reviewed observability change: the deferral is routine under connection-step-lock\ncontention and self-healing (the background expiry sweep re-schedules; outcome flag\nMANAGED_READ_CLEANUP_DEFERRED), so DEBUG is the correct level. It stops production WARNING log spam and\nbenign leakage into tests that assert logger silence, while hiding no terminal error (raised\nLedgerQueryDeadline/LedgerReadTimeout paths are unchanged and still surface). The SSOT constant removes\na duplicated string literal so the one observability assertion can import it rather than re-hardcode it.\nReviewed and accepted as part of closing the busy-connection / ledger-read-expiry timing flake family.",
     "reviewed_supported_minor_parity_for_existing_lifecycle_guards": "Restore supported Python 3.11 measurement parity for existing reviewed changes already recorded under Python 3.12: delegate cancel-retention directory guard; managed read-expiry DEBUG SSOT observability; bounded ledger-writer shutdown drain; report whole-collector deadline; realtime storm per-item deadline. The six source files are unchanged by the broker fix. Their existing review narratives remain authoritative; this entry records only the omitted 3.11 Linux/amd64 Radon 6.0.1 measurements, preserving independent tokenizer-specific baselines. The same Linux measurement also records model_catalog MI 12.608930133037463 instead of 12.608930133037466, a platform floating-point difference with unchanged CC 43 and unchanged source. Broker execution_journal maximum CC remains 23 and MI improves, requiring no ratchet increase.",
     "reviewed_protected_lane_leak_readiness": "Reviewed complete readiness gate body: reuses CLI probe and its terminal constants, captures the whole report, honestly exempts absent offline ledgers, and preserves uncertain states. The added live-state wrapper lowers module maintainability index; no existing function complexity or global ratchet is relaxed.",
-    "reviewed_cycle_magnitude_ratchet": "Phase 0 adds measured cycle-magnitude ceilings, explicit tightening, and complementary gate diagnostics without changing the import graph."
+    "reviewed_cycle_magnitude_ratchet": "Phase 0 adds measured cycle-magnitude ceilings, explicit tightening, and complementary gate diagnostics without changing the import graph.",
+    "reviewed_phase2d_dynamic_import_ratchet": "Phase 2d extends the existing AST import graph and unresolved dynamic-import ratchet without changing runtime behavior."
   },
   "duplication": {
     "duplicate_lines": 303,
@@ -5789,6 +5790,20 @@
       "spendguard.xp_rate_window",
       "spendguard.ledger_writer"
     ]
+  ],
+  "recorded_dynamic_spendguard_imports": [
+    "src/spendguard/adapters.py:447",
+    "src/spendguard/adapters.py:2743",
+    "src/spendguard/delegate_router.py:227",
+    "src/spendguard/delegate_router.py:481",
+    "src/spendguard/gate.py:2707",
+    "src/spendguard/gate.py:2717",
+    "src/spendguard/gate.py:2755",
+    "src/spendguard/gpu_port.py:278",
+    "src/spendguard/lane_bandit.py:290",
+    "src/spendguard/lane_servability.py:292",
+    "src/spendguard/lanes.py:64",
+    "src/spendguard/sources.py:77"
   ],
   "max_largest_scc_size": 142,
   "max_cyclic_edge_count": 943
