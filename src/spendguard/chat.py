@@ -314,7 +314,7 @@ def _digest_conv(conv, detail, projmap, prev=None):
     prev = prev or {}
     return {"uuid": conv["uuid"], "updated_at": conv.get("updated_at") or "", "v": _DIGEST_V,
             "title": conv.get("name") or "(untitled)", "summary": _clean_summary(conv.get("summary")),
-            "first_user": (first_user or "").strip().replace("\n", " ")[:300],
+            "first_user": (first_user or "").strip().replace("\n", " "),
             "ai_project": _claudeai_project(conv, projmap), "model": model or "",
             "days": days, "value": val,
             # agentic assignment (org → team × project[]) — preserved across re-fetches; empty until `chat classify`
