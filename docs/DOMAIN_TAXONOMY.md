@@ -71,9 +71,16 @@ money scale, and the sync/refresh paths that author them.
 `pricing.py` · `catalog_price_authoring.py` · `model_catalog.py` · `catalog.py` · `lane_registry.py` ·
 `lane_catalog.py` · `reasoning_equivalence.py` · `money_scale.py` · `sync.py` · `sync_capabilities.py` · `refresh.py`
 
-#### 2. Configuration · `STORE` · L0
+#### 2. Configuration · `STORE` · L0 (target; `config.py` is NOT L0 today — see note)
 Declarative settings registry and resolved runtime config (paths, knobs, key loading).
 `config_schema.py` · (+ the config half of `config.py` — see §2 splits)
+
+> **Measured 2026-11-02 — `config.py` is in the 142-SCC, not at L0.** The module imports *upward*: `adapters` and
+> `codex_exec` (Execution, L1), `content_compression` (Call Corpus, L1), `pricing` (Reference Data, L0), and five
+> `ledger_*` (`ledger_fork_locks`, `ledger_read`, `ledger_request_cursor`, `ledger_wal_maintenance`,
+> `ledger_writer`). So L0 is the **target** once the §2 split lands; the shipped module sits in the L1 mesh. An
+> earlier draft assumed `config` was a safe L0 leaf outside the cycle — it is not (caught by cross-check before any
+> move; see §4b).
 
 #### 3. Money Ledger · `STORE` · L0
 Money truth: `spend_events` schema, single-owner hash-chained writer, migrations, indexes, fork-safe locks, rollups,
@@ -110,10 +117,11 @@ subscription-lane executors (one-shot CLI runs on flat-fee plans), plus the prov
 
 #### 8. Work Integrity · `GENERATE` · L1
 Correctness contracts on produced work, independent of how it is routed: every item ends in a named state, resume
-never re-buys or reuses stale output, outputs match a declared shape, files enter prompts whole, exactly-once
-terminal journal, commit assertions, bulk-resilience rule.
-`item_ledger.py` · `job_fingerprint.py` · `output_contract.py` · `llm_files.py` · `execution_journal.py` ·
-`work_integrity.py` · `bulk_resilience.py`
+never re-buys or reuses stale output, outputs match a declared shape, files enter prompts whole, commit assertions,
+bulk-resilience rule.
+`item_ledger.py` · `job_fingerprint.py` · `output_contract.py` · `llm_files.py` · `work_integrity.py` ·
+`bulk_resilience.py`
+*(`execution_journal.py` was reassigned to Token Operations #11 — it is mutually bound with `delegate_jobs`; see §4b.)*
 
 ### ACTIVELY-MANAGE — live decisions over money and resources, per call/job
 
@@ -135,10 +143,11 @@ lane/batch/realtime, cascade escalation, best-value (model, effort) resolution, 
 
 #### 11. Token Operations · `ACTIVELY-MANAGE` · L1
 Cross-call live resource management: dispatch governor, cross-process rate reservation, durable lane queue and
-predictive planner, storm coalescing, delegation (router, durable jobs, detached worker, worktree isolation, reaper),
-warm-daemon pools and broker, persisted per-resource state, lane fail-over evidence, corpus fan-out.
+predictive planner, storm coalescing, delegation (router, durable jobs, exactly-once terminal execution journal,
+detached worker, worktree isolation, reaper), warm-daemon pools and broker, persisted per-resource state, lane
+fail-over evidence, corpus fan-out.
 `dispatch.py` · `xp_rate_window.py` · `lane_queue.py` · `queue_planner.py` · `storm_coalescer.py` · `storm_submit.py` ·
-`storm_route.py` · `delegate_router.py` · `delegate_jobs.py` · `delegate_worker.py` · `delegate_worktrees.py` ·
+`storm_route.py` · `delegate_router.py` · `delegate_jobs.py` · `execution_journal.py` · `delegate_worker.py` · `delegate_worktrees.py` ·
 `process_group_reaper.py` · `warm_stdio_daemon.py` · `codex_daemon.py` · `codex_daemon_broker.py` ·
 `codex_broker_owner.py` · `kimi_daemon.py` · `resource_state.py` · `lane_recovery.py` · `comprehend.py`
 
@@ -237,7 +246,8 @@ the dominant responsibility.
 **Home layer (dominant responsibility) — these modules are placed here, not left un-layered.** §1 lists each module
 once; the split modules below take the layer of their *dominant* context so the layering is complete:
 `__init__`→L4 (Surfaces) · `adapters`→L1 (Execution) · `gate`→L1 (Admission) · `budget`→L1 (Admission) ·
-`config`→L0 (Configuration) · `models`→L0 (Reference Data) · `whole_job`→L1 (Routing) · `lane_quota_cost`→L1
+`config`→L0 (Configuration — *target* layer; the shipped module is in the L1 SCC, see §1 #2 note + §4b) ·
+`models`→L0 (Reference Data) · `whole_job`→L1 (Routing) · `lane_quota_cost`→L1
 (Treasury) · `truth`→L3 (Reconciliation) · `receipt`→L3 (Spend Reporting) · `openai_batch_cli`→L1 (Execution) ·
 `resources`→L1 (Spend Capture). The measured import cycle (§3) runs through exactly these hubs — `gate`, `adapters`
 and `budget` are its three highest-degree nodes — which is why resolving their splits is the real decoupling lever,
@@ -249,7 +259,7 @@ not the `__init__` root.
 | `adapters.py` | provider registry/call/vision/embed/deadlines/budget-healing → **Execution**; lane/lane-model cooling + learned rate limits → **Token Operations** (`resource_state`); best-value default + route-through-queue + fallback learning → **Routing**; `schema_capability`/`generation_support` per-model facts → **Reference Data**. |
 | `gate.py` | pre-submit estimate-vs-cap gate + kill switch → **Admission**; `_record_rt` realtime recording → **Spend Capture**. |
 | `budget.py` | legacy cross-process charges store → **Money Ledger**; fleet-wide daily/monthly cap check → **Admission**. |
-| `config.py` | paths/knobs/key resolution → **Configuration**; single-instance locks + ledger connection/WAL/cursor wiring → **Money Ledger** (should move behind the ledger — this wiring is the defect). |
+| `config.py` | paths/knobs/key resolution → **Configuration**; single-instance locks + ledger connection/WAL/cursor wiring → **Money Ledger**; plus measured upward imports into `adapters`/`codex_exec` (**Execution**) and `content_compression` (**Call Corpus**) — each should move behind the target context's surface. This upward wiring (wider than the ledger wiring alone) is why `config.py` is in the L1 SCC, not an L0 leaf — the split defect. |
 | `models.py` | verified per-model facts/quirks → **Reference Data**; `apply_call_params` request shaping → **Execution**. |
 | `whole_job.py` | choose batch/lane/metered per job, capability-matched → **Routing**; enforce budget + execute + return receipts → **Token Operations**. |
 | `lane_quota_cost.py` | measured lane token cost → **Treasury**; fail-closed plan-quota admission → **Admission**. |
@@ -328,6 +338,23 @@ cited as real again:
 | `savings` (analytics) | `guard.py` (guarded-savings distribution) |
 
 ---
+
+## 4b. Ground-truth placement corrections (measured 2026-11-02)
+
+Two §1/§2 placements were corrected against the **real** import graph (AST over `src/spendguard/*.py`), not inferred.
+Both were caught by the migration-plan cross-check before any module was moved — the pre-registered pilot assumption
+that `config` was a safe L0 leaf was false, which is why the plan now grounds every placement before acting.
+
+- **`config.py` is in the 142-SCC, not an L0 leaf.** Measured imports (upward): `adapters` and `codex_exec`
+  (Execution, L1), `content_compression` (Call Corpus, L1), `pricing` (Reference Data, L0), and five `ledger_*`
+  (`ledger_fork_locks`, `ledger_read`, `ledger_request_cursor`, `ledger_wal_maintenance`, `ledger_writer`). L0 remains
+  the **target** for the Configuration context once the §2 split lands; the shipped module is not there today.
+- **`execution_journal.py` → Token Operations (#11), not Work Integrity (#8).** It is *mutually* imported with
+  `delegate_jobs.py`: `delegate_jobs` calls `begin_durable_execution` / `recover_durable_execution` /
+  `terminalize_durable_execution`, and `execution_journal` calls back into `record_delegate_codex_thread` /
+  `register_codex_session_lease` / `settle_codex_session_lease` / `reap_terminal_codex_sessions`. The journal's
+  dominant collaborator is delegation, so its true home is Token Operations. Both contexts are L1 — this does not
+  change the layering, only the context assignment.
 
 ## 5. Open items (post-finalization)
 
