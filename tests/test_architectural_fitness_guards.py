@@ -18,6 +18,7 @@ from spendguard.architectural_fitness import (
     measure_architectural_cycle_magnitude,
     measure_architectural_complexity,
     measure_architectural_duplication,
+    regenerate_architectural_legacy_flat_module_baseline,
     regenerate_architectural_complexity_baseline,
     regenerate_architectural_legacy_shim_count_baseline,
     run_architectural_fitness_gate,
@@ -50,6 +51,10 @@ ARCHITECTURAL_FIXTURE_BETA_SURFACE = "spendguard.store.fixture_beta"
 ARCHITECTURAL_FIXTURE_UNASSIGNED_MODULE = "spendguard.fixture_infrastructure"
 ARCHITECTURAL_FIXTURE_LEGACY_MODULE = "spendguard.fixture_moved"
 ARCHITECTURAL_FIXTURE_CURRENT_MODULE = "spendguard.store.fixture_moved"
+ARCHITECTURAL_FIXTURE_FLAT_MODULE = "fixture_new_code.py"
+ARCHITECTURAL_FIXTURE_RECORDED_FLAT_MODULE = "fixture_legacy_code.py"
+ARCHITECTURAL_FIXTURE_NESTED_KIND = "store"
+ARCHITECTURAL_FIXTURE_NESTED_CONTEXT = "fixture_context"
 ARCHITECTURAL_FIXTURE_SHIM_PEER = "spendguard.fixture_shim_peer"
 ARCHITECTURAL_FIXTURE_CLEAN_CORE = "def fixture_foundation_identity(value: int) -> int:\n    return value\n"
 ARCHITECTURAL_FIXTURE_CLEAN_APPLICATION = "def fixture_application_identity(value: str) -> str:\n    return value\n"
@@ -172,6 +177,63 @@ def architectural_boundary_fixture_registry(*, exempt_sources=()):
         ],
         "boundary_exempt_shim_modules": list(exempt_sources),
     }
+
+
+def write_architectural_flat_module_fixture(tmp_path, recorded_modules):
+    """Create a minimal package and reviewed baseline for flat-module guard proofs."""
+    repository = Path(__file__).resolve().parents[1]
+    settings = load_architectural_fitness_baseline(repository)
+    package = tmp_path / settings["source_root"]
+    package.mkdir(parents=True)
+    (package / "__init__.py").write_text("")
+    settings["recorded_legacy_flat_modules"] = sorted(recorded_modules)
+    (package / "architectural_fitness_baseline.json").write_text(json.dumps(settings))
+    return settings, package
+
+
+def test_new_top_level_flat_module_is_red_then_recorded_green(tmp_path):
+    """A new direct-child module fails until its exact basename is reviewed."""
+    _, package = write_architectural_flat_module_fixture(tmp_path, ())
+    new_module = package / ARCHITECTURAL_FIXTURE_FLAT_MODULE
+    new_module.write_text(ARCHITECTURAL_FIXTURE_CLEAN_CORE)
+    context = {"repo_root": tmp_path}
+    red = run_architectural_fitness_gate(context=context, invariant="new_code")
+    assert red.status == "FAIL", red
+    assert ARCHITECTURAL_FIXTURE_FLAT_MODULE in red.evidence, red
+    baseline_path = package / "architectural_fitness_baseline.json"
+    settings = json.loads(baseline_path.read_text())
+    settings["recorded_legacy_flat_modules"] = [ARCHITECTURAL_FIXTURE_FLAT_MODULE]
+    baseline_path.write_text(json.dumps(settings))
+    assert run_architectural_fitness_gate(context=context, invariant="new_code").status == "PASS"
+
+
+def test_nested_context_module_is_never_flagged_as_flat(tmp_path):
+    """A module below a kind/context package is outside the flat placement debt."""
+    _, package = write_architectural_flat_module_fixture(tmp_path, ())
+    context_package = package / ARCHITECTURAL_FIXTURE_NESTED_KIND / ARCHITECTURAL_FIXTURE_NESTED_CONTEXT
+    context_package.mkdir(parents=True)
+    (context_package / ARCHITECTURAL_FIXTURE_FLAT_MODULE).write_text(ARCHITECTURAL_FIXTURE_CLEAN_CORE)
+    evidence = run_architectural_fitness_gate(context={"repo_root": tmp_path}, invariant="new_code")
+    assert evidence.status == "PASS", evidence
+    assert "0 new" in evidence.detail, evidence
+
+
+def test_flat_module_regeneration_is_shrink_only(tmp_path):
+    """Regeneration tightens removed debt and refuses to bless new flat code."""
+    _, package = write_architectural_flat_module_fixture(
+        tmp_path,
+        (ARCHITECTURAL_FIXTURE_RECORDED_FLAT_MODULE, ARCHITECTURAL_FIXTURE_FLAT_MODULE),
+    )
+    (package / ARCHITECTURAL_FIXTURE_RECORDED_FLAT_MODULE).write_text(ARCHITECTURAL_FIXTURE_CLEAN_CORE)
+    tightened = regenerate_architectural_legacy_flat_module_baseline(tmp_path)
+    assert tightened["updated"] is True
+    assert tightened["modules"] == [ARCHITECTURAL_FIXTURE_RECORDED_FLAT_MODULE]
+    (package / ARCHITECTURAL_FIXTURE_FLAT_MODULE).write_text(ARCHITECTURAL_FIXTURE_CLEAN_CORE)
+    refused = regenerate_architectural_legacy_flat_module_baseline(tmp_path)
+    assert refused["updated"] is False
+    assert run_architectural_fitness_gate(
+        context={"repo_root": tmp_path}, invariant="new_code",
+    ).status == "FAIL"
 
 
 def test_new_cross_context_nonsurface_import_is_red_then_recorded_green(tmp_path):
@@ -557,6 +619,17 @@ def test_architectural_violation_red_then_restored_green(tmp_path, architectural
 
 
 if __name__ == "__main__":
+    with tempfile.TemporaryDirectory() as architectural_flat_module_directory:
+        test_new_top_level_flat_module_is_red_then_recorded_green(
+            Path(architectural_flat_module_directory),
+        )
+    print("new flat module: RED / RECORDED GREEN")
+    with tempfile.TemporaryDirectory() as architectural_nested_module_directory:
+        test_nested_context_module_is_never_flagged_as_flat(Path(architectural_nested_module_directory))
+    print("nested context module: NEVER FLAGGED")
+    with tempfile.TemporaryDirectory() as architectural_flat_regeneration_directory:
+        test_flat_module_regeneration_is_shrink_only(Path(architectural_flat_regeneration_directory))
+    print("flat module regeneration: SHRINK RECORDED / GROWTH REFUSED")
     with tempfile.TemporaryDirectory() as architectural_boundary_directory:
         test_new_cross_context_nonsurface_import_is_red_then_recorded_green(
             Path(architectural_boundary_directory),

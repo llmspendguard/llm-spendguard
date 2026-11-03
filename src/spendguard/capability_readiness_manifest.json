@@ -1,5 +1,5 @@
 {
-  "revision": 5,
+  "revision": 6,
   "items": [
     {
       "id": "architecture-import-cycles",
@@ -16,6 +16,14 @@
       "gate": "spendguard.architectural_fitness:run_architectural_fitness_gate",
       "arguments": {"invariant": "boundaries"},
       "reason": "The measured flat-module debt is a reviewed shrink-only ratchet; intra-context, declared shim-source, and surface-routed edges are allowed, while unassigned endpoints remain explicit unreviewed coverage."
+    },
+    {
+      "id": "architecture-no-new-flat-module",
+      "section": "architecture",
+      "description": "Reject new top-level flat package modules while allowing reviewed legacy flat-module debt only to shrink.",
+      "gate": "spendguard.architectural_fitness:run_architectural_fitness_gate",
+      "arguments": {"invariant": "new_code"},
+      "reason": "The measured direct-child Python module set is recorded as reviewed legacy debt. New code belongs inside a context package; nested modules are outside this mechanical placement ratchet."
     },
     {
       "id": "architecture-layer-boundaries",

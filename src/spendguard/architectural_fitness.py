@@ -22,6 +22,7 @@ ARCHITECTURAL_CYCLIC_EDGE_CEILING_KEY = "max_cyclic_edge_count"
 ARCHITECTURAL_LEGACY_SHIM_COUNT_CEILING_KEY = "max_legacy_shim_count"
 ARCHITECTURAL_DYNAMIC_IMPORT_BASELINE_KEY = "recorded_dynamic_spendguard_imports"
 ARCHITECTURAL_BOUNDARY_BASELINE_KEY = "recorded_cross_context_nonsurface_imports"
+ARCHITECTURAL_LEGACY_FLAT_MODULE_BASELINE_KEY = "recorded_legacy_flat_modules"
 ARCHITECTURAL_BOUNDARY_SHIM_KEY = "boundary_exempt_shim_modules"
 ARCHITECTURAL_CONTEXT_REGISTRY_RESOURCE = "domain_context_registry.json"
 ARCHITECTURAL_LEGACY_SHIM_REGISTRY_KEY = "domain_legacy_path_shims"
@@ -81,6 +82,15 @@ def measure_architectural_boundary_violations(edges, registry):
     return sorted(violations), sorted(unassigned)
 
 
+def measure_architectural_toplevel_flat_modules(root, settings):
+    """Return direct-child package modules, excluding the package initializer."""
+    package_root = Path(root) / settings["source_root"]
+    return sorted(
+        path.name for path in package_root.glob("*.py")
+        if path.name != "__init__.py"
+    )
+
+
 def regenerate_architectural_boundary_baseline(root):
     """Explicitly record the current boundary set when it tightens the reviewed ratchet."""
     root = Path(root).resolve()
@@ -106,6 +116,29 @@ def regenerate_architectural_boundary_baseline(root):
         required=True,
     )
     return {"updated": True, "violations": measured, "unassigned": unassigned}
+
+
+def regenerate_architectural_legacy_flat_module_baseline(root):
+    """Explicitly record top-level flat modules only when legacy debt shrinks."""
+    root = Path(root).resolve()
+    settings = load_architectural_fitness_baseline(root)
+    measured = measure_architectural_toplevel_flat_modules(root, settings)
+    recorded = set(settings.get(ARCHITECTURAL_LEGACY_FLAT_MODULE_BASELINE_KEY, ()))
+    if recorded and not set(measured) < recorded:
+        return {"updated": False, "modules": measured}
+    baseline_path = root / ARCHITECTURAL_PACKAGE_RELATIVE_ROOT / ARCHITECTURAL_BASELINE_RESOURCE
+
+    def tighten_architectural_legacy_flat_module_baseline(data):
+        data[ARCHITECTURAL_LEGACY_FLAT_MODULE_BASELINE_KEY] = measured
+
+    config.update_json(
+        baseline_path,
+        tighten_architectural_legacy_flat_module_baseline,
+        reason="architectural top-level flat-module ratchet regeneration",
+        keep_backups=0,
+        required=True,
+    )
+    return {"updated": True, "modules": measured}
 
 
 def collect_architectural_source_units(root, settings):
@@ -607,6 +640,14 @@ def run_architectural_fitness_gate(*, context, invariant):
                 detail = contract["reason"] + "\n" + completed.stdout + completed.stderr
                 if completed.returncode:
                     violations.append(detail)
+        elif invariant == "new_code":
+            measured = measure_architectural_toplevel_flat_modules(root, settings)
+            recorded = set(settings[ARCHITECTURAL_LEGACY_FLAT_MODULE_BASELINE_KEY])
+            violations = sorted(set(measured) - recorded)
+            detail = (
+                f"No-new top-level flat-module ratchet: {len(measured)} measured; "
+                f"{len(recorded)} recorded; {len(violations)} new."
+            )
         elif invariant == "complexity":
             current = measure_architectural_complexity(root, settings)
             recorded = select_architectural_interpreter_baseline(settings)
