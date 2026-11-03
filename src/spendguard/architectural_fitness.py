@@ -20,11 +20,84 @@ ARCHITECTURAL_COMPLEXITY_REVIEW_KEY_PREFIX = "reviewed_"
 ARCHITECTURAL_LARGEST_SCC_CEILING_KEY = "max_largest_scc_size"
 ARCHITECTURAL_CYCLIC_EDGE_CEILING_KEY = "max_cyclic_edge_count"
 ARCHITECTURAL_DYNAMIC_IMPORT_BASELINE_KEY = "recorded_dynamic_spendguard_imports"
+ARCHITECTURAL_BOUNDARY_BASELINE_KEY = "recorded_cross_context_nonsurface_imports"
+ARCHITECTURAL_BOUNDARY_SHIM_KEY = "boundary_exempt_shim_modules"
+ARCHITECTURAL_CONTEXT_REGISTRY_RESOURCE = "domain_context_registry.json"
 
 
 def load_architectural_fitness_baseline(root):
     """Read the reviewed, versioned architectural scope and measurements."""
     return json.loads((Path(root) / ARCHITECTURAL_PACKAGE_RELATIVE_ROOT / ARCHITECTURAL_BASELINE_RESOURCE).read_text())
+
+
+def load_architectural_context_registry(root):
+    """Read the reviewed module-to-context and access-surface registry."""
+    path = Path(root) / ARCHITECTURAL_PACKAGE_RELATIVE_ROOT / ARCHITECTURAL_CONTEXT_REGISTRY_RESOURCE
+    return json.loads(path.read_text())
+
+
+def measure_architectural_boundary_violations(edges, registry):
+    """Return cross-context non-surface edges and edges lacking complete context coverage."""
+    package = registry["contexts"][0]["surface_module"].split(".", 1)[0]
+    home_contexts = {
+        module: declaration["home_context"]
+        for module, declaration in registry.get("split_modules", {}).items()
+    }
+    module_context = {}
+    context_surfaces = {}
+    for context in registry["contexts"]:
+        context_id = context["id"]
+        surface = context["surface_module"]
+        context_surfaces[context_id] = surface
+        module_context[surface] = context_id
+        for module in context["backing_modules"]:
+            if home_contexts.get(module, context_id) == context_id:
+                qualified = package if module == "__init__" else package + "." + module
+                module_context[qualified] = context_id
+    exempt_sources = set(registry.get(ARCHITECTURAL_BOUNDARY_SHIM_KEY, ()))
+    violations = set()
+    unassigned = set()
+    for source, targets in edges.items():
+        for target in targets:
+            source_context = module_context.get(source)
+            target_context = module_context.get(target)
+            if source_context is None or target_context is None:
+                unassigned.add((source, target))
+            elif (
+                source not in exempt_sources
+                and source_context != target_context
+                and target != context_surfaces[target_context]
+            ):
+                violations.add((source, target))
+    return sorted(violations), sorted(unassigned)
+
+
+def regenerate_architectural_boundary_baseline(root):
+    """Explicitly record the current boundary set when it tightens the reviewed ratchet."""
+    root = Path(root).resolve()
+    settings = load_architectural_fitness_baseline(root)
+    registry = load_architectural_context_registry(root)
+    registry[ARCHITECTURAL_BOUNDARY_SHIM_KEY] = settings.get(ARCHITECTURAL_BOUNDARY_SHIM_KEY, [])
+    units = collect_architectural_source_units(root, settings)
+    measured, unassigned = measure_architectural_boundary_violations(
+        collect_architectural_import_edges(units), registry,
+    )
+    recorded = {tuple(edge) for edge in settings.get(ARCHITECTURAL_BOUNDARY_BASELINE_KEY, ())}
+    if recorded and not set(measured) < recorded:
+        return {"updated": False, "violations": measured, "unassigned": unassigned}
+    baseline_path = root / ARCHITECTURAL_PACKAGE_RELATIVE_ROOT / ARCHITECTURAL_BASELINE_RESOURCE
+
+    def tighten_architectural_boundary_baseline(data):
+        data[ARCHITECTURAL_BOUNDARY_BASELINE_KEY] = [list(edge) for edge in measured]
+
+    config.update_json(
+        baseline_path,
+        tighten_architectural_boundary_baseline,
+        reason="architectural context boundary ratchet regeneration",
+        keep_backups=0,
+        required=True,
+    )
+    return {"updated": True, "violations": measured, "unassigned": unassigned}
 
 
 def collect_architectural_source_units(root, settings):
@@ -369,10 +442,21 @@ def run_architectural_fitness_gate(*, context, invariant):
         settings = load_architectural_fitness_baseline(root)
         violations = []
         detail = ""
-        if invariant in {"cycles", "layers"}:
+        if invariant in {"cycles", "layers", "boundaries"}:
             units = collect_architectural_source_units(root, settings)
             edges = collect_architectural_import_edges(units)
-            if invariant == "cycles":
+            if invariant == "boundaries":
+                registry = load_architectural_context_registry(root)
+                registry[ARCHITECTURAL_BOUNDARY_SHIM_KEY] = settings.get(ARCHITECTURAL_BOUNDARY_SHIM_KEY, [])
+                measured, unassigned = measure_architectural_boundary_violations(edges, registry)
+                recorded = {tuple(edge) for edge in settings[ARCHITECTURAL_BOUNDARY_BASELINE_KEY]}
+                violations = sorted(set(measured) - recorded)
+                detail = (
+                    f"No-new cross-context non-surface import ratchet: {len(measured)} measured; "
+                    f"{len(recorded)} recorded; {len(violations)} new; "
+                    f"unreviewed context coverage edges={len(unassigned)}."
+                )
+            elif invariant == "cycles":
                 magnitude = measure_architectural_cycle_magnitude(edges)
                 components = magnitude["components"]
                 cyclic_edges = magnitude["cyclic_edges"]

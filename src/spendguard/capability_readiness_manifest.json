@@ -1,5 +1,5 @@
 {
-  "revision": 4,
+  "revision": 5,
   "items": [
     {
       "id": "architecture-import-cycles",
@@ -8,6 +8,14 @@
       "gate": "spendguard.architectural_fitness:run_architectural_fitness_gate",
       "arguments": {"invariant": "cycles"},
       "reason": "AST includes deferred imports. Exact measured cyclic components and reviewed scope are recorded in architectural_fitness_baseline.json; removing existing cycles is tracked in docs/READINESS-FOLLOWUP.md. No claim of complete acyclicity."
+    },
+    {
+      "id": "architecture-context-boundaries",
+      "section": "architecture",
+      "description": "Reject new cross-context imports that bypass the target context's declared surface.",
+      "gate": "spendguard.architectural_fitness:run_architectural_fitness_gate",
+      "arguments": {"invariant": "boundaries"},
+      "reason": "The measured flat-module debt is a reviewed shrink-only ratchet; intra-context, declared shim-source, and surface-routed edges are allowed, while unassigned endpoints remain explicit unreviewed coverage."
     },
     {
       "id": "architecture-layer-boundaries",

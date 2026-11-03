@@ -12,6 +12,7 @@ from spendguard.architectural_fitness import (
     collect_architectural_source_units,
     collect_unresolved_architectural_dynamic_imports,
     load_architectural_fitness_baseline,
+    measure_architectural_boundary_violations,
     measure_architectural_cycle_magnitude,
     measure_architectural_complexity,
     measure_architectural_duplication,
@@ -32,6 +33,13 @@ ARCHITECTURAL_FIXTURE_ONE_EDGE_CEILING = 1
 ARCHITECTURAL_FIXTURE_DYNAMIC_OWNER = "fixture_dynamic_owner"
 ARCHITECTURAL_FIXTURE_DYNAMIC_TARGET = "fixture_dynamic_target"
 ARCHITECTURAL_FIXTURE_DYNAMIC_NAME = "dynamic_target_name"
+ARCHITECTURAL_FIXTURE_CONTEXT_ALPHA = "fixture_context_alpha"
+ARCHITECTURAL_FIXTURE_CONTEXT_BETA = "fixture_context_beta"
+ARCHITECTURAL_FIXTURE_ALPHA_MODULE = "spendguard.fixture_alpha"
+ARCHITECTURAL_FIXTURE_ALPHA_PEER = "spendguard.fixture_alpha_peer"
+ARCHITECTURAL_FIXTURE_BETA_MODULE = "spendguard.fixture_beta"
+ARCHITECTURAL_FIXTURE_BETA_SURFACE = "spendguard.store.fixture_beta"
+ARCHITECTURAL_FIXTURE_UNASSIGNED_MODULE = "spendguard.fixture_infrastructure"
 ARCHITECTURAL_FIXTURE_CLEAN_CORE = "def fixture_foundation_identity(value: int) -> int:\n    return value\n"
 ARCHITECTURAL_FIXTURE_CLEAN_APPLICATION = "def fixture_application_identity(value: str) -> str:\n    return value\n"
 ARCHITECTURAL_FIXTURE_NESTED_COMPLEXITY = "\n".join((
@@ -83,6 +91,83 @@ ARCHITECTURAL_CYCLE_GROWTH_CASES = (
         "cyclic_edge_count",
     ),
 )
+
+
+def architectural_boundary_fixture_registry(*, exempt_sources=()):
+    """Build the complete two-context registry used by boundary guard proofs."""
+    return {
+        "contexts": [
+            {
+                "id": ARCHITECTURAL_FIXTURE_CONTEXT_ALPHA,
+                "surface_module": "spendguard.store.fixture_alpha",
+                "backing_modules": ["fixture_alpha", "fixture_alpha_peer"],
+            },
+            {
+                "id": ARCHITECTURAL_FIXTURE_CONTEXT_BETA,
+                "surface_module": ARCHITECTURAL_FIXTURE_BETA_SURFACE,
+                "backing_modules": ["fixture_beta"],
+            },
+        ],
+        "boundary_exempt_shim_modules": list(exempt_sources),
+    }
+
+
+def test_new_cross_context_nonsurface_import_is_red_then_recorded_green(tmp_path):
+    """A new bypass edge fails with its identity and passes only after review."""
+    repository = Path(__file__).resolve().parents[1]
+    settings = load_architectural_fitness_baseline(repository)
+    package = tmp_path / settings["source_root"]
+    package.mkdir(parents=True)
+    (package / "__init__.py").write_text("")
+    (package / "fixture_alpha.py").write_text("from . import fixture_beta\n")
+    (package / "fixture_beta.py").write_text("")
+    registry = architectural_boundary_fixture_registry()
+    (package / "domain_context_registry.json").write_text(json.dumps(registry))
+    settings["recorded_cross_context_nonsurface_imports"] = []
+    settings["boundary_exempt_shim_modules"] = []
+    baseline_path = package / "architectural_fitness_baseline.json"
+    baseline_path.write_text(json.dumps(settings))
+    context = {"repo_root": tmp_path}
+    red = run_architectural_fitness_gate(context=context, invariant="boundaries")
+    expected_edge = (ARCHITECTURAL_FIXTURE_ALPHA_MODULE, ARCHITECTURAL_FIXTURE_BETA_MODULE)
+    assert red.status == "FAIL", red
+    assert str(expected_edge) in str(red.evidence), red
+    settings["recorded_cross_context_nonsurface_imports"] = [list(expected_edge)]
+    baseline_path.write_text(json.dumps(settings))
+    assert run_architectural_fitness_gate(context=context, invariant="boundaries").status == "PASS"
+
+
+@pytest.mark.parametrize(
+    ("edge", "registry", "expected_unassigned"),
+    (
+        (
+            (ARCHITECTURAL_FIXTURE_ALPHA_MODULE, ARCHITECTURAL_FIXTURE_ALPHA_PEER),
+            architectural_boundary_fixture_registry(),
+            (),
+        ),
+        (
+            (ARCHITECTURAL_FIXTURE_ALPHA_MODULE, ARCHITECTURAL_FIXTURE_BETA_SURFACE),
+            architectural_boundary_fixture_registry(),
+            (),
+        ),
+        (
+            (ARCHITECTURAL_FIXTURE_ALPHA_MODULE, ARCHITECTURAL_FIXTURE_UNASSIGNED_MODULE),
+            architectural_boundary_fixture_registry(),
+            ((ARCHITECTURAL_FIXTURE_ALPHA_MODULE, ARCHITECTURAL_FIXTURE_UNASSIGNED_MODULE),),
+        ),
+        (
+            (ARCHITECTURAL_FIXTURE_ALPHA_MODULE, ARCHITECTURAL_FIXTURE_BETA_MODULE),
+            architectural_boundary_fixture_registry(exempt_sources=(ARCHITECTURAL_FIXTURE_ALPHA_MODULE,)),
+            (),
+        ),
+    ),
+    ids=("intra-context", "through-surface", "unassigned-coverage", "shim-source"),
+)
+def test_boundary_exemptions_are_green(edge, registry, expected_unassigned):
+    """Each declared legal or uncovered boundary class stays out of violations."""
+    violations, unassigned = measure_architectural_boundary_violations({edge[0]: {edge[1]}}, registry)
+    assert violations == []
+    assert tuple(unassigned) == expected_unassigned
 
 
 def test_real_package_cycle_magnitude_stays_within_recorded_ceilings():
@@ -317,6 +402,35 @@ def test_architectural_violation_red_then_restored_green(tmp_path, architectural
 
 
 if __name__ == "__main__":
+    with tempfile.TemporaryDirectory() as architectural_boundary_directory:
+        test_new_cross_context_nonsurface_import_is_red_then_recorded_green(
+            Path(architectural_boundary_directory),
+        )
+    print("context boundaries: NEW BYPASS RED / RECORDED GREEN")
+    for boundary_case in (
+        (
+            (ARCHITECTURAL_FIXTURE_ALPHA_MODULE, ARCHITECTURAL_FIXTURE_ALPHA_PEER),
+            architectural_boundary_fixture_registry(),
+            (),
+        ),
+        (
+            (ARCHITECTURAL_FIXTURE_ALPHA_MODULE, ARCHITECTURAL_FIXTURE_BETA_SURFACE),
+            architectural_boundary_fixture_registry(),
+            (),
+        ),
+        (
+            (ARCHITECTURAL_FIXTURE_ALPHA_MODULE, ARCHITECTURAL_FIXTURE_UNASSIGNED_MODULE),
+            architectural_boundary_fixture_registry(),
+            ((ARCHITECTURAL_FIXTURE_ALPHA_MODULE, ARCHITECTURAL_FIXTURE_UNASSIGNED_MODULE),),
+        ),
+        (
+            (ARCHITECTURAL_FIXTURE_ALPHA_MODULE, ARCHITECTURAL_FIXTURE_BETA_MODULE),
+            architectural_boundary_fixture_registry(exempt_sources=(ARCHITECTURAL_FIXTURE_ALPHA_MODULE,)),
+            (),
+        ),
+    ):
+        test_boundary_exemptions_are_green(*boundary_case)
+    print("context boundaries: INTRA / SURFACE / UNASSIGNED / SHIM GREEN")
     test_real_package_cycle_magnitude_stays_within_recorded_ceilings()
     print("cycle magnitude: REAL PACKAGE WITHIN MEASURED CEILINGS")
     with tempfile.TemporaryDirectory() as literal_dynamic_directory:
