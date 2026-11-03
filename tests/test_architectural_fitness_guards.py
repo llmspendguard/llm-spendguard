@@ -8,15 +8,18 @@ import tempfile
 import pytest
 
 from spendguard.architectural_fitness import (
+    collapse_architectural_shim_edges,
     collect_architectural_import_edges,
     collect_architectural_source_units,
     collect_unresolved_architectural_dynamic_imports,
     load_architectural_fitness_baseline,
+    load_architectural_context_registry,
     measure_architectural_boundary_violations,
     measure_architectural_cycle_magnitude,
     measure_architectural_complexity,
     measure_architectural_duplication,
     regenerate_architectural_complexity_baseline,
+    regenerate_architectural_legacy_shim_count_baseline,
     run_architectural_fitness_gate,
     select_architectural_interpreter_baseline,
 )
@@ -27,9 +30,14 @@ ARCHITECTURAL_FIXTURE_REVIEW_KEY = "reviewed_fixture_complexity_regression"
 ARCHITECTURAL_FIXTURE_SECOND_REVIEW_KEY = "reviewed_fixture_complexity_regression_second"
 ARCHITECTURAL_FIXTURE_REVIEW_JUSTIFICATION = "Scratch regression reviewed for the architectural guard proof."
 ARCHITECTURAL_FIXTURE_SECOND_REVIEW_JUSTIFICATION = "A distinct scratch regression received its own review."
+ARCHITECTURAL_FIXTURE_SHIM_REVIEW_KEY = "reviewed_fixture_legacy_shim_debt"
+ARCHITECTURAL_FIXTURE_SHIM_REVIEW_JUSTIFICATION = "Scratch legacy shim debt reviewed for the guard proof."
 ARCHITECTURAL_FIXTURE_TWO_NODE_CEILING = 2
 ARCHITECTURAL_FIXTURE_THREE_NODE_CEILING = 3
 ARCHITECTURAL_FIXTURE_ONE_EDGE_CEILING = 1
+ARCHITECTURAL_FIXTURE_ZERO_CEILING = 0
+ARCHITECTURAL_FIXTURE_ONE_SHIM_CEILING = 1
+ARCHITECTURAL_FIXTURE_TWO_SHIM_CEILING = 2
 ARCHITECTURAL_FIXTURE_DYNAMIC_OWNER = "fixture_dynamic_owner"
 ARCHITECTURAL_FIXTURE_DYNAMIC_TARGET = "fixture_dynamic_target"
 ARCHITECTURAL_FIXTURE_DYNAMIC_NAME = "dynamic_target_name"
@@ -40,6 +48,9 @@ ARCHITECTURAL_FIXTURE_ALPHA_PEER = "spendguard.fixture_alpha_peer"
 ARCHITECTURAL_FIXTURE_BETA_MODULE = "spendguard.fixture_beta"
 ARCHITECTURAL_FIXTURE_BETA_SURFACE = "spendguard.store.fixture_beta"
 ARCHITECTURAL_FIXTURE_UNASSIGNED_MODULE = "spendguard.fixture_infrastructure"
+ARCHITECTURAL_FIXTURE_LEGACY_MODULE = "spendguard.fixture_moved"
+ARCHITECTURAL_FIXTURE_CURRENT_MODULE = "spendguard.store.fixture_moved"
+ARCHITECTURAL_FIXTURE_SHIM_PEER = "spendguard.fixture_shim_peer"
 ARCHITECTURAL_FIXTURE_CLEAN_CORE = "def fixture_foundation_identity(value: int) -> int:\n    return value\n"
 ARCHITECTURAL_FIXTURE_CLEAN_APPLICATION = "def fixture_application_identity(value: str) -> str:\n    return value\n"
 ARCHITECTURAL_FIXTURE_NESTED_COMPLEXITY = "\n".join((
@@ -91,6 +102,57 @@ ARCHITECTURAL_CYCLE_GROWTH_CASES = (
         "cyclic_edge_count",
     ),
 )
+
+
+def write_architectural_fixture_registry(package, shim_declarations=()):
+    """Write the minimal reviewed registry needed by a scratch cycles gate."""
+    registry = {"domain_legacy_path_shims": list(shim_declarations)}
+    (package / "domain_context_registry.json").write_text(json.dumps(registry))
+
+
+def architectural_fixture_shim_declaration():
+    """Return the complete synthetic legacy-to-current module declaration."""
+    return {
+        "legacy_module": ARCHITECTURAL_FIXTURE_LEGACY_MODULE,
+        "current_module": ARCHITECTURAL_FIXTURE_CURRENT_MODULE,
+        "moved_in_phase": "fixture",
+    }
+
+
+def write_architectural_shim_cycle_fixture(tmp_path, settings, magnitude_ceiling, shim_count_ceiling):
+    """Create a physical three-node cycle that collapses to a logical two-node cycle."""
+    package = tmp_path / settings["source_root"]
+    package.mkdir(parents=True)
+    (package / "__init__.py").write_text("")
+    current_relative_parts = ARCHITECTURAL_FIXTURE_CURRENT_MODULE.split(".")[1:-1]
+    current_package = package.joinpath(*current_relative_parts)
+    current_package.mkdir()
+    (current_package / "__init__.py").write_text("")
+    peer_import = f"from . import {ARCHITECTURAL_FIXTURE_SHIM_PEER.rsplit('.', 1)[-1]}\n"
+    (package / f"{ARCHITECTURAL_FIXTURE_LEGACY_MODULE.rsplit('.', 1)[-1]}.py").write_text(peer_import)
+    (current_package / f"{ARCHITECTURAL_FIXTURE_CURRENT_MODULE.rsplit('.', 1)[-1]}.py").write_text(
+        f"from .. import {ARCHITECTURAL_FIXTURE_SHIM_PEER.rsplit('.', 1)[-1]}\n"
+    )
+    (package / f"{ARCHITECTURAL_FIXTURE_SHIM_PEER.rsplit('.', 1)[-1]}.py").write_text(
+        f"from . import {ARCHITECTURAL_FIXTURE_LEGACY_MODULE.rsplit('.', 1)[-1]}\n"
+        f"from .{'.'.join(current_relative_parts)} import "
+        f"{ARCHITECTURAL_FIXTURE_CURRENT_MODULE.rsplit('.', 1)[-1]}\n"
+    )
+    declaration = architectural_fixture_shim_declaration()
+    write_architectural_fixture_registry(package, (declaration,))
+    physical_edges = collect_architectural_import_edges(collect_architectural_source_units(tmp_path, settings))
+    logical_edges = collapse_architectural_shim_edges(
+        physical_edges,
+        {declaration["legacy_module"]: declaration["current_module"]},
+    )
+    logical_magnitude = measure_architectural_cycle_magnitude(logical_edges)
+    settings["recorded_cyclic_edges"] = [list(edge) for edge in sorted(logical_magnitude["cyclic_edges"])]
+    settings["recorded_dynamic_spendguard_imports"] = []
+    settings["max_largest_scc_size"] = magnitude_ceiling
+    settings["max_cyclic_edge_count"] = magnitude_ceiling
+    settings["max_legacy_shim_count"] = shim_count_ceiling
+    (package / "architectural_fitness_baseline.json").write_text(json.dumps(settings))
+    return physical_edges, logical_edges
 
 
 def architectural_boundary_fixture_registry(*, exempt_sources=()):
@@ -175,9 +237,99 @@ def test_real_package_cycle_magnitude_stays_within_recorded_ceilings():
     repository = Path(__file__).resolve().parents[1]
     settings = load_architectural_fitness_baseline(repository)
     edges = collect_architectural_import_edges(collect_architectural_source_units(repository, settings))
-    magnitude = measure_architectural_cycle_magnitude(edges)
+    registry = load_architectural_context_registry(repository)
+    shim_map = {
+        declaration["legacy_module"]: declaration["current_module"]
+        for declaration in registry["domain_legacy_path_shims"]
+    }
+    magnitude = measure_architectural_cycle_magnitude(collapse_architectural_shim_edges(edges, shim_map))
     assert magnitude["largest_scc_size"] <= settings["max_largest_scc_size"]
     assert magnitude["cyclic_edge_count"] <= settings["max_cyclic_edge_count"]
+
+
+def test_shim_collapse_merges_split_module_and_restores_presplit_magnitude():
+    """Legacy and current spellings become one logical graph vertex."""
+    presplit_edges = {
+        ARCHITECTURAL_FIXTURE_CURRENT_MODULE: {ARCHITECTURAL_FIXTURE_SHIM_PEER},
+        ARCHITECTURAL_FIXTURE_SHIM_PEER: {ARCHITECTURAL_FIXTURE_CURRENT_MODULE},
+    }
+    split_edges = {
+        ARCHITECTURAL_FIXTURE_LEGACY_MODULE: {ARCHITECTURAL_FIXTURE_SHIM_PEER},
+        ARCHITECTURAL_FIXTURE_CURRENT_MODULE: {ARCHITECTURAL_FIXTURE_SHIM_PEER},
+        ARCHITECTURAL_FIXTURE_SHIM_PEER: {
+            ARCHITECTURAL_FIXTURE_LEGACY_MODULE,
+            ARCHITECTURAL_FIXTURE_CURRENT_MODULE,
+        },
+    }
+    shim_map = {ARCHITECTURAL_FIXTURE_LEGACY_MODULE: ARCHITECTURAL_FIXTURE_CURRENT_MODULE}
+    collapsed_edges = collapse_architectural_shim_edges(split_edges, shim_map)
+    assert len(split_edges) > len(collapsed_edges)
+    assert measure_architectural_cycle_magnitude(collapsed_edges) == measure_architectural_cycle_magnitude(
+        presplit_edges
+    )
+
+
+def test_cycle_magnitude_ratchet_enforces_logical_not_physical_graph(tmp_path):
+    """A physical-only breach passes, while a logical magnitude breach fails."""
+    repository = Path(__file__).resolve().parents[1]
+    settings = load_architectural_fitness_baseline(repository)
+    physical_edges, logical_edges = write_architectural_shim_cycle_fixture(
+        tmp_path,
+        settings,
+        ARCHITECTURAL_FIXTURE_TWO_NODE_CEILING,
+        ARCHITECTURAL_FIXTURE_ONE_SHIM_CEILING,
+    )
+    physical_magnitude = measure_architectural_cycle_magnitude(physical_edges)
+    logical_magnitude = measure_architectural_cycle_magnitude(logical_edges)
+    assert physical_magnitude["largest_scc_size"] > ARCHITECTURAL_FIXTURE_TWO_NODE_CEILING
+    assert logical_magnitude["largest_scc_size"] == ARCHITECTURAL_FIXTURE_TWO_NODE_CEILING
+    context = {"repo_root": tmp_path}
+    logical_green = run_architectural_fitness_gate(context=context, invariant="cycles")
+    assert logical_green.status == "PASS", logical_green
+    assert "logical scc=2 edges=2; physical scc=3 edges=4; shims=1<=1" in logical_green.detail
+    baseline_path = tmp_path / settings["source_root"] / "architectural_fitness_baseline.json"
+    settings["max_largest_scc_size"] = ARCHITECTURAL_FIXTURE_ONE_EDGE_CEILING
+    baseline_path.write_text(json.dumps(settings))
+    logical_red = run_architectural_fitness_gate(context=context, invariant="cycles")
+    assert logical_red.status == "FAIL", logical_red
+    assert "largest_scc_size" in str(logical_red.evidence), logical_red
+
+
+def test_legacy_shim_count_ceiling_is_red_then_reviewed_green_and_lowered_red(tmp_path):
+    """Shim debt cannot rise or remain above a lowered ceiling without review."""
+    repository = Path(__file__).resolve().parents[1]
+    settings = load_architectural_fitness_baseline(repository)
+    write_architectural_shim_cycle_fixture(
+        tmp_path,
+        settings,
+        ARCHITECTURAL_FIXTURE_TWO_NODE_CEILING,
+        ARCHITECTURAL_FIXTURE_ZERO_CEILING,
+    )
+    context = {"repo_root": tmp_path}
+    unreviewed_red = run_architectural_fitness_gate(context=context, invariant="cycles")
+    assert unreviewed_red.status == "FAIL", unreviewed_red
+    assert "legacy_shim_count: 1 exceeds 0" in str(unreviewed_red.evidence), unreviewed_red
+    with pytest.raises(ValueError, match="reviewed justification"):
+        regenerate_architectural_legacy_shim_count_baseline(tmp_path)
+    reviewed = regenerate_architectural_legacy_shim_count_baseline(
+        tmp_path,
+        reviewed_justification=ARCHITECTURAL_FIXTURE_SHIM_REVIEW_JUSTIFICATION,
+        reviewed_justification_key=ARCHITECTURAL_FIXTURE_SHIM_REVIEW_KEY,
+    )
+    assert reviewed == {"updated": True, "legacy_shim_count": ARCHITECTURAL_FIXTURE_ONE_SHIM_CEILING}
+    assert run_architectural_fitness_gate(context=context, invariant="cycles").status == "PASS"
+    baseline_path = tmp_path / settings["source_root"] / "architectural_fitness_baseline.json"
+    lowered_settings = json.loads(baseline_path.read_text())
+    lowered_settings["max_legacy_shim_count"] = ARCHITECTURAL_FIXTURE_TWO_SHIM_CEILING
+    baseline_path.write_text(json.dumps(lowered_settings))
+    lowered = regenerate_architectural_legacy_shim_count_baseline(tmp_path)
+    assert lowered == {"updated": True, "legacy_shim_count": ARCHITECTURAL_FIXTURE_ONE_SHIM_CEILING}
+    lowered_settings = json.loads(baseline_path.read_text())
+    lowered_settings["max_legacy_shim_count"] = ARCHITECTURAL_FIXTURE_ZERO_CEILING
+    baseline_path.write_text(json.dumps(lowered_settings))
+    lowered_red = run_architectural_fitness_gate(context=context, invariant="cycles")
+    assert lowered_red.status == "FAIL", lowered_red
+    assert "legacy_shim_count: 1 exceeds 0" in str(lowered_red.evidence), lowered_red
 
 
 def test_literal_dynamic_import_is_counted_in_cycle_magnitude(tmp_path):
@@ -209,6 +361,7 @@ def test_new_nonliteral_dynamic_import_fails_until_recorded(tmp_path):
     package = tmp_path / settings["source_root"]
     package.mkdir(parents=True)
     (package / "__init__.py").write_text("")
+    write_architectural_fixture_registry(package)
     dynamic_source = package / f"{ARCHITECTURAL_FIXTURE_DYNAMIC_OWNER}.py"
     dynamic_source.write_text(
         "import importlib\n"
@@ -248,6 +401,7 @@ def test_cycle_magnitude_gate_fails_when_independent_ceiling_grows(
     package = tmp_path / settings["source_root"]
     package.mkdir(parents=True)
     (package / "__init__.py").write_text("")
+    write_architectural_fixture_registry(package)
     for module_name, source in module_imports.items():
         (package / f"{module_name}.py").write_text(source)
     edges = collect_architectural_import_edges(collect_architectural_source_units(tmp_path, settings))
@@ -344,6 +498,7 @@ def test_architectural_violation_red_then_restored_green(tmp_path, architectural
     package = tmp_path / settings["source_root"]
     package.mkdir(parents=True)
     (package / "__init__.py").write_text("")
+    write_architectural_fixture_registry(package)
     core = package / (ARCHITECTURAL_FIXTURE_CORE + ".py")
     application = package / (ARCHITECTURAL_FIXTURE_APPLICATION + ".py")
     core.write_text(ARCHITECTURAL_FIXTURE_CLEAN_CORE)
@@ -433,6 +588,16 @@ if __name__ == "__main__":
     print("context boundaries: INTRA / SURFACE / UNASSIGNED / SHIM GREEN")
     test_real_package_cycle_magnitude_stays_within_recorded_ceilings()
     print("cycle magnitude: REAL PACKAGE WITHIN MEASURED CEILINGS")
+    test_shim_collapse_merges_split_module_and_restores_presplit_magnitude()
+    print("shim collapse: PHYSICAL NODES MERGED / PRESPLIT MAGNITUDE RESTORED")
+    with tempfile.TemporaryDirectory() as logical_magnitude_directory:
+        test_cycle_magnitude_ratchet_enforces_logical_not_physical_graph(Path(logical_magnitude_directory))
+    print("cycle magnitude: PHYSICAL BREACH GREEN / LOGICAL BREACH RED")
+    with tempfile.TemporaryDirectory() as shim_count_directory:
+        test_legacy_shim_count_ceiling_is_red_then_reviewed_green_and_lowered_red(
+            Path(shim_count_directory),
+        )
+    print("shim debt: UNREVIEWED RED / REVIEWED GREEN / LOWERED RED")
     with tempfile.TemporaryDirectory() as literal_dynamic_directory:
         test_literal_dynamic_import_is_counted_in_cycle_magnitude(Path(literal_dynamic_directory))
     print("dynamic literal import: EDGE COUNTED / SCC MAGNITUDE COUNTED")

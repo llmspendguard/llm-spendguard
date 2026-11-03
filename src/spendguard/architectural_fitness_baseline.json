@@ -105,8 +105,8 @@
             "mi": 50.48267079784406
           },
           "src/spendguard/architectural_fitness.py": {
-            "max_cc": 34,
-            "mi": 0.8034242544302405
+            "max_cc": 36,
+            "mi": 0.0
           },
           "src/spendguard/attribution.py": {
             "max_cc": 26,
@@ -1105,8 +1105,8 @@
             "mi": 50.48267079784406
           },
           "src/spendguard/architectural_fitness.py": {
-            "max_cc": 34,
-            "mi": 0.8034242544302405
+            "max_cc": 36,
+            "mi": 0.0
           },
           "src/spendguard/attribution.py": {
             "max_cc": 26,
@@ -2089,7 +2089,8 @@
     "reviewed_phase2d_dynamic_import_ratchet": "Phase 2d extends the existing AST import graph and unresolved dynamic-import ratchet without changing runtime behavior.",
     "reviewed_import_behavior_snapshot_harness": "Reviewed the complete import-behavior snapshot harness: subprocess isolation, deterministic module-order capture, SDK wrapper-state invariants, name normalization, and explicit atomic regeneration.",
     "reviewed_phase_2a_domain_context_skeleton": "2026-11-02: Reviewed the additive Phase 2a domain-context package skeleton, shared lazy PEP-562 surface, and empty namespace initializers; no existing module moved or rewired. The same fail-closed measurement exposed and records two pre-existing baseline gaps: import_behavior_snapshot.py at its current measured body and architectural_fitness.py as reviewed existing low-MI debt, not an improvement or relaxed threshold.",
-    "reviewed_phase_2b_context_boundary_gate": "2026-11-02: Reviewed the complete additive Phase 2b context-boundary measurement, shrink-only baseline regeneration, gate diagnostics, registry coverage accounting, and declared shim-source exemption. The same source was independently measured with Radon 6.0.1 under Python 3.11 and 3.12; only architectural_fitness.py changes, with max CC 34 and MI 1.0061817599352973 under both supported interpreters."
+    "reviewed_phase_2b_context_boundary_gate": "2026-11-02: Reviewed the complete additive Phase 2b context-boundary measurement, shrink-only baseline regeneration, gate diagnostics, registry coverage accounting, and declared shim-source exemption. The same source was independently measured with Radon 6.0.1 under Python 3.11 and 3.12; only architectural_fitness.py changes, with max CC 34 and MI 1.0061817599352973 under both supported interpreters.",
+    "reviewed_phase_2d_shim_ratchets": "Phase 2d shim-collapsed logical magnitude and reviewed shim-count ratchets."
   },
   "duplication": {
     "duplicate_lines": 303,
@@ -6035,6 +6036,7 @@
   ],
   "max_largest_scc_size": 142,
   "max_cyclic_edge_count": 943,
+  "max_legacy_shim_count": 0,
   "recorded_cross_context_nonsurface_imports": [
     [
       "spendguard",

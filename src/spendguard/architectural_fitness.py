@@ -19,12 +19,14 @@ ARCHITECTURAL_LAYER_CONFIGURATION_FILENAME = "architecture.ini"
 ARCHITECTURAL_COMPLEXITY_REVIEW_KEY_PREFIX = "reviewed_"
 ARCHITECTURAL_LARGEST_SCC_CEILING_KEY = "max_largest_scc_size"
 ARCHITECTURAL_CYCLIC_EDGE_CEILING_KEY = "max_cyclic_edge_count"
+ARCHITECTURAL_LEGACY_SHIM_COUNT_CEILING_KEY = "max_legacy_shim_count"
 ARCHITECTURAL_DYNAMIC_IMPORT_BASELINE_KEY = "recorded_dynamic_spendguard_imports"
 ARCHITECTURAL_BOUNDARY_BASELINE_KEY = "recorded_cross_context_nonsurface_imports"
 ARCHITECTURAL_BOUNDARY_SHIM_KEY = "boundary_exempt_shim_modules"
 ARCHITECTURAL_CONTEXT_REGISTRY_RESOURCE = "domain_context_registry.json"
 ARCHITECTURAL_LEGACY_SHIM_REGISTRY_KEY = "domain_legacy_path_shims"
 ARCHITECTURAL_LEGACY_SHIM_MODULE_KEY = "legacy_module"
+ARCHITECTURAL_CURRENT_SHIM_MODULE_KEY = "current_module"
 
 
 def load_architectural_fitness_baseline(root):
@@ -282,13 +284,31 @@ def measure_architectural_cycle_magnitude(edges):
     }
 
 
+def collapse_architectural_shim_edges(edges, shim_map):
+    """Merge legacy and current module names into one logical import graph."""
+    collapsed_edges = {}
+    for source, targets in edges.items():
+        logical_source = shim_map.get(source, source)
+        collapsed_edges.setdefault(logical_source, set())
+        for target in targets:
+            logical_target = shim_map.get(target, target)
+            collapsed_edges.setdefault(logical_target, set())
+            collapsed_edges[logical_source].add(logical_target)
+    return collapsed_edges
+
+
 def regenerate_architectural_cycle_magnitude_baseline(root):
     """Explicitly tighten cycle-magnitude ceilings to the current measurement."""
     root = Path(root).resolve()
     settings = load_architectural_fitness_baseline(root)
     units = collect_architectural_source_units(root, settings)
     edges = collect_architectural_import_edges(units)
-    magnitude = measure_architectural_cycle_magnitude(edges)
+    registry = load_architectural_context_registry(root)
+    shim_map = {
+        declaration[ARCHITECTURAL_LEGACY_SHIM_MODULE_KEY]: declaration[ARCHITECTURAL_CURRENT_SHIM_MODULE_KEY]
+        for declaration in registry.get(ARCHITECTURAL_LEGACY_SHIM_REGISTRY_KEY, ())
+    }
+    magnitude = measure_architectural_cycle_magnitude(collapse_architectural_shim_edges(edges, shim_map))
     dynamic_imports = sorted(collect_unresolved_architectural_dynamic_imports(units, root))
     measured_ceilings = {
         ARCHITECTURAL_LARGEST_SCC_CEILING_KEY: magnitude["largest_scc_size"],
@@ -322,6 +342,49 @@ def regenerate_architectural_cycle_magnitude_baseline(root):
         required=True,
     )
     return {"updated": True, **measured_ceilings, "dynamic_imports": dynamic_imports}
+
+
+def regenerate_architectural_legacy_shim_count_baseline(
+    root, reviewed_justification=None, reviewed_justification_key=None,
+):
+    """Record shim debt, requiring explicit review only when its ceiling rises."""
+    root = Path(root).resolve()
+    settings = load_architectural_fitness_baseline(root)
+    registry = load_architectural_context_registry(root)
+    measured_count = len(registry.get(ARCHITECTURAL_LEGACY_SHIM_REGISTRY_KEY, ()))
+    recorded_count = settings.get(ARCHITECTURAL_LEGACY_SHIM_COUNT_CEILING_KEY)
+    if recorded_count == measured_count:
+        return {"updated": False, "legacy_shim_count": measured_count}
+    raising = recorded_count is not None and measured_count > recorded_count
+    if raising:
+        if not isinstance(reviewed_justification, str) or not reviewed_justification.strip():
+            raise ValueError("A non-empty reviewed justification is required to raise legacy shim debt")
+        if (
+            not isinstance(reviewed_justification_key, str)
+            or not reviewed_justification_key.startswith(ARCHITECTURAL_COMPLEXITY_REVIEW_KEY_PREFIX)
+            or reviewed_justification_key == ARCHITECTURAL_COMPLEXITY_REVIEW_KEY_PREFIX
+        ):
+            raise ValueError("The legacy shim justification key must start with 'reviewed_'")
+        recorded_justification = settings.get(reviewed_justification_key)
+        if recorded_justification is not None and recorded_justification != reviewed_justification:
+            raise ValueError(
+                f"The justification key already records a different review: {reviewed_justification_key}"
+            )
+    baseline_path = root / ARCHITECTURAL_PACKAGE_RELATIVE_ROOT / ARCHITECTURAL_BASELINE_RESOURCE
+
+    def record_architectural_legacy_shim_count(data):
+        data[ARCHITECTURAL_LEGACY_SHIM_COUNT_CEILING_KEY] = measured_count
+        if raising:
+            data[reviewed_justification_key] = reviewed_justification
+
+    config.update_json(
+        baseline_path,
+        record_architectural_legacy_shim_count,
+        reason="architectural legacy shim debt ratchet regeneration",
+        keep_backups=0,
+        required=True,
+    )
+    return {"updated": True, "legacy_shim_count": measured_count}
 
 
 def measure_architectural_complexity(root, settings):
@@ -462,9 +525,18 @@ def run_architectural_fitness_gate(*, context, invariant):
                     f"unreviewed context coverage edges={len(unassigned)}."
                 )
             elif invariant == "cycles":
-                magnitude = measure_architectural_cycle_magnitude(edges)
-                components = magnitude["components"]
-                cyclic_edges = magnitude["cyclic_edges"]
+                registry = load_architectural_context_registry(root)
+                shim_declarations = registry.get(ARCHITECTURAL_LEGACY_SHIM_REGISTRY_KEY, ())
+                shim_map = {
+                    declaration[ARCHITECTURAL_LEGACY_SHIM_MODULE_KEY]: declaration[ARCHITECTURAL_CURRENT_SHIM_MODULE_KEY]
+                    for declaration in shim_declarations
+                }
+                physical_magnitude = measure_architectural_cycle_magnitude(edges)
+                logical_magnitude = measure_architectural_cycle_magnitude(
+                    collapse_architectural_shim_edges(edges, shim_map)
+                )
+                components = logical_magnitude["components"]
+                cyclic_edges = logical_magnitude["cyclic_edges"]
                 recorded_edges = {tuple(edge) for edge in settings["recorded_cyclic_edges"]}
                 violations = sorted(cyclic_edges - recorded_edges)
                 dynamic_imports = collect_unresolved_architectural_dynamic_imports(units, root)
@@ -475,25 +547,32 @@ def run_architectural_fitness_gate(*, context, invariant):
                 )
                 largest_scc_ceiling = settings[ARCHITECTURAL_LARGEST_SCC_CEILING_KEY]
                 cyclic_edge_ceiling = settings[ARCHITECTURAL_CYCLIC_EDGE_CEILING_KEY]
-                if magnitude["largest_scc_size"] > largest_scc_ceiling:
+                if logical_magnitude["largest_scc_size"] > largest_scc_ceiling:
                     violations.append(
-                        f"largest_scc_size: {magnitude['largest_scc_size']} exceeds {largest_scc_ceiling}"
+                        f"largest_scc_size: {logical_magnitude['largest_scc_size']} exceeds {largest_scc_ceiling}"
                     )
-                if magnitude["cyclic_edge_count"] > cyclic_edge_ceiling:
+                if logical_magnitude["cyclic_edge_count"] > cyclic_edge_ceiling:
                     violations.append(
-                        f"cyclic_edge_count: {magnitude['cyclic_edge_count']} exceeds {cyclic_edge_ceiling}"
+                        f"cyclic_edge_count: {logical_magnitude['cyclic_edge_count']} exceeds {cyclic_edge_ceiling}"
                     )
+                shim_count = len(shim_declarations)
+                shim_count_ceiling = settings[ARCHITECTURAL_LEGACY_SHIM_COUNT_CEILING_KEY]
+                if shim_count > shim_count_ceiling:
+                    violations.append(f"legacy_shim_count: {shim_count} exceeds {shim_count_ceiling}")
                 tightening = [
                     key for key, current, ceiling in (
-                        ("largest_scc_size", magnitude["largest_scc_size"], largest_scc_ceiling),
-                        ("cyclic_edge_count", magnitude["cyclic_edge_count"], cyclic_edge_ceiling),
+                        ("largest_scc_size", logical_magnitude["largest_scc_size"], largest_scc_ceiling),
+                        ("cyclic_edge_count", logical_magnitude["cyclic_edge_count"], cyclic_edge_ceiling),
+                        ("legacy_shim_count", shim_count, shim_count_ceiling),
                     ) if current < ceiling
                 ]
                 detail = (
                     f"No-new-cyclic-import-edge ratchet: {len(edges)} modules; {len(components)} existing cyclic "
                     f"components; {len(cyclic_edges)} cyclic edges; {len(violations)} violations. "
-                    f"Magnitude largest_scc_size={magnitude['largest_scc_size']}<={largest_scc_ceiling}, "
-                    f"cyclic_edge_count={magnitude['cyclic_edge_count']}<={cyclic_edge_ceiling}. "
+                    f"Magnitude logical scc={logical_magnitude['largest_scc_size']} "
+                    f"edges={logical_magnitude['cyclic_edge_count']}; "
+                    f"physical scc={physical_magnitude['largest_scc_size']} "
+                    f"edges={physical_magnitude['cyclic_edge_count']}; shims={shim_count}<={shim_count_ceiling}. "
                     f"Unresolved dynamic package imports={len(dynamic_imports)}; "
                     f"Explicit baseline tightening available for: {', '.join(tightening) or 'none'}. "
                     "Full no-cycles remains reviewed N/A."
