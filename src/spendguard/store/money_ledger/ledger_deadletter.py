@@ -8,7 +8,7 @@ import tempfile
 import time
 from pathlib import Path
 
-from . import config
+from ... import config
 from .ledger_writer import (serialize_ledger_function, require_ledger_writer_request_live,
                             LEDGER_WRITER_DEADLINE_POLL_DIVISOR, current_ledger_writer_connection,
                             isolate_nested_ledger_write, ledger_connection_commit_deferred)
@@ -22,7 +22,7 @@ def locked_spend_deadletter_path(path):
     retry_path = Path(path)
     retry_path.parent.mkdir(parents=True, exist_ok=True)
     with open(str(retry_path) + LEDGER_DEADLETTER_LOCK_SUFFIX, "a") as lock_handle:
-        from .ledger_read import current_ledger_request_scope
+        from ...ledger_read import current_ledger_request_scope
         scope = current_ledger_request_scope()
         if scope is None:
             fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX)
@@ -44,7 +44,7 @@ def locked_spend_deadletter_path(path):
 
 def append_spend_deadletter_event(path, payload):
     """Return only after the complete retry evidence is durably written."""
-    from .ledger_read import ledger_evidence_persistence_scope
+    from ...ledger_read import ledger_evidence_persistence_scope
     with ledger_evidence_persistence_scope(), locked_spend_deadletter_path(path) as retry_path:
         with open(retry_path, "a") as spool:
             spool.write(json.dumps(payload) + "\n")
@@ -61,9 +61,9 @@ def drain_spend_deadletter_events(paths=None):
 
 def stage_and_commit_spend_deadletters(paths, spool_locks):
     """Keep every spool locked until the one authoritative replay commit."""
-    from .budget import spend_event_retry_paths, charge_to_event, _attribute
+    from ...budget import spend_event_retry_paths, charge_to_event, _attribute
     from .ledger import SpendLedger
-    from .ledger_read import LedgerQueryDeadline
+    from ...ledger_read import LedgerQueryDeadline
     writer_connection = current_ledger_writer_connection()
     if ledger_connection_commit_deferred(writer_connection):
         raise RuntimeError("Deadletter drain requires ownership of its final commit")

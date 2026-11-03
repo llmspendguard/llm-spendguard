@@ -9,7 +9,7 @@ regex guess. This does NOT touch the `charges` table (additive); it backfills th
 onto it. Kept separate from SpendLedger so the ledger never imports the legacy store.
 """
 import sqlite3
-from . import config, conv, budget
+from ... import config, conv, budget
 from . import ledger as _ledger
 
 # The charge→event field mapping (kind/role/basis, incl. which models are reconciliation markers) lives in ONE
@@ -126,7 +126,7 @@ def run_cutover(db_path=None):
     the cutover. Σ is over EVERY dollar (include_void), so quarantined-impossible rows are proven carried too."""
     from decimal import Decimal
     from . import ledger as _ledger
-    from . import budget as _budget
+    from ... import budget as _budget
     path = db_path or config.db_path()
 
     # ALREADY CUT OVER — refuse, touching NOTHING. Once `charges` has been dropped, spend_events IS the ledger,

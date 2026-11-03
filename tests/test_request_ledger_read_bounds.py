@@ -13,6 +13,7 @@ REQUEST_LEDGER_READER_MODULES = (
 REQUEST_LEDGER_OFFLINE_CONNECTION_FUNCTIONS = {("budget", "snapshot")}
 REQUEST_LEDGER_MOVED_MODULE_PATHS = {
     "config": ("store", "configuration", "config.py"),
+    "ledger": ("store", "money_ledger", "ledger.py"),
     "ledger_read": ("store", "spend_search", "ledger_read.py"),
     "ledger_request_cursor": ("store", "spend_search", "ledger_request_cursor.py"),
     "receipt": ("analyze", "spend_reporting", "receipt.py"),

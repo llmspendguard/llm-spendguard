@@ -30,7 +30,16 @@
     "spendguard.external_standard_readiness": "spendguard.analyze.assurance.external_standard_readiness",
     "spendguard.ledger_performance_benchmark": "spendguard.analyze.assurance.ledger_performance_benchmark",
     "spendguard.source_compact": "spendguard.analyze.assurance.source_compact",
-    "spendguard.import_behavior_snapshot": "spendguard.analyze.assurance.import_behavior_snapshot"
+    "spendguard.import_behavior_snapshot": "spendguard.analyze.assurance.import_behavior_snapshot",
+    "spendguard.ledger": "spendguard.store.money_ledger.ledger",
+    "spendguard.ledger_writer": "spendguard.store.money_ledger.ledger_writer",
+    "spendguard.ledger_schema_migrations": "spendguard.store.money_ledger.ledger_schema_migrations",
+    "spendguard.schema_indexes": "spendguard.store.money_ledger.schema_indexes",
+    "spendguard.ledger_fork_locks": "spendguard.store.money_ledger.ledger_fork_locks",
+    "spendguard.ledger_daily_rollup": "spendguard.store.money_ledger.ledger_daily_rollup",
+    "spendguard.ledger_wal_maintenance": "spendguard.store.money_ledger.ledger_wal_maintenance",
+    "spendguard.ledger_deadletter": "spendguard.store.money_ledger.ledger_deadletter",
+    "spendguard.migrate_charges": "spendguard.store.money_ledger.migrate_charges"
   },
   "entry_points": {
     "package_import": {
@@ -417,6 +426,7 @@
     "spendguard.analyze.assurance.external_standard_readiness",
     "spendguard.analyze.assurance.ledger_performance_benchmark",
     "spendguard.analyze.assurance.source_compact",
-    "spendguard.analyze.assurance.import_behavior_snapshot"
+    "spendguard.analyze.assurance.import_behavior_snapshot",
+    "spendguard.store.money_ledger"
   ]
 }

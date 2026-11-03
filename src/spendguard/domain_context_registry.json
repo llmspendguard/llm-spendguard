@@ -147,9 +147,11 @@
       "surface_module": "spendguard.store.money_ledger",
       "layer": "L0",
       "backing_modules": [
-        "ledger", "ledger_writer", "ledger_schema_migrations", "schema_indexes",
-        "ledger_fork_locks", "ledger_daily_rollup", "ledger_wal_maintenance",
-        "ledger_deadletter", "migrate_charges"
+        "store.money_ledger.ledger", "store.money_ledger.ledger_writer",
+        "store.money_ledger.ledger_schema_migrations", "store.money_ledger.schema_indexes",
+        "store.money_ledger.ledger_fork_locks", "store.money_ledger.ledger_daily_rollup",
+        "store.money_ledger.ledger_wal_maintenance", "store.money_ledger.ledger_deadletter",
+        "store.money_ledger.migrate_charges"
       ],
       "published_names": []
     },
@@ -630,6 +632,51 @@
     {
       "legacy_module": "spendguard.import_behavior_snapshot",
       "current_module": "spendguard.analyze.assurance.import_behavior_snapshot",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.ledger",
+      "current_module": "spendguard.store.money_ledger.ledger",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.ledger_writer",
+      "current_module": "spendguard.store.money_ledger.ledger_writer",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.ledger_schema_migrations",
+      "current_module": "spendguard.store.money_ledger.ledger_schema_migrations",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.schema_indexes",
+      "current_module": "spendguard.store.money_ledger.schema_indexes",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.ledger_fork_locks",
+      "current_module": "spendguard.store.money_ledger.ledger_fork_locks",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.ledger_daily_rollup",
+      "current_module": "spendguard.store.money_ledger.ledger_daily_rollup",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.ledger_wal_maintenance",
+      "current_module": "spendguard.store.money_ledger.ledger_wal_maintenance",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.ledger_deadletter",
+      "current_module": "spendguard.store.money_ledger.ledger_deadletter",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.migrate_charges",
+      "current_module": "spendguard.store.money_ledger.migrate_charges",
       "moved_in_phase": 3
     }
   ],

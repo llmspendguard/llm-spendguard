@@ -8,6 +8,7 @@ import ast
 from pathlib import Path
 
 PROJECTION_GUARD_PACKAGE = Path(__file__).resolve().parents[1] / "src" / "spendguard"
+PROJECTION_GUARD_MONEY_LEDGER_PACKAGE = PROJECTION_GUARD_PACKAGE / "store" / "money_ledger"
 PROJECTION_GUARD_READ_ROOTS = {
     "budget": {"spent_since", "spent_by_job", "spent_all_time", "meta_spent_since", "external_spent_since"},
     "calls": {"intent_spend"},
@@ -166,7 +167,7 @@ def run_budget_projection_seam_source_guard():
     sources = {module: (PROJECTION_GUARD_PACKAGE / PROJECTION_GUARD_SOURCE_RELATIVE_PATHS[module]).read_text()
                for module in PROJECTION_GUARD_READ_ROOTS}
     checked, failures, unreviewed = inspect_budget_projection_seam_sources(sources)
-    ledger_source = (PROJECTION_GUARD_PACKAGE / "ledger.py").read_text()
+    ledger_source = (PROJECTION_GUARD_MONEY_LEDGER_PACKAGE / "ledger.py").read_text()
     failures.extend(inspect_budget_projection_category_ownership(ledger_source, sources["budget"]))
     total = sum(len(roots) for roots in PROJECTION_GUARD_READ_ROOTS.values())
     total += sum(1 for root in checked if root.split(".")[-1]

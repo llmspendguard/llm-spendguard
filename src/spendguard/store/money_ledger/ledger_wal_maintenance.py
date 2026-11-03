@@ -53,7 +53,7 @@ def truncate_ledger_wal_bounded(path=None, *, deadline_s=None):
     filesystem I/O itself remains subject to OS scheduling, as with ledger opens.
     No row contents change; contention is a visible BUSY report, never retried inline.
     """
-    from .ledger_read import effective_ledger_admission_deadline, LedgerReadError
+    from ...ledger_read import effective_ledger_admission_deadline, LedgerReadError
     duration = config.LEDGER_READ_TIME_BUDGET_S if deadline_s is None else deadline_s
     connection = None
     try:
@@ -95,7 +95,7 @@ def maintain_ledger_wal_if_due(path=None, *, cadence=None):
     The process lock is nonblocking so concurrent callers never queue behind
     maintenance. BUSY/failed attempts are logged and retried on a later operation.
     """
-    from .ledger_read import LedgerReadError, effective_ledger_admission_deadline
+    from ...ledger_read import LedgerReadError, effective_ledger_admission_deadline
     # Best-effort maintenance must NEVER abort the serving operation that happens to trigger it. A serving
     # surface can hold an expired/abandoned request scope (e.g. a long inline delegate turn ran under a
     # request-lifetime ledger_request_scope whose absolute deadline has since passed); raising that request's
