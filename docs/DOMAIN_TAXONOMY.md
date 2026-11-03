@@ -209,6 +209,15 @@ These have more than one responsibility and are split across their true contexts
 rest were false positives). Each is a real refactor candidate; the context assignment above is the **target** home of
 the dominant responsibility.
 
+**Home layer (dominant responsibility) — these modules are placed here, not left un-layered.** §1 lists each module
+once; the split modules below take the layer of their *dominant* context so the layering is complete:
+`__init__`→L4 (Surfaces) · `adapters`→L1 (Execution) · `gate`→L1 (Admission) · `budget`→L1 (Admission) ·
+`config`→L0 (Configuration) · `models`→L0 (Reference Data) · `whole_job`→L1 (Routing) · `lane_quota_cost`→L1
+(Treasury) · `truth`→L3 (Reconciliation) · `receipt`→L3 (Spend Reporting) · `openai_batch_cli`→L1 (Execution) ·
+`resources`→L1 (Spend Capture). The measured import cycle (§3) runs through exactly these hubs — `gate`, `adapters`
+and `budget` are its three highest-degree nodes — which is why resolving their splits is the real decoupling lever,
+not the `__init__` root.
+
 | Module | Responsibility → context |
 |---|---|
 | `__init__.py` | public API re-exports → **Surfaces**; `_auto_install` gate side-effect → **Admission**; `install_litellm/bedrock/vertex` hooks → **Spend Capture**. *(The single highest-leverage split — see §3.)* |
@@ -226,39 +235,56 @@ the dominant responsibility.
 
 ---
 
-## 3. The economic loop — target vs today
+## 3. The economic loop — target vs the measured reality
 
 **Target (the to-be this taxonomy organizes toward):** an acyclic flow
 `ledger → measurement → learning → [valuation table] → treasury → routing → execution → ledger`,
 with lower layers (L0 STORE) importing nothing above them.
 
-**Today it is violated.** The discovery found one **30-module strongly-connected cycle** spanning `ledger`,
-`ledger_writer`, `ledger_read`, `budget`, `gate`, `config`, `config_schema`, `calls`, `fleet`, `distribution`,
-`distribution_daemon`, `manifest`, `setup`, `mcp_server`, `mcp_fd_lifecycle`, `receipt`, `residency_gate`,
-`weekly_cap_guard`, `lane_queue`, the codex daemon/broker/exec stack, `delegate_jobs/router`, `execution_journal`,
-`disk_guard`, `ledger_deadletter`, `ledger_request_cursor`, `ledger_wal_maintenance`.
+**The code today is far from that — and the gap was mis-sized by the discovery.** A deterministic AST import-graph
+analysis (Tarjan SCC over every intra-package import; not the LLM discovery's estimate) measured the real cycle:
 
-**Edge-cut order (the refactor roadmap, most leverage first):**
-1. **`__init__` split** — 185 modules import the package root, whose `__init__` eagerly imports gate/calls/pricing and
-   installs the gate as an import side-effect, making every module transitively depend on everything. Separate the
-   public-API facade from the auto-install side-effect. *Single highest-leverage change.*
-2. `budget` ↔ `gate` and `budget` → `distribution`: move the cap-check out of `budget` into Admission.
-3. `config` → `ledger_*` and `config_schema` → `fleet`/`residency_gate`/`weekly_cap_guard`: L0 must import nothing
-   above it — invert to registration.
-4. `ledger_writer` → `ledger_read` and `ledger_read` → `calls`/`budget`: store-write must not import its search;
-   read must not import corpus/admission.
-5. `adapters` → `distribution` and `distribution_daemon` → `mcp_server`: execution/platform must not import a surface.
-6. `execution_journal` ↔ `delegate_jobs`.
+> **One strongly-connected component of 142 modules** (65% of the 220) carrying **941 intra-SCC import edges.** The
+> only other cycle is the 2-edge `kimi_daemon`↔`kimi_exec` pair.
 
-**Two more structural debts (not cycle edges, but loop-integrity issues):**
-- **`bulkgate` → `advisor`** is a real violation: Admission must consume a **calibrated estimate** (Cost Estimation),
-  not the learning advisor.
+The discovery's earlier "30-module / ~19-edge" claim was wrong by ~50× in edges — all 19 edges it named are real, but
+they are **~2% of the cycle**. Cutting them would leave the hairball essentially intact. Three interventions were
+measured against the real graph, and **none is a cheap lever:**
+
+| Intervention | Effect on the 142-SCC |
+|---|---|
+| Remove all `__init__`/root-hub edges (the "highest-leverage" guess) | 142 → **134** (root has only 7 in / 14 out edges — a peripheral node, not the hub) |
+| Remove **all 69** layer-inversion edges (lower-imports-higher) | 142 → ~132; 69 of 941 edges is 7% of the cycle |
+| Remove **both** of the above together | still a **130-node SCC** — not a DAG |
+
+**What the cycle actually is:** a dense **within-layer mesh**, not a ring and not a layering inversion. Of the 941
+edges, **248 are same-layer** (dominantly within **L1**), routed through the central multi-responsibility hubs
+`gate`, `adapters`, `budget` (the three highest-degree nodes), then `models`, `truth`, `resources`, `receipt`,
+`whole_job`, `lane_quota_cost`. Breaking it is **not** an edge-cut sequence — it is sustained **within-layer
+decoupling**, which must start by resolving those hubs' splits (§2) so the shared responsibilities stop binding every
+L1 context to every other.
+
+### Decision: contain now, do not cure blind
+This is shipped (0.16.28) code with green CI; a 142-module decoupling done blind is a multi-week, high-regression
+program for a maintainability (not functional) payoff. So:
+
+1. **Guard first (Phase 0, bounded):** replace the existing `architectural_fitness` ratchet — which records 943
+   cyclic edges and only fails on *new* ones, i.e. it **sanctions** today's hairball — with a **magnitude ratchet**:
+   record the measured `{largest_scc_size, cyclic_edge_count}` as a baseline and fail the gate if either **grows**,
+   auto-updating the baseline **down** when they shrink. Assert it against the **real** `spendguard` package, not the
+   2-module scratch fixture the current test uses. This stops the cycle worsening and makes it honest.
+2. **Decoupling is recorded as known debt, degree-ranked, not scheduled:** attack order when/if funded is the
+   highest-degree hubs first — `gate`, then `adapters`, then `budget` — each by resolving its §2 split (move the
+   secondary responsibility to its true context), with the Phase-0 ratchet proving each step shrank the SCC.
+
+### Smaller debts (real, but minor next to the mesh)
+- **`bulkgate` → `advisor`:** Admission consumes the learning advisor instead of a calibrated estimate (Cost
+  Estimation). A genuine layer violation, cheap to fix independently.
 - **Meta-loop:** 9 ANALYZE modules (`advisor`, `bakeoff`, `experiment`, `effort_titration`, `cacheaudit`,
-  `cachetest`, `conv`, `review`, `intent_model_prior`) import `submit` (Execution) to buy their own judge calls — a
-  nested, meta-budgeted loop. Not a data-flow violation, but an import back-edge Execution ← Analyze; expose a caged
-  **meta-call port** from Execution and depend on that.
-- **Rule-4 at scale:** 76 non-surface modules import `capability_cli_parsing` and define their own `main()`. The
-  capability modules own their CLI, so the facades are not thin; move `main()` bodies into generated projections.
+  `cachetest`, `conv`, `review`, `intent_model_prior`) import `submit` (Execution) to buy their own judge calls — an
+  import back-edge Execution ← Analyze; expose a caged **meta-call port** and depend on that.
+- **Rule-4 at scale:** 80 modules import `capability_cli_parsing` and 44 define their own `main()` — the capability
+  modules own their CLI, so the facades are not thin; move `main()` bodies into generated projections.
 
 ---
 
@@ -282,4 +308,7 @@ cited as real again:
 
 - **#2 whole-job planner** — `submit(jobs, goal)` built on the capability core (Routing + Token Operations), per
   [`.claude/plans/zany-cooking-moon.md`](../.claude/plans/zany-cooking-moon.md).
-- The §3 edge-cut list is a refactor roadmap, not yet executed; the SCC exists in the shipped code today.
+- **Phase 0 acyclicity ratchet** (§3 decision) — the one scheduled follow-up: make `architectural_fitness` gate the
+  cycle's *magnitude* against a shrink-only baseline, asserted on the real package. Bounded, low-risk.
+- The 142-module SCC itself is **known debt**, not scheduled work — the §3 degree-ranked hub decoupling runs only if
+  maintenance pain justifies the multi-week cost. The cycle exists in shipped 0.16.28 and is functional today.

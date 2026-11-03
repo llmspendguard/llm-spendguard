@@ -51,8 +51,12 @@ Largest: `adapters.py` (~90 defs: execution + live lane-health state + routing d
 lane-cooling state belongs in `resource_state`. Full table in [`DOMAIN_TAXONOMY.md` §2](DOMAIN_TAXONOMY.md).
 
 ## Findings beyond taxonomy (fed into the finalized doc §3)
-- **Acyclicity is violated today:** one 30-module SCC (cut `budget`↔`gate` first; full edge-cut order in §3). The
-  seed's acyclic loop is a **target**, not current state.
+- **Acyclicity is violated today.** The discovery estimated a ~30-module cycle; a follow-up deterministic AST
+  measurement ground-truthed it as **one 142-module SCC / 941 edges** (the discovery's named edges are ~2% of it).
+  Neither the `__init__` split nor removing all layer-inversions reduces it meaningfully — it is a dense within-L1
+  mesh through the split-hubs. See [`DOMAIN_TAXONOMY.md` §3](DOMAIN_TAXONOMY.md) for the measured reality and the
+  contain-don't-cure decision. *(Lesson: the holistic LLM discovery under-counts dense import structure ~50×;
+  acyclicity claims must be ground-truthed mechanically before any edge-cut is sequenced.)*
 - **`__init__` hub:** 185 modules import the package root, whose `__init__` installs the gate as an import
   side-effect — flagged the single highest-leverage fix.
 - `bulkgate` → `advisor`: Admission consumes the learning advisor instead of a calibrated estimate (a real violation).
