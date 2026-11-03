@@ -34,6 +34,31 @@ Two capability kinds were added beyond the seed's five because real code fit non
 
 ---
 
+## 0b. Access surfaces — how domains touch each other (the decoupling contract)
+
+**Every bounded context publishes exactly ONE public surface — a "port" / published language — and other contexts
+access it ONLY through that surface, never by importing its internal modules.** This is the third structural element
+(after *kind* and *context*): each context declares the operations its peers may call, and everything else is private.
+
+- **Cross-context imports go only to the target context's declared surface.** A module in context A importing a module
+  in context B is legal only if B's module *is* B's surface. Reaching into B's internals is a boundary violation.
+- **Intra-context imports are unconstrained.** Cohesion *inside* a context is expected; the constraint is purely on
+  what crosses a context boundary. So a context may stay internally interconnected while the graph *between* contexts
+  stays small and inspectable.
+- **This is the actual cure for the §3 mesh.** The 248 same-layer cyclic edges are overwhelmingly deep cross-context
+  imports; routing each through the target's surface turns an N×N internal mesh into N context→surface edges and stops
+  a context's internals from binding every peer. The §3 magnitude ratchet then *proves* the SCC shrinks as surfaces
+  land.
+- **Enforcement (extends `architectural_fitness`):** a cross-context edge whose target is not the declared surface is
+  gated red. Mechanism: a `context → surface-module` registry (data), checked against the real import graph — the same
+  Tarjan/edge machinery the ratchet uses.
+- **Not the same as the Surfaces context (#21).** #21 is the *user*-facing facade (cli/mcp/api/http). The access
+  surface here is the *inter-domain* facade each of the 21 contexts publishes to its sibling contexts. A context's
+  surface is typically its package `__init__` or one named facade module; naming all 21 is the first step of the cure
+  (§3). This mirrors the global **capability-SSOT** doctrine — declare once, access through the published surface.
+
+---
+
 ## 1. The 21 bounded contexts
 
 Layer tags (`L0`–`L4`) are the intended dependency layer, lowest first; see §3 for the acyclicity contract.
