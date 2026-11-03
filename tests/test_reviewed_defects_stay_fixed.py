@@ -553,5 +553,31 @@ check("the module docstring no longer promises 'never 0'", "and never 0." not in
 check("...and says to check the basis instead", "CHECK THE BASIS" in _eo.__doc__)
 
 
+# ── chat whole-evidence and refresh-durability review (coding_router) ──────────────────────
+# Execute the offline behavioral guards in their own temp-HOME subprocesses. Source-string checks
+# would miss a newly introduced helper that silently dropped evidence or an unwired refresh notice.
+import subprocess as _reviewed_chat_subprocess
+_REVIEWED_CHAT_GUARDS = {
+    "test_chat_whole_evidence.py": (
+        "story: whole titles/summaries and all conversations, including beyond the old fifty cap",
+        "discover: whole selected fields, chunked reconciliation, and explicit sampling gap",
+        "allocation: whole title/summary/first-user evidence",
+        "synthesis: all calls estimated before execution; oversized evidence and incomplete JSON named",
+    ),
+    "test_chat_refresh_durability.py": (
+        "refresh: no_uuid/detail/page/cap rejection accounting and incomplete page errors",
+        "refresh: durable checkpoint before next page and conservative resume watermark",
+        "sync: announced cap and no destructive replace from an incomplete fetch",
+    ),
+}
+for _reviewed_chat_script, _reviewed_chat_findings in _REVIEWED_CHAT_GUARDS.items():
+    _reviewed_chat_run = _reviewed_chat_subprocess.run(
+        [sys.executable, str(pathlib.Path(__file__).with_name(_reviewed_chat_script))],
+        capture_output=True, text=True, check=False)
+    for _reviewed_chat_finding in _reviewed_chat_findings:
+        check(_reviewed_chat_finding, _reviewed_chat_run.returncode == 0,
+              _reviewed_chat_run.stdout + _reviewed_chat_run.stderr)
+
+
 print(f"\n{'[FAIL]' if failures else 'OK'} test_reviewed_defects_stay_fixed: {len(failures)} failure(s)")
 sys.exit(1 if failures else 0)

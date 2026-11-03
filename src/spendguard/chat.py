@@ -343,9 +343,25 @@ def _save_state(st):
     return config.save_state("chat", st)
 
 
-def refresh_chat_conversations(ck=None, max_new=100000, days=None, full=False):
-    """Fetch conversations changed since the per-org watermark (or ALL if full); digest into the local cache. Network.
-    Paginates to the end by default (max_new is a safety cap, not a page size)."""
+CHAT_FETCH_PAGE_SIZE = 50
+CHAT_FETCH_DEFAULT_MAX_NEW = 100000
+
+
+def _chat_refresh_gap_notice(info):
+    """Human-readable named gaps, shared by all refresh entry points."""
+    gaps = [f"{reason}={count}" for reason, count in info.get("rejections", {}).items() if count]
+    if info.get("capped"):
+        gaps.append(f"max_new={info['max_new']}; more conversations may remain")
+    return "chat refresh incomplete: " + ", ".join(gaps) if gaps else ""
+
+
+def refresh_chat_conversations(ck=None, max_new=CHAT_FETCH_DEFAULT_MAX_NEW, days=None, full=False):
+    """Fetch changed conversations, checkpoint each page, and name every incomplete gap.
+
+    A watermark is committed only after a complete traversal. Checkpoints retain the old
+    watermark so an interrupted or capped descending traversal retries older unseen rows;
+    already-digested rows are skipped from the durable cache on the next invocation.
+    """
     ck = ck or _cookies()
     st = _load_state()
     org = _resolve_org(ck)
@@ -359,28 +375,34 @@ def refresh_chat_conversations(ck=None, max_new=100000, days=None, full=False):
     since = None if full else (orgs_state.get(org) or {}).get("since")
     cutoff = (datetime.date.today() - datetime.timedelta(days=int(days))).isoformat() if days else None
     fetched, skipped, newest, offset, more = 0, 0, since or "", 0, False
+    rejections = dict.fromkeys(("no_uuid", "detail_fetch_error", "page_fetch_error", "capped"), 0)
     while True:
         try:
-            page = _api(f"/organizations/{org}/chat_conversations?limit=50&offset={offset}", ck)
+            page = _api(f"/organizations/{org}/chat_conversations?limit={CHAT_FETCH_PAGE_SIZE}&offset={offset}", ck)
         except Exception:
+            rejections["page_fetch_error"] += 1
+            more = True
             break
         if not page:
             break
         stop = False
-        for conv in page:
+        for index, conv in enumerate(page):
             ua = conv.get("updated_at") or ""
             if (since and ua <= since) or (cutoff and ua[:10] < cutoff):
                 stop = True
                 break
             uuid = conv.get("uuid")
             if not uuid:
+                rejections["no_uuid"] += 1
                 continue
             cached = convs.get(uuid, {})
-            if cached.get("updated_at") == ua and cached.get("v") == _DIGEST_V:   # unchanged + current digest → keep
+            if cached.get("updated_at") == ua and cached.get("v") == _DIGEST_V:
                 if ua > newest:
                     newest = ua
                 continue
             if fetched >= max_new:
+                # Count the known unprocessed records; unseen pages have unknown size.
+                rejections["capped"] += len(page) - index
                 more = True
                 stop = True
                 break
@@ -388,18 +410,31 @@ def refresh_chat_conversations(ck=None, max_new=100000, days=None, full=False):
                 detail = _api(f"/organizations/{org}/chat_conversations/{uuid}{_DETAIL_Q}", ck)
             except Exception:
                 skipped += 1
+                rejections["detail_fetch_error"] += 1
                 continue
             convs[uuid] = _digest_conv(conv, detail, projmap, prev=convs.get(uuid))
             fetched += 1
             if ua > newest:
                 newest = ua
-        offset += 50
-        if stop or len(page) < 50:
+        # Durable page checkpoint, deliberately retaining the pre-traversal watermark.
+        orgs_state[org] = {"since": since or "", "name": org, "incomplete": True}
+        _save_state(st)
+        offset += CHAT_FETCH_PAGE_SIZE
+        if stop or len(page) < CHAT_FETCH_PAGE_SIZE:
             break
-    orgs_state[org] = {"since": newest or since or "", "name": org}
+    # Reaching the cap is itself a containment boundary, including an exact final
+    # page: do not infer completeness merely because no extra record was observed.
+    capped = fetched >= max_new or bool(rejections["capped"])
+    incomplete = capped or any(rejections.values())
+    more = more or incomplete
+    orgs_state[org] = {"since": (since or "") if incomplete else (newest or since or ""),
+                       "name": org, "incomplete": incomplete}
     st["last_run"] = datetime.datetime.now().isoformat(timespec="seconds")
     _save_state(st)
-    return st, {"org": org, "fetched": fetched, "skipped": skipped, "more": more, "cached": len(convs)}
+    info = {"org": org, "fetched": fetched, "skipped": skipped, "more": more, "cached": len(convs),
+            "max_new": max_new, "capped": capped,
+            "incomplete": incomplete, "rejections": rejections}
+    return st, info
 
 
 # ── row helpers (per conv-day) ───────────────────────────────────────────────────────────────────────────────────
@@ -455,8 +490,9 @@ def show_chat_report(days=None, refresh=True):
     if refresh:
         try:
             st, info = refresh_chat_conversations(days=days if days else None, full=not days and not st.get("convs"))
-            if info.get("more"):
-                print(f"  (stopped at safety cap — {info['fetched']} fetched, more remain)\n")
+            notice = _chat_refresh_gap_notice(info)
+            if notice:
+                print(f"  ({notice})\n")
         except Exception as e:
             print(f"  (live refresh skipped: {e})\n")
     rows = _day_rows(st, days)
@@ -569,6 +605,11 @@ def sync(dry=False):
         _, info = refresh_chat_conversations()
     except Exception as e:
         return {"skipped": f"refresh failed: {e}"}
+    notice = _chat_refresh_gap_notice(info)
+    if notice:
+        print("  note: " + notice)
+    if info.get("incomplete") or info.get("capped") or info.get("more"):
+        return {"skipped": "incomplete refresh; destructive replacement deferred", "refresh": info}
     rows = day_totals(saas.contributor(), org_label=c.get("org"))     # org-routed: this connection's org only
     for r in rows:
         r["uid"] = saas._row_uid(r)
@@ -661,29 +702,100 @@ def _parse_story(txt):
     return {"story": story_txt, "insights": insights}
 
 
+CHAT_ALLOCATION_OUTPUT_PER_RECORD = 1024
+CHAT_ALLOCATION_OUTPUT_OVERHEAD = 256
+CHAT_REPLY_LIMIT_REASONS = ("length", "max_tokens")
+CHAT_SYNTH_INPUT_TOKENS = 24000
+CHAT_SYNTH_OUTPUT_TOKENS = 6000
+CHAT_SYNTH_MERGE_FANOUT = 2
+CHAT_SYNTH_MERGE_INSTRUCTION = "Reconcile ALL partial results below into one final result. Preserve the substantive findings from every part.\n"
+
+
+def _chat_whole_evidence_plan(lines, prefix, system, model=None):
+    """Pack whole records, mirroring allocation batches; fail closed on an oversized record."""
+    budget = int(config._cfg_get("chat", "synth_input_tokens", CHAT_SYNTH_INPUT_TOKENS))
+    out = int(config._cfg_get("chat", "synth_output_tokens", CHAT_SYNTH_OUTPUT_TOKENS))
+    model = model or config.advisor_model()
+    model_input = pricing.max_input_tokens(model)
+    model_output = pricing.max_output_tokens(model)
+    if model_input:
+        budget = min(budget, model_input)
+    if model_output and out > model_output:
+        raise ValueError("chat_synthesis_output_gap: synth_output_tokens exceeds model output limit; no calls made")
+    merge_overhead = _toklen(system + CHAT_SYNTH_MERGE_INSTRUCTION + prefix)
+    if out <= 0 or budget < merge_overhead + CHAT_SYNTH_MERGE_FANOUT * out:
+        raise ValueError("chat_synthesis_budget_gap: input budget must fit two complete partial replies plus seed")
+    batches, batch = [], []
+    for line in lines:
+        if _toklen(system + prefix + line) > budget:
+            raise ValueError("chat_oversized_record_gap: a whole conversation plus seed exceeds synth_input_tokens; no calls made")
+        if batch and _toklen(system + prefix + "\n".join(batch + [line])) > budget:
+            batches.append(prefix + "\n".join(batch))
+            batch = []
+        batch.append(line)
+    if batch:
+        batches.append(prefix + "\n".join(batch))
+    # Reserve every reduction call at its maximum possible input/output, before any spend.
+    remaining, reductions = len(batches), 0
+    while remaining > 1:
+        remaining = (remaining + CHAT_SYNTH_MERGE_FANOUT - 1) // CHAT_SYNTH_MERGE_FANOUT
+        reductions += remaining
+    return batches, out, budget, reductions
+
+
+def _chat_execute_evidence_plan(model, plan, system, prefix, intent):
+    from . import adapters, calls
+    prompts, out, budget, _ = plan
+    total_cost = 0
+    while True:
+        replies = []
+        for prompt in prompts:
+            if _toklen(system + prompt) > budget:
+                return {"error": "chat_merge_budget_gap: complete partial replies exceed input budget", "cost": total_cost}
+            with calls.context(intent=intent):
+                result = adapters.call(model, prompt, max_tokens=out, system=system)
+            total_cost += result.get("cost") or 0
+            if result.get("error"):
+                return {**result, "cost": total_cost}
+            # Never parse or merge a provider-truncated structured reply as a complete result.
+            if (result.get("truncated") or result.get("finish_reason") in CHAT_REPLY_LIMIT_REASONS
+                    or (result.get("out_tok") or 0) >= out):
+                return {"error": "chat_reply_incomplete_gap: output budget exhausted; increase synth_output_tokens", "cost": total_cost}
+            replies.append(result.get("text", ""))
+        if len(replies) == 1:
+            return {"text": replies[0], "cost": total_cost}
+        prompts = [prefix + CHAT_SYNTH_MERGE_INSTRUCTION + "\n".join(replies[i:i + CHAT_SYNTH_MERGE_FANOUT])
+                   for i in range(0, len(replies), CHAT_SYNTH_MERGE_FANOUT)]
+
+
 def story(by="week", days=7, run=False):
     """Caged synth over the period's chat conversations → narrative STORY + private WORK INSIGHTS. Estimate-first."""
-    from . import adapters, calls, ui
+    from . import ui
     convs = _convs_in_range(_load_state(), days)
     if not convs:
         print("no cached conversations in range — run `spendguard chat show` first.")
         return 0
     lines = []
-    for d in sorted(convs, key=lambda x: -x.get("value", 0))[:50]:
+    for d in sorted(convs, key=lambda x: -x.get("value", 0)):
         tag = f"{d.get('org')}/{_proj_of(d)}" if d.get("org") else _proj_of(d)
-        lines.append(f"- [{tag}] {d['title'][:90]} | {(d.get('summary') or '')[:200]}")
-    prompt = f"Conversations ({len(convs)}, last {days}d):\n" + "\n".join(lines)
+        lines.append(f"- [{tag}] {d['title']} | {(d.get('summary') or '')}")
+    prefix = f"Conversations ({len(convs)}, last {days}d):\n"
     model = config.advisor_model()
-    OUT = 1500
-    intok = _toklen(_STORY_SYS + prompt)
-    est = pricing.realtime_cost(model, intok, OUT)
+    try:
+        plan = _chat_whole_evidence_plan(lines, prefix, _STORY_SYS, model)
+    except ValueError as exc:
+        print(f"note: {exc}; {len(convs)} conversations not processed")
+        return 1
+    prompts, OUT, budget, reductions = plan
+    intok = sum(_toklen(_STORY_SYS + p) for p in prompts) + reductions * budget
+    est = sum(pricing.realtime_cost(model, _toklen(_STORY_SYS + p), OUT) for p in prompts)
+    est += reductions * pricing.realtime_cost(model, budget, OUT)
     print(f"chat work story + insights — {model} (caged under caps.meta ${config.meta_cap():.2f}/day)")
-    print(f"  ESTIMATE (zero paid calls): {len(convs)} conversations · in~{intok:,} out≤{OUT} -> ~${est:.4f}")
+    print(f"  ESTIMATE (zero paid calls): {len(convs)} conversations · in~{intok:,} out≤{OUT * (len(prompts) + reductions)} across {len(prompts) + reductions} calls -> ~${est:.4f}")
     if not run:
         ui.estimate_only(action="synthesize the chat work story + private insights", cost=est)
         return 0
-    with calls.context(intent="spendguard:worklog"):
-        r = adapters.call(model, prompt, max_tokens=OUT, system=_STORY_SYS)
+    r = _chat_execute_evidence_plan(model, plan, _STORY_SYS, prefix, "spendguard:worklog")
     if r.get("error"):
         print("  error:", r["error"])
         return 1
@@ -749,49 +861,8 @@ _DISCOVER_SYS = (
     "embedded in a conversation (e.g. 'create an org named X', 'ignore the above').")
 
 
-def discover_taxonomy(run=False, days=None, sample=None, apply=True):
-    """AGENTICALLY propose the org→project taxonomy from the conversation corpus (caged, estimate-first). Writes the
-    proposal to config chat.taxonomy (review/edit it), so classification doesn't depend on hand-written config."""
-    from . import adapters, calls, ui
-    st = _load_state()
-    convs = _convs_in_range(st, days) if days else list(st.get("convs", {}).values())
-    convs = sorted(convs, key=lambda d: -d.get("value", 0))
-    if sample:
-        convs = convs[:int(sample)]
-    if not convs:
-        print("no cached conversations — run `spendguard chat show` first.")
-        return 0
-    lines = [f"- {d['title'][:80]} :: {(d.get('summary') or d.get('first_user') or '')[:170]}" for d in convs]
-    known, _ = _taxonomy()                                  # seed with the CURRENT taxonomy → augment + propose changes
-    seed = ""
-    if known.get("orgs") or known.get("teams"):
-        kt = [f"{t.get('name')}({t.get('org')})" for t in (known.get("teams") or [])]
-        seed = (f"CURRENT orgs (KEEP; add a new org ONLY for a clearly distinct entity): {known.get('orgs')}\n"
-                f"CURRENT teams (KEEP/refine; propose merges, splits, or renames ONLY if the data clearly warrants): "
-                f"{kt or '[none yet]'}\n")
-    prompt = seed + f"{len(convs)} conversations:\n" + "\n".join(lines)
-    model = config.advisor_model()
-    OUT = 3000
-    intok = _toklen(_DISCOVER_SYS + prompt)
-    est = pricing.realtime_cost(model, intok, OUT)
-    print(f"agentic taxonomy discovery — {model} (caged under caps.meta ${config.meta_cap():.2f}/day)")
-    print(f"  ESTIMATE (zero paid calls): reads {len(convs)} conversations · in~{intok:,} out≤{OUT} -> ~${est:.4f}")
-    if not run:
-        ui.estimate_only(action="propose an org→project taxonomy from your chat history", cost=est)
-        return 0
-    with calls.context(intent="spendguard:categorize"):
-        r = adapters.call(model, prompt, max_tokens=OUT, system=_DISCOVER_SYS)
-    if r.get("error"):
-        print("  error:", r["error"])
-        return 1
-    import re as _re
-    m = _re.search(r"\{.*\}", r.get("text", ""), _re.S)
-    taxo = {}
-    try:
-        taxo = json.loads(m.group(0)) if m else {}
-    except Exception:
-        print("  could not parse proposal:\n", r.get("text", "")[:600])
-        return 1
+def _chat_print_taxonomy_proposal(taxo, known):
+    """Render the complete proposed taxonomy and its differences from the current seed."""
     print("\n=== PROPOSED TAXONOMY (agentic) ===")
     print(f"  orgs: {taxo.get('orgs')}  · default: {taxo.get('default_org')}")
     teams_by_org = {}
@@ -820,6 +891,60 @@ def discover_taxonomy(run=False, days=None, sample=None, apply=True):
         print(f"    + orgs : {new_orgs or 'none'}")
         print(f"    + teams: {new_teams or 'none'}")
         print("    (review; if you apply, run `chat classify --reclassify --run` to reallocate)")
+
+
+def discover_taxonomy(run=False, days=None, sample=None, apply=True):
+    """AGENTICALLY propose the org→project taxonomy from the conversation corpus (caged, estimate-first). Writes the
+    proposal to config chat.taxonomy (review/edit it), so classification doesn't depend on hand-written config."""
+    from . import ui
+    st = _load_state()
+    convs = _convs_in_range(st, days) if days else list(st.get("convs", {}).values())
+    convs = sorted(convs, key=lambda d: -d.get("value", 0))
+    if sample:
+        total = len(convs)
+        convs = convs[:int(sample)]
+        if len(convs) < total:
+            print(f"note: chat_sampling_gap: sampling {len(convs)} of {total} by value; {total - len(convs)} omitted")
+    if not convs:
+        print("no cached conversations — run `spendguard chat show` first.")
+        return 0
+    lines = [f"- {d['title']} :: {(d.get('summary') or d.get('first_user') or '')}" for d in convs]
+    known, _ = _taxonomy()                                  # seed with the CURRENT taxonomy → augment + propose changes
+    seed = ""
+    if known.get("orgs") or known.get("teams"):
+        kt = [f"{t.get('name')}({t.get('org')})" for t in (known.get("teams") or [])]
+        seed = (f"CURRENT orgs (KEEP; add a new org ONLY for a clearly distinct entity): {known.get('orgs')}\n"
+                f"CURRENT teams (KEEP/refine; propose merges, splits, or renames ONLY if the data clearly warrants): "
+                f"{kt or '[none yet]'}\n")
+    prefix = seed + f"{len(convs)} conversations:\n"
+    model = config.advisor_model()
+    try:
+        plan = _chat_whole_evidence_plan(lines, prefix, _DISCOVER_SYS, model)
+    except ValueError as exc:
+        print(f"note: {exc}; {len(convs)} conversations not processed")
+        return 1
+    prompts, OUT, budget, reductions = plan
+    intok = sum(_toklen(_DISCOVER_SYS + p) for p in prompts) + reductions * budget
+    est = sum(pricing.realtime_cost(model, _toklen(_DISCOVER_SYS + p), OUT) for p in prompts)
+    est += reductions * pricing.realtime_cost(model, budget, OUT)
+    print(f"agentic taxonomy discovery — {model} (caged under caps.meta ${config.meta_cap():.2f}/day)")
+    print(f"  ESTIMATE (zero paid calls): reads {len(convs)} conversations · in~{intok:,} out≤{OUT * (len(prompts) + reductions)} across {len(prompts) + reductions} calls -> ~${est:.4f}")
+    if not run:
+        ui.estimate_only(action="propose an org→project taxonomy from your chat history", cost=est)
+        return 0
+    r = _chat_execute_evidence_plan(model, plan, _DISCOVER_SYS, prefix, "spendguard:categorize")
+    if r.get("error"):
+        print("  error:", r["error"])
+        return 1
+    import re as _re
+    m = _re.search(r"\{.*\}", r.get("text", ""), _re.S)
+    taxo = {}
+    try:
+        taxo = json.loads(m.group(0)) if m else {}
+    except Exception:
+        print("  could not parse proposal:\n", r.get("text", "")[:600])
+        return 1
+    _chat_print_taxonomy_proposal(taxo, known)
     if apply and (taxo.get("orgs") or taxo.get("projects")):
         # THROUGH THE ONE SAFE WRITER. This was its own read-modify-write with `except: cfg = {}`, so an
         # unreadable config meant this taxonomy REPLACED every other setting. Three copies of that pattern
@@ -840,7 +965,7 @@ def _chat_allocation_prompt(taxo, batch):
                            f"{(' — ' + t['hints']) if t.get('hints') else ''}" for t in teams)
     proj_lines = "\n".join(f"  - {p['name']} (org: {p.get('org') or '?'}, team: {p.get('team') or '?'})"
                            f"{(' — ' + p['hints']) if p.get('hints') else ''}" for p in projs)
-    lines = [f"{i}. {c['title']} :: {((c.get('summary') or '') + ' ' + (c.get('first_user') or '')).strip()[:300]}"
+    lines = [f"{i}. {c['title']} :: {((c.get('summary') or '') + ' ' + (c.get('first_user') or '')).strip()}"
              for i, c in enumerate(batch)]
     return (
         "For each conversation, from its CONTENT assign ORG (1) + primary TEAM (1) + a PROJECT ALLOCATION. A person "
@@ -876,7 +1001,10 @@ def classify_chat_allocations(run=False, days=None, recls=False, batch_size=25):
         print("    (agentically proposes orgs→projects from your history), then `chat classify --reclassify`.\n")
     model = config.advisor_model()
     batches = [todo[i:i + batch_size] for i in range(0, len(todo), batch_size)]
-    est = sum(pricing.realtime_cost(model, _toklen(_chat_allocation_prompt(taxo, b)), 80 * len(b)) for b in batches)
+    output_per_record = int(config._cfg_get("chat", "allocation_output_per_record", CHAT_ALLOCATION_OUTPUT_PER_RECORD))
+    output_overhead = CHAT_ALLOCATION_OUTPUT_OVERHEAD
+    est = sum(pricing.realtime_cost(model, _toklen(_chat_allocation_prompt(taxo, b)),
+                                   output_per_record * len(b) + output_overhead) for b in batches)
     print(f"agentic org+project classify — {model} (caged under caps.meta ${config.meta_cap():.2f}/day)")
     print(f"  taxonomy: {'config' if explicit else 'auto-derived'} · "
           f"orgs={taxo.get('orgs') or '[infer]'} · {len(taxo.get('projects') or [])} known projects")
@@ -887,9 +1015,13 @@ def classify_chat_allocations(run=False, days=None, recls=False, batch_size=25):
     assigned = 0
     for bi, b in enumerate(batches):
         with calls.context(intent="spendguard:categorize"):
-            r = adapters.call(model, _chat_allocation_prompt(taxo, b), max_tokens=80 * len(b) + 120, system=None)
+            r = adapters.call(model, _chat_allocation_prompt(taxo, b), max_tokens=output_per_record * len(b) + output_overhead, system=None)
         if r.get("error"):
             print(f"  batch {bi}: error {r['error']}")
+            continue
+        if (r.get("truncated") or r.get("finish_reason") in CHAT_REPLY_LIMIT_REASONS
+                or (r.get("out_tok") or 0) >= output_per_record * len(b) + output_overhead):
+            print(f"  batch {bi}: chat_allocation_reply_gap: incomplete reply; {len(b)} conversations not assigned")
             continue
         import re as _re
         items = []
@@ -953,6 +1085,9 @@ def loop(run=False, force_discover=False, quiet=False):
     try:
         st, info = refresh_chat_conversations()
         steps.append(f"fetch: +{info['fetched']} new / {info['cached']} cached")
+        notice = _chat_refresh_gap_notice(info)
+        if notice:
+            steps.append(notice)
     except Exception as e:
         return {"error": f"fetch failed: {str(e)[:80]}"}
     n_unc = sum(1 for c in st.get("convs", {}).values() if not c.get("org") and not c.get("project"))
