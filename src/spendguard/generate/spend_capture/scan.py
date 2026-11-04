@@ -18,7 +18,7 @@ Designed to be the `uvx --from llm-spendguard spendguard scan` command: read-onl
 you don't own.
 """
 
-from .capability_cli_parsing import registered_cli_option_token
+from ...capability_cli_parsing import registered_cli_option_token
 
 
 def collect(days=None):

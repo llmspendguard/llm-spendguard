@@ -13,10 +13,10 @@ INCREMENTAL + idempotent (this is the "track what's analyzed, update only the ne
 Cost ≈ pricing.realtime_cost(model, input+cache_create+cache_read, output, cached=cache_read). Project = cwd name.
 """
 
-from .capability_cli_parsing import registered_cli_option_token
+from ...capability_cli_parsing import registered_cli_option_token
 import os, json, glob, pathlib, datetime, hashlib, time
 
-from . import config, conv, pricing
+from ... import config, conv, pricing
 
 _TOOL_FILE_KEYS = ("file_path", "path", "notebook_path")
 OVERAGE_DISCARDED_EVIDENCE_SAMPLE_CAP = 20
@@ -192,7 +192,7 @@ def ingest_events(days=None, limit=None, reset=False, dry=False):
     limit — only the `limit` most-recently-modified transcripts (bounds the SCAN, not just the write).
     reset — delete prior source="claude-code" rows + clear the watermark first (dev re-ingest).
     dry   — count the turns + est-value that WOULD be written, write nothing (measure before a large backfill)."""
-    from . import budget
+    from ... import budget
     st = config.load_state("claudecode", {"sessions": {}, "ledger": {}})
     wm = st.setdefault("ledger_sessions", {})          # OWN watermark {path:{lines,mtime}} — distinct from update()'s
     if reset and not dry:
@@ -476,7 +476,7 @@ def reconcile_billing_state(dry=False):
     Idempotent (delete+rebook). Pure parse + arithmetic, $0."""
     import datetime as _dt
     from collections import Counter
-    from . import budget
+    from ... import budget
     ev = _overage_events()
     windows, anchor = _overage_windows(ev)
     con = config.open_ledger_connection(config.db_path(), tune=False)
@@ -583,7 +583,7 @@ def _supersede_overflow_for_invoiced_months():
     Idempotent (only billed=1 rows are touched) and reversible (a billed flag, never a delete): reconcile_billing_
     state's delete+rebook restores billed=1, then re-supersedes only the still-invoiced (provider, month)s.
     Returns the count superseded."""
-    from . import budget
+    from ... import budget
     led = budget._ledger()
     invoiced = {(p, m) for (p, m, it) in led.source_rows("%-invoice", cols=("provider", "month", "intent"),
                                                          source_is_like=True)
@@ -609,7 +609,7 @@ def overage_tally():
     invoiced month's overflow is billed=0 by _supersede_overflow_for_invoiced_months). GENERAL across lanes —
     anthropic (claude-code), openai (codex), zai, … — by the same provider match the reconciliation uses.
     Read-only, $0. Returns {provider: {invoiced_usd, estimate_usd, total_usd, months_invoiced, months_estimate}}."""
-    from . import budget
+    from ... import budget
     led = budget._ledger()
     out = {}
 
@@ -656,7 +656,7 @@ def overflow_by_conversation():
     """{conv_id: overage paid $ (UNRECONCILED upper bound)} from the source='claude-code-overflow' rows — the turns
     that fell inside an observed overage window [weekly-cap hit → reset], booked at their full est-value. Read-only;
     empty until `claude-code overflow` has run (and empty when no overage window was observed)."""
-    from .ledger_read import read_cc_overflow_conversations
+    from ...ledger_read import read_cc_overflow_conversations
     return {r[0] or "": float(r[1] or 0.0) for r in read_cc_overflow_conversations()}
 
 
@@ -675,7 +675,7 @@ def ingest_invoices(csv_path=None, dry=False):
     import csv as _csv
     import glob as _glob
     from collections import defaultdict
-    from . import budget
+    from ... import budget
     path = csv_path or config._cfg_get("subscription", "anthropic_invoice_csv", None)
     if not path:                                            # discover the newest by-card export (pattern, not a hardcode)
         cands = sorted(_glob.glob(os.path.expanduser("~/Documents/Anthropic*charges*.csv")),
@@ -756,7 +756,7 @@ def attribute_overage(top=12):
     observed overage window that month, PROPORTIONAL to their observable overage est-value. The invoice gives the
     TOTAL truth per month; the observable window detector gives the per-conversation SHAPE. Months with real overage
     but no observed window can't be attributed (surfaced, not hidden). Read-only, $0."""
-    from .ledger_read import read_cc_attribution_evidence
+    from ...ledger_read import read_cc_attribution_evidence
     windows, _anchor = _overage_windows(_overage_events())
     real, evidence, fallback = read_cc_attribution_evidence(windows)
     real_by_month = {r[0]: float(r[1] or 0.0) for r in real}
@@ -827,7 +827,7 @@ def attribute_overage(top=12):
 def _cc_conv_rows(min_day=None):
     """{conv_id: [(occurred_at, model, in_tok, cache_read, cache_write), …] ordered by ts} from the claude-code
     est-value rows. One focused SELECT; read-only. context per turn = in_tok + cache_read + cache_write."""
-    from .ledger_read import read_cc_conversation_turns
+    from ...ledger_read import read_cc_conversation_turns
     rows = [r.values for r in read_cc_conversation_turns(min_day)]
     out = {}
     for conv_id, occ, model, i, cr, cw in rows:            # conv_id: don't shadow the module-level `conv` import
@@ -839,7 +839,7 @@ def _cache_read_rate(model):
     """$/token for a cache READ of `model` (the recurring cost of re-reading retained context each turn): the
     canonical `cached_in` rate if priced, else None. From pricing only — never an invented number."""
     try:
-        from . import pricing
+        from ... import pricing
         p = pricing.price(model) or {}
         cin = p.get("cached_in")
         return (float(cin) / 1e6) if cin is not None else None
@@ -1031,7 +1031,7 @@ def residency_counterfactual_costs(model, tokens, remaining_turns, return_tokens
     cache creation/write for the evidence plus ordinary output for the bounded return. These are distinct token
     classes: passing the evidence as both ordinary input and cache creation would charge the read twice.
     """
-    from . import pricing
+    from ... import pricing
     resident = pricing.realtime_cost(model, tokens, 0, cached_in_tok=tokens) * remaining_turns
     delegated = pricing.realtime_cost(model, 0, return_tokens, cache_creation_tok=tokens)
     return resident, delegated
@@ -1052,7 +1052,7 @@ def residency_decomposition(conv_id, instruction_tokens=None, instruction_paths=
     per_turn_usd, by_source_usd, by_tool_usd, top_contributors, instruction_tokens, instruction_source, reconciles}.
     $0 — pure parse + pricing, no LLM call."""
     recs = _conv_transcript_records(conv_id)
-    from .ledger_read import read_cc_residency_totals
+    from ...ledger_read import read_cc_residency_totals
     residency_totals = read_cc_residency_totals(conv_id)
     measured = residency_totals["measured_recurring_usd"]
     turn, id2tool, items = 0, {}, []           # items: (source, tool|None, tokens, entry_turn, label)
@@ -1116,7 +1116,7 @@ def residency_decomposition(conv_id, instruction_tokens=None, instruction_paths=
     usd = (lambda w: (measured * w / total_w) if measured is not None else None)
     src_usd = {c: usd(w) for c, w in by_source.items()}
     tool_usd = {t: usd(w) for t, w in by_tool.items()}
-    from .config_schema import SETTINGS as _CONFIG_SETTINGS
+    from ...config_schema import SETTINGS as _CONFIG_SETTINGS
     _res_specs = {s["key"]: s for s in _CONFIG_SETTINGS if s.get("section") == "residency_gate"}
     top_n = int(config._cfg_get("residency_gate", "receipt_top_n", _res_specs["receipt_top_n"]["default"]))
     return_tokens = int(config._cfg_get("residency_gate", "subagent_return_tokens",
@@ -1176,7 +1176,7 @@ def _render_residency_decomposition_lines(result):
 
 def refresh_residency_summary_cache(conv_id=None):
     """Explicit slow path: decompose a complete transcript and persist its bounded diagnostic summary."""
-    from .ledger_read import read_cc_residency_totals
+    from ...ledger_read import read_cc_residency_totals
 
     if not conv_id:
         conv_id = read_cc_residency_totals()["conv_id"]
@@ -1309,7 +1309,7 @@ def conversations_cmd(top=15):
     """`claude-code conversations` — the unified per-conversation view: top conversations by est-value, each labeled by
     its human SIDEBAR TITLE, with turns, current max re-read context, and (when reconciled) the REAL $ that overflowed
     the weekly cap. The est-value and the real-overflow axes are shown SEPARATELY, never summed."""
-    from .ledger_read import read_cc_top_conversations
+    from ...ledger_read import read_cc_top_conversations
     rows = [r.values for r in read_cc_top_conversations()]
     titles = _sidebar_titles()
     over = overflow_by_conversation()
@@ -1339,7 +1339,7 @@ def show_claudecode_report(days=None):
     # in-chat footer can show plan-usage cheaply. billed=false → it stays out of actual-$; channel keyed so claude.ai
     # doesn't clobber it. Best-effort.
     try:
-        from . import receipt
+        from ... import receipt
         _cls = st.get("cls", {})       # ORG → TEAM → PROJECT, the agentic classification (same as the server push)
         receipt.stamp_est_value(
             [{"day": d["day"], "spend_micros": round(d["cost"] * 1_000_000), "billed": False,
@@ -1416,7 +1416,7 @@ def _session_digests(days=None):
 def classify(run=False, days=None, recls=False):
     """Classify Claude Code sessions into org→team×project via the SHARED classifier + taxonomy (NOT the cwd repo
     name — that's an umbrella). Caged, estimate-first. Stored per session in state.cls; reused by day_totals/sync."""
-    from . import attribution
+    from ... import attribution
     st = config.load_state("claudecode", {"sessions": {}, "ledger": {}})
     cls = st.setdefault("cls", {})
     # Re-classify a session if it's unclassified OR its cached confidence is 0/missing. A 0 means it was never given a
@@ -1479,7 +1479,7 @@ def day_totals(member_ref, org_label=None):
 def sync(dry=False):
     """Push Claude Code spend (channel=claude-code) → the server. Honors visibility + contributor; ORG-ROUTED by the
     session's classified org (only rows whose org matches THIS connection — or are unclassified — push here)."""
-    from . import saas
+    from ... import saas
     c = saas.saas_connection()
     if c.get("visibility", "private") == "private":
         return {"skipped": "visibility=private"}
@@ -1508,7 +1508,7 @@ def _iso_period(day, by):
     """Kept as a one-line alias so this module's callers read locally, but the PERIOD RULE lives in exactly
     one place. chat and claudecode each had this identical wrapper, and before that each had its own real
     implementation — one of which was missing 'ytd'."""
-    from . import attribution
+    from ... import attribution
     return attribution.iso_period(day, by)
 
 
@@ -1609,7 +1609,7 @@ _STORY_SYS = (
 def story(by="week", days=7, run=False):
     """Caged synth over the period's work rows → a narrative STORY + private WORK INSIGHTS (findings/decisions/
     gotchas/next — distinct from cost/LLM-usage learnings). Estimate-first; the LLM call is caged under caps.meta."""
-    from . import config, adapters, calls, pricing, ui
+    from ... import config, adapters, calls, pricing, ui
     digs = _read_session_digests(days)                     # ONE home for the guard + glob (see _read_session_digests)
     if digs is None:                                       # projects dir missing/unreadable (named there)
         return 0

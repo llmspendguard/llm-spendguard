@@ -22,7 +22,7 @@ import time
 import datetime
 import urllib.request
 
-from . import config
+from ... import config
 
 RUNPOD_GRAPHQL = "https://api.runpod.io/graphql"
 KEY_ENV = "RUNPOD_API_KEY"

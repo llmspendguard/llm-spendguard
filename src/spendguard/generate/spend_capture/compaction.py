@@ -16,7 +16,7 @@ import datetime
 import json
 import os
 
-from . import config
+from ... import config
 
 _STATE = "compaction_events"
 _MAX_EVENTS = 500
@@ -168,7 +168,7 @@ def agentic_advise(transcript_path, run=False, model=None):
     preserve. The judgement is the LLM's (not a threshold). Runs UNDER spendguard's own gate, caged (intent
     spendguard:compact-advise), estimate-first. Returns the verdict dict on run; prints the estimate + returns None
     otherwise. Never raises out to a hook."""
-    from . import config, adapters, calls, pricing, ui, claudecode
+    from ... import config, adapters, calls, pricing, ui, claudecode
     convo = _recent_convo(transcript_path)
     if not convo:
         print("compact --tailor: no readable recent conversation at that transcript.")
@@ -295,7 +295,7 @@ def _credit_compaction_saving(ev, post):
     not a guess; the true saving accrues on EVERY subsequent turn, so this floors it and never inflates. Routed
     through guard.record_saving(source='compaction') — a counterfactual, honestly labelled. Best-effort; never raises."""
     try:
-        from . import pricing, guard
+        from ... import pricing, guard
         dropped = int(ev.get("pre_context") or 0) - int(post or 0)
         if dropped <= 0:
             return

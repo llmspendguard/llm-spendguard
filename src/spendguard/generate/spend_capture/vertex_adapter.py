@@ -43,7 +43,7 @@ def _embed_toks(result):
 
 def _capture_vertex_result(kw, result, toks_fn=_toks):
     try:
-        from . import gate
+        from ... import gate
         model = (kw or {}).get("model") or getattr(result, "model_version", "") or ""
         u = toks_fn(result)
         if u is not None:

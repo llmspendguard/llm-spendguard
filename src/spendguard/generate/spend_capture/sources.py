@@ -33,7 +33,7 @@ Fail-open per adapter, exactly like gpu_port: a broken source warns once and is 
 the others or the command.
 """
 
-from .capability_cli_parsing import registered_cli_option_token
+from ...capability_cli_parsing import registered_cli_option_token
 import sys
 
 CLAUDE_CODE_SOURCE = "claude-code"
@@ -49,7 +49,7 @@ def receipt_source_family(source):
     Overflow producers append ``-overflow`` and optional hyphen-separated tags to the lane identifier.
     Unknown identifiers retain their value in the explicit other bucket.
     """
-    from . import lane_registry
+    from ... import lane_registry
     for lane in (*lane_registry.all_lanes(), CLAUDE_CHAT_SOURCE):
         overflow = lane + OVERFLOW_SOURCE_SUFFIX
         if source == lane or source == overflow or (source or "").startswith(overflow + "-"):
@@ -82,7 +82,7 @@ def _register_builtins():
     register("codex", _mk("codex", "Codex", "_save_state"))
     # third-party sources: same entry-point group the GPU adapters use.
     try:
-        from . import provider_plugins
+        from ... import provider_plugins
         provider_plugins.load_plugins()
     except Exception:
         pass
@@ -156,9 +156,9 @@ def providers_paid():
     'compute': both are REAL billed dollars and both reconcile, but spendguard keeps the two axes separate
     everywhere else (caps, reporting, the statement), so the discovery view must not blur them either.
     NEVER returns or prints the key itself — only whether one resolves."""
-    from . import config, config_schema
+    from ... import config, config_schema
     try:
-        from . import adapters
+        from ... import adapters
         llm_envs = {p["key_env"] for p in adapters.PROVIDERS.values()}
     except Exception:
         llm_envs = set()
@@ -189,7 +189,7 @@ def discover_sources(days=None):
         rec.update(name=getattr(src, "NAME", name), key=name, error=None)
         tools.append(rec)
     try:
-        from . import coverage
+        from ... import coverage
         venvs = coverage.audit_gating_coverage()
     except Exception:
         venvs = []

@@ -17,13 +17,13 @@ so a multi-day conversation lands on the right days. Org+project are assigned AG
 caged LLM reads each conversation and picks the best (org, project) from your taxonomy; nothing hardcoded.
 """
 
-from .capability_cli_parsing import registered_cli_option_token
+from ...capability_cli_parsing import registered_cli_option_token
 import os, sys, json, sqlite3, hashlib, subprocess, urllib.request, urllib.error, pathlib, tempfile, datetime, time
 import collections
 
 CHAT_COOKIE_COPY_DIRECTORY_PREFIX = "spendguard-chat-cookies-"
 
-from . import config, pricing
+from ... import config, pricing
 
 _COOKIES = pathlib.Path.home() / "Library" / "Application Support" / "Claude" / "Cookies"
 _KEYCHAIN_SERVICE = "Claude Safe Storage"
@@ -463,7 +463,7 @@ def show_chat_report(days=None, refresh=True):
     # Stamp claude.ai est-value windows (from the FULL history, not the day-filtered view) so `spendguard receipt`
     # and the in-chat footer sum claude-code + claude-ai. billed=false → stays out of actual-$. Best-effort.
     try:
-        from . import receipt
+        from ... import receipt
         # ORG → TEAM → PROJECT, the agentic classification (chats already carry it)
         receipt.stamp_est_value([{"day": r["day"], "spend_micros": round(r["value"] * 1_000_000), "billed": False,
                                   "org": r.get("org") or "", "team": r.get("team") or "", "project": r.get("project") or ""}
@@ -553,7 +553,7 @@ def sync(dry=False):
     if not _chat_enabled() and not dry:
         return {"skipped": "chat adapter not enabled — `spendguard chat enable` (or set chat.enabled / "
                            "SPENDGUARD_CHAT_ENABLED=1). On-device, opt-in, your session only."}
-    from . import saas
+    from ... import saas
     c = saas.saas_connection()
     if not c.get("enabled"):
         # contributor_ok() returns (True, "n/a") for a DISABLED saas connection — that means "don't check", not
@@ -597,7 +597,7 @@ def _iso_period(day, by):
     """Kept as a one-line alias so this module's callers read locally, but the PERIOD RULE lives in exactly
     one place. chat and claudecode each had this identical wrapper, and before that each had its own real
     implementation — one of which was missing 'ytd'."""
-    from . import attribution
+    from ... import attribution
     return attribution.iso_period(day, by)
 
 
@@ -663,7 +663,7 @@ def _parse_story(txt):
 
 def story(by="week", days=7, run=False):
     """Caged synth over the period's chat conversations → narrative STORY + private WORK INSIGHTS. Estimate-first."""
-    from . import adapters, calls, ui
+    from ... import adapters, calls, ui
     convs = _convs_in_range(_load_state(), days)
     if not convs:
         print("no cached conversations in range — run `spendguard chat show` first.")
@@ -715,7 +715,7 @@ def _taxonomy():
                 "projects": [t for t in tx if t.get("project")], "default_org": ""}, True
     orgs, projects = set(), set()
     try:
-        from . import saas
+        from ... import saas
         cemail = (saas.contributor() or "")
         if "@" in cemail:
             orgs.add(cemail.split("@", 1)[1].split(".")[0])
@@ -725,7 +725,7 @@ def _taxonomy():
         if d.get("ai_project"):
             projects.add(d["ai_project"])
     try:
-        from . import workdone
+        from ... import workdone
         for v in workdone._repos().values():
             if v:
                 projects.add(str(v))
@@ -752,7 +752,7 @@ _DISCOVER_SYS = (
 def discover_taxonomy(run=False, days=None, sample=None, apply=True):
     """AGENTICALLY propose the org→project taxonomy from the conversation corpus (caged, estimate-first). Writes the
     proposal to config chat.taxonomy (review/edit it), so classification doesn't depend on hand-written config."""
-    from . import adapters, calls, ui
+    from ... import adapters, calls, ui
     st = _load_state()
     convs = _convs_in_range(st, days) if days else list(st.get("convs", {}).values())
     convs = sorted(convs, key=lambda d: -d.get("value", 0))
@@ -863,7 +863,7 @@ def _chat_allocation_prompt(taxo, batch):
 def classify_chat_allocations(run=False, days=None, recls=False, batch_size=25):
     """Agentically assign (org, project) to conversations from their content. Caged (spendguard:categorize),
     estimate-first. Only classifies UNCLASSIFIED conversations unless --reclassify."""
-    from . import adapters, calls, ui
+    from ... import adapters, calls, ui
     st = _load_state()
     convs = _convs_in_range(st, days) if days else list(st.get("convs", {}).values())
     todo = [c for c in convs if recls or not c.get("org") and not c.get("project")]
@@ -1039,7 +1039,7 @@ def show_chat_adapter_status():
     """Show adapter state + any PENDING org attribution request (the consent surface)."""
     print(f"chat adapter: {'🟢 ENABLED' if _chat_enabled() else 'disabled'}")
     try:
-        from . import saas
+        from ... import saas
         s = saas._state()
         if s.get("chat_request_pending") and not _chat_enabled():
             by = s.get("chat_requested_by") or "your org"
@@ -1060,7 +1060,7 @@ def accept_chat_org_taxonomy():
     """Consent to an org attribution request: enable + adopt the org's canonical taxonomy. Runs on next sync."""
     _set_enabled(True)
     try:
-        from . import saas
+        from ... import saas
         saas._set_state(chat_request_pending=False)
         t = saas.pull_taxonomy()
         v = (t or {}).get("version", "?") if isinstance(t, dict) else "?"
@@ -1077,7 +1077,7 @@ _accept = accept_chat_org_taxonomy
 
 
 def publish_chat_org_taxonomy() -> int:
-    from . import saas
+    from ... import saas
     print("push-taxonomy:", saas.push_taxonomy())
     return 0
 

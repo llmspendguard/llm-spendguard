@@ -9,13 +9,13 @@ post-event conversation + script evolution. This solves cold start and enables t
 Exposed as: spendguard.backfill() (fn) · `spendguard backfill` (CLI) · a Claude skill (see SKILL.md).
 """
 
-from .capability_cli_parsing import add_registered_cli_argument
+from ...capability_cli_parsing import add_registered_cli_argument
 import os, json
-from . import calls, learn, pricing
+from ... import calls, learn, pricing
 
 
 def _openai_rows():
-    from .reconcile_openai import load_key, fetch_batches, day
+    from ...reconcile_openai import load_key, fetch_batches, day
     out = []
     for b in fetch_batches(load_key()):
         if b["status"] not in ("completed", "cancelled"):
@@ -42,7 +42,7 @@ def _openai_rows():
 
 
 def _anthropic_rows():
-    from . import reconcile_anthropic as ra
+    from ... import reconcile_anthropic as ra
     ra.cost_by_day()  # ensure the local usage cache is fresh
     cache = {}
     if os.path.exists(ra.CACHE_PATH):

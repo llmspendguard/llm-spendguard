@@ -291,23 +291,23 @@
       "surface_module": "spendguard.generate.spend_capture",
       "layer": "L1",
       "backing_modules": [
-        "bedrock_adapter",
-        "litellm_adapter",
-        "vertex_adapter",
-        "http_capture",
-        "otel_ingest",
-        "claudecode",
-        "codex",
-        "chat",
-        "compaction",
-        "sources",
-        "scan",
-        "backfill",
-        "gpu_port",
-        "lambda_adapter",
-        "modal_adapter",
-        "runpod_adapter",
-        "resources"
+        "generate.spend_capture.bedrock_adapter",
+        "generate.spend_capture.litellm_adapter",
+        "generate.spend_capture.vertex_adapter",
+        "generate.spend_capture.http_capture",
+        "generate.spend_capture.otel_ingest",
+        "generate.spend_capture.claudecode",
+        "generate.spend_capture.codex",
+        "generate.spend_capture.chat",
+        "generate.spend_capture.compaction",
+        "generate.spend_capture.sources",
+        "generate.spend_capture.scan",
+        "generate.spend_capture.backfill",
+        "generate.spend_capture.gpu_port",
+        "generate.spend_capture.lambda_adapter",
+        "generate.spend_capture.modal_adapter",
+        "generate.spend_capture.runpod_adapter",
+        "generate.spend_capture.resources"
       ],
       "published_names": []
     },
@@ -1450,6 +1450,91 @@
     {
       "legacy_module": "spendguard.budget",
       "current_module": "spendguard.manage.admission.budget",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.bedrock_adapter",
+      "current_module": "spendguard.generate.spend_capture.bedrock_adapter",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.litellm_adapter",
+      "current_module": "spendguard.generate.spend_capture.litellm_adapter",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.vertex_adapter",
+      "current_module": "spendguard.generate.spend_capture.vertex_adapter",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.http_capture",
+      "current_module": "spendguard.generate.spend_capture.http_capture",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.otel_ingest",
+      "current_module": "spendguard.generate.spend_capture.otel_ingest",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.claudecode",
+      "current_module": "spendguard.generate.spend_capture.claudecode",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.codex",
+      "current_module": "spendguard.generate.spend_capture.codex",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.chat",
+      "current_module": "spendguard.generate.spend_capture.chat",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.compaction",
+      "current_module": "spendguard.generate.spend_capture.compaction",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.sources",
+      "current_module": "spendguard.generate.spend_capture.sources",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.scan",
+      "current_module": "spendguard.generate.spend_capture.scan",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.backfill",
+      "current_module": "spendguard.generate.spend_capture.backfill",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.gpu_port",
+      "current_module": "spendguard.generate.spend_capture.gpu_port",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.lambda_adapter",
+      "current_module": "spendguard.generate.spend_capture.lambda_adapter",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.modal_adapter",
+      "current_module": "spendguard.generate.spend_capture.modal_adapter",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.runpod_adapter",
+      "current_module": "spendguard.generate.spend_capture.runpod_adapter",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.resources",
+      "current_module": "spendguard.generate.spend_capture.resources",
       "moved_in_phase": 3
     }
   ],

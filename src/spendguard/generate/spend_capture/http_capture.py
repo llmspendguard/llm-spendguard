@@ -52,7 +52,7 @@ def _enabled():
     if v is not None:
         return v.strip().lower() not in ("0", "off", "false", "no")
     try:
-        from . import config
+        from ... import config
         return str(config._cfg_get("gate", "http_capture", "on")).lower() != "off"
     except Exception:
         return True
@@ -65,7 +65,7 @@ def _is_deliberate_stop(e):
     editing an enumerated tuple). A genuine malfunction returns False → the caller swallows it so a bookkeeping
     hiccup never breaks the user's already-completed call."""
     try:
-        from . import gate
+        from ... import gate
         return isinstance(e, gate.deliberate_stop_types())
     except Exception:
         return False
@@ -114,7 +114,7 @@ def _capture(host, path, status, body_bytes):
             got = _usage_from_json(json.loads(body_bytes))
         except Exception:
             got = None
-        from . import gate
+        from ... import gate
         if got and (got[1] or got[2]):
             model, i, o = got
             gate._record_rt(model, {"model": model, "raw_http": True}, i, o, provider=provider)
@@ -122,7 +122,7 @@ def _capture(host, path, status, body_bytes):
         key = (host, path.split("?")[0])
         intent = None
         try:
-            from . import calls as _calls
+            from ... import calls as _calls
             intent = (_calls.current() or {}).get("intent")   # attribute the event to the live job when one is set
         except Exception:
             intent = None
@@ -231,7 +231,7 @@ def _capture_urllib(fullurl, data, resp):
     if host not in PROVIDER_HOSTS or not is_post:        # only billable POSTs to a known provider host
         return
     try:
-        from . import budget
+        from ... import budget
         if budget.is_reading_history():                  # a history read is not spend (reconcile/oracle downloads)
             return
     except Exception:
@@ -249,7 +249,7 @@ def _capture_urllib(fullurl, data, resp):
             clen = int(cl) if cl not in (None, "") else None
     except Exception:
         pass
-    from . import gate
+    from ... import gate
     # Whether a response is safe to read for usage is decided MECHANICALLY by its declared size — never by
     # classifying the content-type. A body is buffered only when it has a Content-Length within the cap; anything
     # else (a stream, which carries no Content-Length whether it is SSE or ndjson; an oversized body; or an
@@ -334,7 +334,7 @@ def install() -> bool:
     Client wrappers remain idempotent and fail-open; urllib remains eager and needs no optional dependency.
     Returns True iff at least one client is now wrapped.
     """
-    from .gate import _register_gate_package_postimport
+    from ...gate import _register_gate_package_postimport
 
     _register_gate_package_postimport("httpx", _install_imported_httpx_capture)
     _register_gate_package_postimport("requests", _install_imported_requests_capture)

@@ -49,7 +49,7 @@ def record_litellm(kwargs, response_obj, start_time=None, end_time=None):
     """LiteLLM success-callback signature `(kwargs, response, start, end)`. Records one completion's usage into the
     realtime ledger. FAIL-OPEN — it's a post-success logger and must never break the user's LiteLLM call."""
     try:
-        from . import gate
+        from ... import gate
         prov = str((kwargs or {}).get("custom_llm_provider") or "").lower()
         if prov in _SDK_GATED:
             return                                  # already captured by the OpenAI-SDK gate → no double count

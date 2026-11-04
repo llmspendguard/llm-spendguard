@@ -8,7 +8,7 @@ Push path mirrors the LLM roll-up: run `spendguard resources sync` from a repo a
 whose label maps to THAT repo's project, via that repo's key → the right org. Read-only against vast.ai (free).
 """
 
-from .capability_cli_parsing import registered_cli_option_token
+from ...capability_cli_parsing import registered_cli_option_token
 import json
 import os
 import pathlib
@@ -19,7 +19,7 @@ import collections
 import datetime
 import urllib.request
 
-from . import config
+from ... import config
 from . import gpu_port
 
 # NOTE: the old conversation-alignment gap reconstruction (`_gpu_alignment` + `_GPU_KW`) was REMOVED. It spread the
@@ -157,7 +157,7 @@ def gpu_rows(now=None, label_map=None):
     instances aren't listed here — their spend is in the vast.ai invoice total (the GPU reconcile gap, mirroring
     the LLM unattributed gap). Returns rows ready to map into ledger pushes."""
     now = now or time.time()
-    from . import conv
+    from ... import conv
     insts = list(_all_instances())
     attrib = conv.instance_attributions(insts)   # TIMING MATCH: vast.ai cost+window ⨝ conversation active then → org/project
     agg = {}
@@ -200,7 +200,7 @@ def vast_gpu_accounting_rows_by_day(since_ts=None, now=None, label_map=None):
     day), not lumped on today. Attributed by label → project. since_ts defaults to the start of this month."""
     now = now or time.time()
     since_ts = since_ts if since_ts is not None else _month_start_ts()
-    from . import conv
+    from ... import conv
     insts = list(_all_instances())
     attrib = conv.instance_attributions(insts)   # TIMING MATCH: vast.ai cost+window ⨝ conversation active then → org/project
     agg = {}
@@ -262,7 +262,7 @@ def compute_exceeded():
     running billed job (your protocol). Returns (scope, cap, spent) for the first breached window, else None.
     Surfaced in the report + dashboard so a breach is visible; pair with `spendguard resources launch` to hard-block
     NEW launches over cap."""
-    from . import config
+    from ... import config
     cm = config.class_cap("compute", "monthly")
     if cm is not None:
         spent = account_gpu_total()                       # month-to-date account charges (proxy); None = fetch failed
@@ -428,7 +428,7 @@ def _gpu_project_hints():
     """The USER'S OWN projects + label→project rules — from their taxonomy (chat/discover) + config
     `resources.vastai.label_map`. Injected into the agentic prompt so it maps boxes to THEIR projects. NOTHING
     about a specific user's projects is hardcoded in the package; an empty config yields an explicit 'none' note."""
-    from . import attribution
+    from ... import attribution
     lines = []
     try:
         projs = (attribution.taxonomy()[0] or {}).get("projects") or []
@@ -457,7 +457,7 @@ def _gpu_session_excerpts(max_sessions=None, max_chars=12000):
     whole-content chunking that feeds the realtime reconstruction; no truncation — input is bounded only at the
     provider window in the consumer). `max_sessions` caps the SESSIONS scanned (a named sampling bound). Yields
     [(session_id, chunk)]."""
-    from . import conv
+    from ... import conv
     return list(conv.session_chunks(max_sessions=max_sessions, max_chars=max_chars))
 
 
@@ -468,7 +468,7 @@ def discover_agentic(run=False, record=False, max_sessions=None, now=None):
     map labels→projects. Caged + estimate-first (run=False → cost only). record=True → record_recovered the
     confidently-real, not-already-known instances so the account reconcile auto-fills. Same agentic pattern as
     attribution.classify_items / conv.attribute_usage — the shared 'LLM reads conversations to attribute spend'."""
-    from . import adapters, calls, ui, pricing, conv
+    from ... import adapters, calls, ui, pricing, conv
     sessions = _gpu_session_excerpts(max_sessions)
     hints = _gpu_project_hints()                           # the USER'S projects/label_map — never hardcoded
     # CHEAP find model: relevance is now the LLM's decision over the WHOLE transcript (no regex pre-gate), so it reads
@@ -476,7 +476,7 @@ def discover_agentic(run=False, record=False, max_sessions=None, now=None):
     # confidence filter below is the right shape for that scan (the realtime reconstruction reads the same chunks the
     # same way); estimate-first surfaces the cost before any spend.
     model = config.advisor_judge_model()
-    from . import expected_output as _eo
+    from ... import expected_output as _eo
     _out, _ = _eo.expect(model, sig="spendguard:gpu_discover")   # measured, not a literal 800
     est = sum(pricing.realtime_cost(model, max(1, len(_GPU_DISCOVER_SYS + (_GPU_DISCOVER_PROMPT % (hints, ex))) // 4), _out)
               for _, ex in sessions)
@@ -573,7 +573,7 @@ def _norm_model(ms):
     """Short model name (as the LLM reads it from the transcript) → a canonical id pricing.py knows, so realtime
     token usage can be priced. Uses the shared family heuristic (_family_canonical), else falls back to
     pricing.normalize (so a specific id like 'gpt-4o' prices as itself, not the family default)."""
-    from . import pricing
+    from ... import pricing
     fam = _family_canonical(ms)
     if fam:
         return fam
@@ -591,13 +591,13 @@ def reconstruct_remote_llm(run=False, max_sessions=None, model_org_hints=None, f
     saas.identity_for_org). Magnitude from the numbers the boxes PRINTED (ground truth in the transcript); attribution
     from the shared classifier. DEDUP across sessions by run signature so a run discussed in N sessions isn't counted
     N× (the over-count guard). Estimate-first (run=False → cost only). The same Source pattern as batch/GPU."""
-    from . import adapters, calls, ui, pricing, conv, saas
+    from ... import adapters, calls, ui, pricing, conv, saas
     # full=True → the AGENTIC source: full-conversation chunks (the LLM finds the realtime runs across ALL models,
     # incl Opus/GPT-5.5, in the lmm classification/co-occurrence/stats sessions). full=False → the legacy regex
     # excerpts (box USAGE prints only — too naive; misses the conversation bulk).
     sessions = list(conv.session_chunks(max_sessions=max_sessions, sids=sids, max_chars=max_chars)) if full else conv.remote_llm_excerpts(max_sessions=max_sessions)
     model = config.advisor_model()
-    from . import expected_output as _eo
+    from ... import expected_output as _eo
     _out, _ = _eo.expect(model, sig="spendguard:remote_llm_reconstruct")   # measured, not a literal 700
     est = sum(pricing.realtime_cost(model, max(1, len(_REMOTE_LLM_SYS + ex) // 4), _out) for _, ex in sessions)
     if not run:
@@ -705,7 +705,7 @@ def reconstruct_realtime_llm_sync(run=False, sids=None, max_sessions=None, max_c
     with NO realtime tell) BEFORE the LLM sees them — that spend is already EXACT from the regular batch API, so we
     neither re-pay to analyze it nor risk double-counting it as realtime. Chunks with BOTH a batch ref and a realtime
     tell are KEPT (they may carry realtime); the consolidate then subtracts any run matching a known batch."""
-    from . import adapters, calls, conv, pricing
+    from ... import adapters, calls, conv, pricing
     fm = find_model or config.advisor_judge_model()        # cheap per-chunk scan
     cm = consolidate_model or config.advisor_model()       # opus consolidation/estimate
     raw = list(conv.session_chunks(max_sessions=max_sessions, sids=sids, max_chars=max_chars, since=since))
@@ -805,7 +805,7 @@ def _reconcile(allrows, account_total, conn, ptmap):
     Σ all recorded boxes), NEVER dumped on a project/org — and no flat per-day rows are fabricated. `by_org` is a
     diagnostic of where the recorded spend landed. residual → 0 only when every box is captured/recovered AND
     account_total is true consumption (top-ups carry a balance buffer)."""
-    from . import reconcile, saas
+    from ... import reconcile, saas
     base = saas._conn_project_base(conn)              # ORG-BASED scope (or legacy single-project / static list)
     org_scoped = bool((conn.get("org") or "").strip())
     def _in_scope(r):
@@ -855,7 +855,7 @@ class GPUSource:
     name = "gpu"
 
     def __init__(self, conn=None):
-        from . import saas
+        from ... import saas
         self._conn = conn if conn is not None else saas.saas_connection()
 
     def conn(self):
@@ -882,16 +882,16 @@ def sync(dry=False):
     single repo) — the same agentic, per-item attribution as the LLM ledger. Account-anchored: the unrecoverable
     remainder is an EXPLICIT `residual` (account total − Σ recorded boxes), surfaced but NEVER dumped on a project/org
     (a shared vast.ai account would otherwise leak cross-org). record_instance_history() runs first so live boxes are captured."""
-    from . import saas
+    from ... import saas
     c = saas.saas_connection()
     ref = saas.contributor()
     record_instance_history()                                             # RECORD live instances first (so destroyed ones survive)
-    from . import attribution
+    from ... import attribution
     _ptmap = attribution.project_team_map(attribution.taxonomy()[0])
     _meta = lambda p: _ptmap.get((p or "").lower(), ("", ""))      # (org, team) for a project
     allrows = vast_gpu_accounting_rows_by_day()
     try:                                                   # stamp the machine's billed REMOTE windows so the receipt
-        from . import receipt                              # can show the Remote component (API + Subs + Remote) fast
+        from ... import receipt                              # can show the Remote component (API + Subs + Remote) fast
         receipt.stamp_remote([{"day": r["day"], "spend_micros": round(r["cost"] * 1_000_000), "billed": True} for r in allrows])
     except Exception:
         pass
@@ -963,7 +963,7 @@ def cmd(argv=None):
         print(f"  {p:14} ${c:8.2f}")
     print(f"  {'— attributed':14} ${attributed:8.2f}")
     print(f"  {'account total':14} {money(truth)}  (vast.ai charges; top-up proxy)")
-    from . import reconcile
+    from ... import reconcile
     residual = reconcile.residual(truth, attributed)
     print(f"  {'→ residual':14} {money(residual)}  (account − attributed; should ≈ unspent balance buffer)")
     w = reconcile.residual_warning(truth, residual)         # shared core: flags an under-attributed source/tenant

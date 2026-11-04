@@ -13,10 +13,10 @@ FINAL `token_count` event's cumulative `total_token_usage` — so re-mining a gr
 Cost = pricing.realtime_cost(model, input_tokens, output_tokens, cached_input_tokens). Project = cwd basename.
 """
 
-from .capability_cli_parsing import registered_cli_option_token
+from ...capability_cli_parsing import registered_cli_option_token
 import os, json, glob, pathlib, datetime
 
-from . import config, pricing
+from ... import config, pricing
 
 _DEFAULT_MODEL = "gpt-5.5"          # only a fallback if a session somehow has no turn_context.model
 
@@ -180,7 +180,7 @@ def classify(run=False, days=None, recls=False):
     """Classify Codex sessions into org→team×project via the SHARED classifier + taxonomy (the cwd is a PRIOR the
     LLM confirms/overrides per session, incl. cross-org). Caged, estimate-first. Stored in state.cls; reused by
     day_totals/sync. Parity with claudecode.classify (same convergence: re-do unclassified or 0-confidence)."""
-    from . import attribution
+    from ... import attribution
     st, _ = update()
     cls = st.setdefault("cls", {})
     todo = [d for d in _session_digests(days, st=st) if d.get("prompt")
@@ -237,7 +237,7 @@ def day_totals(member_ref, org_label=None):
 def sync(dry=False):
     """Push Codex spend (channel=codex, billed=false) → the server, ORG-ROUTED by each session's classified org.
     Mirrors claudecode.sync."""
-    from . import saas
+    from ... import saas
     c = saas.saas_connection()
     if c.get("visibility", "private") == "private":
         return {"skipped": "visibility=private"}
@@ -270,7 +270,7 @@ def show_codex_report(days=None):
     total = sum(p["cost"] for p in byproj.values())
     # stamp from ALL digests (not the day-filtered view) so the month window is complete. billed=false → est-value.
     try:
-        from . import receipt
+        from ... import receipt
         _cls = config.load_state("codex", {"sessions": {}, "cls": {}}).get("cls", {})        # ORG → TEAM → PROJECT, the agentic classification
         receipt.stamp_est_value(
             [{"day": d["day"], "spend_micros": round(d["cost"] * 1_000_000), "billed": False,

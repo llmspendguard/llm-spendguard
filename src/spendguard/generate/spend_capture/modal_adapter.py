@@ -18,7 +18,7 @@ truth by construction (residual ≈ 0 states "capture is the bill", not a rigged
 import os
 import datetime
 
-from . import config  # noqa: F401  (keys.env → os.environ at import, the same route every provider key takes)
+from ... import config  # noqa: F401  (keys.env → os.environ at import, the same route every provider key takes)
 
 TOKEN_ID_ENV, TOKEN_SECRET_ENV = "MODAL_TOKEN_ID", "MODAL_TOKEN_SECRET"
 _RESOLUTION = "d"                                          # daily rows — one UTC day per report item

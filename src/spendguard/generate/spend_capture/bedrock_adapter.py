@@ -45,14 +45,14 @@ def _wrap(orig):
         if operation_name in _STREAM_OPS:
             resp = orig(self, operation_name, api_params)          # untouched: the body is the caller's
             try:
-                from . import budget
+                from ... import budget
                 budget.record_unpriced("bedrock", (api_params or {}).get("modelId") or "?", "realtime")
             except Exception as e:
                 print(f"[spend_gate] WARN bedrock stream capture failed ({e}); call unaffected", file=sys.stderr)
             return resp
         resp = orig(self, operation_name, api_params)              # the real AWS call — untouched, errors propagate
         try:
-            from . import gate
+            from ... import gate
             model = (api_params or {}).get("modelId") or ""
             in_tok, out_tok = _toks(operation_name, resp)
             gate._record_rt(model, {"model": model}, in_tok, out_tok, provider="bedrock")

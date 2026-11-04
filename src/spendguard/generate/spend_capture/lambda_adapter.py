@@ -18,7 +18,7 @@ import os
 import json
 import urllib.request
 
-from . import config
+from ... import config
 
 LAMBDA_BASE = "https://cloud.lambdalabs.com/api/v1"
 KEY_ENV = "LAMBDA_API_KEY"

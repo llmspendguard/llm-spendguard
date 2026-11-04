@@ -386,7 +386,7 @@ SRC = pathlib.Path(__file__).resolve().parent.parent / "src" / "spendguard"
 
 # chat.day_totals leaked across orgs: `and r["org"]` made the filter run only for rows that HAD an org, so an
 # unclassified conversation skipped it entirely and pushed under whatever org was connected.
-_chat_src = (SRC / "chat.py").read_text()
+_chat_src = (SRC / "generate/spend_capture/chat.py").read_text()
 check("chat.day_totals does not skip the org filter for unclassified rows",
       'if org_label and (r.get("org") or "").lower() != org_label.lower():' in _chat_src
       and 'and r["org"] and' not in _chat_src)
@@ -411,7 +411,7 @@ check("codex_exec._bin has no shutil.which fast path ahead of the pin",
 
 # modal_adapter.account_total returned None for an empty window, conflating a real $0 with an unreadable bill.
 check("modal account_total distinguishes an unreadable bill from a $0 window",
-      "a successful read of an empty window IS $0.00" in (SRC / "modal_adapter.py").read_text())
+      "a successful read of an empty window IS $0.00" in (SRC / "generate/spend_capture/modal_adapter.py").read_text())
 
 # THE SEAM: the gate wrote gate_ledger, the calibrator read cost_predictions, nothing bridged them — so
 # spendguard's own estimates never reached spendguard's own learned estimator.
@@ -427,11 +427,11 @@ for _t in ("the tool_result came back empty, can you check?", "<thinking> is wha
        check(f"a real ask beginning {_t[:24]!r} is not dropped", bool(conv._is_user_ask({"type": "user"}, _t)))
 check("the ask decider is agentic and lives in ONE place", callable(getattr(conv, "classify_user_asks", None)))
 check("claudecode does not keep its own copy of the ask rules",
-      '"tool_result" not in t[:40]' not in (SRC / "claudecode.py").read_text())
+      '"tool_result" not in t[:40]' not in (SRC / "generate/spend_capture/claudecode.py").read_text())
 
 # claudecode.show_claudecode_work could not tell an unreadable session directory from a period with no work.
 check("claudecode.show_claudecode_work distinguishes an unreadable dir from no work",
-      "nothing could be READ, which is not" in (SRC / "claudecode.py").read_text())
+      "nothing could be READ, which is not" in (SRC / "generate/spend_capture/claudecode.py").read_text())
 
 
 # An unpriced model took the WHOLE OpenAI report down with a KeyError, while the Anthropic path beside it

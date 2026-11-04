@@ -5,9 +5,7 @@
     "__main__.py",
     "anomaly.py",
     "attribution.py",
-    "backfill.py",
     "bakeoff.py",
-    "bedrock_adapter.py",
     "cacheaudit.py",
     "cachetest.py",
     "capability_cli_callable_generation.py",
@@ -18,15 +16,11 @@
     "capability_documentation.py",
     "capability_registry.py",
     "capability_surface_generation.py",
-    "chat.py",
-    "claudecode.py",
     "cli.py",
     "cli_arguments.py",
-    "codex.py",
     "codex_broker_owner.py",
     "codex_daemon.py",
     "codex_daemon_broker.py",
-    "compaction.py",
     "compare.py",
     "comprehend.py",
     "cost_integrity.py",
@@ -42,22 +36,16 @@
     "equivalence.py",
     "execution_journal.py",
     "experiment.py",
-    "gpu_port.py",
     "guard.py",
-    "http_capture.py",
     "kimi_daemon.py",
-    "lambda_adapter.py",
     "lane_eligibility.py",
     "lane_queue.py",
     "lane_recovery.py",
     "lane_servability.py",
     "ledger_sync.py",
-    "litellm_adapter.py",
     "mcp_fd_lifecycle.py",
     "mcp_server.py",
     "measurement.py",
-    "modal_adapter.py",
-    "otel_ingest.py",
     "process_group_reaper.py",
     "prompts.py",
     "queue_planner.py",
@@ -73,13 +61,9 @@
     "reliability.py",
     "requirement_judge.py",
     "resource_state.py",
-    "resources.py",
     "review.py",
     "route_realized.py",
-    "runpod_adapter.py",
-    "scan.py",
     "serve.py",
-    "sources.py",
     "stability.py",
     "storm_coalescer.py",
     "storm_route.py",
@@ -88,7 +72,6 @@
     "trust.py",
     "truth.py",
     "ui.py",
-    "vertex_adapter.py",
     "warm_stdio_daemon.py",
     "workdone.py",
     "xp_rate_window.py"
@@ -127,14 +110,14 @@
       "line": 942
     },
     {
-      "path": "src/spendguard/litellm_adapter.py",
+      "path": "src/spendguard/generate/spend_capture/litellm_adapter.py",
       "name": "start_time",
       "message": "unused variable 'start_time'",
       "reason": "record_litellm callback signature is required by the external LiteLLM callback protocol.",
       "line": 48
     },
     {
-      "path": "src/spendguard/litellm_adapter.py",
+      "path": "src/spendguard/generate/spend_capture/litellm_adapter.py",
       "name": "end_time",
       "message": "unused variable 'end_time'",
       "reason": "record_litellm callback signature is required by the external LiteLLM callback protocol.",
@@ -308,10 +291,6 @@
             "max_cc": 26,
             "mi": 58.04126694582299
           },
-          "src/spendguard/backfill.py": {
-            "max_cc": 11,
-            "mi": 61.588119443987694
-          },
           "src/spendguard/bakeoff.py": {
             "max_cc": 70,
             "mi": 37.37718121692871
@@ -323,10 +302,6 @@
           "src/spendguard/generate/execution/batch_tracker.py": {
             "max_cc": 37,
             "mi": 30.431804375621986
-          },
-          "src/spendguard/bedrock_adapter.py": {
-            "max_cc": 11,
-            "mi": 70.88212201841873
           },
           "src/spendguard/manage/routing/best_value.py": {
             "max_cc": 27,
@@ -404,14 +379,6 @@
             "max_cc": 27,
             "mi": 38.398466988650554
           },
-          "src/spendguard/chat.py": {
-            "max_cc": 49,
-            "mi": 0.0
-          },
-          "src/spendguard/claudecode.py": {
-            "max_cc": 51,
-            "mi": 0.0
-          },
           "src/spendguard/cli.py": {
             "max_cc": 38,
             "mi": 0.0
@@ -419,10 +386,6 @@
           "src/spendguard/cli_arguments.py": {
             "max_cc": 3,
             "mi": 71.93900342409701
-          },
-          "src/spendguard/codex.py": {
-            "max_cc": 29,
-            "mi": 30.558800631498286
           },
           "src/spendguard/codex_broker_owner.py": {
             "max_cc": 3,
@@ -439,10 +402,6 @@
           "src/spendguard/generate/execution/codex_exec.py": {
             "max_cc": 18,
             "mi": 18.420720204206486
-          },
-          "src/spendguard/compaction.py": {
-            "max_cc": 18,
-            "mi": 33.75318788170465
           },
           "src/spendguard/compare.py": {
             "max_cc": 27,
@@ -604,10 +563,6 @@
             "max_cc": 9,
             "mi": 75.54347430315269
           },
-          "src/spendguard/gpu_port.py": {
-            "max_cc": 23,
-            "mi": 48.25303760308668
-          },
           "src/spendguard/guard.py": {
             "max_cc": 14,
             "mi": 31.76708361776414
@@ -615,10 +570,6 @@
           "src/spendguard/analyze/learning/history.py": {
             "max_cc": 20,
             "mi": 39.278100741257006
-          },
-          "src/spendguard/http_capture.py": {
-            "max_cc": 18,
-            "mi": 45.68247390578454
           },
           "src/spendguard/analyze/learning/intent_model_prior.py": {
             "max_cc": 19,
@@ -635,10 +586,6 @@
           "src/spendguard/generate/execution/kimi_exec.py": {
             "max_cc": 24,
             "mi": 44.95088065727963
-          },
-          "src/spendguard/lambda_adapter.py": {
-            "max_cc": 13,
-            "mi": 74.8997143705544
           },
           "src/spendguard/manage/routing/lane_balance.py": {
             "max_cc": 117,
@@ -704,10 +651,6 @@
             "max_cc": 56,
             "mi": 6.955544664201972
           },
-          "src/spendguard/litellm_adapter.py": {
-            "max_cc": 16,
-            "mi": 66.76088145475661
-          },
           "src/spendguard/manage/__init__.py": {
             "max_cc": 0,
             "mi": 100.0
@@ -740,10 +683,6 @@
             "max_cc": 19,
             "mi": 36.18241532204339
           },
-          "src/spendguard/modal_adapter.py": {
-            "max_cc": 9,
-            "mi": 70.70362044668978
-          },
           "src/spendguard/store/reference_data/model_catalog.py": {
             "max_cc": 43,
             "mi": 12.608930133037463
@@ -771,10 +710,6 @@
           "src/spendguard/generate/execution/openai_batch_cli.py": {
             "max_cc": 11,
             "mi": 63.31893735110742
-          },
-          "src/spendguard/otel_ingest.py": {
-            "max_cc": 15,
-            "mi": 47.8920231927494
           },
           "src/spendguard/analyze/treasury/overage.py": {
             "max_cc": 19,
@@ -884,10 +819,6 @@
             "max_cc": 14,
             "mi": 54.671288944145104
           },
-          "src/spendguard/resources.py": {
-            "max_cc": 45,
-            "mi": 0.0
-          },
           "src/spendguard/review.py": {
             "max_cc": 12,
             "mi": 49.0267487779889
@@ -912,17 +843,9 @@
             "max_cc": 9,
             "mi": 70.08133675855753
           },
-          "src/spendguard/runpod_adapter.py": {
-            "max_cc": 22,
-            "mi": 68.37130155170505
-          },
           "src/spendguard/egress/saas.py": {
             "max_cc": 39,
             "mi": 0.0
-          },
-          "src/spendguard/scan.py": {
-            "max_cc": 24,
-            "mi": 60.44379628718127
           },
           "src/spendguard/platform/schedule.py": {
             "max_cc": 14,
@@ -947,10 +870,6 @@
           "src/spendguard/egress/signal.py": {
             "max_cc": 22,
             "mi": 52.382591807655835
-          },
-          "src/spendguard/sources.py": {
-            "max_cc": 23,
-            "mi": 45.305263949266305
           },
           "src/spendguard/stability.py": {
             "max_cc": 31,
@@ -1100,10 +1019,6 @@
             "max_cc": 43,
             "mi": 5.548913231913586
           },
-          "src/spendguard/vertex_adapter.py": {
-            "max_cc": 10,
-            "mi": 54.93503788965597
-          },
           "src/spendguard/warm_stdio_daemon.py": {
             "max_cc": 15,
             "mi": 22.101793907587247
@@ -1151,6 +1066,74 @@
           "src/spendguard/store/call_corpus/routing_audit.py": {
             "max_cc": 14,
             "mi": 36.06718623737245
+          },
+          "src/spendguard/generate/spend_capture/bedrock_adapter.py": {
+            "max_cc": 11,
+            "mi": 70.88212201841873
+          },
+          "src/spendguard/generate/spend_capture/litellm_adapter.py": {
+            "max_cc": 16,
+            "mi": 66.76088145475661
+          },
+          "src/spendguard/generate/spend_capture/vertex_adapter.py": {
+            "max_cc": 10,
+            "mi": 54.93503788965597
+          },
+          "src/spendguard/generate/spend_capture/http_capture.py": {
+            "max_cc": 18,
+            "mi": 45.68247390578454
+          },
+          "src/spendguard/generate/spend_capture/otel_ingest.py": {
+            "max_cc": 15,
+            "mi": 47.8920231927494
+          },
+          "src/spendguard/generate/spend_capture/claudecode.py": {
+            "max_cc": 51,
+            "mi": 0.0
+          },
+          "src/spendguard/generate/spend_capture/codex.py": {
+            "max_cc": 29,
+            "mi": 30.558800631498286
+          },
+          "src/spendguard/generate/spend_capture/chat.py": {
+            "max_cc": 49,
+            "mi": 0.0
+          },
+          "src/spendguard/generate/spend_capture/compaction.py": {
+            "max_cc": 18,
+            "mi": 33.75318788170465
+          },
+          "src/spendguard/generate/spend_capture/sources.py": {
+            "max_cc": 23,
+            "mi": 45.305263949266305
+          },
+          "src/spendguard/generate/spend_capture/scan.py": {
+            "max_cc": 24,
+            "mi": 60.44379628718127
+          },
+          "src/spendguard/generate/spend_capture/backfill.py": {
+            "max_cc": 11,
+            "mi": 61.588119443987694
+          },
+          "src/spendguard/generate/spend_capture/gpu_port.py": {
+            "max_cc": 23,
+            "mi": 48.25303760308668
+          },
+          "src/spendguard/generate/spend_capture/lambda_adapter.py": {
+            "max_cc": 13,
+            "mi": 74.8997143705544
+          },
+          "src/spendguard/generate/spend_capture/modal_adapter.py": {
+            "max_cc": 9,
+            "mi": 70.70362044668978
+          },
+          "src/spendguard/generate/spend_capture/runpod_adapter.py": {
+            "max_cc": 22,
+            "mi": 68.37130155170505
+          },
+          "src/spendguard/generate/spend_capture/resources.py": {
+            "max_cc": 45,
+            "mi": 0.0
           }
         },
         "measured_extremes": {
@@ -1308,10 +1291,6 @@
             "max_cc": 26,
             "mi": 57.823471510010044
           },
-          "src/spendguard/backfill.py": {
-            "max_cc": 11,
-            "mi": 61.31350067360952
-          },
           "src/spendguard/bakeoff.py": {
             "max_cc": 70,
             "mi": 37.25114364783685
@@ -1323,10 +1302,6 @@
           "src/spendguard/generate/execution/batch_tracker.py": {
             "max_cc": 37,
             "mi": 30.431804375621986
-          },
-          "src/spendguard/bedrock_adapter.py": {
-            "max_cc": 11,
-            "mi": 70.88212201841873
           },
           "src/spendguard/manage/routing/best_value.py": {
             "max_cc": 27,
@@ -1404,14 +1379,6 @@
             "max_cc": 27,
             "mi": 38.398466988650554
           },
-          "src/spendguard/chat.py": {
-            "max_cc": 49,
-            "mi": 0.0
-          },
-          "src/spendguard/claudecode.py": {
-            "max_cc": 51,
-            "mi": 0.0
-          },
           "src/spendguard/cli.py": {
             "max_cc": 38,
             "mi": 0.0
@@ -1419,10 +1386,6 @@
           "src/spendguard/cli_arguments.py": {
             "max_cc": 3,
             "mi": 71.93900342409701
-          },
-          "src/spendguard/codex.py": {
-            "max_cc": 29,
-            "mi": 30.45411797288853
           },
           "src/spendguard/codex_broker_owner.py": {
             "max_cc": 3,
@@ -1439,10 +1402,6 @@
           "src/spendguard/generate/execution/codex_exec.py": {
             "max_cc": 18,
             "mi": 18.40491755798936
-          },
-          "src/spendguard/compaction.py": {
-            "max_cc": 18,
-            "mi": 33.63501149430825
           },
           "src/spendguard/compare.py": {
             "max_cc": 27,
@@ -1604,10 +1563,6 @@
             "max_cc": 9,
             "mi": 75.54347430315269
           },
-          "src/spendguard/gpu_port.py": {
-            "max_cc": 23,
-            "mi": 48.14949904015014
-          },
           "src/spendguard/guard.py": {
             "max_cc": 14,
             "mi": 31.76708361776414
@@ -1615,10 +1570,6 @@
           "src/spendguard/analyze/learning/history.py": {
             "max_cc": 20,
             "mi": 39.189145306363805
-          },
-          "src/spendguard/http_capture.py": {
-            "max_cc": 18,
-            "mi": 45.68247390578454
           },
           "src/spendguard/analyze/learning/intent_model_prior.py": {
             "max_cc": 19,
@@ -1635,10 +1586,6 @@
           "src/spendguard/generate/execution/kimi_exec.py": {
             "max_cc": 24,
             "mi": 44.95088065727963
-          },
-          "src/spendguard/lambda_adapter.py": {
-            "max_cc": 13,
-            "mi": 74.8997143705544
           },
           "src/spendguard/manage/routing/lane_balance.py": {
             "max_cc": 117,
@@ -1704,10 +1651,6 @@
             "max_cc": 56,
             "mi": 6.657024289766525
           },
-          "src/spendguard/litellm_adapter.py": {
-            "max_cc": 16,
-            "mi": 66.76088145475661
-          },
           "src/spendguard/manage/__init__.py": {
             "max_cc": 0,
             "mi": 100.0
@@ -1740,10 +1683,6 @@
             "max_cc": 19,
             "mi": 36.18241532204339
           },
-          "src/spendguard/modal_adapter.py": {
-            "max_cc": 9,
-            "mi": 70.70362044668978
-          },
           "src/spendguard/store/reference_data/model_catalog.py": {
             "max_cc": 43,
             "mi": 12.608930133037463
@@ -1771,10 +1710,6 @@
           "src/spendguard/generate/execution/openai_batch_cli.py": {
             "max_cc": 11,
             "mi": 63.046946874326494
-          },
-          "src/spendguard/otel_ingest.py": {
-            "max_cc": 15,
-            "mi": 47.8920231927494
           },
           "src/spendguard/analyze/treasury/overage.py": {
             "max_cc": 19,
@@ -1884,10 +1819,6 @@
             "max_cc": 14,
             "mi": 54.671288944145104
           },
-          "src/spendguard/resources.py": {
-            "max_cc": 45,
-            "mi": 0.0
-          },
           "src/spendguard/review.py": {
             "max_cc": 12,
             "mi": 48.64262788372663
@@ -1912,17 +1843,9 @@
             "max_cc": 9,
             "mi": 70.08133675855753
           },
-          "src/spendguard/runpod_adapter.py": {
-            "max_cc": 22,
-            "mi": 68.37130155170505
-          },
           "src/spendguard/egress/saas.py": {
             "max_cc": 39,
             "mi": 0.0
-          },
-          "src/spendguard/scan.py": {
-            "max_cc": 24,
-            "mi": 59.74907896321292
           },
           "src/spendguard/platform/schedule.py": {
             "max_cc": 14,
@@ -1947,10 +1870,6 @@
           "src/spendguard/egress/signal.py": {
             "max_cc": 22,
             "mi": 51.96146984645848
-          },
-          "src/spendguard/sources.py": {
-            "max_cc": 23,
-            "mi": 45.156848106424626
           },
           "src/spendguard/stability.py": {
             "max_cc": 31,
@@ -2100,10 +2019,6 @@
             "max_cc": 43,
             "mi": 5.443208545770559
           },
-          "src/spendguard/vertex_adapter.py": {
-            "max_cc": 10,
-            "mi": 54.93503788965597
-          },
           "src/spendguard/warm_stdio_daemon.py": {
             "max_cc": 15,
             "mi": 22.101793907587247
@@ -2151,6 +2066,74 @@
           "src/spendguard/store/call_corpus/routing_audit.py": {
             "max_cc": 14,
             "mi": 36.06718623737245
+          },
+          "src/spendguard/generate/spend_capture/bedrock_adapter.py": {
+            "max_cc": 11,
+            "mi": 70.88212201841873
+          },
+          "src/spendguard/generate/spend_capture/litellm_adapter.py": {
+            "max_cc": 16,
+            "mi": 66.76088145475661
+          },
+          "src/spendguard/generate/spend_capture/vertex_adapter.py": {
+            "max_cc": 10,
+            "mi": 54.93503788965597
+          },
+          "src/spendguard/generate/spend_capture/http_capture.py": {
+            "max_cc": 18,
+            "mi": 45.68247390578454
+          },
+          "src/spendguard/generate/spend_capture/otel_ingest.py": {
+            "max_cc": 15,
+            "mi": 47.8920231927494
+          },
+          "src/spendguard/generate/spend_capture/claudecode.py": {
+            "max_cc": 51,
+            "mi": 0.0
+          },
+          "src/spendguard/generate/spend_capture/codex.py": {
+            "max_cc": 29,
+            "mi": 30.45411797288853
+          },
+          "src/spendguard/generate/spend_capture/chat.py": {
+            "max_cc": 49,
+            "mi": 0.0
+          },
+          "src/spendguard/generate/spend_capture/compaction.py": {
+            "max_cc": 18,
+            "mi": 33.63501149430825
+          },
+          "src/spendguard/generate/spend_capture/sources.py": {
+            "max_cc": 23,
+            "mi": 45.156848106424626
+          },
+          "src/spendguard/generate/spend_capture/scan.py": {
+            "max_cc": 24,
+            "mi": 59.74907896321292
+          },
+          "src/spendguard/generate/spend_capture/backfill.py": {
+            "max_cc": 11,
+            "mi": 61.31350067360952
+          },
+          "src/spendguard/generate/spend_capture/gpu_port.py": {
+            "max_cc": 23,
+            "mi": 48.14949904015014
+          },
+          "src/spendguard/generate/spend_capture/lambda_adapter.py": {
+            "max_cc": 13,
+            "mi": 74.8997143705544
+          },
+          "src/spendguard/generate/spend_capture/modal_adapter.py": {
+            "max_cc": 9,
+            "mi": 70.70362044668978
+          },
+          "src/spendguard/generate/spend_capture/runpod_adapter.py": {
+            "max_cc": 22,
+            "mi": 68.37130155170505
+          },
+          "src/spendguard/generate/spend_capture/resources.py": {
+            "max_cc": 45,
+            "mi": 0.0
           }
         },
         "measured_extremes": {
@@ -6113,15 +6096,15 @@
     "src/spendguard/manage/admission/gate.py:2707",
     "src/spendguard/manage/admission/gate.py:2717",
     "src/spendguard/manage/admission/gate.py:2755",
-    "src/spendguard/gpu_port.py:278",
+    "src/spendguard/generate/spend_capture/gpu_port.py:278",
     "src/spendguard/analyze/learning/lane_bandit.py:290",
     "src/spendguard/lane_servability.py:292",
     "src/spendguard/platform/lanes.py:64",
-    "src/spendguard/sources.py:77"
+    "src/spendguard/generate/spend_capture/sources.py:77"
   ],
   "max_largest_scc_size": 142,
   "max_cyclic_edge_count": 943,
-  "max_legacy_shim_count": 132,
+  "max_legacy_shim_count": 149,
   "recorded_cross_context_nonsurface_imports": [
     [
       "spendguard",
@@ -6129,7 +6112,7 @@
     ],
     [
       "spendguard",
-      "spendguard.bedrock_adapter"
+      "spendguard.generate.spend_capture.bedrock_adapter"
     ],
     [
       "spendguard",
@@ -6161,7 +6144,7 @@
     ],
     [
       "spendguard",
-      "spendguard.litellm_adapter"
+      "spendguard.generate.spend_capture.litellm_adapter"
     ],
     [
       "spendguard",
@@ -6169,7 +6152,7 @@
     ],
     [
       "spendguard",
-      "spendguard.vertex_adapter"
+      "spendguard.generate.spend_capture.vertex_adapter"
     ],
     [
       "spendguard.generate.execution.adapters",
@@ -6429,7 +6412,7 @@
     ],
     [
       "spendguard.attribution",
-      "spendguard.chat"
+      "spendguard.generate.spend_capture.chat"
     ],
     [
       "spendguard.attribution",
@@ -6472,27 +6455,27 @@
       "spendguard.ui"
     ],
     [
-      "spendguard.backfill",
+      "spendguard.generate.spend_capture.backfill",
       "spendguard.store.call_corpus.calls"
     ],
     [
-      "spendguard.backfill",
+      "spendguard.generate.spend_capture.backfill",
       "spendguard.capability_cli_parsing"
     ],
     [
-      "spendguard.backfill",
+      "spendguard.generate.spend_capture.backfill",
       "spendguard.analyze.learning.learn"
     ],
     [
-      "spendguard.backfill",
+      "spendguard.generate.spend_capture.backfill",
       "spendguard.store.reference_data.pricing"
     ],
     [
-      "spendguard.backfill",
+      "spendguard.generate.spend_capture.backfill",
       "spendguard.reconcile_anthropic"
     ],
     [
-      "spendguard.backfill",
+      "spendguard.generate.spend_capture.backfill",
       "spendguard.reconcile_openai"
     ],
     [
@@ -6596,11 +6579,11 @@
       "spendguard.generate.work_integrity.work_integrity"
     ],
     [
-      "spendguard.bedrock_adapter",
+      "spendguard.generate.spend_capture.bedrock_adapter",
       "spendguard.manage.admission.budget"
     ],
     [
-      "spendguard.bedrock_adapter",
+      "spendguard.generate.spend_capture.bedrock_adapter",
       "spendguard.manage.admission.gate"
     ],
     [
@@ -6637,7 +6620,7 @@
     ],
     [
       "spendguard.analyze.learning.bootstrap",
-      "spendguard.backfill"
+      "spendguard.generate.spend_capture.backfill"
     ],
     [
       "spendguard.analyze.learning.bootstrap",
@@ -7040,95 +7023,95 @@
       "spendguard.store.configuration.config"
     ],
     [
-      "spendguard.chat",
+      "spendguard.generate.spend_capture.chat",
       "spendguard.generate.execution.adapters"
     ],
     [
-      "spendguard.chat",
+      "spendguard.generate.spend_capture.chat",
       "spendguard.attribution"
     ],
     [
-      "spendguard.chat",
+      "spendguard.generate.spend_capture.chat",
       "spendguard.store.call_corpus.calls"
     ],
     [
-      "spendguard.chat",
+      "spendguard.generate.spend_capture.chat",
       "spendguard.capability_cli_parsing"
     ],
     [
-      "spendguard.chat",
+      "spendguard.generate.spend_capture.chat",
       "spendguard.store.configuration.config"
     ],
     [
-      "spendguard.chat",
+      "spendguard.generate.spend_capture.chat",
       "spendguard.store.reference_data.pricing"
     ],
     [
-      "spendguard.chat",
+      "spendguard.generate.spend_capture.chat",
       "spendguard.analyze.spend_reporting.receipt"
     ],
     [
-      "spendguard.chat",
+      "spendguard.generate.spend_capture.chat",
       "spendguard.egress.saas"
     ],
     [
-      "spendguard.chat",
+      "spendguard.generate.spend_capture.chat",
       "spendguard.ui"
     ],
     [
-      "spendguard.chat",
+      "spendguard.generate.spend_capture.chat",
       "spendguard.workdone"
     ],
     [
-      "spendguard.claudecode",
+      "spendguard.generate.spend_capture.claudecode",
       "spendguard.generate.execution.adapters"
     ],
     [
-      "spendguard.claudecode",
+      "spendguard.generate.spend_capture.claudecode",
       "spendguard.attribution"
     ],
     [
-      "spendguard.claudecode",
+      "spendguard.generate.spend_capture.claudecode",
       "spendguard.manage.admission.budget"
     ],
     [
-      "spendguard.claudecode",
+      "spendguard.generate.spend_capture.claudecode",
       "spendguard.store.call_corpus.calls"
     ],
     [
-      "spendguard.claudecode",
+      "spendguard.generate.spend_capture.claudecode",
       "spendguard.capability_cli_parsing"
     ],
     [
-      "spendguard.claudecode",
+      "spendguard.generate.spend_capture.claudecode",
       "spendguard.store.configuration.config"
     ],
     [
-      "spendguard.claudecode",
+      "spendguard.generate.spend_capture.claudecode",
       "spendguard.store.configuration.config_schema"
     ],
     [
-      "spendguard.claudecode",
+      "spendguard.generate.spend_capture.claudecode",
       "spendguard.analyze.learning.conv"
     ],
     [
-      "spendguard.claudecode",
+      "spendguard.generate.spend_capture.claudecode",
       "spendguard.store.spend_search.ledger_read"
     ],
     [
-      "spendguard.claudecode",
+      "spendguard.generate.spend_capture.claudecode",
       "spendguard.store.reference_data.pricing"
     ],
     [
-      "spendguard.claudecode",
+      "spendguard.generate.spend_capture.claudecode",
       "spendguard.analyze.spend_reporting.receipt"
     ],
     [
-      "spendguard.claudecode",
+      "spendguard.generate.spend_capture.claudecode",
       "spendguard.egress.saas"
     ],
     [
-      "spendguard.claudecode",
+      "spendguard.generate.spend_capture.claudecode",
       "spendguard.ui"
     ],
     [
@@ -7252,27 +7235,27 @@
       "spendguard.truth"
     ],
     [
-      "spendguard.codex",
+      "spendguard.generate.spend_capture.codex",
       "spendguard.attribution"
     ],
     [
-      "spendguard.codex",
+      "spendguard.generate.spend_capture.codex",
       "spendguard.capability_cli_parsing"
     ],
     [
-      "spendguard.codex",
+      "spendguard.generate.spend_capture.codex",
       "spendguard.store.configuration.config"
     ],
     [
-      "spendguard.codex",
+      "spendguard.generate.spend_capture.codex",
       "spendguard.store.reference_data.pricing"
     ],
     [
-      "spendguard.codex",
+      "spendguard.generate.spend_capture.codex",
       "spendguard.analyze.spend_reporting.receipt"
     ],
     [
-      "spendguard.codex",
+      "spendguard.generate.spend_capture.codex",
       "spendguard.egress.saas"
     ],
     [
@@ -7336,27 +7319,27 @@
       "spendguard.analyze.treasury.subscription_headroom_surfaces"
     ],
     [
-      "spendguard.compaction",
+      "spendguard.generate.spend_capture.compaction",
       "spendguard.generate.execution.adapters"
     ],
     [
-      "spendguard.compaction",
+      "spendguard.generate.spend_capture.compaction",
       "spendguard.store.call_corpus.calls"
     ],
     [
-      "spendguard.compaction",
+      "spendguard.generate.spend_capture.compaction",
       "spendguard.store.configuration.config"
     ],
     [
-      "spendguard.compaction",
+      "spendguard.generate.spend_capture.compaction",
       "spendguard.guard"
     ],
     [
-      "spendguard.compaction",
+      "spendguard.generate.spend_capture.compaction",
       "spendguard.store.reference_data.pricing"
     ],
     [
-      "spendguard.compaction",
+      "spendguard.generate.spend_capture.compaction",
       "spendguard.ui"
     ],
     [
@@ -7517,7 +7500,7 @@
     ],
     [
       "spendguard.analyze.learning.conv",
-      "spendguard.backfill"
+      "spendguard.generate.spend_capture.backfill"
     ],
     [
       "spendguard.analyze.learning.conv",
@@ -7553,7 +7536,7 @@
     ],
     [
       "spendguard.analyze.learning.conv",
-      "spendguard.resources"
+      "spendguard.generate.spend_capture.resources"
     ],
     [
       "spendguard.analyze.learning.conv",
@@ -8009,7 +7992,7 @@
     ],
     [
       "spendguard.manage.admission.gate",
-      "spendguard.claudecode"
+      "spendguard.generate.spend_capture.claudecode"
     ],
     [
       "spendguard.manage.admission.gate",
@@ -8053,7 +8036,7 @@
     ],
     [
       "spendguard.manage.admission.gate",
-      "spendguard.http_capture"
+      "spendguard.generate.spend_capture.http_capture"
     ],
     [
       "spendguard.manage.admission.gate",
@@ -8112,11 +8095,11 @@
       "spendguard.manage.routing.tier_config"
     ],
     [
-      "spendguard.gpu_port",
+      "spendguard.generate.spend_capture.gpu_port",
       "spendguard.store.configuration.config"
     ],
     [
-      "spendguard.gpu_port",
+      "spendguard.generate.spend_capture.gpu_port",
       "spendguard.egress.saas"
     ],
     [
@@ -8164,19 +8147,19 @@
       "spendguard.store.money_ledger.ledger_writer"
     ],
     [
-      "spendguard.http_capture",
+      "spendguard.generate.spend_capture.http_capture",
       "spendguard.manage.admission.budget"
     ],
     [
-      "spendguard.http_capture",
+      "spendguard.generate.spend_capture.http_capture",
       "spendguard.store.call_corpus.calls"
     ],
     [
-      "spendguard.http_capture",
+      "spendguard.generate.spend_capture.http_capture",
       "spendguard.store.configuration.config"
     ],
     [
-      "spendguard.http_capture",
+      "spendguard.generate.spend_capture.http_capture",
       "spendguard.manage.admission.gate"
     ],
     [
@@ -8260,7 +8243,7 @@
       "spendguard.analyze.treasury.subscription_headroom_surfaces"
     ],
     [
-      "spendguard.lambda_adapter",
+      "spendguard.generate.spend_capture.lambda_adapter",
       "spendguard.store.configuration.config"
     ],
     [
@@ -8753,7 +8736,7 @@
     ],
     [
       "spendguard.ledger_sync",
-      "spendguard.backfill"
+      "spendguard.generate.spend_capture.backfill"
     ],
     [
       "spendguard.ledger_sync",
@@ -8816,7 +8799,7 @@
       "spendguard.store.spend_search.ledger_read"
     ],
     [
-      "spendguard.litellm_adapter",
+      "spendguard.generate.spend_capture.litellm_adapter",
       "spendguard.manage.admission.gate"
     ],
     [
@@ -8865,7 +8848,7 @@
     ],
     [
       "spendguard.mcp_server",
-      "spendguard.claudecode"
+      "spendguard.generate.spend_capture.claudecode"
     ],
     [
       "spendguard.mcp_server",
@@ -8877,7 +8860,7 @@
     ],
     [
       "spendguard.mcp_server",
-      "spendguard.compaction"
+      "spendguard.generate.spend_capture.compaction"
     ],
     [
       "spendguard.mcp_server",
@@ -9036,7 +9019,7 @@
       "spendguard.analyze.learning.conv"
     ],
     [
-      "spendguard.modal_adapter",
+      "spendguard.generate.spend_capture.modal_adapter",
       "spendguard.store.configuration.config"
     ],
     [
@@ -9092,20 +9075,20 @@
       "spendguard.capability_cli_parsing"
     ],
     [
-      "spendguard.otel_ingest",
+      "spendguard.generate.spend_capture.otel_ingest",
       "spendguard.manage.admission.budget"
     ],
     [
-      "spendguard.otel_ingest",
+      "spendguard.generate.spend_capture.otel_ingest",
       "spendguard.capability_cli_parsing"
     ],
     [
-      "spendguard.otel_ingest",
+      "spendguard.generate.spend_capture.otel_ingest",
       "spendguard.store.reference_data.pricing"
     ],
     [
       "spendguard.analyze.treasury.overage",
-      "spendguard.claudecode"
+      "spendguard.generate.spend_capture.claudecode"
     ],
     [
       "spendguard.analyze.treasury.overage",
@@ -9289,7 +9272,7 @@
     ],
     [
       "spendguard.realtime_oracle",
-      "spendguard.resources"
+      "spendguard.generate.spend_capture.resources"
     ],
     [
       "spendguard.store.reference_data.reasoning_equivalence",
@@ -9325,15 +9308,15 @@
     ],
     [
       "spendguard.analyze.spend_reporting.receipt",
-      "spendguard.claudecode"
+      "spendguard.generate.spend_capture.claudecode"
     ],
     [
       "spendguard.analyze.spend_reporting.receipt",
-      "spendguard.codex"
+      "spendguard.generate.spend_capture.codex"
     ],
     [
       "spendguard.analyze.spend_reporting.receipt",
-      "spendguard.compaction"
+      "spendguard.generate.spend_capture.compaction"
     ],
     [
       "spendguard.analyze.spend_reporting.receipt",
@@ -9397,11 +9380,11 @@
     ],
     [
       "spendguard.analyze.spend_reporting.receipt",
-      "spendguard.sources"
+      "spendguard.generate.spend_capture.sources"
     ],
     [
       "spendguard.reconcile",
-      "spendguard.gpu_port"
+      "spendguard.generate.spend_capture.gpu_port"
     ],
     [
       "spendguard.reconcile_anthropic",
@@ -9569,7 +9552,7 @@
     ],
     [
       "spendguard.platform.remote",
-      "spendguard.resources"
+      "spendguard.generate.spend_capture.resources"
     ],
     [
       "spendguard.analyze.spend_reporting.report",
@@ -9625,7 +9608,7 @@
     ],
     [
       "spendguard.analyze.spend_reporting.report",
-      "spendguard.resources"
+      "spendguard.generate.spend_capture.resources"
     ],
     [
       "spendguard.analyze.spend_reporting.report",
@@ -9665,11 +9648,11 @@
     ],
     [
       "spendguard.manage.admission.residency_gate",
-      "spendguard.claudecode"
+      "spendguard.generate.spend_capture.claudecode"
     ],
     [
       "spendguard.manage.admission.residency_gate",
-      "spendguard.codex"
+      "spendguard.generate.spend_capture.codex"
     ],
     [
       "spendguard.manage.admission.residency_gate",
@@ -9688,51 +9671,51 @@
       "spendguard.store.configuration.config"
     ],
     [
-      "spendguard.resources",
+      "spendguard.generate.spend_capture.resources",
       "spendguard.generate.execution.adapters"
     ],
     [
-      "spendguard.resources",
+      "spendguard.generate.spend_capture.resources",
       "spendguard.attribution"
     ],
     [
-      "spendguard.resources",
+      "spendguard.generate.spend_capture.resources",
       "spendguard.store.call_corpus.calls"
     ],
     [
-      "spendguard.resources",
+      "spendguard.generate.spend_capture.resources",
       "spendguard.capability_cli_parsing"
     ],
     [
-      "spendguard.resources",
+      "spendguard.generate.spend_capture.resources",
       "spendguard.store.configuration.config"
     ],
     [
-      "spendguard.resources",
+      "spendguard.generate.spend_capture.resources",
       "spendguard.analyze.learning.conv"
     ],
     [
-      "spendguard.resources",
+      "spendguard.generate.spend_capture.resources",
       "spendguard.analyze.cost_estimation.expected_output"
     ],
     [
-      "spendguard.resources",
+      "spendguard.generate.spend_capture.resources",
       "spendguard.store.reference_data.pricing"
     ],
     [
-      "spendguard.resources",
+      "spendguard.generate.spend_capture.resources",
       "spendguard.analyze.spend_reporting.receipt"
     ],
     [
-      "spendguard.resources",
+      "spendguard.generate.spend_capture.resources",
       "spendguard.reconcile"
     ],
     [
-      "spendguard.resources",
+      "spendguard.generate.spend_capture.resources",
       "spendguard.egress.saas"
     ],
     [
-      "spendguard.resources",
+      "spendguard.generate.spend_capture.resources",
       "spendguard.ui"
     ],
     [
@@ -9892,7 +9875,7 @@
       "spendguard.store.configuration.config"
     ],
     [
-      "spendguard.runpod_adapter",
+      "spendguard.generate.spend_capture.runpod_adapter",
       "spendguard.store.configuration.config"
     ],
     [
@@ -9929,7 +9912,7 @@
     ],
     [
       "spendguard.egress.saas",
-      "spendguard.chat"
+      "spendguard.generate.spend_capture.chat"
     ],
     [
       "spendguard.egress.saas",
@@ -9965,7 +9948,7 @@
     ],
     [
       "spendguard.egress.saas",
-      "spendguard.resources"
+      "spendguard.generate.spend_capture.resources"
     ],
     [
       "spendguard.egress.saas",
@@ -10000,7 +9983,7 @@
       "spendguard.workdone"
     ],
     [
-      "spendguard.scan",
+      "spendguard.generate.spend_capture.scan",
       "spendguard.capability_cli_parsing"
     ],
     [
@@ -10125,7 +10108,7 @@
     ],
     [
       "spendguard.egress.signal",
-      "spendguard.backfill"
+      "spendguard.generate.spend_capture.backfill"
     ],
     [
       "spendguard.egress.signal",
@@ -10152,31 +10135,31 @@
       "spendguard.reconcile_openai"
     ],
     [
-      "spendguard.sources",
+      "spendguard.generate.spend_capture.sources",
       "spendguard.generate.execution.adapters"
     ],
     [
-      "spendguard.sources",
+      "spendguard.generate.spend_capture.sources",
       "spendguard.capability_cli_parsing"
     ],
     [
-      "spendguard.sources",
+      "spendguard.generate.spend_capture.sources",
       "spendguard.store.configuration.config"
     ],
     [
-      "spendguard.sources",
+      "spendguard.generate.spend_capture.sources",
       "spendguard.store.configuration.config_schema"
     ],
     [
-      "spendguard.sources",
+      "spendguard.generate.spend_capture.sources",
       "spendguard.analyze.assurance.coverage"
     ],
     [
-      "spendguard.sources",
+      "spendguard.generate.spend_capture.sources",
       "spendguard.store.reference_data.lane_registry"
     ],
     [
-      "spendguard.sources",
+      "spendguard.generate.spend_capture.sources",
       "spendguard.generate.execution.provider_plugins"
     ],
     [
@@ -10480,7 +10463,7 @@
       "spendguard.resource_state"
     ],
     [
-      "spendguard.vertex_adapter",
+      "spendguard.generate.spend_capture.vertex_adapter",
       "spendguard.manage.admission.gate"
     ],
     [

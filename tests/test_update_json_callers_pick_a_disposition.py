@@ -26,6 +26,7 @@ _MOVED_CLUSTER_A_PATHS = {
     "saas.py": ("egress", "saas.py"),
     "tier_config.py": ("manage", "routing", "tier_config.py"),
     "lane_balance.py": ("manage", "routing", "lane_balance.py"),
+    "resources.py": ("generate", "spend_capture", "resources.py"),
     "setup.py": ("platform", "setup.py"),
     "catalog.py": ("store", "reference_data", "catalog.py"),
     "catalog_price_authoring.py": ("store", "reference_data", "catalog_price_authoring.py"),

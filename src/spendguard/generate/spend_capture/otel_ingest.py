@@ -14,12 +14,12 @@ records UNPRICED (tokens kept, $ unknown) rather than a silent $0. IDEMPOTENT on
 trace file never double-counts. No LLM, no network. `spendguard otel-ingest <file.json> [--project P] [--dry-run]`.
 """
 
-from .capability_cli_parsing import registered_cli_option_token
+from ...capability_cli_parsing import registered_cli_option_token
 import datetime
 import json
 import sys
 
-from . import budget
+from ... import budget
 
 # provider / model / token / operation attribute keys, current OTel GenAI names first, then the widely-deployed
 # older ones (OpenLLMetry/Traceloop shipped gen_ai.system + prompt/completion_tokens for a long time). Reading a
@@ -141,7 +141,7 @@ def _cost_for(ch):
     if ch["in_tok"] is None or ch["out_tok"] is None:
         return None, budget.BASIS_UNPRICED
     try:
-        from . import pricing
+        from ... import pricing
         return pricing.realtime_cost(ch["model"], ch["in_tok"], ch["out_tok"], ch["cache_tok"]), budget.BASIS_RECONSTRUCTED
     except Exception:
         return None, budget.BASIS_UNPRICED
