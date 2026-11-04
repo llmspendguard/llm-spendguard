@@ -226,13 +226,15 @@ def produce_periodic_spend_report(*, alert_threshold: float | None = None, email
     print(text, end="")
     if a.email:
         from ... import notify
-        if not notify.is_configured():
+        email_configuration = config.email_config()
+        if not notify.is_configured(email_configuration):
             print("  email not configured — skipping (set up a sender: see README → 'Email the report')")
         else:
             stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d")
             subj = f"LLM and Remote Compute spend report — {stamp}" + ("  ⚠️ ALERT" if rc == 2 else "")
             try:
-                to = notify.send_email(subj, text, to=a.email_to)
+                to = notify.send_email(
+                    subj, text, config.ssl_context(), to=a.email_to, cfg=email_configuration)
                 print(f"  (emailed to {to})")
             except Exception as e:
                 print(f"  EMAIL FAILED: {e}")

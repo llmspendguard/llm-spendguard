@@ -10,7 +10,7 @@ import threading
 import urllib.parse
 from unittest.mock import patch
 
-from spendguard import kimi_exec, zai_exec, subscription_headroom_surfaces as surfaces
+from spendguard import config, kimi_exec, zai_exec, subscription_headroom_surfaces as surfaces
 
 FIXTURE_RATIO = 0.25
 FIXTURE_REMAINING = 75
@@ -41,7 +41,8 @@ def assert_subscription_surface_guard():
     assert kimi[0]["reset_ts"] == zai[0]["reset_ts"] == FIXTURE_MILLISECONDS / surfaces.SURFACE_MILLISECONDS_PER_SECOND
     with patch.object(surfaces.urllib.request, "urlopen", side_effect=TimeoutError):
         report = surfaces.read_subscription_surface_report(FIXTURE_SETTINGS, FIXTURE_TOKEN, FIXTURE_TIMEOUT,
-                                                           surfaces.parse_zai_subscription_surface)
+                                                           surfaces.parse_zai_subscription_surface,
+                                                           config.ssl_context())
     assert report["buckets"] is None and report["reason"] == "usage_read_gap:TimeoutError"
     assert report["uncertainty"] == "provider_data_unknown" and report["window"] is None and report["n"] == 0
 
@@ -52,7 +53,8 @@ def assert_subscription_surface_complete_response():
     payload["data"]["limits"].append({"type": "CREDIT_LIMIT"})
     with patch.object(surfaces.urllib.request, "urlopen", return_value=io.BytesIO(json.dumps(payload).encode())):
         report = surfaces.read_subscription_surface_report(FIXTURE_SETTINGS, FIXTURE_TOKEN, FIXTURE_TIMEOUT,
-                                                           surfaces.parse_zai_subscription_surface)
+                                                           surfaces.parse_zai_subscription_surface,
+                                                           config.ssl_context())
     assert report["buckets"] is None and report["reason"] == "usage_read_gap:KeyError"
     for value in (float("nan"), float("inf"), True, -FIXTURE_PERCENT):
         bad = copy.deepcopy(KIMI_PAYLOAD)
@@ -77,10 +79,12 @@ def assert_subscription_surface_wiring():
         assert zai_exec.usage_report() == report
         assert zai_exec.usage() == report["buckets"]
     with patch.dict(os.environ, {"SPENDGUARD_KIMI_USAGE_URL": FIXTURE_URL}):
-        assert surfaces.subscription_surface_settings("kimi_code", "SPENDGUARD_KIMI_USAGE_URL")["url"] == FIXTURE_URL
+        assert surfaces.subscription_surface_settings(
+            "kimi_code", "SPENDGUARD_KIMI_USAGE_URL", config._cfg_get)["url"] == FIXTURE_URL
     unknown_settings = {**FIXTURE_SETTINGS, "url": None}
     with patch.object(surfaces.urllib.request, "urlopen", side_effect=AssertionError("must not probe")):
-        unknown = surfaces.read_subscription_surface_report(unknown_settings, FIXTURE_TOKEN, FIXTURE_TIMEOUT, None)
+        unknown = surfaces.read_subscription_surface_report(
+            unknown_settings, FIXTURE_TOKEN, FIXTURE_TIMEOUT, None, config.ssl_context())
     assert unknown["buckets"] is None and unknown["reason"] == "usage_url_not_configured"
 
 
@@ -105,7 +109,8 @@ def assert_kimi_runtime_surface_discovery():
         with patch.object(surfaces.urllib.request, "urlopen",
                           return_value=io.BytesIO(json.dumps(KIMI_PAYLOAD).encode())):
             report = surfaces.read_subscription_surface_report(
-                resolved, token, FIXTURE_TIMEOUT, surfaces.parse_kimi_subscription_surface)
+                resolved, token, FIXTURE_TIMEOUT, surfaces.parse_kimi_subscription_surface,
+                config.ssl_context())
         assert report["buckets"][0]["remaining_pct"] == FIXTURE_REMAINING
 
     unresolved, token, gap = kimi_exec.discover_kimi_server_surface(

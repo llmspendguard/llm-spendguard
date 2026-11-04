@@ -51,10 +51,14 @@ def usage():
 
 def usage_report():
     """Read-only quota monitor using the existing coding-plan credential."""
+    from ... import config
     from ... import subscription_headroom_surfaces as surfaces
-    settings = surfaces.subscription_surface_settings("zai_coding", "SPENDGUARD_ZAI_USAGE_URL")
+    settings = surfaces.subscription_surface_settings(
+        "zai_coding", "SPENDGUARD_ZAI_USAGE_URL", config._cfg_get)
     return surfaces.cached_subscription_surface_report(_usage_cache, _USAGE_TTL_S, lambda:
-        surfaces.read_subscription_surface_report(settings, _key(), TIMEOUT_S, surfaces.parse_zai_subscription_surface))
+        surfaces.read_subscription_surface_report(
+            settings, _key(), TIMEOUT_S, surfaces.parse_zai_subscription_surface,
+            config.ssl_context()))
 # Only used when neither the caller nor the price table knows the model's output ceiling. The plan is flat-fee,
 # so a generous cap costs nothing and only avoids truncation; a real measured/published max always wins over it.
 _FALLBACK_MAX_TOKENS = 16384

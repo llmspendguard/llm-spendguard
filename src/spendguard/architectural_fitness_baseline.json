@@ -2155,10 +2155,8 @@
       "spendguard.analyze.treasury.lane_quota_cost",
       "spendguard.analyze.treasury.lane_value",
       "spendguard.analyze.treasury.overage",
-      "spendguard.analyze.treasury.subscription_headroom_surfaces",
       "spendguard.egress.deid",
       "spendguard.egress.emit",
-      "spendguard.egress.notify",
       "spendguard.egress.saas",
       "spendguard.egress.share",
       "spendguard.egress.signal",
@@ -3374,10 +3372,6 @@
     ],
     [
       "spendguard.analyze.spend_reporting.report",
-      "spendguard.egress.notify"
-    ],
-    [
-      "spendguard.analyze.spend_reporting.report",
       "spendguard.egress.saas"
     ],
     [
@@ -3501,10 +3495,6 @@
       "spendguard.store.spend_search.ledger_read"
     ],
     [
-      "spendguard.analyze.treasury.subscription_headroom_surfaces",
-      "spendguard.store.configuration.config"
-    ],
-    [
       "spendguard.egress.deid",
       "spendguard.store.configuration.config"
     ],
@@ -3514,10 +3504,6 @@
     ],
     [
       "spendguard.egress.emit",
-      "spendguard.store.configuration.config"
-    ],
-    [
-      "spendguard.egress.notify",
       "spendguard.store.configuration.config"
     ],
     [
@@ -3802,10 +3788,6 @@
     ],
     [
       "spendguard.generate.execution.antigravity_exec",
-      "spendguard.analyze.treasury.subscription_headroom_surfaces"
-    ],
-    [
-      "spendguard.generate.execution.antigravity_exec",
       "spendguard.manage.token_operations.execution_journal"
     ],
     [
@@ -3847,10 +3829,6 @@
     [
       "spendguard.generate.execution.batch_tracker",
       "spendguard.store.money_ledger.ledger_writer"
-    ],
-    [
-      "spendguard.generate.execution.codex_exec",
-      "spendguard.analyze.treasury.subscription_headroom_surfaces"
     ],
     [
       "spendguard.generate.execution.codex_exec",
@@ -6011,8 +5989,8 @@
     "src/spendguard/platform/lanes.py:64",
     "src/spendguard/generate/spend_capture/sources.py:77"
   ],
-  "max_largest_scc_size": 140,
-  "max_cyclic_edge_count": 936,
+  "max_largest_scc_size": 138,
+  "max_cyclic_edge_count": 931,
   "max_legacy_shim_count": 219,
   "recorded_cross_context_nonsurface_imports": [
     [

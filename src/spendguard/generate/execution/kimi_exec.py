@@ -46,8 +46,10 @@ def usage():
 
 def usage_report():
     """Documented CLI-server quota; missing local server configuration is a named gap."""
+    from ... import config
     from ... import subscription_headroom_surfaces as surfaces
-    settings = surfaces.subscription_surface_settings("kimi_code", "SPENDGUARD_KIMI_USAGE_URL")
+    settings = surfaces.subscription_surface_settings(
+        "kimi_code", "SPENDGUARD_KIMI_USAGE_URL", config._cfg_get)
     settings, token, discovery_gap = discover_kimi_server_surface(settings)
     if discovery_gap:
         return {"buckets": None, "source": settings["source"], "reason": discovery_gap,
@@ -55,7 +57,8 @@ def usage_report():
                 "uncertainty": "provider_data_unknown"}
     return surfaces.cached_subscription_surface_report(_usage_cache, _USAGE_TTL_S, lambda:
         surfaces.read_subscription_surface_report(settings, token, TIMEOUT_S,
-                                                  surfaces.parse_kimi_subscription_surface))
+                                                  surfaces.parse_kimi_subscription_surface,
+                                                  config.ssl_context()))
 
 
 def discover_kimi_server_surface(settings, kimi_home=None, process_exists=None):

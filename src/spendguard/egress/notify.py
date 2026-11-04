@@ -18,14 +18,11 @@ import urllib.request
 import urllib.error
 from email.message import EmailMessage
 
-from .. import config
-
-
 def _recipients(to):
     return [t.strip() for t in str(to).split(",") if t.strip()]
 
 
-def _send_resend(subject, body, to, cfg):
+def _send_resend(subject, body, to, cfg, resend_ssl_context):
     key = cfg.get("api_key")
     if not key or key.startswith("re_PASTE"):
         raise RuntimeError("no Resend api_key (set in ~/.spendguard/email.json or SPENDGUARD_RESEND_KEY)")
@@ -38,7 +35,7 @@ def _send_resend(subject, body, to, cfg):
                  # api.resend.com is behind Cloudflare, which 403s urllib's default UA ("error code: 1010").
                  "User-Agent": "spendguard/0.1 (+https://github.com/llmspendguard/llm-spendguard)"})
     try:
-        with urllib.request.urlopen(req, context=config.ssl_context(), timeout=30) as r:
+        with urllib.request.urlopen(req, context=resend_ssl_context, timeout=30) as r:
             r.read()
     except urllib.error.HTTPError as e:
         detail = e.read().decode()[:300]
@@ -53,7 +50,7 @@ def _send_resend(subject, body, to, cfg):
     return to
 
 
-def _send_smtp(subject, body, to, cfg):
+def _send_smtp(subject, body, to, cfg, smtp_ssl_context):
     host = cfg.get("host")
     if not host:
         raise RuntimeError("no SMTP host (set SPENDGUARD_SMTP_HOST or ~/.spendguard/email.json)")
@@ -63,17 +60,16 @@ def _send_smtp(subject, body, to, cfg):
     msg["To"] = to
     msg.set_content(body)
     with smtplib.SMTP(host, int(cfg.get("port", 587)), timeout=30) as s:
-        s.starttls(context=config.ssl_context())
+        s.starttls(context=smtp_ssl_context)
         if cfg.get("user") and cfg.get("password"):
             s.login(cfg["user"], cfg["password"])
         s.send_message(msg)
     return to
 
 
-def is_configured(cfg=None):
+def is_configured(cfg):
     """True if a usable email backend is set up (so report can distinguish 'not set up'
     from 'tried and failed')."""
-    cfg = config.email_config() if cfg is None else cfg
     provider = cfg.get("provider") or ("resend" if cfg.get("api_key") else ("smtp" if cfg.get("host") else None))
     if provider == "resend":
         key = str(cfg.get("api_key") or "")
@@ -83,12 +79,12 @@ def is_configured(cfg=None):
     return False
 
 
-def send_email(subject, body, to=None, cfg=None):
-    cfg = dict(cfg or config.email_config())
+def send_email(subject, body, email_ssl_context, to=None, cfg=None):
+    cfg = dict(cfg or {})
     to = to or cfg.get("to")
     if not to:
         raise RuntimeError("no recipient (set SPENDGUARD_EMAIL_TO, ~/.spendguard/email.json, or --email-to)")
     provider = cfg.get("provider") or ("resend" if cfg.get("api_key") else "smtp")
     if provider == "resend":
-        return _send_resend(subject, body, to, cfg)
-    return _send_smtp(subject, body, to, cfg)
+        return _send_resend(subject, body, to, cfg, email_ssl_context)
+    return _send_smtp(subject, body, to, cfg, email_ssl_context)

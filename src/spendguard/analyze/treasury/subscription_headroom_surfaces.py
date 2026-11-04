@@ -27,10 +27,9 @@ class SubscriptionHeadroomDataGap(ValueError):
     """A complete provider response cannot establish complete headroom."""
 
 
-def subscription_surface_settings(section, url_env):
-    from ... import config
+def subscription_surface_settings(section, url_env, configuration_value_getter):
     defaults = json.loads(importlib.resources.files(__package__.partition(".")[0]).joinpath(SURFACE_CONFIG_RESOURCE).read_text())[section]
-    return {**defaults, "url": os.environ.get(url_env) or config._cfg_get(section, "usage_url", defaults.get("url"))}
+    return {**defaults, "url": os.environ.get(url_env) or configuration_value_getter(section, "usage_url", defaults.get("url"))}
 
 
 def subscription_surface_remaining(value, scale):
@@ -92,7 +91,7 @@ def subscription_zai_reset_time(timestamp):
     return timestamp / SURFACE_MILLISECONDS_PER_SECOND
 
 
-def read_subscription_surface_report(settings, token, timeout, parser):
+def read_subscription_surface_report(settings, token, timeout, parser, subscription_surface_ssl_context):
     report = {"buckets": None, "source": settings["source"], "reason": None,
               "n": SURFACE_UNKNOWN_SAMPLE_COUNT, "window": None, "uncertainty": "provider_data_unknown"}
     if not settings.get("url"):
@@ -101,10 +100,9 @@ def read_subscription_surface_report(settings, token, timeout, parser):
     if not token:
         report["reason"] = "usage_auth_not_configured"
         return report
-    from ... import config
     try:
         request = urllib.request.Request(settings["url"], headers={"Authorization": settings["auth_prefix"] + token})
-        with urllib.request.urlopen(request, context=config.ssl_context(), timeout=timeout) as response:
+        with urllib.request.urlopen(request, context=subscription_surface_ssl_context, timeout=timeout) as response:
             payload = json.load(response)
         report["buckets"] = parser(payload, settings)
         report["uncertainty"] = "provider_reported_reset_unknown" if any(
