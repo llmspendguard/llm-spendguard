@@ -416,7 +416,7 @@ check("modal account_total distinguishes an unreadable bill from a $0 window",
 # THE SEAM: the gate wrote gate_ledger, the calibrator read cost_predictions, nothing bridged them — so
 # spendguard's own estimates never reached spendguard's own learned estimator.
 check("bulkgate.record_estimate forwards the prediction to the calibrator",
-      "calibrate.record_prediction(" in (SRC / "bulkgate.py").read_text())
+      "calibrate.record_prediction(" in (SRC / "manage/admission/bulkgate.py").read_text())
 check("the record_estimate name collision is resolved", hasattr(calibrate, "record_prediction"))
 
 # "Is this a genuine human ask?" was decided by three substrings, in TWO places. A real ask that opened with
@@ -463,7 +463,7 @@ check("cachetest uses the AST extractor, not a second regex scan",
 
 # gate._rt_flush emptied the aggregate BEFORE writing, so a failed write deleted real spend records for
 # good — in the tool whose whole purpose is not losing track of spend.
-_gsrc = (SRC / "gate.py").read_text()
+_gsrc = (SRC / "manage/admission/gate.py").read_text()
 check("a failed realtime-log write HOLDS the rows for the next flush instead of dropping them",
       "HELD for the next flush, not dropped" in _gsrc)
 from spendguard import gate                                                            # noqa: E402

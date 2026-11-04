@@ -63,11 +63,11 @@
       100
     ]
   },
-  "src/spendguard/model_preflight.py::_preflight_one::realtime_cost(1000, 100)": {
+  "src/spendguard/manage/admission/model_preflight.py::_preflight_one::realtime_cost(1000, 100)": {
     "verdict": "not_a_quote",
     "why": "The result is discarded; the call only checks whether the model has valid pricing data by observing whether it raises an unknown-model exception.",
     "model": "gpt-5.6-sol",
-    "file": "src/spendguard/model_preflight.py",
+    "file": "src/spendguard/manage/admission/model_preflight.py",
     "symbol": "_preflight_one",
     "literals": [
       1000,

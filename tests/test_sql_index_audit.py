@@ -3,7 +3,7 @@
 Two guards, both un-regressable:
 1) REQUIRED_INDEXES exist after the modules create their schema (a fresh isolated home — the same
    DDL upgrades existing installs on next open, since it runs at every connect).
-2) Every SELECT/UPDATE/DELETE literal extracted from src/spendguard/*.py is EXPLAIN QUERY PLANned
+2) Every SELECT/UPDATE/DELETE literal extracted from src/spendguard/**/*.py is EXPLAIN QUERY PLANned
    against that schema; a plan that SCANs a WATCHLIST table (the ones that grow with usage) fails
    unless the query is a whole-table aggregate registered in ALLOWED_SCANS. A future query on a big
    table without an index turns red HERE, not as a mystery slowdown in the daily report.
@@ -124,12 +124,14 @@ for migration_query in ALLOWED_EXACT_SCAN_QUERIES:
        not sql_index_scan_is_registered(migration_query + " AND intent=1"))
 
 queries = set()
+# Recurse: SQL-bearing modules now live in kind/context subpackages (the Phase-3 domain reorg),
+# not only the flat root — a non-recursive *.py glob would silently drop their queries from the audit.
 SQL_INDEX_AUDIT_SOURCE_DIRECTORIES = {
     os.path.dirname(spendguard_package.__file__),
     os.path.dirname(calls.__file__),
 }
 for source_directory in SQL_INDEX_AUDIT_SOURCE_DIRECTORIES:
-    for path in glob.glob(os.path.join(source_directory, "*.py")):
+    for path in glob.glob(os.path.join(source_directory, "**", "*.py"), recursive=True):
         tree = ast.parse(open(path).read(), filename=path)
         for node in ast.walk(tree):
             if not isinstance(node, ast.Constant) or not isinstance(node.value, str):

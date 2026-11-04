@@ -396,17 +396,17 @@
       "surface_module": "spendguard.manage.admission",
       "layer": "L1",
       "backing_modules": [
-        "bulkgate",
-        "escalation_ladder",
-        "plan_admission",
-        "model_preflight",
-        "disk_guard",
-        "agent_spawn_gate",
-        "weekly_cap_guard",
-        "residency_gate",
-        "semcache",
-        "gate",
-        "budget"
+        "manage.admission.bulkgate",
+        "manage.admission.escalation_ladder",
+        "manage.admission.plan_admission",
+        "manage.admission.model_preflight",
+        "manage.admission.disk_guard",
+        "manage.admission.agent_spawn_gate",
+        "manage.admission.weekly_cap_guard",
+        "manage.admission.residency_gate",
+        "manage.admission.semcache",
+        "manage.admission.gate",
+        "manage.admission.budget"
       ],
       "published_names": []
     },
@@ -1395,6 +1395,61 @@
     {
       "legacy_module": "spendguard.models",
       "current_module": "spendguard.store.reference_data.models",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.bulkgate",
+      "current_module": "spendguard.manage.admission.bulkgate",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.escalation_ladder",
+      "current_module": "spendguard.manage.admission.escalation_ladder",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.plan_admission",
+      "current_module": "spendguard.manage.admission.plan_admission",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.model_preflight",
+      "current_module": "spendguard.manage.admission.model_preflight",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.disk_guard",
+      "current_module": "spendguard.manage.admission.disk_guard",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.agent_spawn_gate",
+      "current_module": "spendguard.manage.admission.agent_spawn_gate",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.weekly_cap_guard",
+      "current_module": "spendguard.manage.admission.weekly_cap_guard",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.residency_gate",
+      "current_module": "spendguard.manage.admission.residency_gate",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.semcache",
+      "current_module": "spendguard.manage.admission.semcache",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.gate",
+      "current_module": "spendguard.manage.admission.gate",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.budget",
+      "current_module": "spendguard.manage.admission.budget",
       "moved_in_phase": 3
     }
   ],

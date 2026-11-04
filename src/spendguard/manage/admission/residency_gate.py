@@ -14,7 +14,7 @@ repeated pattern is judged once across sessions. It must NOT become the
 thing it warns about: never a subagent/session spawn to make this judgement (the symgrep grep-classifier failure —
 166 cold sessions, $70/day). FAIL-OPEN always: a nudge that crashes the hook would be worse than silence."""
 
-from .capability_cli_parsing import registered_cli_option_token
+from ...capability_cli_parsing import registered_cli_option_token
 import hashlib
 import json
 import os
@@ -23,8 +23,8 @@ import shlex
 import shutil
 import sys
 
-from . import config
-from .ledger_read import LedgerReadError
+from ... import config
+from ...ledger_read import LedgerReadError
 
 _HOOK_SUFFIX = "residency-gate --posttooluse-hook"
 RESIDENCY_NUDGE_ENABLED_DEFAULT = True
@@ -47,7 +47,7 @@ RESIDENCY_HOOK_TIMEOUT_SECONDS_DEFAULT = 30
 
 def _residency_configured_boolean(key):
     """Resolve a residency boolean through the declarative config layer and its environment override."""
-    from .config_schema import SETTINGS
+    from ...config_schema import SETTINGS
     spec = next(s for s in SETTINGS if s.get("section") == "residency_gate" and s.get("key") == key)
     value = os.environ.get(spec.get("env") or "")
     if value is None:
@@ -57,7 +57,7 @@ def _residency_configured_boolean(key):
 
 def _residency_configured_integer(key):
     """Resolve a residency setting through the declarative config layer, including its registered default."""
-    from .config_schema import SETTINGS
+    from ...config_schema import SETTINGS
     spec = next(s for s in SETTINGS if s.get("section") == "residency_gate" and s.get("key") == key)
     try:
         v = os.environ.get(spec.get("env") or "")
@@ -135,7 +135,7 @@ def _judge_residency_delegability(tool_name, tool_input, result_text):
         return cached
     try:
         import spendguard
-        from . import adapters, plan_admission, calls
+        from ... import adapters, plan_admission, calls
         spendguard.require()
         model = plan_admission.ready_meta_model(config.advisor_judge_model())
         rationale_max_chars = max(1, _residency_configured_integer("judge_rationale_max_chars"))
@@ -190,9 +190,9 @@ def evaluate_posttooluse(payload):
         session_id = payload.get("session_id") or "unknown-session"
         text = _result_text(payload)
         nbytes = len(text.encode("utf-8", "ignore"))
-        from . import claudecode
+        from ... import claudecode
         if os.getenv("SPENDGUARD_HOOK_HOST") == "codex":
-            from .codex import codex_hook_context_trajectory
+            from ...codex import codex_hook_context_trajectory
             try:
                 trajectory = codex_hook_context_trajectory(payload)
             except (OSError, ValueError):
@@ -221,7 +221,7 @@ def evaluate_posttooluse(payload):
         # Share the spawn gate's plan-state policy, including its configured hosting lane and near-cap band.
         # The evidence's meaning remains the agentic verdict above; this branch only chooses the permitted route.
         from . import plan_admission
-        from .config_schema import configured_agent_near_cap_threshold
+        from ...config_schema import configured_agent_near_cap_threshold
         recommendation = (
             "prefer an off-plan route via `spendguard delegate` (estimate first), or another provider's ready "
             "agent CLI such as `codex exec`; the hosting plan is near cap/overage, so avoid its subagents"

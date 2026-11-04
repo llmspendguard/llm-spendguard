@@ -3510,7 +3510,7 @@
         "literal": "model specs (vendor:model or bare); omit to check all CONFIGURED ids"
       }
     },
-    "evidence": "src/spendguard/model_preflight.py:169"
+    "evidence": "src/spendguard/manage/admission/model_preflight.py:169"
   },
   {
     "declaration_id": "preflight/model_preflight.cmd/ap/--no-correct",
@@ -3528,7 +3528,7 @@
         "literal": "skip the tiny agentic call that names a stale id's current replacement (report stale only)"
       }
     },
-    "evidence": "src/spendguard/model_preflight.py:170"
+    "evidence": "src/spendguard/manage/admission/model_preflight.py:170"
   },
   {
     "declaration_id": "batch-submit/openai_batch_cli.submit_batch_jsonl/src/--tasks",
@@ -4529,7 +4529,7 @@
         "literal": "batch .jsonl to dedup"
       }
     },
-    "evidence": "src/spendguard/semcache.py:350"
+    "evidence": "src/spendguard/manage/admission/semcache.py:350"
   },
   {
     "declaration_id": "dedup/semcache.dedup_main/ap/--out",
@@ -4547,7 +4547,7 @@
         "literal": "write the unique requests here"
       }
     },
-    "evidence": "src/spendguard/semcache.py:351"
+    "evidence": "src/spendguard/manage/admission/semcache.py:351"
   },
   {
     "declaration_id": "dedup/semcache.dedup_main/ap/--map",
@@ -4562,7 +4562,7 @@
         "literal": "write the id-grouping map here (json)"
       }
     },
-    "evidence": "src/spendguard/semcache.py:352"
+    "evidence": "src/spendguard/manage/admission/semcache.py:352"
   },
   {
     "declaration_id": "dedup/semcache.dedup_main/ap/--model",
@@ -4580,7 +4580,7 @@
         "literal": "cache scope (default * = any)"
       }
     },
-    "evidence": "src/spendguard/semcache.py:353"
+    "evidence": "src/spendguard/manage/admission/semcache.py:353"
   },
   {
     "declaration_id": "dedup-populate/semcache.populate_main/ap/--input",
@@ -4598,7 +4598,7 @@
         "literal": "the batch .jsonl that was submitted"
       }
     },
-    "evidence": "src/spendguard/semcache.py:362"
+    "evidence": "src/spendguard/manage/admission/semcache.py:362"
   },
   {
     "declaration_id": "dedup-populate/semcache.populate_main/ap/--results",
@@ -4616,7 +4616,7 @@
         "literal": "the batch results .jsonl"
       }
     },
-    "evidence": "src/spendguard/semcache.py:363"
+    "evidence": "src/spendguard/manage/admission/semcache.py:363"
   },
   {
     "declaration_id": "dedup-populate/semcache.populate_main/ap/--model",
@@ -4631,7 +4631,7 @@
         "expression": "_SCOPE_ANY"
       }
     },
-    "evidence": "src/spendguard/semcache.py:364"
+    "evidence": "src/spendguard/manage/admission/semcache.py:364"
   },
   {
     "declaration_id": "serve/serve.cmd/ap/--host",

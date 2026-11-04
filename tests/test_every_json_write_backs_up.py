@@ -123,7 +123,7 @@ print("\n-- the DATABASE gets the same treatment as the files --")
 # snapshot() was written the day config.json was lost and then called from exactly ONE place, while six
 # functions issue a DELETE against the ledger. Same shape as keep_backups=0: built, made opt-in, not opted
 # into. Every function that DELETEs money rows must snapshot first.
-_bsrc = (SRC / "budget.py").read_text()
+_bsrc = (SRC / "manage/admission/budget.py").read_text()
 _btree = ast.parse(_bsrc)
 _unsnapped, _checked = [], []
 for _fn in [n for n in ast.walk(_btree) if isinstance(n, ast.FunctionDef)]:

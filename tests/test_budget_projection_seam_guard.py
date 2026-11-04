@@ -16,9 +16,9 @@ PROJECTION_GUARD_READ_ROOTS = {
     "receipt": set(),
 }
 PROJECTION_GUARD_SOURCE_RELATIVE_PATHS = {
-    "budget": Path("budget.py"),
+    "budget": Path("manage/admission/budget.py"),
     "calls": Path("store/call_corpus/calls.py"),
-    "gate": Path("gate.py"),
+    "gate": Path("manage/admission/gate.py"),
     "receipt": Path("analyze/spend_reporting/receipt.py"),
 }
 PROJECTION_GUARD_CONSUMERS = {

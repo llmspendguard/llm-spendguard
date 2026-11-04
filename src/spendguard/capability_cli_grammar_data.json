@@ -93,7 +93,7 @@
       "gate._cli"
     ],
     "handler_evidence": [
-      "src/spendguard/gate.py:2934 (gate._cli)"
+      "src/spendguard/manage/admission/gate.py:2934 (gate._cli)"
     ],
     "parser_kind": "manual argv",
     "nested_grammar_summary": "",
@@ -112,7 +112,7 @@
       "gate._cli"
     ],
     "handler_evidence": [
-      "src/spendguard/gate.py:2934 (gate._cli)"
+      "src/spendguard/manage/admission/gate.py:2934 (gate._cli)"
     ],
     "parser_kind": "no flags parsed / inline positional grammar",
     "nested_grammar_summary": "",
@@ -129,7 +129,7 @@
       "gate._cli"
     ],
     "handler_evidence": [
-      "src/spendguard/gate.py:2934 (gate._cli)"
+      "src/spendguard/manage/admission/gate.py:2934 (gate._cli)"
     ],
     "parser_kind": "no flags parsed / inline positional grammar",
     "nested_grammar_summary": "",
@@ -146,7 +146,7 @@
       "gate._cli"
     ],
     "handler_evidence": [
-      "src/spendguard/gate.py:2934 (gate._cli)"
+      "src/spendguard/manage/admission/gate.py:2934 (gate._cli)"
     ],
     "parser_kind": "manual argv",
     "nested_grammar_summary": "",
@@ -724,7 +724,7 @@
       "agent_spawn_gate.cmd"
     ],
     "handler_evidence": [
-      "src/spendguard/agent_spawn_gate.py:142 (agent_spawn_gate.cmd)"
+      "src/spendguard/manage/admission/agent_spawn_gate.py:142 (agent_spawn_gate.cmd)"
     ],
     "parser_kind": "manual argv",
     "nested_grammar_summary": "",
@@ -743,7 +743,7 @@
       "residency_gate.cmd"
     ],
     "handler_evidence": [
-      "src/spendguard/residency_gate.py:231 (residency_gate.cmd)"
+      "src/spendguard/manage/admission/residency_gate.py:231 (residency_gate.cmd)"
     ],
     "parser_kind": "manual argv",
     "nested_grammar_summary": "",
@@ -762,7 +762,7 @@
       "weekly_cap_guard.cmd"
     ],
     "handler_evidence": [
-      "src/spendguard/weekly_cap_guard.py:169 (weekly_cap_guard.cmd)"
+      "src/spendguard/manage/admission/weekly_cap_guard.py:169 (weekly_cap_guard.cmd)"
     ],
     "parser_kind": "manual argv",
     "nested_grammar_summary": "",
@@ -781,7 +781,7 @@
       "residency_gate.install_residency_gate_cli"
     ],
     "handler_evidence": [
-      "src/spendguard/residency_gate.py:304 (residency_gate.install_residency_gate_cli)"
+      "src/spendguard/manage/admission/residency_gate.py:304 (residency_gate.install_residency_gate_cli)"
     ],
     "parser_kind": "manual argv",
     "nested_grammar_summary": "",
@@ -1217,14 +1217,14 @@
       "model_preflight.cmd"
     ],
     "handler_evidence": [
-      "src/spendguard/model_preflight.py:163 (model_preflight.cmd)"
+      "src/spendguard/manage/admission/model_preflight.py:163 (model_preflight.cmd)"
     ],
     "parser_kind": "argparse",
     "nested_grammar_summary": "",
     "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [
       {
-        "source_scope": "src/spendguard/model_preflight.py:163",
+        "source_scope": "src/spendguard/manage/admission/model_preflight.py:163",
         "selector": null,
         "operations": [
           {
@@ -3299,7 +3299,7 @@
       "agent_spawn_gate.install_agent_gate_cli"
     ],
     "handler_evidence": [
-      "src/spendguard/agent_spawn_gate.py:221 (agent_spawn_gate.install_agent_gate_cli)"
+      "src/spendguard/manage/admission/agent_spawn_gate.py:221 (agent_spawn_gate.install_agent_gate_cli)"
     ],
     "parser_kind": "manual argv",
     "nested_grammar_summary": "",
@@ -3327,7 +3327,7 @@
       "weekly_cap_guard.install_weekly_cap_guard_cli"
     ],
     "handler_evidence": [
-      "src/spendguard/weekly_cap_guard.py:244 (weekly_cap_guard.install_weekly_cap_guard_cli)"
+      "src/spendguard/manage/admission/weekly_cap_guard.py:244 (weekly_cap_guard.install_weekly_cap_guard_cli)"
     ],
     "parser_kind": "manual argv",
     "nested_grammar_summary": "",
@@ -5013,7 +5013,7 @@
       "semcache.cmd"
     ],
     "handler_evidence": [
-      "src/spendguard/semcache.py:370 (semcache.cmd)"
+      "src/spendguard/manage/admission/semcache.py:370 (semcache.cmd)"
     ],
     "parser_kind": "no flags parsed / inline positional grammar",
     "nested_grammar_summary": "",
@@ -5030,14 +5030,14 @@
       "semcache.dedup_main"
     ],
     "handler_evidence": [
-      "src/spendguard/semcache.py:347 (semcache.dedup_main)"
+      "src/spendguard/manage/admission/semcache.py:347 (semcache.dedup_main)"
     ],
     "parser_kind": "argparse",
     "nested_grammar_summary": "",
     "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [
       {
-        "source_scope": "src/spendguard/semcache.py:347",
+        "source_scope": "src/spendguard/manage/admission/semcache.py:347",
         "selector": null,
         "operations": [
           {
@@ -5085,14 +5085,14 @@
       "semcache.populate_main"
     ],
     "handler_evidence": [
-      "src/spendguard/semcache.py:359 (semcache.populate_main)"
+      "src/spendguard/manage/admission/semcache.py:359 (semcache.populate_main)"
     ],
     "parser_kind": "argparse",
     "nested_grammar_summary": "",
     "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [
       {
-        "source_scope": "src/spendguard/semcache.py:359",
+        "source_scope": "src/spendguard/manage/admission/semcache.py:359",
         "selector": null,
         "operations": [
           {

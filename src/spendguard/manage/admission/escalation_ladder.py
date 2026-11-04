@@ -5,7 +5,7 @@ import threading
 import time
 from typing import Callable
 
-from . import config
+from ... import config
 
 
 _ZERO_SAFE = {"subscription"}
@@ -77,7 +77,7 @@ def cancel_on_zero_billable(run: Callable[[], object], soft_deadline_s: float, *
     if expired and proof and cancel is not None:
         cancelled = bool(cancel())
     if cancelled:
-        from . import calls
+        from ... import calls
         calls.record_call(provider, model, "subscription" if transport == "subscription" else "realtime", 0.0,
                           latency=time.monotonic() - started, intent=intent, outcome="deadline_exceeded",
                           disposition="cancelled-stall-zerobill",

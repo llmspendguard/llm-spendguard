@@ -13,12 +13,12 @@ Wrap your call (no auto-hijack of the gate — explicit + safe):
 threshold=0.0 → exact-only (default, zero risk). >0 → also semantic. Returns the (possibly cached) text.
 """
 
-from .capability_cli_parsing import add_registered_cli_argument
+from ...capability_cli_parsing import add_registered_cli_argument
 import sqlite3, struct, hashlib, threading, datetime
-from . import config
-from .ledger_fork_locks import new_fork_reset_ledger_state
-from .ledger_writer import best_effort_ledger_function
-from .schema_indexes import ensure_ordered_index_coverage, table_index_coverages
+from ... import config
+from ...ledger_fork_locks import new_fork_reset_ledger_state
+from ...ledger_writer import best_effort_ledger_function
+from ...schema_indexes import ensure_ordered_index_coverage, table_index_coverages
 
 _lock = new_fork_reset_ledger_state(globals(), "_lock", threading.RLock)
 _stats = {"exact": 0, "semantic": 0, "miss": 0, "saved": 0.0}
@@ -122,7 +122,7 @@ def _embed(text):
     truncates. text[:8000] here would have keyed two different long prompts to the SAME cache entry — a wrong-hit. Returns
     a vector, or None (a failed/oversized item or any error) → the caller treats None as a cache MISS (graceful)."""
     try:
-        from . import adapters, calls
+        from ... import adapters, calls
         with calls.context(intent="spendguard:semcache"):
             r = adapters.embed([text], model=_SEMCACHE_EMBED_MODEL)
         return (r.get("vectors") or [None])[0]
@@ -211,7 +211,7 @@ def cached_call(fn, prompt, model, threshold=0.0, est_cost=0.0):
     hit = get_cached(prompt, model, threshold=threshold)
     if hit is not None:
         _stats["saved"] += est_cost
-        from . import guard
+        from ... import guard
         guard.record_saving("cache", est_cost)          # guarded: the API cost this cache hit avoided
         return hit
     out = fn(prompt)

@@ -1,6 +1,6 @@
 """PreToolUse gate that routes avoidable Agent/Task work off a near-cap hosting plan."""
 
-from .capability_cli_parsing import registered_cli_option_token
+from ...capability_cli_parsing import registered_cli_option_token
 import hashlib
 import json
 import os
@@ -9,8 +9,8 @@ import shlex
 import shutil
 import sys
 
-from . import config, delegate_router, plan_admission
-from .ledger_read import LedgerReadError
+from ... import config, delegate_router, plan_admission
+from ...ledger_read import LedgerReadError
 
 _HOOK_SUFFIX = "agent-spawn-gate --pretooluse-hook"
 _OVERRIDE_FLAG = "SPENDGUARD_ALLOW_SUBAGENT"
@@ -22,7 +22,7 @@ def _hosting_lane():
 
 
 def _plan_in_band():
-    from .config_schema import configured_agent_near_cap_threshold
+    from ...config_schema import configured_agent_near_cap_threshold
     return plan_admission.hosting_plan_in_near_cap_band(_hosting_lane(), configured_agent_near_cap_threshold())
 
 

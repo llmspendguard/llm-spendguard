@@ -22,10 +22,10 @@ import contextlib
 import io
 import os, sys, json, functools, datetime, time
 
-from . import pricing
-from . import calls as _calls
-from .config import LOG, FLAG, cap as _cap, disabled as _disabled, allow as _allow
-from .emit import emit as _emit
+from ... import pricing
+from ... import calls as _calls
+from ...config import LOG, FLAG, cap as _cap, disabled as _disabled, allow as _allow
+from ...emit import emit as _emit
 
 
 def _prompt_text(kw):
@@ -74,7 +74,7 @@ def _finish(result):
 def _call_orig(orig, self, a, kw):
     """Run the REAL SDK call with the raw-HTTP layer suppressed — the SDKs ride httpx underneath, and
     without this flag http_capture would record every gated SDK call a second time."""
-    from . import http_capture
+    from ... import http_capture
     tok = http_capture.in_sdk_call.set(True)
     try:
         return orig(self, *a, **kw)
@@ -83,7 +83,7 @@ def _call_orig(orig, self, a, kw):
 
 
 async def _call_orig_async(orig, self, a, kw):
-    from . import http_capture
+    from ... import http_capture
     tok = http_capture.in_sdk_call.set(True)
     try:
         return await orig(self, *a, **kw)
@@ -188,10 +188,10 @@ def deliberate_stop_types():
     drifts. A brand-new REFUSAL should still subclass SpendGateRefused (covered automatically); only a genuinely
     different KIND of deliberate stop (like the deadline) is enumerated here. DispatchTimeout is imported lazily to
     keep this module low in the import graph."""
-    from .bulk_resilience import BulkResilienceRefused
+    from ...bulk_resilience import BulkResilienceRefused
     types = [SpendGateRefused, BulkResilienceRefused]
     try:
-        from .dispatch import DispatchTimeout
+        from ...dispatch import DispatchTimeout
         types.append(DispatchTimeout)
     except ImportError:
         pass
@@ -199,7 +199,7 @@ def deliberate_stop_types():
         # A refusal to produce a GROUNDED estimate is a deliberate stop too (provider_tokens / comprehend / whole_job
         # all propagate it): it must never be downgraded to 'keep going' by a fail-open estimate handler. Lazy-imported
         # to keep gate low in the import graph.
-        from .estimate_divergence import EstimateNotGrounded
+        from ...estimate_divergence import EstimateNotGrounded
         types.append(EstimateNotGrounded)
     except ImportError:
         pass
@@ -233,7 +233,7 @@ def _content_tokens(content, provider=None, model=None):
     if isinstance(content, str):
         return _ct(content)
     try:
-        from . import content_tokens
+        from ... import content_tokens
         return content_tokens.count_tokens(content, provider=provider, model=model, text_tokens=_ct)
     except Exception as e:
         # THE FALLBACK IS THE BUG THIS FUNCTION EXISTS TO PREVENT. `_ct(str(content))` json-ifies the blocks
@@ -253,7 +253,7 @@ _warned_once = set()
 
 def _gate_warn_once(msg):
     """One line per distinct problem. An 800-request batch that warns 800 times is a warning nobody reads."""
-    from . import config
+    from ... import config
     config.warn_once(msg)                                # one registry; deid.py had its own copy + own set
 
 
@@ -264,7 +264,7 @@ def _expected_out(model, kw=None, body=None, sig=None):
     say "NEVER 0", which was not true of the code below it. Callers that take `[0]` and drop the basis get
     the warning but not the flag, so a 0 does reach their arithmetic — it is announced, not prevented. See
     expected_output.py for the precedence and why 0 is the least-bad number to hand back."""
-    from . import expected_output
+    from ... import expected_output
     cap = None
     src = kw if kw is not None else (body or {})
     for k in ("max_tokens", "max_completion_tokens", "max_output_tokens"):
@@ -339,7 +339,7 @@ def _warn_implausible(model, in_tok, requests, per_item_max=None):
 
 
 def _estimate_openai_jsonl(data: bytes, intent=None, declared_out=None):
-    from . import expected_output as _eo
+    from ... import expected_output as _eo
     in_tok = out = n = 0
     max_req = 0            # largest SINGLE provider request/item — the impossibility bound (the window is per-request,
     model = None           # NOT per-batch); for embeddings it is the biggest single input, never the line's summed list.
@@ -386,7 +386,7 @@ def _estimate_openai_jsonl(data: bytes, intent=None, declared_out=None):
 
 
 def _estimate_anthropic_requests(requests, intent=None, declared_out=None):
-    from . import expected_output as _eo
+    from ... import expected_output as _eo
     in_tok = n = 0
     max_req = 0            # largest SINGLE request (system+messages) — the window bounds each request, not the batch
     skipped = 0            # sum; max_req ≥ the old batch AVERAGE, so this only ever catches MORE, never fewer (a single
@@ -460,7 +460,7 @@ def _submit_receipt(est):
     submit (the gate already printed the est). Verbosity-gated, stderr, fully guarded: must NEVER affect the gate's
     decision or raise. The batch's ACTUAL cost trues up later at reconcile; this shows the est + the billed tally."""
     try:
-        from . import receipt
+        from ... import receipt
         if receipt.level() in ("flow", "verbose"):
             print(receipt.render_tally(), file=sys.stderr)
     except Exception:
@@ -477,7 +477,7 @@ def _calibrate_est(est):
     quantiles per (label, model, transport) — this reads them so the DISPLAYED number is grounded, while the
     ceiling stays the thing the cap compares. Zero spend, fully guarded: no calibration → no claim."""
     try:
-        from . import calibrate, calls as _calls
+        from ... import calibrate, calls as _calls
         n = int(est.get("requests") or 0)
         if n <= 0 or not est.get("model") or not est.get("out_tok"):
             return None
@@ -544,11 +544,11 @@ def _decide(est):
         if ans in ("yes", "y"):
             _log({**est, "decision": "allowed_prompt"}); _submit_receipt(est); return
         _log({**est, "decision": "refused_prompt"})
-        from . import guard
+        from ... import guard
         guard.record_saving("block", est["cost"])     # guarded: a blocked submission's spend, prevented
         raise SpendGateRefused(f"submission refused at gate (${est['cost']:.2f} > ${cap:.0f})")
     _log({**est, "decision": "refused_noninteractive"})
-    from . import guard
+    from ... import guard
     guard.record_saving("block", est["cost"])         # guarded: a blocked submission's spend, prevented
     raise SpendGateRefused(
         f"submission ${est['cost']:.2f} > cap ${cap:.0f} (non-interactive). "
@@ -561,7 +561,7 @@ def _worst_case_cap():
     genuinely runaway request set is still caught while a legitimate large batch — whose realistic cost is fine but
     whose ceiling-worst-case is naturally large — is not false-refused. Much higher than _cap by design. env
     SPENDGUARD_WORST_CASE_CAP → config gate.worst_case_cap → default max(GATE_CAP × 100, $10,000)."""
-    from . import config
+    from ... import config
     try:
         v = os.getenv("SPENDGUARD_WORST_CASE_CAP") or config._cfg_get("gate", "worst_case_cap", None)
         if v is not None:
@@ -617,7 +617,7 @@ def _read_filelike(file):
 def _budget_check(cost, model, provider, kind):
     """Cross-process daily/monthly cap (only when budget.backend=sqlite). Hard stop — but ASK first
     when interactive (same as the per-batch cap); GATE_ALLOW=1 skips the prompt for big intentional runs."""
-    from . import config
+    from ... import config
     if _allow():
         return
     from . import budget
@@ -625,7 +625,7 @@ def _budget_check(cost, model, provider, kind):
         # Re-reading an already-billed batch is not spending, so a cap must not fire on it. Without this the
         # gate refused every call for the rest of the day over $359.63 of charges that never happened.
         return
-    from .ledger_read import LedgerSettlementIncomplete
+    from ...ledger_read import LedgerSettlementIncomplete
     try:
         if config.budget_backend() != "sqlite":
             budget.require_complete_metered_settlements()
@@ -651,7 +651,7 @@ def _budget_check(cost, model, provider, kind):
     _emit({"kind": kind, "provider": provider, "model": model, "cost": cost, "decision": f"refused_{w}"})
     hint = ""                                          # on_breach policy: fail-closed by default; opt-in names a $0 lane
     try:
-        from . import route_utility
+        from ... import route_utility
         _act, _tgt, _why = route_utility.breach_decision()
         if _act == "downgrade":
             hint = f" · on_breach=downgrade → {_why}"
@@ -665,7 +665,7 @@ def _budget_record(cost, model, provider, kind, quarantine=False, basis=None, in
     """`quarantine` marks a row the gate PROVED impossible (input > the model's context window). It is still
     written — deleting the forensic record of a bad estimate is how you lose the ability to explain the bug —
     but it is tagged so every total excludes it and the receipt can show it as what it is."""
-    from . import config
+    from ... import config
     if config.budget_backend() == "sqlite":
         from . import budget
         budget.record_charge(provider, model, kind, cost, basis=basis,
@@ -684,7 +684,7 @@ def _meta_gate(cost, model, provider):
     """Enforce the SEPARATE meta cap + record to the meta ledger. Returns True if handled (meta)."""
     if not _meta_intent():
         return False
-    from . import budget, config
+    from ... import budget, config
     if not _allow():
         ex = budget.meta_exceeded(cost)
         if ex:
@@ -826,7 +826,7 @@ def _gate_openai_files(kw, args=()):
     # intent + a caller's declared output ride the recording CONTEXT (the submitter stamps them) → the at-create estimate
     # uses the realistic basis (measured/declared), not the ceiling, so the cap + provisional row see the plausible cost.
     try:
-        from . import calls as _c
+        from ... import calls as _c
         _ctx = _c.current()
         _intent, _declared = _ctx.get("intent"), _ctx.get("batch_expected_out")
     except Exception:
@@ -854,7 +854,7 @@ def _gate_anthropic(kw, args=()):
     # estimate uses the SAME realistic basis (measured/declared, not the ceiling) the per-call estimate did — the
     # provisional cost row + the global cap then see what the job will PLAUSIBLY emit, not a ~100x ceiling.
     try:
-        from . import calls as _c
+        from ... import calls as _c
         _ctx = _c.current()
         _intent, _declared = _ctx.get("intent"), _ctx.get("batch_expected_out")
     except Exception:
@@ -877,7 +877,7 @@ def _gate_anthropic(kw, args=()):
 # reconcile" gap), and HARD-STOPS before the next call once per-process cumulative spend
 # crosses GATE_RT_BUDGET (default $50). The runaway-loop protection (e.g. the 47,771-call balloon).
 import threading as _threading, atexit as _atexit, collections as _collections
-from .config import RT_LOG, rt_budget as _rt_budget
+from ...config import RT_LOG, rt_budget as _rt_budget
 
 _rt_lock = _threading.Lock()
 _rt_spent = 0.0          # per-process cumulative real-time $
@@ -977,14 +977,14 @@ def _intent_door_gate(intent, est, provider, model):
                 _warn_ungated_fan_once(intent, n_raw)
     except Exception:
         pass                                              # detection is telemetry — never break a call
-    from . import config
+    from ... import config
     cap = config.intent_cap(intent)
     if cap is None or _allow():
         return
-    from .ledger_read import LedgerSettlementIncomplete
+    from ...ledger_read import LedgerSettlementIncomplete
     from .budget import require_finite_budget_value
     try:
-        from . import calls
+        from ... import calls
         spent = calls.intent_spend(intent, config.intent_cap_window_s())
         require_finite_budget_value((spent, est, cap, spent + est))
     except LedgerSettlementIncomplete as partial_settlement:
@@ -1135,13 +1135,13 @@ def _rt_precheck_usd(provider, model, est):
     if _refuse_metered_active():                       # 'prove $0' switch → NO metered call proceeds (lanes bypass this)
         raise MeteredCallRefused("metered call refused (refuse_metered active): %s %s" % (provider, model))
     if _meta_intent():
-        from . import calls as _scoped_calls, config as _scoped_config
+        from ... import calls as _scoped_calls, config as _scoped_config
         _scoped_label = _scoped_calls.current().get("intent")
         if _scoped_config.scoped_intent_authorizations(_scoped_label):
             _intent_door_gate(_scoped_label, est, provider, model)
     if _meta_intent():                                # spendguard's own use → separate meta cap, skip workload
         if not _allow():
-            from . import budget, config
+            from ... import budget, config
             ex = budget.meta_exceeded(est)
             if ex:
                 _emit({"kind": "meta", "provider": provider, "model": model, "cost": est, "decision": "refused_meta"})
@@ -1395,12 +1395,12 @@ def _provider_of(model):
     if not m:
         return UNKNOWN_PROVIDER
     try:
-        from . import adapters
+        from ... import adapters
         return adapters.provider_for(m)
     except Exception:
         pass
     try:
-        from . import pricing as _p
+        from ... import pricing as _p
         return _p.PROVIDERS.get(m) or _p.PROVIDERS.get(_p.normalize(m)) or UNKNOWN_PROVIDER
     except Exception:
         return UNKNOWN_PROVIDER
@@ -1485,7 +1485,7 @@ def _record_rt(model, kw, in_tok, out_tok, cached=0, latency=None, output=None, 
             if cache_creation:
                 _saved -= cache_creation * _pin * (pricing.CACHE_WRITE_5M_MULTIPLIER - 1)   # the write premium (offset)
             if _saved > 0:
-                from . import guard
+                from ... import guard
                 guard.record_saving("prompt_cache", _saved / 1_000_000)
         except Exception:
             pass
@@ -1825,7 +1825,7 @@ def _autotune_mode():
     if v is not None:
         return v.strip().lower()
     try:
-        from . import config
+        from ... import config
         return str(config._cfg_get("gate", "autotune", "suggest")).lower()
     except Exception:
         return "suggest"
@@ -1897,7 +1897,7 @@ def _autotune(kw, model):
     # accept). This single invariant makes the visible-output p99 spiral impossible: a cap of 7 can never be emitted,
     # whatever a poisoned class recommends. (The adapters path already sends the ceiling via output_budget; _autotune
     # mutates the cap on the raw SDK-patch path that bypasses it, so it carries its own copy of the same law.)
-    from . import adapters as _ad, pricing
+    from ... import adapters as _ad, pricing
     try:
         _pub = int(pricing.max_output_tokens(model) or 0)
     except Exception:
@@ -1930,7 +1930,7 @@ def _autotune(kw, model):
         try:
             ceiling = int(pricing.output_ceiling(_ad.provider_for(model), model, _MAX_ABS))
         except Exception as _ce:
-            from . import config as _cfg
+            from ... import config as _cfg
             _cfg.warn_once(f"autotune: could not resolve an output ceiling for {model!r} ({str(_ce)[:60]}) — "
                            f"capping the raise at the absolute {_MAX_ABS:,} backstop, not the recommend.")
             ceiling = _MAX_ABS
@@ -2704,7 +2704,7 @@ def _install_imported_adapter_sdk(module):
     """Wire the adapter selected for an SDK whose import has just completed."""
     import importlib
     adapter_module_name, _verifier_name = _ADAPTER_GATED_SDK_MODULES[module.__name__]
-    adapter_module = importlib.import_module("." + adapter_module_name, __package__)
+    adapter_module = importlib.import_module("..." + adapter_module_name, __package__)
     if not adapter_module.install(force=False):
         print(f"[spend_gate] WARN adapter {adapter_module_name} did not wire imported SDK {module.__name__}",
               file=sys.stderr)
@@ -2714,7 +2714,7 @@ def _imported_adapter_sdk_is_wired(module_name):
     """Use each adapter's real capture signal; an imported-but-unwired SDK is never covered."""
     import importlib
     adapter_module_name, verifier_name = _ADAPTER_GATED_SDK_MODULES[module_name]
-    adapter_module = importlib.import_module("." + adapter_module_name, __package__)
+    adapter_module = importlib.import_module("..." + adapter_module_name, __package__)
     return bool(getattr(adapter_module, verifier_name)())
 
 
@@ -2725,7 +2725,7 @@ def _register_installing_enforcing_interpreter() -> None:
     registration_exception = None
     with contextlib.redirect_stderr(registration_stderr):
         try:
-            from . import fleet as enforcing_fleet
+            from ... import fleet as enforcing_fleet
             enforcing_fleet.register_enforcing_interpreter()
         except Exception as exc:
             registration_exception = exc
@@ -2752,16 +2752,16 @@ def install(cap: "float | None" = None) -> None:
     import importlib
     for _mod in ("litellm_adapter", "bedrock_adapter", "vertex_adapter"):
         try:                                    # provider breadth (LiteLLM / direct Bedrock / direct Vertex) — wire
-            importlib.import_module("." + _mod, __package__).install(force=False)   # only if the underlying SDK is
+            importlib.import_module("..." + _mod, __package__).install(force=False)   # only if the underlying SDK is
         except Exception as e:                   # ALREADY imported; never force-import a heavy optional dep at startup.
             print(f"[spend_gate] WARN adapter {_mod} startup wiring skipped: {e}", file=sys.stderr)
     try:                                         # third-party providers: `pip install spendguard-provider-X` is all a
-        from . import provider_plugins           # user does — entry points activate here, fail-open per plugin
+        from ... import provider_plugins           # user does — entry points activate here, fail-open per plugin
         provider_plugins.load_plugins()                  # (recipe: docs/PROVIDERS.md; conformance: spendguard.provider_kit)
     except Exception as e:
         print(f"[spend_gate] WARN provider plugins skipped: {e}", file=sys.stderr)
     try:                                         # raw-HTTP visibility net (capture-first, never blocks) — SDK-originated
-        from . import http_capture               # traffic is suppressed via the _call_orig ContextVar (no double count)
+        from ... import http_capture               # traffic is suppressed via the _call_orig ContextVar (no double count)
         http_capture.install()
     except Exception as e:
         print(f"[spend_gate] WARN raw-HTTP capture skipped: {e}", file=sys.stderr)
@@ -2903,7 +2903,7 @@ def _render_key_status_lines(statuses, down):
     'resolved' (the key STRING is present) is NOT 'valid' (it authenticates), the split that let a rotated, 401ing key
     read all-green. Any OTHER down metered provider (gemini / zai / kimi …) gets its own liveness line, so a failed
     key is visible per-provider, not only in the footer."""
-    from . import config
+    from ... import config
     lines, shown = [], set()
     for st in statuses:
         prov = st["prov"]
@@ -2938,7 +2938,7 @@ def _stale_editable_install():
     installed here, so a lazy import fails at runtime (the 'reviewer unavailable' / ImportError class the caller hit).
     meta_v is None when metadata is unreadable — that is 'unknown', NOT a skew (we never flag on a failed read)."""
     try:
-        from . import __version__ as code_v
+        from ... import __version__ as code_v
     except Exception:
         return False, None, None
     try:
@@ -2963,7 +2963,7 @@ def control_gate_runtime(cmd: str = "status", live: bool = False):
     else:  # status / doctor
         print(f"spend gate: {'🔴 DISABLED' if _disabled() else '🟢 ENABLED'}   (cap ${_cap():.0f})")
         print(f"  python    : {sys.executable}")
-        from . import config
+        from ... import config
         _doctor_budget_backend = config.budget_backend()
         if _doctor_budget_backend == "sqlite":
             print(f"  budget enforcement: durable, cross-process (budget_backend={_doctor_budget_backend})")
@@ -2984,7 +2984,7 @@ def control_gate_runtime(cmd: str = "status", live: bool = False):
             print(f"  version   : 🟢 {_code_v}")
         if cmd == "doctor":
             try:
-                from . import fleet as _fleet
+                from ... import fleet as _fleet
                 _consumer_drift = _fleet.consumer_install_drift()
                 _consumer_install_drift_found = bool(_consumer_drift)
                 for _drift in _consumer_drift:
@@ -3006,7 +3006,7 @@ def control_gate_runtime(cmd: str = "status", live: bool = False):
         enforcing = _enforcement_armed()
         startup_gate_active = True
         if cmd == "doctor":
-            from . import setup as _doctor_setup
+            from ... import setup as _doctor_setup
             startup_gate_active = _doctor_setup._startup_gate_active(sys.executable)
             _doctor_startup_gate_gap_found = enforcing and not startup_gate_active
         if _doctor_startup_gate_gap_found:
@@ -3031,7 +3031,7 @@ def control_gate_runtime(cmd: str = "status", live: bool = False):
             print("    fix: run under a gated venv, `spendguard install-hook --venv <v>` / `--user`, "
                   "or `import spendguard; spendguard.require()` at the top of the script.")
         try:
-            from . import fleet as _registration_fleet
+            from ... import fleet as _registration_fleet
             _registration_status = _registration_fleet.enforcing_interpreter_registration_status()
             if _registration_status["registered"]:
                 print("  registry  : 🟢 enforcing interpreter registered for fleet management")
@@ -3051,7 +3051,7 @@ def control_gate_runtime(cmd: str = "status", live: bool = False):
         except Exception:
             pass
         try:                                          # DEAD bandit-list entries — a name matching NO recorded intent
-            from . import lane_balance                #   protects/selects nothing (axis-4: absence read as success)
+            from ... import lane_balance                #   protects/selects nothing (axis-4: absence read as success)
             for _lk, _cov in (lane_balance.bandit_list_coverage() or {}).items():
                 if not _cov.get("read_ok"):           # a ledger read failure is not 'all fine' AND not 'all unmatched'
                     print(f"  ? advisor.{_lk}: could not check entries (calls ledger unreadable) — not 'all fine'")
@@ -3080,7 +3080,7 @@ def control_gate_runtime(cmd: str = "status", live: bool = False):
         # estimate-first discipline silently degrades to "run it and find out". doctor is where a user goes
         # to ask whether this machine is configured correctly, so it is where the answer belongs.
         try:
-            from . import config as _c
+            from ... import config as _c
             _probs = _c.validate_advisor()
             print(f"  advisor   : {'🟢 both models priced' if not _probs else '🔴 UNPRICED — the meta cap cannot be computed'}")
             for _p in _probs:
@@ -3091,7 +3091,7 @@ def control_gate_runtime(cmd: str = "status", live: bool = False):
         print(f"  flag file : {FLAG}  ({'present → off' if os.path.exists(FLAG) else 'absent'})")
         print(f"  env       : GATE_DISABLE={os.getenv('GATE_DISABLE','')!r}  GATE_ALLOW={os.getenv('GATE_ALLOW','')!r}  GATE_CAP={os.getenv('GATE_CAP') or '(default 75)'}")
         try:                                          # on-cap-breach policy: fail-closed by default; downgrade names a $0 lane
-            from . import route_utility as _ru
+            from ... import route_utility as _ru
             _pol = _ru.breach_policy()
             if _pol == "downgrade":
                 _a, _t, _w = _ru.breach_decision()
@@ -3114,9 +3114,9 @@ def control_gate_runtime(cmd: str = "status", live: bool = False):
         # API keys — a proper setup check (this is what would have CAUGHT the repo-move break: cwd-relative .env
         # silently lost the keys, so reconcile/report saw no provider data). Show found + where from.
         try:
-            from . import config
+            from ... import config
             try:                                           # CACHED liveness ($0): a resolved key that last FAILED to reach
-                from . import reliability as _rel          # its provider is NOT 'valid' — cross-reference so the key line
+                from ... import reliability as _rel          # its provider is NOT 'valid' — cross-reference so the key line
                 _down = {d["resource"]: d for d in _rel.health_reds() if d.get("kind") == "metered"}  # never reads green
             except Exception:
                 _down = {}
@@ -3126,19 +3126,19 @@ def control_gate_runtime(cmd: str = "status", live: bool = False):
             pass
         if cmd == "doctor":
             try:
-                from . import claudecode as _cc_residency
+                from ... import claudecode as _cc_residency
                 for _res_line in _cc_residency.residency_summary_lines():
                     print("  " + _res_line)
             except Exception:
                 print("  residency : UNKNOWN — transcript analysis could not run")
             try:
-                from . import delegate_router as _delegate_router
+                from ... import delegate_router as _delegate_router
                 print("  " + _delegate_router.delegation_doctor_line())
             except Exception as _delegation_error:
                 print(f"  delegation lanes ready: UNKNOWN — check could not run ({type(_delegation_error).__name__})")
             # SaaS push readiness — confirm THIS repo will independently push to the aggregation server.
             try:
-                from . import saas as _saas
+                from ... import saas as _saas
                 c = _saas.saas_connection()
                 ok, reason = _saas.ready()
                 if c.get("enabled"):
@@ -3158,7 +3158,7 @@ def control_gate_runtime(cmd: str = "status", live: bool = False):
                 # (measured 3.5 min) and already runs in the daily report/reconcile, which persist it as a
                 # byproduct. Read that, show its AGE; no cache = honest UNKNOWN, never a silent skip.
                 # `spendguard doctor --live` forces the full pull.
-                from . import ledger_sync
+                from ... import ledger_sync
                 if live:
                     line = ledger_sync.leak_line()
                     print(f"  ledger    : {line}" if line else "  ledger    : (nothing to compare yet)")
@@ -3175,14 +3175,14 @@ def control_gate_runtime(cmd: str = "status", live: bool = False):
             except Exception:
                 print("  ledger    : leak status UNKNOWN — check could not run")
             try:                                          # COST×TOKEN cross-check: the ledger cost column is what
-                from . import cost_integrity              # every $ figure rests on; a cost PROVABLY above the max
+                from ... import cost_integrity              # every $ figure rests on; a cost PROVABLY above the max
                 for _l in cost_integrity.cost_integrity_lines():   # token price = under-recorded tokens, caught here
                     print("  integrity : " + _l)          # BEFORE it is quoted as verified (always ≥1 line: green+
             except Exception as _cie:                     # coverage / UNKNOWN on read-fail / 🔴 per impossible bucket)
                 # the check itself erroring must NOT let the status silently VANISH (that reads as clean) — say UNKNOWN
                 print(f"  integrity : ⚪ UNKNOWN — cost×token cross-check could not run ({str(_cie)[:120]})")
             try:                                          # subscription-lane activation: silent-by-design at call
-                from . import lanes                       # time (degrade to API), so doctor is where a dead lane
+                from ... import lanes                       # time (degrade to API), so doctor is where a dead lane
                 for _ln in lanes.lane_summary_lines():         # must become VISIBLE with its exact activation step
                     print("  " + _ln)
             except Exception:
@@ -3201,7 +3201,7 @@ def control_gate_runtime(cmd: str = "status", live: bool = False):
             except Exception:
                 print("  model ids : ⚪ UNKNOWN — configured-model preflight could not run")
             try:                                          # OVERAGE NUDGE: when a plan lane is at/below its warn
-                from . import lanes as _lanes_nudge       # level, steer batchable comprehension onto the OTHER
+                from ... import lanes as _lanes_nudge       # level, steer batchable comprehension onto the OTHER
                 _nudge = _lanes_nudge.overage_nudge_line(do_fetch=False)   # $0 lanes (cached read — no CLI here)
                 if _nudge:
                     print("  " + _nudge)
@@ -3219,7 +3219,7 @@ def control_gate_runtime(cmd: str = "status", live: bool = False):
             except Exception:
                 print("  plan axis : ⚪ UNKNOWN — admission risk state could not be read")
             try:                                          # BULK-LANE SURFACE: an estate can migrate its bulk onto
-                from . import tier_config                 # bulk_delegate, pass every check, and STILL route 100% to
+                from ... import tier_config                 # bulk_delegate, pass every check, and STILL route 100% to
                 _tc = tier_config.tier_config_report()    # the metered API if advisor.tiers is unset — inert while the
                 if not _tc["configured"]:                 # code looks protected. doctor is where that becomes visible.
                     print("  bulk lanes: 🔴 NOT CONFIGURED — advisor.tiers unset, so a --tier bulk_delegate fan refuses every task.")
@@ -3253,15 +3253,15 @@ def control_gate_runtime(cmd: str = "status", live: bool = False):
             # live pull used to run on the DEFAULT path, so whenever that server was slow/unreachable it blocked
             # ~1.4–2.6s and blew doctor's <2s health-check budget — the regression test_gate_cli guards.
             try:
-                from . import metadata_audit
+                from ... import metadata_audit
                 if live:
                     mr = metadata_audit.backbone_health()
                     if not mr["cache"]["present"]:        # AUTO-HEAL an absent/empty cache by adopting the table now
                         try:
-                            from . import sync as _sync
+                            from ... import sync as _sync
                             _sync.sync()
                             import importlib
-                            from . import pricing as _pr
+                            from ... import pricing as _pr
                             importlib.reload(_pr)
                             mr = metadata_audit.backbone_health()
                         except Exception:
@@ -3278,7 +3278,7 @@ def control_gate_runtime(cmd: str = "status", live: bool = False):
             except Exception:
                 pass
             try:                                          # PRICE-TABLE FRESHNESS: pricing.freshness() computes it but
-                from . import pricing as _pr              # nothing surfaced it — a stale $/token silently misprices
+                from ... import pricing as _pr              # nothing surfaced it — a stale $/token silently misprices
                 _v, _age, _stale = _pr.freshness()        # every estimate until someone notices. doctor is where it shows.
                 if _age is None:
                     print(f"  pricing   : ⚪ curated verify date unparseable ({_v})")

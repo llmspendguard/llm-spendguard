@@ -12,6 +12,8 @@ REQUEST_LEDGER_READER_MODULES = (
 )
 REQUEST_LEDGER_OFFLINE_CONNECTION_FUNCTIONS = {("budget", "snapshot")}
 REQUEST_LEDGER_MOVED_MODULE_PATHS = {
+    "budget": ("manage", "admission", "budget.py"),
+    "bulkgate": ("manage", "admission", "bulkgate.py"),
     "lane_bandit": ("analyze", "learning", "lane_bandit.py"),
     "intent_model_prior": ("analyze", "learning", "intent_model_prior.py"),
     "learn": ("analyze", "learning", "learn.py"),
@@ -27,6 +29,7 @@ REQUEST_LEDGER_MOVED_MODULE_PATHS = {
     "models": ("store", "reference_data", "models.py"),
     "provider_tokens": ("analyze", "cost_estimation", "provider_tokens.py"),
     "receipt": ("analyze", "spend_reporting", "receipt.py"),
+    "semcache": ("manage", "admission", "semcache.py"),
 }
 REQUEST_LEDGER_REQUIRED_EDGES = {
     "ledger_read": {

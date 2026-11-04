@@ -14,9 +14,9 @@ import math
 import sqlite3
 from numbers import Number
 from decimal import Decimal
-from . import config
-from .ledger_fork_locks import new_fork_reset_ledger_state
-from .ledger_writer import serialize_ledger_function
+from ... import config
+from ...ledger_fork_locks import new_fork_reset_ledger_state
+from ...ledger_writer import serialize_ledger_function
 
 
 def require_finite_budget_value(value):
@@ -42,7 +42,7 @@ def finite_budget_projection(project):
 
 def _budget_snapshot_generation_observer():
     """Keep SQLite's connection-relative commit counter on a read-only owner."""
-    from .store.spend_search.ledger_read import (
+    from ...store.spend_search.ledger_read import (
         _consumer_ledger_read_target,
         effective_ledger_admission_deadline,
     )
@@ -74,8 +74,8 @@ def _budget_snapshot_generation_observer():
 @contextlib.contextmanager
 def budget_projection_reader(*, deadline_s=None, rollup_eligible=True):
     """Use committed WAL snapshots independently of pending writer work."""
-    from .ledger import SpendLedger
-    from .store.spend_search.ledger_read import (
+    from ...ledger import SpendLedger
+    from ...store.spend_search.ledger_read import (
         _ledger_read_connection, consumer_empty_spend_compatibility,
         SPEND_EVENT_READ_COLUMNS, DEFAULT_LEDGER_READ_TIME_BUDGET_S,
         LedgerReadTimeout, LedgerReadError, LedgerReadOpenError, LedgerRequestAbandoned,
@@ -154,7 +154,7 @@ def budget_projection_snapshot(read_projection):
                 _LEDGER_TL.read_ledger = previous
     return read_budget_projection_snapshot
 
-from .store.spend_search.ledger_read import bind_ledger_query_deadline
+from ...store.spend_search.ledger_read import bind_ledger_query_deadline
 
 _conn = None
 BUDGET_AUXILIARY_POOL_KEY = "budget_auxiliary_reads"
@@ -182,7 +182,7 @@ def _ledger_db():
     SpendLedger), every reader/writer here goes through it, and a fresh install has no `charges` to make.
     The one-time `migrate_charges` bridge reads a PRE-EXISTING charges via its own connection; it never needs
     this to create one, and the migration tests build their own charges fixture."""
-    from .ledger_writer import current_ledger_writer_connection
+    from ...ledger_writer import current_ledger_writer_connection
     owner = current_ledger_writer_connection()
     if owner is not None:
         return owner
@@ -207,9 +207,9 @@ def _ledger():
         return scoped_reader
     led = getattr(_LEDGER_TL, "led", None)
     if led is None:
-        from .ledger import SpendLedger
+        from ...ledger import SpendLedger
         led = _LEDGER_TL.led = SpendLedger()
-    from .ledger_writer import current_ledger_writer_connection
+    from ...ledger_writer import current_ledger_writer_connection
     owner_connection = current_ledger_writer_connection()
     if owner_connection is not None:
         import copy
@@ -220,7 +220,7 @@ def _ledger():
 
 def _budget_writer_is_initialized():
     """An existing facade or executing owner can read without schema initialization."""
-    from .ledger_writer import current_ledger_writer_connection
+    from ...ledger_writer import current_ledger_writer_connection
     if current_ledger_writer_connection(config.db_path()) is not None:
         return True
     initialized_ledger = getattr(_LEDGER_TL, "led", None)
@@ -237,8 +237,8 @@ def _consumer_aggregate_snapshot(aggregate):
         if (_budget_writer_is_initialized()
                 or getattr(_LEDGER_TL, "read_ledger", None) is not None):
             return aggregate(*args, **kwargs)
-        from .ledger import SpendLedger
-        from .ledger_read import (_ledger_read_connection, DEFAULT_LEDGER_READ_TIME_BUDGET_S,
+        from ...ledger import SpendLedger
+        from ...ledger_read import (_ledger_read_connection, DEFAULT_LEDGER_READ_TIME_BUDGET_S,
                                   SPEND_EVENT_READ_COLUMNS, LedgerReadTimeout, LedgerQueryDeadline,
                                   consumer_empty_spend_compatibility)
         aggregate_budget = (kwargs.get("deadline_s", deadline_parameter.default)
@@ -310,7 +310,7 @@ def _attribute(ev, project):
     if not proj:
         proj = UNATTRIBUTED_PROJECT
     try:
-        from . import conv as _conv_mod
+        from ... import conv as _conv_mod
         org, team = _conv_mod._prior_org_team(proj) if proj else ("", "")
     except Exception:
         org, team = "", ""
@@ -332,7 +332,7 @@ def _record_spend_event(provider, model, kind, cost, *, conv_id="", basis="", in
     `chain` is the caller's JOB/RUN tag — carried onto
     the money row so billed $ slices by job, not just intent (two concurrent runs of one intent get distinct chains)."""
     try:
-        from .ledger import live_dedup_key
+        from ...ledger import live_dedup_key
         ev = charge_to_event(provider, model, kind, cost, conv_id=conv_id, basis=basis,
                              intent=intent, actor=actor, key_fp=key_fp, chain=chain)
         # Gate-only interpreter provenance. Captured as a LOCAL and handed to the ledger writer as an explicit
@@ -383,7 +383,7 @@ def _record_spend_event(provider, model, kind, cost, *, conv_id="", basis="", in
             payload["venv"] = running_venv
         for candidate in spend_event_retry_paths():
             try:
-                from .ledger_deadletter import append_spend_deadletter_event
+                from ...ledger_deadletter import append_spend_deadletter_event
                 append_spend_deadletter_event(candidate, payload)
                 retry_path = candidate
                 break
@@ -503,13 +503,13 @@ def record_charge(provider, model, kind, cost, project=None, conv_id=None, basis
         fp = ""
     if intent is None or actor is None:
         try:
-            from . import calls as _c
+            from ... import calls as _c
             intent = intent if intent is not None else (_c.current().get("intent") or "")
             actor = actor if actor is not None else (_c.caller() or "")
         except Exception:
             intent, actor = intent or "", actor or ""
     try:                                               # the JOB/RUN tag from the live context (spendguard.context(chain=…)):
-        from . import calls as _cc                     # carried onto the money row so "my spend" slices by JOB, not just
+        from ... import calls as _cc                     # carried onto the money row so "my spend" slices by JOB, not just
         chain = _cc.current().get("chain") or ""       # intent (which two concurrent runs of one intent would collide on)
     except Exception:
         chain = ""
@@ -521,7 +521,7 @@ def record_charge(provider, model, kind, cost, project=None, conv_id=None, basis
 
 def reconcile_money_batch_estimate(provider, model, intent, in_tok, out_tok, cost):
     """Auditably revise the newest open gate estimate to the measured batch actual; never delete or clamp rows."""
-    from .ledger_writer import current_ledger_writer_connection, run_ledger_write
+    from ...ledger_writer import current_ledger_writer_connection, run_ledger_write
     if current_ledger_writer_connection() is None:
         return run_ledger_write(lambda: reconcile_money_batch_estimate(provider, model, intent, in_tok, out_tok, cost))
     led = _ledger()
@@ -577,7 +577,7 @@ def snapshot(reason="", keep=None, force=False, *, compact_source=None, compact_
     import time as _time
     try:
         src = config.db_path()
-        from .distribution import mark_distribution_ephemeral_dir
+        from ...distribution import mark_distribution_ephemeral_dir
         d = mark_distribution_ephemeral_dir(config.HOME / "snapshots")
         # THROTTLE — a snapshot is a FULL-DB copy. Before this, the scheduled reconcile's reattribute took one on
         # EVERY run, so a full backup landed ~every 45 min and keep=4 rotated through in ~3h (measured 2026-10-08:
@@ -637,7 +637,7 @@ def reattribute_providers(apply=False, actor="reattribute_providers"):
     spend_audit with the old and new value, because a silent restatement is indistinguishable from the
     error it corrects — and in a forensic tool the correction has to be as visible as the mistake."""
     from . import gate
-    from .ledger import to_dec, USD_COLS
+    from ...ledger import to_dec, USD_COLS
     led = _ledger()
     rows = [r for r in led.query() if r.get("model")]     # every spend_events row carrying a model
     fixes = []
@@ -694,7 +694,7 @@ def reattribute_providers(apply=False, actor="reattribute_providers"):
     # that it served a call made before it existed.
     known = {}
     try:
-        from . import adapters
+        from ... import adapters
         for v in adapters.PROVIDERS:
             fp = config.key_fingerprint(v)
             if fp:
@@ -907,7 +907,7 @@ def require_complete_metered_settlements(since=None, project=None, *, time_budge
     """
     if not pathlib.Path(config.db_path()).exists():
         return
-    from .ledger_read import (read_incomplete_call_settlements, LedgerSettlementIncomplete,
+    from ...ledger_read import (read_incomplete_call_settlements, LedgerSettlementIncomplete,
                               _read_incomplete_settlement_totals)
     if connection is not None:
         coverage = _read_incomplete_settlement_totals(connection, since, project)
@@ -919,7 +919,7 @@ def require_complete_metered_settlements(since=None, project=None, *, time_budge
 
 
 def _require_budget_settlement_within_deadline(started, deadline_s, since=None, project=None):
-    from .ledger_read import LedgerReadTimeout, LedgerQueryDeadline, DEFAULT_LEDGER_READ_TIME_BUDGET_S
+    from ...ledger_read import LedgerReadTimeout, LedgerQueryDeadline, DEFAULT_LEDGER_READ_TIME_BUDGET_S
     remaining = (deadline_s - (time.monotonic() - started) if deadline_s is not None
                  else DEFAULT_LEDGER_READ_TIME_BUDGET_S)
     if remaining <= 0:
@@ -969,7 +969,7 @@ def input_cache_split(since=None, project=None, conv=None):
     denominator is their sum. Include reconstructed subscription rows because their transcript usage is the primary
     measured cache evidence; exclude reconciliation mirrors so the same usage is not counted twice. The two cache
     axes stay separate and are never inferred."""
-    from .ledger import LLM_USD_COLS
+    from ...ledger import LLM_USD_COLS
     where = {}
     if project is not None:
         where["project_primary"] = str(project).strip().lower()
@@ -1039,7 +1039,7 @@ def quarantine_charge(ts=None, reason="", row=None):
     Target by `row` (the spend_events id — exact) or by `ts` (ts_utc). Up to six rows can share one second, so
     a ts matching more than one RAISES rather than voiding all of them: silently voiding five innocent rows to
     quarantine one bad one would be a worse version of the bug this repairs. Returns the number voided."""
-    from .ledger import to_dec, USD_COLS
+    from ...ledger import to_dec, USD_COLS
     led = _ledger()
     with _lock:
         if row is not None:
@@ -1132,9 +1132,9 @@ def reprice_unpriced(model=None, apply=False, actor="reprice"):
     DRY-RUN by default: returns a plan [{id, provider, model, in_tok, out_tok, cost, method}] (method ∈
     update|adjust|skip). `apply=True` commits through update()/adjust() — both audited + revision-bumped, never raw
     SQL. Filter to one `model` (e.g. 'glm-5.2') or sweep every unpriced model."""
-    from . import pricing
-    from .ledger import _KIND_TO_USD, dec
-    from .ledger_writer import current_ledger_writer_connection, run_ledger_write
+    from ... import pricing
+    from ...ledger import _KIND_TO_USD, dec
+    from ...ledger_writer import current_ledger_writer_connection, run_ledger_write
     if current_ledger_writer_connection() is None:
         return run_ledger_write(lambda: reprice_unpriced(model, apply, actor))
     led = _ledger()
@@ -1337,7 +1337,7 @@ def clear_readable_true_down(since=None, providers=None, *, maintenance_ledger=N
 
     An explicit providers collection scopes the rebuild to readable provider units; None preserves the
     unconditional default above. An empty collection changes nothing, including taking no snapshot."""
-    from .ledger_writer import current_ledger_writer_connection, run_ledger_write
+    from ...ledger_writer import current_ledger_writer_connection, run_ledger_write
     if maintenance_ledger is None and current_ledger_writer_connection() is None:
         return run_ledger_write(lambda: clear_readable_true_down(since, providers))
     true_down_provider_scope = None if providers is None else tuple(dict.fromkeys(providers))
@@ -1348,8 +1348,8 @@ def clear_readable_true_down(since=None, providers=None, *, maintenance_ledger=N
     # of true-down rows, record_true_down, now writes only spend_events (its INSERT INTO charges was removed
     # above); and the only consumers of these rows — gate_batch_cells (the estimate base) and by_dims (the SaaS
     # push) — read spend_events (repointed 5b). So charges holds no true-down rows for this to leave stale.
-    from .ledger import LockedError
-    from .ledger_read import DEFAULT_LEDGER_READ_ROW_CAP
+    from ...ledger import LockedError
+    from ...ledger_read import DEFAULT_LEDGER_READ_ROW_CAP
     import logging as true_down_logging
     import traceback as true_down_traceback
     true_down_ledger = maintenance_ledger if maintenance_ledger is not None else _ledger()
@@ -1511,7 +1511,7 @@ def by_dims(since=None):
     # where nobody has the local context to question it — so void is auto-excluded, and unpriced ($0) too. It
     # DELIBERATELY keeps reconciliation/backfill + meta rows: the org dashboard needs them. `kind` is
     # reconstructed from the row's category — is_meta → 'meta', else the category its money column names.
-    from .ledger import BILLED_USD_COLS
+    from ...ledger import BILLED_USD_COLS
     led = _ledger()
     # est-VALUE is excluded in the SQL WHERE (billed=0 rows never enter the sum), exactly like void/unpriced —
     # NOT filtered out row-by-row in Python, so there is no untraced drop. COALESCE(billed,1) keeps legacy rows
@@ -1553,7 +1553,7 @@ def by_intent(since=None):
     SAME countable filter (`_COUNTABLE`) as spent_since — the receipt's real-$ API line — so the Σ over all intents
     RECONCILES with that headline for the same window, exactly. Blank/legacy intent groups under '(unlabelled)' and is
     never dropped (an unattributed dollar stays visible, not silently folded into a named job)."""
-    from .ledger import LLM_USD_COLS
+    from ...ledger import LLM_USD_COLS
     led = _ledger()
     res = led.sum_by(["intent"], cols=LLM_USD_COLS, filt=led._COUNTABLE, since=since)
     return {(i or "(unlabelled)"): {"cost": float(v["usd"]), "calls": v["n"]} for i, v in res.items()}
@@ -1569,7 +1569,7 @@ def billed_by_model(intent=None, as_of=None):
     amortized plan-draw (out_tok x lane_eff) so a $0-lane arm is priced at its TRUE marginal cost, never a flat $0 and
     never the corpus fiction. Keyed 'provider:model' to match advise.evidence's row ids. Same LLM_USD_COLS + _COUNTABLE
     filter as spent_since, so a metered arm's cost here reconciles with the real-$ ledger for that (intent, model)."""
-    from .ledger import LLM_USD_COLS
+    from ...ledger import LLM_USD_COLS
     led = _ledger()
     where = {"intent": intent} if intent is not None else None
     res = led.sum_by(["provider", "model"], cols=LLM_USD_COLS, filt=led._COUNTABLE, where=where, until=as_of)

@@ -17,9 +17,9 @@ Composes existing primitives — adapters.provider_for, adapters.metered_fallbac
 vendor_call.served_check / closest_served, pricing.realtime_cost — it re-implements none of them; it makes them a
 single pre-spend gate. Run it before any batch, and on a cadence (`spendguard verify` calls it)."""
 
-from .capability_cli_parsing import add_registered_cli_argument
+from ...capability_cli_parsing import add_registered_cli_argument
 
-from . import adapters, config, gate, pricing, vendor_call
+from ... import adapters, config, gate, pricing, vendor_call
 
 
 def _split_spec(spec):

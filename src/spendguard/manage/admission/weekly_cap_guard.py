@@ -1,6 +1,6 @@
 """Fast, offline PreToolUse guard for Claude Code weekly-cap spawn leaks."""
 
-from .capability_cli_parsing import registered_cli_option_token
+from ...capability_cli_parsing import registered_cli_option_token
 import datetime
 import json
 import os
@@ -9,8 +9,8 @@ import shlex
 import shutil
 import sys
 
-from . import config
-from .ledger_read import LedgerReadError
+from ... import config
+from ...ledger_read import LedgerReadError
 
 
 WEEKLY_CAP_GUARD_ENABLED_DEFAULT = True
@@ -51,7 +51,7 @@ def _weekly_cap_guard_setting(key, default):
 
 def anthropic_weekly_headroom():
     """Return (fraction-left, reset timestamp), or (None, None), from lanes.lane_headroom's provider-truth SSOT."""
-    from . import lanes
+    from ... import lanes
     row = next((item for item in lanes.lane_headroom(do_fetch=False)
                 if item.get("lane") == WEEKLY_CAP_GUARD_HOST_LANE), None)
     if not row or not row.get("known") or row.get("remaining_pct") is None:

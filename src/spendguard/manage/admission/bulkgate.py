@@ -21,12 +21,12 @@ import hashlib
 import sqlite3
 import threading
 import contextlib
-from . import config
-from .ledger_fork_locks import new_fork_reset_ledger_state
+from ... import config
+from ...ledger_fork_locks import new_fork_reset_ledger_state
 from decimal import Decimal, localcontext
 import logging
-from .ledger_writer import best_effort_ledger_function, serialize_ledger_function
-from .money_scale import real_usd_to_nano_usd, nano_usd_to_usd, assert_nano_total_matches
+from ...ledger_writer import best_effort_ledger_function, serialize_ledger_function
+from ...money_scale import real_usd_to_nano_usd, nano_usd_to_usd, assert_nano_total_matches
 
 GATE_ESTIMATE_NANO_COLUMNS = {column: f"{column}_nano" for column in ("est_usd",)}
 
@@ -237,7 +237,7 @@ def record_estimate(sig, model, est_usd, est_count):
     # remembered to log by hand through a DIFFERENTLY NAMED function. Neither module was wrong on its own;
     # the defect was the gap. Never raises: a calibration write must not be able to block an authorization.
     try:
-        from . import calibrate
+        from ... import calibrate
         calibrate.record_prediction(sig, f"gate:{sig[:12]}", model, float(est_usd), n=int(est_count),
                                     transport="batch")
     except Exception:
@@ -252,7 +252,7 @@ def record_tested(sig, test_n, verified=True, contract=None, result=None, data_s
 
     `verified` used to mean only "a test ran". It now means "the output matched the declared shape", which is
     the claim a bulk run is actually relying on."""
-    from . import output_contract
+    from ... import output_contract
     now = time.time()
     desc = output_contract.describe(contract) if contract is not None else ""
     chash = output_contract.contract_hash(contract) if contract is not None else ""
@@ -301,7 +301,7 @@ def gate_status(sig, contract=None, data_sig=None):
     Pass the CURRENT `contract` / `data_sig` and freshness additionally requires that they MATCH what was
     tested. A test proves something about a shape and a data distribution; carrying it over to a different
     shape or a different corpus is the "tested v1, ran v2" hole the sig already closes for the prompt."""
-    from . import output_contract
+    from ... import output_contract
     with config.ledger_op("bulkgate", _ensure_gate_schema) as db, _lock:
         r = db.execute("SELECT model,estimated_at,est_usd,est_count,tested_at,test_n,verified,"
                           "contract,contract_hash,data_sig,test_parsed,test_salvaged,test_failed,test_failure,"
@@ -513,7 +513,7 @@ def latency(sig=None, model=None, near_chars=None):
         """Seconds at quantile q. Same single algorithm as _pctl — this was a nearest-rank variant whose
         index `int(len(v)*q)` overshoots by up to one position (q=1.0 indexes len, out of range) and which
         raised IndexError on an empty sample rather than saying it did not know."""
-        from .calibrate import _quantile
+        from ...calibrate import _quantile
         s = _quantile(vals, q)
         return None if s is None else round(float(s), 3)
 
@@ -719,7 +719,7 @@ def _pctl(vals, p):
     repo and all three disagreed. This one returned 0 on empty input, which is the house invariant inverted:
     an empty sample means we do not KNOW the p99 output length, and 0 is a specific, confident, wrong answer
     that a max_tokens decision would then be sized from."""
-    from .calibrate import _quantile
+    from ...calibrate import _quantile
     q = _quantile(vals, p)
     return None if q is None else int(q)
 
@@ -784,7 +784,7 @@ def maxtokens(sig, current_max=None, model=None):
     _rfloor = 0
     if model:
         try:
-            from . import models as _m
+            from ... import models as _m
             if _m.reasons_by_default(model):
                 _rfloor = _reasoning_out_estimate()      # env → config → default, shared with expected_output.expect
         except Exception:
@@ -1015,7 +1015,7 @@ def test_job(sig, run_fn, n=None, verify_fn=None, contract=None, items=None):
     trust that it ran"), which authorized full batches on a sample that proved only that the API returned
     something. The run is still allowed under `warn`/`off` and via GATE_FORCE — but the gate no longer claims a
     verification that never happened."""
-    from . import output_contract
+    from ... import output_contract
     n = min(int(n or preview_max()), preview_max())
     out = run_fn(n)
     res = output_contract.check_items_against_contract(out if contract is not None else [], contract) if contract is not None else None
@@ -1063,7 +1063,7 @@ _EVAL_OUT_CEILING = 1500         # OUTPUT budget for the verdict — a structure
 def _eval_verdict_from_result(r):
     """Parse the judge's structured verdict. FAIL-SAFE: an unparseable or empty judge reply is NOT a pass — an eval
     that did not clearly clear the bar cannot authorize scale, so ambiguity blocks rather than waves work through."""
-    from . import output_contract
+    from ... import output_contract
     txt = (r or {}).get("text") or ""
     obj, _ = output_contract.as_obj_lenient(txt)   # lenient: unparseable → (None, False), NEVER raises (fail-safe below)
     if not isinstance(obj, dict):
@@ -1086,8 +1086,8 @@ def eval_job(sig, bar, sample, model=None):
     bar = (bar or "").strip()
     if not bar:
         raise ValueError("eval_job needs a STATED bar (what a passing output looks like) — pass bar='...'.")
-    from . import adapters, calls, config
-    from .advisor import META                                    # ONE source of the meta-intent prefix
+    from ... import adapters, calls, config
+    from ...advisor import META                                    # ONE source of the meta-intent prefix
     judge = model or _gate_setting("eval_model", None, str) or config.advisor_judge_model()
     body = sample if isinstance(sample, str) else "\n---\n".join(str(x) for x in sample)
     shown = body[:_EVAL_SAMPLE_CHARS]
@@ -1140,7 +1140,7 @@ def check_realtime(sig, model, est_usd=0.0, force=False, never_block=False, *, b
             return "allow:warn"                                  # already flagged this burst — enforce silently
         _rt_warned[sig] = now
     if batch_eligible:
-        from . import config
+        from ... import config
         config.warn_once(f"[spendguard] BATCH HAND-OFF: burst of {n} independent calls on {model}; "
                          f"realtime estimate ${float(est_usd or 0) * n:.6f} API. "
                          "Persist the complete task list with ordinals/custom_id='task-<ordinal>' (Anthropic-safe). "
@@ -1179,7 +1179,7 @@ def gated_batch(sig, model):
             return eval_job(sig, bar, sample if sample is not None else self._sample, model=model)
 
         def gated_submit(self, count, est_usd, submit_fn, force=False):
-            from . import output_contract
+            from ... import output_contract
             ds = output_contract.data_signature(self._items) if getattr(self, "_items", None) else None
             check_bulk(sig, model, count, est_usd, force=force,   # raises GateBlocked if estimate/test missing
                        contract=getattr(self, "_contract", None), data_sig=ds)

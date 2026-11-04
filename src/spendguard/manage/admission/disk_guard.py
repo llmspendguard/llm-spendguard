@@ -2,7 +2,7 @@
 import shutil
 from pathlib import Path
 
-from . import config
+from ... import config
 from .gate import SpendGateRefused
 
 

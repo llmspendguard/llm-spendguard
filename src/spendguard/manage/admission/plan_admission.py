@@ -1,7 +1,7 @@
 """Admission control for ordinary calls whose subscription lane is exhausted."""
 import os
 
-from . import config, lane_catalog, lane_registry, lanes, overage
+from ... import config, lane_catalog, lane_registry, lanes, overage
 
 
 def hosting_plan_lane():
@@ -71,7 +71,7 @@ def _ready(lane):
     is excluded. An 'unknown' lane that is actually down fails over gracefully via the reactive ladder — strictly better
     than never routing to it (the old `auth != "ok"` gate excluded every no-status-probe lane, leaving only codex able
     to absorb a shed)."""
-    from . import adapters, reliability
+    from ... import adapters, reliability
     provider = lane_catalog.lane_provider(lane)
     if any((r.get("kind") == "lane" and r.get("resource") == lane)
            or (r.get("kind") == "metered" and r.get("resource") == provider)
@@ -91,7 +91,7 @@ def _best_ready_alt_lane(primary, tier="cheap"):
     (lane, model) or None. This is the AVAILABILITY core shared by decide()'s fallback tier and ready_meta_model: an
     UNPROVEN but SUBSTITUTABLE call can still be SERVED on a ready free lane rather than refused, because the caller
     declared the model substitutable (a pinned / measurement call never reaches here). $0 (cached status), never raises."""
-    from . import lane_catalog, route_utility
+    from ... import lane_catalog, route_utility
     ready = []
     for lane in lane_catalog.lanes():
         if lane == primary or not _ready(lane):
@@ -139,7 +139,7 @@ def decide(model, intent, auth_over_quota=False):
     Alternatives come only from the existing propose→confirm registry: the agentic meaning decision has already
     happened. This hot path performs fixed structured filtering and never invents interchangeability.
     """
-    from . import adapters, lane_balance, route_utility
+    from ... import adapters, lane_balance, route_utility
     provider = adapters.provider_for(model)
     primary = adapters._LANES.get(provider, (None,))[0]
     if not primary:
@@ -205,7 +205,7 @@ def ready_meta_model(default_model):
     substitute first, then falls back to the same availability core for substitutable USER calls.) $0 (cached lane
     status). Never raises — a meta call must not break on a routing read."""
     try:
-        from . import adapters
+        from ... import adapters
         prov = adapters.provider_for(default_model)
         primary = adapters._LANES.get(prov, (None,))[0]
         if not primary or not lane_risk(primary)["at_risk"]:
