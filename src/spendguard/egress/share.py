@@ -16,7 +16,7 @@ CLI: `spendguard insights {list,export,import}`.
 
 from ..capability_cli_parsing import add_registered_cli_argument
 import json
-from .. import learn
+from .. import config, learn
 
 
 def _scrub_text(s, intent=None):
@@ -26,7 +26,8 @@ def _scrub_text(s, intent=None):
     if not s:
         return s
     from . import deid
-    return deid.redact(s, drop=[intent] if intent else None).strip()
+    return deid.redact(s, drop=[intent] if intent else None,
+                       configuration_value_getter=config._cfg_get).strip()
 
 
 def generalize_insight(ins):

@@ -636,9 +636,9 @@ def push_workdone(since=None, by="month", dry=False):
             "n_batch_calls": int(r.get("n_batch_calls") or 0),
             # de-id at the wire: commit subjects are RAW git text and the summary is an LLM digest only
             # *instructed* to scrub — neither is a guarantee, so both pass through the deterministic floor.
-            "commits": [deid.redact(str(s)[:200]) for s in (r.get("commits") or [])][:100],
+            "commits": [deid.redact(str(s)[:200], configuration_value_getter=config._cfg_get) for s in (r.get("commits") or [])][:100],
             "intents": {str(k): int(v) for k, v in (r.get("intents") or {}).items()},
-            "summary": deid.redact(summaries.get(proj, "")),   # caged on-device digest (empty until `workdone --summarize --run`)
+            "summary": deid.redact(summaries.get(proj, ""), configuration_value_getter=config._cfg_get),   # caged on-device digest (empty until `workdone --summarize --run`)
         })
     if not work:
         return {"skipped": "no work in range for this connection's project(s)"}

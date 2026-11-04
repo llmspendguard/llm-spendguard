@@ -76,9 +76,11 @@ def write_cfg(d):
     config.CONFIG_JSON.write_text(json.dumps(d))
     config._cfg._cache = None
 write_cfg({"deid": {"engine": "off"}})
-record_script_check(fails, "config deid.engine=off honored (no engine arg)", deid.redact("bob@x.com") == "bob@x.com")
+record_script_check(fails, "config deid.engine=off honored (no engine arg)",
+                    deid.redact("bob@x.com", configuration_value_getter=config._cfg_get) == "bob@x.com")
 os.environ["SPENDGUARD_DEID_ENGINE"] = "regex"
-record_script_check(fails, "env SPENDGUARD_DEID_ENGINE overrides config", deid.redact("bob@x.com") == "<EMAIL>")
+record_script_check(fails, "env SPENDGUARD_DEID_ENGINE overrides config",
+                    deid.redact("bob@x.com", configuration_value_getter=config._cfg_get) == "<EMAIL>")
 del os.environ["SPENDGUARD_DEID_ENGINE"]
 
 # ── WIRING guard 1: share._scrub_text routes through deid ──

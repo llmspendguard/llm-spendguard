@@ -592,8 +592,8 @@ def cell_stats(as_of=None):
 
     def scrub(label):
         try:
-            from ... import deid
-            return deid.redact(label)[:120]
+            from ... import config, deid
+            return deid.redact(label, configuration_value_getter=config._cfg_get)[:120]
         except Exception:
             # FAIL CLOSED toward privacy: if de-identification itself is unavailable (import error / unexpected crash),
             # WITHHOLD the label — never return the raw text (was `(label or "")[:120]`, which leaked the un-redacted

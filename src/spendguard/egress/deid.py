@@ -80,17 +80,18 @@ _RULES = [
 FLOOR_ENTITIES = tuple(dict.fromkeys(name for name, *_ in _RULES))
 
 
-def _engine(explicit=None):
+def _engine(explicit=None, configuration_value_getter=None):
     if explicit:
         return explicit.strip().lower()
     env = os.getenv("SPENDGUARD_DEID_ENGINE")
     if env:
         return env.strip().lower()
-    try:
-        from .. import config
-        return str(config._cfg_get("deid", "engine", "regex")).strip().lower()
-    except Exception:
-        return "regex"
+    if configuration_value_getter is not None:
+        try:
+            return str(configuration_value_getter("deid", "engine", "regex")).strip().lower()
+        except Exception:
+            return "regex"
+    return "regex"
 
 
 def _entity_set(entities):
@@ -113,9 +114,15 @@ def _floor(text, entities=None):
     return out
 
 
+_WARNED_ONCE_DEID = set()
+
+
 def _warn_once(msg):
-    from .. import config
-    config.warn_once(msg, prefix="[spendguard.deid] ")   # one registry; gate.py had its own copy + own set
+    import sys as _sys
+    line = "[spendguard.deid] " + msg
+    if line not in _WARNED_ONCE_DEID:
+        _WARNED_ONCE_DEID.add(line)
+        _sys.stderr.write(line + "\n")
 
 
 _PRESIDIO = None  # None=untried, False=unavailable, (analyzer, anonymizer)=ready
@@ -174,10 +181,11 @@ def _drop_literals(text, drop):
 DEID_FAILED = "<deid-failed: text withheld>"
 
 
-def redact(text, *, engine=None, entities=None, drop=None):
+def redact(text, *, engine=None, entities=None, drop=None, configuration_value_getter=None):
     """De-identify `text` before it leaves this machine. The single chokepoint for every egress path.
 
-    engine: override the configured `deid.engine` (regex | presidio | off). None = use config / env.
+    engine: override `deid.engine` (regex | presidio | off). None = use env, then the injected
+        configuration getter, then regex.
     entities: restrict to these entity types (list or comma-string); None = all.
     drop: literal private labels to strip to <task> (always honored, even when engine=off).
 
@@ -185,7 +193,7 @@ def redact(text, *, engine=None, entities=None, drop=None):
     deterministic floor still applies (only engine=off skips it)."""
     if not isinstance(text, str) or not text.strip():
         return text
-    eng = _engine(engine)
+    eng = _engine(engine, configuration_value_getter)
     out = text
     if eng != "off":
         try:

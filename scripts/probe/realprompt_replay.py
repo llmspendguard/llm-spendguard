@@ -164,8 +164,8 @@ def main():
         nonlocal spent
         # DE-ID BEFORE EGRESS. These are real prompts recovered from real work; the synthetic harness had
         # nothing to protect and this one does. redact() fails open toward privacy and never raises.
-        prompt = deid.redact(r["prompt"])
-        system = deid.redact(r["system"]) or None
+        prompt = deid.redact(r["prompt"], configuration_value_getter=config._cfg_get)
+        system = deid.redact(r["system"], configuration_value_getter=config._cfg_get) or None
         # THE REQUEST SHAPE, not just the prompt. Sending the question without the system message and the
         # output contract is a different call: measured on this very corpus, prompts whose originals were
         # schema-forced came back 10-32x larger when replayed bare (truth 4 tokens -> 77-133), while the
