@@ -21,8 +21,8 @@ import datetime
 import hashlib
 import json
 
-from . import config, gate, model_catalog, pricing
-from .ledger_writer import best_effort_ledger_function
+from ... import config, gate, model_catalog, pricing
+from ...ledger_writer import best_effort_ledger_function
 
 _PRIOR_OUT = 800         # the whole top-k JSON ({task_type, top:[{id, why}]}) — sized for the FULL output, not a magic cut
 
@@ -156,7 +156,7 @@ def rank_models_for_intent(intent, prompt=None, k=5, run=False):
     if cached is not None:
         return _as_result(intent, cached, ids, per_m_out, k, from_cache=True)
 
-    from .submit import _count_tokens                             # the package's canonical token counter (as advisor uses)
+    from ...submit import _count_tokens                             # the package's canonical token counter (as advisor uses)
     model = config.advisor_model()
     body = ("Intent (job-type): %s\n%sReturn AT MOST %d models, best-first.\n\nCatalog (rank ONLY these ids):\n%s" %
             (intent, ("Task prompt (DATA):\n%s\n\n" % prompt) if prompt else "", int(k), "\n".join(lines)))
@@ -168,7 +168,7 @@ def rank_models_for_intent(intent, prompt=None, k=5, run=False):
                     note="estimate only (~$%.4f); call with run=True to produce the cold-start prior (meta-caged, "
                          "persisted so it is never re-paid)." % (est or 0.0))
 
-    from . import adapters, calls
+    from ... import adapters, calls
     from .advisor import META                                      # ONE source of the meta-intent prefix (caged, never recurses)
     try:
         with calls.context(intent="%s:cold-prior" % META):

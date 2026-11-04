@@ -15,10 +15,10 @@ The model for each role is configurable (see config.advisor_model / advisor_judg
 estimate path makes ZERO paid calls — it only counts tokens and prices via pricing.py.
 """
 
-from .capability_cli_parsing import add_registered_cli_argument
+from ...capability_cli_parsing import add_registered_cli_argument
 import json
-from . import calls, learn, config, pricing
-from .submit import _count_tokens
+from ... import calls, learn, config, pricing
+from ...submit import _count_tokens
 
 META = "spendguard"   # intent prefix → routed to the meta budget by the gate
 
@@ -62,7 +62,7 @@ def _judge_sample(per, limit=None, rows=None):
     """Unjudged call_io samples, bounded to `per` per (intent, model) — enough to estimate good%
     with a confidence interval, not label everything (keeps the judge spend small). `rows` lets the caller pass an
     already-fetched callio.unjudged() so it isn't queried twice."""
-    from . import callio
+    from ... import callio
     from collections import defaultdict
     if limit is not None and limit <= 0:
         return []                                         # limit=0 asks for ZERO samples. `if limit and …` below is falsy
@@ -116,7 +116,7 @@ def _est_line(mode, model, n, in_tok, out_tok, cost):
 def reconstruct_advisor_history(run=False, per=15, limit=None):
     """Judge a bounded sample of the recovered call_io corpus for quality → makes good% / $/good real.
     Estimate-only unless run=True. Realtime judge (synchronous, small, caged by intent spendguard:*)."""
-    from . import callio
+    from ... import callio
     judge = config.advisor_judge_model()
     unjudged = list(callio.unjudged())                    # fetch ONCE — reused for the sample AND the count (was
     samples = _judge_sample(per, limit, rows=unjudged)    # two separate callio.unjudged() DB queries, risking drift)
@@ -135,10 +135,10 @@ def reconstruct_advisor_history(run=False, per=15, limit=None):
     _est_line("realtime", judge, len(samples), in_tok, out_tok, cost)
     print(f"  meta budget: ${config.meta_cap():.2f}/day · spent today {_meta_spent_str()}")
     if not run:
-        from . import ui; ui.estimate_only(action="judge output quality", cost=cost)
+        from ... import ui; ui.estimate_only(action="judge output quality", cost=cost)
         return dict(requests=len(samples), in_tok=in_tok, out_tok=out_tok, cost=cost, model=judge)
 
-    from . import adapters
+    from ... import adapters
     good = bad = err = 0
     with calls.context(intent=f"{META}:reconstruct"):
         for io_id, _intent, _model, p, o in samples:
@@ -185,10 +185,10 @@ def mine(run=False, intent=None):
     _est_line("realtime", model, 1, in_tok, _MINE_OUT, cost)
     print(f"  meta budget: ${config.meta_cap():.2f}/day · spent today {_meta_spent_str()}")
     if not run:
-        from . import ui; ui.estimate_only(action="synthesize the insights", cost=cost)
+        from ... import ui; ui.estimate_only(action="synthesize the insights", cost=cost)
         return dict(requests=1, in_tok=in_tok, out_tok=_MINE_OUT, cost=cost, model=model)
 
-    from . import adapters
+    from ... import adapters
     with calls.context(intent=f"{META}:mine"):
         r = adapters.call(model, prompt, max_tokens=_MINE_OUT, system=_MINE_SYS)  # gate → meta cap
     if r["error"]:
@@ -273,10 +273,10 @@ def optimize(intent=None, plan=None, run=False):
     _est_line("realtime", model, 1, in_tok, _OPT_OUT, cost)
     print(f"  meta budget: ${config.meta_cap():.2f}/day · spent today {_meta_spent_str()}")
     if not run:
-        from . import ui; ui.estimate_only(action="produce the recommendation", cost=cost)
+        from ... import ui; ui.estimate_only(action="produce the recommendation", cost=cost)
         return dict(requests=1, in_tok=in_tok, out_tok=_OPT_OUT, cost=cost, model=model)
 
-    from . import adapters
+    from ... import adapters
     with calls.context(intent=f"{META}:optimize"):
         # no_substitution: this returns model=model as the recommender of record — the bandit must not silently serve
         # another model while we report this one produced the recommendation (measurement-identity integrity)
@@ -327,7 +327,7 @@ def recommend_models(intent=None, k=5, quality_bar=None, run=False):
                     estimate_only=True, candidates=[m["id"] for m in ev["models"]],
                     unmeasured_for_intent=ev["unmeasured_for_intent"],
                     note=f"estimate only (~${cost:.4f}); call with run=True to produce the ranking (meta-caged).")
-    from . import adapters
+    from ... import adapters
     with calls.context(intent=f"{META}:recommend"):
         # no_substitution: the ranking is reported as produced by `model` (returned as model=model) — pin it so the
         # bandit can't silently swap the model of record for this measurement
@@ -369,11 +369,11 @@ def _meta_spent():
     told "spent today $0.0000" by a machine that could not read the ledger, and then decides whether to
     approve a run on the strength of it. A figure nobody could read is UNKNOWN, and saying so costs one
     line."""
-    from . import budget
+    from ... import budget
     try:
         return budget.meta_spent_today()
     except Exception as e:
-        from . import config
+        from ... import config
         config.warn_once(f"[spendguard] meta spend for today could not be read ({type(e).__name__}) — "
                          f"treating the cap as UNKNOWN, not as $0 spent.")
         return None

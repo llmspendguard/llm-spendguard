@@ -8,10 +8,10 @@ can check it would have caught known-good decisions (pack it, Opus-cheaper, don'
 This is the evidence layer. The reasoning/LLM "learning advisor" (Layer 2) sits on top of this.
 """
 
-from .capability_cli_parsing import add_registered_cli_argument
+from ...capability_cli_parsing import add_registered_cli_argument
 import argparse
 from pathlib import Path
-from . import config, ledger_read
+from ... import config, ledger_read
 
 
 def _rows(as_of=None, intent=None):
@@ -37,7 +37,7 @@ def unmeasured_catalog_models(intent, measured_model_ids):
     """Priced catalog ids with no measured row for this exact intent, by mechanical set difference."""
     if not intent:
         return []
-    from . import model_catalog, pricing
+    from ... import model_catalog, pricing
     catalog_ids = set()
     for bare_id, record in model_catalog.all_records().items():
         provider = record.get("provider")
@@ -118,7 +118,7 @@ def ranked(intent=None, as_of=None, by_effort=False):
     # bandit STOP ranking a plan lane as free (measured live: claude-code ≈ $15/Mtok, not $0). Read ONCE; a metered arm
     # (no lane for its provider) is unchanged, and the map is empty when no lane has converged economics — fail-open to
     # the prior $0-lane behaviour, never a crash. The WASTE reclaim stays a per-job route_economics call, not here.
-    from . import route_economics as _re, budget
+    from ... import route_economics as _re, budget
     _lane_eff = _re.lane_eff_by_provider()
     # COST BASIS = the LEDGER (money of record), NOT the calls corpus. The corpus books a per-call cost that for a
     # lane-routed call is a metered-EQUIVALENT estimate — measured ~57x the ledger (one model: ~$1,019 corpus vs ~$18
@@ -184,7 +184,7 @@ def ranked(intent=None, as_of=None, by_effort=False):
                   pick=pick, cheapest_per_token=cpt, models=models,
                   unmeasured_for_intent=unmeasured_catalog_models(intent, (m["id"] for m in models)))
     if intent:
-        from . import route_realized
+        from ... import route_realized
         result["routing"] = route_realized.routing_summary(intent, as_of=as_of)
     return result
 
@@ -252,7 +252,7 @@ def advise(intent=None, plan=None, as_of=None):
     print(f"  ⚠️ {sum(m['jobs'] for m in rows)} jobs; confounds possible — confirm head-to-head with "
           f"`spendguard compare` on a fixed sample. (history proposes, compare disposes.)")
     try:                        # learned-calibration confidence (fill ratios etc.) — see `spendguard calibrate`
-        from . import calibrate as _cal
+        from ... import calibrate as _cal
         for ln in _cal.calibration_summary_lines():
             print("  " + ln)
     except Exception:

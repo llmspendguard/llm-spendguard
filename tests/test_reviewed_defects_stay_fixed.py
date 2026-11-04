@@ -496,9 +496,10 @@ check("the caller keeps UNKNOWN and zero apart too", "if n is None:" in _gsrc an
 
 # Two copies of "meta spend today" returned 0.0 when the ledger could not be read, and both figures are
 # shown to an operator deciding whether to approve a run.
-for _m, _f in (("advisor", "_meta_spent"), ("experiment", "_meta")):
+for _path, _m, _f in (("analyze/learning/advisor.py", "advisor", "_meta_spent"),
+                      ("experiment.py", "experiment", "_meta")):
     check(f"{_m}.{_f} says UNKNOWN rather than $0 when the ledger is unreadable",
-          "return 0.0" not in (SRC / f"{_m}.py").read_text().split(f"def {_f}(")[1].split("def ")[0])
+          "return 0.0" not in (SRC / _path).read_text().split(f"def {_f}(")[1].split("def ")[0])
 
 # calibrate.estimate collided with pricing.estimate, and pricing's is what `spendguard.estimate` binds — so
 # the plain name reached the NAIVE figure while the learned predictor had to be asked for by module path.

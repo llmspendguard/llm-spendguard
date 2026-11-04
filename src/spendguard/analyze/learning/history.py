@@ -16,10 +16,10 @@ All zero-spend. The LLM-judged reconstruction (ambiguous conversation/outcome) l
 is caged by caps.meta. CLI: `spendguard mine-history {intents,graph,git} [--repo PATH] [--apply]`.
 """
 
-from .capability_cli_parsing import add_registered_cli_argument
+from ...capability_cli_parsing import add_registered_cli_argument
 import os, re, json, glob, subprocess
-from . import calls, learn
-from .ledger_writer import serialize_ledger_function
+from ... import calls, learn
+from ...ledger_writer import serialize_ledger_function
 
 
 # ─────────────────────────── intent reconstruction ───────────────────────────

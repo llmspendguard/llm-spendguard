@@ -12,6 +12,9 @@ REQUEST_LEDGER_READER_MODULES = (
 )
 REQUEST_LEDGER_OFFLINE_CONNECTION_FUNCTIONS = {("budget", "snapshot")}
 REQUEST_LEDGER_MOVED_MODULE_PATHS = {
+    "lane_bandit": ("analyze", "learning", "lane_bandit.py"),
+    "intent_model_prior": ("analyze", "learning", "intent_model_prior.py"),
+    "learn": ("analyze", "learning", "learn.py"),
     "best_value": ("manage", "routing", "best_value.py"),
     "lane_quota_cost": ("analyze", "treasury", "lane_quota_cost.py"),
     "calibrate": ("analyze", "cost_estimation", "calibrate.py"),

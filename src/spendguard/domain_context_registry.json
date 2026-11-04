@@ -21,7 +21,9 @@
         "refresh",
         "models"
       ],
-      "published_names": []
+      "published_names": [
+
+      ]
     },
     {
       "id": "configuration",
@@ -168,7 +170,9 @@
         "store.money_ledger.ledger_deadletter",
         "store.money_ledger.migrate_charges"
       ],
-      "published_names": []
+      "published_names": [
+
+      ]
     },
     {
       "id": "spend_search",
@@ -281,7 +285,9 @@
         "store.call_corpus.content_compression_backfill",
         "store.call_corpus.routing_audit"
       ],
-      "published_names": []
+      "published_names": [
+
+      ]
     },
     {
       "id": "spend_capture",
@@ -309,7 +315,9 @@
         "runpod_adapter",
         "resources"
       ],
-      "published_names": []
+      "published_names": [
+
+      ]
     },
     {
       "id": "execution",
@@ -333,7 +341,9 @@
         "generate.execution.adapters",
         "generate.execution.openai_batch_cli"
       ],
-      "published_names": []
+      "published_names": [
+
+      ]
     },
     {
       "id": "work_integrity",
@@ -408,7 +418,9 @@
         "gate",
         "budget"
       ],
-      "published_names": []
+      "published_names": [
+
+      ]
     },
     {
       "id": "routing",
@@ -427,7 +439,9 @@
         "manage.routing.tier_config",
         "manage.routing.whole_job"
       ],
-      "published_names": []
+      "published_names": [
+
+      ]
     },
     {
       "id": "token_operations",
@@ -459,7 +473,9 @@
         "lane_recovery",
         "comprehend"
       ],
-      "published_names": []
+      "published_names": [
+
+      ]
     },
     {
       "id": "cost_estimation",
@@ -476,7 +492,9 @@
         "analyze.cost_estimation.provider_tokens",
         "analyze.cost_estimation.estimate_divergence"
       ],
-      "published_names": []
+      "published_names": [
+
+      ]
     },
     {
       "id": "treasury",
@@ -494,7 +512,9 @@
         "analyze.treasury.overage",
         "analyze.treasury.lane_quota_cost"
       ],
-      "published_names": []
+      "published_names": [
+
+      ]
     },
     {
       "id": "measurement",
@@ -523,7 +543,9 @@
         "review",
         "lane_eligibility"
       ],
-      "published_names": []
+      "published_names": [
+
+      ]
     },
     {
       "id": "learning",
@@ -533,18 +555,20 @@
       "surface_module": "spendguard.analyze.learning",
       "layer": "L2",
       "backing_modules": [
-        "learn",
-        "validate",
-        "lane_bandit",
-        "intent_model_prior",
-        "advise",
-        "advisor",
-        "conv",
-        "history",
-        "bootstrap",
-        "brief"
+        "analyze.learning.learn",
+        "analyze.learning.validate",
+        "analyze.learning.lane_bandit",
+        "analyze.learning.intent_model_prior",
+        "analyze.learning.advise",
+        "analyze.learning.advisor",
+        "analyze.learning.conv",
+        "analyze.learning.history",
+        "analyze.learning.bootstrap",
+        "analyze.learning.brief"
       ],
-      "published_names": []
+      "published_names": [
+
+      ]
     },
     {
       "id": "reconciliation",
@@ -571,7 +595,9 @@
         "workdone",
         "truth"
       ],
-      "published_names": []
+      "published_names": [
+
+      ]
     },
     {
       "id": "spend_reporting",
@@ -639,7 +665,9 @@
         "analyze.assurance.source_compact",
         "analyze.assurance.import_behavior_snapshot"
       ],
-      "published_names": []
+      "published_names": [
+
+      ]
     },
     {
       "id": "federation_egress",
@@ -657,7 +685,9 @@
         "egress.notify",
         "egress.focus_export"
       ],
-      "published_names": []
+      "published_names": [
+
+      ]
     },
     {
       "id": "platform",
@@ -681,7 +711,9 @@
         "offline_python_build",
         "launchd_labels"
       ],
-      "published_names": []
+      "published_names": [
+
+      ]
     },
     {
       "id": "surfaces",
@@ -709,7 +741,9 @@
         "ui",
         "__init__"
       ],
-      "published_names": []
+      "published_names": [
+
+      ]
     }
   ],
   "split_modules": {
@@ -1220,6 +1254,56 @@
     {
       "legacy_module": "spendguard.whole_job",
       "current_module": "spendguard.manage.routing.whole_job",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.learn",
+      "current_module": "spendguard.analyze.learning.learn",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.validate",
+      "current_module": "spendguard.analyze.learning.validate",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.lane_bandit",
+      "current_module": "spendguard.analyze.learning.lane_bandit",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.intent_model_prior",
+      "current_module": "spendguard.analyze.learning.intent_model_prior",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.advise",
+      "current_module": "spendguard.analyze.learning.advise",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.advisor",
+      "current_module": "spendguard.analyze.learning.advisor",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.conv",
+      "current_module": "spendguard.analyze.learning.conv",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.history",
+      "current_module": "spendguard.analyze.learning.history",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.bootstrap",
+      "current_module": "spendguard.analyze.learning.bootstrap",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.brief",
+      "current_module": "spendguard.analyze.learning.brief",
       "moved_in_phase": 3
     }
   ],

@@ -13,9 +13,9 @@ Free steps always run (idempotent). Paid steps are estimate-first and meta-cappe
 cold start: history → corpus → insights, repeatably.
 """
 
-from .capability_cli_parsing import add_registered_cli_argument
+from ...capability_cli_parsing import add_registered_cli_argument
 import argparse
-from . import config
+from ... import config
 
 
 def _hdr(step, what):
@@ -30,7 +30,7 @@ def bootstrap(repo=None, transcripts=None, run=False, cap=50):
     # ── free recovery ──
     _hdr("1/6 ledgers", "backfill billed batches → cost corpus + run graph")
     try:
-        from . import backfill
+        from ... import backfill
         n, total = backfill.backfill()
         print(f"  +{n} batch rows (${total:,.2f} historical)")
     except Exception as e:
@@ -52,7 +52,7 @@ def bootstrap(repo=None, transcripts=None, run=False, cap=50):
 
     _hdr("4/6 call I/O", "recover real prompt+output samples from providers (free)")
     try:
-        from . import callio
+        from ... import callio
         r = callio.fetch_history(cap=cap)
         print(f"  +{r['added']} samples · {r['batches_fetched']} batches · {r['errors']} unrecoverable")
     except Exception as e:
@@ -73,7 +73,7 @@ def bootstrap(repo=None, transcripts=None, run=False, cap=50):
     # Each sub-step is guarded SEPARATELY: three of four succeeding beats one raising and hiding the rest,
     # and a step that was skipped must be visible as skipped rather than simply absent.
     try:
-        from . import review, advisor, conv
+        from ... import review, advisor, conv
     except Exception as e:
         review = advisor = conv = None
         print(f"  reasoning steps unavailable ({type(e).__name__}: {str(e)[:100]})")
@@ -93,7 +93,7 @@ def bootstrap(repo=None, transcripts=None, run=False, cap=50):
         print("bootstrap complete — corpus + insights ready. Try: `spendguard advise` / `spendguard optimize --intent <X>`.")
     else:
         print("bootstrap (estimate) complete — free corpus built. The caged reasoning steps above were NOT run.")
-        from . import ui
+        from ... import ui
         ui.estimate_only(action="execute the caged reasoning steps (total ≈ sum of the estimates above)")
     return 0
 

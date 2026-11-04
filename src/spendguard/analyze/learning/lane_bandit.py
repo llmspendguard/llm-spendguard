@@ -20,8 +20,8 @@ import contextlib
 import datetime
 import random
 
-from . import config
-from .ledger_writer import best_effort_ledger_function
+from ... import config
+from ...ledger_writer import best_effort_ledger_function
 
 _rng = random.Random()          # module-level so tests can seed it deterministically
 DECAY_DEFAULT = 0.95            # exponential forgetting per trial — recent results weigh more (relearn)
@@ -88,7 +88,7 @@ def _arm_cooling(lane, use_name):
     cooldown the adapter learned. Reuses the SAME backoff the metered path uses, so the bandit never routes onto a
     known-bad arm."""
     try:
-        from . import adapters, lane_catalog
+        from ... import adapters, lane_catalog
         if adapters._lane_cooling(lane):
             return True
         base, _lv = lane_catalog.parse_use_name(use_name, lane)
@@ -101,7 +101,7 @@ def _idle_bonus(lane):
     """A gentle tilt toward IDLE plans (fill spare paid capacity), from lane_utilization. 1.0 when unknown/neutral;
     bounded [0.5, 1.5] so it only breaks near-ties, never overrides a real quality gap."""
     try:
-        from . import lane_balance
+        from ... import lane_balance
         u = {l["lane"]: l for l in lane_balance.lane_utilization()["lanes"]}.get(lane) or {}
         util = u.get("utilization")
         if util is None:
@@ -115,7 +115,7 @@ def _measured_headroom_tiebreak(lane):
     """Provider-measured quota score used ONLY after learned quality ties exactly. Unknown headroom is neutral, and
     the persisted snapshot means choosing an arm never launches a status command on the routing hot path."""
     try:
-        from . import lanes, route_utility
+        from ... import lanes, route_utility
         rows = lanes.lane_headroom(do_fetch=False)
         ranked = {r["lane"]: r for r in route_utility.rank_lanes(rows)}
         row = ranked.get(lane) or {}
@@ -134,7 +134,7 @@ def _intent_realized_costs(intent, arms):
     Never raises (a routing read must not break routing)."""
     costs = {}
     try:
-        from . import calls, lane_catalog
+        from ... import calls, lane_catalog
         norms = calls.mean_out_by_executor_model(intent)   # {(executor_or_provider, model): {mean_out, n}}
         for arm in (arms or []):
             lane, use_name = arm
@@ -255,7 +255,7 @@ def bakeoff_judge(task, out_a, out_b, arm_a, arm_b, cost_a=None, cost_b=None):
         return None, "identical outputs (no judge spend)"
     prompt = _value_judge_prompt(task, a, b, cost_a, cost_b)
     try:
-        from . import adapters, calls, gate
+        from ... import adapters, calls, gate
         from .advisor import META                                   # ONE source of the meta-intent prefix
         with calls.context(intent=f"{META}:bandit-judge"):          # caged: attributed, never bandit-routed
             r = adapters.call(_bandit_judge_model(), prompt)
@@ -281,7 +281,7 @@ def _run_arm(arm, task, system, reasoning, timeout_s):
     (reasoning INCLUDED, since it bills as output) so the EXPLOIT path can detect a cost-runaway (A2.3)."""
     lane, use_name = arm
     try:
-        from . import adapters, lane_catalog, calls
+        from ... import adapters, lane_catalog, calls
         import importlib
         prov = lane_catalog.lane_provider(lane)
         entry = adapters._LANES.get(prov)
@@ -311,7 +311,7 @@ def run_bakeoff(intent, task, system=None, reasoning=None, timeout_s=None):
     """Run the two LEAST-tried live arms on the SAME task, judge which is better, record the outcome for BOTH, and
     RETURN the winner's text (the caller still gets a usable answer). None if fewer than 2 live arms. This is where
     the bandit LEARNS — two $0 lane calls + one cheap judge call."""
-    from . import lane_catalog
+    from ... import lane_catalog
     dl = config._cfg_get("advisor", "delegate_lanes", None)
     arms = lane_catalog.arms(dl) if dl else lane_catalog.arms()
     live = [a for a in arms if not _arm_cooling(*a)]
@@ -357,7 +357,7 @@ def _exploit_overshoot_reward(intent, arm, out_tok, pre_norm):
     try:
         if not out_tok or int(out_tok) <= 0:
             return 1.0
-        from . import lane_catalog, bulkgate
+        from ... import lane_catalog, bulkgate
         lane, use_name = arm
         base, _lv = lane_catalog.parse_use_name(use_name, lane)
         # the (executor, model) the lane path RECORDS under — suffix-style lanes (gemini) log the whole use-name
@@ -382,7 +382,7 @@ def bandit_call(intent, task, system=None, reasoning=None, timeout_s=None):
     """The bandit's ENTRY for a delegatable task: EXPLORE via a bake-off (while cold, or at rate ε) else EXPLOIT the
     learned-winner arm on its lane. Returns {text, lane, use_name, why} of the answering lane, or None if no arm
     could serve it (caller falls back to its normal path). Records outcomes so it keeps learning."""
-    from . import lane_catalog
+    from ... import lane_catalog
     dl = config._cfg_get("advisor", "delegate_lanes", None)
     arms = lane_catalog.arms(dl) if dl else lane_catalog.arms()
     if should_bakeoff(intent, arms):
@@ -392,7 +392,7 @@ def bandit_call(intent, task, system=None, reasoning=None, timeout_s=None):
     arm = choose_arm(intent, arms)
     if not arm:
         return None
-    from . import calls
+    from ... import calls
     pre_norm = calls.mean_out_by_executor_model(intent)   # PRE-call norm (this call not yet recorded) → no self-inflation
     out, out_tok = _run_arm(arm, task, system, reasoning, timeout_s)
     if out:
@@ -408,7 +408,7 @@ def estimate_judge_cost(bakeoffs=(10, 100, 1000)):
     (the two lane answers are $0, plan-served). Prices the judge prompt (boilerplate + task + two answers, at the
     BOUNDED sizes the judge truncates to) + the tiny output cap, at the judge model's rate, then projects a monthly $
     for a few bake-off counts. No LLM is called — this is arithmetic over pricing.py."""
-    from . import pricing
+    from ... import pricing
     judge = _bandit_judge_model()
     # the judge prompt caps: task ≤3000 + two answers ≤4000 each + ~700 boilerplate chars (the value-judge guidance +
     # the two per-call cost figures; the pure-quality variant is smaller — see _value_judge_prompt)

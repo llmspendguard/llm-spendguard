@@ -14,7 +14,7 @@ the advisor weights by CURRENT confidence/status, so stale advice sinks and corr
 CLI: `spendguard validate`.
 """
 import re
-from . import learn, calls, pricing
+from ... import learn, calls, pricing
 
 
 def _known_models():

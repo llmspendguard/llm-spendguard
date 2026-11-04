@@ -10,7 +10,7 @@ from the task text when history is thin.
   spendguard brief --task "re-type the new RXNORM drug codes into baseconcepts"
 """
 
-from .capability_cli_parsing import add_registered_cli_argument
+from ...capability_cli_parsing import add_registered_cli_argument
 import re
 import argparse
 
@@ -20,7 +20,7 @@ def _slug(task):
 
 
 def _known_intents():
-    from . import ledger_read
+    from ... import ledger_read
     return [row[0] for row in ledger_read.read_known_call_intents(include_empty=True)]
 
 
@@ -41,7 +41,7 @@ def _match_intent(task):
 
 
 def _defaults(intent, task):
-    from . import calls, callio, learn, models, config
+    from ... import calls, callio, learn, models, config
     rows = [r for r in calls.cost_summary(intent)]                 # (intent, model, jobs, cost, good, bad)
     rates = callio.good_rates()
     # per-model cost + quality for this intent
@@ -127,10 +127,10 @@ def _scale_default(task, d):
 
 
 def _llm_refine(task, intent):
-    from . import calls, config
+    from ... import calls, config
     META = "spendguard"
     try:
-        from . import adapters, plan_admission
+        from ... import adapters, plan_admission
         sysmsg = ("Given a short task description, propose the 6 briefing fields (intent, quality_bar, "
                   "scale, budget, output_format, test_or_prod) as terse defaults. <120 words.")
         _meta = plan_admission.ready_meta_model(config.advisor_model())   # off a capped plan to a READY provider

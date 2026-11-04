@@ -17,10 +17,10 @@ Two stages:
 CLI: `spendguard mine-conv {index,synth} [--transcripts PATH] [--limit N] [--run]`.
 """
 
-from .capability_cli_parsing import add_registered_cli_argument, registered_cli_option_token
+from ...capability_cli_parsing import add_registered_cli_argument, registered_cli_option_token
 import os, re, json, glob, hashlib, functools, datetime
-from . import config, calls, learn
-from .ledger_writer import best_effort_ledger_function, serialize_ledger_function
+from ... import config, calls, learn
+from ...ledger_writer import best_effort_ledger_function, serialize_ledger_function
 
 _DEFAULT_TDIR = os.path.expanduser("~/.claude/projects")
 _CACHE = os.path.join(str(config.HOME), "conv_index.json")
@@ -157,7 +157,7 @@ def attribute_usage(since="2026-06-01", tdir=None):
     attribution — batch id → the segment that ran it → its LLM-classified project (cwd as a prior the LLM confirms).
     NEVER a regex keyword guess. Reads the cached classification (run `spendguard accounting --run` to refresh it).
     Returns {total, batches, linked, by_project:{proj:$}}. Free (reads the cache)."""
-    from . import backfill
+    from ... import backfill
     costs = {}
     for _prov, _model, cost, _it, _ot, day, bid in (backfill._openai_rows() + backfill._anthropic_rows()):
         if (day or "") >= since:
@@ -254,7 +254,7 @@ def classify_user_asks(items, run=True):
     Same shape as classify_evidence: batched, cached by content hash so re-runs and the second consumer read
     free, caged under spendguard:user-ask, cheap model. FAILS OPEN — an unjudged or failed item comes back
     True, because the damaging error here is deleting a real ask, not keeping a spurious one."""
-    from . import adapters, calls
+    from ... import adapters, calls
     items = [c for c in items if (c.get("text") or "").strip()]
     res = {c["id"]: True for c in items}                  # fail-open default, applied before anything can fail
     if not items or not run:
@@ -291,7 +291,7 @@ def classify_user_asks(items, run=True):
                     res[item["id"]] = verdicts[i]
             _persist_user_ask_verdicts(b, hashes, verdicts, model)
         except Exception as ask_error:
-            from . import gate
+            from ... import gate
             if gate.is_deliberate_stop(ask_error):
                 raise
             continue                                      # stays True
@@ -414,7 +414,7 @@ def _seg_put_cls(seg_id, cls, source="llm", model="", seg=None):
     the LLM's full DETERMINATION (cls as JSON — what it classified/extracted) · model · ts. So we never re-pay AND
     can re-derive / selectively re-run when the model or prompt changes. An llm write NEVER overwrites a human one."""
     from . import learn
-    from .content_compression import compress_retained_text
+    from ...content_compression import compress_retained_text
     with learn._lock:
         db = learn._insights_db()
         cur = db.execute("SELECT source FROM seg_attribution WHERE seg_id=?", (seg_id,)).fetchone()
@@ -469,7 +469,7 @@ def attribute_segments(tdir=None, run=False, recls=False, spend_only=True, tau=_
     estimate only). Scopes to SPEND-BEARING segments by default (the core-mission $ attribution), and re-classifies
     only segments that are absent / not-llm-or-human / below confidence τ — the convergence loop's small step.
     Returns the recorded store (run=True) or an estimate summary (run=False)."""
-    from . import attribution
+    from ... import attribution
     segs = segments(tdir)
     if spend_only:
         segs = [s for s in segs if s["batch_ids"]]         # only segments that OWN spend
@@ -585,7 +585,7 @@ def _conversation_prior_index():
     that turns a bare repo/cwd PRIOR ('lmm', 'manga2anime') into its org+team WITHOUT re-classifying. Taxonomy-derived,
     not a hardcoded repo→org table: a repo only maps if the taxonomy names it (else it stays unattributed, never a
     guess). Cached; call `_conversation_prior_index.cache_clear()` if the taxonomy changes in-process (tests)."""
-    from . import attribution
+    from ... import attribution
     taxo, _ = attribution.taxonomy()
     idx = {}
     for org in (taxo.get("orgs") or []):
@@ -698,7 +698,7 @@ def resolve(evidence, tdir=None, classify_on_miss=False, segs=None, store=None):
 
 def _classify_one_segment(seg):
     """Classify ONE segment via the shared LLM classifier + record it (resolve's agentic miss path)."""
-    from . import attribution
+    from ... import attribution
     taxo, _ = attribution.taxonomy()
     res = attribution.classify_items(
         [{"id": seg["seg_id"], "text": f"[repo:{seg.get('project_prior')}] {seg.get('prompt')}"}], taxo, run=True)
@@ -812,7 +812,7 @@ def classify_evidence(chunks, run=False, batch_size=20):
     replacing their separate keyword pre-filters. chunks: [{"id","text"}] → {id: {spend_evidence,kind,cost_lesson}}.
     A BROAD deterministic cost-SHAPE cut runs first (never a topic keyword → no silent drops); only candidates reach
     the LLM. Cached by content hash (re-runs + BOTH consumers read free). Estimate-first: run=False → no spend."""
-    from . import adapters, calls, pricing, ui, attribution
+    from ... import adapters, calls, pricing, ui, attribution
     chunks = [c for c in chunks if (c.get("text") or "").strip()]
     res = {c["id"]: dict(_NONE_EV) for c in chunks}
     cands = [c for c in chunks if _EVIDENCE_CANDIDATE.search(c["text"])]   # broad mechanical cut (deterministic)
@@ -982,7 +982,7 @@ def realtime_token_tally(tdir=None):
     pricing.py, and attribute the session to its org via session_classification. Returns {total, by_org, calls}.
     NOTE: only counts usage the transcript actually PRINTED — a lower bound vs the admin oracle when runs logged only
     samples; the durable fix for full coverage is inline capture (gate) going forward."""
-    from . import pricing, resources
+    from ... import pricing, resources
     tdir = tdir or _DEFAULT_TDIR
     files = sorted(glob.glob(os.path.join(tdir, "**", "*.jsonl"), recursive=True)) if os.path.isdir(tdir) else [tdir]
     by_org, total, calls, skipped_no_model, skipped_ambiguous = {}, 0.0, 0, 0, 0
@@ -1166,7 +1166,7 @@ def _dedup_top(events, k):
 
 
 def synth(tdir=None, run=False, limit=40):
-    from .submit import _count_tokens
+    from ...submit import _count_tokens
     model = config.advisor_model()
     index, _ = build_conversation_event_index(tdir)
     events = _dedup_top(list(_all_events(index)), limit)
@@ -1179,17 +1179,17 @@ def synth(tdir=None, run=False, limit=40):
     prompt = f"Decision snippets ({len(events)}):\n{body}"
     in_tok = _count_tokens(sys + prompt, model)
     out_tok = 1500
-    from . import pricing
+    from ... import pricing
     cost = pricing.realtime_cost(model, in_tok, out_tok)
     print(f"  {len(events)} snippets fed.  ESTIMATE (zero paid calls):")
     print(f"    realtime {model} 1 call · in~{in_tok:,} out≤{out_tok:,} -> ~${cost:.4f}")
-    from . import budget
+    from ... import budget
     print(f"  meta budget: ${config.meta_cap():.2f}/day · spent today ${budget.meta_spent_today():.4f}")
     if not run:
-        from . import ui; ui.estimate_only(action="synthesize from the conversations", cost=cost)
+        from ... import ui; ui.estimate_only(action="synthesize from the conversations", cost=cost)
         return dict(requests=1, in_tok=in_tok, out_tok=out_tok, cost=cost, model=model)
 
-    from . import adapters
+    from ... import adapters
     with calls.context(intent="spendguard:conv-synth"):
         r = adapters.call(model, prompt, max_tokens=out_tok, system=sys)
     if r["error"]:

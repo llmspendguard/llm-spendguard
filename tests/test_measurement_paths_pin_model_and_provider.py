@@ -17,9 +17,9 @@ _SRC = pathlib.Path(__file__).resolve().parent.parent / "src" / "spendguard"
 
 # B: (file, enclosing-func, callee-name, required kw=True). The callee is matched by its bare attribute/name.
 _B_PINS = [
-    ("advisor.py", "optimize", "call", "no_substitution"),          # reports model=model (recommender of record)
-    ("advisor.py", "recommend_models", "call", "no_substitution"),  # reports model=model (ranker of record)
-    ("advisor.py", "reconstruct_advisor_history", "call", "no_substitution"),  # records judge quality for history
+    ("analyze/learning/advisor.py", "optimize", "call", "no_substitution"),          # reports model=model (recommender of record)
+    ("analyze/learning/advisor.py", "recommend_models", "call", "no_substitution"),  # reports model=model (ranker of record)
+    ("analyze/learning/advisor.py", "reconstruct_advisor_history", "call", "no_substitution"),  # records judge quality for history
     ("manage/routing/lane_balance.py", "propose_substitutes", "call", "no_substitution"),  # records proposed_by=judge
 ]
 # C: (file, enclosing-func, callee-name, required kw present — any value). realtime_cost must receive provider=.
