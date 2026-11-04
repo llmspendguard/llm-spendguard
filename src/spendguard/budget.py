@@ -54,9 +54,9 @@ def _budget_snapshot_generation_observer():
         _LEDGER_TL.projection_observer = None
         observer = None
     if observer is None:
-        owner = config.managed_ledger_read_connection(read_target, uri=True,
+        owner = contextlib.closing(config.open_ledger_connection(read_target, uri=True, tune=False,
             deadline_at=effective_ledger_admission_deadline(
-                time.monotonic() + config.LEDGER_QUERY_DEADLINE_S))
+                time.monotonic() + config.LEDGER_QUERY_DEADLINE_S)))
         connection = owner.__enter__()
         observer = (observer_identity, owner, connection)
         _LEDGER_TL.projection_observer = observer
