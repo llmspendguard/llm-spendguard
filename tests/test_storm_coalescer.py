@@ -27,6 +27,7 @@ sys.path.insert(0, _HERE)
 import spendguard  # noqa: E402
 spendguard.require = lambda: None
 import storm_harness as H  # noqa: E402
+from spendguard.manage.token_operations import queue_planner  # noqa: E402
 from spendguard.storm_coalescer import StormCoalescer  # noqa: E402
 
 COALESCER_PROMPTNESS_BOUND_S = 15.0
@@ -67,7 +68,8 @@ def _results(futs):
 print("-- I1 conservation (N in == N out; every future resolved once) --")
 for N in (0, 1, 2, 300, 1000):
     fp = H.FakeProvider(cap=100000, window_s=1.0)                 # huge wall: isolate conservation from pacing
-    c = StormCoalescer(execute_realtime=_rt(fp), execute_batch=_batch(fp),
+    c = StormCoalescer(batch_chunk_planner=queue_planner.plan_batch_chunks,
+                       execute_realtime=_rt(fp), execute_batch=_batch(fp),
                        sustainable_rate_per_s=5000, horizon_s=1.0, provider="anthropic")
     futs = c.submit_all(["do %s" % H.canary(i) for i in range(N)])
     res = _results(futs)
@@ -78,7 +80,8 @@ for N in (0, 1, 2, 300, 1000):
        extra="len=%d ok=%d done=%s" % (len(res), ok_n, all_done))
 # concurrent arm (panel: serial submit_all under a huge cap didn't exercise contention): 200 threads, a REAL wall
 fp = H.FakeProvider(cap=60, window_s=1.0)
-c = StormCoalescer(execute_realtime=_rt(fp), execute_batch=_batch(fp),
+c = StormCoalescer(batch_chunk_planner=queue_planner.plan_batch_chunks,
+                   execute_realtime=_rt(fp), execute_batch=_batch(fp),
                    sustainable_rate_per_s=40, horizon_s=1.0, provider="anthropic")   # budget 40, N 200 => both paths, paced
 subs = ["do %s" % H.canary(i) for i in range(200)]
 box = [None] * 200
@@ -96,7 +99,8 @@ ck("I1 concurrent: 200 submitted from 32 threads under a real wall -> all resolv
 # ── I2 — demux/bijection: future for request i resolves with the result FOR i ─────────────────────────────────
 print("-- I2 demux/bijection (future_i answers request_i, across paths) --")
 fp = H.FakeProvider(cap=100000, window_s=1.0)
-c = StormCoalescer(execute_realtime=_rt(fp), execute_batch=_batch(fp),
+c = StormCoalescer(batch_chunk_planner=queue_planner.plan_batch_chunks,
+                   execute_realtime=_rt(fp), execute_batch=_batch(fp),
                    sustainable_rate_per_s=50, horizon_s=1.0, provider="anthropic")   # budget 50, N 200 => both paths
 subs = ["do %s" % H.canary(i) for i in range(200)]
 futs = c.submit_all(subs)
@@ -117,7 +121,8 @@ def _rt_stamped(req):
     with _slock:
         _stamps.append(time.monotonic())
     return r
-c = StormCoalescer(execute_realtime=_rt_stamped, execute_batch=_batch(fp),
+c = StormCoalescer(batch_chunk_planner=queue_planner.plan_batch_chunks,
+                   execute_realtime=_rt_stamped, execute_batch=_batch(fp),
                    sustainable_rate_per_s=10, horizon_s=2.0, provider="anthropic")    # budget 20, N 20 => realtime-only
 t0 = time.monotonic()
 futs = c.submit_all(["do %s" % H.canary(i) for i in range(20)])
@@ -133,7 +138,8 @@ ck("I5 sliding-window peak <= per-second cap(+1), 0 provider 429, not instant",
 # ── I6 — the COMBO under pressure: pace sustainable share AND batch the overflow ──────────────────────────────
 print("-- I6 combo (realtime 0<x<=budget AND overflow batched) --")
 fp = H.FakeProvider(cap=100000, window_s=1.0)
-c = StormCoalescer(execute_realtime=_rt(fp), execute_batch=_batch(fp),
+c = StormCoalescer(batch_chunk_planner=queue_planner.plan_batch_chunks,
+                   execute_realtime=_rt(fp), execute_batch=_batch(fp),
                    sustainable_rate_per_s=40, horizon_s=1.0, provider="anthropic")    # budget 40
 N = 300
 futs = c.submit_all(["do %s" % H.canary(i) for i in range(N)])
@@ -149,7 +155,8 @@ ck("I6 combo: realtime in (0,budget], overflow batched, all N returned",
 # ── I7 — below threshold: small cohort stays realtime, ZERO batch (no over-eager batching) ────────────────────
 print("-- I7 small cohort stays realtime (no over-eager batch) --")
 fp = H.FakeProvider(cap=100000, window_s=1.0)
-c = StormCoalescer(execute_realtime=_rt(fp), execute_batch=_batch(fp),
+c = StormCoalescer(batch_chunk_planner=queue_planner.plan_batch_chunks,
+                   execute_realtime=_rt(fp), execute_batch=_batch(fp),
                    sustainable_rate_per_s=40, horizon_s=1.0, provider="anthropic")    # budget 40
 futs = c.submit_all(["do %s" % H.canary(i) for i in range(5)])   # 5 << budget
 res = _results(futs)
@@ -160,7 +167,8 @@ ck("I7 small cohort: 0 batch jobs, all 5 served realtime", c.batch_jobs == 0 and
 # ── I8 — a burst within the idle gap forms ONE cohort (planned once) ──────────────────────────────────────────
 print("-- I8 coalesces a burst into ONE cohort --")
 fp = H.FakeProvider(cap=100000, window_s=1.0)
-c = StormCoalescer(execute_realtime=_rt(fp), execute_batch=_batch(fp),
+c = StormCoalescer(batch_chunk_planner=queue_planner.plan_batch_chunks,
+                   execute_realtime=_rt(fp), execute_batch=_batch(fp),
                    sustainable_rate_per_s=100000, horizon_s=10.0, provider="anthropic",  # budget huge => wait for quiescence
                    idle_gap_s=0.05)
 futs = [c.submit_request("do %s" % H.canary(i)) for i in range(50)]      # tight loop << idle_gap
@@ -171,7 +179,8 @@ ck("I8 one burst -> one cohort (O(1) plan, not per-request)", c.cohorts == 1, ex
 # ── I9 — logical break: a lone call fires at ~idle_gap, NOT at max_wait ───────────────────────────────────────
 print("-- I9 logical-break timing (lone call not needlessly delayed) --")
 fp = H.FakeProvider(cap=100000, window_s=1.0)
-c = StormCoalescer(execute_realtime=_rt(fp), execute_batch=_batch(fp),
+c = StormCoalescer(batch_chunk_planner=queue_planner.plan_batch_chunks,
+                   execute_realtime=_rt(fp), execute_batch=_batch(fp),
                    sustainable_rate_per_s=100000, horizon_s=1.0, provider="anthropic",
                    idle_gap_s=COALESCER_LONE_IDLE_GAP_S, max_wait_s=COALESCER_LONE_MAX_WAIT_S)
 t0 = time.monotonic()
@@ -198,7 +207,8 @@ def _evil(items):
     out["ghost-9999"] = {"text": "ok GHOST", "status_code": 200}       # unknown id — must be quarantined, not assigned
     pairs = list(out.items()); random.Random(7).shuffle(pairs)          # returned UNORDERED
     return dict(pairs)
-c = StormCoalescer(execute_realtime=_rt(fp), execute_batch=_evil,
+c = StormCoalescer(batch_chunk_planner=queue_planner.plan_batch_chunks,
+                   execute_realtime=_rt(fp), execute_batch=_evil,
                    sustainable_rate_per_s=5, horizon_s=1.0, provider="anthropic")     # budget 5, N 40 => 35 overflow
 subs = ["do %s" % H.canary(i) for i in range(40)]
 res = _results(c.submit_all(subs))
@@ -219,7 +229,8 @@ def _poison(items):
         if POISON in str(req):
             out[cid] = {"text": None, "error": "invalid request (poison)", "status_code": 400}  # per-item error, always
     return out
-c = StormCoalescer(execute_realtime=_rt(fp), execute_batch=_poison,
+c = StormCoalescer(batch_chunk_planner=queue_planner.plan_batch_chunks,
+                   execute_realtime=_rt(fp), execute_batch=_poison,
                    sustainable_rate_per_s=5, horizon_s=1.0, provider="anthropic")     # budget 5, N 30 => 17 is in overflow
 res = _results(c.submit_all(["do %s" % H.canary(i) for i in range(30)]))
 c.close()
@@ -233,7 +244,8 @@ print("-- I12 whole-submit throw -> typed group error, none pending (bisection i
 fp = H.FakeProvider(cap=100000, window_s=1.0)
 def _boom(items):
     raise RuntimeError("batch provider down")
-c = StormCoalescer(execute_realtime=_rt(fp), execute_batch=_boom,
+c = StormCoalescer(batch_chunk_planner=queue_planner.plan_batch_chunks,
+                   execute_realtime=_rt(fp), execute_batch=_boom,
                    sustainable_rate_per_s=10, horizon_s=1.0, provider="anthropic")    # budget 10, N 30 => 20 overflow
 futs = c.submit_all(["do %s" % H.canary(i) for i in range(30)])
 res = _results(futs)
@@ -254,7 +266,8 @@ def _rt_flaky(req):
     if ERRC in str(req):
         return {"text": None, "error": "realtime 500", "status_code": 500}   # an error result must not count as success
     return fp._realtime("m", req)
-c = StormCoalescer(execute_realtime=_rt_flaky, execute_batch=_batch(fp),
+c = StormCoalescer(batch_chunk_planner=queue_planner.plan_batch_chunks,
+                   execute_realtime=_rt_flaky, execute_batch=_batch(fp),
                    sustainable_rate_per_s=100000, horizon_s=1.0, provider="anthropic")   # huge budget → all start realtime
 res = _results(c.submit_all(["do %s" % H.canary(i) for i in range(20)]))
 c.close()
@@ -269,7 +282,8 @@ fp = H.FakeProvider(cap=100000, window_s=1.0)
 _hang_gate = threading.Event()
 _hang_batch = partial(delayed_batch_results, event=_hang_gate, timeout=COALESCER_BATCH_RELEASE_S,
                       response_for=lambda prompt: {"text": "late", "status_code": 200})
-c = StormCoalescer(execute_realtime=_rt(fp), execute_batch=_hang_batch,
+c = StormCoalescer(batch_chunk_planner=queue_planner.plan_batch_chunks,
+                   execute_realtime=_rt(fp), execute_batch=_hang_batch,
                    sustainable_rate_per_s=5, horizon_s=1.0, provider="anthropic")   # budget 5, N 20 → 15 overflow hangs
 c.submit_all(["do %s" % H.canary(i) for i in range(20)])
 _t = time.monotonic()
@@ -284,7 +298,8 @@ ck("close() returns bounded, not a hang", _close_s < COALESCER_PROMPTNESS_BOUND_
 # ── I20 — realtime reserved ACROSS cohorts: a sustained fan overflows to batch, not budget-sized all-realtime ──
 print("-- I20 cohort reservation: the realtime budget is shared across the horizon (sustained fan -> batch) --")
 fp = H.FakeProvider(cap=100000, window_s=1.0)
-c = StormCoalescer(execute_realtime=_rt(fp), execute_batch=_batch(fp),
+c = StormCoalescer(batch_chunk_planner=queue_planner.plan_batch_chunks,
+                   execute_realtime=_rt(fp), execute_batch=_batch(fp),
                    sustainable_rate_per_s=40, horizon_s=3.0, provider="anthropic")   # budget 120
 fresh = c._available_realtime()
 c._reserve_realtime(c.realtime_budget)
@@ -306,7 +321,8 @@ ck("I20 sustained: budget already reserved → the cohort overflows ENTIRELY to 
 # ── I20 atomicity: concurrent cohorts claiming realtime must NOT over-grant (the check-then-reserve TOCTOU fix) ─
 print("-- I20 atomic claim: concurrent claims never exceed the budget in total --")
 fp = H.FakeProvider(cap=100000, window_s=1.0)
-c = StormCoalescer(execute_realtime=_rt(fp), execute_batch=_batch(fp),
+c = StormCoalescer(batch_chunk_planner=queue_planner.plan_batch_chunks,
+                   execute_realtime=_rt(fp), execute_batch=_batch(fp),
                    sustainable_rate_per_s=40, horizon_s=3.0, provider="anthropic")   # budget 120
 with cf.ThreadPoolExecutor(max_workers=16) as ex:
     grants = list(ex.map(lambda _: c._claim_realtime(c.realtime_budget), range(16)))  # 16 threads each want the full budget
@@ -316,7 +332,8 @@ ck("I20 atomic: 16 concurrent full-budget claims grant <= budget TOTAL (no TOCTO
 
 # ── I14 — chunk coverage: slices cover the overflow exactly, no overlap, no dropped tail ──────────────────────
 print("-- I14 chunks cover overflow exactly (union==overflow, no overlap) --")
-c = StormCoalescer(execute_realtime=lambda r: {}, execute_batch=lambda rs: [{} for _ in rs],
+c = StormCoalescer(batch_chunk_planner=queue_planner.plan_batch_chunks,
+                   execute_realtime=lambda r: {}, execute_batch=lambda rs: [{} for _ in rs],
                    sustainable_rate_per_s=10, horizon_s=1.0, provider="openai")        # openai chunks 50000 -> 50x1000
 for M in (5, 1000, 50000, 50001):
     pend = list(range(M))

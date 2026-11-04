@@ -24,6 +24,7 @@ import threading
 import time
 
 from ... import adapters, dispatch
+from . import queue_planner
 from .storm_coalescer import StormCoalescer
 from .storm_submit import StormRequestContract, default_batch_executor, governed_realtime_executor
 
@@ -139,6 +140,7 @@ def get_coalescer(vendor, model, intent, system=None, reasoning="minimal", horiz
         c = _REG.get(key)
         if c is None:
             c = StormCoalescer(
+                batch_chunk_planner=queue_planner.plan_batch_chunks,
                 # The urgency HORIZON sizes realtime CAPACITY (rate × horizon) — it is NOT a per-call reply deadline.
                 # Passing it as the executor's timeout_s killed any realtime reply that legitimately took longer than the
                 # horizon (default 30s), which then rerouted to batch and came back text=None — the measured "coalescer

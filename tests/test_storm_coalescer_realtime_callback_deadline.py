@@ -26,6 +26,7 @@ EXPECTED_TIMEOUT_COUNT = 1
 def run_hung_realtime_deadline_child():
     repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     sys.path.insert(0, os.path.join(repo_root, "src"))
+    from spendguard.manage.token_operations import queue_planner
     from spendguard.storm_coalescer import StormCoalescer, _Pending
 
     callback_blocker = threading.Event()
@@ -34,6 +35,7 @@ def run_hung_realtime_deadline_child():
         callback_blocker.wait()
 
     coalescer = StormCoalescer(
+        batch_chunk_planner=queue_planner.plan_batch_chunks,
         execute_realtime=execute_realtime_that_never_returns,
         execute_batch=lambda _requests: {},
         sustainable_rate_per_s=1.0 / REALTIME_HORIZON_S,

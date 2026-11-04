@@ -31,8 +31,7 @@ import traceback
 import threading
 import time
 from concurrent.futures import Future, InvalidStateError, ThreadPoolExecutor, TimeoutError as FutureTimeoutError
-
-from . import queue_planner
+from typing import Callable
 
 _STORM_FAILURE_LOGGER = logging.getLogger(__name__)
 
@@ -78,11 +77,13 @@ class StormCoalescer:
     """Accumulate concurrent submissions into cohorts cut at an adaptive LOGICAL BREAK, then route each cohort as the
     COMBO (pace sustainable realtime + batch the overflow), resolving every future exactly once. Execution injected."""
 
-    def __init__(self, *, execute_realtime, execute_batch, sustainable_rate_per_s, horizon_s,
+    def __init__(self, *, execute_realtime, execute_batch, batch_chunk_planner: Callable[[int, str], dict],
+                 sustainable_rate_per_s, horizon_s,
                  idle_gap_s=0.01, max_wait_s=1.0, realtime_concurrency=8, route_concurrency=4,
                  batch_concurrency=4, provider="?", batch_refill_depth=1, realtime_timeout_for=None):
-        if not callable(execute_realtime) or not callable(execute_batch):
-            raise ValueError("execute_realtime and execute_batch are REQUIRED callables (no silent default)")
+        if not callable(execute_realtime) or not callable(execute_batch) or not callable(batch_chunk_planner):
+            raise ValueError("execute_realtime, execute_batch, and batch_chunk_planner are REQUIRED callables "
+                             "(no silent default)")
         if not (sustainable_rate_per_s > 0 and math.isfinite(sustainable_rate_per_s)):
             raise ValueError("sustainable_rate_per_s must be a FINITE number > 0 (rpm/60 for the vendor); got %r "
                              "(inf/NaN would silently disable pacing)" % (sustainable_rate_per_s,))
@@ -95,6 +96,7 @@ class StormCoalescer:
         self._execute_realtime = execute_realtime
         self._realtime_timeout_for = realtime_timeout_for
         self._execute_batch = execute_batch
+        self._batch_chunk_planner = batch_chunk_planner
         self.sustainable_rate_per_s = float(sustainable_rate_per_s)
         self.horizon_s = float(horizon_s)
         self.idle_gap_s = float(idle_gap_s)
@@ -346,7 +348,7 @@ class StormCoalescer:
         return reroute
 
     def _run_batch_overflow(self, pend, depth):
-        """Submit the overflow to the injected batch path, chunked by queue_planner.plan_batch_chunks, demuxing the
+        """Submit the overflow to the injected batch path, chunked by the injected canonical planner, demuxing the
         output BY REQUEST ID — never positionally. Real Batch APIs return unordered and may drop/duplicate, so a
         positional zip corrupts demux (the Prompt 9 panel caught exactly this). Each _Pending's `seq` is its custom_id.
         A per-item failure (an error/rate-limit result, or a MISSING id) is ISOLATED (I19): only that id is refilled
@@ -393,7 +395,7 @@ class StormCoalescer:
     def _slice_by_chunks(self, pend):
         """Split `pend` into Batch-API-sized groups using the canonical planner (int COUNTS). Covers [0,len) exactly —
         the tail is always included even if the plan under-counts (I14: union == overflow, no drop)."""
-        plan = queue_planner.plan_batch_chunks(len(pend), self.provider)
+        plan = self._batch_chunk_planner(len(pend), self.provider)
         counts = [c for c in (plan.get("chunks") or []) if isinstance(c, int) and c > 0]
         groups, i = [], 0
         for n in counts:

@@ -2209,7 +2209,6 @@
       "spendguard.manage.token_operations.lane_recovery",
       "spendguard.manage.token_operations.queue_planner",
       "spendguard.manage.token_operations.resource_state",
-      "spendguard.manage.token_operations.storm_coalescer",
       "spendguard.manage.token_operations.storm_route",
       "spendguard.manage.token_operations.storm_submit",
       "spendguard.manage.token_operations.warm_stdio_daemon",
@@ -5262,10 +5261,6 @@
       "spendguard.store.configuration.config"
     ],
     [
-      "spendguard.manage.token_operations.storm_coalescer",
-      "spendguard.manage.token_operations.queue_planner"
-    ],
-    [
       "spendguard.manage.token_operations.storm_route",
       "spendguard.generate.execution.adapters"
     ],
@@ -5275,7 +5270,7 @@
     ],
     [
       "spendguard.manage.token_operations.storm_route",
-      "spendguard.manage.token_operations.storm_coalescer"
+      "spendguard.manage.token_operations.queue_planner"
     ],
     [
       "spendguard.manage.token_operations.storm_route",
@@ -5303,7 +5298,7 @@
     ],
     [
       "spendguard.manage.token_operations.storm_submit",
-      "spendguard.manage.token_operations.storm_coalescer"
+      "spendguard.manage.token_operations.queue_planner"
     ],
     [
       "spendguard.manage.token_operations.storm_submit",
@@ -5976,8 +5971,8 @@
     "src/spendguard/platform/lanes.py:64",
     "src/spendguard/generate/spend_capture/sources.py:77"
   ],
-  "max_largest_scc_size": 137,
-  "max_cyclic_edge_count": 928,
+  "max_largest_scc_size": 136,
+  "max_cyclic_edge_count": 927,
   "max_legacy_shim_count": 219,
   "recorded_cross_context_nonsurface_imports": [
     [

@@ -20,6 +20,7 @@ import time
 from concurrent.futures import TimeoutError as FuturesTimeout
 
 from ... import adapters, dispatch
+from . import queue_planner
 from .storm_coalescer import StormCoalescer
 
 
@@ -219,6 +220,7 @@ def submit_storm(tasks, intent, model, execute_batch=None, deadline_s=30.0, syst
         execute_batch = default_batch_executor(model, intent, system=system, reasoning=reasoning)
     rate = sustainable_rate_per_s(provider, model)
     coalescer = StormCoalescer(
+        batch_chunk_planner=queue_planner.plan_batch_chunks,
         execute_realtime=governed_realtime_executor(model, system, reasoning, intent, deadline_s),
         execute_batch=execute_batch, sustainable_rate_per_s=rate, horizon_s=deadline_s,
         realtime_concurrency=max_workers, idle_gap_s=idle_gap_s, max_wait_s=max_wait_s, provider=provider)
