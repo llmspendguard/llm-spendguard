@@ -58,8 +58,7 @@ import logging
 import os
 import time
 import traceback
-
-from ... import config
+from pathlib import Path
 
 ANSWERED, REFUSED, UNRESOLVED = "answered", "refused", "unresolved"
 
@@ -70,9 +69,9 @@ RETRY_ROUNDS = 3
 ITEM_LEDGER_LOGGER = logging.getLogger(__name__)
 
 
-def _default_rounds() -> int:
+def _default_rounds(configured=None) -> int:
     try:
-        return max(1, int(config._cfg_get("bulkgate", "item_retry_rounds", RETRY_ROUNDS)))
+        return max(1, int(RETRY_ROUNDS if configured is None else configured))
     except (TypeError, ValueError):
         return RETRY_ROUNDS
 
@@ -90,12 +89,15 @@ class ItemLedger:
     durable file cannot survive the restart it exists to survive.
     """
 
-    def __init__(self, requested, *, path: str = None, job: str = None):
+    def __init__(self, requested, *, path: str = None, job: str = None, home=None, default_rounds=None):
         if not path and not job:
             raise ValueError("ItemLedger needs a durable location: pass path=<jsonl> or job=<name> "
                              "(→ SPENDGUARD_HOME/item_ledger_<job>.jsonl). An in-memory-only ledger cannot survive a "
                              "restart, which is the whole point.")
-        self.path = str(path) if path else str(config.HOME / f"item_ledger_{job}.jsonl")
+        if not path and home is None:
+            raise ValueError("ItemLedger job=<name> requires home=<SPENDGUARD_HOME> when path is not provided.")
+        self.path = str(path) if path else str(Path(home) / f"item_ledger_{job}.jsonl")
+        self.default_rounds = _default_rounds(default_rounds)
         self.requested = list(dict.fromkeys(requested))   # de-duped, order kept
         self.state: dict = {}
         self.answers: dict = {}
@@ -211,7 +213,7 @@ class ItemLedger:
 
     def exhausted(self, rounds: int = None) -> list:
         """Pending items already asked `rounds` times — out of retry budget. `rounds` defaults to the configured bound."""
-        rounds = _default_rounds() if rounds is None else rounds
+        rounds = self.default_rounds if rounds is None else rounds
         return [i for i in self.pending() if self.attempts[i] >= rounds]
 
     def close_exhausted(self, rounds: int = None) -> int:

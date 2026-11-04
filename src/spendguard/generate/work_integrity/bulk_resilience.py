@@ -2,9 +2,6 @@
 import os
 import sys
 
-from ... import config
-
-
 class BulkResilienceRefused(Exception):
     """A large submission lacks both real chunks and a durable checkpoint."""
 
@@ -17,19 +14,18 @@ class BulkResilienceRefused(Exception):
         self.where = where
 
 
-def _resilience_min_units(default=1000):
+def _resilience_min_units(configured=None, default=1000):
     """Configured bulk.resilience_min_units; zero disables the structural gate."""
     try:
-        v = config._cfg_get("bulk", "resilience_min_units", None)
-        v = os.environ.get("SPENDGUARD_BULK_RESILIENCE_MIN_UNITS", v)
+        v = os.environ.get("SPENDGUARD_BULK_RESILIENCE_MIN_UNITS", configured)
         return int(v) if v is not None else default
     except (TypeError, ValueError):
         return default
 
 
-def require_resilient(n_units, *, chunked, checkpointed, force, where, chunk_size=None):
+def require_resilient(n_units, *, chunked, checkpointed, force, where, chunk_size=None, min_units=None):
     """Refuse a large indivisible run. Unknown shape fails closed; force is logged."""
-    minimum = _resilience_min_units()
+    minimum = _resilience_min_units(configured=min_units)
     if force:
         if where != "lane":
             print(f"[spendguard] resilience force=True override at {where}: {n_units} requests", file=sys.stderr)

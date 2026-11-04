@@ -386,14 +386,16 @@ def submit_offload(intent, rows, batch_model, *, cap_dollars=None, expires_at=No
     rows = list(rows or [])
     if not rows:
         return {"batch_id": None, "marked": 0, "error": "no rows"}
-    minimum = bulk_resilience._resilience_min_units()
+    resilience_min_units = config._cfg_get("bulk", "resilience_min_units", None)
+    minimum = bulk_resilience._resilience_min_units(configured=resilience_min_units)
     if shard_size is None and minimum > 1 and len(rows) >= minimum:
         shard_size = minimum - 1
     chunked = shard_size is not None and 0 < shard_size < len(rows)
     # This is the checkpointed path: every shard recurses through reconcile → create → durable row mark.
     # The provider sees request counts, not logical units packed upstream into each request.
     bulk_resilience.require_resilient(len(rows), chunked=chunked, checkpointed=True,
-                                      force=force, where="batch_tracker.submit_offload")
+                                      force=force, where="batch_tracker.submit_offload",
+                                      min_units=resilience_min_units)
     if chunked:
         shards = [rows[i:i + shard_size] for i in range(0, len(rows), shard_size)]
         per_cap = float(cap_dollars) / len(shards) if cap_dollars is not None else None

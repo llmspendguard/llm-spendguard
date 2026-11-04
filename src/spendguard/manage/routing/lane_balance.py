@@ -680,7 +680,8 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None,
     # small leased batches, well under the threshold.
     bulk_resilience.require_resilient(len(tasks), chunked=chunk_size < len(tasks),
                                       checkpointed=bool(checkpoint), force=force, where="lane",
-                                      chunk_size=chunk_size)
+                                      chunk_size=chunk_size,
+                                      min_units=config._cfg_get("bulk", "resilience_min_units", None))
     # BULK-GATE REACH (the axis-4 gap warden's Q8 found). The estimate→test→eval discipline does NOT follow work
     # onto a lane: a lane runs a CLI subprocess, touching no patched SDK, so gate._bulkgate_check never fires and a
     # lane fan is otherwise UNGOVERNED. The SPEND gate is moot ($0 on a plan) — but "was this proven to work before N

@@ -23,7 +23,7 @@ import time
 import traceback
 
 from ...pricing import batch_cost, realtime_cost, normalize
-from ... import bulk_resilience
+from ... import bulk_resilience, config
 
 from ...config import HOME as _HOME, api_key as _api_key
 AUDIT_DIR = str(_HOME)
@@ -380,7 +380,8 @@ def guarded_submit(jsonl_path, model, cap_dollars, batch=True, avg_out_tokens=No
     est = estimate_submission_jsonl_cost(jsonl_path, model, batch=batch, avg_out_tokens=avg_out_tokens, intent=intent)
     if submit:
         bulk_resilience.require_resilient(est["requests"], chunked=False, checkpointed=False,
-                                          force=force, where="guarded_submit")
+                                          force=force, where="guarded_submit",
+                                          min_units=config._cfg_get("bulk", "resilience_min_units", None))
     print(f"[submit_gate] {est['requests']:,} req · {est['mode']} · in={est['in_tok']:,} "
           f"out={est['out_tok']:,} ({est['out_basis']}; {est['token_basis']}) -> ${est['cost']:,.2f}")
 
@@ -410,7 +411,6 @@ def guarded_submit(jsonl_path, model, cap_dollars, batch=True, avg_out_tokens=No
     import hashlib as _hashlib
     _tag = _hashlib.sha256(os.path.abspath(jsonl_path).encode()).hexdigest()[:8]
     audit_path = os.path.join(AUDIT_DIR, f"{os.path.basename(jsonl_path)}.{_tag}.gate.json")
-    from ... import config
     config.update_json(audit_path, lambda _d: rec,      # a gate AUDIT record; losing it loses the trail
                        quarantine_unparseable=True)     # so a corrupt prior audit is moved aside (kept .corrupt) and the
     #                                                     current record STILL persists before submission — never a silent decline
@@ -538,7 +538,8 @@ def submit_chat_tasks(tasks, model, *, system=None, schema=None, reasoning="mini
     items = _assign_batch_ordinals(tasks)
     if submit and items:
         bulk_resilience.require_resilient(len(items), chunked=shard_size is not None and 0 < shard_size < len(items),
-                                          checkpointed=False, force=force, where="submit_chat_tasks")
+                                          checkpointed=False, force=force, where="submit_chat_tasks",
+                                          min_units=config._cfg_get("bulk", "resilience_min_units", None))
     if shard_size and shard_size > 0 and len(items) > shard_size:   # fan into shards → a LIST of batch ids (not one)
         return _fan_submit_shards(items, shard_size, cap_dollars, lambda shard, cap: submit_chat_tasks(
             shard, model, system=system, schema=schema, reasoning=reasoning, max_out=max_out,
@@ -679,7 +680,8 @@ def submit_message_batch(tasks, model, *, system=None, schema=None, max_out=None
     items = _assign_batch_ordinals(tasks)
     if submit and items:
         bulk_resilience.require_resilient(len(items), chunked=shard_size is not None and 0 < shard_size < len(items),
-                                          checkpointed=False, force=force, where="submit_message_batch")
+                                          checkpointed=False, force=force, where="submit_message_batch",
+                                          min_units=config._cfg_get("bulk", "resilience_min_units", None))
     if shard_size and shard_size > 0 and len(items) > shard_size:   # fan into shards → a LIST of batch ids (not one)
         return _fan_submit_shards(items, shard_size, cap_dollars, lambda shard, cap: submit_message_batch(
             shard, model, system=system, schema=schema, max_out=max_out, expected_out_tokens=expected_out_tokens,

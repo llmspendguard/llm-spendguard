@@ -17,7 +17,7 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
     os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="sg-itemledger-")
     os.execv(sys.executable, [sys.executable] + sys.argv)
 
-from spendguard.item_ledger import ItemLedger, ANSWERED, REFUSED, UNRESOLVED  # noqa: E402
+from spendguard.item_ledger import ItemLedger, ANSWERED, REFUSED, RETRY_ROUNDS, UNRESOLVED  # noqa: E402
 
 
 class Checks:
@@ -40,7 +40,7 @@ try:
 except ValueError:
     ck("a ledger with no path/job is refused", True)
 
-L = ItemLedger(ITEMS, job="t1")
+L = ItemLedger(ITEMS, job="t1", home=os.environ["SPENDGUARD_HOME"], default_rounds=RETRY_ROUNDS)
 ck("the job name resolves to a file under SPENDGUARD_HOME", "item_ledger_t1.jsonl" in L.path and os.environ["SPENDGUARD_HOME"] in L.path)
 
 # ── states + counts + pending ─────────────────────────────────────────────────────────────────────────────────────
@@ -72,7 +72,7 @@ done = L.assert_complete()
 ck("answered + refused + unresolved == requested", done[ANSWERED] + done[REFUSED] + done[UNRESOLVED] == done["requested"])
 
 # ── DURABILITY: a fresh ledger (a restart) recovers outcomes AND the attempt budget ────────────────────────────────
-L2 = ItemLedger(ITEMS, job="t1")
+L2 = ItemLedger(ITEMS, job="t1", home=os.environ["SPENDGUARD_HOME"], default_rounds=RETRY_ROUNDS)
 ck("restart recovers an answered outcome + its answer", L2.state["a"] == ANSWERED and L2.answers["a"] == "A1")
 ck("restart recovers the attempt budget (the retry bound survives)", L2.attempts["c"] >= 3)
 ck("restart recovers the unresolved state", L2.state["c"] == UNRESOLVED)
@@ -81,7 +81,7 @@ ck("restart recovers the unresolved state", L2.state["c"] == UNRESOLVED)
 reopened = L2.reopen()
 ck("reopen clears the 3 unresolved items", reopened == 3)
 ck("reopened items are pending again", set(L2.pending()) == {"c", "d", "e"}, extra=repr(L2.pending()))
-L3 = ItemLedger(ITEMS, job="t1")
+L3 = ItemLedger(ITEMS, job="t1", home=os.environ["SPENDGUARD_HOME"], default_rounds=RETRY_ROUNDS)
 ck("a restart AFTER reopen keeps them pending (reopen row clears the stale terminal state)",
    set(L3.pending()) == {"c", "d", "e"}, extra=repr(L3.pending()))
 
