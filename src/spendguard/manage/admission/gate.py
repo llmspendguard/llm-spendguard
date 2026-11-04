@@ -2639,10 +2639,10 @@ class _GatePackagePostImportFinder:
 _gate_package_import_finder = _GatePackagePostImportFinder()
 
 _ADAPTER_GATED_SDK_MODULES = {
-    "litellm": ("litellm_adapter", "litellm_adapter_is_wired"),
-    "google.generativeai": ("vertex_adapter", "vertex_adapter_is_wired"),
-    "google.genai": ("vertex_adapter", "vertex_adapter_is_wired"),
-    "vertexai": ("vertex_adapter", "vertex_adapter_is_wired"),
+    "litellm": ("litellm_adapter", "litellm_adapter_is_wired", "set_litellm_realtime_recorder"),
+    "google.generativeai": ("vertex_adapter", "vertex_adapter_is_wired", "set_vertex_realtime_recorder"),
+    "google.genai": ("vertex_adapter", "vertex_adapter_is_wired", "set_vertex_realtime_recorder"),
+    "vertexai": ("vertex_adapter", "vertex_adapter_is_wired", "set_vertex_realtime_recorder"),
 }
 
 
@@ -2703,8 +2703,9 @@ def _patch_imported_sdk_package(module):
 def _install_imported_adapter_sdk(module):
     """Wire the adapter selected for an SDK whose import has just completed."""
     import importlib
-    adapter_module_name, _verifier_name = _ADAPTER_GATED_SDK_MODULES[module.__name__]
+    adapter_module_name, _verifier_name, recorder_setter_name = _ADAPTER_GATED_SDK_MODULES[module.__name__]
     adapter_module = importlib.import_module("..." + adapter_module_name, __package__)
+    getattr(adapter_module, recorder_setter_name)(_record_rt)
     if not adapter_module.install(force=False):
         print(f"[spend_gate] WARN adapter {adapter_module_name} did not wire imported SDK {module.__name__}",
               file=sys.stderr)
@@ -2713,7 +2714,7 @@ def _install_imported_adapter_sdk(module):
 def _imported_adapter_sdk_is_wired(module_name):
     """Use each adapter's real capture signal; an imported-but-unwired SDK is never covered."""
     import importlib
-    adapter_module_name, verifier_name = _ADAPTER_GATED_SDK_MODULES[module_name]
+    adapter_module_name, verifier_name, _recorder_setter_name = _ADAPTER_GATED_SDK_MODULES[module_name]
     adapter_module = importlib.import_module("..." + adapter_module_name, __package__)
     return bool(getattr(adapter_module, verifier_name)())
 
@@ -2750,9 +2751,17 @@ def install(cap: "float | None" = None) -> None:
         except Exception as e:
             print(f"[spend_gate] WARN adapter import hook for {module_name} skipped: {e}", file=sys.stderr)
     import importlib
+    adapter_recorder_setters = {
+        adapter_module_name: recorder_setter_name
+        for adapter_module_name, _verifier_name, recorder_setter_name in _ADAPTER_GATED_SDK_MODULES.values()
+    }
     for _mod in ("litellm_adapter", "bedrock_adapter", "vertex_adapter"):
         try:                                    # provider breadth (LiteLLM / direct Bedrock / direct Vertex) — wire
-            importlib.import_module("..." + _mod, __package__).install(force=False)   # only if the underlying SDK is
+            _adapter_module = importlib.import_module("..." + _mod, __package__)
+            recorder_setter_name = adapter_recorder_setters.get(_mod)
+            if recorder_setter_name is not None:
+                getattr(_adapter_module, recorder_setter_name)(_record_rt)
+            _adapter_module.install(force=False)   # only if the underlying SDK is
         except Exception as e:                   # ALREADY imported; never force-import a heavy optional dep at startup.
             print(f"[spend_gate] WARN adapter {_mod} startup wiring skipped: {e}", file=sys.stderr)
     try:                                         # third-party providers: `pip install spendguard-provider-X` is all a

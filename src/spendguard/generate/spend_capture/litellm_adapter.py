@@ -19,6 +19,13 @@ _SDK_GATED = {"openai", "azure", "azure_ai", "azure_text"}
 # Fixed LiteLLM operation discriminators, not an inference from model names or text.
 _LITELLM_NO_COMPLETION_KINDS = {"embedding", "aembedding", "rerank", "arerank"}
 _LITELLM_EMBEDDING_RESPONSE_KIND = "list"
+_litellm_realtime_recorder = None
+
+
+def set_litellm_realtime_recorder(recorder):
+    """Inject the realtime ledger sink before the success callback is registered."""
+    global _litellm_realtime_recorder
+    _litellm_realtime_recorder = recorder
 
 
 def litellm_adapter_is_wired() -> bool:
@@ -49,7 +56,6 @@ def record_litellm(kwargs, response_obj, start_time=None, end_time=None):
     """LiteLLM success-callback signature `(kwargs, response, start, end)`. Records one completion's usage into the
     realtime ledger. FAIL-OPEN — it's a post-success logger and must never break the user's LiteLLM call."""
     try:
-        from ... import gate
         prov = str((kwargs or {}).get("custom_llm_provider") or "").lower()
         if prov in _SDK_GATED:
             return                                  # already captured by the OpenAI-SDK gate → no double count
@@ -66,7 +72,8 @@ def record_litellm(kwargs, response_obj, start_time=None, end_time=None):
             cost = None
         if usage is None and cost is None:
             return                                  # neither usage nor monetary evidence
-        gate._record_rt(model, {"model": model}, in_tok, out_tok, cost=cost, provider=prov or None)
+        _litellm_realtime_recorder(
+            model, {"model": model}, in_tok, out_tok, cost=cost, provider=prov or None)
     except Exception as e:
         print(f"[spend_gate] WARN litellm capture failed ({e}); call unaffected", file=sys.stderr)
 

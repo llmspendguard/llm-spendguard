@@ -11,6 +11,13 @@ import sys
 
 _VERTEX_CAPTURE_METHODS = ("generate_content", "embed_content")
 _VERTEX_CAPTURE_CLASSES = (("Models", False), ("AsyncModels", True))
+_vertex_realtime_recorder = None
+
+
+def set_vertex_realtime_recorder(recorder):
+    """Inject the realtime ledger sink before SDK surfaces are wrapped."""
+    global _vertex_realtime_recorder
+    _vertex_realtime_recorder = recorder
 
 
 def _toks(result):
@@ -43,11 +50,10 @@ def _embed_toks(result):
 
 def _capture_vertex_result(kw, result, toks_fn=_toks):
     try:
-        from ... import gate
         model = (kw or {}).get("model") or getattr(result, "model_version", "") or ""
         u = toks_fn(result)
         if u is not None:
-            gate._record_rt(model, {"model": model}, u[0], u[1], provider="google")
+            _vertex_realtime_recorder(model, {"model": model}, u[0], u[1], provider="google")
     except Exception as e:
         print(f"[spend_gate] WARN vertex capture failed ({e}); call unaffected", file=sys.stderr)
 

@@ -14,6 +14,8 @@ os.environ["SPENDGUARD_CALLS"] = "1"
 
 from spendguard import adapters, budget, calls, focus_export, gate, lane_value, litellm_adapter, output_contract, pricing, receipt
 
+litellm_adapter.set_litellm_realtime_recorder(gate._record_rt)
+
 AXES_MODEL = "gpt-5-nano"
 AXES_INPUT = 100
 AXES_INTENT = "authoritative-cost-token-axes"

@@ -30,6 +30,7 @@ record_script_check(fails, "AsyncAzureOpenAI .create gated", getattr(type(azc.ch
 REC = []
 gate._record_rt = (lambda model, kw, in_tok, out_tok, cached=0, latency=None, output=None, finish=None,
                    cost=None, provider=None: REC.append((model, in_tok, out_tok, provider)))
+litellm_adapter.set_litellm_realtime_recorder(gate._record_rt)
 
 class _U:
     def __init__(self): self.prompt_tokens = 100; self.completion_tokens = 42
@@ -119,6 +120,7 @@ fake_google = types.ModuleType("google"); fake_google.genai = fake_genai
 sys.modules["google"] = fake_google; sys.modules["google.genai"] = fake_genai; sys.modules["google.genai.models"] = fake_models
 try:
     from spendguard import vertex_adapter
+    vertex_adapter.set_vertex_realtime_recorder(gate._record_rt)
     record_script_check(fails, "install_vertex wires (force)", vertex_adapter.install(force=True) is True)
     record_script_check(fails, "genai generate_content patched", getattr(Models.generate_content, "_spend_gated", False) is True)
     REC.clear()

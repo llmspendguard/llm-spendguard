@@ -52,6 +52,7 @@ from spendguard import vertex_adapter, gate  # noqa: E402
 
 captured = []
 gate._record_rt = lambda model, kw, i, o, **k: captured.append((model, i, o, k.get("provider")))
+vertex_adapter.set_vertex_realtime_recorder(gate._record_rt)
 
 record_script_check(fails, "install() wires the stubbed SDK", vertex_adapter.install(force=True) is True)
 record_script_check(fails, "generate_content patched", getattr(Models.generate_content, "_spend_gated", False))
