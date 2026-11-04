@@ -16,6 +16,7 @@ explicit proxy, marked at the call site), never a measured count — the same co
 $0 billed either way (a flat-fee plan served it). Prompt-mode only (no agent loop for meta work): a self-contained
 meta prompt needs no tools, and the run happens in a throwaway CWD so an agentic step can never touch the repo.
 """
+import functools
 import json
 import os
 import pathlib
@@ -239,7 +240,8 @@ def run_prompt(prompt, system=None, model=None, timeout=TIMEOUT_S, reasoning=Non
         from ... import kimi_daemon
         from .subscription_cli_results import kimi_warm_prompt_result
         warm_result = kimi_warm_prompt_result(
-            full, model, reasoning, timeout, kimi_exec_durable_dispatch_id, kimi_daemon.run_warm,
+            full, model, reasoning, timeout, kimi_exec_durable_dispatch_id,
+            functools.partial(kimi_daemon.run_warm, kimi_cli_path=exe),
             execution_journal.append_durable_execution_evidence)
         if warm_result is not None:
             return warm_result

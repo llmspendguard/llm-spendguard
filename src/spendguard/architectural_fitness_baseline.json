@@ -2239,10 +2239,6 @@
       "spendguard.store.reference_data.sync_capabilities",
       "spendguard.store.spend_search.ledger_read",
       "spendguard.store.spend_search.ledger_request_cursor"
-    ],
-    [
-      "spendguard.generate.execution.kimi_exec",
-      "spendguard.manage.token_operations.kimi_daemon"
     ]
   ],
   "recorded_cyclic_edges": [
@@ -3819,10 +3815,6 @@
       "spendguard.store.configuration.config"
     ],
     [
-      "spendguard.generate.execution.kimi_exec",
-      "spendguard.manage.token_operations.kimi_daemon"
-    ],
-    [
       "spendguard.generate.execution.submit",
       "spendguard.analyze.cost_estimation.content_tokens"
     ],
@@ -5143,10 +5135,6 @@
       "spendguard.store.configuration.config"
     ],
     [
-      "spendguard.manage.token_operations.kimi_daemon",
-      "spendguard.generate.execution.kimi_exec"
-    ],
-    [
       "spendguard.manage.token_operations.lane_queue",
       "spendguard.analyze.cost_estimation.provider_tokens"
     ],
@@ -5954,7 +5942,7 @@
     "src/spendguard/generate/spend_capture/sources.py:77"
   ],
   "max_largest_scc_size": 134,
-  "max_cyclic_edge_count": 923,
+  "max_cyclic_edge_count": 921,
   "max_legacy_shim_count": 219,
   "recorded_cross_context_nonsurface_imports": [
     [

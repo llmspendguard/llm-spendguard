@@ -46,6 +46,7 @@ class _KimiAcpDaemon(_WarmStdioJsonRpcDaemon):
 
     def __init__(self):
         super().__init__()
+        self._injected_cli_path = None
         self._session_waiters = {}             # sessionId -> the in-flight prompt waiter (streamed text accumulator)
 
     # ── ACP notification / server-request demux, overriding the base no-op ────────────────────────────────────
@@ -87,8 +88,7 @@ class _KimiAcpDaemon(_WarmStdioJsonRpcDaemon):
 
     # ── ACP spawn + handshake, overriding the base hooks ──────────────────────────────────────────────────────
     def _spawn_cmd(self):
-        from ... import kimi_exec
-        exe = kimi_exec._bin()
+        exe = self._injected_cli_path
         if not exe:
             return None
         return [exe, "acp"]
@@ -110,7 +110,8 @@ class _KimiAcpDaemon(_WarmStdioJsonRpcDaemon):
             self._drop_waiter(rid)
         return bool(ok)
 
-    def run_warm(self, prompt, model=None, reasoning=None, timeout=None, cwd=None, recycle_on_timeout=False):
+    def run_warm(self, prompt, model=None, reasoning=None, timeout=None, cwd=None, recycle_on_timeout=False,
+                 kimi_cli_path: "str | None" = None):
         """One delegation on the WARM ACP server, CONCURRENCY-SAFE. Each call opens a FRESH `session/new` (isolated
         context), sends one `session/prompt`, concatenates the streamed `agent_message_chunk` text, and returns on the
         `stopReason` the prompt response carries. → {"text", "error"} (plus "tool_error" on a hard refusal). A call
@@ -126,6 +127,8 @@ class _KimiAcpDaemon(_WarmStdioJsonRpcDaemon):
         kimi_warm_execution_id = self._enter_warm_evidence_scope()
         prompt = (prompt or "")
         self._cancel_idle_shutdown()
+        if kimi_cli_path:
+            self._injected_cli_path = kimi_cli_path
         try:
             for attempt in (1, 2):
                 p = self.ensure_running()

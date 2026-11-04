@@ -18,6 +18,7 @@ def main():
         print("SKIP: kimi CLI not found on this host")
         return 0
     d = kimi_daemon._KimiAcpDaemon()
+    d._injected_cli_path = kimi_exec._bin()
     try:
         p = d.ensure_running()                 # spawns `kimi acp` + runs the ACP initialize handshake
         if p is None:

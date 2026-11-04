@@ -32,7 +32,9 @@ def new_daemon(boot_log=None):
         os.environ["FAKE_KIMI_BOOT_LOG"] = str(boot_log)
     else:
         os.environ.pop("FAKE_KIMI_BOOT_LOG", None)
-    return kimi_daemon._KimiAcpDaemon()
+    daemon = kimi_daemon._KimiAcpDaemon()
+    daemon._injected_cli_path = str(FAKE)
+    return daemon
 
 
 fails = []
