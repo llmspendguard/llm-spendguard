@@ -12,10 +12,10 @@ real-time spend isn't provider-visible without an Admin key, so it's shown local
 LEAK (provider > local) = the important signal. Local > provider = estimate-over-actual / double-count.
 """
 
-from .capability_cli_parsing import add_registered_cli_argument
+from ...capability_cli_parsing import add_registered_cli_argument
 import argparse
 
-from . import config
+from ... import config
 
 RECONCILE_GAP_MONEY_PRECISION = 6
 RECONCILE_GAP_REPORT_PRECISION = 2
@@ -28,7 +28,7 @@ def _warn_fetch(provider, e):
     it visible so an empty result is distinguishable from a genuine zero (a caller trusting this total must know
     the pull FAILED, not that the provider billed nothing)."""
     try:
-        from . import config
+        from ... import config
         config.warn_once(f"[spendguard] provider batch fetch ({provider}) FAILED ({type(e).__name__}: "
                          f"{str(e)[:80]}) — its spend is MISSING from this reconcile, NOT $0")
     except Exception:
@@ -36,7 +36,7 @@ def _warn_fetch(provider, e):
 
 
 def _provider_batch_by_day(since):
-    from .report import openai_by_day
+    from ...report import openai_by_day
     from . import reconcile_anthropic as anth
     prov = {}
     try:
@@ -66,7 +66,7 @@ def _compute(since=None):
     The batch window opens at the first batch row in the ledger (cutoff = ledger_start('batch')), NOT the global
     ledger_start: realtime started recording weeks before batch, so the global start would drag in pre-batch-recording
     history and mislabel it as a leak. Provider batch before the batch cutoff is pre-ledger (expected)."""
-    from . import budget
+    from ... import budget
     since = since or config.month_start_utc()
     prov, pending = _provider_batch_by_day(since)
     accounted = budget.by_day(kind="batch", since=since, exclude_reconciled=False)    # gate-recorded + backfill = what the ledger accounts for
@@ -99,7 +99,7 @@ def audit_completeness():
     the only ones legitimately without usage are genuine zero-cost (0 completed requests). Any batch with
     completed requests but no usage is flagged UNACCOUNTED — surfaced, never silently dropped. complete=True
     iff there are no unaccounted batches."""
-    from . import pricing
+    from ... import pricing
     audit = {}
     try:
         from collections import Counter
@@ -157,11 +157,11 @@ def true_down(since=None, billed_rows=None):
 
     `billed_rows` = {"openai": [(prov, model, cost, in, out, day, batch_id), ...] | None, "anthropic": ...};
     None/absent = fetch that provider here (None after a failed fetch = skip). Returns the correction summary."""
-    from . import budget
+    from ... import budget
     since = since or config.month_start_utc()
     if billed_rows is None:
         billed_rows = {}
-        from . import backfill
+        from ... import backfill
         for prov_name, fetch in (("openai", lambda: backfill._openai_rows()),
                                  ("anthropic", lambda: backfill._anthropic_rows())):
             try:
@@ -181,7 +181,7 @@ def true_down(since=None, billed_rows=None):
     # e.g. claude-haiku-4-5-20251001) while the billed caches key the base name — an exact-string join misses those,
     # trues real billed spend to $0 and dumps it on the gap machinery (right total, degraded attribution). The
     # correction ROW still carries the cell's ORIGINAL model so by_dims nets it against the very rows it corrects.
-    from . import pricing
+    from ... import pricing
 
     def _join_model(m):
         try:
@@ -233,7 +233,7 @@ def true_down(since=None, billed_rows=None):
             by_model[f"{prov_name}:{jmodel}"] = round(delta, 2)
         # All reads/calculations finish before the snapshot and destructive clear.
         staged.commit()
-        from .ledger import SpendLedger, ledger_posting_metadata
+        from ...ledger import SpendLedger, ledger_posting_metadata
         from .reconcile_maintenance_owner import owned_reconcile_maintenance_connection
         true_down_posting = ledger_posting_metadata()
         # Snapshot before SQLite's writer transaction; backup must never wait on our own uncommitted writes.
@@ -263,14 +263,14 @@ def reconcile_into_ledger(since=None):
     spend stays attributed (project/user). Zero model spend (provider GETs are free). Returns a summary. This is
     what makes the ledger correct + the dashboard show the real total, and it rides the existing daily reconcile
     cadence — no separate scheduler."""
-    from . import budget
+    from ... import budget
     since = since or config.month_start_utc()
     # Only the account-OWNER connection reconciles the SHARED provider-account gap. A connected non-owner
     # (owns_account=false — e.g. one of several repos sharing one OpenAI/Anthropic account) must NOT claim it, or it
     # attributes OTHER repos' provider spend to its own project (the bug where vision-pipeline absorbed nlp-pipeline's
     # batch). Standalone / unconnected use (no saas.json) still reconciles fully — the whole account is genuinely theirs.
     try:
-        from . import saas as _saas
+        from ... import saas as _saas
         _conn = _saas.saas_connection()
     except Exception:
         _conn = {}
@@ -284,7 +284,7 @@ def reconcile_into_ledger(since=None):
     prov = {}   # (provider, day) -> $ billed (truth)
     errors = {}   # NEVER silently undercount — a failed/partial provider fetch must be visible, not hidden
     try:
-        from .report import openai_by_day
+        from ...report import openai_by_day
         oai, _pending = openai_by_day()                        # NB: returns (by_day, pending)
         for d, v in oai.items():
             if d >= since:
@@ -302,7 +302,7 @@ def reconcile_into_ledger(since=None):
     # Per-batch billed actuals, fetched ONCE and shared by the true-down and the evidence-attribution loop below.
     # A failed side is None (skip-that-provider in true_down; the loop just sees no evidence rows) and lands in
     # `errors` — a partial fetch must be visible, never silently treated as $0 billed.
-    from . import backfill, conv
+    from ... import backfill, conv
     _billed_rows = {}
     for _prov_name, _fetch in (("openai", backfill._openai_rows), ("anthropic", backfill._anthropic_rows)):
         try:
@@ -329,7 +329,7 @@ def reconcile_into_ledger(since=None):
     # repo's project, not truly 'unattributed' — that bucket is for genuinely MULTI-project repos only. This is the
     # "most-recent/primary task" rule the user asked for; it takes LLM attribution to ~100% for single-project orgs.
     try:
-        from . import saas
+        from ... import saas
         _c = saas.saas_connection()
         _ps = _c.get("projects")
         fallback = "unattributed" if (isinstance(_ps, list) and len(_ps) > 1) else \
@@ -472,7 +472,7 @@ def record_realtime_reconstruction(since=None):
     only). Each row records at its OWN day (the reconstruction now carries per-run `day` from conv.resolve), so a
     multi-month window folds into the right months instead of one lump day; caches without `day` fall back to the
     window start. Project identity comes from each evidence row; missing identity stays explicitly unattributed."""
-    from . import budget
+    from ... import budget
     import os, json
     cache = str(config.HOME / "realtime_reconstruction.json")   # config.HOME (respects SPENDGUARD_HOME), not a ~ literal
     if not os.path.exists(cache):
@@ -514,8 +514,8 @@ def reconcile_realtime(since=None):
     DEFAULT (no admin key): import the gate's own realtime_log as the $-floor (max(0, log − gate-recorded) per
     provider/day). The FORWARD fix for full coverage with no admin key is the gate's inline true-up (records actual
     tokens at call time). Idempotent (clears + rebuilds the marker rows each run)."""
-    from . import budget
-    from .config import RT_LOG
+    from ... import budget
+    from ...config import RT_LOG
     import os, json
     since = since or config.month_start_utc()
 
@@ -563,12 +563,12 @@ def reconcile_realtime(since=None):
     if skipped:
         # Surface the loss (same rule the realtime_oracle skips follow): a silently-dropped line undercounts the
         # realtime floor with nothing signalling it. A trace makes the (lower-bound) gap visible.
-        from .config import warn_once
+        from ...config import warn_once
         warn_once(f"[ledger_sync] {skipped} unparseable RT_LOG line(s) SKIPPED in reconcile_realtime — the realtime "
                   f"floor is a lower bound by their unknown cost.")
     gate_pd = budget.by_provider_day(kind="realtime", since=since)   # REAL gate realtime (markers just cleared)
     try:
-        from . import saas
+        from ... import saas
         _c = saas.saas_connection()
         _ps = _c.get("projects")
         fallback = "unattributed" if (isinstance(_ps, list) and len(_ps) > 1) else \
@@ -586,7 +586,7 @@ def reconcile_realtime(since=None):
 
 
 def _leak_cache_path():
-    from . import config
+    from ... import config
     return config.HOME / "leak_line.json"
 
 
@@ -619,7 +619,7 @@ def realtime_check(recorded, since=None):
     ledger against an all-time log and reported $226 missing that was never missing — an alarm that cries wolf
     is worse than no alarm, because the next real one gets ignored."""
     import os, json
-    from .config import RT_LOG                 # the gate's own call log — written locally, no key, no network
+    from ...config import RT_LOG                 # the gate's own call log — written locally, no key, no network
     log_total = 0.0
     seen = False
     skipped = 0
@@ -643,7 +643,7 @@ def realtime_check(recorded, since=None):
     if skipped:
         # Same rule as reconcile_realtime: a silently-dropped line makes log_total a LOWER BOUND, so the
         # recorded-vs-log comparison could under-read the gap and falsely look reconciled. Surface it.
-        from .config import warn_once
+        from ...config import warn_once
         warn_once(f"[ledger_sync] {skipped} unparseable RT_LOG line(s) SKIPPED in realtime_check — log_total is a "
                   f"lower bound; the recorded-vs-log comparison may under-read the gap.")
     if not seen:
@@ -708,7 +708,7 @@ def leak_line(since=None):
     except Exception:
         return None
     line = _render_leak_line(c)
-    from .ledger_writer import ledger_bulk_scope_matches
+    from ...ledger_writer import ledger_bulk_scope_matches
     if ledger_bulk_scope_matches(config.db_path()):
         # Coverage can include pending reserved-connection rows; never persist
         # that observation beyond the transaction which owns it.
@@ -722,7 +722,7 @@ def leak_line(since=None):
 
 
 def sync(since=None):
-    from . import budget
+    from ... import budget
     since = since or config.month_start_utc()
     prov, pending = _provider_batch_by_day(since)
     accounted = budget.by_day(kind="batch", since=since, exclude_reconciled=False)    # gate-recorded + reconciled backfill = ACCOUNTED
@@ -811,10 +811,10 @@ def _provider_total(since):
     masquerade as 'fully reconciled'. (An unpriced model prices to $0 in openai_by_day, so its real $ is missing from the
     sum; a $0-understated total presented as truth would generate a wrong reconcile residual.) A DELIBERATE spend refusal
     / deadline from a fetch PROPAGATES — it is never downgraded to a plain 'fetch failed'."""
-    from . import pricing, gate as _g
+    from ... import pricing, gate as _g
     total, err = 0.0, False
     try:
-        from .report import openai_by_day
+        from ...report import openai_by_day
         _unpriced_before = sum(pricing.UNPRICED_SEEN.values())
         oai, _ = openai_by_day()
         if sum(pricing.UNPRICED_SEEN.values()) > _unpriced_before:
@@ -837,7 +837,7 @@ def _provider_total(since):
 
 def _gate_captured_rows(since):
     """Gate-recorded (attributed) batch LLM spend by project — the CAPTURED side, as reconcile.Source rows."""
-    from . import budget
+    from ... import budget
     by = {}
     for (proj, _day), gv in budget.gate_by_project_day(kind="batch", since=since).items():
         by[proj] = by.get(proj, 0.0) + gv
@@ -851,7 +851,7 @@ class LLMSource:
     name = "llm"
 
     def __init__(self, conn=None, since=None):
-        from . import saas
+        from ... import saas
         try:
             self._conn = conn if conn is not None else saas.saas_connection()
         except Exception:
@@ -870,7 +870,7 @@ class LLMSource:
     def attribute_gap(self, gap, since=None):
         # the gap that reconcile_into_ledger already attributed by conversation/intent evidence (batch→conv→project),
         # stored as reconciled rows. If reconcile hasn't run, this is empty → the residual warns to run it.
-        from . import budget
+        from ... import budget
         return [{"cost": round(v, 2), "project": p}
                 for p, v in budget.reconciled_by_project(since or self._since).items()]
 
@@ -885,7 +885,7 @@ class RealtimeSource:
     name = "realtime"
 
     def __init__(self, conn=None, since=None):
-        from . import saas
+        from ... import saas
         try:
             self._conn = conn if conn is not None else saas.saas_connection()
         except Exception:
@@ -906,7 +906,7 @@ class RealtimeSource:
         self.estimate = None
         self.note = None
         if os.environ.get("SPENDGUARD_ADMIN_ORACLE"):         # DEV cross-check only — never the shipped-client path
-            from .report import admin_billed_realtime_total
+            from ...report import admin_billed_realtime_total
             return admin_billed_realtime_total(since)                # None unless an admin key is also set
         est = realtime_reconstruction_estimate(since)
         if est is None:
@@ -923,7 +923,7 @@ class RealtimeSource:
         return None
 
     def captured(self, since=None):
-        from . import budget
+        from ... import budget
         by = {}
         for (proj, _day), v in budget.gate_by_project_day(kind="realtime", since=since or self._since).items():
             by[proj] = by.get(proj, 0.0) + v

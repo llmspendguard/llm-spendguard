@@ -7,7 +7,7 @@ import logging
 import math
 import traceback
 
-from . import ledger_read, pricing
+from ... import ledger_read, pricing
 
 COST_INTEGRITY_LOGGER = logging.getLogger(__name__)
 COST_INTEGRITY_LEGACY_WIDTH = 7

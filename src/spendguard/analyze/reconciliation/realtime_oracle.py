@@ -44,8 +44,8 @@ def _start_ts(since):
 
 def openai_hourly(since):
     """{hour_unix: [(model, in, cached, out)]} for REALTIME rows only (batch flag false)."""
-    from .config import api_key
-    from .resources import _norm_model
+    from ...config import api_key
+    from ...resources import _norm_model
     k = api_key("OPENAI_ADMIN_KEY")
     if not k:
         return {}
@@ -65,8 +65,8 @@ def openai_hourly(since):
 
 
 def anthropic_hourly(since):
-    from .config import api_key
-    from .resources import _norm_model
+    from ...config import api_key
+    from ...resources import _norm_model
     k = api_key("ANTHROPIC_ADMIN_KEY")
     if not k:
         return {}
@@ -91,7 +91,7 @@ def anthropic_hourly(since):
     if skipped:
         # …but NEVER silently: a dropped bucket is dropped realtime spend. Leave a trace (the module's rule — a
         # missing unit of work is surfaced, never a silent $0), so the excluded usage is visible, not invisible.
-        from .config import warn_once
+        from ...config import warn_once
         warn_once(f"[realtime_oracle] {skipped} anthropic usage bucket(s) missing 'starting_at' were SKIPPED — "
                   f"their realtime usage is EXCLUDED from the total (the provider returned malformed buckets).")
     return by
@@ -100,7 +100,7 @@ def anthropic_hourly(since):
 def _conversation_hours(since):
     """{hour_unix: {(org, project): weight}} — which org+project's conversation segments were active each hour
     (session_classification → the timing key that connects org-wide usage to OUR work)."""
-    from . import conv
+    from ... import conv
     by = defaultdict(lambda: defaultdict(int))
     start = _start_ts(since)
     skipped = 0
@@ -123,7 +123,7 @@ def _conversation_hours(since):
         if org and proj:
             by[hour][(org, proj)] += 1
     if skipped:
-        from .config import warn_once
+        from ...config import warn_once
         warn_once(f"[realtime_oracle] {skipped} conversation segment(s) without a session id were skipped from the "
                   f"timing-match (their hours are not attributed) — surfaced, not hidden.")
     return by
@@ -134,7 +134,7 @@ def by_project_day(since):
     Each hour of org-wide realtime usage is attributed to the (org, project) whose segments were active that hour
     (1h lag tolerated for logging delay); hours with no conversation of ours are OTHER-org and excluded. Magnitude =
     tokens × pricing.py (cache-discounted). Returns (rows, meta) where meta has ours_total/other/ceiling/by_org."""
-    from . import pricing
+    from ... import pricing
     # A provider's hourly fetch (urlopen → network / HTTP / JSON) can raise; letting it propagate aborted the
     # WHOLE oracle run. Guard each independently and surface the failure in meta['errors'] — a partial oracle is
     # honest (some truth, and a named gap), never a silent $0 that reads as "no realtime spend".

@@ -8,7 +8,7 @@
 """
 
 import sys
-from .ledger_writer import serialize_ledger_function
+from ...ledger_writer import serialize_ledger_function
 
 
 _EMPTY_PROJECT = "(project_primary IS NULL OR project_primary='')"   # an untagged row, in spend_events terms
@@ -20,7 +20,7 @@ VENV_BACKFILL_UNATTRIBUTED_REASON = "prior resolved to unattributed-project sent
 
 def backfill_project_from_venv(led):
     """Fill unresolved project tags from distinct virtual-environment priors without classification spend."""
-    from . import budget, conv
+    from ... import budget, conv
     unresolved_venvs = set(led.distinct(
         "venv", filt=f"{_EMPTY_PROJECT} AND venv IS NOT NULL AND venv != ''"))
     unresolved_venvs.update(led.distinct(
@@ -49,7 +49,7 @@ def retag_deterministic():
     Each pass only touches rows that remain unresolved, so meta precedence is preserved. Returns the number of
     rows changed. Reads/writes spend_events (the money-of-record).
     """
-    from . import budget
+    from ... import budget
     led = budget._ledger()
     with budget._lock:
         a = led.bulk_retag_project(
@@ -68,7 +68,7 @@ def retag_deterministic():
 def move_project(old, new):
     """Re-assign a project tag across the ledger — fixes cwd-fallback mistags (e.g. video-captioning that ran
     from ~/Documents got tagged 'documents' instead of 'vision-pipeline'). Returns rows changed."""
-    from . import budget
+    from ... import budget
     old, new = (old or "").strip().lower(), (new or "").strip().lower()
     with budget._lock:
         n = budget._ledger().bulk_retag_project(new, filt="lower(COALESCE(project_primary,''))=?", args=(old,),
@@ -91,7 +91,7 @@ def cmd(argv=None):
 def ambiguous_count():
     """Rows a human/LLM might still need to disambiguate — untagged after the free pass (should be ~0 once
     deterministic runs, but non-repo or mixed-context charges can remain). Zero-spend."""
-    from . import budget, ledger_read
+    from ... import budget, ledger_read
     return ledger_read.read_ledger_count(ledger_read.LedgerReadRequest(
         where_sql=_UNRESOLVED_PROJECT, parameters=(budget.UNATTRIBUTED_PROJECT,)))
 

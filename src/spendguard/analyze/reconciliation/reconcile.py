@@ -144,7 +144,7 @@ def all_sources(ptmap=None, since=None):
     # + the port adapters (gpu:runpod / gpu:modal / gpu:lambdalabs) + any plugin-registered provider. An
     # UNCONFIGURED adapter's factory returns None → silently skipped (never an error, never fake data).
     try:
-        from . import gpu_port
+        from ... import gpu_port
         gpu_sources = gpu_port.sources()
     except Exception as e:
         gpu_sources, out["gpu"] = {}, {"error": str(e)[:160]}

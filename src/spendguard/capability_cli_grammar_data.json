@@ -1355,15 +1355,15 @@
       "reconcile_openai.main"
     ],
     "handler_evidence": [
-      "src/spendguard/reconcile_openai.py:149 (reconcile_openai.main)",
-      "src/spendguard/reconcile_anthropic.py:177 (reconcile_anthropic.main)"
+      "src/spendguard/analyze/reconciliation/reconcile_openai.py:149 (reconcile_openai.main)",
+      "src/spendguard/analyze/reconciliation/reconcile_anthropic.py:177 (reconcile_anthropic.main)"
     ],
     "parser_kind": "mixed argparse/manual",
     "nested_grammar_summary": "all|openai|anthropic; all uses manual --since, provider modes own argparse parsers",
     "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [
       {
-        "source_scope": "src/spendguard/reconcile_openai.py:149",
+        "source_scope": "src/spendguard/analyze/reconciliation/reconcile_openai.py:149",
         "selector": "openai",
         "operations": [
           {
@@ -1391,7 +1391,7 @@
         ]
       },
       {
-        "source_scope": "src/spendguard/reconcile_anthropic.py:177",
+        "source_scope": "src/spendguard/analyze/reconciliation/reconcile_anthropic.py:177",
         "selector": "anthropic",
         "operations": [
           {
@@ -3619,7 +3619,7 @@
       "tag.cmd"
     ],
     "handler_evidence": [
-      "src/spendguard/tag.py:79 (tag.cmd)"
+      "src/spendguard/analyze/reconciliation/tag.py:79 (tag.cmd)"
     ],
     "parser_kind": "no flags parsed / inline positional grammar",
     "nested_grammar_summary": "",
@@ -4229,14 +4229,14 @@
       "workdone.cmd"
     ],
     "handler_evidence": [
-      "src/spendguard/workdone.py:201 (workdone.cmd)"
+      "src/spendguard/analyze/reconciliation/workdone.py:201 (workdone.cmd)"
     ],
     "parser_kind": "argparse",
     "nested_grammar_summary": "",
     "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [
       {
-        "source_scope": "src/spendguard/workdone.py:201",
+        "source_scope": "src/spendguard/analyze/reconciliation/workdone.py:201",
         "selector": null,
         "operations": [
           {
@@ -5198,14 +5198,14 @@
       "ledger_sync.main"
     ],
     "handler_evidence": [
-      "src/spendguard/ledger_sync.py:934 (ledger_sync.main)"
+      "src/spendguard/analyze/reconciliation/ledger_sync.py:934 (ledger_sync.main)"
     ],
     "parser_kind": "argparse",
     "nested_grammar_summary": "",
     "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [
       {
-        "source_scope": "src/spendguard/ledger_sync.py:934",
+        "source_scope": "src/spendguard/analyze/reconciliation/ledger_sync.py:934",
         "selector": null,
         "operations": [
           {
@@ -5240,7 +5240,7 @@
       "trust.cmd"
     ],
     "handler_evidence": [
-      "src/spendguard/trust.py:122 (trust.cmd)"
+      "src/spendguard/analyze/reconciliation/trust.py:122 (trust.cmd)"
     ],
     "parser_kind": "manual argv",
     "nested_grammar_summary": "",
@@ -5604,14 +5604,14 @@
       "truth.main"
     ],
     "handler_evidence": [
-      "src/spendguard/truth.py:67 (truth.main)"
+      "src/spendguard/analyze/reconciliation/truth.py:67 (truth.main)"
     ],
     "parser_kind": "argparse",
     "nested_grammar_summary": "",
     "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [
       {
-        "source_scope": "src/spendguard/truth.py:67",
+        "source_scope": "src/spendguard/analyze/reconciliation/truth.py:67",
         "selector": null,
         "operations": [
           {

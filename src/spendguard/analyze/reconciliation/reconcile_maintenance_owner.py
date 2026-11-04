@@ -237,7 +237,7 @@ def owned_reconcile_maintenance_connection(path=None, time_budget=None):
     if not math.isfinite(budget) or budget <= 0:
         raise ValueError("Offline reconciliation budget must be positive and finite")
     deadline = time.monotonic() + budget
-    from .ledger_writer import exclusive_ledger_writer_connection
+    from ...ledger_writer import exclusive_ledger_writer_connection
     with ExitStack() as reservation_stack:
         try:
             with ledger_read.ledger_request_scope(deadline_s=deadline - time.monotonic()):

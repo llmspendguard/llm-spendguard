@@ -554,22 +554,22 @@
       "surface_module": "spendguard.analyze.reconciliation",
       "layer": "L3",
       "backing_modules": [
-        "reconcile",
-        "ledger_sync",
-        "reconcile_openai",
-        "reconcile_anthropic",
-        "reconcile_calls",
-        "reconcile_estimate_stage",
-        "reconcile_gap_ownership",
-        "reconcile_maintenance_owner",
-        "realtime_oracle",
-        "trust",
-        "cost_integrity",
-        "anomaly",
-        "attribution",
-        "tag",
-        "workdone",
-        "truth"
+        "analyze.reconciliation.reconcile",
+        "analyze.reconciliation.ledger_sync",
+        "analyze.reconciliation.reconcile_openai",
+        "analyze.reconciliation.reconcile_anthropic",
+        "analyze.reconciliation.reconcile_calls",
+        "analyze.reconciliation.reconcile_estimate_stage",
+        "analyze.reconciliation.reconcile_gap_ownership",
+        "analyze.reconciliation.reconcile_maintenance_owner",
+        "analyze.reconciliation.realtime_oracle",
+        "analyze.reconciliation.trust",
+        "analyze.reconciliation.cost_integrity",
+        "analyze.reconciliation.anomaly",
+        "analyze.reconciliation.attribution",
+        "analyze.reconciliation.tag",
+        "analyze.reconciliation.workdone",
+        "analyze.reconciliation.truth"
       ],
       "published_names": []
     },
@@ -792,6 +792,86 @@
     }
   },
   "domain_legacy_path_shims": [
+    {
+      "legacy_module": "spendguard.reconcile",
+      "current_module": "spendguard.analyze.reconciliation.reconcile",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.ledger_sync",
+      "current_module": "spendguard.analyze.reconciliation.ledger_sync",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.reconcile_openai",
+      "current_module": "spendguard.analyze.reconciliation.reconcile_openai",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.reconcile_anthropic",
+      "current_module": "spendguard.analyze.reconciliation.reconcile_anthropic",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.reconcile_calls",
+      "current_module": "spendguard.analyze.reconciliation.reconcile_calls",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.reconcile_estimate_stage",
+      "current_module": "spendguard.analyze.reconciliation.reconcile_estimate_stage",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.reconcile_gap_ownership",
+      "current_module": "spendguard.analyze.reconciliation.reconcile_gap_ownership",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.reconcile_maintenance_owner",
+      "current_module": "spendguard.analyze.reconciliation.reconcile_maintenance_owner",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.realtime_oracle",
+      "current_module": "spendguard.analyze.reconciliation.realtime_oracle",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.trust",
+      "current_module": "spendguard.analyze.reconciliation.trust",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.cost_integrity",
+      "current_module": "spendguard.analyze.reconciliation.cost_integrity",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.anomaly",
+      "current_module": "spendguard.analyze.reconciliation.anomaly",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.attribution",
+      "current_module": "spendguard.analyze.reconciliation.attribution",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.tag",
+      "current_module": "spendguard.analyze.reconciliation.tag",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.workdone",
+      "current_module": "spendguard.analyze.reconciliation.workdone",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.truth",
+      "current_module": "spendguard.analyze.reconciliation.truth",
+      "moved_in_phase": 3
+    },
     {
       "legacy_module": "spendguard.ledger_read",
       "current_module": "spendguard.store.spend_search.ledger_read",

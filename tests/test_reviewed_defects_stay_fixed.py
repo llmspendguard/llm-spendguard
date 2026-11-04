@@ -446,7 +446,7 @@ _pr.UNPRICED_SEEN.clear()
 # reconcile_anthropic._get passed NO timeout and handed back an unread, unclosed response — a provider stall
 # became a hung reconcile with no error and no output.
 check("no module opens its own socket to a provider any more",
-      "urlopen" not in (SRC / "reconcile_anthropic.py").read_text())
+      "urlopen" not in (SRC / "analyze/reconciliation/reconcile_anthropic.py").read_text())
 check("the shared transport always passes a timeout",
       "timeout=timeout" in (SRC / "store" / "configuration" / "config.py").read_text())
 

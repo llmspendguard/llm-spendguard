@@ -14,11 +14,11 @@ Opus judge running via ThreadPool) are NOT captured — that needs an Admin API 
   python scripts/reconcile_anthropic_spend.py [--since YYYY-MM-DD] [--by-day]
 """
 
-from .capability_cli_parsing import add_registered_cli_argument
+from ...capability_cli_parsing import add_registered_cli_argument
 import os, json, argparse, socket
 
-from . import pricing
-from .config import ANTHROPIC_CACHE as CACHE_PATH, api_key as _api_key, KEYS_ENV as _KEYS_ENV
+from ... import pricing
+from ...config import ANTHROPIC_CACHE as CACHE_PATH, api_key as _api_key, KEYS_ENV as _KEYS_ENV
 CACHE_PATH = str(CACHE_PATH)
 socket.setdefaulttimeout(60)
 
@@ -41,14 +41,14 @@ def _h(k):
 def _get_text(url, k):
     """Raw body text from the Anthropic API (batch RESULTS are JSONL, not JSON). A module-level seam so the
     offline test can stub the transport; the socket itself is opened in exactly one place."""
-    from . import config
+    from ... import config
     return config.api_get_text(url, _h(k))
 
 
 def _anthropic_get(url, k):
     """Parsed JSON from the Anthropic API. Delegates to config.api_get — this had no timeout and handed the
     caller an unread, unclosed response object."""
-    from . import config
+    from ... import config
     return config.api_get(url, _h(k))
 
 
@@ -64,7 +64,7 @@ def list_batches(k):
             return rows
 
 
-from . import pricing as _pricing        # noqa: E402
+from ... import pricing as _pricing        # noqa: E402
 # The same dict object pricing.UNPRICED_SEEN holds — this module's private copy WAS the duplicate.
 UNKNOWN_MODELS = _pricing.UNPRICED_SEEN  # model -> result count, for models missing from pricing.py (never guessed)
 
@@ -146,7 +146,7 @@ def refresh_cache(k, cache):
         os.makedirs(os.path.dirname(CACHE_PATH), exist_ok=True)
         # The results this summarizes are DOWNLOADED — losing the cache means re-fetching every batch
         # body to rebuild it. Atomic, with a `~` copy of the last good one.
-        from . import config
+        from ... import config
         config.update_json(CACHE_PATH, lambda _d: cache)
     return new
 

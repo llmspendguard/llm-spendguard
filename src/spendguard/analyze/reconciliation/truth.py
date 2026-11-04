@@ -12,14 +12,14 @@ code, and truth here is definitionally the same numbers the report prints. Zero 
 APIs are free). CLI: `spendguard truth [--push]` — preview first, push is explicit; the push follows the
 tolerant contract (a server without /v1/truth yet → a friendly skip, never an error)."""
 
-from .capability_cli_parsing import add_registered_cli_argument
+from ...capability_cli_parsing import add_registered_cli_argument
 import datetime
 
 
 def rows(since=None):
     """[{day, provider, usd}] for every day ≥ `since` (default: 35 days — covers a full statement month
     plus reconciliation lag) across all sources the report knows: openai · anthropic · vastai (GPU)."""
-    from . import report
+    from ... import report
     from . import reconcile_anthropic as anth
     if since is None:
         since = (datetime.date.today() - datetime.timedelta(days=35)).strftime("%Y-%m-%d")
@@ -37,7 +37,7 @@ def rows(since=None):
 def push_truth(since=None, dry=False, truth_rows=None):
     """Push truth rows → POST /v1/truth. Honors visibility (private = nothing leaves); tolerates a server
     that doesn't implement the endpoint yet (the same forward-compat pattern as push_insights)."""
-    from . import saas
+    from ... import saas
     c = saas.saas_connection()
     if c.get("visibility", "private") == "private":
         return {"skipped": "visibility=private — nothing leaves this machine"}

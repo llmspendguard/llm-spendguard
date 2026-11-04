@@ -10,11 +10,11 @@ TIER 2 (separate, caged + opt-in): an LLM pass synthesizes a day's raw activity 
   spendguard workdone --since 2026-06-01 --by week
 """
 
-from .capability_cli_parsing import add_registered_cli_argument
+from ...capability_cli_parsing import add_registered_cli_argument
 import argparse, datetime, os, subprocess
 from collections import defaultdict
 
-from . import config
+from ... import config
 
 # repo path → project tag (the WHAT this work belongs to). Repos MUST be configured via config workdone.repos
 # (mapping absolute repo paths → project tags); there are no machine-specific defaults.
@@ -22,7 +22,7 @@ DEFAULT_REPOS = {}
 
 
 def _repos():
-    from . import config
+    from ... import config
     try:
         m = (config.saas_config().get("workdone") or {}).get("repos")
     except Exception:
@@ -58,7 +58,7 @@ def _batch_intents(since):
     """{(day, project): {intent: count}} from the local call corpus — what LLM work actually ran each day."""
     out = defaultdict(lambda: defaultdict(int))
     try:
-        from . import callio, conv
+        from ... import callio, conv
         bmap = conv.batch_project_map()       # AGENTIC: batch → its subconversation's classified project (no regex)
         with callio.config.ledger_op('callio', callio._ensure_callio_schema) as ledger_read_handle:
             for day, intent, batch, n in ledger_read_handle.execute(
@@ -154,7 +154,7 @@ def _aggregate_by_project(since=None):
 
 
 def _summaries_path():
-    from . import config
+    from ... import config
     config.HOME.mkdir(parents=True, exist_ok=True)
     return config.HOME / "work_summaries.json"
 
@@ -178,16 +178,16 @@ def summarize(since=None, run=False, model=None):
     """Generate (or estimate) the scrubbed per-project work summary. Estimate-first: default returns a zero-spend
     {projects, est_usd, model}; with run=True it makes the CAGED calls (gate → caps.meta), caches {project: summary}
     to ~/.spendguard/work_summaries.json, and returns {summarized, model}. push_workdone attaches the cache."""
-    from . import config, pricing
+    from ... import config, pricing
     model = model or config.advisor_model()
     byproj = _aggregate_by_project(since)
     prompts = {p: _summary_prompt(p, e["commits"], e["intents"]) for p, e in byproj.items()}
     est = round(sum(pricing.realtime_cost(model, len(pr) // 4 + 80, _SUMMARY_OUT) for pr in prompts.values()), 4)
     if not run:
-        from . import ui
+        from ... import ui
         ui.estimate_only(action=f"summarize {len(prompts)} projects' work (caged · caps.meta)", cost=est)
         return {"projects": len(prompts), "est_usd": est, "model": model}
-    from . import calls, adapters
+    from ... import calls, adapters
     out = {}
     with calls.context(intent=f"{_META}:worksummary"):
         for p, pr in prompts.items():
@@ -212,7 +212,7 @@ def cmd(argv=None):
         print("workdone summarize:", summarize(since=a.since, run=a.run))
         return 0
     if a.push:
-        from . import saas
+        from ... import saas
         # push monthly periods regardless of the display --by, to match the dashboard's current-month view
         print("workdone push:", saas.push_workdone(since=a.since))
         return 0

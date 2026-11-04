@@ -12,9 +12,9 @@ is the provider's own bill; everything else must reconcile to it, loudly, every 
 Free (provider GETs + one server GET). Run daily.
 """
 
-from .capability_cli_parsing import registered_cli_option_token
+from ...capability_cli_parsing import registered_cli_option_token
 
-from . import config
+from ... import config
 
 WARN_FRAC = 0.15      # |recorded − truth| / truth beyond this → WARN
 ALARM_RATIO = 1.4     # recorded ≥ this × truth → ALARM (almost certainly double-counting / accumulation)
@@ -46,7 +46,7 @@ def provider_truth(since=None):
     since = str(since or config.month_start_utc())
     total, ok = 0.0, True
     try:
-        from .report import openai_by_day
+        from ...report import openai_by_day
         oai, _ = openai_by_day()
         total += sum(v for d, v in oai.items() if str(d) >= since)
     except Exception:
@@ -58,7 +58,7 @@ def provider_truth(since=None):
     except Exception:
         ok = False
     try:
-        from . import gate
+        from ... import gate
         rt, _ = gate.realtime_by_day(since=since)
         total += sum(v for d, v in rt.items() if str(d) >= since)
     except Exception:
@@ -77,7 +77,7 @@ def _ledger_llm_total(since):
         that are NOT in provider_truth, so counting them here inflates only the recorded side (the old +$13
         phantom drift).
     Meta is excluded on both sides (it's spendguard's own spend, tracked separately)."""
-    from . import budget
+    from ... import budget
     by = budget.by_day(kind="batch", since=since, exclude_reconciled=True)
     rt = budget.by_day(kind="realtime", since=since, exclude_reconciled=True)
     return round(sum(by.values()) + sum(rt.values()), 2)
@@ -94,7 +94,7 @@ def trust_report(since=None, with_server=True):
     out["ledger_verdict"] = {"level": lvl, "msg": msg}
     if with_server:
         try:
-            from . import saas
+            from ... import saas
             x = saas.crosscheck(since=since)
             if x.get("error"):
                 # A crosscheck that FAILED (network/auth) is NOT the same as "no server": dropping it left the CLI

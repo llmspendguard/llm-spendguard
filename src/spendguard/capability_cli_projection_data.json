@@ -3241,7 +3241,7 @@
         "literal": "YYYY-MM-DD (default: start of this month)"
       }
     },
-    "evidence": "src/spendguard/ledger_sync.py:936"
+    "evidence": "src/spendguard/analyze/reconciliation/ledger_sync.py:936"
   },
   {
     "declaration_id": "manifest/manifest.manifest_command/parser/action",
@@ -3965,7 +3965,7 @@
       "--since"
     ],
     "attributes": {},
-    "evidence": "src/spendguard/reconcile_anthropic.py:179"
+    "evidence": "src/spendguard/analyze/reconciliation/reconcile_anthropic.py:179"
   },
   {
     "declaration_id": "reconcile/reconcile_openai.main/ap/--since",
@@ -3980,7 +3980,7 @@
         "literal": "YYYY-MM-DD (UTC) lower bound on batch creation"
       }
     },
-    "evidence": "src/spendguard/reconcile_openai.py:151"
+    "evidence": "src/spendguard/analyze/reconciliation/reconcile_openai.py:151"
   },
   {
     "declaration_id": "reconcile/reconcile_openai.main/ap/--by-day",
@@ -3995,7 +3995,7 @@
         "literal": "store_true"
       }
     },
-    "evidence": "src/spendguard/reconcile_openai.py:152"
+    "evidence": "src/spendguard/analyze/reconciliation/reconcile_openai.py:152"
   },
   {
     "declaration_id": "reconcile/reconcile_openai.main/ap/--estimate",
@@ -4013,7 +4013,7 @@
         "literal": "a pre-flight $ estimate to compare against actual"
       }
     },
-    "evidence": "src/spendguard/reconcile_openai.py:153"
+    "evidence": "src/spendguard/analyze/reconciliation/reconcile_openai.py:153"
   },
   {
     "declaration_id": "refresh-prices/refresh.main/ap/--model",
@@ -5060,7 +5060,7 @@
         "literal": "YYYY-MM-DD (default: 35 days back)"
       }
     },
-    "evidence": "src/spendguard/truth.py:71"
+    "evidence": "src/spendguard/analyze/reconciliation/truth.py:71"
   },
   {
     "declaration_id": "truth/truth.main/ap/--push",
@@ -5078,7 +5078,7 @@
         "literal": "push to the org server (default: preview only)"
       }
     },
-    "evidence": "src/spendguard/truth.py:72"
+    "evidence": "src/spendguard/analyze/reconciliation/truth.py:72"
   },
   {
     "declaration_id": "verify/verify.cmd/ap/--probe",
@@ -5229,7 +5229,7 @@
         "literal": "YYYY-MM-DD (default: start of this month)"
       }
     },
-    "evidence": "src/spendguard/workdone.py:203"
+    "evidence": "src/spendguard/analyze/reconciliation/workdone.py:203"
   },
   {
     "declaration_id": "workdone/workdone.cmd/ap/--by",
@@ -5251,7 +5251,7 @@
         "literal": "day"
       }
     },
-    "evidence": "src/spendguard/workdone.py:204"
+    "evidence": "src/spendguard/analyze/reconciliation/workdone.py:204"
   },
   {
     "declaration_id": "workdone/workdone.cmd/ap/--push",
@@ -5269,7 +5269,7 @@
         "literal": "push the work-done roll-up to the server"
       }
     },
-    "evidence": "src/spendguard/workdone.py:205"
+    "evidence": "src/spendguard/analyze/reconciliation/workdone.py:205"
   },
   {
     "declaration_id": "workdone/workdone.cmd/ap/--summarize",
@@ -5287,7 +5287,7 @@
         "literal": "generate the caged per-project 'what was accomplished' summary (ESTIMATE-ONLY unless --run)"
       }
     },
-    "evidence": "src/spendguard/workdone.py:206"
+    "evidence": "src/spendguard/analyze/reconciliation/workdone.py:206"
   },
   {
     "declaration_id": "workdone/workdone.cmd/ap/--run",
@@ -5305,7 +5305,7 @@
         "literal": "with --summarize: actually spend (caged by caps.meta)"
       }
     },
-    "evidence": "src/spendguard/workdone.py:207"
+    "evidence": "src/spendguard/analyze/reconciliation/workdone.py:207"
   },
   {
     "declaration_id": "delegate/delegate_router.delegate_cli/parser/--warm",

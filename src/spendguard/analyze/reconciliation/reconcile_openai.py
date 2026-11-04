@@ -15,11 +15,11 @@ KEY ACCOUNTING RULES baked in:
   * failed = $0 ; in_progress/finalizing = not yet metered (reported separately)
 """
 
-from .capability_cli_parsing import add_registered_cli_argument
+from ...capability_cli_parsing import add_registered_cli_argument
 import json, argparse, urllib.request, urllib.error, datetime
 from collections import defaultdict
 
-from .pricing import cost_or_unpriced, normalize, PRICING_SOURCE, PRICING_VERIFIED
+from ...pricing import cost_or_unpriced, normalize, PRICING_SOURCE, PRICING_VERIFIED
 
 # Paging bounds for /v1/batches. The listing is newest-first, so a `since` window can stop early; the cap +
 # cursor-advance guard + per-request timeout are what stop a stuck `has_more`/non-advancing cursor from spinning
@@ -82,11 +82,11 @@ def _http_error_detail(e):
 
 
 def load_key():
-    from .config import api_key
+    from ...config import api_key
     k = api_key("OPENAI_API_KEY")
     if not k:
         # name the file `init` actually CREATES (keys.env), not the legacy .env nothing scaffolds.
-        from .config import KEYS_ENV
+        from ...config import KEYS_ENV
         raise KeyMissing(f"OPENAI_API_KEY not found (set it in the environment, or add it to {KEYS_ENV})")
     return k
 
@@ -100,7 +100,7 @@ def fetch_batches(key, since=None, max_pages=BATCH_MAX_PAGES, timeout_s=BATCH_HT
       • timeout_s on every request → a stalled socket fails fast instead of hanging the run.
     Returns raw batch dicts newest-first; callers still filter by day(), so a trailing partly-out-of-window page
     is harmless (the window sums are identical to an unbounded pull — this avoids work, it does not change the answer)."""
-    from .config import ssl_context
+    from ...config import ssl_context
     rows, after, seen = [], None, set()
     for _page in range(max_pages):
         url = f"https://api.openai.com/v1/batches?limit={BATCH_PAGE_LIMIT}" + (f"&after={after}" if after else "")
@@ -138,7 +138,7 @@ def fetch_batches(key, since=None, max_pages=BATCH_MAX_PAGES, timeout_s=BATCH_HT
 def _warn_paging(msg):
     """Surface a paging-bound event once (stuck cursor / page-cap truncation) without taking the report down."""
     try:
-        from . import config
+        from ... import config
         config.warn_once("[spendguard] " + msg)
     except Exception:
         pass

@@ -8,7 +8,7 @@ the pulled org_taxonomy) so chat, code, and the dashboard share one canonical st
 """
 import json
 
-from . import config, pricing
+from ... import config, pricing
 
 
 def _toklen(s):
@@ -36,7 +36,7 @@ def iso_period(day, by):
 
 
 def taxonomy():
-    from . import chat
+    from ... import chat
     return chat._taxonomy()
 
 
@@ -78,7 +78,7 @@ def _item_attribution_prompt(taxo, batch):
 def classify_items(items, taxo, run, batch_size=25):
     """items: [{"id", "text"}] → {id: {"org","team","project","confidence"}}. Caged + estimate-first. Returns {}
     on estimate-only (run=False). Items that fail to classify are simply absent from the result."""
-    from . import adapters, calls, ui
+    from ... import adapters, calls, ui
     items = [it for it in items if (it.get("text") or "").strip()]
     if not items:
         return {}

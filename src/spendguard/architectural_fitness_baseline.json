@@ -3,8 +3,6 @@
   "package": "spendguard",
   "recorded_legacy_flat_modules": [
     "__main__.py",
-    "anomaly.py",
-    "attribution.py",
     "bakeoff.py",
     "cacheaudit.py",
     "cachetest.py",
@@ -23,7 +21,6 @@
     "codex_daemon_broker.py",
     "compare.py",
     "comprehend.py",
-    "cost_integrity.py",
     "crossllm.py",
     "delegate_jobs.py",
     "delegate_router.py",
@@ -42,7 +39,6 @@
     "lane_queue.py",
     "lane_recovery.py",
     "lane_servability.py",
-    "ledger_sync.py",
     "mcp_fd_lifecycle.py",
     "mcp_server.py",
     "measurement.py",
@@ -50,14 +46,6 @@
     "prompts.py",
     "queue_planner.py",
     "realized.py",
-    "realtime_oracle.py",
-    "reconcile.py",
-    "reconcile_anthropic.py",
-    "reconcile_calls.py",
-    "reconcile_estimate_stage.py",
-    "reconcile_gap_ownership.py",
-    "reconcile_maintenance_owner.py",
-    "reconcile_openai.py",
     "reliability.py",
     "requirement_judge.py",
     "resource_state.py",
@@ -68,12 +56,8 @@
     "storm_coalescer.py",
     "storm_route.py",
     "storm_submit.py",
-    "tag.py",
-    "trust.py",
-    "truth.py",
     "ui.py",
     "warm_stdio_daemon.py",
-    "workdone.py",
     "xp_rate_window.py"
   ],
   "layer_contract": {
@@ -279,7 +263,7 @@
             "max_cc": 0,
             "mi": 100.0
           },
-          "src/spendguard/anomaly.py": {
+          "src/spendguard/analyze/reconciliation/anomaly.py": {
             "max_cc": 7,
             "mi": 71.02439595935184
           },
@@ -287,7 +271,7 @@
             "max_cc": 18,
             "mi": 50.48267079784406
           },
-          "src/spendguard/attribution.py": {
+          "src/spendguard/analyze/reconciliation/attribution.py": {
             "max_cc": 26,
             "mi": 58.04126694582299
           },
@@ -419,7 +403,7 @@
             "max_cc": 38,
             "mi": 0.0
           },
-          "src/spendguard/cost_integrity.py": {
+          "src/spendguard/analyze/reconciliation/cost_integrity.py": {
             "max_cc": 19,
             "mi": 48.34992153195338
           },
@@ -647,7 +631,7 @@
             "max_cc": 8,
             "mi": 62.359954013078486
           },
-          "src/spendguard/ledger_sync.py": {
+          "src/spendguard/analyze/reconciliation/ledger_sync.py": {
             "max_cc": 56,
             "mi": 6.955544664201972
           },
@@ -755,7 +739,7 @@
             "max_cc": 16,
             "mi": 59.47712586910378
           },
-          "src/spendguard/realtime_oracle.py": {
+          "src/spendguard/analyze/reconciliation/realtime_oracle.py": {
             "max_cc": 15,
             "mi": 51.57809686307217
           },
@@ -763,31 +747,31 @@
             "max_cc": 18,
             "mi": 46.47025113759904
           },
-          "src/spendguard/reconcile.py": {
+          "src/spendguard/analyze/reconciliation/reconcile.py": {
             "max_cc": 23,
             "mi": 50.033651319260244
           },
-          "src/spendguard/reconcile_anthropic.py": {
+          "src/spendguard/analyze/reconciliation/reconcile_anthropic.py": {
             "max_cc": 13,
             "mi": 56.902275325635486
           },
-          "src/spendguard/reconcile_calls.py": {
+          "src/spendguard/analyze/reconciliation/reconcile_calls.py": {
             "max_cc": 8,
             "mi": 70.31522668360425
           },
-          "src/spendguard/reconcile_estimate_stage.py": {
+          "src/spendguard/analyze/reconciliation/reconcile_estimate_stage.py": {
             "max_cc": 14,
             "mi": 50.333814925778796
           },
-          "src/spendguard/reconcile_gap_ownership.py": {
+          "src/spendguard/analyze/reconciliation/reconcile_gap_ownership.py": {
             "max_cc": 12,
             "mi": 61.94786319237164
           },
-          "src/spendguard/reconcile_maintenance_owner.py": {
+          "src/spendguard/analyze/reconciliation/reconcile_maintenance_owner.py": {
             "max_cc": 8,
             "mi": 46.58232138616767
           },
-          "src/spendguard/reconcile_openai.py": {
+          "src/spendguard/analyze/reconciliation/reconcile_openai.py": {
             "max_cc": 24,
             "mi": 53.821868942173104
           },
@@ -991,7 +975,7 @@
             "max_cc": 18,
             "mi": 49.370334797050255
           },
-          "src/spendguard/tag.py": {
+          "src/spendguard/analyze/reconciliation/tag.py": {
             "max_cc": 7,
             "mi": 67.18510085275686
           },
@@ -999,11 +983,11 @@
             "max_cc": 40,
             "mi": 46.65539030471832
           },
-          "src/spendguard/trust.py": {
+          "src/spendguard/analyze/reconciliation/trust.py": {
             "max_cc": 12,
             "mi": 59.8805925070759
           },
-          "src/spendguard/truth.py": {
+          "src/spendguard/analyze/reconciliation/truth.py": {
             "max_cc": 8,
             "mi": 70.66515507498384
           },
@@ -1031,7 +1015,7 @@
             "max_cc": 27,
             "mi": 25.64598378308811
           },
-          "src/spendguard/workdone.py": {
+          "src/spendguard/analyze/reconciliation/workdone.py": {
             "max_cc": 10,
             "mi": 44.66581389826934
           },
@@ -1279,7 +1263,7 @@
             "max_cc": 0,
             "mi": 100.0
           },
-          "src/spendguard/anomaly.py": {
+          "src/spendguard/analyze/reconciliation/anomaly.py": {
             "max_cc": 7,
             "mi": 70.79046594533779
           },
@@ -1287,7 +1271,7 @@
             "max_cc": 18,
             "mi": 50.48267079784406
           },
-          "src/spendguard/attribution.py": {
+          "src/spendguard/analyze/reconciliation/attribution.py": {
             "max_cc": 26,
             "mi": 57.823471510010044
           },
@@ -1419,7 +1403,7 @@
             "max_cc": 38,
             "mi": 0.0
           },
-          "src/spendguard/cost_integrity.py": {
+          "src/spendguard/analyze/reconciliation/cost_integrity.py": {
             "max_cc": 19,
             "mi": 48.13044412823358
           },
@@ -1647,7 +1631,7 @@
             "max_cc": 8,
             "mi": 62.359954013078486
           },
-          "src/spendguard/ledger_sync.py": {
+          "src/spendguard/analyze/reconciliation/ledger_sync.py": {
             "max_cc": 56,
             "mi": 6.657024289766525
           },
@@ -1755,7 +1739,7 @@
             "max_cc": 16,
             "mi": 59.09429866379758
           },
-          "src/spendguard/realtime_oracle.py": {
+          "src/spendguard/analyze/reconciliation/realtime_oracle.py": {
             "max_cc": 15,
             "mi": 51.4356327617239
           },
@@ -1763,31 +1747,31 @@
             "max_cc": 18,
             "mi": 46.335870385043656
           },
-          "src/spendguard/reconcile.py": {
+          "src/spendguard/analyze/reconciliation/reconcile.py": {
             "max_cc": 23,
             "mi": 49.70880746525215
           },
-          "src/spendguard/reconcile_anthropic.py": {
+          "src/spendguard/analyze/reconciliation/reconcile_anthropic.py": {
             "max_cc": 13,
             "mi": 56.6985323288053
           },
-          "src/spendguard/reconcile_calls.py": {
+          "src/spendguard/analyze/reconciliation/reconcile_calls.py": {
             "max_cc": 8,
             "mi": 70.31522668360425
           },
-          "src/spendguard/reconcile_estimate_stage.py": {
+          "src/spendguard/analyze/reconciliation/reconcile_estimate_stage.py": {
             "max_cc": 14,
             "mi": 50.333814925778796
           },
-          "src/spendguard/reconcile_gap_ownership.py": {
+          "src/spendguard/analyze/reconciliation/reconcile_gap_ownership.py": {
             "max_cc": 12,
             "mi": 61.94786319237164
           },
-          "src/spendguard/reconcile_maintenance_owner.py": {
+          "src/spendguard/analyze/reconciliation/reconcile_maintenance_owner.py": {
             "max_cc": 8,
             "mi": 46.58232138616767
           },
-          "src/spendguard/reconcile_openai.py": {
+          "src/spendguard/analyze/reconciliation/reconcile_openai.py": {
             "max_cc": 24,
             "mi": 53.323138835469095
           },
@@ -1991,7 +1975,7 @@
             "max_cc": 18,
             "mi": 49.31444269268742
           },
-          "src/spendguard/tag.py": {
+          "src/spendguard/analyze/reconciliation/tag.py": {
             "max_cc": 7,
             "mi": 67.03821908557403
           },
@@ -1999,11 +1983,11 @@
             "max_cc": 40,
             "mi": 46.42709771081143
           },
-          "src/spendguard/trust.py": {
+          "src/spendguard/analyze/reconciliation/trust.py": {
             "max_cc": 12,
             "mi": 59.413814148064276
           },
-          "src/spendguard/truth.py": {
+          "src/spendguard/analyze/reconciliation/truth.py": {
             "max_cc": 8,
             "mi": 70.36437793305625
           },
@@ -2031,7 +2015,7 @@
             "max_cc": 27,
             "mi": 25.64598378308811
           },
-          "src/spendguard/workdone.py": {
+          "src/spendguard/analyze/reconciliation/workdone.py": {
             "max_cc": 10,
             "mi": 44.66581389826934
           },
@@ -6104,7 +6088,7 @@
   ],
   "max_largest_scc_size": 142,
   "max_cyclic_edge_count": 943,
-  "max_legacy_shim_count": 149,
+  "max_legacy_shim_count": 165,
   "recorded_cross_context_nonsurface_imports": [
     [
       "spendguard",
@@ -6403,27 +6387,27 @@
       "spendguard.store.configuration.config"
     ],
     [
-      "spendguard.attribution",
+      "spendguard.analyze.reconciliation.attribution",
       "spendguard.generate.execution.adapters"
     ],
     [
-      "spendguard.attribution",
+      "spendguard.analyze.reconciliation.attribution",
       "spendguard.store.call_corpus.calls"
     ],
     [
-      "spendguard.attribution",
+      "spendguard.analyze.reconciliation.attribution",
       "spendguard.generate.spend_capture.chat"
     ],
     [
-      "spendguard.attribution",
+      "spendguard.analyze.reconciliation.attribution",
       "spendguard.store.configuration.config"
     ],
     [
-      "spendguard.attribution",
+      "spendguard.analyze.reconciliation.attribution",
       "spendguard.store.reference_data.pricing"
     ],
     [
-      "spendguard.attribution",
+      "spendguard.analyze.reconciliation.attribution",
       "spendguard.ui"
     ],
     [
@@ -6472,11 +6456,11 @@
     ],
     [
       "spendguard.generate.spend_capture.backfill",
-      "spendguard.reconcile_anthropic"
+      "spendguard.analyze.reconciliation.reconcile_anthropic"
     ],
     [
       "spendguard.generate.spend_capture.backfill",
-      "spendguard.reconcile_openai"
+      "spendguard.analyze.reconciliation.reconcile_openai"
     ],
     [
       "spendguard.bakeoff",
@@ -7028,7 +7012,7 @@
     ],
     [
       "spendguard.generate.spend_capture.chat",
-      "spendguard.attribution"
+      "spendguard.analyze.reconciliation.attribution"
     ],
     [
       "spendguard.generate.spend_capture.chat",
@@ -7060,7 +7044,7 @@
     ],
     [
       "spendguard.generate.spend_capture.chat",
-      "spendguard.workdone"
+      "spendguard.analyze.reconciliation.workdone"
     ],
     [
       "spendguard.generate.spend_capture.claudecode",
@@ -7068,7 +7052,7 @@
     ],
     [
       "spendguard.generate.spend_capture.claudecode",
-      "spendguard.attribution"
+      "spendguard.analyze.reconciliation.attribution"
     ],
     [
       "spendguard.generate.spend_capture.claudecode",
@@ -7200,15 +7184,15 @@
     ],
     [
       "spendguard.cli",
-      "spendguard.reconcile"
+      "spendguard.analyze.reconciliation.reconcile"
     ],
     [
       "spendguard.cli",
-      "spendguard.reconcile_anthropic"
+      "spendguard.analyze.reconciliation.reconcile_anthropic"
     ],
     [
       "spendguard.cli",
-      "spendguard.reconcile_openai"
+      "spendguard.analyze.reconciliation.reconcile_openai"
     ],
     [
       "spendguard.cli",
@@ -7228,15 +7212,15 @@
     ],
     [
       "spendguard.analyze.spend_reporting.close",
-      "spendguard.ledger_sync"
+      "spendguard.analyze.reconciliation.ledger_sync"
     ],
     [
       "spendguard.analyze.spend_reporting.close",
-      "spendguard.truth"
+      "spendguard.analyze.reconciliation.truth"
     ],
     [
       "spendguard.generate.spend_capture.codex",
-      "spendguard.attribution"
+      "spendguard.analyze.reconciliation.attribution"
     ],
     [
       "spendguard.generate.spend_capture.codex",
@@ -7496,7 +7480,7 @@
     ],
     [
       "spendguard.analyze.learning.conv",
-      "spendguard.attribution"
+      "spendguard.analyze.reconciliation.attribution"
     ],
     [
       "spendguard.analyze.learning.conv",
@@ -7547,11 +7531,11 @@
       "spendguard.ui"
     ],
     [
-      "spendguard.cost_integrity",
+      "spendguard.analyze.reconciliation.cost_integrity",
       "spendguard.store.spend_search.ledger_read"
     ],
     [
-      "spendguard.cost_integrity",
+      "spendguard.analyze.reconciliation.cost_integrity",
       "spendguard.store.reference_data.pricing"
     ],
     [
@@ -8004,7 +7988,7 @@
     ],
     [
       "spendguard.manage.admission.gate",
-      "spendguard.cost_integrity"
+      "spendguard.analyze.reconciliation.cost_integrity"
     ],
     [
       "spendguard.manage.admission.gate",
@@ -8052,7 +8036,7 @@
     ],
     [
       "spendguard.manage.admission.gate",
-      "spendguard.ledger_sync"
+      "spendguard.analyze.reconciliation.ledger_sync"
     ],
     [
       "spendguard.manage.admission.gate",
@@ -8735,47 +8719,47 @@
       "spendguard.store.money_ledger.ledger_writer"
     ],
     [
-      "spendguard.ledger_sync",
+      "spendguard.analyze.reconciliation.ledger_sync",
       "spendguard.generate.spend_capture.backfill"
     ],
     [
-      "spendguard.ledger_sync",
+      "spendguard.analyze.reconciliation.ledger_sync",
       "spendguard.manage.admission.budget"
     ],
     [
-      "spendguard.ledger_sync",
+      "spendguard.analyze.reconciliation.ledger_sync",
       "spendguard.capability_cli_parsing"
     ],
     [
-      "spendguard.ledger_sync",
+      "spendguard.analyze.reconciliation.ledger_sync",
       "spendguard.store.configuration.config"
     ],
     [
-      "spendguard.ledger_sync",
+      "spendguard.analyze.reconciliation.ledger_sync",
       "spendguard.analyze.learning.conv"
     ],
     [
-      "spendguard.ledger_sync",
+      "spendguard.analyze.reconciliation.ledger_sync",
       "spendguard.manage.admission.gate"
     ],
     [
-      "spendguard.ledger_sync",
+      "spendguard.analyze.reconciliation.ledger_sync",
       "spendguard.store.money_ledger.ledger"
     ],
     [
-      "spendguard.ledger_sync",
+      "spendguard.analyze.reconciliation.ledger_sync",
       "spendguard.store.money_ledger.ledger_writer"
     ],
     [
-      "spendguard.ledger_sync",
+      "spendguard.analyze.reconciliation.ledger_sync",
       "spendguard.store.reference_data.pricing"
     ],
     [
-      "spendguard.ledger_sync",
+      "spendguard.analyze.reconciliation.ledger_sync",
       "spendguard.analyze.spend_reporting.report"
     ],
     [
-      "spendguard.ledger_sync",
+      "spendguard.analyze.reconciliation.ledger_sync",
       "spendguard.egress.saas"
     ],
     [
@@ -8912,7 +8896,7 @@
     ],
     [
       "spendguard.mcp_server",
-      "spendguard.ledger_sync"
+      "spendguard.analyze.reconciliation.ledger_sync"
     ],
     [
       "spendguard.mcp_server",
@@ -9259,19 +9243,19 @@
       "spendguard.store.spend_search.ledger_read"
     ],
     [
-      "spendguard.realtime_oracle",
+      "spendguard.analyze.reconciliation.realtime_oracle",
       "spendguard.store.configuration.config"
     ],
     [
-      "spendguard.realtime_oracle",
+      "spendguard.analyze.reconciliation.realtime_oracle",
       "spendguard.analyze.learning.conv"
     ],
     [
-      "spendguard.realtime_oracle",
+      "spendguard.analyze.reconciliation.realtime_oracle",
       "spendguard.store.reference_data.pricing"
     ],
     [
-      "spendguard.realtime_oracle",
+      "spendguard.analyze.reconciliation.realtime_oracle",
       "spendguard.generate.spend_capture.resources"
     ],
     [
@@ -9383,75 +9367,75 @@
       "spendguard.generate.spend_capture.sources"
     ],
     [
-      "spendguard.reconcile",
+      "spendguard.analyze.reconciliation.reconcile",
       "spendguard.generate.spend_capture.gpu_port"
     ],
     [
-      "spendguard.reconcile_anthropic",
+      "spendguard.analyze.reconciliation.reconcile_anthropic",
       "spendguard.capability_cli_parsing"
     ],
     [
-      "spendguard.reconcile_anthropic",
+      "spendguard.analyze.reconciliation.reconcile_anthropic",
       "spendguard.store.configuration.config"
     ],
     [
-      "spendguard.reconcile_anthropic",
+      "spendguard.analyze.reconciliation.reconcile_anthropic",
       "spendguard.store.reference_data.pricing"
     ],
     [
-      "spendguard.reconcile_calls",
+      "spendguard.analyze.reconciliation.reconcile_calls",
       "spendguard.manage.admission.budget"
     ],
     [
-      "spendguard.reconcile_calls",
+      "spendguard.analyze.reconciliation.reconcile_calls",
       "spendguard.store.spend_search.ledger_read"
     ],
     [
-      "spendguard.reconcile_estimate_stage",
+      "spendguard.analyze.reconciliation.reconcile_estimate_stage",
       "spendguard.store.configuration.config"
     ],
     [
-      "spendguard.reconcile_estimate_stage",
+      "spendguard.analyze.reconciliation.reconcile_estimate_stage",
       "spendguard.store.money_ledger.ledger"
     ],
     [
-      "spendguard.reconcile_estimate_stage",
+      "spendguard.analyze.reconciliation.reconcile_estimate_stage",
       "spendguard.store.spend_search.ledger_read"
     ],
     [
-      "spendguard.reconcile_gap_ownership",
+      "spendguard.analyze.reconciliation.reconcile_gap_ownership",
       "spendguard.manage.admission.budget"
     ],
     [
-      "spendguard.reconcile_gap_ownership",
+      "spendguard.analyze.reconciliation.reconcile_gap_ownership",
       "spendguard.store.money_ledger.ledger_writer"
     ],
     [
-      "spendguard.reconcile_gap_ownership",
+      "spendguard.analyze.reconciliation.reconcile_gap_ownership",
       "spendguard.store.reference_data.pricing"
     ],
     [
-      "spendguard.reconcile_maintenance_owner",
+      "spendguard.analyze.reconciliation.reconcile_maintenance_owner",
       "spendguard.store.configuration.config"
     ],
     [
-      "spendguard.reconcile_maintenance_owner",
+      "spendguard.analyze.reconciliation.reconcile_maintenance_owner",
       "spendguard.store.spend_search.ledger_read"
     ],
     [
-      "spendguard.reconcile_maintenance_owner",
+      "spendguard.analyze.reconciliation.reconcile_maintenance_owner",
       "spendguard.store.money_ledger.ledger_writer"
     ],
     [
-      "spendguard.reconcile_openai",
+      "spendguard.analyze.reconciliation.reconcile_openai",
       "spendguard.capability_cli_parsing"
     ],
     [
-      "spendguard.reconcile_openai",
+      "spendguard.analyze.reconciliation.reconcile_openai",
       "spendguard.store.configuration.config"
     ],
     [
-      "spendguard.reconcile_openai",
+      "spendguard.analyze.reconciliation.reconcile_openai",
       "spendguard.store.reference_data.pricing"
     ],
     [
@@ -9556,7 +9540,7 @@
     ],
     [
       "spendguard.analyze.spend_reporting.report",
-      "spendguard.anomaly"
+      "spendguard.analyze.reconciliation.anomaly"
     ],
     [
       "spendguard.analyze.spend_reporting.report",
@@ -9584,7 +9568,7 @@
     ],
     [
       "spendguard.analyze.spend_reporting.report",
-      "spendguard.ledger_sync"
+      "spendguard.analyze.reconciliation.ledger_sync"
     ],
     [
       "spendguard.analyze.spend_reporting.report",
@@ -9600,11 +9584,11 @@
     ],
     [
       "spendguard.analyze.spend_reporting.report",
-      "spendguard.reconcile_anthropic"
+      "spendguard.analyze.reconciliation.reconcile_anthropic"
     ],
     [
       "spendguard.analyze.spend_reporting.report",
-      "spendguard.reconcile_openai"
+      "spendguard.analyze.reconciliation.reconcile_openai"
     ],
     [
       "spendguard.analyze.spend_reporting.report",
@@ -9676,7 +9660,7 @@
     ],
     [
       "spendguard.generate.spend_capture.resources",
-      "spendguard.attribution"
+      "spendguard.analyze.reconciliation.attribution"
     ],
     [
       "spendguard.generate.spend_capture.resources",
@@ -9708,7 +9692,7 @@
     ],
     [
       "spendguard.generate.spend_capture.resources",
-      "spendguard.reconcile"
+      "spendguard.analyze.reconciliation.reconcile"
     ],
     [
       "spendguard.generate.spend_capture.resources",
@@ -9884,7 +9868,7 @@
     ],
     [
       "spendguard.egress.saas",
-      "spendguard.attribution"
+      "spendguard.analyze.reconciliation.attribution"
     ],
     [
       "spendguard.egress.saas",
@@ -9936,7 +9920,7 @@
     ],
     [
       "spendguard.egress.saas",
-      "spendguard.ledger_sync"
+      "spendguard.analyze.reconciliation.ledger_sync"
     ],
     [
       "spendguard.egress.saas",
@@ -9960,15 +9944,15 @@
     ],
     [
       "spendguard.egress.saas",
-      "spendguard.tag"
+      "spendguard.analyze.reconciliation.tag"
     ],
     [
       "spendguard.egress.saas",
-      "spendguard.trust"
+      "spendguard.analyze.reconciliation.trust"
     ],
     [
       "spendguard.egress.saas",
-      "spendguard.truth"
+      "spendguard.analyze.reconciliation.truth"
     ],
     [
       "spendguard.egress.saas",
@@ -9980,7 +9964,7 @@
     ],
     [
       "spendguard.egress.saas",
-      "spendguard.workdone"
+      "spendguard.analyze.reconciliation.workdone"
     ],
     [
       "spendguard.generate.spend_capture.scan",
@@ -10132,7 +10116,7 @@
     ],
     [
       "spendguard.egress.signal",
-      "spendguard.reconcile_openai"
+      "spendguard.analyze.reconciliation.reconcile_openai"
     ],
     [
       "spendguard.generate.spend_capture.sources",
@@ -10279,19 +10263,19 @@
       "spendguard.egress.saas"
     ],
     [
-      "spendguard.tag",
+      "spendguard.analyze.reconciliation.tag",
       "spendguard.manage.admission.budget"
     ],
     [
-      "spendguard.tag",
+      "spendguard.analyze.reconciliation.tag",
       "spendguard.analyze.learning.conv"
     ],
     [
-      "spendguard.tag",
+      "spendguard.analyze.reconciliation.tag",
       "spendguard.store.spend_search.ledger_read"
     ],
     [
-      "spendguard.tag",
+      "spendguard.analyze.reconciliation.tag",
       "spendguard.store.money_ledger.ledger_writer"
     ],
     [
@@ -10339,39 +10323,39 @@
       "spendguard.generate.work_integrity.output_contract"
     ],
     [
-      "spendguard.trust",
+      "spendguard.analyze.reconciliation.trust",
       "spendguard.manage.admission.budget"
     ],
     [
-      "spendguard.trust",
+      "spendguard.analyze.reconciliation.trust",
       "spendguard.capability_cli_parsing"
     ],
     [
-      "spendguard.trust",
+      "spendguard.analyze.reconciliation.trust",
       "spendguard.store.configuration.config"
     ],
     [
-      "spendguard.trust",
+      "spendguard.analyze.reconciliation.trust",
       "spendguard.manage.admission.gate"
     ],
     [
-      "spendguard.trust",
+      "spendguard.analyze.reconciliation.trust",
       "spendguard.analyze.spend_reporting.report"
     ],
     [
-      "spendguard.trust",
+      "spendguard.analyze.reconciliation.trust",
       "spendguard.egress.saas"
     ],
     [
-      "spendguard.truth",
+      "spendguard.analyze.reconciliation.truth",
       "spendguard.capability_cli_parsing"
     ],
     [
-      "spendguard.truth",
+      "spendguard.analyze.reconciliation.truth",
       "spendguard.analyze.spend_reporting.report"
     ],
     [
-      "spendguard.truth",
+      "spendguard.analyze.reconciliation.truth",
       "spendguard.egress.saas"
     ],
     [
@@ -10531,39 +10515,39 @@
       "spendguard.manage.admission.gate"
     ],
     [
-      "spendguard.workdone",
+      "spendguard.analyze.reconciliation.workdone",
       "spendguard.generate.execution.adapters"
     ],
     [
-      "spendguard.workdone",
+      "spendguard.analyze.reconciliation.workdone",
       "spendguard.store.call_corpus.callio"
     ],
     [
-      "spendguard.workdone",
+      "spendguard.analyze.reconciliation.workdone",
       "spendguard.store.call_corpus.calls"
     ],
     [
-      "spendguard.workdone",
+      "spendguard.analyze.reconciliation.workdone",
       "spendguard.capability_cli_parsing"
     ],
     [
-      "spendguard.workdone",
+      "spendguard.analyze.reconciliation.workdone",
       "spendguard.store.configuration.config"
     ],
     [
-      "spendguard.workdone",
+      "spendguard.analyze.reconciliation.workdone",
       "spendguard.analyze.learning.conv"
     ],
     [
-      "spendguard.workdone",
+      "spendguard.analyze.reconciliation.workdone",
       "spendguard.store.reference_data.pricing"
     ],
     [
-      "spendguard.workdone",
+      "spendguard.analyze.reconciliation.workdone",
       "spendguard.egress.saas"
     ],
     [
-      "spendguard.workdone",
+      "spendguard.analyze.reconciliation.workdone",
       "spendguard.ui"
     ],
     [
