@@ -21,7 +21,7 @@ import time
 import uuid
 from pathlib import Path
 
-from . import config
+from ... import config
 from .process_group_reaper import PROCESS_GROUP_LIVENESS_PROBE_SIGNAL, reap_process_group_bounded
 
 DELEGATE_JOBS_DATABASE_FILENAME = "delegate_jobs.db"

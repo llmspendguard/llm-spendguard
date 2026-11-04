@@ -437,27 +437,27 @@
       "surface_module": "spendguard.manage.token_operations",
       "layer": "L1",
       "backing_modules": [
-        "dispatch",
-        "xp_rate_window",
-        "lane_queue",
-        "queue_planner",
-        "storm_coalescer",
-        "storm_submit",
-        "storm_route",
-        "delegate_router",
-        "delegate_jobs",
-        "execution_journal",
-        "delegate_worker",
-        "delegate_worktrees",
-        "process_group_reaper",
-        "warm_stdio_daemon",
-        "codex_daemon",
-        "codex_daemon_broker",
-        "codex_broker_owner",
-        "kimi_daemon",
-        "resource_state",
-        "lane_recovery",
-        "comprehend"
+    "manage.token_operations.dispatch",
+    "manage.token_operations.xp_rate_window",
+    "manage.token_operations.lane_queue",
+    "manage.token_operations.queue_planner",
+    "manage.token_operations.storm_coalescer",
+    "manage.token_operations.storm_submit",
+    "manage.token_operations.storm_route",
+    "manage.token_operations.delegate_router",
+    "manage.token_operations.delegate_jobs",
+    "manage.token_operations.execution_journal",
+    "manage.token_operations.delegate_worker",
+    "manage.token_operations.delegate_worktrees",
+    "manage.token_operations.process_group_reaper",
+    "manage.token_operations.warm_stdio_daemon",
+    "manage.token_operations.codex_daemon",
+    "manage.token_operations.codex_daemon_broker",
+    "manage.token_operations.codex_broker_owner",
+    "manage.token_operations.kimi_daemon",
+    "manage.token_operations.resource_state",
+    "manage.token_operations.lane_recovery",
+    "manage.token_operations.comprehend"
       ],
       "published_names": []
     },
@@ -1705,6 +1705,111 @@
     {
       "legacy_module": "spendguard.lane_eligibility",
       "current_module": "spendguard.analyze.measurement.lane_eligibility",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.dispatch",
+      "current_module": "spendguard.manage.token_operations.dispatch",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.xp_rate_window",
+      "current_module": "spendguard.manage.token_operations.xp_rate_window",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.lane_queue",
+      "current_module": "spendguard.manage.token_operations.lane_queue",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.queue_planner",
+      "current_module": "spendguard.manage.token_operations.queue_planner",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.storm_coalescer",
+      "current_module": "spendguard.manage.token_operations.storm_coalescer",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.storm_submit",
+      "current_module": "spendguard.manage.token_operations.storm_submit",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.storm_route",
+      "current_module": "spendguard.manage.token_operations.storm_route",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.delegate_router",
+      "current_module": "spendguard.manage.token_operations.delegate_router",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.delegate_jobs",
+      "current_module": "spendguard.manage.token_operations.delegate_jobs",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.execution_journal",
+      "current_module": "spendguard.manage.token_operations.execution_journal",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.delegate_worker",
+      "current_module": "spendguard.manage.token_operations.delegate_worker",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.delegate_worktrees",
+      "current_module": "spendguard.manage.token_operations.delegate_worktrees",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.process_group_reaper",
+      "current_module": "spendguard.manage.token_operations.process_group_reaper",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.warm_stdio_daemon",
+      "current_module": "spendguard.manage.token_operations.warm_stdio_daemon",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.codex_daemon",
+      "current_module": "spendguard.manage.token_operations.codex_daemon",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.codex_daemon_broker",
+      "current_module": "spendguard.manage.token_operations.codex_daemon_broker",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.codex_broker_owner",
+      "current_module": "spendguard.manage.token_operations.codex_broker_owner",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.kimi_daemon",
+      "current_module": "spendguard.manage.token_operations.kimi_daemon",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.resource_state",
+      "current_module": "spendguard.manage.token_operations.resource_state",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.lane_recovery",
+      "current_module": "spendguard.manage.token_operations.lane_recovery",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.comprehend",
+      "current_module": "spendguard.manage.token_operations.comprehend",
       "moved_in_phase": 3
     }
   ],

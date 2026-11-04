@@ -5,8 +5,8 @@ import plistlib
 import subprocess
 import sys
 
-from . import config
-from .launchd_labels import CODEX_BROKER_OWNER_LAUNCHD_LABEL
+from ... import config
+from ...launchd_labels import CODEX_BROKER_OWNER_LAUNCHD_LABEL
 
 
 CODEX_BROKER_OWNER_ROLE = "codex-broker-owner"
@@ -34,7 +34,7 @@ def codex_broker_owner_plist_path():
 
 
 def codex_broker_owner_program_arguments():
-    return [sys.executable, "-m", "spendguard.codex_broker_owner"]
+    return [sys.executable, "-m", "spendguard.manage.token_operations.codex_broker_owner"]
 
 
 def install_codex_broker_owner_launchd():
@@ -75,7 +75,7 @@ def ensure_codex_broker_owner_running():
 
 
 def run_codex_broker_owner_entrypoint():
-    from . import fleet
+    from ... import fleet
     from .codex_daemon import run_dedicated_codex_broker_owner
     fleet.register_consumer(role=fleet.CONSUMER_ROLE_DAEMON,
                             supervision_mode=fleet.SUPERVISION_LAUNCHD,

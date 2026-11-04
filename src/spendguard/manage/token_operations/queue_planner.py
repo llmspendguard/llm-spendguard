@@ -113,7 +113,7 @@ def batch_caps(provider):
     """The resolved Batch-API caps for `provider` — {max_requests, max_mb, max_enqueued_tokens?}. Config
     (batch.max_requests / batch.max_mb / batch.max_enqueued_tokens[provider]) overrides the published defaults; an
     unknown vendor gets the conservative fallback. $0 — a config + constant read, never a hardcode at the call site."""
-    from . import config
+    from ... import config
     base = dict(_BATCH_CAPS.get((provider or "").strip().lower(), _BATCH_CAPS_FALLBACK))
     mr = config._cfg_get("batch", "max_requests", None)
     mb = config._cfg_get("batch", "max_mb", None)
@@ -160,7 +160,7 @@ def _batch_eligible():
     """Is there a configured Batch-API model to offload to? The OpenAI Batch API serves an OpenAI id, so an offload
     runs on config advisor.batch_model (NOT the intent's realtime vendor) — fungible work only, never a pinned/
     consensus vote. Returns (eligible, batch_model). No batch_model set => not eligible => no auto-submit by omission."""
-    from . import config
+    from ... import config
     bm = config._cfg_get("advisor", "batch_model", None)
     return (bool(bm), bm)
 
@@ -187,7 +187,7 @@ def offload_plan(pending_by_intent, *, avg_call_tokens=NOMINAL_CALL_TOKENS, fc=N
             saturated.add(key.split(":", 1)[0])        # the vendor half of the governor key (vendor[:model])
     plan, skipped = [], []
     if eligible:
-        from . import route_economics, adapters, gate as _gate
+        from ... import route_economics, adapters, gate as _gate
         bprov = adapters.provider_for(batch_model)     # the offload RUNS on batch_model (an OpenAI id) → chunk vs ITS caps
         for intent, n in (pending_by_intent or {}).items():
             n = int(n or 0)
@@ -278,10 +278,10 @@ def plan_loop(interval_s=None, iterations=None, on_tick=None, avg_call_tokens=NO
     defaults to config queue.planner_interval_s. Returns {ticks, stopped_by} — how many ticks ran AND why it ended
     ('iterations' completed | 'stop_event' | 'interrupt' | 'error') — so the termination is never a silent stop."""
     import time as _t
-    from . import gate as _g
+    from ... import gate as _g
     if interval_s is None:
         try:
-            from . import config
+            from ... import config
             interval_s = config._cfg_get("queue", "planner_interval_s", PLANNER_INTERVAL_S_DEFAULT)
         except Exception:
             interval_s = PLANNER_INTERVAL_S_DEFAULT

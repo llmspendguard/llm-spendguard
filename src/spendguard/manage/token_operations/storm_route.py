@@ -23,7 +23,7 @@ import os
 import threading
 import time
 
-from . import adapters, dispatch
+from ... import adapters, dispatch
 from .storm_coalescer import StormCoalescer
 from .storm_submit import StormRequestContract, default_batch_executor, governed_realtime_executor
 

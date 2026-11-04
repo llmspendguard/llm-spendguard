@@ -9,7 +9,7 @@ import time
 import math
 from dataclasses import dataclass, field
 
-from . import config, gate
+from ... import config, gate
 
 
 class LaneRecoveryViolation(gate.SpendGateRefused):

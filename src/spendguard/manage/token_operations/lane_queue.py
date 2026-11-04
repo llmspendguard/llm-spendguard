@@ -35,7 +35,7 @@ import pathlib
 import sqlite3
 import time
 
-from . import config
+from ... import config
 
 LEASE_S_DEFAULT = 300.0         # a leased task must settle within this window or it is reclaimed (worker presumed dead)
 MAX_ATTEMPTS_DEFAULT = 10       # DURABLE retry budget: re-enqueue a RETRYABLE (transient) failure up to this many times
@@ -175,7 +175,7 @@ def _ensure_queue_schema(c):
     c.execute("CREATE INDEX IF NOT EXISTS lane_queue_fingerprint ON lane_queue(fingerprint)")
     # The migration predicate must stay indexed: scoped readers ensure this schema on every open.
     # Retain the predicate rather than a process/file marker so late legacy rows are still repaired.
-    from .schema_indexes import ensure_ordered_index_coverage
+    from ...schema_indexes import ensure_ordered_index_coverage
     ensure_ordered_index_coverage(c, "lane_queue", ("result_migrated",))
     for rid, payload in c.execute("SELECT id,result FROM lane_queue WHERE result_migrated=0").fetchall():
         parsed = _decode_queue_audit(rid, payload)
@@ -281,7 +281,7 @@ def _queue_conn():
 def _reset_queue_conn():
     """Drop this thread's pooled queue connection (self-heal after an error); see config.reset_ledger_conn."""
     config.reset_ledger_conn(_QUEUE_KEY)
-    from .ledger_writer import exclusive_ledger_writer_connection
+    from ...ledger_writer import exclusive_ledger_writer_connection
     with exclusive_ledger_writer_connection(config.lane_queue_db_path()) as connection:
         schema_keys = getattr(connection, "_ledger_writer_schema_keys", None)
         if schema_keys is not None:
@@ -291,8 +291,8 @@ def _reset_queue_conn():
 @contextlib.contextmanager
 def _queue_op():
     """Reserve the queue database owner for one committed, rollback-safe operation."""
-    from .ledger_writer import exclusive_ledger_writer_connection
-    from .ledger_read import ledger_request_scope
+    from ...ledger_writer import exclusive_ledger_writer_connection
+    from ...ledger_read import ledger_request_scope
     queue_path = config.lane_queue_db_path()
     try:
         with ledger_request_scope(deadline_s=config.LEDGER_WRITE_TIMEOUT_S), exclusive_ledger_writer_connection(queue_path):
@@ -351,7 +351,7 @@ def migrate_from_ledger():
                 c.executemany("INSERT INTO lane_queue (%s) VALUES (%s)" % (",".join(use), ",".join("?" * len(use))),
                               [[row[i] for i in idx] for row in live])
                 moved = len(live)
-        from .ledger_writer import run_ledger_write, current_ledger_writer_connection
+        from ...ledger_writer import run_ledger_write, current_ledger_writer_connection
 
         def drop_migrated_ledger_queue_table():
             current_ledger_writer_connection(ledger).execute("DROP TABLE IF EXISTS lane_queue")
@@ -387,7 +387,7 @@ def enqueue(intent, task, system=None, reasoning=None, priority=0, max_attempts=
 
 def _degrade_transient_lane_queue_write_error(operation, error):
     """Log a transient sqlite write failure; propagate every guard, deliberate stop, and programming error."""
-    from . import provider_tokens as _pt
+    from ... import provider_tokens as _pt
     if _pt._stop_or_locked(error) or not isinstance(error, sqlite3.OperationalError):
         raise error
     import sys as _sys
@@ -496,7 +496,7 @@ def dedup_pending_against_done(chunk=5000):
             settled = cur.rowcount
             c.commit()
     except Exception as _e:
-        from . import provider_tokens as _pt                  # CANONICAL stop-or-locked predicate (same as settle)
+        from ... import provider_tokens as _pt                  # CANONICAL stop-or-locked predicate (same as settle)
         if _pt._stop_or_locked(_e):
             raise                                             # spend refusal / ledger LOCK propagates — never swallowed
     return {"fingerprinted": fingerprinted, "settled": settled}
@@ -673,7 +673,7 @@ def settle(row_id, result):
                 # hopeless re-run (Ash: "reduce retry, batch off"). The outcome is the vendor_call KIND the runner
                 # stamped on the result; an ABSENT/unknown outcome is treated as retryable (conservative — matches the
                 # pre-class behavior for a row a runner didn't classify, e.g. a governor/dispatch hiccup).
-                from . import vendor_call as _vc
+                from ... import vendor_call as _vc
                 oc = result.get("outcome")
                 retryable = (oc is None) or (oc in _vc.RETRYABLE)
                 state = ("pending" if attempts < maxa else "failed") if retryable else "failed"
@@ -717,7 +717,7 @@ def settle(row_id, result):
             c.commit()
             return settled
     except Exception as _e:
-        from . import provider_tokens as _pt          # the CANONICAL stop-or-locked predicate (same as _enqueue_leased)
+        from ... import provider_tokens as _pt          # the CANONICAL stop-or-locked predicate (same as _enqueue_leased)
         if _pt._stop_or_locked(_e):
             raise                                      # spend refusal / ledger LOCK PROPAGATES — never swallowed
         # else best-effort: a transient settle failure never crashes the drain loop (the lease reclaims the row) — but it
@@ -780,7 +780,7 @@ def mark_batched(row_ids, batch_id, batch_model=None):
                 marked += cur.rowcount if (cur.rowcount and cur.rowcount > 0) else 0
         return marked
     except Exception as _e:
-        from . import provider_tokens as _pt
+        from ... import provider_tokens as _pt
         if _pt._stop_or_locked(_e):
             raise
         import sys as _sysmb                           # NAMED trace (never a silent swallow): the affected rows + batch
@@ -807,14 +807,14 @@ def collect_batched(limit=2000, model=None):
     $0 (a finished batch was already billed at submit). `model` defaults to config advisor.batch_model. A DELIBERATE
     spend/deadline stop from a collect propagates. Returns {rows, batches, done, failed, not_ready, collected,
     orphaned, result_gaps, collect_errors}."""
-    from . import config
+    from ... import config
     model = model or config._cfg_get("advisor", "batch_model", None)
     try:
         with _queue_op() as c:
             rows = c.execute("SELECT id, intent, result, batch_handle, batch_model, result_payload, result_gap FROM lane_queue WHERE state='queued_batch' LIMIT ?",
                              (int(limit),)).fetchall()
     except Exception as _e:
-        from . import provider_tokens as _pt
+        from ... import provider_tokens as _pt
         if _pt._stop_or_locked(_e):
             raise
         import sys as _syscb                           # NAMED trace: the read failed → collection skipped THIS round,
@@ -834,7 +834,7 @@ def collect_batched(limit=2000, model=None):
             group_model[(handle, intent)] = _bmodel     # the batch's OWN model → its provider (picks the collect twin)
         else:
             orphaned.append(rid)                       # a queued_batch row with no usable batch handle — uncollectable
-    from . import callio, gate as _gate, adapters
+    from ... import callio, gate as _gate, adapters
     out = {"rows": len(rows), "batches": len(groups), "done": 0, "failed": 0, "not_ready": 0, "collected": 0,
            "orphaned": len(orphaned), "not_settled": 0, "result_gaps": len(result_gaps),
            "collect_errors": result_gaps}
@@ -873,7 +873,7 @@ def collect_batched(limit=2000, model=None):
         # without this, real offloaded rows never settle (they sit queued_batch forever). Coerce both maps once.
         results = {str(k): v for k, v in (res.get("results") or {}).items()}
         failed = {str(k): v for k, v in (res.get("failed") or {}).items()}
-        from .work_integrity import WorkIntegrityProof
+        from ...work_integrity import WorkIntegrityProof
         proof = WorkIntegrityProof("exactly-once-collect")
         # Partial output stays durably queued; overlapping terminal outcomes are a bug.
         proof.assert_work_partition(ids, [[rid for rid in ids if str(rid) in results],
@@ -929,7 +929,7 @@ def batched_rows(batch_id):
             rows = c.execute("SELECT id, task, system, reasoning, result, batch_handle, result_payload, result_gap FROM lane_queue "
                              "WHERE state='queued_batch'").fetchall()
     except Exception as _e:
-        from . import provider_tokens as _pt
+        from ... import provider_tokens as _pt
         if _pt._stop_or_locked(_e):
             raise
         return None                                    # UNKNOWN (read failed) — never [] (which reads as 'all settled')
@@ -967,7 +967,7 @@ def requeue_from_batch(row_ids, reason):
                 moved += cur.rowcount if (cur.rowcount and cur.rowcount > 0) else 0
         return moved
     except Exception as _e:
-        from . import provider_tokens as _pt
+        from ... import provider_tokens as _pt
         if _pt._stop_or_locked(_e):
             raise
         import sys as _sysrq                           # NAMED trace: the rows not yet moved stay queued_batch (retried)
@@ -1006,7 +1006,7 @@ def _enqueue_leased(intent, tasks, *, system=None, reasoning=None, priority=PRIO
             c.commit()
             return ids
     except Exception as _e:
-        from . import provider_tokens as _pt          # reuse the CANONICAL stop-or-locked predicate (no duplicate name)
+        from ... import provider_tokens as _pt          # reuse the CANONICAL stop-or-locked predicate (no duplicate name)
         if _pt._stop_or_locked(_e):
             raise                                      # spend refusal / ledger LOCK PROPAGATES — never a silent []
         import sys as _sys
@@ -1048,9 +1048,9 @@ def submit(intent, tasks, *, priority=PRIORITY_INTERACTIVE, sla_class="realtime"
                 "durable": durable, "will_process": bool(ids), "status_handles": ids,
                 "status_query": "spendguard dispatch --id <id>"}
     # SYNC FAST-PATH — own the rows from the start (no daemon race), run inline via the bulletproof engine, settle.
-    from . import lane_balance
-    from .ledger_read import ledger_request_scope
-    from .ledger_writer import require_ledger_writer_request_live
+    from ... import lane_balance
+    from ...ledger_read import ledger_request_scope
+    from ...ledger_writer import require_ledger_writer_request_live
     import time
     _run_dl = float(deadline_s if deadline_s is not None else (sla_s if sla_s else LEASE_S_DEFAULT))
     with ledger_request_scope(deadline_s=_run_dl) as submit_admission_scope:
@@ -1094,7 +1094,7 @@ def record_close(rid, result):
     try:
         settle(rid, result if isinstance(result, dict) else {"error": "no result"})
     except Exception as e:
-        from . import gate
+        from ... import gate
         if gate.is_deliberate_stop(e):
             raise                                         # spend refusal / ledger lock → propagate (queue contract)
         import sys as _sys
@@ -1109,9 +1109,9 @@ def hold_free_recovery(intent, task, invoke, *, deadline_s, poll_s):
     admission of another attempt, never cancels an attempt already running.
     """
     import time
-    from .ledger_read import ledger_request_scope
-    from .ledger_writer import require_ledger_writer_request_live
-    from . import vendor_call
+    from ...ledger_read import ledger_request_scope
+    from ...ledger_writer import require_ledger_writer_request_live
+    from ... import vendor_call
     if deadline_s <= 0:
         # No attempt is admitted, but its durable terminal bookkeeping still
         # uses the queue operation's independently configured storage budget.
@@ -1147,7 +1147,7 @@ def hold_free_recovery(intent, task, invoke, *, deadline_s, poll_s):
             result = {**result, "outcome": vendor_call.DEADLINE_EXCEEDED}
         record_close(rid, result)
         # A failed terminal write must not turn a completed/expired hold into a future purchase.
-        from .work_integrity import WorkIntegrityProof
+        from ...work_integrity import WorkIntegrityProof
         states = row_results([rid]) if rid is not None else {}
         terminal = [r for r, value in states.items() if value["state"] in ("done", "failed")]
         WorkIntegrityProof("free-hold-terminal").assert_work_partition([rid], [terminal])
@@ -1170,7 +1170,7 @@ def queue_depth():
         out["parked"] = int(parked[0]) if parked else 0
         return out
     except Exception as _e:
-        from . import provider_tokens as _pt          # the CANONICAL stop-or-locked predicate (same as _enqueue_leased)
+        from ... import provider_tokens as _pt          # the CANONICAL stop-or-locked predicate (same as _enqueue_leased)
         if _pt._stop_or_locked(_e):
             raise                                      # spend refusal / ledger LOCK PROPAGATES — never masked as empty
         return {}
@@ -1246,7 +1246,7 @@ def pending_counts(realtime_only=True):
                                  "GROUP BY intent").fetchall()
         return {r[0]: int(r[1]) for r in rows if r[0]}
     except Exception as _e:
-        from . import provider_tokens as _pt
+        from ... import provider_tokens as _pt
         if _pt._stop_or_locked(_e):
             raise
         return {}
@@ -1612,8 +1612,8 @@ def drain(worker=None, batch=None, lease_s=None, idle_rounds=None, idle_sleep=No
 
     Reuses the whole existing execution path — governor admission, bandit routing, $0 plan-served, API fallback —
     so the queue is PURELY the durability + priority + crash-recovery layer on top."""
-    from . import fleet
-    from .launchd_labels import LANE_DRAIN_LAUNCHD_LABEL
+    from ... import fleet
+    from ...launchd_labels import LANE_DRAIN_LAUNCHD_LABEL
     fleet.register_consumer(role=fleet.CONSUMER_ROLE_DAEMON,
                             supervision_mode=fleet.SUPERVISION_LAUNCHD,
                             supervision_ref=LANE_DRAIN_LAUNCHD_LABEL)
@@ -1631,7 +1631,7 @@ def _drain_locked(worker, batch, lease_s, idle_rounds, idle_sleep, load_ceiling,
     """The drain loop, run by drain() while it holds the single-instance lock. Separated so drain() can release that
     lock in a `finally` no matter how this exits — a normal return OR a propagated deliberate-stop raise (without this,
     an exception leaked the lock FD and, in a long-lived daemon, permanently wedged the queue — F6)."""
-    from . import dispatch, lane_balance
+    from ... import dispatch, lane_balance
     batch = int(batch or _qcfg("queue_batch", 0) or dispatch._limit("global_concurrency", 24))
     lease_s = float(lease_s if lease_s is not None else _qcfg("queue_lease_s", LEASE_S_DEFAULT))
     idle_rounds = int(idle_rounds if idle_rounds is not None else _qcfg("queue_idle_rounds", IDLE_ROUNDS_DEFAULT))
@@ -1644,7 +1644,7 @@ def _drain_locked(worker, batch, lease_s, idle_rounds, idle_sleep, load_ceiling,
     _last_dedup = 0.0                                                    # throttle for the consumer-side dedup (below)
     while True:
         if forever:
-            from . import release
+            from ... import release
             release.exit_if_stale()
         iters += 1
         if max_iters is not None and iters > int(max_iters):
@@ -1682,7 +1682,7 @@ def _drain_locked(worker, batch, lease_s, idle_rounds, idle_sleep, load_ceiling,
                           "(no re-buy)" % (_dd.get("fingerprinted", 0), _dd.get("settled", 0)),
                           file=_sysdd.stderr, flush=True)
             except Exception as _dde:
-                from . import gate as _gdd
+                from ... import gate as _gdd
                 if _gdd.is_deliberate_stop(_dde):
                     raise
         rows = lease(batch, worker=worker, lease_s=lease_s)
@@ -1708,7 +1708,7 @@ def _drain_locked(worker, batch, lease_s, idle_rounds, idle_sleep, load_ceiling,
                     print("[spendguard] queue planner: %d vendor(s) at 429-risk (%s) — see `spendguard plan-queue`"
                           % (len(_fc["at_risk"]), ", ".join(_fc["at_risk"][:5])), file=_sysqp.stderr, flush=True)
             except Exception as _ce:
-                from . import gate as _gce
+                from ... import gate as _gce
                 if _gce.is_deliberate_stop(_ce):
                     raise                                               # a refusal/deadline/containment HALTS, not pass
         # BATCH-TRACKER POLL (C3b) — settle ready batch offloads (out-of-order) + fail over expired ones. THROTTLED
@@ -1717,10 +1717,10 @@ def _drain_locked(worker, batch, lease_s, idle_rounds, idle_sleep, load_ceiling,
         if _qcfg("queue_planner_poll", 1) and (time.time() - _last_poll) >= float(_qcfg("queue_planner_poll_s", 30)):
             _last_poll = time.time()
             try:
-                from . import batch_tracker
+                from ... import batch_tracker
                 batch_tracker.poll()
             except Exception as _pe:
-                from . import gate as _gpe
+                from ... import gate as _gpe
                 if _gpe.is_deliberate_stop(_pe):
                     raise
         intent = rows[0]["intent"]
@@ -1731,7 +1731,7 @@ def _drain_locked(worker, batch, lease_s, idle_rounds, idle_sleep, load_ceiling,
         # also falls through — the leased work is NEVER lost. A deliberate spend/deadline stop propagates.
         if _qcfg("queue_planner_autobatch", 0):
             try:
-                from . import queue_planner, batch_tracker
+                from ... import queue_planner, batch_tracker
                 _dec = queue_planner.should_offload(intent, len(rows))
                 if _dec:
                     _off = batch_tracker.submit_offload(intent, rows, _dec["batch_model"],
@@ -1762,7 +1762,7 @@ def _drain_locked(worker, batch, lease_s, idle_rounds, idle_sleep, load_ceiling,
                         print("[spendguard] drain: batch offload of intent %r skipped (%s) — running realtime instead"
                               % (intent, _off["error"]), file=_sysob.stderr, flush=True)
             except Exception as _oe:
-                from . import gate as _goe
+                from ... import gate as _goe
                 if _goe.is_deliberate_stop(_oe):
                     raise                                               # a spend refusal / deadline HALTS — never swallowed
                 # any other hiccup → fall through to realtime (the leased work is never lost) — but NAMED + COUNTED, never

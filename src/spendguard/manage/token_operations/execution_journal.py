@@ -117,7 +117,7 @@ def _read_durable_execution_event_lines(stream, path):
 
 
 def durable_execution_store_root():
-    from . import config
+    from ... import config
     configured = os.getenv("SPENDGUARD_EXECUTION_STORE") or config._cfg_get("delegate", "execution_store", None)
     return Path(configured).expanduser() if configured else config.HOME / EXECUTION_STORE_DIRECTORY
 
@@ -159,7 +159,7 @@ def _locked_durable_execution(execution_id, root=None):
 
 
 def _write_durable_execution_state(directory, state):
-    from . import config
+    from ... import config
     state_path = directory / EXECUTION_STATE_FILENAME
     config.update_json(state_path, lambda previous: state, required=True,
                        reason="durable execution lifecycle")
@@ -249,7 +249,7 @@ def begin_durable_execution(metadata=None):
             (directory / filename).touch()
         _write_durable_execution_state(directory, state)
     environment = os.environ.copy()
-    source_root = str(Path(__file__).resolve().parent.parent)
+    source_root = str(Path(__file__).resolve().parents[3])
     environment["PYTHONPATH"] = os.pathsep.join(filter(None, (source_root, environment.get("PYTHONPATH"))))
     interval = environment.get("SPENDGUARD_EXECUTION_WATCH_INTERVAL_S", str(EXECUTION_WATCH_INTERVAL_DEFAULT_S))
     # stderr remains on disk: observer persistence failures are never discarded.

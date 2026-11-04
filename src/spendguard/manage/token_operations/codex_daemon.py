@@ -22,7 +22,7 @@ import shutil
 import threading
 import time
 
-from . import config
+from ... import config
 from .warm_stdio_daemon import _SAFE_CWD, _WarmStdioJsonRpcDaemon
 
 # MODULE-LEVEL constants (not only class attrs): run_warm reads CALL_TIMEOUT_S as a module global so a caller/test
@@ -143,7 +143,7 @@ def _mcp_disable_flags():
     MCP-tool use in delegation is available only on the cold workspace-write path; exec's --approve-for-me
     does not apply to this app-server. Codex 0.160.1 gates configured servers on ``orchestrator.mcp.enabled``
     key; the global gate is used, not per-entry overrides (those can break the initialize handshake)."""
-    from . import codex_exec
+    from ... import codex_exec
     return codex_exec._mcp_disable_flags()
 
 
@@ -219,7 +219,7 @@ class _CodexDaemon(_WarmStdioJsonRpcDaemon):
 
     # ── codex spawn + handshake, overriding the base hooks ────────────────────────────────────────────────────
     def _spawn_cmd(self):
-        from . import codex_exec
+        from ... import codex_exec
         exe = codex_exec._bin()
         if not exe:
             return None
@@ -244,7 +244,7 @@ class _CodexDaemon(_WarmStdioJsonRpcDaemon):
 
     def read_worker_rate_limits(self, timeout=None):
         """Read plan limits through this daemon's existing correlated JSON-RPC channel."""
-        from . import codex_exec
+        from ... import codex_exec
         effective_timeout = timeout if timeout and timeout > 0 else RATE_LIMITS_READ_TIMEOUT_S
         self._cancel_idle_shutdown()
         try:
@@ -323,7 +323,7 @@ class _CodexDaemon(_WarmStdioJsonRpcDaemon):
                 bare_model = model.split(":", 1)[-1] if model else None
                 approval_policy = "never"
                 if thread:
-                    from .codex_exec import hold_execution_codex_session as register_codex_session_lease
+                    from ...codex_exec import hold_execution_codex_session as register_codex_session_lease
                     register_codex_session_lease(thread, p.pid)
                     thread_method = "thread/resume"
                     thread_params = {"threadId": thread}
@@ -365,12 +365,12 @@ class _CodexDaemon(_WarmStdioJsonRpcDaemon):
                     return _codex_pool_error_result(msg["error"], thread)
                 new_thread = ((msg.get("result") or {}).get("thread") or {}).get("id") or thread
 
-                from .codex_exec import (hold_execution_codex_session as register_codex_session_lease,
+                from ...codex_exec import (hold_execution_codex_session as register_codex_session_lease,
                                          capture_execution_codex_thread as record_delegate_codex_thread)
                 register_codex_session_lease(new_thread, p.pid)
                 record_delegate_codex_thread(new_thread, evidence_execution_id)
 
-                from . import codex_exec
+                from ... import codex_exec
                 turn_params = {"threadId": new_thread, "input": [{"type": "text", "text": prompt}],
                                "cwd": task_cwd, "sandboxPolicy": {
                                    "type": "readOnly" if sandbox == "read-only" else "workspaceWrite"},
@@ -407,7 +407,7 @@ class _CodexDaemon(_WarmStdioJsonRpcDaemon):
                                 "error": "codex app-server turn failed after restart"}
                     continue
                 if turn_msg is not None and turn_msg.get("error"):
-                    from .codex_exec import settle_execution_codex_session as settle_codex_session_lease
+                    from ...codex_exec import settle_execution_codex_session as settle_codex_session_lease
                     settle_codex_session_lease(new_thread, p.pid)
                     return _codex_pool_error_result(turn_msg["error"], new_thread)
                 if turn_msg is None or completed_turn is None:
@@ -416,7 +416,7 @@ class _CodexDaemon(_WarmStdioJsonRpcDaemon):
                     return {"text": None, "thread": new_thread,
                             "error": f"codex warm call timeout ({eff_timeout:.0f}s)", "timed_out": True}
                 status = completed_turn.get("status")
-                from .codex_exec import settle_execution_codex_session as settle_codex_session_lease
+                from ...codex_exec import settle_execution_codex_session as settle_codex_session_lease
                 settle_codex_session_lease(new_thread, p.pid)
                 if status != "completed":
                     error = completed_turn.get("error") or f"codex turn {status or 'failed'}"
@@ -513,7 +513,7 @@ class _CodexDaemonPool:
             # Continuously reclaim orphaned codex app-servers (a host that died WHILE this pool runs leaks its
             # servers too), so the leak can never accumulate between restarts — the active reaper the user asked for.
             _reap_codex_orphans()
-            from . import codex_exec
+            from ... import codex_exec
             from .warm_stdio_daemon import _warm_owner_identity_state, WARM_OWNER_IDENTITY_DEAD
             codex_exec.reap_execution_codex_sessions(
                 executable=codex_exec._bin(), owner_identity_state=_warm_owner_identity_state,
@@ -657,7 +657,7 @@ class _CodexDaemonPool:
                         finally:
                             completion.set()
 
-                    from .ledger_read import ledger_request_scope
+                    from ...ledger_read import ledger_request_scope
                     # Span the lease's cancellation scope across the lease budget (an agentic turn is minutes), not
                     # the 5s ledger-read default — otherwise an incidental serving-path ledger op after 5s of a
                     # healthy long lease raises LedgerQueryDeadline and fails a completed turn. Never shorter than

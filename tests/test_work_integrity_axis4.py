@@ -27,12 +27,12 @@ WORK_REVIEWED = {
     ("src/spendguard/generate/execution/batch_tracker.py", "submit_offload", "_submit.submit_message_batch"): 1,
     ("src/spendguard/generate/execution/batch_tracker.py", "submit_offload", "_submit.submit_chat_tasks"): 1,
     ("src/spendguard/manage/routing/lane_balance.py", "batch_submit", "_sm.submit_chat_tasks"): 1,
-    ("src/spendguard/lane_queue.py", "hold_free_recovery", "record_close"): 1,
-    ("src/spendguard/lane_queue.py", "collect_batched", "callio.collect_message_batch"): 1,
-    ("src/spendguard/lane_queue.py", "collect_batched", "callio.collect_chat_tasks"): 1,
-    ("src/spendguard/lane_queue.py", "_drain_locked", "batch_tracker.submit_offload"): 1,
-    ("src/spendguard/storm_submit.py", "_run_durable_batch", "_bt.submit_offload"): 1,
-    ("src/spendguard/storm_submit.py", "_run_durable_batch", "_lq.collect_batched"): 1,
+    ("src/spendguard/manage/token_operations/lane_queue.py", "hold_free_recovery", "record_close"): 1,
+    ("src/spendguard/manage/token_operations/lane_queue.py", "collect_batched", "callio.collect_message_batch"): 1,
+    ("src/spendguard/manage/token_operations/lane_queue.py", "collect_batched", "callio.collect_chat_tasks"): 1,
+    ("src/spendguard/manage/token_operations/lane_queue.py", "_drain_locked", "batch_tracker.submit_offload"): 1,
+    ("src/spendguard/manage/token_operations/storm_submit.py", "_run_durable_batch", "_bt.submit_offload"): 1,
+    ("src/spendguard/manage/token_operations/storm_submit.py", "_run_durable_batch", "_lq.collect_batched"): 1,
     ("src/spendguard/generate/execution/submit.py", "submit_chat_tasks", "submit_chat_tasks"): 1,
     ("src/spendguard/generate/execution/submit.py", "submit_message_batch", "submit_message_batch"): 1,
     ("src/spendguard/manage/routing/whole_job.py", "_run_batch_group", "_submit.submit_chat_tasks"): 1,
@@ -41,13 +41,13 @@ WORK_REVIEWED = {
 }
 STATE_WRITES_REVIEWED = {
     ("src/spendguard/generate/execution/batch_tracker.py", "_set_status"): 1,
-    ("src/spendguard/lane_queue.py", "dedup_pending_against_done"): 1,
-    ("src/spendguard/lane_queue.py", "settle"): 2,
-    ("src/spendguard/lane_queue.py", "lease"): 2,
-    ("src/spendguard/lane_queue.py", "_reclaim_locked"): 2,
-    ("src/spendguard/lane_queue.py", "mark_batched"): 1,
-    ("src/spendguard/lane_queue.py", "requeue_from_batch"): 1,
-    ("src/spendguard/lane_queue.py", "_archive_then_retire_stale_queue_pass"): 1,
+    ("src/spendguard/manage/token_operations/lane_queue.py", "dedup_pending_against_done"): 1,
+    ("src/spendguard/manage/token_operations/lane_queue.py", "settle"): 2,
+    ("src/spendguard/manage/token_operations/lane_queue.py", "lease"): 2,
+    ("src/spendguard/manage/token_operations/lane_queue.py", "_reclaim_locked"): 2,
+    ("src/spendguard/manage/token_operations/lane_queue.py", "mark_batched"): 1,
+    ("src/spendguard/manage/token_operations/lane_queue.py", "requeue_from_batch"): 1,
+    ("src/spendguard/manage/token_operations/lane_queue.py", "_archive_then_retire_stale_queue_pass"): 1,
 }
 
 
@@ -106,7 +106,7 @@ _, _, unreadable = inventory_work_ownership_edges([(pathlib.Path("broken.py"), "
 assert unreadable, "unparseable input was silently accepted"
 
 # Review commit order and evidence, rather than accepting a proof imported but never used.
-queue_tree = ast.parse((ROOT / "src/spendguard/lane_queue.py").read_text())
+queue_tree = ast.parse((ROOT / "src/spendguard/manage/token_operations/lane_queue.py").read_text())
 tracker_tree = ast.parse((ROOT / "src/spendguard/generate/execution/batch_tracker.py").read_text())
 job_tree = ast.parse((ROOT / "src/spendguard/manage/routing/whole_job.py").read_text())
 functions = {n.name: n for tree in (queue_tree, tracker_tree, job_tree) for n in ast.walk(tree)

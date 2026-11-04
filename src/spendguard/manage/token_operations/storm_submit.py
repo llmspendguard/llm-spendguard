@@ -19,7 +19,7 @@ from dataclasses import dataclass
 import time
 from concurrent.futures import TimeoutError as FuturesTimeout
 
-from . import adapters, dispatch
+from ... import adapters, dispatch
 from .storm_coalescer import StormCoalescer
 
 
@@ -51,7 +51,7 @@ def governed_realtime_executor(model, system, reasoning, intent, timeout_s):
     so adapters.call derives the real per-prompt deadline from deadline_for (the urgency horizon sizes realtime CAPACITY,
     NOT a per-call reply deadline — using it as the timeout choked large replies → NO REPLY). `timeout_s` is the one
     parameter that differs between the two doors."""
-    from . import calls as _cre
+    from ... import calls as _cre
     _who = (_cre.current() or {}).get("who")          # the ORIGINATING caller, captured HERE on the submitting thread
     #   (the executor is built during the caller's own adapters.call, where the app frame is on the stack). The
     #   storm-rt worker that runs the re-entry has NO app frame, so its calls.caller() lands None/thread-trampoline —
@@ -83,7 +83,7 @@ def default_batch_executor(model, intent, system=None, reasoning="minimal", poll
     BATCH-worker thread until the batch ends (bounded by max_poll_s); submit_storm's collect_timeout_s bounds the CALLER
     independently, so a slow batch never blocks the caller. A whole-submit failure returns a per-item error (never a
     silent drop); a per-request failure is surfaced by id."""
-    from . import adapters as _adapters, callio as _callio, submit as _submit   # lazy — avoid import-time cycles
+    from ... import adapters as _adapters, callio as _callio, submit as _submit   # lazy — avoid import-time cycles
     provider = _adapters.provider_for(model)
     _pairs = {"openai": (_submit.submit_chat_tasks, _callio.collect_chat_tasks),
               "anthropic": (_submit.submit_message_batch, _callio.collect_message_batch)}
@@ -157,7 +157,7 @@ def durable_batch_executor(model, intent, batch_model=None, poll_interval_s=2.0,
     them (collect_batched reattaches by the stored handle) — no dropped request, no double-spend. `batch_model` defaults
     to `model` (must be a batch-capable openai/anthropic model). Durable enqueue unavailable → honest NON-durable
     fallback to default_batch_executor (loud, never a silent downgrade)."""
-    from . import lane_queue as _lq, batch_tracker as _bt
+    from ... import lane_queue as _lq, batch_tracker as _bt
     bm = batch_model or model
 
     def _run_durable_batch(items):

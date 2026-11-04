@@ -20,7 +20,7 @@ import os
 import sqlite3
 import time
 
-from . import config
+from ... import config
 
 _XP_RATE_KEY = "xp_rate"
 _MIN_WAIT_S = 0.02        # floor on a recomputed wait so an over-limit boundary (wait≈0) can never busy-loop
@@ -98,7 +98,7 @@ def _try_reserve(c, key, limits, est, now):
 def _commit_rate_window_reservation(key, limits, est_tokens, clock):
     """Execute only the local atomic attempt on the ledger writer."""
     with config.ledger_op(_XP_RATE_KEY, _ensure_xp_rate_schema) as connection:
-        from .ledger_writer import require_ledger_writer_request_live
+        from ...ledger_writer import require_ledger_writer_request_live
         require_ledger_writer_request_live()
         connection.execute("BEGIN IMMEDIATE")
         result = _try_reserve(connection, key, limits, est_tokens, clock())
@@ -113,7 +113,7 @@ def reserve(key, limits, est_tokens=0, deadline_s=30.0, clock=time.time, sleep=t
     deadline. A shared-store infrastructure failure raises RateDeadline with the complete reason. `clock`/`sleep` are injectable for tests."""
     if _xp_rate_off() or not limits:
         return 0.0
-    from .ledger_read import effective_ledger_admission_deadline, LedgerReadError
+    from ...ledger_read import effective_ledger_admission_deadline, LedgerReadError
     try:
         reservation_expiry = effective_ledger_admission_deadline(time.monotonic() + float(deadline_s))
     except LedgerReadError as error:
@@ -132,8 +132,8 @@ def reserve(key, limits, est_tokens=0, deadline_s=30.0, clock=time.time, sleep=t
         if remaining <= 0:
             raise RateDeadline("'%s' shared rate window saturated — deadline %.0fs exhausted" % (key, float(deadline_s)))
         try:
-            from .ledger_writer import run_ledger_write
-            from .ledger_read import ledger_request_scope
+            from ...ledger_writer import run_ledger_write
+            from ...ledger_read import ledger_request_scope
             with ledger_request_scope(deadline_s=remaining):
                 ok, wait = run_ledger_write(
                     lambda: _commit_rate_window_reservation(key, limits, est_tokens, clock), deadline_at=reservation_expiry)

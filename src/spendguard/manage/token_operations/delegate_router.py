@@ -5,7 +5,7 @@ different provider plan. Meaning (task kind and provider suitability) is decided
 code contains no keyword router. Provider/model choices are derived from advisor.lane_models and lane_registry.
 """
 
-from .capability_cli_parsing import add_registered_cli_argument
+from ...capability_cli_parsing import add_registered_cli_argument
 import importlib
 import hashlib
 import json
@@ -16,7 +16,7 @@ import threading
 import time
 from pathlib import Path
 
-from . import config, guard, lane_balance, lane_registry, pricing, provider_tokens, release as _release
+from ... import config, guard, lane_balance, lane_registry, pricing, provider_tokens, release as _release
 
 CLASSIFY_INTENT = "spendguard:classify"
 DEFAULT_DELEGATE_INTENT = "spendguard:delegate-task"
@@ -51,7 +51,7 @@ DELEGATE_CLASSIFIER_CACHE_FILENAME = "delegate-route-verdicts.json"
 DELEGATE_CLASSIFIER_PLAN_VERSION = "delegate-route-v2"
 DELEGATE_INCREMENTAL_SUBSCRIPTION_USD = 0.0
 DELEGATE_WORKER_REQUEST_FILENAME = "delegate-request.json"
-DELEGATE_WORKER_MODULE = "spendguard.delegate_worker"
+DELEGATE_WORKER_MODULE = "spendguard.manage.token_operations.delegate_worker"
 DELEGATE_CLI_RESULT_MAX_LINES = 10
 DELEGATE_EXECUTION_RESULT_MAX_LINES = DELEGATE_CLI_RESULT_MAX_LINES - 1
 DELEGATE_TOOL_DEGRADED_MARKER = "DEGRADED_TOOL_ENVELOPE"
@@ -211,7 +211,7 @@ def delegation_lanes_ready(route_kind="oneshot"):
     configured = _configured_plan_models()
     ready = []
     if route_kind == "oneshot":
-        from . import lanes, reliability
+        from ... import lanes, reliability
         status_by_lane = {row["lane"]: row for row in lanes.lanes_status()["lanes"]}
         health_down = {row["resource"] for row in reliability.health_reds() if row.get("kind") == "lane"}
         for plan in sorted(configured):
@@ -224,7 +224,7 @@ def delegation_lanes_ready(route_kind="oneshot"):
             spec = lane_registry.lane_spec(plan)
             if not spec or not spec.get("agentic"):
                 continue
-            module = importlib.import_module(f".{spec['exec']}", __package__)
+            module = importlib.import_module(f"...{spec['exec']}", __package__)
             try:
                 executor_available = bool(module.available())
                 auth = (module.auth_status().get("authed") if hasattr(module, "auth_status") else
@@ -268,7 +268,7 @@ def _whole_file_evidence(paths):
 
 def classify_task(task, files=None, provider="auto", exclude_plans=None):
     """Agentically classify the WHOLE task and WHOLE attached files on an existing $0 lane."""
-    from . import gate
+    from ... import gate
     gate.require()                         # fail closed: even this plan-routed LLM call runs only in an enforcing process
     fingerprint = delegate_route_fingerprint(task, files=files, provider=provider, exclude_plans=exclude_plans)
     cached = config.read_json_cache_entry(_delegate_classifier_cache_path(), fingerprint)
@@ -289,7 +289,7 @@ def classify_task(task, files=None, provider="auto", exclude_plans=None):
               f"CONFIGURED PLAN NAMES: {json.dumps(menu)}\n"
               f"Provider is {'fixed to ' + explicit if explicit else 'for you to choose from that exact list'}. "
               "Return route, provider, self_contained, why.")
-    from . import calls
+    from ... import calls
     with calls.gate_internal():
         response = lane_balance.delegate(prompt, system=_CLASSIFY_SYSTEM, intent=CLASSIFY_INTENT,
                                          schema=_CLASSIFY_SCHEMA)
@@ -317,7 +317,7 @@ def classify_task(task, files=None, provider="auto", exclude_plans=None):
 
 
 def _estimated_tokens(task, files, provider, model, intent):
-    from . import bulkgate
+    from ... import bulkgate
     full = task + _whole_file_evidence(files)
     input_tokens = provider_tokens.count_text(full, provider=provider, model=model)
     measured = bulkgate.maxtokens(intent)
@@ -329,7 +329,7 @@ def _estimated_tokens(task, files, provider, model, intent):
 
 def _measured_claude_overage_ratio():
     """Invoice overage $ / Claude plan est-value in the same invoiced months; None means insufficient evidence."""
-    from .ledger_read import read_delegate_overage_evidence
+    from ...ledger_read import read_delegate_overage_evidence
     invoice_rows, value = read_delegate_overage_evidence()
     billed = sum(float(row["dollars"] or 0) for row in invoice_rows)
     return billed / float(value) if value and float(value) > 0 else None
@@ -478,7 +478,7 @@ def _route_agentic(plan, prompt, model, timeout, cwd, warm=False):
         return {"error": f"unknown configured plan {plan!r}"}
     if not spec.get("agentic"):
         return {"error": f"configured plan {plan!r} has no agentic executor"}
-    module = importlib.import_module(f".{spec['exec']}", __package__)
+    module = importlib.import_module(f"...{spec['exec']}", __package__)
     kwargs = {"model": model, "cwd": cwd}
     if timeout is not None:
         kwargs["timeout"] = timeout
@@ -551,7 +551,7 @@ def _assemble_delegate_execution_result(execution, *, result, classification, es
     # LedgerQueryDeadline before the booking is even reached, failing a job whose work already landed. The
     # persistence scope replaces the expired ambient scope with a fresh, uncancellable bounded budget — the
     # exact mandatory-charge-recovery case ledger_evidence_persistence_scope exists for (ledger_read.py).
-    from .ledger_read import ledger_evidence_persistence_scope
+    from ...ledger_read import ledger_evidence_persistence_scope
     with ledger_evidence_persistence_scope():
         ratio = _measured_claude_overage_ratio()
         avoided = actual_value * ratio if ratio is not None else None
@@ -654,7 +654,7 @@ def _launch_detached_delegate_worker(job_id, worker_args, worker_kwargs):
                        reason="persist governed detached delegate request", required=True)
     environment = os.environ.copy()
     environment["SPENDGUARD_HOME"] = os.fspath(config.HOME)
-    source_root = os.fspath(Path(__file__).resolve().parent.parent)
+    source_root = os.fspath(Path(__file__).resolve().parents[3])
     environment["PYTHONPATH"] = os.pathsep.join(filter(None, (source_root, environment.get("PYTHONPATH"))))
     with paths["stderr"].open("ab") as diagnostics:
         worker = subprocess.Popen([sys.executable, "-m", DELEGATE_WORKER_MODULE, os.fspath(request_path)],
@@ -737,7 +737,7 @@ def delegate_task(task, files=None, intent=None, provider="auto", execute=False,
 
 def delegate_cli(argv=None):
     import argparse
-    from . import fleet
+    from ... import fleet
     fleet.register_consumer(role=fleet.CONSUMER_ROLE_EPHEMERAL)
     parser = argparse.ArgumentParser(
         prog="spendguard delegate",

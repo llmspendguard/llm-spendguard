@@ -25,7 +25,7 @@ turn, so the caller falls back to the metered API and backs off the lane rather 
 """
 import atexit
 
-from . import config
+from ... import config
 from .warm_stdio_daemon import _SAFE_CWD, _WarmStdioJsonRpcDaemon
 
 ACP_PROTOCOL_VERSION = 1       # ACP protocolVersion is an INTEGER; 1 is current. A mismatch degrades to the cold path.
@@ -87,7 +87,7 @@ class _KimiAcpDaemon(_WarmStdioJsonRpcDaemon):
 
     # ── ACP spawn + handshake, overriding the base hooks ──────────────────────────────────────────────────────
     def _spawn_cmd(self):
-        from . import kimi_exec
+        from ... import kimi_exec
         exe = kimi_exec._bin()
         if not exe:
             return None

@@ -1735,7 +1735,7 @@
         "literal": "files or globs to analyse (e.g. 'docs/**/*.md')"
       }
     },
-    "evidence": "src/spendguard/comprehend.py:208"
+    "evidence": "src/spendguard/manage/token_operations/comprehend.py:208"
   },
   {
     "declaration_id": "comprehend/comprehend.cmd/ap/--intent",
@@ -1753,7 +1753,7 @@
         "literal": "job-type label the spend records under (attribution)"
       }
     },
-    "evidence": "src/spendguard/comprehend.py:209"
+    "evidence": "src/spendguard/manage/token_operations/comprehend.py:209"
   },
   {
     "declaration_id": "comprehend/comprehend.cmd/ap/--question",
@@ -1768,7 +1768,7 @@
         "literal": "what to ask of each file (default: extract key points + gaps/risks)"
       }
     },
-    "evidence": "src/spendguard/comprehend.py:210"
+    "evidence": "src/spendguard/manage/token_operations/comprehend.py:210"
   },
   {
     "declaration_id": "comprehend/comprehend.cmd/ap/--run",
@@ -1786,7 +1786,7 @@
         "literal": "actually fan across the lanes (default: zero-spend estimate)"
       }
     },
-    "evidence": "src/spendguard/comprehend.py:211"
+    "evidence": "src/spendguard/manage/token_operations/comprehend.py:211"
   },
   {
     "declaration_id": "comprehend/comprehend.cmd/ap/--budget-usd",
@@ -1804,7 +1804,7 @@
         "literal": "refuse the run if the estimate ceiling exceeds this"
       }
     },
-    "evidence": "src/spendguard/comprehend.py:212"
+    "evidence": "src/spendguard/manage/token_operations/comprehend.py:212"
   },
   {
     "declaration_id": "comprehend/comprehend.cmd/ap/--refuse-billed",
@@ -1822,7 +1822,7 @@
         "literal": "explicit $0-or-fail mode; default ensures success via a loud metered fallback if needed"
       }
     },
-    "evidence": "src/spendguard/comprehend.py:213"
+    "evidence": "src/spendguard/manage/token_operations/comprehend.py:213"
   },
   {
     "declaration_id": "comprehend/comprehend.cmd/ap/--lanes",
@@ -1837,7 +1837,7 @@
         "literal": "confine the fan to these lanes, comma-separated (e.g. codex,gemini)"
       }
     },
-    "evidence": "src/spendguard/comprehend.py:215"
+    "evidence": "src/spendguard/manage/token_operations/comprehend.py:215"
   },
   {
     "declaration_id": "comprehend/comprehend.cmd/ap/--max-chars",
@@ -1858,7 +1858,7 @@
         "expression": "f'per-task evidence ceiling; larger files are chunked, never cut (default {_DEFAULT_MAX_CHARS})'"
       }
     },
-    "evidence": "src/spendguard/comprehend.py:216"
+    "evidence": "src/spendguard/manage/token_operations/comprehend.py:216"
   },
   {
     "declaration_id": "comprehend/comprehend.cmd/ap/--model",
@@ -1873,7 +1873,7 @@
         "literal": "pin the model (default: config.advisor_model)"
       }
     },
-    "evidence": "src/spendguard/comprehend.py:218"
+    "evidence": "src/spendguard/manage/token_operations/comprehend.py:218"
   },
   {
     "declaration_id": "comprehend/comprehend.cmd/ap/--checkpoint",
@@ -1888,7 +1888,7 @@
         "literal": "resumable results jsonl (default: ~/.spendguard/comprehend/<intent>.jsonl)"
       }
     },
-    "evidence": "src/spendguard/comprehend.py:219"
+    "evidence": "src/spendguard/manage/token_operations/comprehend.py:219"
   },
   {
     "declaration_id": "comprehend/comprehend.cmd/ap/--out",
@@ -1903,7 +1903,7 @@
         "literal": "also export the aggregated per-file results as JSON to this path"
       }
     },
-    "evidence": "src/spendguard/comprehend.py:220"
+    "evidence": "src/spendguard/manage/token_operations/comprehend.py:220"
   },
   {
     "declaration_id": "consumer-audit/consumer_audit.consumer_audit_command/parser/--json",
@@ -2347,7 +2347,7 @@
         "literal": "complete, self-contained task to classify and delegate"
       }
     },
-    "evidence": "src/spendguard/delegate_router.py:657"
+    "evidence": "src/spendguard/manage/token_operations/delegate_router.py:657"
   },
   {
     "declaration_id": "delegate/delegate_router.delegate_cli/parser/--files",
@@ -2362,7 +2362,7 @@
         "literal": "comma-separated supporting files; every file is read in full"
       }
     },
-    "evidence": "src/spendguard/delegate_router.py:658"
+    "evidence": "src/spendguard/manage/token_operations/delegate_router.py:658"
   },
   {
     "declaration_id": "delegate/delegate_router.delegate_cli/parser/--intent",
@@ -2377,7 +2377,7 @@
         "literal": "attribution/cost-control intent (default: spendguard:delegate-task)"
       }
     },
-    "evidence": "src/spendguard/delegate_router.py:659"
+    "evidence": "src/spendguard/manage/token_operations/delegate_router.py:659"
   },
   {
     "declaration_id": "delegate/delegate_router.delegate_cli/parser/--provider",
@@ -2395,7 +2395,7 @@
         "literal": "configured plan to use, or auto for agentic selection among ready lanes (default: auto)"
       }
     },
-    "evidence": "src/spendguard/delegate_router.py:660"
+    "evidence": "src/spendguard/manage/token_operations/delegate_router.py:660"
   },
   {
     "declaration_id": "delegate/delegate_router.delegate_cli/parser/--estimate",
@@ -2413,7 +2413,7 @@
         "literal": "force dry-run even when --yes is also present"
       }
     },
-    "evidence": "src/spendguard/delegate_router.py:662"
+    "evidence": "src/spendguard/manage/token_operations/delegate_router.py:662"
   },
   {
     "declaration_id": "delegate/delegate_router.delegate_cli/parser/--yes",
@@ -2432,7 +2432,7 @@
         "literal": "execute hop 2 after classification and estimate (--execute is an alias)"
       }
     },
-    "evidence": "src/spendguard/delegate_router.py:663"
+    "evidence": "src/spendguard/manage/token_operations/delegate_router.py:663"
   },
   {
     "declaration_id": "delegate/delegate_router.delegate_cli/parser/--timeout",
@@ -2450,7 +2450,7 @@
         "literal": "optional execution timeout in seconds"
       }
     },
-    "evidence": "src/spendguard/delegate_router.py:664"
+    "evidence": "src/spendguard/manage/token_operations/delegate_router.py:664"
   },
   {
     "declaration_id": "delegate/delegate_router.delegate_cli/parser/--cwd",
@@ -2468,7 +2468,7 @@
         "literal": "trusted target repo for agentic workspace-write tasks (default: current shell cwd)"
       }
     },
-    "evidence": "src/spendguard/delegate_router.py:665"
+    "evidence": "src/spendguard/manage/token_operations/delegate_router.py:665"
   },
   {
     "declaration_id": "delegate/delegate_router.delegate_cli/lookup/--collect",
@@ -2486,7 +2486,7 @@
         "literal": "print the complete persisted result; state is canonical, status preserves execution compatibility; add --wait to block"
       }
     },
-    "evidence": "src/spendguard/delegate_router.py:668"
+    "evidence": "src/spendguard/manage/token_operations/delegate_router.py:668"
   },
   {
     "declaration_id": "delegate/delegate_router.delegate_cli/lookup/--status",
@@ -2504,7 +2504,7 @@
         "literal": "print durable job metadata; state is the canonical lifecycle key (status is a legacy alias)"
       }
     },
-    "evidence": "src/spendguard/delegate_router.py:669"
+    "evidence": "src/spendguard/manage/token_operations/delegate_router.py:669"
   },
   {
     "declaration_id": "delegate/delegate_router.delegate_cli/lookup/--recover",
@@ -2522,7 +2522,7 @@
         "literal": "recover complete raw result, stderr and exit code"
       }
     },
-    "evidence": "src/spendguard/delegate_router.py:670"
+    "evidence": "src/spendguard/manage/token_operations/delegate_router.py:670"
   },
   {
     "declaration_id": "distribute/distribution.parse_distribution_cli_arguments/parser/--check",
@@ -5323,7 +5323,7 @@
         "literal": "request the existing warm governed Codex broker path"
       }
     },
-    "evidence": "src/spendguard/delegate_router.py:delegate_cli"
+    "evidence": "src/spendguard/manage/token_operations/delegate_router.py:delegate_cli"
   },
   {
     "declaration_id": "delegate/delegate_router.delegate_cli/parser/--wait",
@@ -5341,7 +5341,7 @@
         "literal": "with --collect JOB_ID, block until a durable terminal state is available"
       }
     },
-    "evidence": "src/spendguard/delegate_router.py:delegate_cli"
+    "evidence": "src/spendguard/manage/token_operations/delegate_router.py:delegate_cli"
   },
   {
     "declaration_id": "delegate/delegate_router.delegate_cli/parser/--timeout-s",
@@ -5359,7 +5359,7 @@
         "expression": "float"
       }
     },
-    "evidence": "src/spendguard/delegate_router.py:delegate_cli"
+    "evidence": "src/spendguard/manage/token_operations/delegate_router.py:delegate_cli"
   },
   {
     "declaration_id": "delegate/delegate_router.delegate_cli/parser/--mixed-stream",
@@ -5377,7 +5377,7 @@
         "literal": "compatibility: print spendguard diagnostics and receipts to stdout (default: stderr)"
       }
     },
-    "evidence": "src/spendguard/delegate_router.py:delegate_cli"
+    "evidence": "src/spendguard/manage/token_operations/delegate_router.py:delegate_cli"
   },
   {
     "declaration_id": "delegate/delegate_router.delegate_cli/lookup/--cancel",
@@ -5395,7 +5395,7 @@
         "literal": "terminate the governed worker and record terminal state"
       }
     },
-    "evidence": "src/spendguard/delegate_router.py:delegate_cli"
+    "evidence": "src/spendguard/manage/token_operations/delegate_router.py:delegate_cli"
   },
   {
     "declaration_id": "delegate/delegate_router.delegate_cli/lookup/--kill",
@@ -5413,7 +5413,7 @@
         "literal": "force-kill the governed worker and record terminal state"
       }
     },
-    "evidence": "src/spendguard/delegate_router.py:delegate_cli"
+    "evidence": "src/spendguard/manage/token_operations/delegate_router.py:delegate_cli"
   },
   {
     "declaration_id": "comprehend/comprehend.cmd/ap/--items",
@@ -5431,7 +5431,7 @@
         "literal": "explicit literal file/id list (alternative to globs); read whole"
       }
     },
-    "evidence": "src/spendguard/comprehend.py:cmd"
+    "evidence": "src/spendguard/manage/token_operations/comprehend.py:cmd"
   },
   {
     "declaration_id": "comprehend/comprehend.cmd/ap/--vendors",
@@ -5446,7 +5446,7 @@
         "literal": "registered lane vendors, comma-separated (constrains --lanes)"
       }
     },
-    "evidence": "src/spendguard/comprehend.py:cmd"
+    "evidence": "src/spendguard/manage/token_operations/comprehend.py:cmd"
   },
   {
     "declaration_id": "comprehend/comprehend.cmd/ap/--panel",
@@ -5464,6 +5464,6 @@
         "literal": "review every item with every selected vendor's configured lane model"
       }
     },
-    "evidence": "src/spendguard/comprehend.py:cmd"
+    "evidence": "src/spendguard/manage/token_operations/comprehend.py:cmd"
   }
 ]

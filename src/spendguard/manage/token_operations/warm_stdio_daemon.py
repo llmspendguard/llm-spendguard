@@ -43,7 +43,7 @@ import time
 
 import psutil
 
-from . import config
+from ... import config
 from .process_group_reaper import reap_process_group_bounded
 
 # A FIXED, non-external bootstrap directory for the server process. Each call carries its own explicit task cwd where

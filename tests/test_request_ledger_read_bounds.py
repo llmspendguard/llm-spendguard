@@ -22,6 +22,8 @@ REQUEST_LEDGER_MOVED_MODULE_PATHS = {
     "calibrate": ("analyze", "cost_estimation", "calibrate.py"),
     "batch_tracker": ("generate", "execution", "batch_tracker.py"),
     "callio": ("store", "call_corpus", "callio.py"),
+    "codex_daemon": ("manage", "token_operations", "codex_daemon.py"),
+    "codex_daemon_broker": ("manage", "token_operations", "codex_daemon_broker.py"),
     "config": ("store", "configuration", "config.py"),
     "ledger": ("store", "money_ledger", "ledger.py"),
     "ledger_read": ("store", "spend_search", "ledger_read.py"),

@@ -21,12 +21,12 @@ DISCIPLINES (inherited, non-negotiable):
   • ATTRIBUTED — every call is tagged with the caller's `intent`, so the spend records under the right job.
 """
 
-from .capability_cli_parsing import add_registered_cli_argument
+from ...capability_cli_parsing import add_registered_cli_argument
 import glob as _glob
 import os
 import re
 
-from . import calls, config, expected_output, lane_balance, lane_catalog, pricing
+from ... import calls, config, expected_output, lane_balance, lane_catalog, pricing
 
 # Per-task evidence ceiling (chars). A file larger than this is split into contiguous parts — contained, never
 # cut. ~200k chars ≈ 50k tokens, comfortably inside a 1M-context model, so in practice most files are one task.

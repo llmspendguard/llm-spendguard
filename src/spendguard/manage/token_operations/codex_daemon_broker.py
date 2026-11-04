@@ -15,7 +15,7 @@ import threading
 import time
 from pathlib import Path
 
-from . import config
+from ... import config
 from .warm_stdio_daemon import _warm_owner_marker_env
 
 
@@ -35,8 +35,8 @@ class _BrokerAttachImportFailure:
 
 
 def _stale_consumer_attach_error(error):
-    from . import __version__
-    install_root = Path(__file__).resolve().parents[2]
+    from ... import __version__
+    install_root = Path(__file__).resolve().parents[4]
     return {"error": (f"spendguard install in this venv is stale/broken (running {__version__}; "
                       f"attach-client import failed: {error}) — run `pip install -e {install_root}`; "
                       "uncounted local fallback refused")}
@@ -55,7 +55,7 @@ def _broker_request_ledger_lifetime(connection, *, deadline_s=None):
     otherwise-healthy long turn raises LedgerQueryDeadline, which _serve_one re-wraps as "codex broker request
     refused: Ledger read exceeded wall-clock budget 5.0 seconds" — failing a job whose work already completed.
     """
-    from .ledger_read import ledger_request_scope
+    from ...ledger_read import ledger_request_scope
 
     observer_stopped = threading.Event()
     with ledger_request_scope(deadline_s=deadline_s) as request_reads:
@@ -349,7 +349,7 @@ class _CodexDaemonBroker:
                         timeout=None, recycle_on_timeout=None):
         if os.environ.get(config.CODEX_LEASE_ACTIVE_ENV):
             config.warn_once("[spendguard] nested-codex-lease -> cold-exec divert")
-            from . import codex_exec
+            from ... import codex_exec
             return codex_exec.run_cold_prompt(
                 prompt, model=model, thread=thread, reasoning=reasoning, sandbox=sandbox, cwd=cwd,
                 timeout=timeout, recycle_on_timeout=recycle_on_timeout)
@@ -401,7 +401,7 @@ class _CodexDaemonBroker:
         """Build and serve only when this facade carries this process's exact owner identity."""
         if not self._become_owner_if_available():
             return False
-        from . import release
+        from ... import release
         while not self._stopping.wait(config.codex_daemon_pool_settings()["health_interval_s"]):
             release.exit_if_stale(config.warn_once)
         return True

@@ -13,34 +13,13 @@
     "capability_surface_generation.py",
     "cli.py",
     "cli_arguments.py",
-    "codex_broker_owner.py",
-    "codex_daemon.py",
-    "codex_daemon_broker.py",
-    "comprehend.py",
     "crossllm.py",
-    "delegate_jobs.py",
-    "delegate_router.py",
-    "delegate_worker.py",
-    "delegate_worktrees.py",
-    "dispatch.py",
     "domain_context_surface.py",
     "domain_legacy_path_shim.py",
-    "execution_journal.py",
-    "kimi_daemon.py",
-    "lane_queue.py",
-    "lane_recovery.py",
     "mcp_fd_lifecycle.py",
     "mcp_server.py",
-    "process_group_reaper.py",
-    "queue_planner.py",
-    "resource_state.py",
     "serve.py",
-    "storm_coalescer.py",
-    "storm_route.py",
-    "storm_submit.py",
-    "ui.py",
-    "warm_stdio_daemon.py",
-    "xp_rate_window.py"
+    "ui.py"
   ],
   "layer_contract": {
     "independent_foundations": [
@@ -341,15 +320,15 @@
             "max_cc": 3,
             "mi": 71.93900342409701
           },
-          "src/spendguard/codex_broker_owner.py": {
+          "src/spendguard/manage/token_operations/codex_broker_owner.py": {
             "max_cc": 3,
             "mi": 44.03143459396765
           },
-          "src/spendguard/codex_daemon.py": {
+          "src/spendguard/manage/token_operations/codex_daemon.py": {
             "max_cc": 49,
             "mi": 7.880856918064156
           },
-          "src/spendguard/codex_daemon_broker.py": {
+          "src/spendguard/manage/token_operations/codex_daemon_broker.py": {
             "max_cc": 17,
             "mi": 21.026037017456613
           },
@@ -357,7 +336,7 @@
             "max_cc": 18,
             "mi": 18.420720204206486
           },
-          "src/spendguard/comprehend.py": {
+          "src/spendguard/manage/token_operations/comprehend.py": {
             "max_cc": 21,
             "mi": 39.06540928307973
           },
@@ -381,19 +360,19 @@
             "max_cc": 11,
             "mi": 61.206448796592674
           },
-          "src/spendguard/delegate_jobs.py": {
+          "src/spendguard/manage/token_operations/delegate_jobs.py": {
             "max_cc": 30,
             "mi": 17.623099760090394
           },
-          "src/spendguard/delegate_router.py": {
+          "src/spendguard/manage/token_operations/delegate_router.py": {
             "max_cc": 48,
             "mi": 0.0
           },
-          "src/spendguard/delegate_worker.py": {
+          "src/spendguard/manage/token_operations/delegate_worker.py": {
             "max_cc": 1,
             "mi": 68.14868072197874
           },
-          "src/spendguard/delegate_worktrees.py": {
+          "src/spendguard/manage/token_operations/delegate_worktrees.py": {
             "max_cc": 10,
             "mi": 58.494595475720615
           },
@@ -401,7 +380,7 @@
             "max_cc": 5,
             "mi": 83.52736160445481
           },
-          "src/spendguard/dispatch.py": {
+          "src/spendguard/manage/token_operations/dispatch.py": {
             "max_cc": 23,
             "mi": 0.0
           },
@@ -441,7 +420,7 @@
             "max_cc": 12,
             "mi": 69.00470814762058
           },
-          "src/spendguard/execution_journal.py": {
+          "src/spendguard/manage/token_operations/execution_journal.py": {
             "max_cc": 23,
             "mi": 12.536718980712662
           },
@@ -513,7 +492,7 @@
             "max_cc": 0,
             "mi": 100.0
           },
-          "src/spendguard/kimi_daemon.py": {
+          "src/spendguard/manage/token_operations/kimi_daemon.py": {
             "max_cc": 30,
             "mi": 53.46804979520682
           },
@@ -537,7 +516,7 @@
             "max_cc": 28,
             "mi": 24.950450138602857
           },
-          "src/spendguard/lane_queue.py": {
+          "src/spendguard/manage/token_operations/lane_queue.py": {
             "max_cc": 56,
             "mi": 0.0
           },
@@ -549,7 +528,7 @@
             "max_cc": 21,
             "mi": 31.86878938805318
           },
-          "src/spendguard/lane_recovery.py": {
+          "src/spendguard/manage/token_operations/lane_recovery.py": {
             "max_cc": 12,
             "mi": 49.05184957405596
           },
@@ -649,7 +628,7 @@
             "max_cc": 23,
             "mi": 25.82654388083465
           },
-          "src/spendguard/process_group_reaper.py": {
+          "src/spendguard/manage/token_operations/process_group_reaper.py": {
             "max_cc": 9,
             "mi": 73.39668068181851
           },
@@ -665,7 +644,7 @@
             "max_cc": 23,
             "mi": 36.69155733755533
           },
-          "src/spendguard/queue_planner.py": {
+          "src/spendguard/manage/token_operations/queue_planner.py": {
             "max_cc": 22,
             "mi": 45.710623967324935
           },
@@ -721,7 +700,7 @@
             "max_cc": 25,
             "mi": 35.028116921535904
           },
-          "src/spendguard/resource_state.py": {
+          "src/spendguard/manage/token_operations/resource_state.py": {
             "max_cc": 14,
             "mi": 54.671288944145104
           },
@@ -849,15 +828,15 @@
             "max_cc": 34,
             "mi": 29.582462009186894
           },
-          "src/spendguard/storm_coalescer.py": {
+          "src/spendguard/manage/token_operations/storm_coalescer.py": {
             "max_cc": 24,
             "mi": 30.15302067138812
           },
-          "src/spendguard/storm_route.py": {
+          "src/spendguard/manage/token_operations/storm_route.py": {
             "max_cc": 11,
             "mi": 59.80546381562603
           },
-          "src/spendguard/storm_submit.py": {
+          "src/spendguard/manage/token_operations/storm_submit.py": {
             "max_cc": 31,
             "mi": 57.58697740496773
           },
@@ -913,7 +892,7 @@
             "max_cc": 43,
             "mi": 5.548913231913586
           },
-          "src/spendguard/warm_stdio_daemon.py": {
+          "src/spendguard/manage/token_operations/warm_stdio_daemon.py": {
             "max_cc": 15,
             "mi": 22.101793907587247
           },
@@ -929,7 +908,7 @@
             "max_cc": 10,
             "mi": 44.66581389826934
           },
-          "src/spendguard/xp_rate_window.py": {
+          "src/spendguard/manage/token_operations/xp_rate_window.py": {
             "max_cc": 15,
             "mi": 61.8753803545072
           },
@@ -1341,15 +1320,15 @@
             "max_cc": 3,
             "mi": 71.93900342409701
           },
-          "src/spendguard/codex_broker_owner.py": {
+          "src/spendguard/manage/token_operations/codex_broker_owner.py": {
             "max_cc": 3,
             "mi": 44.03143459396765
           },
-          "src/spendguard/codex_daemon.py": {
+          "src/spendguard/manage/token_operations/codex_daemon.py": {
             "max_cc": 49,
             "mi": 7.880856918064156
           },
-          "src/spendguard/codex_daemon_broker.py": {
+          "src/spendguard/manage/token_operations/codex_daemon_broker.py": {
             "max_cc": 17,
             "mi": 21.026037017456613
           },
@@ -1357,7 +1336,7 @@
             "max_cc": 18,
             "mi": 18.40491755798936
           },
-          "src/spendguard/comprehend.py": {
+          "src/spendguard/manage/token_operations/comprehend.py": {
             "max_cc": 21,
             "mi": 38.987113926607044
           },
@@ -1381,19 +1360,19 @@
             "max_cc": 11,
             "mi": 61.11579083959757
           },
-          "src/spendguard/delegate_jobs.py": {
+          "src/spendguard/manage/token_operations/delegate_jobs.py": {
             "max_cc": 30,
             "mi": 17.623099760090394
           },
-          "src/spendguard/delegate_router.py": {
+          "src/spendguard/manage/token_operations/delegate_router.py": {
             "max_cc": 48,
             "mi": 0.0
           },
-          "src/spendguard/delegate_worker.py": {
+          "src/spendguard/manage/token_operations/delegate_worker.py": {
             "max_cc": 1,
             "mi": 68.14868072197874
           },
-          "src/spendguard/delegate_worktrees.py": {
+          "src/spendguard/manage/token_operations/delegate_worktrees.py": {
             "max_cc": 10,
             "mi": 58.494595475720615
           },
@@ -1401,7 +1380,7 @@
             "max_cc": 5,
             "mi": 83.52736160445481
           },
-          "src/spendguard/dispatch.py": {
+          "src/spendguard/manage/token_operations/dispatch.py": {
             "max_cc": 23,
             "mi": 0.0
           },
@@ -1441,7 +1420,7 @@
             "max_cc": 12,
             "mi": 69.00470814762058
           },
-          "src/spendguard/execution_journal.py": {
+          "src/spendguard/manage/token_operations/execution_journal.py": {
             "max_cc": 23,
             "mi": 12.536718980712662
           },
@@ -1513,7 +1492,7 @@
             "max_cc": 0,
             "mi": 100.0
           },
-          "src/spendguard/kimi_daemon.py": {
+          "src/spendguard/manage/token_operations/kimi_daemon.py": {
             "max_cc": 30,
             "mi": 53.46804979520682
           },
@@ -1537,7 +1516,7 @@
             "max_cc": 28,
             "mi": 24.64482091758812
           },
-          "src/spendguard/lane_queue.py": {
+          "src/spendguard/manage/token_operations/lane_queue.py": {
             "max_cc": 56,
             "mi": 0.0
           },
@@ -1549,7 +1528,7 @@
             "max_cc": 21,
             "mi": 31.603773947651447
           },
-          "src/spendguard/lane_recovery.py": {
+          "src/spendguard/manage/token_operations/lane_recovery.py": {
             "max_cc": 12,
             "mi": 49.05184957405596
           },
@@ -1649,7 +1628,7 @@
             "max_cc": 23,
             "mi": 25.742519523290415
           },
-          "src/spendguard/process_group_reaper.py": {
+          "src/spendguard/manage/token_operations/process_group_reaper.py": {
             "max_cc": 9,
             "mi": 73.39668068181851
           },
@@ -1665,7 +1644,7 @@
             "max_cc": 23,
             "mi": 36.626221325416864
           },
-          "src/spendguard/queue_planner.py": {
+          "src/spendguard/manage/token_operations/queue_planner.py": {
             "max_cc": 22,
             "mi": 45.61682434748873
           },
@@ -1721,7 +1700,7 @@
             "max_cc": 25,
             "mi": 34.94816974489087
           },
-          "src/spendguard/resource_state.py": {
+          "src/spendguard/manage/token_operations/resource_state.py": {
             "max_cc": 14,
             "mi": 54.671288944145104
           },
@@ -1849,15 +1828,15 @@
             "max_cc": 34,
             "mi": 29.582462009186894
           },
-          "src/spendguard/storm_coalescer.py": {
+          "src/spendguard/manage/token_operations/storm_coalescer.py": {
             "max_cc": 24,
             "mi": 30.15302067138812
           },
-          "src/spendguard/storm_route.py": {
+          "src/spendguard/manage/token_operations/storm_route.py": {
             "max_cc": 11,
             "mi": 59.80546381562603
           },
-          "src/spendguard/storm_submit.py": {
+          "src/spendguard/manage/token_operations/storm_submit.py": {
             "max_cc": 31,
             "mi": 57.58697740496773
           },
@@ -1913,7 +1892,7 @@
             "max_cc": 43,
             "mi": 5.443208545770559
           },
-          "src/spendguard/warm_stdio_daemon.py": {
+          "src/spendguard/manage/token_operations/warm_stdio_daemon.py": {
             "max_cc": 15,
             "mi": 22.101793907587247
           },
@@ -1929,7 +1908,7 @@
             "max_cc": 10,
             "mi": 44.66581389826934
           },
-          "src/spendguard/xp_rate_window.py": {
+          "src/spendguard/manage/token_operations/xp_rate_window.py": {
             "max_cc": 15,
             "mi": 61.8753803545072
           },
@@ -6057,8 +6036,8 @@
   "recorded_dynamic_spendguard_imports": [
     "src/spendguard/generate/execution/adapters.py:447",
     "src/spendguard/generate/execution/adapters.py:2743",
-    "src/spendguard/delegate_router.py:227",
-    "src/spendguard/delegate_router.py:481",
+    "src/spendguard/manage/token_operations/delegate_router.py:227",
+    "src/spendguard/manage/token_operations/delegate_router.py:481",
     "src/spendguard/manage/admission/gate.py:2707",
     "src/spendguard/manage/admission/gate.py:2717",
     "src/spendguard/manage/admission/gate.py:2755",
@@ -6070,7 +6049,7 @@
   ],
   "max_largest_scc_size": 142,
   "max_cyclic_edge_count": 943,
-  "max_legacy_shim_count": 183,
+  "max_legacy_shim_count": 204,
   "recorded_cross_context_nonsurface_imports": [
     [
       "spendguard",
@@ -6158,7 +6137,7 @@
     ],
     [
       "spendguard.generate.execution.adapters",
-      "spendguard.dispatch"
+      "spendguard.manage.token_operations.dispatch"
     ],
     [
       "spendguard.generate.execution.adapters",
@@ -6190,7 +6169,7 @@
     ],
     [
       "spendguard.generate.execution.adapters",
-      "spendguard.lane_queue"
+      "spendguard.manage.token_operations.lane_queue"
     ],
     [
       "spendguard.generate.execution.adapters",
@@ -6198,7 +6177,7 @@
     ],
     [
       "spendguard.generate.execution.adapters",
-      "spendguard.lane_recovery"
+      "spendguard.manage.token_operations.lane_recovery"
     ],
     [
       "spendguard.generate.execution.adapters",
@@ -6246,7 +6225,7 @@
     ],
     [
       "spendguard.generate.execution.adapters",
-      "spendguard.resource_state"
+      "spendguard.manage.token_operations.resource_state"
     ],
     [
       "spendguard.generate.execution.adapters",
@@ -6254,7 +6233,7 @@
     ],
     [
       "spendguard.generate.execution.adapters",
-      "spendguard.storm_route"
+      "spendguard.manage.token_operations.storm_route"
     ],
     [
       "spendguard.analyze.learning.advise",
@@ -6342,7 +6321,7 @@
     ],
     [
       "spendguard.manage.admission.agent_spawn_gate",
-      "spendguard.delegate_router"
+      "spendguard.manage.token_operations.delegate_router"
     ],
     [
       "spendguard.manage.admission.agent_spawn_gate",
@@ -6354,7 +6333,7 @@
     ],
     [
       "spendguard.generate.execution.antigravity_exec",
-      "spendguard.execution_journal"
+      "spendguard.manage.token_operations.execution_journal"
     ],
     [
       "spendguard.generate.execution.antigravity_exec",
@@ -6526,7 +6505,7 @@
     ],
     [
       "spendguard.generate.execution.batch_tracker",
-      "spendguard.lane_queue"
+      "spendguard.manage.token_operations.lane_queue"
     ],
     [
       "spendguard.generate.execution.batch_tracker",
@@ -6930,7 +6909,7 @@
     ],
     [
       "spendguard.analyze.assurance.capability_readiness_gates",
-      "spendguard.lane_queue"
+      "spendguard.manage.token_operations.lane_queue"
     ],
     [
       "spendguard.manage.routing.cascade",
@@ -7114,7 +7093,7 @@
     ],
     [
       "spendguard.cli",
-      "spendguard.dispatch"
+      "spendguard.manage.token_operations.dispatch"
     ],
     [
       "spendguard.cli",
@@ -7142,7 +7121,7 @@
     ],
     [
       "spendguard.cli",
-      "spendguard.lane_queue"
+      "spendguard.manage.token_operations.lane_queue"
     ],
     [
       "spendguard.cli",
@@ -7162,7 +7141,7 @@
     ],
     [
       "spendguard.cli",
-      "spendguard.queue_planner"
+      "spendguard.manage.token_operations.queue_planner"
     ],
     [
       "spendguard.cli",
@@ -7186,7 +7165,7 @@
     ],
     [
       "spendguard.cli",
-      "spendguard.warm_stdio_daemon"
+      "spendguard.manage.token_operations.warm_stdio_daemon"
     ],
     [
       "spendguard.analyze.spend_reporting.close",
@@ -7225,52 +7204,52 @@
       "spendguard.egress.saas"
     ],
     [
-      "spendguard.codex_broker_owner",
+      "spendguard.manage.token_operations.codex_broker_owner",
       "spendguard.store.configuration.config"
     ],
     [
-      "spendguard.codex_broker_owner",
+      "spendguard.manage.token_operations.codex_broker_owner",
       "spendguard.platform.fleet"
     ],
     [
-      "spendguard.codex_broker_owner",
+      "spendguard.manage.token_operations.codex_broker_owner",
       "spendguard.platform.launchd_labels"
     ],
     [
-      "spendguard.codex_daemon",
+      "spendguard.manage.token_operations.codex_daemon",
       "spendguard.generate.execution.codex_exec"
     ],
     [
-      "spendguard.codex_daemon",
+      "spendguard.manage.token_operations.codex_daemon",
       "spendguard.store.configuration.config"
     ],
     [
-      "spendguard.codex_daemon",
+      "spendguard.manage.token_operations.codex_daemon",
       "spendguard.store.spend_search.ledger_read"
     ],
     [
-      "spendguard.codex_daemon_broker",
+      "spendguard.manage.token_operations.codex_daemon_broker",
       "spendguard"
     ],
     [
-      "spendguard.codex_daemon_broker",
+      "spendguard.manage.token_operations.codex_daemon_broker",
       "spendguard.generate.execution.codex_exec"
     ],
     [
-      "spendguard.codex_daemon_broker",
+      "spendguard.manage.token_operations.codex_daemon_broker",
       "spendguard.store.configuration.config"
     ],
     [
-      "spendguard.codex_daemon_broker",
+      "spendguard.manage.token_operations.codex_daemon_broker",
       "spendguard.store.spend_search.ledger_read"
     ],
     [
-      "spendguard.codex_daemon_broker",
+      "spendguard.manage.token_operations.codex_daemon_broker",
       "spendguard.platform.release"
     ],
     [
       "spendguard.generate.execution.codex_exec",
-      "spendguard.codex_daemon"
+      "spendguard.manage.token_operations.codex_daemon"
     ],
     [
       "spendguard.generate.execution.codex_exec",
@@ -7278,7 +7257,7 @@
     ],
     [
       "spendguard.generate.execution.codex_exec",
-      "spendguard.execution_journal"
+      "spendguard.manage.token_operations.execution_journal"
     ],
     [
       "spendguard.generate.execution.codex_exec",
@@ -7317,35 +7296,35 @@
       "spendguard.capability_cli_parsing"
     ],
     [
-      "spendguard.comprehend",
+      "spendguard.manage.token_operations.comprehend",
       "spendguard"
     ],
     [
-      "spendguard.comprehend",
+      "spendguard.manage.token_operations.comprehend",
       "spendguard.store.call_corpus.calls"
     ],
     [
-      "spendguard.comprehend",
+      "spendguard.manage.token_operations.comprehend",
       "spendguard.capability_cli_parsing"
     ],
     [
-      "spendguard.comprehend",
+      "spendguard.manage.token_operations.comprehend",
       "spendguard.store.configuration.config"
     ],
     [
-      "spendguard.comprehend",
+      "spendguard.manage.token_operations.comprehend",
       "spendguard.analyze.cost_estimation.expected_output"
     ],
     [
-      "spendguard.comprehend",
+      "spendguard.manage.token_operations.comprehend",
       "spendguard.manage.routing.lane_balance"
     ],
     [
-      "spendguard.comprehend",
+      "spendguard.manage.token_operations.comprehend",
       "spendguard.store.reference_data.lane_catalog"
     ],
     [
-      "spendguard.comprehend",
+      "spendguard.manage.token_operations.comprehend",
       "spendguard.store.reference_data.pricing"
     ],
     [
@@ -7577,71 +7556,71 @@
       "spendguard.store.configuration.config"
     ],
     [
-      "spendguard.delegate_jobs",
+      "spendguard.manage.token_operations.delegate_jobs",
       "spendguard.store.configuration.config"
     ],
     [
-      "spendguard.delegate_router",
+      "spendguard.manage.token_operations.delegate_router",
       "spendguard.manage.admission.bulkgate"
     ],
     [
-      "spendguard.delegate_router",
+      "spendguard.manage.token_operations.delegate_router",
       "spendguard.store.call_corpus.calls"
     ],
     [
-      "spendguard.delegate_router",
+      "spendguard.manage.token_operations.delegate_router",
       "spendguard.capability_cli_parsing"
     ],
     [
-      "spendguard.delegate_router",
+      "spendguard.manage.token_operations.delegate_router",
       "spendguard.store.configuration.config"
     ],
     [
-      "spendguard.delegate_router",
+      "spendguard.manage.token_operations.delegate_router",
       "spendguard.platform.fleet"
     ],
     [
-      "spendguard.delegate_router",
+      "spendguard.manage.token_operations.delegate_router",
       "spendguard.manage.admission.gate"
     ],
     [
-      "spendguard.delegate_router",
+      "spendguard.manage.token_operations.delegate_router",
       "spendguard.analyze.measurement.guard"
     ],
     [
-      "spendguard.delegate_router",
+      "spendguard.manage.token_operations.delegate_router",
       "spendguard.manage.routing.lane_balance"
     ],
     [
-      "spendguard.delegate_router",
+      "spendguard.manage.token_operations.delegate_router",
       "spendguard.store.reference_data.lane_registry"
     ],
     [
-      "spendguard.delegate_router",
+      "spendguard.manage.token_operations.delegate_router",
       "spendguard.platform.lanes"
     ],
     [
-      "spendguard.delegate_router",
+      "spendguard.manage.token_operations.delegate_router",
       "spendguard.store.spend_search.ledger_read"
     ],
     [
-      "spendguard.delegate_router",
+      "spendguard.manage.token_operations.delegate_router",
       "spendguard.store.reference_data.pricing"
     ],
     [
-      "spendguard.delegate_router",
+      "spendguard.manage.token_operations.delegate_router",
       "spendguard.analyze.cost_estimation.provider_tokens"
     ],
     [
-      "spendguard.delegate_router",
+      "spendguard.manage.token_operations.delegate_router",
       "spendguard.platform.release"
     ],
     [
-      "spendguard.delegate_router",
+      "spendguard.manage.token_operations.delegate_router",
       "spendguard.analyze.measurement.reliability"
     ],
     [
-      "spendguard.delegate_worker",
+      "spendguard.manage.token_operations.delegate_worker",
       "spendguard"
     ],
     [
@@ -7649,31 +7628,31 @@
       "spendguard.store.configuration.config"
     ],
     [
-      "spendguard.dispatch",
+      "spendguard.manage.token_operations.dispatch",
       "spendguard.generate.execution.adapters"
     ],
     [
-      "spendguard.dispatch",
+      "spendguard.manage.token_operations.dispatch",
       "spendguard.manage.admission.bulkgate"
     ],
     [
-      "spendguard.dispatch",
+      "spendguard.manage.token_operations.dispatch",
       "spendguard.store.configuration.config"
     ],
     [
-      "spendguard.dispatch",
+      "spendguard.manage.token_operations.dispatch",
       "spendguard.manage.admission.gate"
     ],
     [
-      "spendguard.dispatch",
+      "spendguard.manage.token_operations.dispatch",
       "spendguard.store.reference_data.lane_catalog"
     ],
     [
-      "spendguard.dispatch",
+      "spendguard.manage.token_operations.dispatch",
       "spendguard.platform.lanes"
     ],
     [
-      "spendguard.dispatch",
+      "spendguard.manage.token_operations.dispatch",
       "spendguard.store.reference_data.model_catalog"
     ],
     [
@@ -7825,7 +7804,7 @@
       "spendguard.generate.work_integrity.output_contract"
     ],
     [
-      "spendguard.execution_journal",
+      "spendguard.manage.token_operations.execution_journal",
       "spendguard.store.configuration.config"
     ],
     [
@@ -7898,7 +7877,7 @@
     ],
     [
       "spendguard.platform.fleet",
-      "spendguard.codex_broker_owner"
+      "spendguard.manage.token_operations.codex_broker_owner"
     ],
     [
       "spendguard.platform.fleet",
@@ -7910,7 +7889,7 @@
     ],
     [
       "spendguard.platform.fleet",
-      "spendguard.lane_queue"
+      "spendguard.manage.token_operations.lane_queue"
     ],
     [
       "spendguard.platform.fleet",
@@ -7918,7 +7897,7 @@
     ],
     [
       "spendguard.platform.fleet",
-      "spendguard.warm_stdio_daemon"
+      "spendguard.manage.token_operations.warm_stdio_daemon"
     ],
     [
       "spendguard.egress.focus_export",
@@ -7974,11 +7953,11 @@
     ],
     [
       "spendguard.manage.admission.gate",
-      "spendguard.delegate_router"
+      "spendguard.manage.token_operations.delegate_router"
     ],
     [
       "spendguard.manage.admission.gate",
-      "spendguard.dispatch"
+      "spendguard.manage.token_operations.dispatch"
     ],
     [
       "spendguard.manage.admission.gate",
@@ -8185,11 +8164,11 @@
       "spendguard.store.configuration.config"
     ],
     [
-      "spendguard.kimi_daemon",
+      "spendguard.manage.token_operations.kimi_daemon",
       "spendguard.store.configuration.config"
     ],
     [
-      "spendguard.kimi_daemon",
+      "spendguard.manage.token_operations.kimi_daemon",
       "spendguard.generate.execution.kimi_exec"
     ],
     [
@@ -8198,11 +8177,11 @@
     ],
     [
       "spendguard.generate.execution.kimi_exec",
-      "spendguard.execution_journal"
+      "spendguard.manage.token_operations.execution_journal"
     ],
     [
       "spendguard.generate.execution.kimi_exec",
-      "spendguard.kimi_daemon"
+      "spendguard.manage.token_operations.kimi_daemon"
     ],
     [
       "spendguard.generate.execution.kimi_exec",
@@ -8238,7 +8217,7 @@
     ],
     [
       "spendguard.manage.routing.lane_balance",
-      "spendguard.dispatch"
+      "spendguard.manage.token_operations.dispatch"
     ],
     [
       "spendguard.manage.routing.lane_balance",
@@ -8258,7 +8237,7 @@
     ],
     [
       "spendguard.manage.routing.lane_balance",
-      "spendguard.lane_queue"
+      "spendguard.manage.token_operations.lane_queue"
     ],
     [
       "spendguard.manage.routing.lane_balance",
@@ -8401,63 +8380,63 @@
       "spendguard.store.reference_data.pricing"
     ],
     [
-      "spendguard.lane_queue",
+      "spendguard.manage.token_operations.lane_queue",
       "spendguard.generate.execution.adapters"
     ],
     [
-      "spendguard.lane_queue",
+      "spendguard.manage.token_operations.lane_queue",
       "spendguard.generate.execution.batch_tracker"
     ],
     [
-      "spendguard.lane_queue",
+      "spendguard.manage.token_operations.lane_queue",
       "spendguard.store.call_corpus.callio"
     ],
     [
-      "spendguard.lane_queue",
+      "spendguard.manage.token_operations.lane_queue",
       "spendguard.store.configuration.config"
     ],
     [
-      "spendguard.lane_queue",
+      "spendguard.manage.token_operations.lane_queue",
       "spendguard.platform.fleet"
     ],
     [
-      "spendguard.lane_queue",
+      "spendguard.manage.token_operations.lane_queue",
       "spendguard.manage.admission.gate"
     ],
     [
-      "spendguard.lane_queue",
+      "spendguard.manage.token_operations.lane_queue",
       "spendguard.manage.routing.lane_balance"
     ],
     [
-      "spendguard.lane_queue",
+      "spendguard.manage.token_operations.lane_queue",
       "spendguard.platform.launchd_labels"
     ],
     [
-      "spendguard.lane_queue",
+      "spendguard.manage.token_operations.lane_queue",
       "spendguard.store.spend_search.ledger_read"
     ],
     [
-      "spendguard.lane_queue",
+      "spendguard.manage.token_operations.lane_queue",
       "spendguard.store.money_ledger.ledger_writer"
     ],
     [
-      "spendguard.lane_queue",
+      "spendguard.manage.token_operations.lane_queue",
       "spendguard.analyze.cost_estimation.provider_tokens"
     ],
     [
-      "spendguard.lane_queue",
+      "spendguard.manage.token_operations.lane_queue",
       "spendguard.platform.release"
     ],
     [
-      "spendguard.lane_queue",
+      "spendguard.manage.token_operations.lane_queue",
       "spendguard.store.money_ledger.schema_indexes"
     ],
     [
-      "spendguard.lane_queue",
+      "spendguard.manage.token_operations.lane_queue",
       "spendguard.generate.execution.vendor_call"
     ],
     [
-      "spendguard.lane_queue",
+      "spendguard.manage.token_operations.lane_queue",
       "spendguard.generate.work_integrity.work_integrity"
     ],
     [
@@ -8477,11 +8456,11 @@
       "spendguard.store.spend_search.ledger_read"
     ],
     [
-      "spendguard.lane_recovery",
+      "spendguard.manage.token_operations.lane_recovery",
       "spendguard.store.configuration.config"
     ],
     [
-      "spendguard.lane_recovery",
+      "spendguard.manage.token_operations.lane_recovery",
       "spendguard.manage.admission.gate"
     ],
     [
@@ -8578,7 +8557,7 @@
     ],
     [
       "spendguard.platform.lanes",
-      "spendguard.lane_queue"
+      "spendguard.manage.token_operations.lane_queue"
     ],
     [
       "spendguard.platform.lanes",
@@ -8818,7 +8797,7 @@
     ],
     [
       "spendguard.mcp_server",
-      "spendguard.codex_daemon"
+      "spendguard.manage.token_operations.codex_daemon"
     ],
     [
       "spendguard.mcp_server",
@@ -8838,15 +8817,15 @@
     ],
     [
       "spendguard.mcp_server",
-      "spendguard.delegate_jobs"
+      "spendguard.manage.token_operations.delegate_jobs"
     ],
     [
       "spendguard.mcp_server",
-      "spendguard.delegate_router"
+      "spendguard.manage.token_operations.delegate_router"
     ],
     [
       "spendguard.mcp_server",
-      "spendguard.dispatch"
+      "spendguard.manage.token_operations.dispatch"
     ],
     [
       "spendguard.mcp_server",
@@ -8862,7 +8841,7 @@
     ],
     [
       "spendguard.mcp_server",
-      "spendguard.lane_queue"
+      "spendguard.manage.token_operations.lane_queue"
     ],
     [
       "spendguard.mcp_server",
@@ -8894,7 +8873,7 @@
     ],
     [
       "spendguard.mcp_server",
-      "spendguard.queue_planner"
+      "spendguard.manage.token_operations.queue_planner"
     ],
     [
       "spendguard.mcp_server",
@@ -9197,19 +9176,19 @@
       "spendguard.store.reference_data.pricing"
     ],
     [
-      "spendguard.queue_planner",
+      "spendguard.manage.token_operations.queue_planner",
       "spendguard.generate.execution.adapters"
     ],
     [
-      "spendguard.queue_planner",
+      "spendguard.manage.token_operations.queue_planner",
       "spendguard.store.configuration.config"
     ],
     [
-      "spendguard.queue_planner",
+      "spendguard.manage.token_operations.queue_planner",
       "spendguard.manage.admission.gate"
     ],
     [
-      "spendguard.queue_planner",
+      "spendguard.manage.token_operations.queue_planner",
       "spendguard.manage.routing.route_economics"
     ],
     [
@@ -9294,7 +9273,7 @@
     ],
     [
       "spendguard.analyze.spend_reporting.receipt",
-      "spendguard.lane_queue"
+      "spendguard.manage.token_operations.lane_queue"
     ],
     [
       "spendguard.analyze.spend_reporting.receipt",
@@ -9633,7 +9612,7 @@
       "spendguard.store.spend_search.ledger_read"
     ],
     [
-      "spendguard.resource_state",
+      "spendguard.manage.token_operations.resource_state",
       "spendguard.store.configuration.config"
     ],
     [
@@ -9774,7 +9753,7 @@
     ],
     [
       "spendguard.manage.routing.route_horizon",
-      "spendguard.queue_planner"
+      "spendguard.manage.token_operations.queue_planner"
     ],
     [
       "spendguard.analyze.measurement.route_realized",
@@ -9822,7 +9801,7 @@
     ],
     [
       "spendguard.manage.routing.route_utility",
-      "spendguard.resource_state"
+      "spendguard.manage.token_operations.resource_state"
     ],
     [
       "spendguard.store.call_corpus.routing_audit",
@@ -10137,27 +10116,27 @@
       "spendguard.capability_cli_parsing"
     ],
     [
-      "spendguard.storm_route",
+      "spendguard.manage.token_operations.storm_route",
       "spendguard.generate.execution.adapters"
     ],
     [
-      "spendguard.storm_submit",
+      "spendguard.manage.token_operations.storm_submit",
       "spendguard.generate.execution.adapters"
     ],
     [
-      "spendguard.storm_submit",
+      "spendguard.manage.token_operations.storm_submit",
       "spendguard.generate.execution.batch_tracker"
     ],
     [
-      "spendguard.storm_submit",
+      "spendguard.manage.token_operations.storm_submit",
       "spendguard.store.call_corpus.callio"
     ],
     [
-      "spendguard.storm_submit",
+      "spendguard.manage.token_operations.storm_submit",
       "spendguard.store.call_corpus.calls"
     ],
     [
-      "spendguard.storm_submit",
+      "spendguard.manage.token_operations.storm_submit",
       "spendguard.generate.execution.submit"
     ],
     [
@@ -10210,7 +10189,7 @@
     ],
     [
       "spendguard.generate.execution.subscription_exec",
-      "spendguard.execution_journal"
+      "spendguard.manage.token_operations.execution_journal"
     ],
     [
       "spendguard.generate.execution.subscription_exec",
@@ -10370,7 +10349,7 @@
     ],
     [
       "spendguard.generate.execution.vendor_call",
-      "spendguard.dispatch"
+      "spendguard.manage.token_operations.dispatch"
     ],
     [
       "spendguard.generate.execution.vendor_call",
@@ -10426,14 +10405,14 @@
     ],
     [
       "spendguard.analyze.assurance.verify",
-      "spendguard.resource_state"
+      "spendguard.manage.token_operations.resource_state"
     ],
     [
       "spendguard.generate.spend_capture.vertex_adapter",
       "spendguard.manage.admission.gate"
     ],
     [
-      "spendguard.warm_stdio_daemon",
+      "spendguard.manage.token_operations.warm_stdio_daemon",
       "spendguard.store.configuration.config"
     ],
     [
@@ -10533,15 +10512,15 @@
       "spendguard.ui"
     ],
     [
-      "spendguard.xp_rate_window",
+      "spendguard.manage.token_operations.xp_rate_window",
       "spendguard.store.configuration.config"
     ],
     [
-      "spendguard.xp_rate_window",
+      "spendguard.manage.token_operations.xp_rate_window",
       "spendguard.store.spend_search.ledger_read"
     ],
     [
-      "spendguard.xp_rate_window",
+      "spendguard.manage.token_operations.xp_rate_window",
       "spendguard.store.money_ledger.ledger_writer"
     ],
     [
@@ -10550,7 +10529,7 @@
     ],
     [
       "spendguard.generate.execution.zai_exec",
-      "spendguard.execution_journal"
+      "spendguard.manage.token_operations.execution_journal"
     ],
     [
       "spendguard.generate.execution.zai_exec",

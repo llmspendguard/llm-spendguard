@@ -19,7 +19,7 @@ adapters helpers (_lane_cool/_lane_cooling/…) keep their exact behaviour and n
 import time
 import threading
 
-from . import config
+from ... import config
 
 _STATE_NAME = "resource_state"   # persisted under SPENDGUARD_HOME via the shared config.load_state/save_state
 _lock = threading.Lock()

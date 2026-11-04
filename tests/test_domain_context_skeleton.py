@@ -27,7 +27,7 @@ FIXTURE_MISSING_ATTRIBUTE_NAME = "missing_value"
 FIXTURE_PRIVATE_PUBLISHED_NAME = "_private_value"
 SANCTIONED_INFRASTRUCTURE_GAPS = {"domain_context_surface", "domain_legacy_path_shim"}
 CORRECTED_CONFIGURATION_MODULE = "store.configuration.config"
-CORRECTED_TOKEN_OPERATIONS_MODULE = "execution_journal"
+CORRECTED_TOKEN_OPERATIONS_MODULE = "manage.token_operations.execution_journal"
 
 
 def load_domain_context_registry():

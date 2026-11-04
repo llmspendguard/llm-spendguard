@@ -174,14 +174,14 @@
       "delegate_router.delegate_cli"
     ],
     "handler_evidence": [
-      "src/spendguard/delegate_router.py:642 (delegate_router.delegate_cli)"
+      "src/spendguard/manage/token_operations/delegate_router.py:642 (delegate_router.delegate_cli)"
     ],
     "parser_kind": "argparse",
     "nested_grammar_summary": "",
     "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [
       {
-        "source_scope": "src/spendguard/delegate_router.py:642",
+        "source_scope": "src/spendguard/manage/token_operations/delegate_router.py:642",
         "selector": null,
         "operations": [
           {
@@ -2186,14 +2186,14 @@
       "comprehend.cmd"
     ],
     "handler_evidence": [
-      "src/spendguard/comprehend.py:200 (comprehend.cmd)"
+      "src/spendguard/manage/token_operations/comprehend.py:200 (comprehend.cmd)"
     ],
     "parser_kind": "argparse",
     "nested_grammar_summary": "",
     "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [
       {
-        "source_scope": "src/spendguard/comprehend.py:200",
+        "source_scope": "src/spendguard/manage/token_operations/comprehend.py:200",
         "selector": null,
         "operations": [
           {

@@ -58,7 +58,7 @@ _ENV_PREFIX = "SPENDGUARD_DISPATCH_"
 
 def effective_codex_concurrency(pool_size=None, *, strict=False):
     """Resolve Codex execution capacity without raising any configured safety bound."""
-    from . import config
+    from ... import config
     if pool_size is None:
         pool_size = config.codex_daemon_pool_settings()["size"]
     # Unify warm-worker N, aggregate dispatch semaphore, and Codex lane admission conservatively.
@@ -90,7 +90,7 @@ def _limit(key, default, *, strict=False):
         except (TypeError, ValueError):
             pass
     try:
-        from . import config
+        from ... import config
         v = config._cfg_get("dispatch", key, default)
         return int(v)
     except Exception:
@@ -145,7 +145,7 @@ class _LearnedLimits:
         self._lock = threading.Lock()
 
     def _path(self):
-        from . import config
+        from ... import config
         d = config.HOME / "dispatch"
         d.mkdir(parents=True, exist_ok=True)
         return d / "learned_limits.json"
@@ -198,12 +198,12 @@ class _LearnedLimits:
                 #                                          write. success headers repeat the same limit on EVERY call, so
                 #                                          this persists ONCE per (vendor, limit), never a per-call backup.
             try:                                         # persist through the ONE backed-up, atomic JSON writer
-                from . import config
+                from ... import config
                 out = config.update_json(self._path(), _stamp_vendor_limits, reason="learn-rate-limit")
                 if isinstance(out, dict):
                     self._d = out                        # adopt the merged on-disk state (incl. other processes' vendors)
             except Exception as e:
-                from . import gate as _gate
+                from ... import gate as _gate
                 if _gate.is_deliberate_stop(e):
                     raise                                # a spend refusal / ledger LOCK is a DELIBERATE stop — PROPAGATE,
                 _warn_learned_io("write", e)             # never downgrade. A transient IO/lock: memory holds the lesson.
@@ -219,7 +219,7 @@ class _LearnedLimits:
                 self._d = {}
             self._checked = time.monotonic()
             try:
-                from . import config
+                from ... import config
                 p = self._path()
                 if not p.exists():
                     return
@@ -233,7 +233,7 @@ class _LearnedLimits:
                 # doctrine: ok — deliberate-refusal containment via the gate's STRUCTURAL isinstance check
                 # (gate.deliberate_stop_types()), the sanctioned primitive used across this module (see learn());
                 # a spend refusal / ledger lock PROPAGATES, a transient file error is non-fatal (memory cleared above).
-                from . import gate as _g
+                from ... import gate as _g
                 if _g.is_deliberate_stop(e):
                     raise
 
@@ -326,7 +326,7 @@ def shrink_connection_window(vendor):
             if new < int(cur):
                 _LEARNED.learn(v, conn=new, source="429-congestion")
     except Exception as e:
-        from . import gate as _g
+        from ... import gate as _g
         if _g.is_deliberate_stop(e):           # a spend refusal / ledger lock PROPAGATES (never fail-open)
             raise
         # else: a transient bookkeeping error must never turn a 429 into a crash
@@ -356,7 +356,7 @@ def grow_connection_window(vendor):
         _LEARNED.learn(v, conn=cur + 1, source="aimd-grow")
         _GOV._conn_wake(v)                      # a slot opened — wake a waiter to use it
     except Exception as e:
-        from . import gate as _g
+        from ... import gate as _g
         if _g.is_deliberate_stop(e):            # a spend refusal / ledger lock PROPAGATES (never fail-open)
             raise
         # else: a transient ACK-grow bookkeeping error must never turn a success into a failure
@@ -390,7 +390,7 @@ def reset_connection_window(vendor=None):
                 _GOV._buckets.clear()
         _LEARNED.forget(v or None)
     except Exception as e:
-        from . import gate as _g
+        from ... import gate as _g
         if _g.is_deliberate_stop(e):            # a spend refusal / ledger lock PROPAGATES (never fail-open)
             raise
         # else: a transient reset bookkeeping error is non-fatal
@@ -404,7 +404,7 @@ def _catalog_rate(vendor, model):
     not curated — an uncurated vendor keeps today's behaviour (concurrency-only), never a fabricated cap. Lazy import
     (model_catalog is import-light; avoids a cycle) and fail-safe: a lookup error never breaks admission."""
     try:
-        from . import model_catalog
+        from ... import model_catalog
         cap = model_catalog.rate_limit_for(model, provider=vendor) or {}
     except Exception:
         return 0, 0
@@ -513,7 +513,7 @@ class _XPSlot:
 
 def _xp_dir(key):
     import hashlib
-    from . import config
+    from ... import config
     d = config.HOME / "dispatch" / hashlib.sha1(key.encode()).hexdigest()[:12]
     d.mkdir(parents=True, exist_ok=True)
     return d
@@ -815,7 +815,7 @@ class Governor:
         lane = None
         if not skip_lane:
             try:
-                from . import adapters
+                from ... import adapters
                 got = adapters._lane_for(vendor)
                 lane = got[0] if got else None
             except Exception:
@@ -1053,7 +1053,7 @@ def admit(vendor, model, deadline_s, no_metered_fallback=False, est_tokens=0, sh
     if not deadline_s or float(deadline_s) <= 0:
         return _Admission(True, False, False, vendor, model, False)
     try:
-        from . import adapters
+        from ... import adapters
         rode_lane = (not skip_lane) and bool(adapters._lane_for(vendor))   # skip_lane=True (a metered_only call) →
     except Exception:                                                      # gate on the metered VENDOR bucket (with
         rode_lane = False                                                  # its RPM/TPM), never the $0 lane bucket
@@ -1127,23 +1127,23 @@ def admission_state():
     except Exception as e:
         out["queue"] = {"error": "%s: %s" % (type(e).__name__, str(e)[:80])}
     try:
-        from . import bulkgate
+        from ... import bulkgate
         out["deadline_cancels"] = bulkgate.deadline_cancels()
         out["unhonored_efforts"] = bulkgate.unhonored_efforts()   # guardrail A: explicit effort pins NOT honored
         out["runaways"] = bulkgate.runaways()                     # guardrail E: out_tok >> the measured p99 norm
     except Exception as e:
-        from . import gate as _g
+        from ... import gate as _g
         if _g.is_deliberate_stop(e):
             raise                                                 # never downgrade a deliberate stop to an error note
         out["deadline_cancels"] = {"error": "%s: %s" % (type(e).__name__, str(e)[:80])}
         out["unhonored_efforts"] = {"error": "%s: %s" % (type(e).__name__, str(e)[:80])}
         out["runaways"] = {"error": "%s: %s" % (type(e).__name__, str(e)[:80])}
     try:
-        from . import gate as _g
+        from ... import gate as _g
         out["intent_cap_refusals"] = _g.intent_cap_refusals()     # guardrail D at the door: per-intent running-cap refusals
         out["ungated_fans"] = _g.ungated_fans()                   # raw same-intent fans NOT via bulk_delegate
     except Exception as e:
-        from . import gate as _g
+        from ... import gate as _g
         if _g.is_deliberate_stop(e):
             raise                                                 # never downgrade a deliberate stop to an error note
         out["intent_cap_refusals"] = {"error": "%s: %s" % (type(e).__name__, str(e)[:80])}
@@ -1161,7 +1161,7 @@ def _managed_all_on():
     if v is not None:
         return v.strip().lower() in ("1", "true", "yes", "on")
     try:
-        from . import config
+        from ... import config
         return bool(config._cfg_get("dispatch", "manage_all", True))
     except Exception:
         return True
@@ -1229,7 +1229,7 @@ def available_capacity(pool="hooks"):
     returns the floor; no probe is spawned or refreshed on this hot path.
     """
     try:
-        from . import lane_catalog, lanes
+        from ... import lane_catalog, lanes
         capacity = 0
         for lane in lane_catalog.lanes():
             readiness = lanes._last_probe_ok(lane)
@@ -1250,7 +1250,7 @@ def _resolve_admit_ceiling(pool):
     if _dispatch_limit_env_key(key) in os.environ:
         return _admit_limit(pool)
     try:
-        from . import config
+        from ... import config
         absent = object()
         if config._cfg_get("dispatch", key, absent) is not absent:
             return _admit_limit(pool)
