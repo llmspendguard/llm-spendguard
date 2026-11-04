@@ -1,7 +1,7 @@
 """Persisted inventory of every locally discovered spendguard surface."""
 from __future__ import annotations
 
-from .capability_cli_parsing import add_registered_cli_argument
+from ..capability_cli_parsing import add_registered_cli_argument
 
 import argparse
 from datetime import datetime, timezone
@@ -17,7 +17,7 @@ import textwrap
 import urllib.parse
 from functools import lru_cache
 
-from . import config, fleet, setup
+from .. import config, fleet, setup
 from ._version import __version__ as SPENDGUARD_WRITER_VERSION
 
 MANIFEST_FILENAME = "surface-manifest.json"

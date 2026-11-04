@@ -3,7 +3,6 @@
   "package": "spendguard",
   "recorded_legacy_flat_modules": [
     "__main__.py",
-    "_version.py",
     "agent_spawn_gate.py",
     "anomaly.py",
     "attribution.py",
@@ -43,8 +42,6 @@
     "delegate_worktrees.py",
     "disk_guard.py",
     "dispatch.py",
-    "distribution.py",
-    "distribution_daemon.py",
     "domain_context_surface.py",
     "domain_legacy_path_shim.py",
     "effort_titration.py",
@@ -52,7 +49,6 @@
     "escalation_ladder.py",
     "execution_journal.py",
     "experiment.py",
-    "fleet.py",
     "gate.py",
     "gpu_port.py",
     "guard.py",
@@ -65,11 +61,8 @@
     "lane_recovery.py",
     "lane_registry.py",
     "lane_servability.py",
-    "lanes.py",
-    "launchd_labels.py",
     "ledger_sync.py",
     "litellm_adapter.py",
-    "manifest.py",
     "mcp_fd_lifecycle.py",
     "mcp_server.py",
     "measurement.py",
@@ -78,7 +71,6 @@
     "model_preflight.py",
     "models.py",
     "money_scale.py",
-    "offline_python_build.py",
     "otel_ingest.py",
     "plan_admission.py",
     "pricing.py",
@@ -96,22 +88,17 @@
     "reconcile_maintenance_owner.py",
     "reconcile_openai.py",
     "refresh.py",
-    "release.py",
     "reliability.py",
-    "remote.py",
     "requirement_judge.py",
     "residency_gate.py",
     "resource_state.py",
     "resources.py",
     "review.py",
     "route_realized.py",
-    "runner.py",
     "runpod_adapter.py",
     "scan.py",
-    "schedule.py",
     "semcache.py",
     "serve.py",
-    "setup.py",
     "sources.py",
     "stability.py",
     "storm_coalescer.py",
@@ -133,7 +120,7 @@
     "independent_foundations": [
       "spendguard.capability_cli_projection_models",
       "spendguard.store.spend_search.ledger_deadline_polling",
-      "spendguard.launchd_labels"
+      "spendguard.platform.launchd_labels"
     ],
     "reason": "These actual foundation modules own immutable parser data, pure deadline cadence, and launchd label constants; each currently depends only on the standard library. Prevent application/surface imports into these foundations. Broader core/surface separation is not claimed: config and pricing currently import adapters/calls."
   },
@@ -204,7 +191,7 @@
             "max_cc": 0,
             "mi": 100.0
           },
-          "src/spendguard/_version.py": {
+          "src/spendguard/platform/_version.py": {
             "max_cc": 0,
             "mi": 100.0
           },
@@ -532,11 +519,11 @@
             "max_cc": 23,
             "mi": 0.0
           },
-          "src/spendguard/distribution.py": {
+          "src/spendguard/platform/distribution.py": {
             "max_cc": 76,
             "mi": 0.0
           },
-          "src/spendguard/distribution_daemon.py": {
+          "src/spendguard/platform/distribution_daemon.py": {
             "max_cc": 20,
             "mi": 37.674605747396626
           },
@@ -588,7 +575,7 @@
             "max_cc": 32,
             "mi": 35.098998371583306
           },
-          "src/spendguard/fleet.py": {
+          "src/spendguard/platform/fleet.py": {
             "max_cc": 26,
             "mi": 0.0
           },
@@ -724,11 +711,11 @@
             "max_cc": 20,
             "mi": 42.88096772536486
           },
-          "src/spendguard/lanes.py": {
+          "src/spendguard/platform/lanes.py": {
             "max_cc": 157,
             "mi": 2.095677617495714
           },
-          "src/spendguard/launchd_labels.py": {
+          "src/spendguard/platform/launchd_labels.py": {
             "max_cc": 0,
             "mi": 100.0
           },
@@ -760,7 +747,7 @@
             "max_cc": 0,
             "mi": 100.0
           },
-          "src/spendguard/manifest.py": {
+          "src/spendguard/platform/manifest.py": {
             "max_cc": 23,
             "mi": 29.865845273530482
           },
@@ -800,7 +787,7 @@
             "max_cc": 9,
             "mi": 62.365455196795004
           },
-          "src/spendguard/offline_python_build.py": {
+          "src/spendguard/platform/offline_python_build.py": {
             "max_cc": 9,
             "mi": 51.72342577474964
           },
@@ -896,7 +883,7 @@
             "max_cc": 8,
             "mi": 62.13286272494166
           },
-          "src/spendguard/release.py": {
+          "src/spendguard/platform/release.py": {
             "max_cc": 13,
             "mi": 55.98988472290109
           },
@@ -904,7 +891,7 @@
             "max_cc": 24,
             "mi": 17.7048922886874
           },
-          "src/spendguard/remote.py": {
+          "src/spendguard/platform/remote.py": {
             "max_cc": 26,
             "mi": 49.869055626025805
           },
@@ -944,7 +931,7 @@
             "max_cc": 44,
             "mi": 38.97136073734599
           },
-          "src/spendguard/runner.py": {
+          "src/spendguard/platform/runner.py": {
             "max_cc": 9,
             "mi": 70.08133675855753
           },
@@ -960,7 +947,7 @@
             "max_cc": 24,
             "mi": 60.44379628718127
           },
-          "src/spendguard/schedule.py": {
+          "src/spendguard/platform/schedule.py": {
             "max_cc": 14,
             "mi": 59.72374201899231
           },
@@ -972,7 +959,7 @@
             "max_cc": 10,
             "mi": 54.771829894576925
           },
-          "src/spendguard/setup.py": {
+          "src/spendguard/platform/setup.py": {
             "max_cc": 47,
             "mi": 0.0
           },
@@ -1204,7 +1191,7 @@
             "max_cc": 0,
             "mi": 100.0
           },
-          "src/spendguard/_version.py": {
+          "src/spendguard/platform/_version.py": {
             "max_cc": 0,
             "mi": 100.0
           },
@@ -1532,11 +1519,11 @@
             "max_cc": 23,
             "mi": 0.0
           },
-          "src/spendguard/distribution.py": {
+          "src/spendguard/platform/distribution.py": {
             "max_cc": 76,
             "mi": 0.0
           },
-          "src/spendguard/distribution_daemon.py": {
+          "src/spendguard/platform/distribution_daemon.py": {
             "max_cc": 20,
             "mi": 37.674605747396626
           },
@@ -1588,7 +1575,7 @@
             "max_cc": 32,
             "mi": 34.65440375053294
           },
-          "src/spendguard/fleet.py": {
+          "src/spendguard/platform/fleet.py": {
             "max_cc": 26,
             "mi": 0.0
           },
@@ -1724,11 +1711,11 @@
             "max_cc": 20,
             "mi": 42.741304003644
           },
-          "src/spendguard/lanes.py": {
+          "src/spendguard/platform/lanes.py": {
             "max_cc": 157,
             "mi": 1.8189477197081199
           },
-          "src/spendguard/launchd_labels.py": {
+          "src/spendguard/platform/launchd_labels.py": {
             "max_cc": 0,
             "mi": 100.0
           },
@@ -1760,7 +1747,7 @@
             "max_cc": 0,
             "mi": 100.0
           },
-          "src/spendguard/manifest.py": {
+          "src/spendguard/platform/manifest.py": {
             "max_cc": 23,
             "mi": 29.865845273530482
           },
@@ -1800,7 +1787,7 @@
             "max_cc": 9,
             "mi": 62.365455196795004
           },
-          "src/spendguard/offline_python_build.py": {
+          "src/spendguard/platform/offline_python_build.py": {
             "max_cc": 9,
             "mi": 51.72342577474964
           },
@@ -1896,7 +1883,7 @@
             "max_cc": 8,
             "mi": 62.02818006633191
           },
-          "src/spendguard/release.py": {
+          "src/spendguard/platform/release.py": {
             "max_cc": 13,
             "mi": 55.98988472290109
           },
@@ -1904,7 +1891,7 @@
             "max_cc": 24,
             "mi": 17.650601686181226
           },
-          "src/spendguard/remote.py": {
+          "src/spendguard/platform/remote.py": {
             "max_cc": 26,
             "mi": 49.680205169070675
           },
@@ -1944,7 +1931,7 @@
             "max_cc": 44,
             "mi": 38.634981583543684
           },
-          "src/spendguard/runner.py": {
+          "src/spendguard/platform/runner.py": {
             "max_cc": 9,
             "mi": 70.08133675855753
           },
@@ -1960,7 +1947,7 @@
             "max_cc": 24,
             "mi": 59.74907896321292
           },
-          "src/spendguard/schedule.py": {
+          "src/spendguard/platform/schedule.py": {
             "max_cc": 14,
             "mi": 59.72374201899231
           },
@@ -1972,7 +1959,7 @@
             "max_cc": 10,
             "mi": 54.771829894576925
           },
-          "src/spendguard/setup.py": {
+          "src/spendguard/platform/setup.py": {
             "max_cc": 47,
             "mi": 0.0
           },
@@ -2197,7 +2184,7 @@
     },
     "reviewed_delegate_lifecycle": "2026-10-30: Reviewed complete changed worker, router, job controls, journal adoption and shared warm broker bodies. Increased branches implement PID/birth-verified cancellation, locked identity validation before stale recovery can declare an adopted worker lost, terminal waits, generated CLI controls and race-safe warm cancellation through the existing daemon journal boundary. Worker reuses existing governed completion. Exact Radon 6.0.1 measurements independently recorded under Python 3.11 and 3.12; all other ratchet limits unchanged. Targeting lifetime, cancellation, wait, stream and warm tests include mutation proofs.",
     "reviewed_delegate_isolation_and_provider_results": "2026-10-30: Reviewed both complete new modules. delegate_worktrees is standard-library-only git isolation: snapshots tracked dirty and untracked inputs, collects the complete binary delta, retains failures, and cleans accepted workspaces through injected durable metadata/envelope writers. Concurrent actual-router and detached success/cancel tests exercise primary-checkout confinement, cleanup and retained inspection; bypassing isolation makes targeting tests red. subscription_cli_results extracts existing fixed-shape provider decoding and warm fallback contracts with injected transports, preserving errors and usage without package imports or semantic routing decisions. Provider execution targeting tests and read-only-routing mutations cover its consumers. Exact Radon 6.0.1 new-file measurements independently match on Python 3.11 and 3.12; existing file ratchets and cyclic-edge limits are unchanged.",
-    "reviewed_doctor_bounded_load_scale_and_regen": "2026-10-31: Reviewed the complete changed bodies for the doctor-bounded load-scale branch. capability_readiness_gates.run_capability_script_readiness_gate now pulls measure_isolated_runner_budget_scale from the chunked_suite harness namespace and threads the measured runner_budget_scale into run_isolated_script, fixing the missing-argument regression that broke the offline readiness-evidence step; its size-sensitive MI falls 47.38754686040469 to 47.21367827153188 with max CC 14 unchanged — the only file whose measurement regresses the frozen baseline on this branch. architectural_fitness additionally gains the shared architectural_complexity_metrics_regress predicate — now the single regression rule read by both run_architectural_fitness_gate and the regenerator — and the surgical, justification-gated regenerate_architectural_complexity_baseline, which records only measured per-interpreter regressions (routing its write through config.update_json with keep_backups=0 so the atomic replace and always-on path~ backup are kept while no undeclared timestamped .json is left in the package dir) and leaves every other ratchet untouched; with those additions architectural_fitness measures max CC 30 and MI 22.221214118439754, improving on both axes versus the stored 31 / 20.935514428828085, so it does not regress and its baseline entry is intentionally left unchanged. Independently remeasured with Radon 6.0.1 under Python 3.11 and 3.12; only capability_readiness_gates.py's baseline changes, identically on each interpreter. All other complexity, cycle, duplication and dead-code ratchets remain unchanged.",
+    "reviewed_doctor_bounded_load_scale_and_regen": "2026-10-31: Reviewed the complete changed bodies for the doctor-bounded load-scale branch. capability_readiness_gates.run_capability_script_readiness_gate now pulls measure_isolated_runner_budget_scale from the chunked_suite harness namespace and threads the measured runner_budget_scale into run_isolated_script, fixing the missing-argument regression that broke the offline readiness-evidence step; its size-sensitive MI falls 47.38754686040469 to 47.21367827153188 with max CC 14 unchanged \u2014 the only file whose measurement regresses the frozen baseline on this branch. architectural_fitness additionally gains the shared architectural_complexity_metrics_regress predicate \u2014 now the single regression rule read by both run_architectural_fitness_gate and the regenerator \u2014 and the surgical, justification-gated regenerate_architectural_complexity_baseline, which records only measured per-interpreter regressions (routing its write through config.update_json with keep_backups=0 so the atomic replace and always-on path~ backup are kept while no undeclared timestamped .json is left in the package dir) and leaves every other ratchet untouched; with those additions architectural_fitness measures max CC 30 and MI 22.221214118439754, improving on both axes versus the stored 31 / 20.935514428828085, so it does not regress and its baseline entry is intentionally left unchanged. Independently remeasured with Radon 6.0.1 under Python 3.11 and 3.12; only capability_readiness_gates.py's baseline changes, identically on each interpreter. All other complexity, cycle, duplication and dead-code ratchets remain unchanged.",
     "reviewed_ledger_performance_benchmark": "Measured offline ledger performance benchmark core and relative baseline comparison.",
     "reviewed_ledger_performance_profile_wiring": "Reviewed benchmark profile wiring adds bounded metadata derivation, fixture construction, and read-only source-ledger integration.",
     "reviewed_selfcheck_named_unreviewed_exit_policy": "Reviewed the explicit selfcheck exit-policy helper and repeatable CLI array parsing; both are small mechanical policy/argument adapters with can-still-fail coverage.",
@@ -6161,16 +6148,16 @@
     "src/spendguard/gpu_port.py:278",
     "src/spendguard/analyze/learning/lane_bandit.py:290",
     "src/spendguard/lane_servability.py:292",
-    "src/spendguard/lanes.py:64",
+    "src/spendguard/platform/lanes.py:64",
     "src/spendguard/sources.py:77"
   ],
   "max_largest_scc_size": 142,
   "max_cyclic_edge_count": 943,
-  "max_legacy_shim_count": 96,
+  "max_legacy_shim_count": 109,
   "recorded_cross_context_nonsurface_imports": [
     [
       "spendguard",
-      "spendguard._version"
+      "spendguard.platform._version"
     ],
     [
       "spendguard",
@@ -6258,7 +6245,7 @@
     ],
     [
       "spendguard.generate.execution.adapters",
-      "spendguard.distribution"
+      "spendguard.platform.distribution"
     ],
     [
       "spendguard.generate.execution.adapters",
@@ -6266,7 +6253,7 @@
     ],
     [
       "spendguard.generate.execution.adapters",
-      "spendguard.fleet"
+      "spendguard.platform.fleet"
     ],
     [
       "spendguard.generate.execution.adapters",
@@ -6306,7 +6293,7 @@
     ],
     [
       "spendguard.generate.execution.adapters",
-      "spendguard.lanes"
+      "spendguard.platform.lanes"
     ],
     [
       "spendguard.generate.execution.adapters",
@@ -6754,7 +6741,7 @@
     ],
     [
       "spendguard.budget",
-      "spendguard.distribution"
+      "spendguard.platform.distribution"
     ],
     [
       "spendguard.budget",
@@ -7214,11 +7201,11 @@
     ],
     [
       "spendguard.cli",
-      "spendguard.distribution"
+      "spendguard.platform.distribution"
     ],
     [
       "spendguard.cli",
-      "spendguard.fleet"
+      "spendguard.platform.fleet"
     ],
     [
       "spendguard.cli",
@@ -7274,11 +7261,11 @@
     ],
     [
       "spendguard.cli",
-      "spendguard.release"
+      "spendguard.platform.release"
     ],
     [
       "spendguard.cli",
-      "spendguard.setup"
+      "spendguard.platform.setup"
     ],
     [
       "spendguard.cli",
@@ -7326,11 +7313,11 @@
     ],
     [
       "spendguard.codex_broker_owner",
-      "spendguard.fleet"
+      "spendguard.platform.fleet"
     ],
     [
       "spendguard.codex_broker_owner",
-      "spendguard.launchd_labels"
+      "spendguard.platform.launchd_labels"
     ],
     [
       "spendguard.codex_daemon",
@@ -7362,7 +7349,7 @@
     ],
     [
       "spendguard.codex_daemon_broker",
-      "spendguard.release"
+      "spendguard.platform.release"
     ],
     [
       "spendguard.generate.execution.codex_exec",
@@ -7482,7 +7469,7 @@
     ],
     [
       "spendguard.store.configuration.config_schema",
-      "spendguard.fleet"
+      "spendguard.platform.fleet"
     ],
     [
       "spendguard.store.configuration.config_schema",
@@ -7506,15 +7493,15 @@
     ],
     [
       "spendguard.analyze.assurance.consumer_audit",
-      "spendguard.fleet"
+      "spendguard.platform.fleet"
     ],
     [
       "spendguard.analyze.assurance.consumer_audit",
-      "spendguard.release"
+      "spendguard.platform.release"
     ],
     [
       "spendguard.analyze.assurance.consumer_audit",
-      "spendguard.setup"
+      "spendguard.platform.setup"
     ],
     [
       "spendguard.store.call_corpus.content_compression_backfill",
@@ -7626,7 +7613,7 @@
     ],
     [
       "spendguard.analyze.assurance.coverage",
-      "spendguard.fleet"
+      "spendguard.platform.fleet"
     ],
     [
       "spendguard.analyze.assurance.coverage",
@@ -7634,7 +7621,7 @@
     ],
     [
       "spendguard.analyze.assurance.coverage",
-      "spendguard.setup"
+      "spendguard.platform.setup"
     ],
     [
       "spendguard.crossllm",
@@ -7694,7 +7681,7 @@
     ],
     [
       "spendguard.delegate_router",
-      "spendguard.fleet"
+      "spendguard.platform.fleet"
     ],
     [
       "spendguard.delegate_router",
@@ -7714,7 +7701,7 @@
     ],
     [
       "spendguard.delegate_router",
-      "spendguard.lanes"
+      "spendguard.platform.lanes"
     ],
     [
       "spendguard.delegate_router",
@@ -7730,7 +7717,7 @@
     ],
     [
       "spendguard.delegate_router",
-      "spendguard.release"
+      "spendguard.platform.release"
     ],
     [
       "spendguard.delegate_router",
@@ -7766,38 +7753,38 @@
     ],
     [
       "spendguard.dispatch",
-      "spendguard.lanes"
+      "spendguard.platform.lanes"
     ],
     [
       "spendguard.dispatch",
       "spendguard.model_catalog"
     ],
     [
-      "spendguard.distribution",
+      "spendguard.platform.distribution",
       "spendguard.capability_cli_parsing"
     ],
     [
-      "spendguard.distribution",
+      "spendguard.platform.distribution",
       "spendguard.store.configuration.config"
     ],
     [
-      "spendguard.distribution",
+      "spendguard.platform.distribution",
       "spendguard.store.configuration.config_schema"
     ],
     [
-      "spendguard.distribution",
+      "spendguard.platform.distribution",
       "spendguard.analyze.assurance.consumer_audit"
     ],
     [
-      "spendguard.distribution_daemon",
+      "spendguard.platform.distribution_daemon",
       "spendguard.store.configuration.config"
     ],
     [
-      "spendguard.distribution_daemon",
+      "spendguard.platform.distribution_daemon",
       "spendguard.mcp_fd_lifecycle"
     ],
     [
-      "spendguard.distribution_daemon",
+      "spendguard.platform.distribution_daemon",
       "spendguard.mcp_server"
     ],
     [
@@ -7982,38 +7969,38 @@
     ],
     [
       "spendguard.analyze.assurance.external_standard_readiness",
-      "spendguard._version"
+      "spendguard.platform._version"
     ],
     [
       "spendguard.analyze.assurance.external_standard_readiness",
-      "spendguard.distribution"
+      "spendguard.platform.distribution"
     ],
     [
-      "spendguard.fleet",
+      "spendguard.platform.fleet",
       "spendguard"
     ],
     [
-      "spendguard.fleet",
+      "spendguard.platform.fleet",
       "spendguard.codex_broker_owner"
     ],
     [
-      "spendguard.fleet",
+      "spendguard.platform.fleet",
       "spendguard.store.configuration.config"
     ],
     [
-      "spendguard.fleet",
+      "spendguard.platform.fleet",
       "spendguard.gate"
     ],
     [
-      "spendguard.fleet",
+      "spendguard.platform.fleet",
       "spendguard.lane_queue"
     ],
     [
-      "spendguard.fleet",
+      "spendguard.platform.fleet",
       "spendguard.pricing"
     ],
     [
-      "spendguard.fleet",
+      "spendguard.platform.fleet",
       "spendguard.warm_stdio_daemon"
     ],
     [
@@ -8090,7 +8077,7 @@
     ],
     [
       "spendguard.gate",
-      "spendguard.fleet"
+      "spendguard.platform.fleet"
     ],
     [
       "spendguard.gate",
@@ -8106,7 +8093,7 @@
     ],
     [
       "spendguard.gate",
-      "spendguard.lanes"
+      "spendguard.platform.lanes"
     ],
     [
       "spendguard.gate",
@@ -8146,7 +8133,7 @@
     ],
     [
       "spendguard.gate",
-      "spendguard.setup"
+      "spendguard.platform.setup"
     ],
     [
       "spendguard.gate",
@@ -8230,7 +8217,7 @@
     ],
     [
       "spendguard.analyze.assurance.import_behavior_snapshot",
-      "spendguard.setup"
+      "spendguard.platform.setup"
     ],
     [
       "spendguard.analyze.learning.intent_model_prior",
@@ -8362,7 +8349,7 @@
     ],
     [
       "spendguard.manage.routing.lane_balance",
-      "spendguard.lanes"
+      "spendguard.platform.lanes"
     ],
     [
       "spendguard.manage.routing.lane_balance",
@@ -8430,7 +8417,7 @@
     ],
     [
       "spendguard.analyze.learning.lane_bandit",
-      "spendguard.lanes"
+      "spendguard.platform.lanes"
     ],
     [
       "spendguard.analyze.learning.lane_bandit",
@@ -8470,7 +8457,7 @@
     ],
     [
       "spendguard.analyze.treasury.lane_economics",
-      "spendguard.lanes"
+      "spendguard.platform.lanes"
     ],
     [
       "spendguard.analyze.treasury.lane_economics",
@@ -8514,7 +8501,7 @@
     ],
     [
       "spendguard.lane_queue",
-      "spendguard.fleet"
+      "spendguard.platform.fleet"
     ],
     [
       "spendguard.lane_queue",
@@ -8526,7 +8513,7 @@
     ],
     [
       "spendguard.lane_queue",
-      "spendguard.launchd_labels"
+      "spendguard.platform.launchd_labels"
     ],
     [
       "spendguard.lane_queue",
@@ -8542,7 +8529,7 @@
     ],
     [
       "spendguard.lane_queue",
-      "spendguard.release"
+      "spendguard.platform.release"
     ],
     [
       "spendguard.lane_queue",
@@ -8566,7 +8553,7 @@
     ],
     [
       "spendguard.analyze.treasury.lane_quota_cost",
-      "spendguard.lanes"
+      "spendguard.platform.lanes"
     ],
     [
       "spendguard.analyze.treasury.lane_quota_cost",
@@ -8633,83 +8620,83 @@
       "spendguard.egress.saas"
     ],
     [
-      "spendguard.lanes",
+      "spendguard.platform.lanes",
       "spendguard.generate.execution.adapters"
     ],
     [
-      "spendguard.lanes",
+      "spendguard.platform.lanes",
       "spendguard.capability_cli_parsing"
     ],
     [
-      "spendguard.lanes",
+      "spendguard.platform.lanes",
       "spendguard.cli_arguments"
     ],
     [
-      "spendguard.lanes",
+      "spendguard.platform.lanes",
       "spendguard.store.configuration.config"
     ],
     [
-      "spendguard.lanes",
+      "spendguard.platform.lanes",
       "spendguard.gate"
     ],
     [
-      "spendguard.lanes",
+      "spendguard.platform.lanes",
       "spendguard.manage.routing.lane_balance"
     ],
     [
-      "spendguard.lanes",
+      "spendguard.platform.lanes",
       "spendguard.analyze.learning.lane_bandit"
     ],
     [
-      "spendguard.lanes",
+      "spendguard.platform.lanes",
       "spendguard.lane_catalog"
     ],
     [
-      "spendguard.lanes",
+      "spendguard.platform.lanes",
       "spendguard.analyze.treasury.lane_economics"
     ],
     [
-      "spendguard.lanes",
+      "spendguard.platform.lanes",
       "spendguard.lane_eligibility"
     ],
     [
-      "spendguard.lanes",
+      "spendguard.platform.lanes",
       "spendguard.lane_queue"
     ],
     [
-      "spendguard.lanes",
+      "spendguard.platform.lanes",
       "spendguard.analyze.treasury.lane_quota"
     ],
     [
-      "spendguard.lanes",
+      "spendguard.platform.lanes",
       "spendguard.analyze.treasury.lane_quota_cost"
     ],
     [
-      "spendguard.lanes",
+      "spendguard.platform.lanes",
       "spendguard.lane_registry"
     ],
     [
-      "spendguard.lanes",
+      "spendguard.platform.lanes",
       "spendguard.lane_servability"
     ],
     [
-      "spendguard.lanes",
+      "spendguard.platform.lanes",
       "spendguard.model_catalog"
     ],
     [
-      "spendguard.lanes",
+      "spendguard.platform.lanes",
       "spendguard.reasoning_equivalence"
     ],
     [
-      "spendguard.lanes",
+      "spendguard.platform.lanes",
       "spendguard.reliability"
     ],
     [
-      "spendguard.lanes",
+      "spendguard.platform.lanes",
       "spendguard.manage.routing.route_utility"
     ],
     [
-      "spendguard.lanes",
+      "spendguard.platform.lanes",
       "spendguard.manage.routing.tier_config"
     ],
     [
@@ -8865,11 +8852,11 @@
       "spendguard.gate"
     ],
     [
-      "spendguard.manifest",
+      "spendguard.platform.manifest",
       "spendguard.capability_cli_parsing"
     ],
     [
-      "spendguard.manifest",
+      "spendguard.platform.manifest",
       "spendguard.store.configuration.config"
     ],
     [
@@ -8946,7 +8933,7 @@
     ],
     [
       "spendguard.mcp_server",
-      "spendguard.fleet"
+      "spendguard.platform.fleet"
     ],
     [
       "spendguard.mcp_server",
@@ -8962,7 +8949,7 @@
     ],
     [
       "spendguard.mcp_server",
-      "spendguard.launchd_labels"
+      "spendguard.platform.launchd_labels"
     ],
     [
       "spendguard.mcp_server",
@@ -8998,7 +8985,7 @@
     ],
     [
       "spendguard.mcp_server",
-      "spendguard.release"
+      "spendguard.platform.release"
     ],
     [
       "spendguard.mcp_server",
@@ -9026,7 +9013,7 @@
     ],
     [
       "spendguard.measurement",
-      "spendguard._version"
+      "spendguard.platform._version"
     ],
     [
       "spendguard.measurement",
@@ -9182,7 +9169,7 @@
     ],
     [
       "spendguard.plan_admission",
-      "spendguard.lanes"
+      "spendguard.platform.lanes"
     ],
     [
       "spendguard.plan_admission",
@@ -9533,11 +9520,11 @@
       "spendguard.store.configuration.config"
     ],
     [
-      "spendguard.release",
+      "spendguard.platform.release",
       "spendguard"
     ],
     [
-      "spendguard.release",
+      "spendguard.platform.release",
       "spendguard.store.configuration.config"
     ],
     [
@@ -9574,7 +9561,7 @@
     ],
     [
       "spendguard.reliability",
-      "spendguard.lanes"
+      "spendguard.platform.lanes"
     ],
     [
       "spendguard.reliability",
@@ -9597,23 +9584,23 @@
       "spendguard.pricing"
     ],
     [
-      "spendguard.remote",
+      "spendguard.platform.remote",
       "spendguard.budget"
     ],
     [
-      "spendguard.remote",
+      "spendguard.platform.remote",
       "spendguard.capability_cli_parsing"
     ],
     [
-      "spendguard.remote",
+      "spendguard.platform.remote",
       "spendguard.analyze.learning.conv"
     ],
     [
-      "spendguard.remote",
+      "spendguard.platform.remote",
       "spendguard.gate"
     ],
     [
-      "spendguard.remote",
+      "spendguard.platform.remote",
       "spendguard.resources"
     ],
     [
@@ -9910,7 +9897,7 @@
     ],
     [
       "spendguard.manage.routing.route_utility",
-      "spendguard.lanes"
+      "spendguard.platform.lanes"
     ],
     [
       "spendguard.manage.routing.route_utility",
@@ -9929,11 +9916,11 @@
       "spendguard.store.money_ledger.schema_indexes"
     ],
     [
-      "spendguard.runner",
+      "spendguard.platform.runner",
       "spendguard.capability_cli_parsing"
     ],
     [
-      "spendguard.runner",
+      "spendguard.platform.runner",
       "spendguard.store.configuration.config"
     ],
     [
@@ -9994,7 +9981,7 @@
     ],
     [
       "spendguard.egress.saas",
-      "spendguard.lanes"
+      "spendguard.platform.lanes"
     ],
     [
       "spendguard.egress.saas",
@@ -10014,7 +10001,7 @@
     ],
     [
       "spendguard.egress.saas",
-      "spendguard.setup"
+      "spendguard.platform.setup"
     ],
     [
       "spendguard.egress.saas",
@@ -10049,11 +10036,11 @@
       "spendguard.capability_cli_parsing"
     ],
     [
-      "spendguard.schedule",
+      "spendguard.platform.schedule",
       "spendguard.capability_cli_parsing"
     ],
     [
-      "spendguard.schedule",
+      "spendguard.platform.schedule",
       "spendguard.store.configuration.config"
     ],
     [
@@ -10094,7 +10081,7 @@
     ],
     [
       "spendguard.serve",
-      "spendguard.fleet"
+      "spendguard.platform.fleet"
     ],
     [
       "spendguard.serve",
@@ -10102,7 +10089,7 @@
     ],
     [
       "spendguard.serve",
-      "spendguard.launchd_labels"
+      "spendguard.platform.launchd_labels"
     ],
     [
       "spendguard.serve",
@@ -10110,54 +10097,54 @@
     ],
     [
       "spendguard.serve",
-      "spendguard.release"
+      "spendguard.platform.release"
     ],
     [
-      "spendguard.setup",
+      "spendguard.platform.setup",
       "spendguard.generate.execution.adapters"
     ],
     [
-      "spendguard.setup",
+      "spendguard.platform.setup",
       "spendguard.store.call_corpus.calls"
     ],
     [
-      "spendguard.setup",
+      "spendguard.platform.setup",
       "spendguard.capability_cli_parsing"
     ],
     [
-      "spendguard.setup",
+      "spendguard.platform.setup",
       "spendguard.store.configuration.config"
     ],
     [
-      "spendguard.setup",
+      "spendguard.platform.setup",
       "spendguard.store.configuration.config_schema"
     ],
     [
-      "spendguard.setup",
+      "spendguard.platform.setup",
       "spendguard.analyze.assurance.consumer_audit"
     ],
     [
-      "spendguard.setup",
+      "spendguard.platform.setup",
       "spendguard.gate"
     ],
     [
-      "spendguard.setup",
+      "spendguard.platform.setup",
       "spendguard.store.money_ledger.ledger"
     ],
     [
-      "spendguard.setup",
+      "spendguard.platform.setup",
       "spendguard.mcp_server"
     ],
     [
-      "spendguard.setup",
+      "spendguard.platform.setup",
       "spendguard.analyze.spend_reporting.receipt"
     ],
     [
-      "spendguard.setup",
+      "spendguard.platform.setup",
       "spendguard.egress.saas"
     ],
     [
-      "spendguard.setup",
+      "spendguard.platform.setup",
       "spendguard.manage.routing.tier_config"
     ],
     [
@@ -10378,7 +10365,7 @@
     ],
     [
       "spendguard.manage.routing.tier_config",
-      "spendguard.lanes"
+      "spendguard.platform.lanes"
     ],
     [
       "spendguard.manage.routing.tier_config",
@@ -10542,7 +10529,7 @@
     ],
     [
       "spendguard.weekly_cap_guard",
-      "spendguard.lanes"
+      "spendguard.platform.lanes"
     ],
     [
       "spendguard.weekly_cap_guard",

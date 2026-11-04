@@ -153,7 +153,7 @@
           "CONTRIBUTING.md",
           "README.md",
           "CHANGELOG.md",
-          "src/spendguard/distribution_build_wheels/*.whl"
+        "src/spendguard/platform/distribution_build_wheels/*.whl"
         ],
         "required_checks": [
           "ruff",
@@ -257,7 +257,7 @@
           ],
           "binary_waivers": [
             {
-              "path": "src/spendguard/distribution_build_wheels/setuptools-84.2.1-py3-none-any.whl",
+        "path": "src/spendguard/platform/distribution_build_wheels/setuptools-84.2.1-py3-none-any.whl",
               "sha256": "ca140b45d5325a9478f880e351484f62fef15f336462e449ca0c03c873d589c2",
               "version": "84.2.1",
               "document": "docs/WAIVERS.md"

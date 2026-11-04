@@ -4,7 +4,7 @@ import json
 import os
 from urllib.request import Request, urlopen
 
-from . import config, fleet, mcp_fd_lifecycle
+from .. import config, fleet, mcp_fd_lifecycle
 from .launchd_labels import MCP_HTTP_LAUNCHD_LABEL, MCP_STDIO_LAUNCHD_LABEL
 
 DISTRIBUTION_RPC_TIMEOUT_DEFAULT_S = 10.0
@@ -16,7 +16,7 @@ DISTRIBUTION_VERSION_TOOL = "spendguard_version"
 
 def distribution_daemon_settings(settings=None):
     """Resolve endpoint from the daemon's own defaults and operational overrides."""
-    from .mcp_server import serve_http
+    from ..mcp_server import serve_http
     defaults = inspect.signature(serve_http).parameters
     host = os.getenv("SPENDGUARD_MCP_HOST", str(defaults["host"].default))
     port = os.getenv("SPENDGUARD_MCP_PORT", str(defaults["port"].default))
@@ -31,7 +31,7 @@ def distribution_daemon_settings(settings=None):
 
 def request_distribution_mcp_rpc(endpoint, method, params, timeout):
     """Send a real, bounded JSON-RPC request to an already running HTTP daemon."""
-    from .mcp_server import (MCP_READ_ONLY_ATTESTATION_META_KEY,
+    from ..mcp_server import (MCP_READ_ONLY_ATTESTATION_META_KEY,
                              MCP_READ_ONLY_ATTESTATION_HEADER,
                              MCP_READ_ONLY_ATTESTATION_HEADER_VALUE)
     # Legacy servers self-restart after any POST. Their HEAD is safely rejected;

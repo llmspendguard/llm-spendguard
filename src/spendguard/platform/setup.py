@@ -3,9 +3,9 @@ so they always match the code. `config` shows resolved values + where each came 
 runs the interview and writes ~/.spendguard/config.json (+ email.json), leaving API keys to env.
 """
 
-from .capability_cli_parsing import add_registered_cli_argument, registered_cli_option_token
+from ..capability_cli_parsing import add_registered_cli_argument, registered_cli_option_token
 import os, json
-from . import config, config_schema
+from .. import config, config_schema
 
 
 # THE MARK THAT SAYS WE WROTE THIS FILE. Ownership used to be tested with `"spendguard" in contents`,
@@ -165,7 +165,7 @@ if not any(getattr(finder, "_spendguard_gate_failclosed", False) for finder in s
 
 def _resolved_gated_sdk_modules(gated_modules):
     if gated_modules is None:
-        from .gate import gated_sdk_modules
+        from ..gate import gated_sdk_modules
         return tuple(gated_sdk_modules())
     return tuple(gated_modules)
 
@@ -431,7 +431,7 @@ def discover_distribution_interpreters(roots=None, settings=None, extra=None):
     """
     import sys
     from pathlib import Path
-    from . import consumer_audit, fleet
+    from .. import consumer_audit, fleet
 
     resolved_settings = config.consumer_audit_settings() if settings is None else settings
     exemptions = tuple(Path(value).expanduser().absolute()
@@ -732,7 +732,7 @@ def _resolved_sitecustomize(target, timeout=10):
 
 def _pkg_src():
     from pathlib import Path
-    return str(Path(__file__).resolve().parents[2] / "src")
+    return str(Path(__file__).resolve().parents[2])
 
 
 _PTH_HOOK = _gate_hook_for_checkout_src(_pkg_src())
@@ -802,7 +802,7 @@ def install_hook(venv=None, uninstall=False, install_pkg=True, user=False, pytho
         body = _sitecustomize_hook_source(inject_src=_pkg_src())
         open(hook, "w").write(body)
     else:
-        pkg_root = str(Path(__file__).resolve().parents[2])
+        pkg_root = str(Path(__file__).resolve().parents[3])
         if install_pkg:
             print(f"  pip install -e {pkg_root}  →  {venv}")
             try:
@@ -866,7 +866,7 @@ def install_skills(dest=None):
     import shutil
     from pathlib import Path
     dest = Path(dest or (Path.home() / ".claude" / "skills"))
-    src = Path(__file__).resolve().parents[2] / "skills"
+    src = Path(__file__).resolve().parents[3] / "skills"
     if not src.is_dir():
         print(f"  no skills/ dir at {src}"); return 1
     dest.mkdir(parents=True, exist_ok=True)
@@ -1073,7 +1073,7 @@ def _chat_caps():
     """Conversational cap setup. Uses YOUR own key for ONE small realtime call, caged under caps.meta (intent
     spendguard:init — separate budget, excluded from the corpus), estimate-first. NEVER the server. Returns
     {llm,compute,total} monthly USD, or None to fall back to the deterministic prompts."""
-    from . import gate, adapters, calls
+    from .. import gate, adapters, calls
     gate.install()   # ensure the gate is enforcing IN THIS PROCESS so the call is metered under caps.meta
     model = config.advisor_model()
     try:
@@ -1145,7 +1145,7 @@ def _reraise_if_governance_stop(e):
     concept `provider_tokens._stop_or_locked` uses, delegated to the canonical predicates rather than re-listed. Any
     other exception is left for the caller's broad handler to report."""
     try:
-        from . import gate, ledger
+        from .. import gate, ledger
         stop = gate.is_deliberate_stop(e) or isinstance(e, ledger.LockedError)
     except Exception:
         stop = False
@@ -1178,7 +1178,7 @@ def _autowire_lanes():
     the plan's real model a priced guess would UNDERCOUNT the lane's value (a wrong number pointing the wrong way) —
     the user declares it deliberately with `spendguard lanes set-model`, which validates the model is priced."""
     try:
-        from . import lanes as _lanes, tier_config, config as _cfg
+        from .. import lanes as _lanes, tier_config, config as _cfg
         st = _lanes.lanes_status()
     except Exception as e:
         _reraise_if_governance_stop(e)
@@ -1265,7 +1265,7 @@ def _run_integration_installers(quick=False, do_all=False):
     if _prompt_yn("Register the spendguard MCP tools (model-advisor + spend) in Claude Code?",
                   default=True, assume=quick):
         try:
-            from . import mcp_server
+            from .. import mcp_server
             mcp_server.register_client()
             wired.append("MCP")
         except Exception as e:
@@ -1274,7 +1274,7 @@ def _run_integration_installers(quick=False, do_all=False):
     # 3) always-on in-chat spend receipt
     if _prompt_yn("Install the always-on in-chat spend receipt (Claude Code)?", default=True, assume=quick):
         try:
-            from . import receipt
+            from .. import receipt
             receipt.install_cli([])
             wired.append("receipt")
         except Exception as e:
@@ -1338,7 +1338,7 @@ def _setup_summary_card(keys_counts, lanes_st, wired):
     pre-flight counts, the ready $0 lanes from lanes_status, and what the installer flow wired — then the ONE command
     that proves the path end-to-end. The proof is OFFERED, never auto-run: a probe bills plan tokens, and setup must
     not spend on the user's behalf."""
-    from . import gate as _gate
+    from .. import gate as _gate
     try:
         enforcing = _gate._any_patched()
     except Exception:
@@ -1465,7 +1465,7 @@ def cmd_init(argv=None):
     # Contributor identity is a MUST (it's the billable/rollup user). Materialize + show the resolved id now so it's
     # never blank/unattributed; an email here also becomes the alert target.
     try:
-        from . import saas as _saas
+        from .. import saas as _saas
         ident = _saas.contributor()
         if config.is_email(ident):
             print(f"Contributor: {ident}  (email — per-user roll-up, billing, AND alerts)")

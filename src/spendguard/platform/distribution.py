@@ -1,7 +1,7 @@
 """Fleet convergence and fail-closed release attestation (no model calls)."""
 from __future__ import annotations
 
-from .capability_cli_parsing import add_registered_cli_argument
+from ..capability_cli_parsing import add_registered_cli_argument
 
 import argparse
 import ast
@@ -21,7 +21,7 @@ import tempfile
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from . import config, consumer_audit, fleet, release, setup
+from .. import config, consumer_audit, fleet, release, setup
 from ._version import __version__ as SPENDGUARD_WRITER_VERSION
 from .distribution_daemon import attest_distribution_daemons
 from . import offline_python_build
@@ -92,7 +92,7 @@ def resolve_distribution_target(version=None):
     pointer = release.green_pointer()
     if not pointer:
         raise ValueError("no deployed green pointer")
-    repository = Path(__file__).resolve().parents[2]
+    repository = Path(__file__).resolve().parents[3]
     version_path = Path(_version.__file__).resolve().relative_to(repository).as_posix()
     source = release._git_src("show", f"{pointer['sha']}:{version_path}")
     if not source:
@@ -198,7 +198,7 @@ def distribution_clean_environment():
 
 def distribution_config_value(key):
     """Read a distribution knob using its declarative schema default as the sole default."""
-    from .config_schema import SETTINGS
+    from ..config_schema import SETTINGS
     entries = [entry for entry in SETTINGS if entry["section"] == DISTRIBUTION_CONFIG_SECTION
                and entry["key"] == key]
     if len(entries) != 1:
@@ -619,7 +619,7 @@ def distribution_dev_venv_status(install, target, venv_path):
     from . import manifest
     if install.get("install_kind") != manifest.MANIFEST_EDITABLE_KIND:
         return False, None
-    canonical_checkout = Path(target.get("checkout", Path(__file__).resolve().parents[2])).resolve()
+    canonical_checkout = Path(target.get("checkout", Path(__file__).resolve().parents[3])).resolve()
     enclosing_working_tree, working_tree_error = distribution_enclosing_working_tree(venv_path)
     if working_tree_error:
         return None, working_tree_error

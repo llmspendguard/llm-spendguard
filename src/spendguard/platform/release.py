@@ -27,7 +27,7 @@ import os
 import pathlib
 import subprocess
 
-from . import config
+from .. import config
 
 # The green pointer lives in the state home (SPENDGUARD_HOME), beside the ledger and caches — resolved live so a
 # test's isolated home is honoured. NOT cached at import: the home can be set after this module loads.
@@ -108,7 +108,7 @@ def stale_vs_green():
 
 def current_respawn_decision():
     """Return the total, traceable install-aware replacement decision for this process."""
-    from . import __version__
+    from .. import __version__
     from .manifest import (MANIFEST_EDITABLE_KIND, MANIFEST_WHEEL_KIND,
                            inspect_current_interpreter_install_kind)
     install = inspect_current_interpreter_install_kind()

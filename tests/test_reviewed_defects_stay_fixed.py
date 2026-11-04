@@ -532,7 +532,7 @@ check("...with the exclusions configurable rather than baked in", "SPENDGUARD_AU
 
 # setup.py's post-install verification imported openai unconditionally, so an Anthropic-only environment —
 # entirely normal — got a raw ImportError traceback and no answer about whether the gate was enforcing.
-_setup_src = (SRC / "setup.py").read_text()
+_setup_src = (SRC / "platform" / "setup.py").read_text()
 # THIS CHECK WAS TOO BROAD AT FIRST and failed on correct code. It searched the whole file for the openai
 # import string, which also matches a DIFFERENT probe that already wraps each provider in its own
 # try/except and falls through to anthropic. A guard that fires on the fixed version of the code teaches

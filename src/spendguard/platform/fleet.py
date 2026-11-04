@@ -31,7 +31,7 @@ import tempfile
 import threading
 from contextlib import closing
 
-from . import config
+from .. import config
 
 _registered_pid = None                               # successful once-per-process register() guard, fork-safe by PID
 _consumer_deregister_hook_pid = None
@@ -179,7 +179,7 @@ def install_periodic_launchd_fleet_jobs():
                                capture_output=True, text=True, timeout=FLEET_LAUNCHD_OPERATION_TIMEOUT_S)
         clean_report = None
         if document["Label"] == QUEUE_MANAGE_LAUNCHD_LABEL and current is None:
-            from .lane_queue import manage_queue_tick
+            from ..lane_queue import manage_queue_tick
             clean_report = manage_queue_tick(execute=True, process=False)
             if clean_report.get("error"):
                 installed.append({"label": document["Label"], "path": str(path),
@@ -280,7 +280,7 @@ def register_enforcing_interpreter():
     global _registration_failure
     try:
         import importlib.metadata
-        from . import _version, pricing
+        from .. import _version, pricing
         python_executable = str(pathlib.Path(sys.executable).resolve())
         now = _fleet_iso()
         try:
@@ -383,7 +383,7 @@ def _classify_fleet_pid_identity(pid, recorded_create_time):
             import psutil
         except ImportError:
             return _FLEET_PID_UNVERIFIABLE
-    from .warm_stdio_daemon import WARM_OWNER_BOOT_EPSILON_S
+    from ..warm_stdio_daemon import WARM_OWNER_BOOT_EPSILON_S
 
     try:
         process = psutil.Process(pid)
@@ -486,7 +486,7 @@ def register_consumer(label=None, role=None, supervision_mode=None, supervision_
             return
         resolved_role = CONSUMER_ROLE_UNSPECIFIED if role is None else role
         try:
-            from . import release, _version, gate
+            from .. import release, _version, gate
             # Observe THIS process without require()/install(): those would repair
             # the state being attested. Legacy registrations have no proof.
             try:
@@ -627,14 +627,14 @@ def fleet_control_restarts_enabled():
 
 def kickstart_declared_launchd_consumer(label):
     """Kickstart one declared launchd label through the package's shared launchctl helper."""
-    from .codex_broker_owner import run_declared_launchd_action
+    from ..codex_broker_owner import run_declared_launchd_action
     result = run_declared_launchd_action(("kickstart", "-k"), label)
     return {"ok": result.returncode == 0, "detail": result.stderr.strip() or result.stdout.strip()}
 
 
 def bootout_declared_launchd_consumer(label):
     """Boot out one declared launchd label through the package's shared launchctl helper."""
-    from .codex_broker_owner import run_declared_launchd_action
+    from ..codex_broker_owner import run_declared_launchd_action
     result = run_declared_launchd_action(("bootout",), label)
     return {"ok": result.returncode == 0, "detail": result.stderr.strip() or result.stdout.strip()}
 
@@ -644,7 +644,7 @@ def launchd_consumer_label_loaded(label):
     if not label:
         return False
     try:
-        from .codex_broker_owner import run_declared_launchd_action
+        from ..codex_broker_owner import run_declared_launchd_action
         result = run_declared_launchd_action(("print",), label)
     except Exception:
         return None
@@ -771,7 +771,7 @@ def _dependency_fingerprint(pyproject_path=None):
         import tomllib
     except ModuleNotFoundError:
         import tomli as tomllib
-    path = pathlib.Path(pyproject_path) if pyproject_path else pathlib.Path(__file__).resolve().parents[2] / "pyproject.toml"
+    path = pathlib.Path(pyproject_path) if pyproject_path else pathlib.Path(__file__).resolve().parents[3] / "pyproject.toml"
     with path.open("rb") as fh:
         project = tomllib.load(fh).get("project") or {}
     normalized = ["project:" + "".join(str(dep).split()) for dep in project.get("dependencies", [])]
@@ -830,8 +830,8 @@ def _consumer_install_is_verified_fresh(install_state, source_version, catalog_v
 
 def consumer_install_drift():
     """Return actionable install skew for registered consumer venvs; read-only and idempotent."""
-    from . import __version__
-    repo_root = pathlib.Path(__file__).resolve().parents[2]
+    from .. import __version__
+    repo_root = pathlib.Path(__file__).resolve().parents[3]
     drift = []
     try:
         with closing(_fleet_db()) as connection:
@@ -878,8 +878,8 @@ def refresh_stale_installs(apply=False):
     if not distinct:
         return {"refreshed": [], "skipped_current": [], "failed": [], "no_consumers": True}
 
-    from . import __version__
-    repo_root = pathlib.Path(__file__).resolve().parents[2]
+    from .. import __version__
+    repo_root = pathlib.Path(__file__).resolve().parents[3]
     try:
         current = _dependency_fingerprint(repo_root / "pyproject.toml")
     except Exception as exc:
@@ -978,8 +978,8 @@ def discover_host_spendguard_installations(cli_paths=None, pipx_document=None):
 
 def verify_and_refresh_registered_interpreters(apply=False):
     """Touch every registered deployment and prove version + catalog freshness after isolated refresh attempts."""
-    from . import __version__, pricing
-    repo_root = pathlib.Path(__file__).resolve().parents[2]
+    from .. import __version__, pricing
+    repo_root = pathlib.Path(__file__).resolve().parents[3]
     try:
         rows = registered_interpreters()
     except Exception as exc:

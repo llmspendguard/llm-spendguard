@@ -51,7 +51,7 @@ def exercise_distribution_probe_startup_without_persistence(disabled=False, runt
         environment = root / "interpreter"
         venv.EnvBuilder(with_pip=False, system_site_packages=True).create(environment)
         site = next(environment.glob("lib/python*/site-packages"))
-        (site / "distribution-source.pth").write_text(str(Path(distribution.__file__).resolve().parents[1]) + "\n")
+        (site / "distribution-source.pth").write_text(str(Path(distribution.__file__).resolve().parents[2]) + "\n")
         (site / PROBE_READONLY_BOOTSTRAP_NAME).write_text(PROBE_READONLY_BOOTSTRAP)
         metadata = site / ("llm_spendguard-" + _version.__version__ + ".dist-info")
         metadata.mkdir()

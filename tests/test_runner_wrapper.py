@@ -67,7 +67,7 @@ _wrapper_builder.create(_wrapper_venv)
 _wrapper_python = _wrapper_context.env_exec_cmd
 _wrapper_probe_env = dict(os.environ)
 _wrapper_probe_env["PYTHONNOUSERSITE"] = "1"
-_wrapper_probe_env["PYTHONPATH"] = os.path.dirname(os.path.dirname(runner.__file__))
+_wrapper_probe_env["PYTHONPATH"] = os.path.dirname(os.path.dirname(os.path.dirname(runner.__file__)))
 PROBE = "import sys; print('ARMED' if 'spendguard' in sys.modules else 'BARE')"
 bare = subprocess.run([_wrapper_python, "-c", PROBE], capture_output=True, text=True,
                       env=_wrapper_probe_env)

@@ -3,7 +3,7 @@
 History: it was a hardcoded literal that shipped as "0.3.0" for four releases; the fix moved it to
 importlib.metadata — but that reads INSTALL-TIME metadata, which under an editable install freezes at install time,
 so it reported 0.7.2 while running 0.10.0 code (warden 2026-09-25, the "packaging version lie"). The durable fix is
-a real single source: src/spendguard/_version.py, read live by __init__ and consumed by pyproject at build time.
+a real single source: src/spendguard/platform/_version.py, read live by __init__ and consumed by pyproject at build time.
 
 This guard fails if any of that regresses: if __version__ stops tracking the _version SSOT, if a second reader
 (measurement._sg_version) drifts from it, if pyproject reintroduces a static literal or stops deriving from the
@@ -36,7 +36,7 @@ check(f"measurement._sg_version() ({measurement._sg_version()}) tracks the SSOT 
 check("the pre-fix stale literal can never come back", spendguard.__version__ != "0.3.0" or ssot == "0.3.0")
 
 # __init__ must NOT go back to reading importlib.metadata for its own version (the editable-install lie).
-init_src = open(os.path.join(os.path.dirname(_version.__file__), "__init__.py")).read()
+init_src = open(os.path.join(os.path.dirname(os.path.dirname(_version.__file__)), "__init__.py")).read()
 check("__init__ does not read importlib.metadata for __version__ (reads the SSOT instead)",
       "from ._version import __version__" in init_src and "_pkg_version(" not in init_src)
 

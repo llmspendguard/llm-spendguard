@@ -15,7 +15,7 @@ The principle: gate at PROVISION, verify before SPEND, sync before TEARDOWN — 
 per script" to structural-by-construction. `spendguard remote {onstart|verify|sync}`.
 """
 
-from .capability_cli_parsing import registered_cli_option_token
+from ..capability_cli_parsing import registered_cli_option_token
 import json
 import shlex
 import subprocess
@@ -25,7 +25,7 @@ _DEFAULT_HOME = "/root/.spendguard"
 # The doctor line this module reads to decide whether a box may spend. IMPORTED FROM THE EMITTER, not retyped:
 # `gate` prints this line and this module parses it, so they must be the same strings by construction. Reading
 # back a format we ourselves wrote is parsing; an unrecognised line is answered UNKNOWN below, never "no".
-from .gate import ENFORCING_MARKER as _MARKER, ENFORCING_YES as _YES, ENFORCING_NO as _NO
+from ..gate import ENFORCING_MARKER as _MARKER, ENFORCING_YES as _YES, ENFORCING_NO as _NO
 
 
 def _ssh_run(run, ssh: str, remote_cmd: str, timeout: int):
@@ -154,7 +154,7 @@ def sync(ssh: str, project: str, label: str = None, home: str = _DEFAULT_HOME, t
     except Exception as e:
         return {"error": f"pull failed ({e}) — spend on this box is UNKNOWN, not zero",
                 "rows": 0, "usd": 0.0, "project": project, "label": label}
-    from . import budget
+    from .. import budget
     n, usd = budget.ingest_remote(label, project, rows)
     return {"rows": n, "usd": round(usd, 4), "project": project, "label": label}
 
@@ -179,7 +179,7 @@ def sync_all(dry=False, home: str = _DEFAULT_HOME, _instances=None, _sync=None, 
     'always report back to local' — schedule it + `resources snapshot`, and sync before every teardown. A box with
     no SSH endpoint yet is SKIPPED (not an error); a failed pull is SURFACED (remote.sync never reads it as zero).
     Returns per-box results. Injection points (_instances/_sync/_attrib) keep it offline-testable."""
-    from . import resources, conv
+    from .. import resources, conv
     insts = _instances if _instances is not None else resources.instances()
     attrib = _attrib if _attrib is not None else (conv.instance_attributions(insts) or {})
     do_sync = _sync or sync

@@ -19,7 +19,7 @@ The bootstrap file is generated locally from this module (never downloaded) and 
 exact contents, so a reviewer can read every byte that will execute.
 """
 
-from .capability_cli_parsing import registered_cli_option_token
+from ..capability_cli_parsing import registered_cli_option_token
 import os
 import sys
 
@@ -57,7 +57,7 @@ except Exception as _e:
 
 def bootstrap_dir():
     """Directory holding the generated bootstrap `sitecustomize.py` (created/refreshed on demand)."""
-    from . import config
+    from .. import config
     d = config.HOME / "bootstrap"
     d.mkdir(parents=True, exist_ok=True)
     p = d / "sitecustomize.py"

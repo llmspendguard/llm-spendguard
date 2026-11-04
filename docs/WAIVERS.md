@@ -13,7 +13,7 @@ here is a process bug.
 
 ## Reviewed binary-artifact exception
 
-The offline distribution builder deliberately vendors `src/spendguard/distribution_build_wheels/setuptools-84.2.1-py3-none-any.whl`, setuptools **84.2.1**, because Python 3.12 ensurepip does not provide setuptools and fleet installation must work without fetching a backend from PyPI. Removing it would break the offline build contract.
+The offline distribution builder deliberately vendors `src/spendguard/platform/distribution_build_wheels/setuptools-84.2.1-py3-none-any.whl`, setuptools **84.2.1**, because Python 3.12 ensurepip does not provide setuptools and fleet installation must work without fetching a backend from PyPI. Removing it would break the offline build contract.
 
 SHA256: `ca140b45d5325a9478f880e351484f62fef15f336462e449ca0c03c873d589c2`.
 

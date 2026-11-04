@@ -28,7 +28,7 @@ def test_distribution_running_api_disabled_is_straggler():
     with tempfile.TemporaryDirectory() as temporary:
         environment = dict(os.environ, HOME=temporary, SPENDGUARD_HOME=temporary,
                            GATE_DISABLE="1", SPENDGUARD_NO_AUTOINSTALL="1",
-                           PYTHONPATH=str(Path(fleet.__file__).resolve().parents[1]))
+        PYTHONPATH=str(Path(fleet.__file__).resolve().parents[2]))
         with subprocess.Popen([sys.executable, "-c", RUNNING_API_CHILD, json.dumps(RUNNING_API_TARGET)],
                               env=environment, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                               stderr=subprocess.PIPE, text=True) as child:

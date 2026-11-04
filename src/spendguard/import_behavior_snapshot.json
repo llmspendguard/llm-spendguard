@@ -1,6 +1,7 @@
 {
   "schema_version": 1,
   "name_normalization": {
+    "spendguard._version": "spendguard.platform._version",
     "spendguard.adapters": "spendguard.generate.execution.adapters",
     "spendguard.advise": "spendguard.analyze.learning.advise",
     "spendguard.advisor": "spendguard.analyze.learning.advisor",
@@ -31,12 +32,15 @@
     "spendguard.conv": "spendguard.analyze.learning.conv",
     "spendguard.coverage": "spendguard.analyze.assurance.coverage",
     "spendguard.deid": "spendguard.egress.deid",
+    "spendguard.distribution": "spendguard.platform.distribution",
+    "spendguard.distribution_daemon": "spendguard.platform.distribution_daemon",
     "spendguard.emit": "spendguard.egress.emit",
     "spendguard.estimate": "spendguard.analyze.cost_estimation.estimate",
     "spendguard.estimate_divergence": "spendguard.analyze.cost_estimation.estimate_divergence",
     "spendguard.estimate_literals": "spendguard.analyze.assurance.estimate_literals",
     "spendguard.expected_output": "spendguard.analyze.cost_estimation.expected_output",
     "spendguard.external_standard_readiness": "spendguard.analyze.assurance.external_standard_readiness",
+    "spendguard.fleet": "spendguard.platform.fleet",
     "spendguard.focus_export": "spendguard.egress.focus_export",
     "spendguard.history": "spendguard.analyze.learning.history",
     "spendguard.import_behavior_snapshot": "spendguard.analyze.assurance.import_behavior_snapshot",
@@ -51,6 +55,8 @@
     "spendguard.lane_quota": "spendguard.analyze.treasury.lane_quota",
     "spendguard.lane_quota_cost": "spendguard.analyze.treasury.lane_quota_cost",
     "spendguard.lane_value": "spendguard.analyze.treasury.lane_value",
+    "spendguard.lanes": "spendguard.platform.lanes",
+    "spendguard.launchd_labels": "spendguard.platform.launchd_labels",
     "spendguard.learn": "spendguard.analyze.learning.learn",
     "spendguard.ledger": "spendguard.store.money_ledger.ledger",
     "spendguard.ledger_daily_rollup": "spendguard.store.money_ledger.ledger_daily_rollup",
@@ -64,9 +70,11 @@
     "spendguard.ledger_wal_maintenance": "spendguard.store.money_ledger.ledger_wal_maintenance",
     "spendguard.ledger_writer": "spendguard.store.money_ledger.ledger_writer",
     "spendguard.llm_files": "spendguard.generate.work_integrity.llm_files",
+    "spendguard.manifest": "spendguard.platform.manifest",
     "spendguard.metadata_audit": "spendguard.analyze.assurance.metadata_audit",
     "spendguard.migrate_charges": "spendguard.store.money_ledger.migrate_charges",
     "spendguard.notify": "spendguard.egress.notify",
+    "spendguard.offline_python_build": "spendguard.platform.offline_python_build",
     "spendguard.openai_batch_cli": "spendguard.generate.execution.openai_batch_cli",
     "spendguard.output_contract": "spendguard.generate.work_integrity.output_contract",
     "spendguard.overage": "spendguard.analyze.treasury.overage",
@@ -74,13 +82,18 @@
     "spendguard.provider_plugins": "spendguard.generate.execution.provider_plugins",
     "spendguard.provider_tokens": "spendguard.analyze.cost_estimation.provider_tokens",
     "spendguard.receipt": "spendguard.analyze.spend_reporting.receipt",
+    "spendguard.release": "spendguard.platform.release",
+    "spendguard.remote": "spendguard.platform.remote",
     "spendguard.report": "spendguard.analyze.spend_reporting.report",
     "spendguard.route_economics": "spendguard.manage.routing.route_economics",
     "spendguard.route_horizon": "spendguard.manage.routing.route_horizon",
     "spendguard.route_utility": "spendguard.manage.routing.route_utility",
     "spendguard.routing_audit": "spendguard.store.call_corpus.routing_audit",
+    "spendguard.runner": "spendguard.platform.runner",
     "spendguard.saas": "spendguard.egress.saas",
+    "spendguard.schedule": "spendguard.platform.schedule",
     "spendguard.schema_indexes": "spendguard.store.money_ledger.schema_indexes",
+    "spendguard.setup": "spendguard.platform.setup",
     "spendguard.share": "spendguard.egress.share",
     "spendguard.signal": "spendguard.egress.signal",
     "spendguard.source_compact": "spendguard.analyze.assurance.source_compact",
@@ -108,7 +121,7 @@
         "spendguard.capability_surface_generation",
         "spendguard.capability_registry",
         "spendguard.capability_cli_projection_models",
-        "spendguard._version",
+        "spendguard.platform._version",
         "spendguard.pricing",
         "spendguard.model_catalog",
         "spendguard.store.configuration.config",
@@ -136,19 +149,15 @@
         "spendguard.vertex_adapter",
         "spendguard.generate.execution.provider_plugins",
         "spendguard.http_capture",
-        "spendguard.fleet"
+        "spendguard.platform.fleet"
       ],
       "gate_installed": true,
-      "gate_unarmed_details": [
-
-      ],
+      "gate_unarmed_details": [],
       "import_hooks": [
         "spendguard.domain_legacy_path_shim.DomainLegacyPathAliasFinder",
         "spendguard.gate._GatePackagePostImportFinder"
       ],
-      "logging_handlers": [
-
-      ],
+      "logging_handlers": [],
       "sdk_methods": {
         "anthropic.resources.messages.batches.Batches.create": "gated",
         "openai.resources.files.Files.create": "gated"
@@ -163,7 +172,7 @@
         "spendguard.capability_surface_generation",
         "spendguard.capability_registry",
         "spendguard.capability_cli_projection_models",
-        "spendguard._version",
+        "spendguard.platform._version",
         "spendguard.pricing",
         "spendguard.model_catalog",
         "spendguard.store.configuration.config",
@@ -191,19 +200,15 @@
         "spendguard.vertex_adapter",
         "spendguard.generate.execution.provider_plugins",
         "spendguard.http_capture",
-        "spendguard.fleet"
+        "spendguard.platform.fleet"
       ],
       "gate_installed": true,
-      "gate_unarmed_details": [
-
-      ],
+      "gate_unarmed_details": [],
       "import_hooks": [
         "spendguard.domain_legacy_path_shim.DomainLegacyPathAliasFinder",
         "spendguard.gate._GatePackagePostImportFinder"
       ],
-      "logging_handlers": [
-
-      ],
+      "logging_handlers": [],
       "sdk_methods": {
         "anthropic.resources.messages.batches.Batches.create": "gated",
         "openai.resources.files.Files.create": "gated"
@@ -218,7 +223,7 @@
         "spendguard.capability_surface_generation",
         "spendguard.capability_registry",
         "spendguard.capability_cli_projection_models",
-        "spendguard._version",
+        "spendguard.platform._version",
         "spendguard.pricing",
         "spendguard.model_catalog",
         "spendguard.store.configuration.config",
@@ -246,19 +251,15 @@
         "spendguard.vertex_adapter",
         "spendguard.generate.execution.provider_plugins",
         "spendguard.http_capture",
-        "spendguard.fleet"
+        "spendguard.platform.fleet"
       ],
       "gate_installed": true,
-      "gate_unarmed_details": [
-
-      ],
+      "gate_unarmed_details": [],
       "import_hooks": [
         "spendguard.domain_legacy_path_shim.DomainLegacyPathAliasFinder",
         "spendguard.gate._GatePackagePostImportFinder"
       ],
-      "logging_handlers": [
-
-      ],
+      "logging_handlers": [],
       "sdk_methods": {
         "anthropic.resources.messages.batches.Batches.create": "gated",
         "openai.resources.files.Files.create": "gated"
@@ -273,7 +274,7 @@
         "spendguard.capability_surface_generation",
         "spendguard.capability_registry",
         "spendguard.capability_cli_projection_models",
-        "spendguard._version",
+        "spendguard.platform._version",
         "spendguard.pricing",
         "spendguard.model_catalog",
         "spendguard.store.configuration.config",
@@ -301,19 +302,15 @@
         "spendguard.vertex_adapter",
         "spendguard.generate.execution.provider_plugins",
         "spendguard.http_capture",
-        "spendguard.fleet"
+        "spendguard.platform.fleet"
       ],
       "gate_installed": true,
-      "gate_unarmed_details": [
-
-      ],
+      "gate_unarmed_details": [],
       "import_hooks": [
         "spendguard.domain_legacy_path_shim.DomainLegacyPathAliasFinder",
         "spendguard.gate._GatePackagePostImportFinder"
       ],
-      "logging_handlers": [
-
-      ],
+      "logging_handlers": [],
       "sdk_methods": {
         "anthropic.resources.messages.batches.Batches.create": "gated",
         "openai.resources.files.Files.create": "gated"
@@ -328,7 +325,7 @@
         "spendguard.capability_surface_generation",
         "spendguard.capability_registry",
         "spendguard.capability_cli_projection_models",
-        "spendguard._version",
+        "spendguard.platform._version",
         "spendguard.pricing",
         "spendguard.model_catalog",
         "spendguard.store.configuration.config",
@@ -356,19 +353,15 @@
         "spendguard.vertex_adapter",
         "spendguard.generate.execution.provider_plugins",
         "spendguard.http_capture",
-        "spendguard.fleet"
+        "spendguard.platform.fleet"
       ],
       "gate_installed": true,
-      "gate_unarmed_details": [
-
-      ],
+      "gate_unarmed_details": [],
       "import_hooks": [
         "spendguard.domain_legacy_path_shim.DomainLegacyPathAliasFinder",
         "spendguard.gate._GatePackagePostImportFinder"
       ],
-      "logging_handlers": [
-
-      ],
+      "logging_handlers": [],
       "sdk_methods": {
         "anthropic.resources.messages.batches.Batches.create": "gated",
         "openai.resources.files.Files.create": "gated"
@@ -383,7 +376,7 @@
         "spendguard.capability_surface_generation",
         "spendguard.capability_registry",
         "spendguard.capability_cli_projection_models",
-        "spendguard._version",
+        "spendguard.platform._version",
         "spendguard.pricing",
         "spendguard.model_catalog",
         "spendguard.store.configuration.config",
@@ -411,19 +404,15 @@
         "spendguard.vertex_adapter",
         "spendguard.generate.execution.provider_plugins",
         "spendguard.http_capture",
-        "spendguard.fleet"
+        "spendguard.platform.fleet"
       ],
       "gate_installed": true,
-      "gate_unarmed_details": [
-
-      ],
+      "gate_unarmed_details": [],
       "import_hooks": [
         "spendguard.domain_legacy_path_shim.DomainLegacyPathAliasFinder",
         "spendguard.gate._GatePackagePostImportFinder"
       ],
-      "logging_handlers": [
-
-      ],
+      "logging_handlers": [],
       "sdk_methods": {
         "anthropic.resources.messages.batches.Batches.create": "gated",
         "openai.resources.files.Files.create": "gated"
@@ -438,7 +427,7 @@
         "spendguard.capability_surface_generation",
         "spendguard.capability_registry",
         "spendguard.capability_cli_projection_models",
-        "spendguard._version",
+        "spendguard.platform._version",
         "spendguard.pricing",
         "spendguard.model_catalog",
         "spendguard.store.configuration.config",
@@ -466,19 +455,15 @@
         "spendguard.vertex_adapter",
         "spendguard.generate.execution.provider_plugins",
         "spendguard.http_capture",
-        "spendguard.fleet"
+        "spendguard.platform.fleet"
       ],
       "gate_installed": true,
-      "gate_unarmed_details": [
-
-      ],
+      "gate_unarmed_details": [],
       "import_hooks": [
         "spendguard.domain_legacy_path_shim.DomainLegacyPathAliasFinder",
         "spendguard.gate._GatePackagePostImportFinder"
       ],
-      "logging_handlers": [
-
-      ],
+      "logging_handlers": [],
       "sdk_methods": {
         "anthropic.resources.messages.batches.Batches.create": "gated",
         "openai.resources.files.Files.create": "gated"
@@ -564,6 +549,20 @@
     "spendguard.manage.routing.route_utility",
     "spendguard.manage.routing.tier_config",
     "spendguard.manage.routing.whole_job",
+    "spendguard.platform",
+    "spendguard.platform._version",
+    "spendguard.platform.distribution",
+    "spendguard.platform.distribution_daemon",
+    "spendguard.platform.fleet",
+    "spendguard.platform.lanes",
+    "spendguard.platform.launchd_labels",
+    "spendguard.platform.manifest",
+    "spendguard.platform.offline_python_build",
+    "spendguard.platform.release",
+    "spendguard.platform.remote",
+    "spendguard.platform.runner",
+    "spendguard.platform.schedule",
+    "spendguard.platform.setup",
     "spendguard.store",
     "spendguard.store.call_corpus",
     "spendguard.store.configuration",

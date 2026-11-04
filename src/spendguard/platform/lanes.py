@@ -10,7 +10,7 @@ item can belong to the DESKTOP app while the CLI is logged out, so keychain-only
 'ok' — only each CLI's own credentials file (or a live probe) proves the lane.
 """
 
-from .capability_cli_parsing import registered_cli_option_token
+from ..capability_cli_parsing import registered_cli_option_token
 import math
 import os
 import subprocess
@@ -18,7 +18,7 @@ import sys
 import time
 from pathlib import Path
 
-from . import config, lane_registry   # config: probe cache via update_json; lane_registry: the ONE lane data table
+from .. import config, lane_registry   # config: probe cache via update_json; lane_registry: the ONE lane data table
 
 # Per-lane auth artifacts, keychain services, probe tiers and login steps ALL live in lane_registry now (one place).
 # A test isolates a lane's artifacts by repointing its row's `creds` (lane_registry.lane_spec(x)["creds"] = (tmp,)).
@@ -32,7 +32,7 @@ _QUOTA_WARN_PCT = 25          # DISPLAY-ONLY: the headroom bar flags yellow belo
 
 
 def _probe_cache_path():
-    from . import config
+    from .. import config
     return config.HOME / "lanes_probe.json"
 
 
@@ -61,7 +61,7 @@ def _record_probe(lane, ok):
 def _import_executor_module(spec):
     """The `<name>_exec` module that drives a lane, imported lazily by its registry `exec` name (never at load)."""
     import importlib
-    return importlib.import_module("." + spec["exec"], __package__)
+    return importlib.import_module(".." + spec["exec"], __package__)
 
 
 def _lane_auth(spec):
@@ -124,7 +124,7 @@ def lane_auth_status(lane, ttl=_AUTH_STATUS_TTL_S, use_cache=True):
             authed = None
         if authed is True:                                # a positive auth RETRACTS a stale 'logged out' banner, so a
             try:                                          # re-login (or any positive re-check) self-heals it on the
-                from . import reliability                 # spot — not only a subsequent SERVED call. No-op when clean.
+                from .. import reliability                 # spot — not only a subsequent SERVED call. No-op when clean.
                 reliability.note_lane_ok(lane)
             except Exception:
                 pass
@@ -140,7 +140,7 @@ def lanes_status():
     and the exact activation step if not. DATA-DRIVEN — one row per lane in lane_registry, NO per-lane code here
     (add a lane's row and it appears). Free — no network, no model calls. No static login URL exists to print: each
     CLI generates a ONE-TIME OAuth link when you start its login; the row's `login` is the link-generator step."""
-    from .adapters import _executor
+    from ..adapters import _executor
     ex = _executor()
     out = []
     for lane in lane_registry.all_lanes():
@@ -182,7 +182,7 @@ def probe(timeout_s=None):
     reachability ping must NOT wait a lane's full work-timeout (agy's is 300s), so a dead lane fails FAST (in
     timeout_s) instead of wedging the whole sweep. None → each lane's own default. Returns per-lane live results;
     a fresh probe each call (a point-in-time reachability, not a resumable job — nothing to checkpoint)."""
-    from . import gate as _gate
+    from .. import gate as _gate
     mods = _lane_mods()
     res = []
     for ln in lanes_status()["lanes"]:
@@ -251,7 +251,7 @@ def lane_headroom(do_fetch=True):
     neither establishes availability or a provider capability verdict. The hot path reads
     only the persisted snapshot and never launches a probe.
     """
-    from . import lane_quota
+    from .. import lane_quota
     if not do_fetch:
         snap = config.load_state(_HEADROOM_SNAPSHOT, {}) or {}
         return list(snap.get("rows") or [])
@@ -300,7 +300,7 @@ def lane_headroom(do_fetch=True):
                     "headroom_n": metadata.get("n"), "headroom_window": metadata.get("window"),
                     "headroom_uncertainty": metadata.get("uncertainty")})
     try:
-        from . import lane_economics
+        from .. import lane_economics
         lane_economics.record_samples(out)                  # append a (pct, tokens) sample so caps self-measure over time
         abs_by = lane_economics.remaining_abs_by_lane(headroom_rows=out)   # binding ABSOLUTE tokens left, where measured
         for r in out:
@@ -327,7 +327,7 @@ def lane_summary_lines():
         if ln["auth"] == "ok":
             state = f"🟢 ready ({ln['cli'] or ln['provider'] + ' key'})"   # CLI lanes show the binary path; key lanes show the key
             try:                                            # readiness is MEASURED, not just auth/binary presence (defect 2):
-                from . import lane_servability as _lsr      # codex printed 🟢 ready while failing 4 of 5 calls — a lane that
+                from .. import lane_servability as _lsr      # codex printed 🟢 ready while failing 4 of 5 calls — a lane that
                 _rd = _lsr.lane_readiness(ln["lane"])        # authenticates but whose recent calls FAIL is not actually ready
                 if _rd["degraded"]:
                     _pct = int(round((_rd["ok_rate"] or 0) * 100))
@@ -350,7 +350,7 @@ def lane_summary_lines():
 
 def lane_metered_fallback_summary_line():
     """Name the monthly metered API subset using the existing fell_from ledger rollup, without adding it again."""
-    from . import reliability
+    from .. import reliability
     rows = reliability.lane_fallback_spend(since=config.month_start_utc())
     if not rows:
         return None
@@ -387,7 +387,7 @@ def overage_nudge_line(do_fetch=False):
 
 def set_declared_lane_model(lane: str, model: str, *, tier: str | None = None) -> int:
     """Validate and persist the existing lane model declaration without clobbering other tiers."""
-    from . import lane_catalog, config as _cfg, model_catalog, tier_config, route_utility
+    from .. import lane_catalog, config as _cfg, model_catalog, tier_config, route_utility
     if lane not in lane_catalog.lanes():
         print(f"unknown lane {lane!r} — known lanes: {', '.join(lane_catalog.lanes())}")
         return 2
@@ -424,7 +424,7 @@ def main(argv=None):
         # Declare the model a subscription LANE calls with (advisor.lane_models[lane]), VALIDATED at declaration: the
         # lane must be real and the model must be catalogued + priced. `set-model <lane> <model>` sets its single model;
         # `set-model <lane> <tier> <model>` sets ONE tier of its per-tier map, preserving the others (no clobber).
-        from . import lane_catalog
+        from .. import lane_catalog
         rest = argv[1:]
         if len(rest) == 2:
             lane, tier, model = rest[0], None, rest[1]
@@ -449,7 +449,7 @@ def main(argv=None):
             print(line)
     if _operator_view:
         try:                                              # defect 3: the figure that answers 'is rule #8 in force' —
-            from . import lane_eligibility                 # lane-ELIGIBLE work billed metered anyway ($0, cached verdicts)
+            from .. import lane_eligibility                 # lane-ELIGIBLE work billed metered anyway ($0, cached verdicts)
             _le_line = lane_eligibility.summary_line()
             if _le_line:
                 print("ℹ " + _le_line)
@@ -466,7 +466,7 @@ def main(argv=None):
                 print(f"  {r['lane']:<12} 🔴 {r['error']}")
     if registered_cli_option_token('lanes/--usage') in argv:                                 # per-lane PLAN QUOTA headroom (provider truth where exposed)
         import datetime
-        from . import lane_quota_cost
+        from .. import lane_quota_cost
         token_costs = lane_quota_cost.measured_lane_token_cost()
         print("\nplan quota headroom (provider truth where read; unknown does not establish availability):")
         for h in lane_headroom():
@@ -494,7 +494,7 @@ def main(argv=None):
             flag = "🟢" if rem >= _QUOTA_WARN_PCT else ("🟡" if rem > 0 else "🔴")
             print(f"  {h['lane']:<12} ({h['provider']} plan): {flag} {rem:3}% left {bar}{when}{cost_text}")
     if registered_cli_option_token('lanes/--reprobe') in argv:                               # RECOVERY: re-probe each lane's measured-unserved models ($0
-        from . import lane_servability                     # lane calls); a model that came back self-heals out of unserved
+        from .. import lane_servability                     # lane calls); a model that came back self-heals out of unserved
         _any = False
         for _ln, _r in lane_servability.refresh_lane_servability(reprobe=True).items():
             if _r.get("recovered"):
@@ -505,7 +505,7 @@ def main(argv=None):
         if not _any:
             print("  no lane-model recoveries this pass.")
     if registered_cli_option_token('lanes/--judge-eligibility') in argv:                     # defect 3: classify the UNJUDGED metered intents — opt-in SPEND,
-        from . import lane_eligibility                     # ESTIMATE-FIRST (default shows the estimate; --yes executes).
+        from .. import lane_eligibility                     # ESTIMATE-FIRST (default shows the estimate; --yes executes).
         _est = lane_eligibility.lane_eligible_report(execute=False)
         if not _est["unjudged"]:
             print(f"lane-eligibility: all metered intents judged — ${_est['eligible_usd']:.2f} of "
@@ -523,11 +523,11 @@ def main(argv=None):
                 _mark = "LANE-ELIGIBLE" if d["eligible"] else "legit-metered"
                 print(f"  ${d['usd']:>8.2f}  {_mark:<14} {d['intent']}  — {d['why']}")
     if registered_cli_option_token('lanes/--catalog') in argv:                               # the lane model catalog: use-names · provider · reasoning · $
-        from . import lane_catalog
+        from .. import lane_catalog
         print()
         lane_catalog.main()
     if registered_cli_option_token('lanes/--learn') in argv:                                 # what the cross-lane BANDIT has learned per intent
-        from . import lane_bandit
+        from .. import lane_bandit
         print()
         lane_bandit.main()
     if registered_cli_option_token('lanes/--bakeoff') in argv:                               # run ONE bake-off (2 lanes $0 + a cheap judge) to seed learning
@@ -535,7 +535,7 @@ def main(argv=None):
         if len(rest) < 2:
             print('usage: spendguard lanes --bakeoff <intent> "<task>"   (needs ≥2 lanes in advisor.lane_models + a judge)')
         else:
-            from . import lane_bandit
+            from .. import lane_bandit
             _intent, _task = rest[0], " ".join(rest[1:])
             r = lane_bandit.run_bakeoff(_intent, _task)
             if r and r.get("text"):
@@ -544,7 +544,7 @@ def main(argv=None):
             else:
                 print("bake-off produced no winner (need ≥2 live lanes with configured models, and a judge model).")
     if registered_cli_option_token('lanes/--estimate') in argv:                              # ZERO-SPEND: what would the bandit's judge cost?
-        from . import lane_bandit
+        from .. import lane_bandit
         e = lane_bandit.estimate_judge_cost()
         per = e["per_bakeoff_usd"]
         print("\nBandit judge-cost estimate (ZERO SPEND — the 2 lane answers per bake-off are $0, plan-served):")
@@ -556,18 +556,18 @@ def main(argv=None):
                 print(f"  {n:>5} bake-offs/mo : ${m:,.2f}")
         print("  a bake-off runs only while an intent is COLD or at rate ε — exploration is nearly free here.")
     if registered_cli_option_token('lanes/--balance') in argv:                               # per-plan utilisation: which plans are hot vs idle
-        from . import lane_balance
+        from .. import lane_balance
         print(lane_balance.format_utilization())
     if registered_cli_option_token('lanes/--economics') in argv:                             # measured token caps · $/token · fee at risk this window
-        from . import lane_economics
+        from .. import lane_economics
         print()
         print(lane_economics.format_economics())
     if registered_cli_option_token('lanes/--fallback') in argv:                              # lane→metered id equivalence: a down plan must degrade, not strand
-        from . import lane_catalog
+        from .. import lane_catalog
         print()
         print(lane_catalog.format_lane_fallback())
     if registered_cli_option_token('lanes/--fallback-spend') in argv:                        # $ actually spent falling over from down lanes (savings lost)
-        from . import reliability as _rel_fbs, config as _cfg_fbs
+        from .. import reliability as _rel_fbs, config as _cfg_fbs
         _since = None
         for _i, _a in enumerate(argv):
             if _a == registered_cli_option_token('lanes/--since') and _i + 1 < len(argv):
@@ -584,7 +584,7 @@ def main(argv=None):
         if _rows:
             print(f"  {'TOTAL':<14} ${_tot:>9.4f}  — metered spend that a logged-in lane would have served at $0")
     if registered_cli_option_token('lanes/--reasoning-map') in argv:                         # lane→metered REASONING equivalence: same model, equal-or-greater effort
-        from . import reasoning_equivalence
+        from .. import reasoning_equivalence
         print()
         print(reasoning_equivalence.format_map())
     if registered_cli_option_token('lanes/--propose') in argv:                               # model PROPOSES acceptable substitutes for an intent (PENDING)
@@ -592,7 +592,7 @@ def main(argv=None):
         if len(rest) < 2:
             print("usage: spendguard lanes --propose <intent> <primary_model>   (needs advisor.lane_models set)")
         else:
-            from . import lane_balance
+            from .. import lane_balance
             res = lane_balance.propose_substitutes(rest[0], rest[1])
             print(f"proposed for {rest[0]!r} (PENDING — confirm to use): {res['acceptable'] or 'none'}")
             if res.get("rationale"):
@@ -604,7 +604,7 @@ def main(argv=None):
         if len(rest) < 2:
             print("usage: spendguard lanes --confirm <intent> <substitute>")
         else:
-            from . import lane_balance
+            from .. import lane_balance
             print(f"confirmed for {rest[0]!r}: {lane_balance.confirm_substitute(rest[0], rest[1])}")
     if registered_cli_option_token('lanes/--delegate') in argv:                              # offload ONE task to the cheapest viable idle lane ($0)
         rest = argv[argv.index(registered_cli_option_token('lanes/--delegate')) + 1:]
@@ -612,7 +612,7 @@ def main(argv=None):
         if not task:
             print('usage: spendguard lanes --delegate "<task>"   (needs advisor.lane_models set)')
         else:
-            from . import lane_balance
+            from .. import lane_balance
             r = lane_balance.delegate(task, refuse_billed=registered_cli_option_token('lanes/--refuse-billed') in rest)
             if r.get("text"):
                 flag = f"BILLED ${r.get('cost')}" if r.get("billed") else "$0 on-plan"
@@ -623,7 +623,7 @@ def main(argv=None):
                 print(f"delegate failed: {r.get('error')}")
     if registered_cli_option_token('lanes/--bulk') in argv:                                  # fan a LIST of similar tasks across ALL idle lanes at once
         import json as _json
-        from .cli_arguments import cli_option_value_after
+        from ..cli_arguments import cli_option_value_after
         rest = argv[argv.index(registered_cli_option_token('lanes/--bulk')) + 1:]
 
         file_p = cli_option_value_after(rest, registered_cli_option_token('lanes/--file'))
@@ -686,7 +686,7 @@ def main(argv=None):
             if not tasks:
                 print("no tasks (empty --file / stdin).")
             else:
-                from . import lane_balance
+                from .. import lane_balance
                 system = Path(sysfile_p).read_text() if sysfile_p else sys_p   # --system-file wins; instruction sent ONCE
                 refuse = any(a == registered_cli_option_token('lanes/--refuse-billed') for a in rest)
                 _force = any(a == registered_cli_option_token('lanes/--force') for a in rest)
@@ -738,7 +738,7 @@ def main(argv=None):
                         print(f"  {r.get('lane')} · {r.get('use_name')}: "
                               + ((r.get("text") or r.get("error") or "")[:120].replace("\n", " ")))
     if registered_cli_option_token('lanes/--enqueue') in argv:                               # DURABLY append tasks (never blocks) — drain them later
-        from . import lane_queue
+        from .. import lane_queue
         rest = argv[argv.index(registered_cli_option_token('lanes/--enqueue')) + 1:]
 
         def _qval(flag):
@@ -757,7 +757,7 @@ def main(argv=None):
             print(f"enqueued {len(ids)} task(s) for {intent!r} (priority {int(prio_p or 0)}) — "
                   f"queue now {d.get('pending', 0)} pending. Drain with:  spendguard lanes --drain")
     if registered_cli_option_token('lanes/--drain') in argv:                                 # process the durable queue onto idle lanes ($0 plan-served)
-        from . import lane_queue
+        from .. import lane_queue
         rest = argv[argv.index(registered_cli_option_token('lanes/--drain')) + 1:]
 
         def _dval(flag):
@@ -784,12 +784,12 @@ def main(argv=None):
             print(f"queue now: {d1.get('pending', 0)} pending · {d1.get('leased', 0)} leased · "
                   f"{d1.get('done', 0)} done · {d1.get('failed', 0)} failed")
     if registered_cli_option_token('lanes/--queue') in argv:                                 # just the queue depth (is anything backlogged?)
-        from . import lane_queue
+        from .. import lane_queue
         d = lane_queue.queue_depth()
         print(f"lane queue: {d.get('pending', 0)} pending · {d.get('leased', 0)} leased · "
               f"{d.get('done', 0)} done · {d.get('failed', 0)} failed")
     if registered_cli_option_token('lanes/--purge') in argv:                                 # archive+remove OLD terminal rows so the queue stays bounded
-        from . import lane_queue
+        from .. import lane_queue
         pg = lane_queue.purge()
         if pg.get("error"):
             print(f"purge failed: {pg['error']}")
@@ -797,7 +797,7 @@ def main(argv=None):
             print(f"purged {pg.get('archived', 0)} old terminal row(s)"
                   + (f" → {pg['archive']}" if pg.get("archive") else " (none old enough yet)"))
     if registered_cli_option_token('lanes/--migrate-queue-db') in argv:                      # ONE-TIME: move lane_queue out of the spend.db ledger into
-        from . import lane_queue                            # its own lane_queue.db + drop the old table (idempotent)
+        from .. import lane_queue                            # its own lane_queue.db + drop the old table (idempotent)
         r = lane_queue.migrate_from_ledger()
         if r.get("error"):
             print(f"queue-db migration failed: {r['error']}")

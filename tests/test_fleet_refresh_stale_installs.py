@@ -94,11 +94,11 @@ try:
             "code_version": fleet.__version__ if hasattr(fleet, "__version__") else PINNED_CONSUMER_VERSION,
             "metadata_version": PINNED_CONSUMER_VERSION,
             "module_path": str(pathlib.Path(fleet.__file__).resolve()), "editable": False,
-            "selected_metadata_path": str(pathlib.Path(fleet.__file__).resolve().parents[1] / "stale.egg-info"),
+    "selected_metadata_path": str(pathlib.Path(fleet.__file__).resolve().parents[2] / "stale.egg-info"),
             "editable_metadata_paths": [str(pinned / "site-packages" / "current.dist-info")],
             "catalog_verified": None}))
     shadow_state = fleet._consumer_install_state(pathlib.Path(sys.executable),
-                                                  pathlib.Path(fleet.__file__).resolve().parents[2],
+    pathlib.Path(fleet.__file__).resolve().parents[3],
                                                   PINNED_CONSUMER_VERSION)
     fleet.subprocess.run = original_subprocess_run
     ck("egg-info shadow has its own state instead of noneditable_pinned",
@@ -131,14 +131,14 @@ try:
             **absent_distribution_details,
             "module_path": str(pathlib.Path(fleet.__file__).resolve())}))
     managed_pathinjected_state = fleet._consumer_install_state(
-        pathlib.Path(sys.executable), pathlib.Path(fleet.__file__).resolve().parents[2],
+        pathlib.Path(sys.executable), pathlib.Path(fleet.__file__).resolve().parents[3],
         absent_distribution_details["code_version"])
     fleet.subprocess.run = original_subprocess_run
     ck("an absent distribution imported from the managed source has its own state",
        managed_pathinjected_state["state"] == "pathinjected_managed")
 
     refresh_repo = pathlib.Path(tempfile.mkdtemp(prefix="sg-egg-shadow-"))
-    shutil.copy2(pathlib.Path(fleet.__file__).resolve().parents[2] / "pyproject.toml",
+    shutil.copy2(pathlib.Path(fleet.__file__).resolve().parents[3] / "pyproject.toml",
                  refresh_repo / "pyproject.toml")
     shadow = refresh_repo / "src" / "llm_spendguard.egg-info"
     shadow.mkdir(parents=True)
@@ -207,7 +207,7 @@ try:
     ck("migration adds venv columns", {"venv_root", "python_executable"} <= columns)
 
     print("\n-- deployment completeness touches and verifies every persistent registration --")
-    repo_root = pathlib.Path(fleet.__file__).resolve().parents[2]
+    repo_root = pathlib.Path(fleet.__file__).resolve().parents[3]
     registered = [{"python_executable": str(home / name / "bin" / "python"), "venv_root": str(home / name)}
                   for name in ("consumer-a", "consumer-b", "consumer-c")]
     fleet.registered_interpreters = lambda: registered

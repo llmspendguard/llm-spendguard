@@ -3,7 +3,7 @@
 when due), and `schedule --remove` tears it down. macOS → launchd LaunchAgent; Linux → crontab; Windows → schtasks.
 Idempotent + removable. Same philosophy as `install-hook`: the package owns its own setup, zero extra deps."""
 
-from .capability_cli_parsing import registered_cli_option_token
+from ..capability_cli_parsing import registered_cli_option_token
 import sys
 import subprocess
 import pathlib
@@ -18,7 +18,7 @@ def _cmd():
 
 
 def _logpath():
-    from . import config
+    from .. import config
     config.HOME.mkdir(parents=True, exist_ok=True)
     return str(config.HOME / "schedule.log")
 
