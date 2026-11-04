@@ -12,6 +12,7 @@ REQUEST_LEDGER_READER_MODULES = (
 )
 REQUEST_LEDGER_OFFLINE_CONNECTION_FUNCTIONS = {("budget", "snapshot")}
 REQUEST_LEDGER_MOVED_MODULE_PATHS = {
+    "mcp_server": ("interface", "mcp_server.py"),
     "budget": ("manage", "admission", "budget.py"),
     "bulkgate": ("manage", "admission", "bulkgate.py"),
     "lane_bandit": ("analyze", "learning", "lane_bandit.py"),

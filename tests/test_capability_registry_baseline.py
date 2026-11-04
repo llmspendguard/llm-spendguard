@@ -22,7 +22,7 @@ assert {capability.id for capability in CAPABILITIES} == {
     f"C{index:03d}" for index in range(1, len(CAPABILITIES) + 1)
 }
 from spendguard.capability_registry import CapabilitySurfaceExposure, CAPABILITY_REGISTRY_RESOURCE
-declarations = [json.loads(line) for line in files('spendguard').joinpath(
+declarations = [json.loads(line) for line in files('spendguard.interface').joinpath(
     CAPABILITY_REGISTRY_RESOURCE).read_text().splitlines()]
 exposures = [CapabilitySurfaceExposure(**surface) for declaration in declarations
              for surface in declaration.get('audit_surfaces', ())]

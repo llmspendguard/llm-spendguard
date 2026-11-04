@@ -12,6 +12,9 @@ from spendguard.capability_cli_help_generation import build_capability_cli_help_
 from spendguard.capability_registry import CLI_COMMAND_BINDINGS, CLI_COMMAND_GRAMMARS
 
 CAPABILITY_LEGACY_CLI_CONTRACT_PATH = Path(__file__).parent / 'fixtures' / 'capability_legacy_cli_contract.json'
+CAPABILITY_LEGACY_CLI_HANDLER_MODULE = (
+    f"{cli.__package__.partition('.')[0]}.{cli.__name__.rsplit('.', 1)[-1]}"
+)
 
 
 def assert_capability_legacy_cli_contract_is_preserved():
@@ -80,7 +83,7 @@ def assert_registered_cli_version_aliases_preserve_output():
     """Exercise every SSOT spelling bound to the version implementation."""
     version_aliases = {
         name for name, binding in CLI_COMMAND_BINDINGS.items()
-        if binding.handler_ref == cli.__name__ + ':' + cli.cli_core_version.__name__
+        if binding.handler_ref == CAPABILITY_LEGACY_CLI_HANDLER_MODULE + ':' + cli.cli_core_version.__name__
     }
     assert version_aliases, 'The version handler must have registered spellings'
     assert any(name.startswith('--') for name in version_aliases), version_aliases

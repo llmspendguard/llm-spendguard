@@ -17,7 +17,7 @@
   {
     "command": "distribute",
     "aliases": [],
-    "dispatch_evidence": "src/spendguard/cli.py:491",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:491",
     "core_bindings": [
       "distribution.distribute_command"
     ],
@@ -88,7 +88,7 @@
   {
     "command": "status",
     "aliases": [],
-    "dispatch_evidence": "src/spendguard/cli.py:510",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:510",
     "core_bindings": [
       "gate._cli"
     ],
@@ -107,7 +107,7 @@
   {
     "command": "on",
     "aliases": [],
-    "dispatch_evidence": "src/spendguard/cli.py:510",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:510",
     "core_bindings": [
       "gate._cli"
     ],
@@ -124,7 +124,7 @@
   {
     "command": "off",
     "aliases": [],
-    "dispatch_evidence": "src/spendguard/cli.py:510",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:510",
     "core_bindings": [
       "gate._cli"
     ],
@@ -141,7 +141,7 @@
   {
     "command": "doctor",
     "aliases": [],
-    "dispatch_evidence": "src/spendguard/cli.py:510",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:510",
     "core_bindings": [
       "gate._cli"
     ],
@@ -169,7 +169,7 @@
   {
     "command": "delegate",
     "aliases": [],
-    "dispatch_evidence": "src/spendguard/cli.py:513",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:513",
     "core_bindings": [
       "delegate_router.delegate_cli"
     ],
@@ -314,7 +314,7 @@
   {
     "command": "manifest",
     "aliases": [],
-    "dispatch_evidence": "src/spendguard/cli.py:516",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:516",
     "core_bindings": [
       "manifest.manifest_command"
     ],
@@ -373,19 +373,19 @@
   {
     "command": "reap-orphans",
     "aliases": [],
-    "dispatch_evidence": "src/spendguard/cli.py:519",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:519",
     "core_bindings": [
       "reap_orphaned_warm_servers_cli"
     ],
     "handler_evidence": [
-      "src/spendguard/cli.py:217 (cli.reap_orphaned_warm_servers_cli)"
+      "src/spendguard/interface/cli.py:217 (cli.reap_orphaned_warm_servers_cli)"
     ],
     "parser_kind": "argparse",
     "nested_grammar_summary": "",
     "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [
       {
-        "source_scope": "src/spendguard/cli.py:217",
+        "source_scope": "src/spendguard/interface/cli.py:217",
         "selector": null,
         "operations": [
           {
@@ -437,19 +437,19 @@
   {
     "command": "queue-manage",
     "aliases": [],
-    "dispatch_evidence": "src/spendguard/cli.py:521",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:521",
     "core_bindings": [
       "manage_lane_queue_cli"
     ],
     "handler_evidence": [
-      "src/spendguard/cli.py:287 (cli.manage_lane_queue_cli)"
+      "src/spendguard/interface/cli.py:287 (cli.manage_lane_queue_cli)"
     ],
     "parser_kind": "argparse",
     "nested_grammar_summary": "",
     "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [
       {
-        "source_scope": "src/spendguard/cli.py:287",
+        "source_scope": "src/spendguard/interface/cli.py:287",
         "selector": null,
         "operations": [
           {
@@ -506,19 +506,19 @@
   {
     "command": "lane-leak-check",
     "aliases": [],
-    "dispatch_evidence": "src/spendguard/cli.py:523",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:523",
     "core_bindings": [
       "lane_leak_check_cli"
     ],
     "handler_evidence": [
-      "src/spendguard/cli.py:345 (cli.lane_leak_check_cli)"
+      "src/spendguard/interface/cli.py:345 (cli.lane_leak_check_cli)"
     ],
     "parser_kind": "argparse",
     "nested_grammar_summary": "",
     "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [
       {
-        "source_scope": "src/spendguard/cli.py:345",
+        "source_scope": "src/spendguard/interface/cli.py:345",
         "selector": null,
         "operations": [
           {
@@ -580,19 +580,19 @@
   {
     "command": "ledger-read",
     "aliases": [],
-    "dispatch_evidence": "src/spendguard/cli.py:525",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:525",
     "core_bindings": [
       "ledger_read_cli"
     ],
     "handler_evidence": [
-      "src/spendguard/cli.py:184 (cli.ledger_read_cli)"
+      "src/spendguard/interface/cli.py:184 (cli.ledger_read_cli)"
     ],
     "parser_kind": "argparse",
     "nested_grammar_summary": "",
     "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [
       {
-        "source_scope": "src/spendguard/cli.py:184",
+        "source_scope": "src/spendguard/interface/cli.py:184",
         "selector": null,
         "operations": [
           {
@@ -674,7 +674,7 @@
   {
     "command": "compress-content",
     "aliases": [],
-    "dispatch_evidence": "src/spendguard/cli.py:527",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:527",
     "core_bindings": [
       "content_compression_backfill.content_compression_backfill_cli"
     ],
@@ -719,7 +719,7 @@
   {
     "command": "agent-spawn-gate",
     "aliases": [],
-    "dispatch_evidence": "src/spendguard/cli.py:530",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:530",
     "core_bindings": [
       "agent_spawn_gate.cmd"
     ],
@@ -738,7 +738,7 @@
   {
     "command": "residency-gate",
     "aliases": [],
-    "dispatch_evidence": "src/spendguard/cli.py:533",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:533",
     "core_bindings": [
       "residency_gate.cmd"
     ],
@@ -757,7 +757,7 @@
   {
     "command": "capguard",
     "aliases": [],
-    "dispatch_evidence": "src/spendguard/cli.py:536",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:536",
     "core_bindings": [
       "weekly_cap_guard.cmd"
     ],
@@ -776,7 +776,7 @@
   {
     "command": "install-residency-gate",
     "aliases": [],
-    "dispatch_evidence": "src/spendguard/cli.py:539",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:539",
     "core_bindings": [
       "residency_gate.install_residency_gate_cli"
     ],
@@ -795,7 +795,7 @@
   {
     "command": "overage",
     "aliases": [],
-    "dispatch_evidence": "src/spendguard/cli.py:542",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:542",
     "core_bindings": [
       "overage.overage_cli"
     ],
@@ -821,7 +821,7 @@
   {
     "command": "report",
     "aliases": [],
-    "dispatch_evidence": "src/spendguard/cli.py:545",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:545",
     "core_bindings": [
       "report.main"
     ],
@@ -883,7 +883,7 @@
     "aliases": [
       "route_cost"
     ],
-    "dispatch_evidence": "src/spendguard/cli.py:549",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:549",
     "core_bindings": [
       "route_economics.cmd"
     ],
@@ -955,7 +955,7 @@
     "aliases": [
       "route_realized"
     ],
-    "dispatch_evidence": "src/spendguard/cli.py:552",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:552",
     "core_bindings": [
       "route_realized.cmd"
     ],
@@ -1017,7 +1017,7 @@
     "aliases": [
       "route_horizon"
     ],
-    "dispatch_evidence": "src/spendguard/cli.py:555",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:555",
     "core_bindings": [
       "route_horizon.cmd"
     ],
@@ -1085,7 +1085,7 @@
       "run-jobs",
       "whole-job"
     ],
-    "dispatch_evidence": "src/spendguard/cli.py:558",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:558",
     "core_bindings": [
       "whole_job.cmd"
     ],
@@ -1150,7 +1150,7 @@
   {
     "command": "focus-export",
     "aliases": [],
-    "dispatch_evidence": "src/spendguard/cli.py:561",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:561",
     "core_bindings": [
       "focus_export.main"
     ],
@@ -1183,7 +1183,7 @@
     "aliases": [
       "otel"
     ],
-    "dispatch_evidence": "src/spendguard/cli.py:564",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:564",
     "core_bindings": [
       "otel_ingest.main"
     ],
@@ -1212,7 +1212,7 @@
   {
     "command": "preflight",
     "aliases": [],
-    "dispatch_evidence": "src/spendguard/cli.py:567",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:567",
     "core_bindings": [
       "model_preflight.cmd"
     ],
@@ -1269,7 +1269,7 @@
   {
     "command": "verify",
     "aliases": [],
-    "dispatch_evidence": "src/spendguard/cli.py:570",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:570",
     "core_bindings": [
       "verify.cmd"
     ],
@@ -1321,7 +1321,7 @@
   {
     "command": "keys-audit",
     "aliases": [],
-    "dispatch_evidence": "src/spendguard/cli.py:573",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:573",
     "core_bindings": [
       "keys_audit.cmd"
     ],
@@ -1350,7 +1350,7 @@
   {
     "command": "reconcile",
     "aliases": [],
-    "dispatch_evidence": "src/spendguard/cli.py:576",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:576",
     "core_bindings": [
       "reconcile_openai.main"
     ],
@@ -1426,7 +1426,7 @@
   {
     "command": "estimate",
     "aliases": [],
-    "dispatch_evidence": "src/spendguard/cli.py:608",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:608",
     "core_bindings": [
       "estimate.main"
     ],
@@ -1512,7 +1512,7 @@
   {
     "command": "calibrate",
     "aliases": [],
-    "dispatch_evidence": "src/spendguard/cli.py:614",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:614",
     "core_bindings": [
       "calibrate.main"
     ],
@@ -1668,7 +1668,7 @@
   {
     "command": "measurement",
     "aliases": [],
-    "dispatch_evidence": "src/spendguard/cli.py:617",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:617",
     "core_bindings": [
       "measurement.cmd"
     ],
@@ -1849,7 +1849,7 @@
   {
     "command": "audit",
     "aliases": [],
-    "dispatch_evidence": "src/spendguard/cli.py:620",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:620",
     "core_bindings": [
       "audit.main"
     ],
@@ -1879,7 +1879,7 @@
   {
     "command": "token-caps",
     "aliases": [],
-    "dispatch_evidence": "src/spendguard/cli.py:624",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:624",
     "core_bindings": [
       "token_caps.cmd"
     ],
@@ -1908,7 +1908,7 @@
   {
     "command": "batch-submit",
     "aliases": [],
-    "dispatch_evidence": "src/spendguard/cli.py:627",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:627",
     "core_bindings": [
       "openai_batch_cli.submit_batch_jsonl"
     ],
@@ -2014,7 +2014,7 @@
   {
     "command": "batch-fetch",
     "aliases": [],
-    "dispatch_evidence": "src/spendguard/cli.py:630",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:630",
     "core_bindings": [
       "openai_batch_cli.fetch_batch_output"
     ],
@@ -2074,19 +2074,19 @@
   {
     "command": "ask",
     "aliases": [],
-    "dispatch_evidence": "src/spendguard/cli.py:633",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:633",
     "core_bindings": [
       "crossllm.cmd"
     ],
     "handler_evidence": [
-      "src/spendguard/crossllm.py:413 (crossllm.cmd)"
+      "src/spendguard/interface/crossllm.py:413 (crossllm.cmd)"
     ],
     "parser_kind": "argparse",
     "nested_grammar_summary": "",
     "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [
       {
-        "source_scope": "src/spendguard/crossllm.py:413",
+        "source_scope": "src/spendguard/interface/crossllm.py:413",
         "selector": null,
         "operations": [
           {
@@ -2181,7 +2181,7 @@
   {
     "command": "comprehend",
     "aliases": [],
-    "dispatch_evidence": "src/spendguard/cli.py:636",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:636",
     "core_bindings": [
       "comprehend.cmd"
     ],
@@ -2298,19 +2298,19 @@
   {
     "command": "serve",
     "aliases": [],
-    "dispatch_evidence": "src/spendguard/cli.py:639",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:639",
     "core_bindings": [
       "serve.cmd"
     ],
     "handler_evidence": [
-      "src/spendguard/serve.py:156 (serve.cmd)"
+      "src/spendguard/interface/serve.py:156 (serve.cmd)"
     ],
     "parser_kind": "argparse",
     "nested_grammar_summary": "",
     "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [
       {
-        "source_scope": "src/spendguard/serve.py:156",
+        "source_scope": "src/spendguard/interface/serve.py:156",
         "selector": null,
         "operations": [
           {
@@ -2355,19 +2355,19 @@
   {
     "command": "mcp",
     "aliases": [],
-    "dispatch_evidence": "src/spendguard/cli.py:642",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:642",
     "core_bindings": [
       "mcp_server.cmd"
     ],
     "handler_evidence": [
-      "src/spendguard/mcp_server.py:1353 (mcp_server.cmd)"
+      "src/spendguard/interface/mcp_server.py:1353 (mcp_server.cmd)"
     ],
     "parser_kind": "argparse",
     "nested_grammar_summary": "",
     "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [
       {
-        "source_scope": "src/spendguard/mcp_server.py:1353",
+        "source_scope": "src/spendguard/interface/mcp_server.py:1353",
         "selector": null,
         "operations": [
           {
@@ -2417,7 +2417,7 @@
   {
     "command": "consumer-audit",
     "aliases": [],
-    "dispatch_evidence": "src/spendguard/cli.py:645",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:645",
     "core_bindings": [
       "consumer_audit.consumer_audit_command"
     ],
@@ -2481,14 +2481,14 @@
   {
     "command": "deploy",
     "aliases": [],
-    "dispatch_evidence": "src/spendguard/cli.py:651",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:651",
     "core_bindings": [
       "_deploy_succeeded_verdict",
       "_deploy_failed_verdict"
     ],
     "handler_evidence": [
-      "src/spendguard/cli.py:70 (cli._deploy_succeeded_verdict)",
-      "src/spendguard/cli.py:64 (cli._deploy_failed_verdict)"
+      "src/spendguard/interface/cli.py:70 (cli._deploy_succeeded_verdict)",
+      "src/spendguard/interface/cli.py:64 (cli._deploy_failed_verdict)"
     ],
     "parser_kind": "manual argv",
     "nested_grammar_summary": "",
@@ -2517,7 +2517,7 @@
   {
     "command": "fleet",
     "aliases": [],
-    "dispatch_evidence": "src/spendguard/cli.py:797",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:797",
     "core_bindings": [],
     "handler_evidence": [],
     "parser_kind": "manual argv",
@@ -2547,7 +2547,7 @@
   {
     "command": "release",
     "aliases": [],
-    "dispatch_evidence": "src/spendguard/cli.py:862",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:862",
     "core_bindings": [],
     "handler_evidence": [],
     "parser_kind": "manual argv",
@@ -2573,7 +2573,7 @@
   {
     "command": "bakeoff",
     "aliases": [],
-    "dispatch_evidence": "src/spendguard/cli.py:880",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:880",
     "core_bindings": [
       "bakeoff.main"
     ],
@@ -2675,7 +2675,7 @@
   {
     "command": "stability",
     "aliases": [],
-    "dispatch_evidence": "src/spendguard/cli.py:883",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:883",
     "core_bindings": [
       "stability.cmd"
     ],
@@ -2757,7 +2757,7 @@
   {
     "command": "effort-titrate",
     "aliases": [],
-    "dispatch_evidence": "src/spendguard/cli.py:886",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:886",
     "core_bindings": [
       "effort_titration.main"
     ],
@@ -2844,7 +2844,7 @@
   {
     "command": "metadata",
     "aliases": [],
-    "dispatch_evidence": "src/spendguard/cli.py:889",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:889",
     "core_bindings": [
       "metadata_audit.main"
     ],
@@ -2893,7 +2893,7 @@
   {
     "command": "migrate",
     "aliases": [],
-    "dispatch_evidence": "src/spendguard/cli.py:892",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:892",
     "core_bindings": [],
     "handler_evidence": [],
     "parser_kind": "no flags parsed / inline positional grammar",
@@ -2915,7 +2915,7 @@
   {
     "command": "estimate-literals",
     "aliases": [],
-    "dispatch_evidence": "src/spendguard/cli.py:909",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:909",
     "core_bindings": [
       "estimate_literals.cmd"
     ],
@@ -2943,7 +2943,7 @@
   {
     "command": "estimate-divergence",
     "aliases": [],
-    "dispatch_evidence": "src/spendguard/cli.py:912",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:912",
     "core_bindings": [
       "estimate_divergence.cmd"
     ],
@@ -2969,7 +2969,7 @@
   {
     "command": "pricing",
     "aliases": [],
-    "dispatch_evidence": "src/spendguard/cli.py:915",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:915",
     "core_bindings": [
       "pricing.main"
     ],
@@ -2995,7 +2995,7 @@
   {
     "command": "providers",
     "aliases": [],
-    "dispatch_evidence": "src/spendguard/cli.py:918",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:918",
     "core_bindings": [],
     "handler_evidence": [],
     "parser_kind": "no flags parsed / inline positional grammar",
@@ -3008,7 +3008,7 @@
   {
     "command": "coverage",
     "aliases": [],
-    "dispatch_evidence": "src/spendguard/cli.py:923",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:923",
     "core_bindings": [
       "coverage.cmd"
     ],
@@ -3034,7 +3034,7 @@
   {
     "command": "gate-coverage",
     "aliases": [],
-    "dispatch_evidence": "src/spendguard/cli.py:926",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:926",
     "core_bindings": [
       "setup.cmd_coverage"
     ],
@@ -3051,7 +3051,7 @@
   {
     "command": "maxtokens",
     "aliases": [],
-    "dispatch_evidence": "src/spendguard/cli.py:929",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:929",
     "core_bindings": [],
     "handler_evidence": [],
     "parser_kind": "no flags parsed / inline positional grammar",
@@ -3073,7 +3073,7 @@
   {
     "command": "plan-queue",
     "aliases": [],
-    "dispatch_evidence": "src/spendguard/cli.py:954",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:954",
     "core_bindings": [],
     "handler_evidence": [],
     "parser_kind": "manual argv",
@@ -3091,7 +3091,7 @@
   {
     "command": "dispatch",
     "aliases": [],
-    "dispatch_evidence": "src/spendguard/cli.py:1012",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:1012",
     "core_bindings": [],
     "handler_evidence": [],
     "parser_kind": "mixed argparse/manual",
@@ -3099,7 +3099,7 @@
     "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [
       {
-        "source_scope": "src/spendguard/cli.py:1012",
+        "source_scope": "src/spendguard/interface/cli.py:1012",
         "selector": null,
         "operations": [
           {
@@ -3135,7 +3135,7 @@
   {
     "command": "config",
     "aliases": [],
-    "dispatch_evidence": "src/spendguard/cli.py:1069",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:1069",
     "core_bindings": [
       "setup.cmd_config"
     ],
@@ -3161,7 +3161,7 @@
   {
     "command": "init",
     "aliases": [],
-    "dispatch_evidence": "src/spendguard/cli.py:1072",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:1072",
     "core_bindings": [
       "setup.cmd_init"
     ],
@@ -3197,7 +3197,7 @@
     "aliases": [
       "gate-venv"
     ],
-    "dispatch_evidence": "src/spendguard/cli.py:1075",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:1075",
     "core_bindings": [
       "setup.cmd_install_hook"
     ],
@@ -3266,7 +3266,7 @@
   {
     "command": "gate-host",
     "aliases": [],
-    "dispatch_evidence": "src/spendguard/cli.py:1078",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:1078",
     "core_bindings": [
       "setup.cmd_gate_discovered_host"
     ],
@@ -3294,7 +3294,7 @@
   {
     "command": "install-agent-gate",
     "aliases": [],
-    "dispatch_evidence": "src/spendguard/cli.py:1081",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:1081",
     "core_bindings": [
       "agent_spawn_gate.install_agent_gate_cli"
     ],
@@ -3322,7 +3322,7 @@
   {
     "command": "install-capguard",
     "aliases": [],
-    "dispatch_evidence": "src/spendguard/cli.py:1084",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:1084",
     "core_bindings": [
       "weekly_cap_guard.install_weekly_cap_guard_cli"
     ],
@@ -3350,7 +3350,7 @@
   {
     "command": "schedule",
     "aliases": [],
-    "dispatch_evidence": "src/spendguard/cli.py:1087",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:1087",
     "core_bindings": [
       "schedule.main"
     ],
@@ -3379,7 +3379,7 @@
   {
     "command": "install-skills",
     "aliases": [],
-    "dispatch_evidence": "src/spendguard/cli.py:1090",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:1090",
     "core_bindings": [
       "setup.cmd_install_skills"
     ],
@@ -3428,7 +3428,7 @@
   {
     "command": "install-rule",
     "aliases": [],
-    "dispatch_evidence": "src/spendguard/cli.py:1093",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:1093",
     "core_bindings": [
       "setup.cmd_install_rule"
     ],
@@ -3489,7 +3489,7 @@
   {
     "command": "install-receipts",
     "aliases": [],
-    "dispatch_evidence": "src/spendguard/cli.py:1096",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:1096",
     "core_bindings": [
       "receipt.install_cli"
     ],
@@ -3509,12 +3509,12 @@
   {
     "command": "install-mcp",
     "aliases": [],
-    "dispatch_evidence": "src/spendguard/cli.py:1099",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:1099",
     "core_bindings": [
       "mcp_server.register_client"
     ],
     "handler_evidence": [
-      "src/spendguard/mcp_server.py:1176 (mcp_server.register_client)"
+      "src/spendguard/interface/mcp_server.py:1176 (mcp_server.register_client)"
     ],
     "parser_kind": "manual argv",
     "nested_grammar_summary": "",
@@ -3537,7 +3537,7 @@
   {
     "command": "remote",
     "aliases": [],
-    "dispatch_evidence": "src/spendguard/cli.py:1102",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:1102",
     "core_bindings": [
       "remote.cmd"
     ],
@@ -3561,7 +3561,7 @@
   {
     "command": "saas",
     "aliases": [],
-    "dispatch_evidence": "src/spendguard/cli.py:1105",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:1105",
     "core_bindings": [
       "saas.cmd"
     ],
@@ -3592,7 +3592,7 @@
   {
     "command": "resources",
     "aliases": [],
-    "dispatch_evidence": "src/spendguard/cli.py:1108",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:1108",
     "core_bindings": [
       "resources.cmd"
     ],
@@ -3614,7 +3614,7 @@
   {
     "command": "tag",
     "aliases": [],
-    "dispatch_evidence": "src/spendguard/cli.py:1111",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:1111",
     "core_bindings": [
       "tag.cmd"
     ],
@@ -3631,7 +3631,7 @@
   {
     "command": "calls",
     "aliases": [],
-    "dispatch_evidence": "src/spendguard/cli.py:1114",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:1114",
     "core_bindings": [
       "calls.cmd_summary"
     ],
@@ -3667,7 +3667,7 @@
   {
     "command": "receipt",
     "aliases": [],
-    "dispatch_evidence": "src/spendguard/cli.py:1117",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:1117",
     "core_bindings": [
       "receipt.cli"
     ],
@@ -3707,7 +3707,7 @@
   {
     "command": "backfill",
     "aliases": [],
-    "dispatch_evidence": "src/spendguard/cli.py:1120",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:1120",
     "core_bindings": [
       "backfill.main"
     ],
@@ -3750,7 +3750,7 @@
     "aliases": [
       "backtest"
     ],
-    "dispatch_evidence": "src/spendguard/cli.py:1123",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:1123",
     "core_bindings": [
       "advise.main"
     ],
@@ -3805,7 +3805,7 @@
   {
     "command": "optimize",
     "aliases": [],
-    "dispatch_evidence": "src/spendguard/cli.py:1126",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:1126",
     "core_bindings": [
       "advisor.main"
     ],
@@ -3870,7 +3870,7 @@
   {
     "command": "mine",
     "aliases": [],
-    "dispatch_evidence": "src/spendguard/cli.py:1126",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:1126",
     "core_bindings": [
       "advisor.main"
     ],
@@ -3935,7 +3935,7 @@
   {
     "command": "reconstruct",
     "aliases": [],
-    "dispatch_evidence": "src/spendguard/cli.py:1126",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:1126",
     "core_bindings": [
       "advisor.main"
     ],
@@ -4000,7 +4000,7 @@
   {
     "command": "recommend",
     "aliases": [],
-    "dispatch_evidence": "src/spendguard/cli.py:1126",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:1126",
     "core_bindings": [
       "advisor.main"
     ],
@@ -4067,7 +4067,7 @@
     "aliases": [
       "history"
     ],
-    "dispatch_evidence": "src/spendguard/cli.py:1129",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:1129",
     "core_bindings": [
       "history.main"
     ],
@@ -4119,7 +4119,7 @@
     "aliases": [
       "conv"
     ],
-    "dispatch_evidence": "src/spendguard/cli.py:1132",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:1132",
     "core_bindings": [
       "conv.main"
     ],
@@ -4184,7 +4184,7 @@
   {
     "command": "accounting",
     "aliases": [],
-    "dispatch_evidence": "src/spendguard/cli.py:1135",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:1135",
     "core_bindings": [
       "conv.attribute_cmd"
     ],
@@ -4203,7 +4203,7 @@
   {
     "command": "signal",
     "aliases": [],
-    "dispatch_evidence": "src/spendguard/cli.py:1138",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:1138",
     "core_bindings": [
       "signal.cmd"
     ],
@@ -4224,7 +4224,7 @@
     "aliases": [
       "work"
     ],
-    "dispatch_evidence": "src/spendguard/cli.py:1141",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:1141",
     "core_bindings": [
       "workdone.cmd"
     ],
@@ -4287,7 +4287,7 @@
       "claudecode",
       "cc"
     ],
-    "dispatch_evidence": "src/spendguard/cli.py:1144",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:1144",
     "core_bindings": [
       "claudecode.main"
     ],
@@ -4317,7 +4317,7 @@
   {
     "command": "price",
     "aliases": [],
-    "dispatch_evidence": "src/spendguard/cli.py:1147",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:1147",
     "core_bindings": [],
     "handler_evidence": [],
     "parser_kind": "manual argv",
@@ -4339,7 +4339,7 @@
   {
     "command": "reprice",
     "aliases": [],
-    "dispatch_evidence": "src/spendguard/cli.py:1176",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:1176",
     "core_bindings": [],
     "handler_evidence": [],
     "parser_kind": "manual argv",
@@ -4355,7 +4355,7 @@
   {
     "command": "quarantine",
     "aliases": [],
-    "dispatch_evidence": "src/spendguard/cli.py:1211",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:1211",
     "core_bindings": [],
     "handler_evidence": [],
     "parser_kind": "manual argv",
@@ -4373,7 +4373,7 @@
   {
     "command": "codex",
     "aliases": [],
-    "dispatch_evidence": "src/spendguard/cli.py:1263",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:1263",
     "core_bindings": [
       "codex.main"
     ],
@@ -4396,7 +4396,7 @@
   {
     "command": "chat",
     "aliases": [],
-    "dispatch_evidence": "src/spendguard/cli.py:1266",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:1266",
     "core_bindings": [
       "chat.main"
     ],
@@ -4426,7 +4426,7 @@
     "aliases": [
       "lane-value"
     ],
-    "dispatch_evidence": "src/spendguard/cli.py:1269",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:1269",
     "core_bindings": [
       "lane_value.main"
     ],
@@ -4448,7 +4448,7 @@
     "aliases": [
       "fetchio"
     ],
-    "dispatch_evidence": "src/spendguard/cli.py:1272",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:1272",
     "core_bindings": [
       "callio.main"
     ],
@@ -4500,7 +4500,7 @@
     "aliases": [
       "corpus-status"
     ],
-    "dispatch_evidence": "src/spendguard/cli.py:1275",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:1275",
     "core_bindings": [
       "callio.status_main"
     ],
@@ -4547,7 +4547,7 @@
     "aliases": [
       "codex-prune"
     ],
-    "dispatch_evidence": "src/spendguard/cli.py:1278",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:1278",
     "core_bindings": [],
     "handler_evidence": [],
     "parser_kind": "argparse",
@@ -4555,7 +4555,7 @@
     "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [
       {
-        "source_scope": "src/spendguard/cli.py:1278",
+        "source_scope": "src/spendguard/interface/cli.py:1278",
         "selector": null,
         "operations": [
           {
@@ -4590,7 +4590,7 @@
     "aliases": [
       "embed-prune"
     ],
-    "dispatch_evidence": "src/spendguard/cli.py:1301",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:1301",
     "core_bindings": [],
     "handler_evidence": [],
     "parser_kind": "argparse",
@@ -4598,7 +4598,7 @@
     "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [
       {
-        "source_scope": "src/spendguard/cli.py:1301",
+        "source_scope": "src/spendguard/interface/cli.py:1301",
         "selector": null,
         "operations": [
           {
@@ -4636,7 +4636,7 @@
   {
     "command": "review",
     "aliases": [],
-    "dispatch_evidence": "src/spendguard/cli.py:1330",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:1330",
     "core_bindings": [
       "review.main"
     ],
@@ -4683,7 +4683,7 @@
     "aliases": [
       "cacheaudit"
     ],
-    "dispatch_evidence": "src/spendguard/cli.py:1333",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:1333",
     "core_bindings": [
       "cacheaudit.main"
     ],
@@ -4725,7 +4725,7 @@
     "aliases": [
       "cachetest"
     ],
-    "dispatch_evidence": "src/spendguard/cli.py:1336",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:1336",
     "core_bindings": [
       "cachetest.main"
     ],
@@ -4785,7 +4785,7 @@
   {
     "command": "brief",
     "aliases": [],
-    "dispatch_evidence": "src/spendguard/cli.py:1339",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:1339",
     "core_bindings": [
       "brief.main"
     ],
@@ -4835,7 +4835,7 @@
   {
     "command": "experiment",
     "aliases": [],
-    "dispatch_evidence": "src/spendguard/cli.py:1342",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:1342",
     "core_bindings": [
       "experiment.main"
     ],
@@ -4914,7 +4914,7 @@
   {
     "command": "models",
     "aliases": [],
-    "dispatch_evidence": "src/spendguard/cli.py:1345",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:1345",
     "core_bindings": [
       "models.cmd"
     ],
@@ -4931,7 +4931,7 @@
   {
     "command": "promote",
     "aliases": [],
-    "dispatch_evidence": "src/spendguard/cli.py:1348",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:1348",
     "core_bindings": [
       "experiment.promote_main"
     ],
@@ -5008,7 +5008,7 @@
     "aliases": [
       "semcache"
     ],
-    "dispatch_evidence": "src/spendguard/cli.py:1351",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:1351",
     "core_bindings": [
       "semcache.cmd"
     ],
@@ -5025,7 +5025,7 @@
   {
     "command": "dedup",
     "aliases": [],
-    "dispatch_evidence": "src/spendguard/cli.py:1354",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:1354",
     "core_bindings": [
       "semcache.dedup_main"
     ],
@@ -5080,7 +5080,7 @@
   {
     "command": "dedup-populate",
     "aliases": [],
-    "dispatch_evidence": "src/spendguard/cli.py:1357",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:1357",
     "core_bindings": [
       "semcache.populate_main"
     ],
@@ -5130,7 +5130,7 @@
   {
     "command": "cascade",
     "aliases": [],
-    "dispatch_evidence": "src/spendguard/cli.py:1360",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:1360",
     "core_bindings": [
       "cascade.cmd"
     ],
@@ -5193,7 +5193,7 @@
       "ledger-sync",
       "leaks"
     ],
-    "dispatch_evidence": "src/spendguard/cli.py:1363",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:1363",
     "core_bindings": [
       "ledger_sync.main"
     ],
@@ -5235,7 +5235,7 @@
     "aliases": [
       "trust-check"
     ],
-    "dispatch_evidence": "src/spendguard/cli.py:1366",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:1366",
     "core_bindings": [
       "trust.cmd"
     ],
@@ -5265,7 +5265,7 @@
     "aliases": [
       "crosscheck"
     ],
-    "dispatch_evidence": "src/spendguard/cli.py:1369",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:1369",
     "core_bindings": [],
     "handler_evidence": [],
     "parser_kind": "no flags parsed / inline positional grammar",
@@ -5278,7 +5278,7 @@
   {
     "command": "bootstrap",
     "aliases": [],
-    "dispatch_evidence": "src/spendguard/cli.py:1384",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:1384",
     "core_bindings": [
       "bootstrap.main"
     ],
@@ -5333,7 +5333,7 @@
   {
     "command": "validate",
     "aliases": [],
-    "dispatch_evidence": "src/spendguard/cli.py:1387",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:1387",
     "core_bindings": [
       "validate.main"
     ],
@@ -5350,7 +5350,7 @@
   {
     "command": "realized",
     "aliases": [],
-    "dispatch_evidence": "src/spendguard/cli.py:1390",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:1390",
     "core_bindings": [
       "realized.main"
     ],
@@ -5412,7 +5412,7 @@
   {
     "command": "savings",
     "aliases": [],
-    "dispatch_evidence": "src/spendguard/cli.py:1393",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:1393",
     "core_bindings": [],
     "handler_evidence": [],
     "parser_kind": "manual argv",
@@ -5436,7 +5436,7 @@
   {
     "command": "tokens",
     "aliases": [],
-    "dispatch_evidence": "src/spendguard/cli.py:1423",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:1423",
     "core_bindings": [
       "provider_tokens.cmd"
     ],
@@ -5465,7 +5465,7 @@
   {
     "command": "prompts",
     "aliases": [],
-    "dispatch_evidence": "src/spendguard/cli.py:1426",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:1426",
     "core_bindings": [
       "prompts.main"
     ],
@@ -5537,7 +5537,7 @@
   {
     "command": "close",
     "aliases": [],
-    "dispatch_evidence": "src/spendguard/cli.py:1429",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:1429",
     "core_bindings": [
       "close.main"
     ],
@@ -5599,7 +5599,7 @@
   {
     "command": "truth",
     "aliases": [],
-    "dispatch_evidence": "src/spendguard/cli.py:1432",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:1432",
     "core_bindings": [
       "truth.main"
     ],
@@ -5656,7 +5656,7 @@
   {
     "command": "sources",
     "aliases": [],
-    "dispatch_evidence": "src/spendguard/cli.py:1435",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:1435",
     "core_bindings": [
       "sources.main"
     ],
@@ -5685,7 +5685,7 @@
   {
     "command": "scan",
     "aliases": [],
-    "dispatch_evidence": "src/spendguard/cli.py:1438",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:1438",
     "core_bindings": [
       "scan.main"
     ],
@@ -5713,7 +5713,7 @@
   {
     "command": "run",
     "aliases": [],
-    "dispatch_evidence": "src/spendguard/cli.py:1441",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:1441",
     "core_bindings": [
       "runner.main"
     ],
@@ -5742,7 +5742,7 @@
   {
     "command": "lanes",
     "aliases": [],
-    "dispatch_evidence": "src/spendguard/cli.py:1444",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:1444",
     "core_bindings": [
       "lanes.main"
     ],
@@ -5808,7 +5808,7 @@
   {
     "command": "tiers",
     "aliases": [],
-    "dispatch_evidence": "src/spendguard/cli.py:1447",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:1447",
     "core_bindings": [
       "tier_config.main"
     ],
@@ -5836,7 +5836,7 @@
   {
     "command": "register-critical",
     "aliases": [],
-    "dispatch_evidence": "src/spendguard/cli.py:1450",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:1450",
     "core_bindings": [],
     "handler_evidence": [],
     "parser_kind": "argparse",
@@ -5844,7 +5844,7 @@
     "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [
       {
-        "source_scope": "src/spendguard/cli.py:1450",
+        "source_scope": "src/spendguard/interface/cli.py:1450",
         "selector": null,
         "operations": [
           {
@@ -5882,7 +5882,7 @@
   {
     "command": "keys",
     "aliases": [],
-    "dispatch_evidence": "src/spendguard/cli.py:1471",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:1471",
     "core_bindings": [],
     "handler_evidence": [],
     "parser_kind": "manual argv",
@@ -5906,7 +5906,7 @@
   {
     "command": "insights",
     "aliases": [],
-    "dispatch_evidence": "src/spendguard/cli.py:1490",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:1490",
     "core_bindings": [
       "share.main"
     ],
@@ -5988,7 +5988,7 @@
   {
     "command": "compare",
     "aliases": [],
-    "dispatch_evidence": "src/spendguard/cli.py:1493",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:1493",
     "core_bindings": [
       "compare.main"
     ],
@@ -6051,7 +6051,7 @@
     "aliases": [
       "sync"
     ],
-    "dispatch_evidence": "src/spendguard/cli.py:1496",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:1496",
     "core_bindings": [
       "sync.main"
     ],
@@ -6077,7 +6077,7 @@
   {
     "command": "sync-catalog",
     "aliases": [],
-    "dispatch_evidence": "src/spendguard/cli.py:1499",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:1499",
     "core_bindings": [
       "catalog.main"
     ],
@@ -6103,7 +6103,7 @@
   {
     "command": "sync-capabilities",
     "aliases": [],
-    "dispatch_evidence": "src/spendguard/cli.py:1502",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:1502",
     "core_bindings": [
       "sync_capabilities.cmd"
     ],
@@ -6157,7 +6157,7 @@
   {
     "command": "balances",
     "aliases": [],
-    "dispatch_evidence": "src/spendguard/cli.py:1505",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:1505",
     "core_bindings": [
       "balances.main"
     ],
@@ -6185,7 +6185,7 @@
   {
     "command": "reliability",
     "aliases": [],
-    "dispatch_evidence": "src/spendguard/cli.py:1508",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:1508",
     "core_bindings": [
       "reliability.main"
     ],
@@ -6216,19 +6216,19 @@
   {
     "command": "health",
     "aliases": [],
-    "dispatch_evidence": "src/spendguard/cli.py:1511",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:1511",
     "core_bindings": [
       "cli_health_command"
     ],
     "handler_evidence": [
-      "src/spendguard/cli.py:403 (cli.cli_health_command)"
+      "src/spendguard/interface/cli.py:403 (cli.cli_health_command)"
     ],
     "parser_kind": "argparse",
     "nested_grammar_summary": "",
     "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [
       {
-        "source_scope": "src/spendguard/cli.py:403",
+        "source_scope": "src/spendguard/interface/cli.py:403",
         "selector": null,
         "operations": [
           {
@@ -6277,7 +6277,7 @@
     "aliases": [
       "refresh"
     ],
-    "dispatch_evidence": "src/spendguard/cli.py:1513",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:1513",
     "core_bindings": [
       "refresh.main"
     ],
@@ -6320,7 +6320,7 @@
     "aliases": [
       "freshness"
     ],
-    "dispatch_evidence": "src/spendguard/cli.py:1516",
+    "dispatch_evidence": "src/spendguard/interface/cli.py:1516",
     "core_bindings": [],
     "handler_evidence": [],
     "parser_kind": "no flags parsed / inline positional grammar",

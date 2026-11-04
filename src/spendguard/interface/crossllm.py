@@ -30,7 +30,7 @@ Concurrency/rate limiting is automatic: every call routes through the dispatch g
 """
 
 from .capability_cli_parsing import add_registered_cli_argument
-from . import vendor_call, pricing, gate, config, calls
+from .. import vendor_call, pricing, gate, config, calls
 
 # Named defaults (a value with a name, overridable per call) — never a literal at a call site.
 _DEFAULT_DEADLINE_S = 200.0        # per-vendor default when the caller names none; time_budget refines it per model
@@ -81,7 +81,7 @@ def _preflight_partition(vlist):
     unmet one in the result (PREFLIGHT_UNMET) — one bad id no longer refuses the WHOLE cross-LLM batch; the batch
     is refused only when NOTHING is callable. Re-checked on EVERY call, never memoized, so a mid-process change is
     caught on the next call. Cheap: served_check is cache-first ($0) and a clean served id makes no agentic call."""
-    from . import model_preflight
+    from .. import model_preflight
     rows = {r.get("spec"): r for r in model_preflight.preflight_models([f"{v}:{m}" for v, m in vlist])}
     usable, unmet = [], []
     for v, m in vlist:
@@ -137,7 +137,7 @@ def _default_vendors():
     raw = os.environ.get("SPENDGUARD_ASK_DEFAULT_VENDORS")
     if raw is None:
         try:
-            from . import config
+            from .. import config
             raw = config._cfg_get("ask", "default_vendors", None)
         except Exception:
             raw = None
@@ -148,7 +148,7 @@ def _is_metered(vendor):
     """True when this vendor is NOT riding an active $0 subscription lane — i.e. the call actually bills.
     A lane ($0, kind=subscription) contributes nothing to the budget estimate."""
     try:
-        from . import adapters
+        from .. import adapters
         return not adapters._lane_for((vendor or "").strip().lower())
     except Exception:
         return True                    # unknown → treat as metered (conservative: never under-count a budget)
@@ -356,7 +356,7 @@ def ask_vision(prompt, images, vendors, *, schema=None, system=None, budget_usd=
 
     Returns {results:[{vendor,text,cost,executor,error}], ok, n, n_ok, complete, estimate_usd} — or the estimate."""
     import os
-    from . import adapters, pricing, lane_balance
+    from .. import adapters, pricing, lane_balance
     vlist = [v if isinstance(v, str) else f"{v[0]}:{v[1]}" for v in (vendors or [])]
     if not vlist:
         raise ValueError("ask_vision needs at least one vendor (a vision-capable 'vendor:model')")

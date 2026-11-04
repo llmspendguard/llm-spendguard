@@ -14,7 +14,7 @@ _MARKER = "# spendguard-schedule (managed by `spendguard schedule`)"
 
 def _cmd():
     # snapshot is free + idempotent and runs INSIDE saas sync (records GPU even when the push isn't due)
-    return [sys.executable, "-m", "spendguard.cli", "saas", "sync", "--if-due"]
+    return [sys.executable, "-m", "spendguard.interface.cli", "saas", "sync", "--if-due"]
 
 
 def _logpath():

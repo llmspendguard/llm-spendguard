@@ -58,8 +58,8 @@ def _mcp_http_request_ledger_lifetime(connection):
     import select
     import socket
     import threading
-    from . import config
-    from .ledger_read import ledger_request_scope
+    from .. import config
+    from ..ledger_read import ledger_request_scope
 
     observer_stopped = threading.Event()
     with ledger_request_scope() as request_reads:
@@ -89,8 +89,8 @@ def _mcp_http_request_ledger_lifetime(connection):
 
 def capability_ledger_read_operation(args: dict):
     """Read the local ledger through the bounded library; never open or migrate it."""
-    from . import ledger_read, receipt
-    from .ledger import USD_COLS
+    from .. import ledger_read, receipt
+    from ..ledger import USD_COLS
     operation = args.get("operation", LEDGER_READ_OPERATIONS[0])
     path = args.get("path")
     if operation not in LEDGER_READ_OPERATIONS:
@@ -133,7 +133,7 @@ def capability_ledger_read_operation(args: dict):
 def capability_advise_operation(args: dict):
     """Cost×quality ranking for an intent, from the local `calls` corpus — wraps advise.ranked (the same
     computation the `advise` CLI prints), so the MCP answer and the CLI can never disagree."""
-    from . import advise
+    from .. import advise
     r = advise.ranked(intent=args.get("intent"), as_of=args.get("as_of"))
     caveats = []
     if not r["labeled"]:
@@ -158,7 +158,7 @@ def capability_advise_operation(args: dict):
 
 def _catalogue():
     """Enumerate authored catalog models, resolving rates through the sole price API."""
-    from . import model_catalog, pricing
+    from .. import model_catalog, pricing
     out = []
     for model, record in model_catalog.all_records().items():
         provider = record.get("provider")
@@ -184,7 +184,7 @@ def capability_recommend_operation(args: dict):
     first, and refuses when the estimate exceeds `budget_usd`."""
     import spendguard
     spendguard.require()                    # this tool spends → fail closed if the gate is not enforcing here
-    from . import advisor
+    from .. import advisor
     intent, k, qbar = args.get("intent"), int(args.get("k") or 5), args.get("quality_bar")
     est = advisor.recommend_models(intent=intent, k=k, quality_bar=qbar, run=False)
     if est.get("requests", 0) == 0:
@@ -193,7 +193,7 @@ def capability_recommend_operation(args: dict):
     if budget is not None and est.get("cost", 0.0) > float(budget):
         return {**est, "refused": True,
                 "note": f"estimate ~${est['cost']:.4f} exceeds budget_usd ${float(budget):.4f} — not run. Raise budget_usd."}
-    from . import config
+    from .. import config
     with config.scoped_intent_cap((f"{advisor.META}:recommend", f"{advisor.META}:cold-prior"), budget):
         return advisor.recommend_models(intent=intent, k=k, quality_bar=qbar, run=True)
 
@@ -205,7 +205,7 @@ def capability_bakeoff_operation(args: dict):
     spending on its own."""
     import spendguard
     spendguard.require()                    # real spend → fail closed if the gate is not enforcing here
-    from . import bakeoff as _bk
+    from .. import bakeoff as _bk
     # `efforts` sweeps the reasoning ladder PER model (finds the cheapest (model, effort) that holds quality);
     # a list or a comma string, both accepted. Omitted → one arm per model at its default effort.
     _eff = args.get("efforts")
@@ -233,7 +233,7 @@ def capability_stability_operation(args: dict):
     on a $0 lane); fails closed if the gate is not enforcing."""
     import spendguard
     spendguard.require()
-    from . import stability as _st, bakeoff as _bk
+    from .. import stability as _st, bakeoff as _bk
     prompts = args.get("prompts")
     if not prompts and args.get("intent"):
         prompts = _bk._sample_prompts(args["intent"], int(args.get("sample_n") or 5))
@@ -290,7 +290,7 @@ def capability_vision_operation(args: dict):
     spendguard.require()                     # real spend → fail closed if the gate is not enforcing here
     import json as _json
     import os
-    from . import adapters, pricing
+    from .. import adapters, pricing
     model, prompt = args.get("model"), args.get("prompt")
     images = args.get("images") or []
     schema = args.get("schema") if isinstance(args.get("schema"), dict) else None
@@ -369,7 +369,7 @@ SPEND_OVERVIEW_TOP_INTENT_LIMIT = 5
 
 def _cc_titles():
     try:
-        from . import claudecode
+        from .. import claudecode
         return claudecode._sidebar_titles()
     except Exception:
         return {}
@@ -381,7 +381,7 @@ def _cc_label(conv, titles):
 
 def capability_spend_overview_operation(_args: dict):
     from pathlib import Path
-    from . import config, ledger_read
+    from .. import config, ledger_read
     path = config.db_path()
     if (not Path(path).exists()
             or not ledger_read.ledger_read_table_exists(ledger_read.LEDGER_EVENTS_TABLE, path)):
@@ -393,7 +393,7 @@ def capability_spend_overview_operation(_args: dict):
     # real-$ or est-value. `counterfactual` (best-value/advisor/compaction) is held apart from `certain` (measured).
     # No except-and-zero here: both readers create their tables if absent, so a fresh install returns real zeros;
     # a genuine failure (a corrupt savings/decisions db) must SURFACE, never be masked as "$0 saved, 0 decisions".
-    from . import guard as _guard
+    from .. import guard as _guard
     _sv = _guard.saved_since()
     _dec = _guard.decisions_summary(intent_limit=SPEND_OVERVIEW_TOP_INTENT_LIMIT)
     return {"note": "THREE separate axes, NEVER summed: real $ (money out the door), est-value (plan-covered usage "
@@ -407,7 +407,7 @@ def capability_spend_overview_operation(_args: dict):
 
 
 def capability_overage_status_operation(_args: dict):
-    from . import overage
+    from .. import overage
     return overage.current_overage_status()
 
 
@@ -418,13 +418,13 @@ def capability_top_conversations_operation(args: dict):
     limit = int(args.get("limit") or 10)
     titles = _cc_titles()
     if by in ("overage", "real"):
-        from . import claudecode
+        from .. import claudecode
         with contextlib.redirect_stdout(io.StringIO()):
             real = claudecode.attribute_overage(top=10 ** 6)
         rows = sorted((real or {}).items(), key=lambda x: -x[1])[:limit]
         return {"ranked_by": "real Claude Code overage $ (reconciled to invoices)",
                 "conversations": [{"title": _cc_label(c, titles), "overage_usd": round(v, 2)} for c, v in rows]}
-    from . import ledger_read
+    from .. import ledger_read
     rows = ledger_read.read_cc_top_conversations(limit=limit)
     return {"ranked_by": "est-value $ (what the usage is worth at API rates)",
             "conversations": [{"title": _cc_label(c, titles), "est_value_usd": v, "turns": n, "max_context_tokens": mx}
@@ -435,7 +435,7 @@ def capability_conversation_cost_operation(args: dict):
     conv = str(args.get("conversation_id") or "").strip()
     if not conv:
         return {"error": "pass conversation_id (a transcript uuid — from spendguard_top_conversations)"}
-    from . import ledger_read
+    from .. import ledger_read
     costs = ledger_read.read_cc_conversation_cost(conv)
     return {"conversation_id": conv, "title": _cc_label(conv, _cc_titles()),
             "est_value_usd_plan_covered": round(costs["est"], 2), "turns": costs["n"],
@@ -446,7 +446,7 @@ def capability_conversation_cost_operation(args: dict):
 def capability_compaction_candidates_operation(args: dict):
     import contextlib
     import io
-    from . import claudecode, compaction
+    from .. import claudecode, compaction
     limit = int(args.get("limit") or 10)
     with contextlib.redirect_stdout(io.StringIO()):
         cands, (k, _kn), stats = claudecode.compaction_candidates()
@@ -462,7 +462,7 @@ def capability_compaction_candidates_operation(args: dict):
 
 
 def capability_dispatch_state_operation(args: dict):
-    from . import dispatch, lane_queue
+    from .. import dispatch, lane_queue
     if args.get("id") is not None:
         return lane_queue.queue_row_status(args["id"])
     st = dispatch.admission_state()
@@ -476,7 +476,7 @@ def capability_dispatch_state_operation(args: dict):
 
 def capability_config_operation(_args: dict):
     import os
-    from . import config, config_schema
+    from .. import config, config_schema
     knobs = []
     for s in config_schema.SETTINGS:
         if s.get("secret"):
@@ -506,7 +506,7 @@ HEALTH_DEFAULT_TIMEOUT_S = 20
 
 # name → (description, JSON-Schema for arguments, handler)
 def capability_health_operation(args: dict):
-    from . import reliability
+    from .. import reliability
     run = args.get("run", HEALTH_DEFAULT_RUN)
     timeout_s = int(args.get("timeout_s") or HEALTH_DEFAULT_TIMEOUT_S)
     # DEGRADE, NEVER CRASH. The reachability surface is the thing you CALL to learn what is healthy, so it must not be
@@ -540,7 +540,7 @@ def capability_health_operation(args: dict):
         actions = actions or None                         # best-effort: a remediate/persist hiccup never blanks a good sweep
     # Same read-only cached ledger verdict as doctor: never turn health into a live billing pull.
     try:
-        from . import ledger_sync
+        from .. import ledger_sync
         cached_ledger_health = ledger_sync.cached_leak_line()
         ledger_health = ({"status": "unknown", "line": "leak status UNKNOWN — run `spendguard reconcile`",
                           "age_s": None} if cached_ledger_health is None else
@@ -563,7 +563,7 @@ def capability_health_operation(args: dict):
 
 
 def capability_savings_operation(args: dict):
-    from . import guard
+    from .. import guard
     s = guard.saved_since()
     ds = guard.decisions_summary()
     shed = guard.shed_summary()
@@ -588,7 +588,7 @@ def capability_version_operation(args: dict):
     from importlib import metadata
     from pathlib import Path
     import spendguard
-    from . import config, gate, release
+    from .. import config, gate, release
     return {**release.release_status(), "pid": os.getpid(),
             "imported_version": spendguard.__version__,
             "metadata_version": metadata.version("llm-spendguard"),
@@ -599,14 +599,14 @@ def capability_version_operation(args: dict):
 def capability_route_cost_operation(args: dict):
     """TRUE-cost batch-vs-lane-vs-combo routing split for an intent at volume N — wraps route_economics.report (the
     same computation the `route-cost` CLI prints), so the MCP answer and the CLI can never disagree. $0."""
-    from . import route_economics
+    from .. import route_economics
     return route_economics.route_report(args["intent"], int(args["n"]), in_tok=args.get("in_tok"), out_tok=args.get("out_tok"),
                                         lane=args.get("lane"), batch_model=args.get("batch_model"))
 
 
 def capability_route_realized_operation(args: dict):
     """REALIZED routing history from the calls ledger; read-only and $0, not a projection."""
-    from . import route_realized
+    from .. import route_realized
     return route_realized.route_realized_report(args["intent"], since=args.get("since"),
                                                   as_of=args.get("as_of"), limit=args.get("limit", 20))
 
@@ -615,7 +615,7 @@ def capability_route_horizon_operation(args: dict):
     """HORIZON plan (item C) for a whole job SET — allocate groups across lane / batch / metered-realtime over the
     plan's reset-window horizon, honouring each group's URGENCY and the SHARED lane budget. Wraps
     route_horizon.horizon_report (the same computation the `route-horizon` CLI prints), so MCP and CLI never disagree. $0."""
-    from . import route_horizon
+    from .. import route_horizon
     return route_horizon.horizon_report(args.get("groups") or [], lane=args.get("lane"),
                                         batch_model=args.get("batch_model"), realtime_model=args.get("realtime_model"))
 
@@ -625,7 +625,7 @@ def capability_plan_queue_operation(args: dict):
     the same queue_planner.tick() (forecast of which vendor is about to 429, which intents to OFFLOAD to the Batch API
     and how to chunk them, which to PACE) plus batch_tracker.status() (open/settled/failed async batch jobs). DECIDES
     only; the drain executes — so this is safe to call any time. $0, read-only arithmetic on live governor + queue state."""
-    from . import queue_planner, batch_tracker
+    from .. import queue_planner, batch_tracker
     t = queue_planner.tick()
     try:
         t["batch_jobs"] = batch_tracker.status()
@@ -640,7 +640,7 @@ def capability_run_jobs_operation(args: dict):
     with NO goal.budget_usd it returns the PLAN + estimate ONLY ($0, executed=False) — never an unbounded fan; pass
     goal.budget_usd to EXECUTE (the budget is the estimate-first cap: an over-estimate or an unpriceable group is
     refused before any spend)."""
-    from . import whole_job
+    from .. import whole_job
     jobs = args.get("jobs") or []
     goal = args.get("goal") if isinstance(args.get("goal"), dict) else {}
     if goal.get("budget_usd") is None:
@@ -653,7 +653,7 @@ def capability_run_jobs_operation(args: dict):
 
 def capability_delegate_operation(args: dict):
     """Offload a SELF-CONTAINED subtask through the same two-hop engine as the delegate CLI."""
-    from . import delegate_router
+    from .. import delegate_router
     task = args.get("task")
     files = args.get("files")
     provider = args.get("provider", "auto")
@@ -670,7 +670,7 @@ def capability_delegate_operation(args: dict):
     if cwd is None or not os.path.isabs(os.path.expanduser(os.fspath(cwd))):
         return delegate_router.delegate_task(
             task, files=files, intent=args.get("intent"), provider=provider, execute=True, cwd=cwd)
-    from . import delegate_jobs
+    from .. import delegate_jobs
     fingerprint = delegate_router.delegate_route_fingerprint(task, files=files, provider=provider)
     job_id = delegate_jobs.find_inflight_delegate_job(fingerprint, cwd)
     if job_id is None:
@@ -684,13 +684,13 @@ def capability_delegate_operation(args: dict):
 
 def capability_delegate_status_operation(args: dict):
     """Read durable status for an agentic delegate job."""
-    from . import delegate_jobs
+    from .. import delegate_jobs
     return delegate_jobs.read_delegate_job(args.get("job_id"))
 
 
 def capability_delegate_result_operation(args: dict):
     """Collect the complete durable result for an agentic delegate job."""
-    from . import delegate_jobs
+    from .. import delegate_jobs
     return delegate_jobs.read_delegate_job_result(args.get("job_id"))
 
 
@@ -781,7 +781,7 @@ def handle(req):
     is_notification = "id" not in req
     if method == "initialize":
         import spendguard
-        from . import release as _rel
+        from .. import release as _rel
         client_ver = (req.get("params") or {}).get("protocolVersion")
         _sv = _rel.served_sha() or {}
         _ver = getattr(spendguard, "__version__", "0") + (f"+{_sv['short']}" if _sv.get("short") else "")
@@ -852,7 +852,7 @@ def handle(req):
         if identity is not None and name.startswith("capability_"):
             fn = CAPABILITY_MCP_DISPATCH[identity]
         try:
-            from .ledger_read import ledger_request_scope
+            from ..ledger_read import ledger_request_scope
             with ledger_request_scope():
                 payload = fn(params.get("arguments") or {})
             return _ok(rid, _tool_result(payload))
@@ -871,7 +871,7 @@ def _auto_respawn_enabled():
     of 'always serve the latest with the best'. Turn it OFF to pin a process to its current version (e.g. to
     reproduce a bug against a known commit)."""
     import os
-    from . import config
+    from .. import config
     v = os.getenv("SPENDGUARD_MCP_AUTO_RESPAWN")
     if v is not None:
         return v.strip().lower() not in ("0", "false", "no", "off")
@@ -881,7 +881,7 @@ def _auto_respawn_enabled():
 def _arm_and_verify_mcp_daemon_gate():
     """Deliberately import and gate core SDKs, independent of import-time auto-install policy."""
     import importlib
-    from . import gate
+    from .. import gate
 
     gate.install()
     for sdk_package in gate.core_gated_sdk_packages():
@@ -909,8 +909,8 @@ def serve_stdio(inp=None, outp=None):
     now running the latest code. Exiting here (never mid-request) means no request is dropped. This is what makes
     'always serve the latest' true for a long-running stdio server; disable with SPENDGUARD_MCP_AUTO_RESPAWN=0."""
     _arm_and_verify_mcp_daemon_gate()
-    from . import fleet, release
-    from .launchd_labels import MCP_STDIO_LAUNCHD_LABEL
+    from .. import fleet, release
+    from ..launchd_labels import MCP_STDIO_LAUNCHD_LABEL
     fleet.register_consumer(role=fleet.CONSUMER_ROLE_DAEMON,
                             supervision_mode=fleet.SUPERVISION_LAUNCHD,
                             supervision_ref=MCP_STDIO_LAUNCHD_LABEL)
@@ -957,8 +957,8 @@ def register_client(remove=False):
     + never silently clobbering an unparseable file) are borrowed from the code that already does this well."""
     import pathlib
 
-    from . import config
-    from .receipt import _spendguard_bin
+    from .. import config
+    from ..receipt import _spendguard_bin
 
     p = pathlib.Path.home() / ".claude.json"
     key = "spendguard"
@@ -995,7 +995,7 @@ def _prewarm_codex_daemon():
     try:
         import threading
 
-        from . import codex_daemon, codex_exec
+        from .. import codex_daemon, codex_exec
 
         if not codex_exec._daemon_enabled():
             return
@@ -1022,7 +1022,7 @@ def build_mcp_http_handler():
     _arm_and_verify_mcp_daemon_gate()
     import os as _os
     from http.server import BaseHTTPRequestHandler
-    from . import release
+    from .. import release
 
     class _Handler(BaseHTTPRequestHandler):
         def log_message(self, *a):            # quiet — no stderr access log per request
@@ -1105,15 +1105,15 @@ def serve_http(host="127.0.0.1", port=4913):
     service_mcp_spend_deadletters()
     handler_class = build_mcp_http_handler()
     from http.server import ThreadingHTTPServer
-    from . import fleet
-    from .launchd_labels import MCP_HTTP_LAUNCHD_LABEL
+    from .. import fleet
+    from ..launchd_labels import MCP_HTTP_LAUNCHD_LABEL
     fleet.register_consumer(role=fleet.CONSUMER_ROLE_DAEMON,
                             supervision_mode=fleet.SUPERVISION_LAUNCHD,
                             supervision_ref=MCP_HTTP_LAUNCHD_LABEL)
     _prewarm_codex_daemon()
     class DescriptorGuardedMCPHTTPServer(ThreadingHTTPServer):
         def service_actions(self):
-            from . import release
+            from .. import release
             if _auto_respawn_enabled():
                 release.exit_if_stale(logging.getLogger(__name__).warning)
             enforce_mcp_descriptor_headroom(fraction)
@@ -1140,7 +1140,7 @@ def cmd(argv=None):
     if args.http:
         # WARM SHARED DAEMON = SINGLETON (one per port): a second start detects the incumbent (flock) and exits 0, so a
         # supervisor can (re)start it idempotently, never racing http.server into a bind "address already in use".
-        from . import config
+        from .. import config
         try:
             _cm = config.single_instance_lock(f"spendguard-mcp-http-{args.port}")
         except Exception:

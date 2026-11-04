@@ -31,7 +31,7 @@ mkdir -p "$SG_HOME" "$HOME/Library/LaunchAgents"
 # Written to config so MANUAL `spendguard lanes --drain` honours it too, not just this agent.
 CORES="$(sysctl -n hw.physicalcpu 2>/dev/null || getconf _NPROCESSORS_ONLN 2>/dev/null || echo 8)"
 CEIL=$(( CORES * 4 / 5 )); [ "$CEIL" -ge 1 ] || CEIL=1
-"$VENV_PY" -m spendguard.cli config set advisor.queue_load_ceiling "$CEIL" >/dev/null 2>&1 || \
+"$VENV_PY" -m spendguard.interface.cli config set advisor.queue_load_ceiling "$CEIL" >/dev/null 2>&1 || \
   echo "note: could not set advisor.queue_load_ceiling — drain still runs; pass --ceiling manually" >&2
 
 cat > "$PLIST" <<PLIST

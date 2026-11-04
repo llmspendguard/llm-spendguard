@@ -691,22 +691,22 @@
       "surface_module": "spendguard.interface",
       "layer": "L4",
       "backing_modules": [
-        "cli",
+        "interface.cli",
         "__main__",
-        "mcp_server",
-        "mcp_fd_lifecycle",
-        "serve",
-        "crossllm",
-        "capability_registry",
-        "capability_cli_projection_models",
-        "capability_cli_parsing",
-        "capability_cli_callable_generation",
-        "capability_cli_dispatch_generation",
-        "capability_cli_help_generation",
-        "capability_surface_generation",
-        "capability_documentation",
-        "cli_arguments",
-        "ui",
+        "interface.mcp_server",
+        "interface.mcp_fd_lifecycle",
+        "interface.serve",
+        "interface.crossllm",
+        "interface.capability_registry",
+        "interface.capability_cli_projection_models",
+        "interface.capability_cli_parsing",
+        "interface.capability_cli_callable_generation",
+        "interface.capability_cli_dispatch_generation",
+        "interface.capability_cli_help_generation",
+        "interface.capability_surface_generation",
+        "interface.capability_documentation",
+        "interface.cli_arguments",
+        "interface.ui",
         "__init__"
       ],
       "published_names": []
@@ -1810,6 +1810,81 @@
     {
       "legacy_module": "spendguard.comprehend",
       "current_module": "spendguard.manage.token_operations.comprehend",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.cli",
+      "current_module": "spendguard.interface.cli",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.mcp_server",
+      "current_module": "spendguard.interface.mcp_server",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.mcp_fd_lifecycle",
+      "current_module": "spendguard.interface.mcp_fd_lifecycle",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.serve",
+      "current_module": "spendguard.interface.serve",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.crossllm",
+      "current_module": "spendguard.interface.crossllm",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.capability_registry",
+      "current_module": "spendguard.interface.capability_registry",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.capability_cli_projection_models",
+      "current_module": "spendguard.interface.capability_cli_projection_models",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.capability_cli_parsing",
+      "current_module": "spendguard.interface.capability_cli_parsing",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.capability_cli_callable_generation",
+      "current_module": "spendguard.interface.capability_cli_callable_generation",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.capability_cli_dispatch_generation",
+      "current_module": "spendguard.interface.capability_cli_dispatch_generation",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.capability_cli_help_generation",
+      "current_module": "spendguard.interface.capability_cli_help_generation",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.capability_surface_generation",
+      "current_module": "spendguard.interface.capability_surface_generation",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.capability_documentation",
+      "current_module": "spendguard.interface.capability_documentation",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.cli_arguments",
+      "current_module": "spendguard.interface.cli_arguments",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.ui",
+      "current_module": "spendguard.interface.ui",
       "moved_in_phase": 3
     }
   ],

@@ -28,7 +28,7 @@ def _deploy_execute_subprocess(command, **kwargs):
 
 def _deploy_align_active_editable_install(repo_root):
     """Self-heal this interpreter's editable metadata before gating; fail closed unless alignment is restored."""
-    from . import gate
+    from .. import gate
     stale, code_version, metadata_version = gate._stale_editable_install()
     if not stale:
         return True, ""
@@ -111,7 +111,7 @@ def ledger_read_cli(argv):
     args = vars(parser.parse_args(argv))
     if args["operation"] == "event" and not args["event_id"]:
         parser.error("event requires --event-id")
-    from .ledger_read import LedgerReadError
+    from ..ledger_read import LedgerReadError
     try:
         payload = _tool_ledger_read(args)
     except (LedgerReadError, ValueError) as error:
@@ -135,7 +135,7 @@ def reap_orphaned_warm_servers_cli(argv):
     """
     import argparse
     import json
-    from .warm_stdio_daemon import reap_orphaned_warm_servers
+    from ..warm_stdio_daemon import reap_orphaned_warm_servers
 
     parser = argparse.ArgumentParser(prog="spendguard reap-orphans")
     add_registered_cli_argument(parser, 'reap-orphans/cli.reap_orphaned_warm_servers_cli/parser/--execute')
@@ -168,7 +168,7 @@ def reap_orphaned_warm_servers_cli(argv):
     if args.json or args.bounded_log:
         rendered = json.dumps(payload, sort_keys=True)
         if args.bounded_log:
-            from .fleet import append_bounded_fleet_log_record
+            from ..fleet import append_bounded_fleet_log_record
             append_bounded_fleet_log_record(args.bounded_log, rendered)
         else:
             print(rendered)
@@ -199,7 +199,7 @@ def manage_lane_queue_cli(argv):
     """Operator queue manager; exit 0 on a completed dry-run/execute and 1 only on a real manager failure."""
     import argparse
     import json
-    from .lane_queue import manage_queue_tick
+    from ..lane_queue import manage_queue_tick
 
     parser = argparse.ArgumentParser(prog="spendguard queue-manage")
     add_registered_cli_argument(parser, 'queue-manage/cli.manage_lane_queue_cli/parser/--execute')
@@ -211,7 +211,7 @@ def manage_lane_queue_cli(argv):
     report = manage_queue_tick(execute=args.execute, process=not args.no_process, stale_days=args.stale_days)
     rendered = json.dumps(report, sort_keys=True)
     if args.bounded_log:
-        from .fleet import append_bounded_fleet_log_record
+        from ..fleet import append_bounded_fleet_log_record
         append_bounded_fleet_log_record(args.bounded_log, rendered)
     elif args.json:
         print(rendered)
@@ -243,7 +243,7 @@ def load_protected_lane_tripwire_module():
     import importlib.util
     from pathlib import Path
 
-    repository_root = Path(__file__).resolve().parents[2]
+    repository_root = Path(__file__).resolve().parents[3]
     tripwire_path = repository_root.joinpath(*_LANE_LEAK_TRIPWIRE_PATH_PARTS)
     module_spec = importlib.util.spec_from_file_location(_LANE_LEAK_TRIPWIRE_MODULE_NAME, tripwire_path)
     if module_spec is None or module_spec.loader is None:
@@ -279,7 +279,7 @@ def check_protected_lane_leaks(*, protect_executor: str | None = None,
     import contextlib
     import io
     from types import SimpleNamespace
-    from . import config, lane_catalog
+    from .. import config, lane_catalog
     arguments = SimpleNamespace(protect_executor=protect_executor, protect_provider=protect_provider,
                                 hours=hours, min_other_calls=min_other_calls, ledger_path=ledger_path,
                                 bounded_log=bounded_log)
@@ -312,7 +312,7 @@ def check_protected_lane_leaks(*, protect_executor: str | None = None,
             exit_codes.append(tripwire_module.main(tripwire_arguments))
     rendered = rendered_stream.getvalue()
     if arguments.bounded_log:
-        from .fleet import append_bounded_fleet_log_record
+        from ..fleet import append_bounded_fleet_log_record
         append_bounded_fleet_log_record(arguments.bounded_log, rendered)
     else:
         print(rendered, end="")
@@ -402,19 +402,19 @@ def _dispatch(argv=None):
     # Verify-only distribution must reach attestation before gate hydration: even
     # gate installation registers this process in the persistent fleet database.
     if cmd == "distribute":
-        from .distribution import distribute_command, parse_distribution_cli_arguments
+        from ..distribution import distribute_command, parse_distribution_cli_arguments
         if parse_distribution_cli_arguments(rest).check:
             return distribute_command(rest)
-    from . import _load_public_api_and_install_gate
+    from .. import _load_public_api_and_install_gate
     _load_public_api_and_install_gate()
     # ensure the gate is installed for this process so the advisor's OWN LLM calls (optimize/experiment/
     # reconstruct/mine/review/promote/cascade/brief --llm) are caged by caps.meta even when run via the CLI
     # outside a gated venv. Installation failures must propagate before dispatch.
-    from . import gate
+    from .. import gate
     gate.install()
     if cmd in ("status", "doctor"):                   # first-run nudge when nothing's configured yet
         try:
-            from . import config
+            from .. import config
             if not config.CONFIG_JSON.exists() and not config.saas_path().exists():
                 print("ℹ not configured yet — run `spendguard init --all` for one-command setup (caps + $0 lanes + "
                       "gate/MCP/receipt/rule/skills); plain `spendguard init` is config-only. Works standalone.\n")
@@ -432,7 +432,7 @@ def _dispatch(argv=None):
 
 
 def cli_core_status(rest, cmd, argv):
-        from . import gate
+        from .. import gate
         return gate._cli(cmd, live=registered_cli_option_token('doctor+status/--live') in rest)   # doctor --live forces the full provider pull
 
 
@@ -451,7 +451,7 @@ def cli_core_reconcile(rest, cmd, argv):
         else:
             sub, prov_args = "openai", rest
         if sub == "all":                                  # unified view: every spend source through the one loop
-            from . import reconcile
+            from .. import reconcile
             _since = None                                 # honor --since here too: it was parsed into prov_args but
             if registered_cli_option_token('reconcile/--since') in prov_args:                    # never passed on, so `reconcile all --since DATE` silently
                 _i = prov_args.index(registered_cli_option_token('reconcile/--since'))           # reported the DEFAULT window instead of the requested one
@@ -459,9 +459,9 @@ def cli_core_reconcile(rest, cmd, argv):
             reconcile.report(since=_since)
             return 0
         if sub == "anthropic":
-            from . import reconcile_anthropic as r
+            from .. import reconcile_anthropic as r
         else:
-            from . import reconcile_openai as r
+            from .. import reconcile_openai as r
         sys.argv = ["reconcile"] + prov_args
         try:
             return r.main()
@@ -472,8 +472,8 @@ def cli_core_reconcile(rest, cmd, argv):
 
 def cli_core_deploy(rest, cmd, argv):
         import pathlib as _pl
-        from . import config as _config
-        from . import release as _rel
+        from .. import config as _config
+        from .. import release as _rel
         r = list(rest)
         if "--help" in r or "-h" in r:
             # Help must NEVER acquire the deploy lock or run the gate. Before this, `deploy --help` fell through the
@@ -506,7 +506,7 @@ def cli_core_deploy(rest, cmd, argv):
                       "at a time (concurrent suites starve each other's CPU and flake). Wait for it to finish, then "
                       "re-run `spendguard deploy`.", file=sys.stderr)
                 return _deploy_failed_verdict("another deploy already holds the deploy lock", exit_code=2)
-            repo_root = _pl.Path(__file__).resolve().parents[2]
+            repo_root = _pl.Path(__file__).resolve().parents[3]
             install_aligned, install_failure = _deploy_align_active_editable_install(repo_root)
             if not install_aligned:
                 return _deploy_failed_verdict(install_failure)
@@ -526,7 +526,7 @@ def cli_core_deploy(rest, cmd, argv):
         print(f"deploy: 🟢 promoted {rec['short']} ({rec['describe']}) → green pointer  [{rec['gate']}]")
         print("        already-running MCP servers serve it on their next request (they hand off between requests).")
         if registered_cli_option_token('deploy/--skip-consumer-verify') not in r:
-            from .consumer_audit import audit_consumer_workspaces, render_consumer_audit_table
+            from ..consumer_audit import audit_consumer_workspaces, render_consumer_audit_table
             _consumer_result = audit_consumer_workspaces(
                 rec["sha"], auto_arm=registered_cli_option_token('deploy/--no-auto-arm') not in r, dry_run=registered_cli_option_token('deploy/--dry-run') in r,
             )
@@ -535,7 +535,7 @@ def cli_core_deploy(rest, cmd, argv):
                 print(f"deploy: promoted; armed {_consumer_result['armed']}; "
                       f"{_consumer_result['remaining_gaps']} consumers STILL not on latest/gated", file=sys.stderr)
                 return 1
-        from . import fleet as _fleet
+        from .. import fleet as _fleet
         try:
             for _job in _fleet.install_periodic_launchd_fleet_jobs():
                 _state = "installed" if _job["kickstart_rc"] == 0 else "install/kickstart warning"
@@ -572,7 +572,7 @@ def cli_core_deploy(rest, cmd, argv):
         _host_escape_count = len(_host_install_audit["escapes"])
         _host_install_failures = []
         if _refresh_deployments:
-            from .setup import install_hook as _install_host_gate
+            from ..setup import install_hook as _install_host_gate
             for _escape in _host_install_audit["escapes"]:
                 _interpreter = _escape["python_executable"]
                 try:
@@ -604,7 +604,7 @@ def cli_core_deploy(rest, cmd, argv):
             return _deploy_failed_verdict(
                 "one or more host installations remain escaped or registered deployments remain stale or unreachable"
             )
-        from .distribution import render_distribution_table
+        from ..distribution import render_distribution_table
         _distribution = _rel.converge_deployed_release(dry_run=registered_cli_option_token('deploy/--dry-run') in r)
         print(render_distribution_table(_distribution))
         if _distribution["exit_code"]:
@@ -615,7 +615,7 @@ def cli_core_deploy(rest, cmd, argv):
 
 def cli_core_fleet(rest, cmd, argv):
         import json as _json
-        from . import fleet as _fleet
+        from .. import fleet as _fleet
         if rest and rest[0] == "deregister":
             if len(rest) != 2:
                 print("usage: spendguard fleet deregister <python_executable>", file=sys.stderr)
@@ -623,7 +623,7 @@ def cli_core_fleet(rest, cmd, argv):
             print(_json.dumps(_fleet.deregister_interpreter(rest[1]), indent=2))
             return 0
         if rest and rest[0] == "consumers":
-            from . import release as _release
+            from .. import release as _release
 
             consumers = _fleet.running_consumers(prune=False)
             green_sha = (_release.green_pointer() or {}).get("sha") or "—"
@@ -682,7 +682,7 @@ def cli_core_fleet(rest, cmd, argv):
 
 def cli_core_release(rest, cmd, argv):
         import json as _json
-        from . import release as _rel
+        from .. import release as _rel
         st = _rel.release_status()
         attestation = _rel.converge_deployed_release(check=registered_cli_option_token('release/--check') in rest, dry_run=registered_cli_option_token('release/--dry-run') in rest)
         if registered_cli_option_token('release/--json') in rest:
@@ -695,13 +695,13 @@ def cli_core_release(rest, cmd, argv):
         print(f"status : {'🔴 STALE' if st.get('stale') else ('🟢 up to date' if g else '⚪ no pointer yet')}")
         print(f"         {st.get('note')}")
         print(f"pointer: {st.get('pointer_path')}")
-        from .distribution import render_distribution_table
+        from ..distribution import render_distribution_table
         print(render_distribution_table(attestation))
         return attestation["exit_code"]
 
 
 def cli_core_migrate(rest, cmd, argv):
-        from . import migrate_charges
+        from .. import migrate_charges
         import json as _json
         stats = migrate_charges.run_cutover()
         if stats.get("already_cutover"):
@@ -718,14 +718,14 @@ def cli_core_migrate(rest, cmd, argv):
 
 
 def cli_core_providers(rest, cmd, argv):
-        from . import pricing as p
+        from .. import pricing as p
         for prov, models in sorted(p.providers().items()):
             print(f"{prov} ({len(models)}): {', '.join(sorted(models))}")
         return 0
 
 
 def cli_core_maxtokens(rest, cmd, argv):
-        from . import bulkgate
+        from .. import bulkgate
         if not rest:
             print("usage: spendguard maxtokens <sig> [current_max] [provider:model]   (sig from a TRUNCATED warning, "
                   "or bulkgate.sig(...); pass the model to get a reasoning-inclusive seed when the class is unmeasured)")
@@ -752,7 +752,7 @@ def cli_core_maxtokens(rest, cmd, argv):
 
 
 def cli_core_plan_queue(rest, cmd, argv):
-        from . import queue_planner                      # $0, NO execution — decides; the executor (drain) acts on it.
+        from .. import queue_planner                      # $0, NO execution — decides; the executor (drain) acts on it.
         if registered_cli_option_token('plan-queue/--watch') in rest:                            # CONTINUOUS ~1s look-ahead (Ash: "periodic say every second")
             import time as _tw
             _iv = next((rest[i + 1] for i, a in enumerate(rest) if a == registered_cli_option_token('plan-queue/--interval') and i + 1 < len(rest)), None)
@@ -779,7 +779,7 @@ def cli_core_plan_queue(rest, cmd, argv):
             return 0
         t = queue_planner.tick()
         try:
-            from . import batch_tracker                   # attach the async BATCH-JOB tracker state to the plan (C3b)
+            from .. import batch_tracker                   # attach the async BATCH-JOB tracker state to the plan (C3b)
             t["batch_jobs"] = batch_tracker.status()
         except Exception:
             t["batch_jobs"] = {}
@@ -812,7 +812,7 @@ def cli_core_plan_queue(rest, cmd, argv):
 
 
 def cli_core_dispatch(rest, cmd, argv):
-        from . import dispatch, lane_queue               # (same dispatch.admission_state() the MCP tool returns)
+        from .. import dispatch, lane_queue               # (same dispatch.admission_state() the MCP tool returns)
         if registered_cli_option_token('dispatch/--id') in rest:
             import argparse as _argparse
             import json as _json
@@ -876,7 +876,7 @@ def cli_core_install_mcp(rest, cmd, argv):
 
 
 def cli_core_price(rest, cmd, argv):
-        from . import pricing as _pr
+        from .. import pricing as _pr
         r = list(rest)
         if not r or r[0].startswith("-"):
             print("usage: spendguard price <model> --in <$/1M> --out <$/1M> --source '<url or invoice>' "
@@ -903,7 +903,7 @@ def cli_core_price(rest, cmd, argv):
 
 
 def cli_core_reprice(rest, cmd, argv):
-        from . import budget as _bud, config as _cfg
+        from .. import budget as _bud, config as _cfg
         r = list(rest)
 
         from .cli_arguments import cli_option_value_after
@@ -913,7 +913,7 @@ def cli_core_reprice(rest, cmd, argv):
             import time as _t
             _db = _cfg.db_path()
             _bak = f"{_db}.bak_reprice_{int(_t.time())}"
-            from .disk_guard import require_disk_space
+            from ..disk_guard import require_disk_space
             require_disk_space(_bak)
             _src = _sq.connect(_db)
             _dst = _sq.connect(_bak)
@@ -936,7 +936,7 @@ def cli_core_reprice(rest, cmd, argv):
 
 
 def cli_core_quarantine(rest, cmd, argv):
-        from . import budget, pricing, config as _cfg
+        from .. import budget, pricing, config as _cfg
         rest_l = list(rest)
         _si = rest_l.index(registered_cli_option_token('quarantine/--since')) if registered_cli_option_token('quarantine/--since') in rest_l else -1   # `--since` as the LAST arg (no value) indexed
         since = rest_l[_si + 1] if 0 <= _si < len(rest_l) - 1 else _cfg.month_start_utc()   # past the end → IndexError
@@ -986,7 +986,7 @@ def cli_core_quarantine(rest, cmd, argv):
 
 
 def cli_core_codex_gc(rest, cmd, argv):
-        from . import codex_exec
+        from .. import codex_exec
         import argparse as _agc
         _p = _agc.ArgumentParser(prog="spendguard codex-gc")
         add_registered_cli_argument(_p, 'codex-gc/cli._dispatch/_p/--max-age-days', type=float)
@@ -1011,7 +1011,7 @@ def cli_core_codex_gc(rest, cmd, argv):
 
 
 def cli_core_embed_gc(rest, cmd, argv):
-        from . import adapters as _aegc
+        from .. import adapters as _aegc
         import argparse as _aeg
         _p = _aeg.ArgumentParser(prog="spendguard embed-gc")
         add_registered_cli_argument(_p, 'embed-gc/cli._dispatch/_p/--max-age-days', type=float)
@@ -1039,7 +1039,7 @@ def cli_core_embed_gc(rest, cmd, argv):
 
 
 def cli_core_cross_check(rest, cmd, argv):
-        from . import pricing as p
+        from .. import pricing as p
         try:
             rows, matched, total = p.cross_check_openrouter()
         except Exception as e:
@@ -1056,7 +1056,7 @@ def cli_core_cross_check(rest, cmd, argv):
 
 
 def cli_core_savings(rest, cmd, argv):
-        from . import guard as _g
+        from .. import guard as _g
         s, ds, shed = _g.saved_since(), _g.decisions_summary(), _g.shed_summary()
         if registered_cli_option_token('savings/--json') in rest:
             import json as _j
@@ -1089,7 +1089,7 @@ def cli_core_savings(rest, cmd, argv):
 
 def cli_core_register_critical(rest, cmd, argv):
         import argparse
-        from . import lane_balance
+        from .. import lane_balance
         ap = argparse.ArgumentParser(prog="spendguard register-critical")
         add_registered_cli_argument(ap, 'register-critical/cli._dispatch/ap/patterns')
         add_registered_cli_argument(ap, 'register-critical/cli._dispatch/ap/--source')
@@ -1111,7 +1111,7 @@ def cli_core_register_critical(rest, cmd, argv):
 
 
 def cli_core_keys(rest, cmd, argv):
-        from . import budget, config as _c
+        from .. import budget, config as _c
         since = None
         for i, a in enumerate(rest):
             if a == registered_cli_option_token('keys/--since') and i + 1 < len(rest):
@@ -1132,7 +1132,7 @@ def cli_core_keys(rest, cmd, argv):
 
 
 def cli_core_check_prices(rest, cmd, argv):
-        from . import pricing as p
+        from .. import pricing as p
         v, days, stale = p.freshness()
         flag = f"  ⚠️ STALE (>{p.STALE_AFTER_DAYS}d) — re-verify against the source below" if stale else "  (fresh)"
         print(f"prices verified {v} ({days} days ago){flag}")
@@ -1140,9 +1140,9 @@ def cli_core_check_prices(rest, cmd, argv):
         print("  config : spendguard price <model> --in <rate> --out <rate> --source <URL> --verified YYYY-MM-DD")
         for prov, models in sorted(p.providers().items()):
             print(f"  {prov}: {len(models)} models")
-        from .ledger_read import LedgerReadError
+        from ..ledger_read import LedgerReadError
         try:                                              # capability coverage/completeness pointer (full detail: `metadata`)
-            from . import metadata_audit as _ma
+            from .. import metadata_audit as _ma
             _cap = _ma._capability_health()
             if _cap.get("catalog_n"):
                 print(f"  capabilities: {_cap['covered']}/{_cap['catalog_n']} models have LiteLLM data · "
@@ -1156,7 +1156,7 @@ def cli_core_check_prices(rest, cmd, argv):
 
 
 def cli_core_version(rest, cmd, argv):
-        from . import __version__, release as _rel
+        from .. import __version__, release as _rel
         _s = _rel.served_sha()
         _tag = (f" ({_s['describe']})" + ("  [dirty]" if _s.get("dirty") else "")) if _s else ""
         print(f"llm-spendguard {__version__}{_tag}")

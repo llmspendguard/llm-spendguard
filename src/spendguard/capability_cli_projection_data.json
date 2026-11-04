@@ -965,7 +965,7 @@
         "expression": "LEDGER_READ_OPERATIONS"
       }
     },
-    "evidence": "src/spendguard/cli.py:190"
+    "evidence": "src/spendguard/interface/cli.py:190"
   },
   {
     "declaration_id": "ledger-read/cli.ledger_read_cli/parser/--table",
@@ -987,7 +987,7 @@
         "literal": "spend_events"
       }
     },
-    "evidence": "src/spendguard/cli.py:191"
+    "evidence": "src/spendguard/interface/cli.py:191"
   },
   {
     "declaration_id": "ledger-read/cli.ledger_read_cli/parser/--event-id",
@@ -998,7 +998,7 @@
       "--event-id"
     ],
     "attributes": {},
-    "evidence": "src/spendguard/cli.py:192"
+    "evidence": "src/spendguard/interface/cli.py:192"
   },
   {
     "declaration_id": "ledger-read/cli.ledger_read_cli/parser/--since",
@@ -1009,7 +1009,7 @@
       "--since"
     ],
     "attributes": {},
-    "evidence": "src/spendguard/cli.py:193"
+    "evidence": "src/spendguard/interface/cli.py:193"
   },
   {
     "declaration_id": "ledger-read/cli.ledger_read_cli/parser/--until",
@@ -1020,7 +1020,7 @@
       "--until"
     ],
     "attributes": {},
-    "evidence": "src/spendguard/cli.py:194"
+    "evidence": "src/spendguard/interface/cli.py:194"
   },
   {
     "declaration_id": "ledger-read/cli.ledger_read_cli/parser/--path",
@@ -1031,7 +1031,7 @@
       "--path"
     ],
     "attributes": {},
-    "evidence": "src/spendguard/cli.py:195"
+    "evidence": "src/spendguard/interface/cli.py:195"
   },
   {
     "declaration_id": "ledger-read/cli.ledger_read_cli/parser/--group-by",
@@ -1046,7 +1046,7 @@
         "literal": "+"
       }
     },
-    "evidence": "src/spendguard/cli.py:196"
+    "evidence": "src/spendguard/interface/cli.py:196"
   },
   {
     "declaration_id": "ledger-read/cli.ledger_read_cli/parser/--conv",
@@ -1057,7 +1057,7 @@
       "--conv"
     ],
     "attributes": {},
-    "evidence": "src/spendguard/cli.py:197"
+    "evidence": "src/spendguard/interface/cli.py:197"
   },
   {
     "declaration_id": "ledger-read/cli.ledger_read_cli/parser/--deadline-s",
@@ -1072,7 +1072,7 @@
         "expression": "float"
       }
     },
-    "evidence": "src/spendguard/cli.py:198"
+    "evidence": "src/spendguard/interface/cli.py:198"
   },
   {
     "declaration_id": "ledger-read/cli.ledger_read_cli/parser/--json",
@@ -1090,7 +1090,7 @@
         "literal": "JSON output (also the default)"
       }
     },
-    "evidence": "src/spendguard/cli.py:199"
+    "evidence": "src/spendguard/interface/cli.py:199"
   },
   {
     "declaration_id": "reap-orphans/cli.reap_orphaned_warm_servers_cli/parser/--execute",
@@ -1108,7 +1108,7 @@
         "literal": "reap provably-dead marked servers (default: dry-run)"
       }
     },
-    "evidence": "src/spendguard/cli.py:230"
+    "evidence": "src/spendguard/interface/cli.py:230"
   },
   {
     "declaration_id": "reap-orphans/cli.reap_orphaned_warm_servers_cli/parser/--lane",
@@ -1126,7 +1126,7 @@
         "literal": "restrict the scan to one warm-lane label"
       }
     },
-    "evidence": "src/spendguard/cli.py:231"
+    "evidence": "src/spendguard/interface/cli.py:231"
   },
   {
     "declaration_id": "reap-orphans/cli.reap_orphaned_warm_servers_cli/parser/--json",
@@ -1144,7 +1144,7 @@
         "literal": "emit one machine-readable JSON object"
       }
     },
-    "evidence": "src/spendguard/cli.py:232"
+    "evidence": "src/spendguard/interface/cli.py:232"
   },
   {
     "declaration_id": "reap-orphans/cli.reap_orphaned_warm_servers_cli/parser/--bounded-log",
@@ -1162,7 +1162,7 @@
         "expression": "argparse.SUPPRESS"
       }
     },
-    "evidence": "src/spendguard/cli.py:233"
+    "evidence": "src/spendguard/interface/cli.py:233"
   },
   {
     "declaration_id": "queue-manage/cli.manage_lane_queue_cli/parser/--execute",
@@ -1180,7 +1180,7 @@
         "literal": "apply cleanup and bounded processing (default: dry-run)"
       }
     },
-    "evidence": "src/spendguard/cli.py:294"
+    "evidence": "src/spendguard/interface/cli.py:294"
   },
   {
     "declaration_id": "queue-manage/cli.manage_lane_queue_cli/parser/--json",
@@ -1198,7 +1198,7 @@
         "literal": "emit one machine-readable JSON object"
       }
     },
-    "evidence": "src/spendguard/cli.py:295"
+    "evidence": "src/spendguard/interface/cli.py:295"
   },
   {
     "declaration_id": "queue-manage/cli.manage_lane_queue_cli/parser/--no-process",
@@ -1216,7 +1216,7 @@
         "literal": "clean only; never start the bounded drain"
       }
     },
-    "evidence": "src/spendguard/cli.py:296"
+    "evidence": "src/spendguard/interface/cli.py:296"
   },
   {
     "declaration_id": "queue-manage/cli.manage_lane_queue_cli/parser/--stale-days",
@@ -1237,7 +1237,7 @@
         "literal": "override advisor.queue_stale_days"
       }
     },
-    "evidence": "src/spendguard/cli.py:297"
+    "evidence": "src/spendguard/interface/cli.py:297"
   },
   {
     "declaration_id": "queue-manage/cli.manage_lane_queue_cli/parser/--bounded-log",
@@ -1255,7 +1255,7 @@
         "expression": "argparse.SUPPRESS"
       }
     },
-    "evidence": "src/spendguard/cli.py:298"
+    "evidence": "src/spendguard/interface/cli.py:298"
   },
   {
     "declaration_id": "lane-leak-check/cli.lane_leak_check_cli/parser/--protect-executor",
@@ -1266,7 +1266,7 @@
       "--protect-executor"
     ],
     "attributes": {},
-    "evidence": "src/spendguard/cli.py:353"
+    "evidence": "src/spendguard/interface/cli.py:353"
   },
   {
     "declaration_id": "lane-leak-check/cli.lane_leak_check_cli/parser/--protect-provider",
@@ -1277,7 +1277,7 @@
       "--protect-provider"
     ],
     "attributes": {},
-    "evidence": "src/spendguard/cli.py:354"
+    "evidence": "src/spendguard/interface/cli.py:354"
   },
   {
     "declaration_id": "lane-leak-check/cli.lane_leak_check_cli/parser/--hours",
@@ -1292,7 +1292,7 @@
         "expression": "float"
       }
     },
-    "evidence": "src/spendguard/cli.py:355"
+    "evidence": "src/spendguard/interface/cli.py:355"
   },
   {
     "declaration_id": "lane-leak-check/cli.lane_leak_check_cli/parser/--min-other-calls",
@@ -1307,7 +1307,7 @@
         "expression": "int"
       }
     },
-    "evidence": "src/spendguard/cli.py:356"
+    "evidence": "src/spendguard/interface/cli.py:356"
   },
   {
     "declaration_id": "lane-leak-check/cli.lane_leak_check_cli/parser/--ledger-path",
@@ -1318,7 +1318,7 @@
       "--ledger-path"
     ],
     "attributes": {},
-    "evidence": "src/spendguard/cli.py:357"
+    "evidence": "src/spendguard/interface/cli.py:357"
   },
   {
     "declaration_id": "lane-leak-check/cli.lane_leak_check_cli/parser/--bounded-log",
@@ -1336,7 +1336,7 @@
         "expression": "argparse.SUPPRESS"
       }
     },
-    "evidence": "src/spendguard/cli.py:358"
+    "evidence": "src/spendguard/interface/cli.py:358"
   },
   {
     "declaration_id": "health/cli.cli_health_command/parser/--run",
@@ -1357,7 +1357,7 @@
         "literal": "probe endpoints (MCP default); --no-run = estimate only, no probes"
       }
     },
-    "evidence": "src/spendguard/cli.py:410"
+    "evidence": "src/spendguard/interface/cli.py:410"
   },
   {
     "declaration_id": "health/cli.cli_health_command/parser/--timeout_s",
@@ -1378,7 +1378,7 @@
         "literal": "per-endpoint fail-fast bound in seconds (same default as MCP)"
       }
     },
-    "evidence": "src/spendguard/cli.py:413"
+    "evidence": "src/spendguard/interface/cli.py:413"
   },
   {
     "declaration_id": "health/cli.cli_health_command/parser/--json",
@@ -1396,7 +1396,7 @@
         "literal": "emit the raw MCP health result"
       }
     },
-    "evidence": "src/spendguard/cli.py:415"
+    "evidence": "src/spendguard/interface/cli.py:415"
   },
   {
     "declaration_id": "codex-gc/cli._dispatch/_p/--max-age-days",
@@ -1417,7 +1417,7 @@
         "literal": "prune shell snapshots older than this (default 7)"
       }
     },
-    "evidence": "src/spendguard/cli.py:1282"
+    "evidence": "src/spendguard/interface/cli.py:1282"
   },
   {
     "declaration_id": "codex-gc/cli._dispatch/_p/--apply",
@@ -1435,7 +1435,7 @@
         "literal": "actually delete (default: dry-run report)"
       }
     },
-    "evidence": "src/spendguard/cli.py:1283"
+    "evidence": "src/spendguard/interface/cli.py:1283"
   },
   {
     "declaration_id": "embed-gc/cli._dispatch/_p/--max-age-days",
@@ -1456,7 +1456,7 @@
         "literal": "prune checkpoints older than this (default: safety.embed_checkpoint_max_age_days, 7)"
       }
     },
-    "evidence": "src/spendguard/cli.py:1305"
+    "evidence": "src/spendguard/interface/cli.py:1305"
   },
   {
     "declaration_id": "embed-gc/cli._dispatch/_p/--max-total-gb",
@@ -1477,7 +1477,7 @@
         "literal": "disk cap for checkpoints that survive the age bound; oldest-first eviction over it (default: safety.embed_checkpoint_max_gb, 5)"
       }
     },
-    "evidence": "src/spendguard/cli.py:1307"
+    "evidence": "src/spendguard/interface/cli.py:1307"
   },
   {
     "declaration_id": "embed-gc/cli._dispatch/_p/--apply",
@@ -1495,7 +1495,7 @@
         "literal": "actually delete (default: dry-run report)"
       }
     },
-    "evidence": "src/spendguard/cli.py:1310"
+    "evidence": "src/spendguard/interface/cli.py:1310"
   },
   {
     "declaration_id": "register-critical/cli._dispatch/ap/patterns",
@@ -1513,7 +1513,7 @@
         "literal": "intent patterns to pin (no-substitution), e.g. warden:card_faithful*"
       }
     },
-    "evidence": "src/spendguard/cli.py:1454"
+    "evidence": "src/spendguard/interface/cli.py:1454"
   },
   {
     "declaration_id": "register-critical/cli._dispatch/ap/--source",
@@ -1528,7 +1528,7 @@
         "literal": "who is registering these (e.g. warden) — recorded so doctor attributes them"
       }
     },
-    "evidence": "src/spendguard/cli.py:1455"
+    "evidence": "src/spendguard/interface/cli.py:1455"
   },
   {
     "declaration_id": "register-critical/cli._dispatch/ap/--list",
@@ -1546,7 +1546,7 @@
         "literal": "show the current pins + who registered each"
       }
     },
-    "evidence": "src/spendguard/cli.py:1456"
+    "evidence": "src/spendguard/interface/cli.py:1456"
   },
   {
     "declaration_id": "dispatch/cli._dispatch/parser/--id",
@@ -1564,7 +1564,7 @@
         "expression": "int"
       }
     },
-    "evidence": "src/spendguard/cli.py:1018"
+    "evidence": "src/spendguard/interface/cli.py:1018"
   },
   {
     "declaration_id": "dispatch/cli._dispatch/parser/--json",
@@ -1579,7 +1579,7 @@
         "literal": "store_true"
       }
     },
-    "evidence": "src/spendguard/cli.py:1019"
+    "evidence": "src/spendguard/interface/cli.py:1019"
   },
   {
     "declaration_id": "close/close.main/ap/--month",
@@ -2125,7 +2125,7 @@
         "literal": "the prompt text; omit to read from stdin"
       }
     },
-    "evidence": "src/spendguard/crossllm.py:421"
+    "evidence": "src/spendguard/interface/crossllm.py:421"
   },
   {
     "declaration_id": "ask/crossllm.cmd/ap/--vendors",
@@ -2140,7 +2140,7 @@
         "literal": "comma-separated vendor:model (e.g. anthropic:claude-opus-4-8,openai:gpt-5.5,moonshot:kimi-k3,zai:glm-5.3); omit to use config ask.default_vendors"
       }
     },
-    "evidence": "src/spendguard/crossllm.py:422"
+    "evidence": "src/spendguard/interface/crossllm.py:422"
   },
   {
     "declaration_id": "ask/crossllm.cmd/ap/--n",
@@ -2161,7 +2161,7 @@
         "literal": "use only this many of the vendors (the first N) — you pick the panel size"
       }
     },
-    "evidence": "src/spendguard/crossllm.py:425"
+    "evidence": "src/spendguard/interface/crossllm.py:425"
   },
   {
     "declaration_id": "ask/crossllm.cmd/ap/--schema",
@@ -2176,7 +2176,7 @@
         "literal": "path to a JSON Schema the answer must satisfy"
       }
     },
-    "evidence": "src/spendguard/crossllm.py:426"
+    "evidence": "src/spendguard/interface/crossllm.py:426"
   },
   {
     "declaration_id": "ask/crossllm.cmd/ap/--system",
@@ -2191,7 +2191,7 @@
         "literal": "system prompt"
       }
     },
-    "evidence": "src/spendguard/crossllm.py:427"
+    "evidence": "src/spendguard/interface/crossllm.py:427"
   },
   {
     "declaration_id": "ask/crossllm.cmd/ap/--purpose",
@@ -2209,7 +2209,7 @@
         "literal": "intent tag for attribution in the ledger"
       }
     },
-    "evidence": "src/spendguard/crossllm.py:428"
+    "evidence": "src/spendguard/interface/crossllm.py:428"
   },
   {
     "declaration_id": "ask/crossllm.cmd/ap/--deadline",
@@ -2230,7 +2230,7 @@
         "literal": "per-vendor deadline seconds"
       }
     },
-    "evidence": "src/spendguard/crossllm.py:429"
+    "evidence": "src/spendguard/interface/crossllm.py:429"
   },
   {
     "declaration_id": "ask/crossllm.cmd/ap/--budget",
@@ -2251,7 +2251,7 @@
         "literal": "refuse if the estimated metered $ exceeds this"
       }
     },
-    "evidence": "src/spendguard/crossllm.py:430"
+    "evidence": "src/spendguard/interface/crossllm.py:430"
   },
   {
     "declaration_id": "ask/crossllm.cmd/ap/--refuse-billed",
@@ -2269,7 +2269,7 @@
         "literal": "explicit $0-or-fail mode; default ensures success and may use a loud metered fallback"
       }
     },
-    "evidence": "src/spendguard/crossllm.py:431"
+    "evidence": "src/spendguard/interface/crossllm.py:431"
   },
   {
     "declaration_id": "ask/crossllm.cmd/ap/--mode",
@@ -2290,7 +2290,7 @@
         "literal": "all"
       }
     },
-    "evidence": "src/spendguard/crossllm.py:433"
+    "evidence": "src/spendguard/interface/crossllm.py:433"
   },
   {
     "declaration_id": "ask/crossllm.cmd/ap/--require",
@@ -2311,7 +2311,7 @@
         "literal": "for --mode first: how many must answer"
       }
     },
-    "evidence": "src/spendguard/crossllm.py:434"
+    "evidence": "src/spendguard/interface/crossllm.py:434"
   },
   {
     "declaration_id": "ask/crossllm.cmd/ap/--json",
@@ -2329,7 +2329,7 @@
         "literal": "emit the honest machine-readable result"
       }
     },
-    "evidence": "src/spendguard/crossllm.py:435"
+    "evidence": "src/spendguard/interface/crossllm.py:435"
   },
   {
     "declaration_id": "delegate/delegate_router.delegate_cli/parser/task",
@@ -3314,7 +3314,7 @@
         "literal": "serve over HTTP (stdlib, POST /mcp) as one WARM daemon every session CONNECTS to via urllib, instead of spawning a stdio `spendguard mcp` per session."
       }
     },
-    "evidence": "src/spendguard/mcp_server.py:1359"
+    "evidence": "src/spendguard/interface/mcp_server.py:1359"
   },
   {
     "declaration_id": "mcp/mcp_server.cmd/ap/--host",
@@ -3329,7 +3329,7 @@
         "expression": "_os.environ.get('SPENDGUARD_MCP_HOST', '127.0.0.1')"
       }
     },
-    "evidence": "src/spendguard/mcp_server.py:1363"
+    "evidence": "src/spendguard/interface/mcp_server.py:1363"
   },
   {
     "declaration_id": "mcp/mcp_server.cmd/ap/--port",
@@ -3347,7 +3347,7 @@
         "expression": "int(_os.environ.get('SPENDGUARD_MCP_PORT', '4913'))"
       }
     },
-    "evidence": "src/spendguard/mcp_server.py:1364"
+    "evidence": "src/spendguard/interface/mcp_server.py:1364"
   },
   {
     "declaration_id": "measurement/measurement.cmd/p_i/reading_id",
@@ -4649,7 +4649,7 @@
         "literal": "bind host (default 127.0.0.1; a non-loopback host needs a token)"
       }
     },
-    "evidence": "src/spendguard/serve.py:161"
+    "evidence": "src/spendguard/interface/serve.py:161"
   },
   {
     "declaration_id": "serve/serve.cmd/ap/--port",
@@ -4667,7 +4667,7 @@
         "expression": "DEFAULT_PORT"
       }
     },
-    "evidence": "src/spendguard/serve.py:162"
+    "evidence": "src/spendguard/interface/serve.py:162"
   },
   {
     "declaration_id": "install-rule/setup.cmd_install_rule/g/--global",

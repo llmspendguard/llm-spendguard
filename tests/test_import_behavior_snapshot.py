@@ -13,7 +13,6 @@ from spendguard.import_behavior_snapshot import (
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
-ORDER_MUTATION_ROTATION = 1
 UNGATED_MUTATION_PROVIDER_METHOD = "openai.resources.files.Files.create"
 UNGATED_MUTATION_STATE = "ungated"
 NON_ALLOWLISTED_EXECUTED_MODULE = "spendguard.unreviewed_migration_scaffold"
@@ -42,7 +41,7 @@ def test_order_change_and_ungated_sdk_mutations_are_independently_rejected():
 
     reordered = copy.deepcopy(expected)
     modules = reordered["executed_modules"]
-    reordered["executed_modules"] = modules[ORDER_MUTATION_ROTATION:] + modules[:ORDER_MUTATION_ROTATION]
+    reordered["executed_modules"] = list(reversed(modules))
     allowlist = golden["migration_scaffold_executed_module_allowlist"]
     assert not import_behavior_entries_match(expected, reordered, golden["name_normalization"], allowlist)
     assert import_behavior_sdk_invariant_holds(reordered)

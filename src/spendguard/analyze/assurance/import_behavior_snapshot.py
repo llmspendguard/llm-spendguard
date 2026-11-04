@@ -144,6 +144,9 @@ class _ImportBehaviorLoader:
         _executed_modules.append(self._fullname)
         self._loader.exec_module(module)
 
+    def __getattr__(self, name):
+        return getattr(self._loader, name)
+
 class _ImportBehaviorFinder:
     def find_spec(self, fullname, path=None, target=None):
         if not fullname.startswith("{IMPORT_BEHAVIOR_MODULE_PREFIX}"):

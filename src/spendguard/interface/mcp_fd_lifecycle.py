@@ -8,7 +8,7 @@ from pathlib import Path
 
 import psutil
 
-from . import config
+from .. import config
 
 MCP_FD_SOFT_LIMIT_DEFAULT = 4096
 MCP_FD_HIGH_WATER_DEFAULT = 0.75
@@ -52,7 +52,7 @@ def service_mcp_spend_deadletters():
                 _mcp_deadletter_worker is not None and _mcp_deadletter_worker.is_alive()):
             return
         _mcp_next_deadletter_drain_at = now + interval
-        from .budget import spend_event_retry_paths
+        from ..budget import spend_event_retry_paths
         paths = tuple(path for path in spend_event_retry_paths() if path.exists() and path.stat().st_size)
         if not paths:
             return
@@ -68,8 +68,8 @@ def service_mcp_spend_deadletters():
 
 def _run_mcp_deadletter_drain(paths, deadline):
     """Bound writer admission; leave durable evidence for the next scheduled retry."""
-    from .ledger_deadletter import drain_spend_deadletter_events
-    from .ledger_read import ledger_request_scope
+    from ..ledger_deadletter import drain_spend_deadletter_events
+    from ..ledger_read import ledger_request_scope
     try:
         with ledger_request_scope(deadline_s=deadline):
             report = drain_spend_deadletter_events(paths)

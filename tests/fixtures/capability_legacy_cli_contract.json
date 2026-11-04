@@ -1,6 +1,6 @@
 {
   "source_revision": "f868f53574abf1ca5226423c2fabea75de004e86",
-  "source_path": "src/spendguard/cli.py",
+  "source_path": "src/spendguard/interface/cli.py",
   "help_controls": [
     "--help",
     "-h",

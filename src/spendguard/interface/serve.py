@@ -60,7 +60,7 @@ class _AskHTTPHandler(BaseHTTPRequestHandler):
             import spendguard
             return self._send_json(200, {"ok": True, "version": spendguard.__version__})
         if self.path == "/metadata":
-            from . import metadata_audit
+            from .. import metadata_audit
             return self._send_json(200, metadata_audit.backbone_health())
         return self._send_json(404, {"error": f"no route {self.path} — GET /health · /metadata · POST /ask · /embed"})
 
@@ -101,8 +101,8 @@ class _AskHTTPHandler(BaseHTTPRequestHandler):
         if not isinstance(texts, list) or not texts or not all(isinstance(t, str) for t in texts):
             return self._send_json(400, {"error": "'texts' must be a non-empty list of strings"})
         import spendguard
-        from . import adapters
-        from . import gate as _g
+        from .. import adapters
+        from .. import gate as _g
         try:
             r = adapters.embed(texts, model=req.get("model"), dimensions=req.get("dimensions"),
                                max_batch=req.get("max_batch"))
@@ -130,14 +130,14 @@ def make_server(host=DEFAULT_HOST, port=DEFAULT_PORT, token=None):
 def serve(host=DEFAULT_HOST, port=DEFAULT_PORT, token=None):
     """Start the localhost cross-LLM ask server (blocking; Ctrl-C to stop)."""
     import spendguard
-    from . import fleet
-    from .launchd_labels import ASK_SERVE_LAUNCHD_LABEL
+    from .. import fleet
+    from ..launchd_labels import ASK_SERVE_LAUNCHD_LABEL
     spendguard.require()         # the server SPENDS — fail closed if this interpreter is not gated
     fleet.register_consumer(role=fleet.CONSUMER_ROLE_DAEMON,
                             supervision_mode=fleet.SUPERVISION_LAUNCHD,
                             supervision_ref=ASK_SERVE_LAUNCHD_LABEL)
     httpd = make_server(host, port, token)
-    from . import release
+    from .. import release
     original_service_actions = httpd.service_actions
 
     def serve_respawn_service_actions():
