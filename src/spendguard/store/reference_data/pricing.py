@@ -27,6 +27,19 @@ from typing import Optional
 # Authored multipliers and provenance live with all other price data in the catalog.
 from . import model_catalog as _price_catalog
 
+
+def _catalog_home_from_config():
+    """Resolve the spendguard HOME dir for model_catalog's path helpers. The config import is DEFERRED to call
+    time: model_catalog stays a config-free leaf (it no longer imports config — architectural acyclicity), and
+    pricing already depends on config, so this wiring adds no new import coupling. It runs at runtime, when
+    config is fully loaded, so there is no import-time circular hazard."""
+    from ... import config
+    return config.HOME
+
+
+_price_catalog.set_catalog_home_provider(_catalog_home_from_config)
+
+
 _ANTHROPIC_CACHE_MODIFIERS = _price_catalog.cache_modifier_table()["anthropic"]
 CACHE_WRITE_5M_MULTIPLIER = _ANTHROPIC_CACHE_MODIFIERS["write_5m"]
 CACHE_WRITE_1H_MULTIPLIER = _ANTHROPIC_CACHE_MODIFIERS["write_1h"]

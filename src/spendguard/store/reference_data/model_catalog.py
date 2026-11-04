@@ -81,10 +81,35 @@ def latest_gemini_flash_base_id(models):
     return version_ids[max(version_ids)]
 
 
+_catalog_home_provider = None
+
+
+def set_catalog_home_provider(provider):
+    """Inject the resolver for the spendguard HOME directory — a zero-arg callable returning the home path.
+
+    model_catalog is a dependency-free leaf by design (see module docstring): it authors per-model data with NO
+    import of config/pricing. The two helpers that need the configurable HOME dir (catalog_authoring_path,
+    _litellm_breadth_cache) therefore receive it through this provider, wired once by a same-context consumer
+    (pricing sets `lambda: config.HOME` at import) instead of model_catalog importing config — which would pull
+    this leaf back into the configuration import cycle. Idempotent; last writer wins."""
+    global _catalog_home_provider
+    _catalog_home_provider = provider
+
+
+def _resolve_catalog_home():
+    """The spendguard HOME directory via the injected provider. Fail LOUD if unset — a missing wiring is a bug to
+    surface, never a silently-wrong path (spendguard fail-loud doctrine). Import spendguard (which loads pricing,
+    the wirer) before resolving catalog paths."""
+    if _catalog_home_provider is None:
+        raise RuntimeError(
+            "model_catalog catalog-home provider is not set; import spendguard (or "
+            "spendguard.store.reference_data.pricing) so the home provider is wired before resolving catalog paths.")
+    return _catalog_home_provider()
+
+
 def catalog_authoring_path():
     """The configurable local catalog layer; the packaged floor is read-only."""
-    from ... import config
-    return os.path.join(str(config.HOME), CATALOG_OVERLAY_FILENAME)
+    return os.path.join(str(_resolve_catalog_home()), CATALOG_OVERLAY_FILENAME)
 
 
 def tracked_catalog_payload(record):
@@ -485,10 +510,10 @@ def _litellm_breadth_cache():
     the documented BREADTH fallback (see module docstring) covering ~3500 models; {} when absent. Read FRESH on each
     call (deliberately NO in-process memo: a cached verdict-source could serve a STALE capability after a sync, and a
     ~2MB parse is ~5ms and only on the FALLBACK path — a curated record short-circuits before this, so the hot 54
-    never reach here). config is imported LAZILY so this leaf never load-imports config/pricing (no circular import)."""
+    never reach here). HOME is resolved through an injected provider (set_catalog_home_provider) so this leaf never imports config/pricing (no circular import)."""
+    home = _resolve_catalog_home()
     try:
-        from ... import config
-        with open(os.path.join(str(config.HOME), "litellm_prices.json")) as f:
+        with open(os.path.join(str(home), "litellm_prices.json")) as f:
             return json.load(f) or {}
     except Exception:
         return {}
