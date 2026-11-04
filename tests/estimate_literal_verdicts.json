@@ -52,11 +52,11 @@
       1000
     ]
   },
-  "src/spendguard/lane_catalog.py::audit_lane_fallback::realtime_cost(1000, 100)": {
+  "src/spendguard/store/reference_data/lane_catalog.py::audit_lane_fallback::realtime_cost(1000, 100)": {
     "verdict": "not_a_quote",
     "why": "The return value is discarded; the call only checks whether the fallback model has a valid pricing-table entry without raising an exception.",
     "model": "gpt-5.6-sol",
-    "file": "src/spendguard/lane_catalog.py",
+    "file": "src/spendguard/store/reference_data/lane_catalog.py",
     "symbol": "audit_lane_fallback",
     "literals": [
       1000,

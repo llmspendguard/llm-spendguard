@@ -8,18 +8,18 @@
       "surface_module": "spendguard.store.reference_data",
       "layer": "L0",
       "backing_modules": [
-        "pricing",
-        "catalog_price_authoring",
-        "model_catalog",
-        "catalog",
-        "lane_registry",
-        "lane_catalog",
-        "reasoning_equivalence",
-        "money_scale",
-        "sync",
-        "sync_capabilities",
-        "refresh",
-        "models"
+        "store.reference_data.pricing",
+        "store.reference_data.catalog_price_authoring",
+        "store.reference_data.model_catalog",
+        "store.reference_data.catalog",
+        "store.reference_data.lane_registry",
+        "store.reference_data.lane_catalog",
+        "store.reference_data.reasoning_equivalence",
+        "store.reference_data.money_scale",
+        "store.reference_data.sync",
+        "store.reference_data.sync_capabilities",
+        "store.reference_data.refresh",
+        "store.reference_data.models"
       ],
       "published_names": []
     },
@@ -1335,6 +1335,66 @@
     {
       "legacy_module": "spendguard.launchd_labels",
       "current_module": "spendguard.platform.launchd_labels",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.pricing",
+      "current_module": "spendguard.store.reference_data.pricing",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.catalog_price_authoring",
+      "current_module": "spendguard.store.reference_data.catalog_price_authoring",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.model_catalog",
+      "current_module": "spendguard.store.reference_data.model_catalog",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.catalog",
+      "current_module": "spendguard.store.reference_data.catalog",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.lane_registry",
+      "current_module": "spendguard.store.reference_data.lane_registry",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.lane_catalog",
+      "current_module": "spendguard.store.reference_data.lane_catalog",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.reasoning_equivalence",
+      "current_module": "spendguard.store.reference_data.reasoning_equivalence",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.money_scale",
+      "current_module": "spendguard.store.reference_data.money_scale",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.sync",
+      "current_module": "spendguard.store.reference_data.sync",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.sync_capabilities",
+      "current_module": "spendguard.store.reference_data.sync_capabilities",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.refresh",
+      "current_module": "spendguard.store.reference_data.refresh",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.models",
+      "current_module": "spendguard.store.reference_data.models",
       "moved_in_phase": 3
     }
   ],

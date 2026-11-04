@@ -33,7 +33,7 @@ from spendguard import config, pricing, models, adapters  # noqa: E402
 RETIRED = {"deepseek-v4-flash": "deepseek-flash"}
 
 DEST = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-                    "src", "spendguard", "model_catalog.json")
+                    "src", "spendguard", "store", "reference_data", "model_catalog.json")
 
 
 def _split(spec):

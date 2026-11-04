@@ -43,7 +43,7 @@ adapters.metered_fallback_id. The ONLY authored constant is the canonical reason
 the vendors' documented scale order, needed to compare "equal or greater". Bake-off learnings are stored and
 OVERLAID, so learning is maintained across re-derivations.
 """
-from . import adapters, config, lane_catalog, models
+from ... import adapters, config, lane_catalog, models
 
 # The requested STANDARD levels a caller pins with. minimal|low|medium|high is the one knob callers use; each
 # channel realizes it on its own scale (below). Not user config — the caller-facing ordinal.
@@ -93,7 +93,7 @@ def _lane_effort(lane, model, level):
     q = lane_catalog.quirk(lane)
     style = q["style"]
     if style == "param":                              # codex: its OWN scale via _codex_effort (minimal→none, rest pass)
-        from . import codex_exec
+        from ... import codex_exec
         return codex_exec._codex_effort(level), "param"
     if style == "suffix":                             # agy/Gemini SUBSCRIPTION: effort rides the id SUFFIX; quirk lists the tiers
         levels = q["levels"]                          # e.g. (low, medium, high) — there is NO 'minimal'/'none' agy spelling
@@ -188,7 +188,7 @@ def _metered_priced_served(provider, metered_id):
         priced = False                                 # downgraded to 'just unpriced'
     served = None
     try:
-        from . import vendor_call as _vc
+        from ... import vendor_call as _vc
         served = _vc.served_check(provider, metered_id)   # cache-first status; never raises
     except Exception:
         served = None                                  # packaging edge / no catalog — 'can't check', never a failure

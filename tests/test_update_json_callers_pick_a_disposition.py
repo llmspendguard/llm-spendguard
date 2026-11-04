@@ -27,6 +27,10 @@ _MOVED_CLUSTER_A_PATHS = {
     "tier_config.py": ("manage", "routing", "tier_config.py"),
     "lane_balance.py": ("manage", "routing", "lane_balance.py"),
     "setup.py": ("platform", "setup.py"),
+    "catalog.py": ("store", "reference_data", "catalog.py"),
+    "catalog_price_authoring.py": ("store", "reference_data", "catalog_price_authoring.py"),
+    "sync.py": ("store", "reference_data", "sync.py"),
+    "sync_capabilities.py": ("store", "reference_data", "sync_capabilities.py"),
 }
 
 # The files whose update_json callers were fixed in cluster A. Every update_json call in these files must carry a
@@ -59,7 +63,7 @@ def _has_true_kw(call, key):
 
 def main():
     fails, checked = [], 0
-    refresh_tree = ast.parse((_SRC / "refresh.py").read_text())
+    refresh_tree = ast.parse((_SRC / "store" / "reference_data" / "refresh.py").read_text())
     refresh_writer = next(node for node in ast.walk(refresh_tree)
                           if isinstance(node, ast.FunctionDef) and node.name == "_write")
     refresh_calls = [node for node in ast.walk(refresh_writer) if isinstance(node, ast.Call)]

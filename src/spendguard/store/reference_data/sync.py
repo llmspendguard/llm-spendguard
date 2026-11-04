@@ -7,7 +7,7 @@ breadth layer; the authored model catalog overrides verified models.
 reads that cache (no network at import). A validation gate prevents caching a bad/empty fetch.
 """
 import json, os, urllib.request, datetime
-from . import config, model_catalog
+from ... import config, model_catalog
 
 LITELLM_URL = "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json"
 CACHE = str(config.HOME / "litellm_prices.json")
@@ -212,7 +212,7 @@ def refresh_if_stale():
     day. Strictly fail-open: a failed fetch leaves the existing cache + curated model catalog in effect and reports
     the error instead of raising. On success the in-process pricing table is reloaded so THIS run (reconcile's
     batch pricing, unit/ft: lookups) already uses the fresh rates."""
-    from . import config
+    from ... import config
     try:
         days = float(os.environ.get("SPENDGUARD_PRICES_REFRESH_DAYS")
                      or config._cfg_get("pricing", "refresh_days", DEFAULT_REFRESH_DAYS))
@@ -235,7 +235,7 @@ def refresh_if_stale():
         # snapshot time must never be promoted to row freshness; runtime refresh never mutates the curated SSOT.
         return {"refreshed": True, "models": n, "notes": msgs[:3]}
     except Exception as e:
-        from . import gate as _g
+        from ... import gate as _g
         if _g.is_deliberate_stop(e):
             raise                                       # a deliberate stop (refusal/deadline) is never downgraded to a fallback
         return {"error": str(e)[:120], "note": "existing cache + curated model catalog still in effect"}

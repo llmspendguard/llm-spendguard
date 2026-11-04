@@ -10,7 +10,7 @@ import sys
 from spendguard import config, model_catalog
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-CATALOG_REL = "src/spendguard/model_catalog.json"
+CATALOG_REL = "src/spendguard/store/reference_data/model_catalog.json"
 
 
 def _git(*args):

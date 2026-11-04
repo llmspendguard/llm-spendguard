@@ -15,12 +15,12 @@ caller's model). $0 — a local dataset read (no LLM, no network of its own). Th
 config.update_json (atomic + backups), so the SSOT catalog is never truncated.
 """
 
-from .capability_cli_parsing import add_registered_cli_argument
+from ...capability_cli_parsing import add_registered_cli_argument
 import argparse
 import datetime
 import sys
 
-from . import config, model_catalog
+from ... import config, model_catalog
 
 # LiteLLM supports_* field → our short capabilities key. supports_vision is handled separately (top-level `vision`,
 # what the guard reads). `mode` (chat/embedding/…) rides along as useful profile data.
@@ -41,14 +41,14 @@ def _fetch_server_catalog():
     daily-fresh catalog — announced LOUD (never a silent swap to possibly-staler local metadata), then {} so the local
     cache still carries the run. NOT memoised (a transient outage never stales the source for the process's life); a
     deliberate spend/deadline stop propagates."""
-    from . import saas
+    from ... import saas
     ok, _reason = saas.ready()
     if not ok:
         return {}                                      # no server configured → local is the source, not a fallback
     try:
         m = saas.fetch_models()
     except Exception as e:
-        from . import gate as _g
+        from ... import gate as _g
         if _g.is_deliberate_stop(e):
             raise
         m = None

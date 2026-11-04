@@ -69,13 +69,15 @@ def test_catalog_ssot_distribution_wheel_excludes_stale_removed_leaf(tmp_path, m
     checkout = tmp_path / "checkout"
     source_directory = distribution.DISTRIBUTION_SOURCE_DIRECTORY_NAME
     package_name = model_catalog.__package__
+    package_path = Path(*package_name.split("."))
+    package_archive_path = package_path.as_posix()
     shutil.copytree(CATALOG_GUARD_ROOT / source_directory, checkout / source_directory)
     for filename in CATALOG_WHEEL_PROJECT_FILES:
         shutil.copy2(CATALOG_GUARD_ROOT / filename, checkout / filename)
-    stale_package = checkout / distribution.DISTRIBUTION_BUILD_DIRECTORY_NAME / "lib" / package_name
+    stale_package = checkout / distribution.DISTRIBUTION_BUILD_DIRECTORY_NAME / "lib" / package_path
     stale_package.mkdir(parents=True)
     (stale_package / LEGACY_PRICE_FILENAME).write_text("{}")
-    catalog_source = checkout / source_directory / package_name / Path(model_catalog.DATA_PATH).name
+    catalog_source = checkout / source_directory / package_path / Path(model_catalog.DATA_PATH).name
     original_catalog = catalog_source.read_bytes()
     metadata_name = "stale.egg-info"
     stale_metadata = [checkout / metadata_name, checkout / source_directory / metadata_name]
@@ -91,9 +93,9 @@ def test_catalog_ssot_distribution_wheel_excludes_stale_removed_leaf(tmp_path, m
     target = {"version": distribution.SPENDGUARD_WRITER_VERSION}
     wheel = distribution.ensure_distribution_wheel(target, checkout, distribution.distribution_policy())
     with zipfile.ZipFile(wheel) as archive:
-        assert f"{package_name}/{LEGACY_PRICE_FILENAME}" not in archive.namelist()
-        assert archive.read(f"{package_name}/{catalog_source.name}") == original_catalog
-        backend_wheels = list((checkout / source_directory / package_name).rglob("*.whl"))
+        assert f"{package_archive_path}/{LEGACY_PRICE_FILENAME}" not in archive.namelist()
+        assert archive.read(f"{package_archive_path}/{catalog_source.name}") == original_catalog
+        backend_wheels = list((checkout / source_directory / package_path.parts[0]).rglob("*.whl"))
         assert backend_wheels, "offline build backend wheelhouse must ship in the distribution"
         for backend_wheel in backend_wheels:
             assert archive.read(str(backend_wheel.relative_to(checkout / source_directory))) == backend_wheel.read_bytes()

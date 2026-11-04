@@ -18,7 +18,7 @@ import os
 import json
 import datetime
 
-from . import config
+from ... import config
 
 CATALOG_CACHE = str(config.HOME / "served_model_ids.json")
 DEFAULT_REFRESH_HOURS = 12          # ids rotate over days/weeks, not hours; 12h keeps it fresh without churn
@@ -32,7 +32,7 @@ def pull_live_catalog(providers=None, timeout_s=20):
     write the cache atomically. Returns (n_providers_ok, n_ids, errors_by_provider). Fail-soft PER provider: one
     provider's fetch error is recorded and the rest still cache — a partial catalog is better than none, and the
     error is surfaced, never silent."""
-    from . import adapters, vendor_call
+    from ... import adapters, vendor_call
     provs = list(providers) if providers else sorted(adapters.PROVIDERS)
     models, errors, ceilings = {}, {}, {}
     for prov in provs:
@@ -70,7 +70,7 @@ def pull_live_catalog(providers=None, timeout_s=20):
     # the vendor's own id convention names the family. Fail-soft: agy absent → no lane_models, no regression.
     lane_models = {}
     try:
-        from . import antigravity_exec
+        from ... import antigravity_exec
         agy_gemini = sorted({m for m in antigravity_exec.model_ids() if m.startswith("gemini-")})
         if agy_gemini:
             lane_models["gemini"] = agy_gemini
@@ -261,7 +261,7 @@ def main(argv=None):
     # travels inside each record unchanged; this local pull/cache time is not row freshness. sync_catalog_overlay is
     # FAIL-OPEN internally (no server / unreachable → 0, the existing overlay kept; a deliberate spend/deadline stop
     # propagates), so it needs no wrapper here.
-    from . import saas, model_catalog
+    from ... import saas, model_catalog
     n_cur = saas.sync_catalog_overlay()
     if n_cur:
         print(f"  curated overlay: {n_cur} models synced (source dates preserved) → {model_catalog._overlay_path()}")

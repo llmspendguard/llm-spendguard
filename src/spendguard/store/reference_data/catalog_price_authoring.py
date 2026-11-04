@@ -166,7 +166,7 @@ def _catalog_local_author_ids(document):
 
 def merge_synced_catalog_layer(models):
     """Refresh server records under the price-author lock, preserving local authored records."""
-    from . import config
+    from ... import config
     catalog_path = Path(model_catalog.catalog_authoring_path())
     catalog_path.parent.mkdir(parents=True, exist_ok=True)
     with Path(str(catalog_path) + CATALOG_AUTHOR_LOCK_SUFFIX).open("a+b") as lock:

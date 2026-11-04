@@ -83,7 +83,7 @@ def latest_gemini_flash_base_id(models):
 
 def catalog_authoring_path():
     """The configurable local catalog layer; the packaged floor is read-only."""
-    from . import config
+    from ... import config
     return os.path.join(str(config.HOME), CATALOG_OVERLAY_FILENAME)
 
 
@@ -487,7 +487,7 @@ def _litellm_breadth_cache():
     ~2MB parse is ~5ms and only on the FALLBACK path — a curated record short-circuits before this, so the hot 54
     never reach here). config is imported LAZILY so this leaf never load-imports config/pricing (no circular import)."""
     try:
-        from . import config
+        from ... import config
         with open(os.path.join(str(config.HOME), "litellm_prices.json")) as f:
             return json.load(f) or {}
     except Exception:

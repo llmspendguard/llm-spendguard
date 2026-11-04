@@ -25,7 +25,7 @@ import time
 from spendguard import config
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
-CATALOG = os.path.abspath(os.path.join(_HERE, "..", "..", "src", "spendguard", "model_catalog.json"))
+CATALOG = os.path.abspath(os.path.join(_HERE, "..", "..", "src", "spendguard", "store", "reference_data", "model_catalog.json"))
 
 # the honest origin of the bare ints already in the catalog (seeded from the synced LiteLLM breadth cache)
 SYNCED_SRC = "litellm:model_prices_and_context_window.json (synced via seed; NOT provider-verified)"

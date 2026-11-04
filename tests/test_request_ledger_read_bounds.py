@@ -24,6 +24,7 @@ REQUEST_LEDGER_MOVED_MODULE_PATHS = {
     "ledger": ("store", "money_ledger", "ledger.py"),
     "ledger_read": ("store", "spend_search", "ledger_read.py"),
     "ledger_request_cursor": ("store", "spend_search", "ledger_request_cursor.py"),
+    "models": ("store", "reference_data", "models.py"),
     "provider_tokens": ("analyze", "cost_estimation", "provider_tokens.py"),
     "receipt": ("analyze", "spend_reporting", "receipt.py"),
 }

@@ -83,7 +83,7 @@ LITELLM_BREADTH_FILENAME = "litellm_prices.json"
 
 def _load_pricing_breadth_snapshot():
     """Read optional synced breadth only in the designated price loader."""
-    from . import config
+    from ... import config
     path = config.HOME / LITELLM_BREADTH_FILENAME
     if not path.exists():
         return {}
@@ -344,7 +344,7 @@ def _same_model_as_ours(ours, their_ids, run=False, advisor=None, fact_key="open
     Judged once and stored as a per-model fact, so it is never re-paid. models.py is THE per-model store;
     this does not open a second one. An empty stored value means "judged: no counterpart exists" — which is
     a real answer and must not be confused with "not yet asked"."""
-    from . import adapters, calls, config, models as _models, ui
+    from ... import adapters, calls, config, models as _models, ui
     theirs = set(their_ids)
     out, unresolved = {}, []
     for m in ours:
@@ -413,7 +413,7 @@ def cross_check_openrouter(run=False, scope=None):
 
     `run=False` makes this entirely zero-spend: both agentic steps report an estimate and decide nothing."""
     import json as _json, urllib.request
-    from . import config
+    from ... import config
     req = urllib.request.Request(_OPENROUTER_URL, headers={"User-Agent": "spendguard/0.1"})
     data = _json.loads(urllib.request.urlopen(req, context=config.ssl_context(), timeout=10).read())
     ormap = {}
@@ -479,7 +479,7 @@ def _judge_price_gaps(differs, run=False, advisor=None):
     Estimate-first and caged, like every other paid step here. On refusal or error the verdict is
     "undecided", never "ok": a judge that did not answer is not a judge that cleared the row, and recording
     it as clean is how a real price drift becomes a green dashboard."""
-    from . import adapters, calls, config, ui
+    from ... import adapters, calls, config, ui
     model = advisor or config.advisor_model()
     listing = "\n".join(f"  {i}. {m}: ours in ${a}/out ${c} | theirs in ${b}/out ${d}"
                         for i, (m, a, b, c, d) in enumerate(differs))

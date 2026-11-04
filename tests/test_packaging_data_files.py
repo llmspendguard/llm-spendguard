@@ -35,7 +35,7 @@ def main():
 
     record_script_check(fails, "the package dir actually has data files to ship (sanity)", bool(on_disk), str(on_disk) if on_disk else "")
     record_script_check(fails, "model_catalog.json is declared in package-data (the 0.11.3 gap — clamp was inert on pip without it)",
-       "model_catalog.json" in shipped, str(sorted(shipped)) if sorted(shipped) else "")
+       "store/reference_data/model_catalog.json" in shipped, str(sorted(shipped)) if sorted(shipped) else "")
     record_script_check(fails, "derived token-price artifact is absent from package and disk",
        "prices.json" not in shipped and "prices.json" not in on_disk)
     for f in on_disk:

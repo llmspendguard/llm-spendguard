@@ -12,7 +12,7 @@ an intent) which then surface in `profile()` and CLI. Per-model best-practices a
 """
 import json
 import re
-from .ledger_writer import serialize_ledger_function
+from ...ledger_writer import serialize_ledger_function
 
 # ordered family rules — first match wins; later stored facts override fields
 _RULES = [
@@ -55,14 +55,14 @@ _RULES = [
 
 def _db():
     # reuse the learn db connection (shared sqlite); a tiny model_facts table
-    from . import learn
+    from ... import learn
     _initialize_model_facts()
     return learn
 
 
 @serialize_ledger_function
 def _initialize_model_facts():
-    from . import learn
+    from ... import learn
     with learn._lock:
         learn._insights_db().execute("""CREATE TABLE IF NOT EXISTS model_facts(
             model TEXT, key TEXT, value TEXT, confidence REAL, source TEXT, verified INTEGER, ts TEXT,
@@ -109,7 +109,7 @@ def clear_fact(model, key):
 
 def facts(model):
     L = _db()
-    from . import config
+    from ... import config
     with config.ledger_op("learn", L._ensure_insights_schema) as model_facts_reader:
         return {k: (_decode_fact(v), c, src, bool(ver)) for k, v, c, src, ver in
                 model_facts_reader.execute("SELECT key,value,confidence,source,verified FROM model_facts WHERE model=?",
@@ -454,7 +454,7 @@ def heal_reasoning(model, kw, err):
     # confirm_reasoning marks it verified once a retry with it actually succeeds, so one good heal serves every
     # later call (and normalize_reasoning, so a BATCH builder reading it sends the right value up front).
     try:
-        from . import vendor_call as _vc
+        from ... import vendor_call as _vc
         _prov = model.split(":", 1)[0] if ":" in model else (profile(model).get("provider") or "")
         _acc = (_vc.discover_efforts(_prov, model.split(":", 1)[-1]) or {}).get("accepted")
     except Exception:
@@ -494,7 +494,7 @@ def resolve_effort(model, level):
     if base is None or not (prof.get("provider") == "openai" or ":" in str(model)):
         return base                                      # non-reasoning model, or not an OpenAI-shape endpoint
     try:
-        from . import vendor_call as _vc
+        from ... import vendor_call as _vc
         _prov = str(model).split(":", 1)[0] if ":" in str(model) else prof.get("provider")
         _acc = (_vc.discover_efforts(_prov, str(model).split(":", 1)[-1]) or {}).get("accepted")
     except Exception:
@@ -508,7 +508,7 @@ def resolve_effort(model, level):
 
 
 def learn_now():
-    from . import learn
+    from ... import learn
     return learn._now()
 
 

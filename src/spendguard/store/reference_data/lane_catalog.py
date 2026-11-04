@@ -14,7 +14,7 @@ lane's CLI/API, grounded in the lane execs (codex none…max, Gemini `-low/-high
 Add a lane in `adapters._LANES` + a `lane_models` entry and it shows up here automatically; a new reasoning style
 is one edit to REASONING_QUIRK.
 """
-from . import adapters, config, lane_registry
+from ... import adapters, config, lane_registry
 
 # HOW EACH LANE EXPRESSES REASONING EFFORT is a field on each lane's row in lane_registry (one place per lane):
 # `style="suffix"` (gemini) rides the USE-NAME `<base>-<level>`; the others (`param` codex, `thinking` claude-code,
@@ -83,7 +83,7 @@ def lane_model_for_tier(lane, tier):
         return parse_use_name(v, lane)[0] if v else None
     if isinstance(m, str) and m:
         base, _lv = parse_use_name(m, lane)
-        from . import route_utility
+        from ... import route_utility
         return base if base in set(route_utility.tier_models(tier)) else None
     return None
 
@@ -152,9 +152,9 @@ def audit_lane_fallback():
     of degrading to the paid API. Read-only, $0 (served_check is cache-first + returns a status, never raises; a
     can't-check is 'unchecked', never a failure). Returns [{lane, provider, use_name, metered_id, reasoning, priced,
     served, ok}] — ok is False only on a CONFIRMED break (unpriced, or a catalog-CONFIRMED stale id)."""
-    from . import adapters, pricing
+    from ... import adapters, pricing
     try:
-        from . import vendor_call as _vc
+        from ... import vendor_call as _vc
     except ImportError:
         _vc = None                                       # packaging edge — skip the served check, keep the priced one
     out = []

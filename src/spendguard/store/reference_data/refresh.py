@@ -11,9 +11,9 @@ Treat results as a flag-for-review, not gospel (an LLM can still misread a page)
   spendguard refresh-prices --model claude-sonnet-4-6
 """
 
-from .capability_cli_parsing import add_registered_cli_argument
+from ...capability_cli_parsing import add_registered_cli_argument
 import json, re, argparse
-from . import pricing, config
+from ... import pricing, config
 
 # The call-class this lookup is measured under, and the COLD-START floor used until it has a measured p99.
 # A floor is not a cap: exceeding it raises (see the stop_reason check in _llm_lookup), so an incomplete
@@ -46,7 +46,7 @@ def _llm_lookup(models, model_id, key):
     # a cut-off body loses the tail of the model list, and the prices that survive look like a complete
     # answer. It also goes direct to the vendor client (the web_search tool is not on adapters.call), so
     # none of the guards in adapters apply here and the truncation check below has to be explicit.
-    from . import bulkgate
+    from ... import bulkgate
     budget = int((bulkgate.maxtokens(_REFRESH_SIG) or {}).get("recommend") or 0) or _REFRESH_FLOOR
     msg = client.messages.create(
         model=model_id, max_tokens=budget,

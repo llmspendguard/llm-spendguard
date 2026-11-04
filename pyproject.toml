@@ -54,7 +54,7 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 # The catalog is authored runtime price and capability data, required in installed wheels.
-spendguard = ["model_catalog.json", "subscription_headroom_surfaces.json", "py.typed",
+spendguard = ["store/reference_data/model_catalog.json", "subscription_headroom_surfaces.json", "py.typed",
               "capability_registry_data.jsonl",
               "capability_mcp_contracts.json", "capability_cli_projection_data.json",
               "capability_readiness_manifest.json", "capability_cli_dispatch_bindings.json",

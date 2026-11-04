@@ -113,8 +113,8 @@ for path in sorted(SRC.rglob("*.json")):
     record_model_fact_ssot_check(fails, f"no legacy price file: {rel}", rel != "prices.json")
     if contains_authored_catalog_contract(data):
         authored.append(rel)
-        record_model_fact_ssot_check(fails, f"authored model facts: {rel}", rel == "model_catalog.json", "competing SSOT")
-record_model_fact_ssot_check(fails, "exactly one authored model fact file", authored == ["model_catalog.json"], str(authored))
+        record_model_fact_ssot_check(fails, f"authored model facts: {rel}", rel == "store/reference_data/model_catalog.json", "competing SSOT")
+record_model_fact_ssot_check(fails, "exactly one authored model fact file", authored == ["store/reference_data/model_catalog.json"], str(authored))
 
 fallback_found = hasattr(pricing, "_FALLBACK")
 for path in sorted(SRC.rglob("*.py")):
@@ -130,7 +130,7 @@ for path in sorted(SRC.rglob("*.py")):
         if not isinstance(node, ast.Assign) or not isinstance(node.value, ast.Dict):
             continue
         names = [target.id for target in node.targets if isinstance(target, ast.Name)]
-        if path == SRC / "pricing.py" and "_FALLBACK" in names:
+        if path == SRC / "store" / "reference_data" / "pricing.py" and "_FALLBACK" in names:
             fallback_found = True
         if contains_literal_catalog_rate_contract(node.value):
             record_model_fact_ssot_check(fails, f"rate literal: {path.relative_to(SRC)}:{node.lineno}", False, "competing SSOT")

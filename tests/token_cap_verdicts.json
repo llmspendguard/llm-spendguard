@@ -17,12 +17,12 @@
     "symbol": "_run_calls",
     "kwarg": "max_tokens"
   },
-  "spendguard/refresh.py::_llm_lookup::max_tokens=3000": {
+  "spendguard/store/reference_data/refresh.py::_llm_lookup::max_tokens=3000": {
     "verdict": "content_call",
     "why": "The call uses a web_search tool and returns a message whose content is evidently consumed as the lookup result for the refresh operation, so a truncated reply would be silently parsed as wrong or empty data.",
     "model": "claude-opus-4-8",
     "value": 3000,
-    "file": "spendguard/refresh.py",
+    "file": "spendguard/store/reference_data/refresh.py",
     "symbol": "_llm_lookup",
     "kwarg": "max_tokens"
   },

@@ -26,7 +26,7 @@ spendguard.require()
 from spendguard import config, pricing  # noqa: E402  — for the EXACT seed-fallback source constant (PRICING_SOURCE)
 
 DEST = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-                    "src", "spendguard", "model_catalog.json")
+                    "src", "spendguard", "store", "reference_data", "model_catalog.json")
 
 # The REAL provider origin for each vendor's published list price (provenance, authored once, by provider).
 PROVIDER_SOURCE = {

@@ -44,7 +44,7 @@ ck("the sole literal is model_catalog.DATA_PATH", len(hits) == 1 and
 ck("catalog.py's live cache uses a different basename",
    Path(catalog.CATALOG_CACHE).name != "model_catalog.json", catalog.CATALOG_CACHE)
 files = sorted(SRC.rglob("model_catalog.json"))
-ck("exactly one model_catalog.json file exists under src", files == [PACKAGE / "model_catalog.json"], files)
+ck("exactly one model_catalog.json file exists under src", files == [PACKAGE / "store" / "reference_data" / "model_catalog.json"], files)
 
 print(f"\n{'[FAIL]' if fails else 'OK'} test_catalog_ssot_single_source: {len(fails)} failure(s)")
 sys.exit(1 if fails else 0)

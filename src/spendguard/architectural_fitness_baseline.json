@@ -21,8 +21,6 @@
     "capability_documentation.py",
     "capability_registry.py",
     "capability_surface_generation.py",
-    "catalog.py",
-    "catalog_price_authoring.py",
     "chat.py",
     "claudecode.py",
     "cli.py",
@@ -55,11 +53,9 @@
     "http_capture.py",
     "kimi_daemon.py",
     "lambda_adapter.py",
-    "lane_catalog.py",
     "lane_eligibility.py",
     "lane_queue.py",
     "lane_recovery.py",
-    "lane_registry.py",
     "lane_servability.py",
     "ledger_sync.py",
     "litellm_adapter.py",
@@ -67,19 +63,14 @@
     "mcp_server.py",
     "measurement.py",
     "modal_adapter.py",
-    "model_catalog.py",
     "model_preflight.py",
-    "models.py",
-    "money_scale.py",
     "otel_ingest.py",
     "plan_admission.py",
-    "pricing.py",
     "process_group_reaper.py",
     "prompts.py",
     "queue_planner.py",
     "realized.py",
     "realtime_oracle.py",
-    "reasoning_equivalence.py",
     "reconcile.py",
     "reconcile_anthropic.py",
     "reconcile_calls.py",
@@ -87,7 +78,6 @@
     "reconcile_gap_ownership.py",
     "reconcile_maintenance_owner.py",
     "reconcile_openai.py",
-    "refresh.py",
     "reliability.py",
     "requirement_judge.py",
     "residency_gate.py",
@@ -104,8 +94,6 @@
     "storm_coalescer.py",
     "storm_route.py",
     "storm_submit.py",
-    "sync.py",
-    "sync_capabilities.py",
     "tag.py",
     "trust.py",
     "truth.py",
@@ -419,11 +407,11 @@
             "max_cc": 25,
             "mi": 59.17462817490093
           },
-          "src/spendguard/catalog.py": {
+          "src/spendguard/store/reference_data/catalog.py": {
             "max_cc": 21,
             "mi": 50.238695321746754
           },
-          "src/spendguard/catalog_price_authoring.py": {
+          "src/spendguard/store/reference_data/catalog_price_authoring.py": {
             "max_cc": 27,
             "mi": 38.398466988650554
           },
@@ -671,7 +659,7 @@
             "max_cc": 17,
             "mi": 34.82740812892309
           },
-          "src/spendguard/lane_catalog.py": {
+          "src/spendguard/store/reference_data/lane_catalog.py": {
             "max_cc": 10,
             "mi": 54.23789137695661
           },
@@ -699,7 +687,7 @@
             "max_cc": 12,
             "mi": 49.05184957405596
           },
-          "src/spendguard/lane_registry.py": {
+          "src/spendguard/store/reference_data/lane_registry.py": {
             "max_cc": 2,
             "mi": 88.70953110460482
           },
@@ -767,7 +755,7 @@
             "max_cc": 9,
             "mi": 70.70362044668978
           },
-          "src/spendguard/model_catalog.py": {
+          "src/spendguard/store/reference_data/model_catalog.py": {
             "max_cc": 43,
             "mi": 12.608930133037463
           },
@@ -775,11 +763,11 @@
             "max_cc": 18,
             "mi": 57.84597250759811
           },
-          "src/spendguard/models.py": {
+          "src/spendguard/store/reference_data/models.py": {
             "max_cc": 13,
             "mi": 39.025561587411524
           },
-          "src/spendguard/money_scale.py": {
+          "src/spendguard/store/reference_data/money_scale.py": {
             "max_cc": 8,
             "mi": 66.35068211769804
           },
@@ -811,7 +799,7 @@
             "max_cc": 0,
             "mi": 100.0
           },
-          "src/spendguard/pricing.py": {
+          "src/spendguard/store/reference_data/pricing.py": {
             "max_cc": 23,
             "mi": 25.82654388083465
           },
@@ -847,7 +835,7 @@
             "max_cc": 15,
             "mi": 51.57809686307217
           },
-          "src/spendguard/reasoning_equivalence.py": {
+          "src/spendguard/store/reference_data/reasoning_equivalence.py": {
             "max_cc": 18,
             "mi": 46.47025113759904
           },
@@ -879,7 +867,7 @@
             "max_cc": 24,
             "mi": 53.821868942173104
           },
-          "src/spendguard/refresh.py": {
+          "src/spendguard/store/reference_data/refresh.py": {
             "max_cc": 8,
             "mi": 62.13286272494166
           },
@@ -1087,11 +1075,11 @@
             "max_cc": 9,
             "mi": 47.012727758606715
           },
-          "src/spendguard/sync.py": {
+          "src/spendguard/store/reference_data/sync.py": {
             "max_cc": 20,
             "mi": 50.999943394196876
           },
-          "src/spendguard/sync_capabilities.py": {
+          "src/spendguard/store/reference_data/sync_capabilities.py": {
             "max_cc": 18,
             "mi": 49.370334797050255
           },
@@ -1419,11 +1407,11 @@
             "max_cc": 25,
             "mi": 58.95170767312015
           },
-          "src/spendguard/catalog.py": {
+          "src/spendguard/store/reference_data/catalog.py": {
             "max_cc": 21,
             "mi": 50.13737153011441
           },
-          "src/spendguard/catalog_price_authoring.py": {
+          "src/spendguard/store/reference_data/catalog_price_authoring.py": {
             "max_cc": 27,
             "mi": 38.398466988650554
           },
@@ -1671,7 +1659,7 @@
             "max_cc": 17,
             "mi": 34.76687319956633
           },
-          "src/spendguard/lane_catalog.py": {
+          "src/spendguard/store/reference_data/lane_catalog.py": {
             "max_cc": 10,
             "mi": 53.91888197068367
           },
@@ -1699,7 +1687,7 @@
             "max_cc": 12,
             "mi": 49.05184957405596
           },
-          "src/spendguard/lane_registry.py": {
+          "src/spendguard/store/reference_data/lane_registry.py": {
             "max_cc": 2,
             "mi": 88.70953110460482
           },
@@ -1767,7 +1755,7 @@
             "max_cc": 9,
             "mi": 70.70362044668978
           },
-          "src/spendguard/model_catalog.py": {
+          "src/spendguard/store/reference_data/model_catalog.py": {
             "max_cc": 43,
             "mi": 12.608930133037463
           },
@@ -1775,11 +1763,11 @@
             "max_cc": 18,
             "mi": 57.68807411563296
           },
-          "src/spendguard/models.py": {
+          "src/spendguard/store/reference_data/models.py": {
             "max_cc": 13,
             "mi": 38.92704751900301
           },
-          "src/spendguard/money_scale.py": {
+          "src/spendguard/store/reference_data/money_scale.py": {
             "max_cc": 8,
             "mi": 66.35068211769804
           },
@@ -1811,7 +1799,7 @@
             "max_cc": 0,
             "mi": 100.0
           },
-          "src/spendguard/pricing.py": {
+          "src/spendguard/store/reference_data/pricing.py": {
             "max_cc": 23,
             "mi": 25.742519523290415
           },
@@ -1847,7 +1835,7 @@
             "max_cc": 15,
             "mi": 51.4356327617239
           },
-          "src/spendguard/reasoning_equivalence.py": {
+          "src/spendguard/store/reference_data/reasoning_equivalence.py": {
             "max_cc": 18,
             "mi": 46.335870385043656
           },
@@ -1879,7 +1867,7 @@
             "max_cc": 24,
             "mi": 53.323138835469095
           },
-          "src/spendguard/refresh.py": {
+          "src/spendguard/store/reference_data/refresh.py": {
             "max_cc": 8,
             "mi": 62.02818006633191
           },
@@ -2087,11 +2075,11 @@
             "max_cc": 9,
             "mi": 47.012727758606715
           },
-          "src/spendguard/sync.py": {
+          "src/spendguard/store/reference_data/sync.py": {
             "max_cc": 20,
             "mi": 50.891671539025715
           },
-          "src/spendguard/sync_capabilities.py": {
+          "src/spendguard/store/reference_data/sync_capabilities.py": {
             "max_cc": 18,
             "mi": 49.31444269268742
           },
@@ -2234,8 +2222,6 @@
       "spendguard.calibrate",
       "spendguard.callio",
       "spendguard.calls",
-      "spendguard.catalog",
-      "spendguard.catalog_price_authoring",
       "spendguard.chat",
       "spendguard.claudecode",
       "spendguard.codex",
@@ -2275,7 +2261,6 @@
       "spendguard.job_fingerprint",
       "spendguard.lane_balance",
       "spendguard.lane_bandit",
-      "spendguard.lane_catalog",
       "spendguard.lane_economics",
       "spendguard.lane_eligibility",
       "spendguard.lane_queue",
@@ -2298,18 +2283,14 @@
       "spendguard.mcp_server",
       "spendguard.measurement",
       "spendguard.metadata_audit",
-      "spendguard.model_catalog",
       "spendguard.model_preflight",
-      "spendguard.models",
       "spendguard.notify",
       "spendguard.overage",
       "spendguard.plan_admission",
-      "spendguard.pricing",
       "spendguard.prompts",
       "spendguard.provider_tokens",
       "spendguard.queue_planner",
       "spendguard.realized",
-      "spendguard.reasoning_equivalence",
       "spendguard.receipt",
       "spendguard.reconcile",
       "spendguard.reconcile_anthropic",
@@ -2341,8 +2322,6 @@
       "spendguard.storm_submit",
       "spendguard.submit",
       "spendguard.subscription_headroom_surfaces",
-      "spendguard.sync",
-      "spendguard.sync_capabilities",
       "spendguard.tag",
       "spendguard.tier_config",
       "spendguard.trust",
@@ -6153,7 +6132,7 @@
   ],
   "max_largest_scc_size": 142,
   "max_cyclic_edge_count": 943,
-  "max_legacy_shim_count": 109,
+  "max_legacy_shim_count": 121,
   "recorded_cross_context_nonsurface_imports": [
     [
       "spendguard",
@@ -6197,7 +6176,7 @@
     ],
     [
       "spendguard",
-      "spendguard.pricing"
+      "spendguard.store.reference_data.pricing"
     ],
     [
       "spendguard",
@@ -6225,7 +6204,7 @@
     ],
     [
       "spendguard.generate.execution.adapters",
-      "spendguard.catalog"
+      "spendguard.store.reference_data.catalog"
     ],
     [
       "spendguard.generate.execution.adapters",
@@ -6269,7 +6248,7 @@
     ],
     [
       "spendguard.generate.execution.adapters",
-      "spendguard.lane_catalog"
+      "spendguard.store.reference_data.lane_catalog"
     ],
     [
       "spendguard.generate.execution.adapters",
@@ -6285,7 +6264,7 @@
     ],
     [
       "spendguard.generate.execution.adapters",
-      "spendguard.lane_registry"
+      "spendguard.store.reference_data.lane_registry"
     ],
     [
       "spendguard.generate.execution.adapters",
@@ -6301,11 +6280,11 @@
     ],
     [
       "spendguard.generate.execution.adapters",
-      "spendguard.model_catalog"
+      "spendguard.store.reference_data.model_catalog"
     ],
     [
       "spendguard.generate.execution.adapters",
-      "spendguard.models"
+      "spendguard.store.reference_data.models"
     ],
     [
       "spendguard.generate.execution.adapters",
@@ -6317,11 +6296,11 @@
     ],
     [
       "spendguard.generate.execution.adapters",
-      "spendguard.pricing"
+      "spendguard.store.reference_data.pricing"
     ],
     [
       "spendguard.generate.execution.adapters",
-      "spendguard.reasoning_equivalence"
+      "spendguard.store.reference_data.reasoning_equivalence"
     ],
     [
       "spendguard.generate.execution.adapters",
@@ -6361,11 +6340,11 @@
     ],
     [
       "spendguard.analyze.learning.advise",
-      "spendguard.model_catalog"
+      "spendguard.store.reference_data.model_catalog"
     ],
     [
       "spendguard.analyze.learning.advise",
-      "spendguard.pricing"
+      "spendguard.store.reference_data.pricing"
     ],
     [
       "spendguard.analyze.learning.advise",
@@ -6401,7 +6380,7 @@
     ],
     [
       "spendguard.analyze.learning.advisor",
-      "spendguard.pricing"
+      "spendguard.store.reference_data.pricing"
     ],
     [
       "spendguard.analyze.learning.advisor",
@@ -6469,7 +6448,7 @@
     ],
     [
       "spendguard.attribution",
-      "spendguard.pricing"
+      "spendguard.store.reference_data.pricing"
     ],
     [
       "spendguard.attribution",
@@ -6497,7 +6476,7 @@
     ],
     [
       "spendguard.analyze.assurance.audit",
-      "spendguard.pricing"
+      "spendguard.store.reference_data.pricing"
     ],
     [
       "spendguard.analyze.assurance.audit",
@@ -6517,7 +6496,7 @@
     ],
     [
       "spendguard.backfill",
-      "spendguard.pricing"
+      "spendguard.store.reference_data.pricing"
     ],
     [
       "spendguard.backfill",
@@ -6561,7 +6540,7 @@
     ],
     [
       "spendguard.bakeoff",
-      "spendguard.pricing"
+      "spendguard.store.reference_data.pricing"
     ],
     [
       "spendguard.bakeoff",
@@ -6661,7 +6640,7 @@
     ],
     [
       "spendguard.manage.routing.best_value",
-      "spendguard.models"
+      "spendguard.store.reference_data.models"
     ],
     [
       "spendguard.manage.routing.best_value",
@@ -6717,7 +6696,7 @@
     ],
     [
       "spendguard.analyze.learning.brief",
-      "spendguard.models"
+      "spendguard.store.reference_data.models"
     ],
     [
       "spendguard.analyze.learning.brief",
@@ -6765,7 +6744,7 @@
     ],
     [
       "spendguard.budget",
-      "spendguard.pricing"
+      "spendguard.store.reference_data.pricing"
     ],
     [
       "spendguard.generate.work_integrity.bulk_resilience",
@@ -6801,11 +6780,11 @@
     ],
     [
       "spendguard.bulkgate",
-      "spendguard.models"
+      "spendguard.store.reference_data.models"
     ],
     [
       "spendguard.bulkgate",
-      "spendguard.money_scale"
+      "spendguard.store.reference_data.money_scale"
     ],
     [
       "spendguard.bulkgate",
@@ -6825,7 +6804,7 @@
     ],
     [
       "spendguard.cacheaudit",
-      "spendguard.pricing"
+      "spendguard.store.reference_data.pricing"
     ],
     [
       "spendguard.cacheaudit",
@@ -6853,7 +6832,7 @@
     ],
     [
       "spendguard.cachetest",
-      "spendguard.pricing"
+      "spendguard.store.reference_data.pricing"
     ],
     [
       "spendguard.cachetest",
@@ -6889,11 +6868,11 @@
     ],
     [
       "spendguard.analyze.cost_estimation.calibrate",
-      "spendguard.money_scale"
+      "spendguard.store.reference_data.money_scale"
     ],
     [
       "spendguard.analyze.cost_estimation.calibrate",
-      "spendguard.pricing"
+      "spendguard.store.reference_data.pricing"
     ],
     [
       "spendguard.analyze.cost_estimation.calibrate",
@@ -6937,7 +6916,7 @@
     ],
     [
       "spendguard.store.call_corpus.callio",
-      "spendguard.pricing"
+      "spendguard.store.reference_data.pricing"
     ],
     [
       "spendguard.store.call_corpus.calls",
@@ -6981,11 +6960,11 @@
     ],
     [
       "spendguard.store.call_corpus.calls",
-      "spendguard.model_catalog"
+      "spendguard.store.reference_data.model_catalog"
     ],
     [
       "spendguard.store.call_corpus.calls",
-      "spendguard.money_scale"
+      "spendguard.store.reference_data.money_scale"
     ],
     [
       "spendguard.store.call_corpus.calls",
@@ -6993,7 +6972,7 @@
     ],
     [
       "spendguard.store.call_corpus.calls",
-      "spendguard.pricing"
+      "spendguard.store.reference_data.pricing"
     ],
     [
       "spendguard.store.call_corpus.calls",
@@ -7037,38 +7016,38 @@
     ],
     [
       "spendguard.manage.routing.cascade",
-      "spendguard.models"
+      "spendguard.store.reference_data.models"
     ],
     [
       "spendguard.manage.routing.cascade",
-      "spendguard.pricing"
+      "spendguard.store.reference_data.pricing"
     ],
     [
       "spendguard.manage.routing.cascade",
       "spendguard.ui"
     ],
     [
-      "spendguard.catalog",
+      "spendguard.store.reference_data.catalog",
       "spendguard.generate.execution.adapters"
     ],
     [
-      "spendguard.catalog",
+      "spendguard.store.reference_data.catalog",
       "spendguard.generate.execution.antigravity_exec"
     ],
     [
-      "spendguard.catalog",
+      "spendguard.store.reference_data.catalog",
       "spendguard.store.configuration.config"
     ],
     [
-      "spendguard.catalog",
+      "spendguard.store.reference_data.catalog",
       "spendguard.egress.saas"
     ],
     [
-      "spendguard.catalog",
+      "spendguard.store.reference_data.catalog",
       "spendguard.generate.execution.vendor_call"
     ],
     [
-      "spendguard.catalog_price_authoring",
+      "spendguard.store.reference_data.catalog_price_authoring",
       "spendguard.store.configuration.config"
     ],
     [
@@ -7093,7 +7072,7 @@
     ],
     [
       "spendguard.chat",
-      "spendguard.pricing"
+      "spendguard.store.reference_data.pricing"
     ],
     [
       "spendguard.chat",
@@ -7149,7 +7128,7 @@
     ],
     [
       "spendguard.claudecode",
-      "spendguard.pricing"
+      "spendguard.store.reference_data.pricing"
     ],
     [
       "spendguard.claudecode",
@@ -7221,7 +7200,7 @@
     ],
     [
       "spendguard.cli",
-      "spendguard.lane_catalog"
+      "spendguard.store.reference_data.lane_catalog"
     ],
     [
       "spendguard.cli",
@@ -7241,7 +7220,7 @@
     ],
     [
       "spendguard.cli",
-      "spendguard.pricing"
+      "spendguard.store.reference_data.pricing"
     ],
     [
       "spendguard.cli",
@@ -7297,7 +7276,7 @@
     ],
     [
       "spendguard.codex",
-      "spendguard.pricing"
+      "spendguard.store.reference_data.pricing"
     ],
     [
       "spendguard.codex",
@@ -7385,7 +7364,7 @@
     ],
     [
       "spendguard.compaction",
-      "spendguard.pricing"
+      "spendguard.store.reference_data.pricing"
     ],
     [
       "spendguard.compaction",
@@ -7425,11 +7404,11 @@
     ],
     [
       "spendguard.comprehend",
-      "spendguard.lane_catalog"
+      "spendguard.store.reference_data.lane_catalog"
     ],
     [
       "spendguard.comprehend",
-      "spendguard.pricing"
+      "spendguard.store.reference_data.pricing"
     ],
     [
       "spendguard.store.configuration.config",
@@ -7465,7 +7444,7 @@
     ],
     [
       "spendguard.store.configuration.config",
-      "spendguard.pricing"
+      "spendguard.store.reference_data.pricing"
     ],
     [
       "spendguard.store.configuration.config_schema",
@@ -7537,7 +7516,7 @@
     ],
     [
       "spendguard.analyze.cost_estimation.content_tokens",
-      "spendguard.pricing"
+      "spendguard.store.reference_data.pricing"
     ],
     [
       "spendguard.analyze.learning.conv",
@@ -7581,7 +7560,7 @@
     ],
     [
       "spendguard.analyze.learning.conv",
-      "spendguard.pricing"
+      "spendguard.store.reference_data.pricing"
     ],
     [
       "spendguard.analyze.learning.conv",
@@ -7601,7 +7580,7 @@
     ],
     [
       "spendguard.cost_integrity",
-      "spendguard.pricing"
+      "spendguard.store.reference_data.pricing"
     ],
     [
       "spendguard.analyze.assurance.coverage",
@@ -7649,7 +7628,7 @@
     ],
     [
       "spendguard.crossllm",
-      "spendguard.pricing"
+      "spendguard.store.reference_data.pricing"
     ],
     [
       "spendguard.crossllm",
@@ -7697,7 +7676,7 @@
     ],
     [
       "spendguard.delegate_router",
-      "spendguard.lane_registry"
+      "spendguard.store.reference_data.lane_registry"
     ],
     [
       "spendguard.delegate_router",
@@ -7709,7 +7688,7 @@
     ],
     [
       "spendguard.delegate_router",
-      "spendguard.pricing"
+      "spendguard.store.reference_data.pricing"
     ],
     [
       "spendguard.delegate_router",
@@ -7749,7 +7728,7 @@
     ],
     [
       "spendguard.dispatch",
-      "spendguard.lane_catalog"
+      "spendguard.store.reference_data.lane_catalog"
     ],
     [
       "spendguard.dispatch",
@@ -7757,7 +7736,7 @@
     ],
     [
       "spendguard.dispatch",
-      "spendguard.model_catalog"
+      "spendguard.store.reference_data.model_catalog"
     ],
     [
       "spendguard.platform.distribution",
@@ -7825,15 +7804,15 @@
     ],
     [
       "spendguard.effort_titration",
-      "spendguard.models"
+      "spendguard.store.reference_data.models"
     ],
     [
       "spendguard.effort_titration",
-      "spendguard.money_scale"
+      "spendguard.store.reference_data.money_scale"
     ],
     [
       "spendguard.effort_titration",
-      "spendguard.pricing"
+      "spendguard.store.reference_data.pricing"
     ],
     [
       "spendguard.effort_titration",
@@ -7869,11 +7848,11 @@
     ],
     [
       "spendguard.analyze.cost_estimation.estimate",
-      "spendguard.models"
+      "spendguard.store.reference_data.models"
     ],
     [
       "spendguard.analyze.cost_estimation.estimate",
-      "spendguard.pricing"
+      "spendguard.store.reference_data.pricing"
     ],
     [
       "spendguard.analyze.cost_estimation.estimate_divergence",
@@ -7917,11 +7896,11 @@
     ],
     [
       "spendguard.analyze.cost_estimation.expected_output",
-      "spendguard.models"
+      "spendguard.store.reference_data.models"
     ],
     [
       "spendguard.analyze.cost_estimation.expected_output",
-      "spendguard.pricing"
+      "spendguard.store.reference_data.pricing"
     ],
     [
       "spendguard.experiment",
@@ -7953,11 +7932,11 @@
     ],
     [
       "spendguard.experiment",
-      "spendguard.models"
+      "spendguard.store.reference_data.models"
     ],
     [
       "spendguard.experiment",
-      "spendguard.pricing"
+      "spendguard.store.reference_data.pricing"
     ],
     [
       "spendguard.experiment",
@@ -7997,7 +7976,7 @@
     ],
     [
       "spendguard.platform.fleet",
-      "spendguard.pricing"
+      "spendguard.store.reference_data.pricing"
     ],
     [
       "spendguard.platform.fleet",
@@ -8109,7 +8088,7 @@
     ],
     [
       "spendguard.gate",
-      "spendguard.pricing"
+      "spendguard.store.reference_data.pricing"
     ],
     [
       "spendguard.gate",
@@ -8137,7 +8116,7 @@
     ],
     [
       "spendguard.gate",
-      "spendguard.sync"
+      "spendguard.store.reference_data.sync"
     ],
     [
       "spendguard.gate",
@@ -8173,7 +8152,7 @@
     ],
     [
       "spendguard.guard",
-      "spendguard.money_scale"
+      "spendguard.store.reference_data.money_scale"
     ],
     [
       "spendguard.guard",
@@ -8241,11 +8220,11 @@
     ],
     [
       "spendguard.analyze.learning.intent_model_prior",
-      "spendguard.model_catalog"
+      "spendguard.store.reference_data.model_catalog"
     ],
     [
       "spendguard.analyze.learning.intent_model_prior",
-      "spendguard.pricing"
+      "spendguard.store.reference_data.pricing"
     ],
     [
       "spendguard.analyze.learning.intent_model_prior",
@@ -8333,7 +8312,7 @@
     ],
     [
       "spendguard.manage.routing.lane_balance",
-      "spendguard.lane_catalog"
+      "spendguard.store.reference_data.lane_catalog"
     ],
     [
       "spendguard.manage.routing.lane_balance",
@@ -8357,7 +8336,7 @@
     ],
     [
       "spendguard.manage.routing.lane_balance",
-      "spendguard.model_catalog"
+      "spendguard.store.reference_data.model_catalog"
     ],
     [
       "spendguard.manage.routing.lane_balance",
@@ -8369,7 +8348,7 @@
     ],
     [
       "spendguard.manage.routing.lane_balance",
-      "spendguard.pricing"
+      "spendguard.store.reference_data.pricing"
     ],
     [
       "spendguard.manage.routing.lane_balance",
@@ -8413,7 +8392,7 @@
     ],
     [
       "spendguard.analyze.learning.lane_bandit",
-      "spendguard.lane_catalog"
+      "spendguard.store.reference_data.lane_catalog"
     ],
     [
       "spendguard.analyze.learning.lane_bandit",
@@ -8425,26 +8404,26 @@
     ],
     [
       "spendguard.analyze.learning.lane_bandit",
-      "spendguard.pricing"
+      "spendguard.store.reference_data.pricing"
     ],
     [
       "spendguard.analyze.learning.lane_bandit",
       "spendguard.manage.routing.route_utility"
     ],
     [
-      "spendguard.lane_catalog",
+      "spendguard.store.reference_data.lane_catalog",
       "spendguard.generate.execution.adapters"
     ],
     [
-      "spendguard.lane_catalog",
+      "spendguard.store.reference_data.lane_catalog",
       "spendguard.store.configuration.config"
     ],
     [
-      "spendguard.lane_catalog",
+      "spendguard.store.reference_data.lane_catalog",
       "spendguard.manage.routing.route_utility"
     ],
     [
-      "spendguard.lane_catalog",
+      "spendguard.store.reference_data.lane_catalog",
       "spendguard.generate.execution.vendor_call"
     ],
     [
@@ -8465,7 +8444,7 @@
     ],
     [
       "spendguard.analyze.treasury.lane_economics",
-      "spendguard.pricing"
+      "spendguard.store.reference_data.pricing"
     ],
     [
       "spendguard.analyze.treasury.lane_economics",
@@ -8481,7 +8460,7 @@
     ],
     [
       "spendguard.lane_eligibility",
-      "spendguard.pricing"
+      "spendguard.store.reference_data.pricing"
     ],
     [
       "spendguard.lane_queue",
@@ -8549,7 +8528,7 @@
     ],
     [
       "spendguard.analyze.treasury.lane_quota_cost",
-      "spendguard.lane_registry"
+      "spendguard.store.reference_data.lane_registry"
     ],
     [
       "spendguard.analyze.treasury.lane_quota_cost",
@@ -8577,7 +8556,7 @@
     ],
     [
       "spendguard.lane_servability",
-      "spendguard.catalog"
+      "spendguard.store.reference_data.catalog"
     ],
     [
       "spendguard.lane_servability",
@@ -8585,7 +8564,7 @@
     ],
     [
       "spendguard.lane_servability",
-      "spendguard.lane_catalog"
+      "spendguard.store.reference_data.lane_catalog"
     ],
     [
       "spendguard.lane_servability",
@@ -8605,7 +8584,7 @@
     ],
     [
       "spendguard.analyze.treasury.lane_value",
-      "spendguard.lane_catalog"
+      "spendguard.store.reference_data.lane_catalog"
     ],
     [
       "spendguard.analyze.treasury.lane_value",
@@ -8649,7 +8628,7 @@
     ],
     [
       "spendguard.platform.lanes",
-      "spendguard.lane_catalog"
+      "spendguard.store.reference_data.lane_catalog"
     ],
     [
       "spendguard.platform.lanes",
@@ -8673,7 +8652,7 @@
     ],
     [
       "spendguard.platform.lanes",
-      "spendguard.lane_registry"
+      "spendguard.store.reference_data.lane_registry"
     ],
     [
       "spendguard.platform.lanes",
@@ -8681,11 +8660,11 @@
     ],
     [
       "spendguard.platform.lanes",
-      "spendguard.model_catalog"
+      "spendguard.store.reference_data.model_catalog"
     ],
     [
       "spendguard.platform.lanes",
-      "spendguard.reasoning_equivalence"
+      "spendguard.store.reference_data.reasoning_equivalence"
     ],
     [
       "spendguard.platform.lanes",
@@ -8721,11 +8700,11 @@
     ],
     [
       "spendguard.store.money_ledger.ledger",
-      "spendguard.money_scale"
+      "spendguard.store.reference_data.money_scale"
     ],
     [
       "spendguard.store.money_ledger.ledger",
-      "spendguard.pricing"
+      "spendguard.store.reference_data.pricing"
     ],
     [
       "spendguard.store.money_ledger.ledger_deadletter",
@@ -8769,11 +8748,11 @@
     ],
     [
       "spendguard.store.spend_search.ledger_read",
-      "spendguard.money_scale"
+      "spendguard.store.reference_data.money_scale"
     ],
     [
       "spendguard.store.spend_search.ledger_read",
-      "spendguard.pricing"
+      "spendguard.store.reference_data.pricing"
     ],
     [
       "spendguard.store.spend_search.ledger_request_cursor",
@@ -8817,7 +8796,7 @@
     ],
     [
       "spendguard.ledger_sync",
-      "spendguard.pricing"
+      "spendguard.store.reference_data.pricing"
     ],
     [
       "spendguard.ledger_sync",
@@ -8965,7 +8944,7 @@
     ],
     [
       "spendguard.mcp_server",
-      "spendguard.model_catalog"
+      "spendguard.store.reference_data.model_catalog"
     ],
     [
       "spendguard.mcp_server",
@@ -8973,7 +8952,7 @@
     ],
     [
       "spendguard.mcp_server",
-      "spendguard.pricing"
+      "spendguard.store.reference_data.pricing"
     ],
     [
       "spendguard.mcp_server",
@@ -9033,7 +9012,7 @@
     ],
     [
       "spendguard.measurement",
-      "spendguard.money_scale"
+      "spendguard.store.reference_data.money_scale"
     ],
     [
       "spendguard.analyze.assurance.metadata_audit",
@@ -9041,15 +9020,15 @@
     ],
     [
       "spendguard.analyze.assurance.metadata_audit",
-      "spendguard.pricing"
+      "spendguard.store.reference_data.pricing"
     ],
     [
       "spendguard.analyze.assurance.metadata_audit",
-      "spendguard.sync"
+      "spendguard.store.reference_data.sync"
     ],
     [
       "spendguard.analyze.assurance.metadata_audit",
-      "spendguard.sync_capabilities"
+      "spendguard.store.reference_data.sync_capabilities"
     ],
     [
       "spendguard.analyze.assurance.metadata_audit",
@@ -9072,7 +9051,7 @@
       "spendguard.store.configuration.config"
     ],
     [
-      "spendguard.model_catalog",
+      "spendguard.store.reference_data.model_catalog",
       "spendguard.store.configuration.config"
     ],
     [
@@ -9089,26 +9068,26 @@
     ],
     [
       "spendguard.model_preflight",
-      "spendguard.pricing"
+      "spendguard.store.reference_data.pricing"
     ],
     [
       "spendguard.model_preflight",
       "spendguard.generate.execution.vendor_call"
     ],
     [
-      "spendguard.models",
+      "spendguard.store.reference_data.models",
       "spendguard.store.configuration.config"
     ],
     [
-      "spendguard.models",
+      "spendguard.store.reference_data.models",
       "spendguard.analyze.learning.learn"
     ],
     [
-      "spendguard.models",
+      "spendguard.store.reference_data.models",
       "spendguard.store.money_ledger.ledger_writer"
     ],
     [
-      "spendguard.models",
+      "spendguard.store.reference_data.models",
       "spendguard.generate.execution.vendor_call"
     ],
     [
@@ -9133,7 +9112,7 @@
     ],
     [
       "spendguard.otel_ingest",
-      "spendguard.pricing"
+      "spendguard.store.reference_data.pricing"
     ],
     [
       "spendguard.analyze.treasury.overage",
@@ -9161,11 +9140,11 @@
     ],
     [
       "spendguard.plan_admission",
-      "spendguard.lane_catalog"
+      "spendguard.store.reference_data.lane_catalog"
     ],
     [
       "spendguard.plan_admission",
-      "spendguard.lane_registry"
+      "spendguard.store.reference_data.lane_registry"
     ],
     [
       "spendguard.plan_admission",
@@ -9184,19 +9163,19 @@
       "spendguard.manage.routing.route_utility"
     ],
     [
-      "spendguard.pricing",
+      "spendguard.store.reference_data.pricing",
       "spendguard.generate.execution.adapters"
     ],
     [
-      "spendguard.pricing",
+      "spendguard.store.reference_data.pricing",
       "spendguard.store.call_corpus.calls"
     ],
     [
-      "spendguard.pricing",
+      "spendguard.store.reference_data.pricing",
       "spendguard.store.configuration.config"
     ],
     [
-      "spendguard.pricing",
+      "spendguard.store.reference_data.pricing",
       "spendguard.ui"
     ],
     [
@@ -9229,7 +9208,7 @@
     ],
     [
       "spendguard.prompts",
-      "spendguard.pricing"
+      "spendguard.store.reference_data.pricing"
     ],
     [
       "spendguard.generate.execution.provider_kit",
@@ -9237,7 +9216,7 @@
     ],
     [
       "spendguard.generate.execution.provider_kit",
-      "spendguard.pricing"
+      "spendguard.store.reference_data.pricing"
     ],
     [
       "spendguard.analyze.cost_estimation.provider_tokens",
@@ -9277,7 +9256,7 @@
     ],
     [
       "spendguard.analyze.cost_estimation.provider_tokens",
-      "spendguard.pricing"
+      "spendguard.store.reference_data.pricing"
     ],
     [
       "spendguard.queue_planner",
@@ -9317,26 +9296,26 @@
     ],
     [
       "spendguard.realtime_oracle",
-      "spendguard.pricing"
+      "spendguard.store.reference_data.pricing"
     ],
     [
       "spendguard.realtime_oracle",
       "spendguard.resources"
     ],
     [
-      "spendguard.reasoning_equivalence",
+      "spendguard.store.reference_data.reasoning_equivalence",
       "spendguard.generate.execution.adapters"
     ],
     [
-      "spendguard.reasoning_equivalence",
+      "spendguard.store.reference_data.reasoning_equivalence",
       "spendguard.generate.execution.codex_exec"
     ],
     [
-      "spendguard.reasoning_equivalence",
+      "spendguard.store.reference_data.reasoning_equivalence",
       "spendguard.store.configuration.config"
     ],
     [
-      "spendguard.reasoning_equivalence",
+      "spendguard.store.reference_data.reasoning_equivalence",
       "spendguard.generate.execution.vendor_call"
     ],
     [
@@ -9401,11 +9380,11 @@
     ],
     [
       "spendguard.analyze.spend_reporting.receipt",
-      "spendguard.model_catalog"
+      "spendguard.store.reference_data.model_catalog"
     ],
     [
       "spendguard.analyze.spend_reporting.receipt",
-      "spendguard.money_scale"
+      "spendguard.store.reference_data.money_scale"
     ],
     [
       "spendguard.analyze.spend_reporting.receipt",
@@ -9413,7 +9392,7 @@
     ],
     [
       "spendguard.analyze.spend_reporting.receipt",
-      "spendguard.pricing"
+      "spendguard.store.reference_data.pricing"
     ],
     [
       "spendguard.analyze.spend_reporting.receipt",
@@ -9445,7 +9424,7 @@
     ],
     [
       "spendguard.reconcile_anthropic",
-      "spendguard.pricing"
+      "spendguard.store.reference_data.pricing"
     ],
     [
       "spendguard.reconcile_calls",
@@ -9477,7 +9456,7 @@
     ],
     [
       "spendguard.reconcile_gap_ownership",
-      "spendguard.pricing"
+      "spendguard.store.reference_data.pricing"
     ],
     [
       "spendguard.reconcile_maintenance_owner",
@@ -9501,22 +9480,22 @@
     ],
     [
       "spendguard.reconcile_openai",
-      "spendguard.pricing"
+      "spendguard.store.reference_data.pricing"
     ],
     [
-      "spendguard.refresh",
+      "spendguard.store.reference_data.refresh",
       "spendguard"
     ],
     [
-      "spendguard.refresh",
+      "spendguard.store.reference_data.refresh",
       "spendguard.bulkgate"
     ],
     [
-      "spendguard.refresh",
+      "spendguard.store.reference_data.refresh",
       "spendguard.capability_cli_parsing"
     ],
     [
-      "spendguard.refresh",
+      "spendguard.store.reference_data.refresh",
       "spendguard.store.configuration.config"
     ],
     [
@@ -9545,7 +9524,7 @@
     ],
     [
       "spendguard.reliability",
-      "spendguard.catalog"
+      "spendguard.store.reference_data.catalog"
     ],
     [
       "spendguard.reliability",
@@ -9557,7 +9536,7 @@
     ],
     [
       "spendguard.reliability",
-      "spendguard.lane_registry"
+      "spendguard.store.reference_data.lane_registry"
     ],
     [
       "spendguard.reliability",
@@ -9573,7 +9552,7 @@
     ],
     [
       "spendguard.reliability",
-      "spendguard.model_catalog"
+      "spendguard.store.reference_data.model_catalog"
     ],
     [
       "spendguard.reliability",
@@ -9581,7 +9560,7 @@
     ],
     [
       "spendguard.reliability",
-      "spendguard.pricing"
+      "spendguard.store.reference_data.pricing"
     ],
     [
       "spendguard.platform.remote",
@@ -9641,7 +9620,7 @@
     ],
     [
       "spendguard.analyze.spend_reporting.report",
-      "spendguard.pricing"
+      "spendguard.store.reference_data.pricing"
     ],
     [
       "spendguard.analyze.spend_reporting.report",
@@ -9749,7 +9728,7 @@
     ],
     [
       "spendguard.resources",
-      "spendguard.pricing"
+      "spendguard.store.reference_data.pricing"
     ],
     [
       "spendguard.resources",
@@ -9801,7 +9780,7 @@
     ],
     [
       "spendguard.review",
-      "spendguard.pricing"
+      "spendguard.store.reference_data.pricing"
     ],
     [
       "spendguard.review",
@@ -9829,7 +9808,7 @@
     ],
     [
       "spendguard.manage.routing.route_economics",
-      "spendguard.pricing"
+      "spendguard.store.reference_data.pricing"
     ],
     [
       "spendguard.manage.routing.route_horizon",
@@ -9849,11 +9828,11 @@
     ],
     [
       "spendguard.manage.routing.route_horizon",
-      "spendguard.model_catalog"
+      "spendguard.store.reference_data.model_catalog"
     ],
     [
       "spendguard.manage.routing.route_horizon",
-      "spendguard.pricing"
+      "spendguard.store.reference_data.pricing"
     ],
     [
       "spendguard.manage.routing.route_horizon",
@@ -9885,7 +9864,7 @@
     ],
     [
       "spendguard.manage.routing.route_utility",
-      "spendguard.lane_catalog"
+      "spendguard.store.reference_data.lane_catalog"
     ],
     [
       "spendguard.manage.routing.route_utility",
@@ -9901,7 +9880,7 @@
     ],
     [
       "spendguard.manage.routing.route_utility",
-      "spendguard.pricing"
+      "spendguard.store.reference_data.pricing"
     ],
     [
       "spendguard.manage.routing.route_utility",
@@ -9909,7 +9888,7 @@
     ],
     [
       "spendguard.store.call_corpus.routing_audit",
-      "spendguard.money_scale"
+      "spendguard.store.reference_data.money_scale"
     ],
     [
       "spendguard.store.call_corpus.routing_audit",
@@ -9953,11 +9932,11 @@
     ],
     [
       "spendguard.egress.saas",
-      "spendguard.catalog"
+      "spendguard.store.reference_data.catalog"
     ],
     [
       "spendguard.egress.saas",
-      "spendguard.catalog_price_authoring"
+      "spendguard.store.reference_data.catalog_price_authoring"
     ],
     [
       "spendguard.egress.saas",
@@ -9993,7 +9972,7 @@
     ],
     [
       "spendguard.egress.saas",
-      "spendguard.pricing"
+      "spendguard.store.reference_data.pricing"
     ],
     [
       "spendguard.egress.saas",
@@ -10005,7 +9984,7 @@
     ],
     [
       "spendguard.egress.saas",
-      "spendguard.sync"
+      "spendguard.store.reference_data.sync"
     ],
     [
       "spendguard.egress.saas",
@@ -10177,7 +10156,7 @@
     ],
     [
       "spendguard.egress.signal",
-      "spendguard.pricing"
+      "spendguard.store.reference_data.pricing"
     ],
     [
       "spendguard.egress.signal",
@@ -10205,7 +10184,7 @@
     ],
     [
       "spendguard.sources",
-      "spendguard.lane_registry"
+      "spendguard.store.reference_data.lane_registry"
     ],
     [
       "spendguard.sources",
@@ -10269,11 +10248,11 @@
     ],
     [
       "spendguard.generate.execution.submit",
-      "spendguard.models"
+      "spendguard.store.reference_data.models"
     ],
     [
       "spendguard.generate.execution.submit",
-      "spendguard.pricing"
+      "spendguard.store.reference_data.pricing"
     ],
     [
       "spendguard.generate.execution.submit",
@@ -10304,27 +10283,27 @@
       "spendguard.store.configuration.config"
     ],
     [
-      "spendguard.sync",
+      "spendguard.store.reference_data.sync",
       "spendguard.store.configuration.config"
     ],
     [
-      "spendguard.sync",
+      "spendguard.store.reference_data.sync",
       "spendguard.gate"
     ],
     [
-      "spendguard.sync_capabilities",
+      "spendguard.store.reference_data.sync_capabilities",
       "spendguard.capability_cli_parsing"
     ],
     [
-      "spendguard.sync_capabilities",
+      "spendguard.store.reference_data.sync_capabilities",
       "spendguard.store.configuration.config"
     ],
     [
-      "spendguard.sync_capabilities",
+      "spendguard.store.reference_data.sync_capabilities",
       "spendguard.gate"
     ],
     [
-      "spendguard.sync_capabilities",
+      "spendguard.store.reference_data.sync_capabilities",
       "spendguard.egress.saas"
     ],
     [
@@ -10361,7 +10340,7 @@
     ],
     [
       "spendguard.manage.routing.tier_config",
-      "spendguard.lane_catalog"
+      "spendguard.store.reference_data.lane_catalog"
     ],
     [
       "spendguard.manage.routing.tier_config",
@@ -10369,7 +10348,7 @@
     ],
     [
       "spendguard.manage.routing.tier_config",
-      "spendguard.pricing"
+      "spendguard.store.reference_data.pricing"
     ],
     [
       "spendguard.analyze.assurance.token_caps",
@@ -10429,7 +10408,7 @@
     ],
     [
       "spendguard.analyze.learning.validate",
-      "spendguard.pricing"
+      "spendguard.store.reference_data.pricing"
     ],
     [
       "spendguard.generate.execution.vendor_call",
@@ -10445,7 +10424,7 @@
     ],
     [
       "spendguard.generate.execution.vendor_call",
-      "spendguard.catalog"
+      "spendguard.store.reference_data.catalog"
     ],
     [
       "spendguard.generate.execution.vendor_call",
@@ -10461,7 +10440,7 @@
     ],
     [
       "spendguard.generate.execution.vendor_call",
-      "spendguard.models"
+      "spendguard.store.reference_data.models"
     ],
     [
       "spendguard.generate.execution.vendor_call",
@@ -10473,7 +10452,7 @@
     ],
     [
       "spendguard.generate.execution.vendor_call",
-      "spendguard.pricing"
+      "spendguard.store.reference_data.pricing"
     ],
     [
       "spendguard.analyze.assurance.verdict_ledger",
@@ -10497,7 +10476,7 @@
     ],
     [
       "spendguard.analyze.assurance.verify",
-      "spendguard.lane_catalog"
+      "spendguard.store.reference_data.lane_catalog"
     ],
     [
       "spendguard.analyze.assurance.verify",
@@ -10565,7 +10544,7 @@
     ],
     [
       "spendguard.manage.routing.whole_job",
-      "spendguard.pricing"
+      "spendguard.store.reference_data.pricing"
     ],
     [
       "spendguard.manage.routing.whole_job",
@@ -10605,7 +10584,7 @@
     ],
     [
       "spendguard.workdone",
-      "spendguard.pricing"
+      "spendguard.store.reference_data.pricing"
     ],
     [
       "spendguard.workdone",
@@ -10641,7 +10620,7 @@
     ],
     [
       "spendguard.generate.execution.zai_exec",
-      "spendguard.models"
+      "spendguard.store.reference_data.models"
     ],
     [
       "spendguard.generate.execution.zai_exec",
