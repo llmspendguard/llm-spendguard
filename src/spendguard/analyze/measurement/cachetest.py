@@ -13,10 +13,10 @@ report (verify the realized hit rate climbed).
 CLI: `spendguard cache-test [--script P | --from-intent X] [--model M] [--n 3] [--run]`.
 """
 
-from .capability_cli_parsing import add_registered_cli_argument
+from ...capability_cli_parsing import add_registered_cli_argument
 import os, re
-from . import config, calls, pricing
-from .submit import _count_tokens
+from ... import config, calls, pricing
+from ...submit import _count_tokens
 
 META = "spendguard"
 _ANTHROPIC_WRITE_MULT = 1.25   # ephemeral (5-min) cache write premium over base input
@@ -53,7 +53,7 @@ def _model_from_script(path):
 
 
 def _system_and_users_from_intent(intent, n):
-    from . import callio
+    from ... import callio
     from .cacheaudit import _common_prefix
     with callio.config.ledger_op('callio', callio._ensure_callio_schema) as ledger_read_handle:
         prompts = [r[0] for r in ledger_read_handle.execute(
@@ -72,7 +72,7 @@ def _run_calls(calls_out, system, users, model, prov):
     Extracted so a failure part-way through leaves the caller holding what already completed. The loop was
     inline and unguarded, so one exception discarded every call before it — calls that were made, billed,
     and whose usage figures were the entire point of running this."""
-    from . import adapters                                             # noqa: F401  (import parity)
+    from ... import adapters                                             # noqa: F401  (import parity)
     with calls.context(intent=f"{META}:cache-test"):
         if prov == "anthropic":
             import anthropic
@@ -98,7 +98,7 @@ def _run_calls(calls_out, system, users, model, prov):
 
 
 def cache_test(system, users, model=None, run=False):
-    from . import adapters
+    from ... import adapters
     model = model or config.advisor_judge_model()
     prov = adapters.provider_for(model)
     sys_tok = _count_tokens(system, model)
@@ -138,7 +138,7 @@ def cache_test(system, users, model=None, run=False):
         # can NEVER cache (Opus/Sonnet need ≥1024), despite the Haiku message itself naming that threshold.
         print("  ⚠️ Anthropic Opus/Sonnet need ≥1024 tokens to cache — this block is too short to cache there.")
     if not run:
-        from . import ui; ui.estimate_only(action="run the live caching test", cost=est)
+        from ... import ui; ui.estimate_only(action="run the live caching test", cost=est)
         return dict(ok=True, est=est)
 
     # PARTIAL RESULTS ARE STILL RESULTS. An exception mid-loop propagated and threw away every call

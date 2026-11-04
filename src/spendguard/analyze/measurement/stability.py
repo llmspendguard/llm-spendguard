@@ -14,8 +14,8 @@ rides its normal path (the $0 lane where available) at production sampling. $0 b
 (pure measurement). The replicate count k is the caller's — more replicates tighten the estimate of the spread.
 """
 
-from .capability_cli_parsing import add_registered_cli_argument
-from . import adapters
+from ...capability_cli_parsing import add_registered_cli_argument
+from ... import adapters
 
 DEFAULT_REPLICATES = 5          # enough to SEE a spread; the caller raises it to tighten the estimate
 

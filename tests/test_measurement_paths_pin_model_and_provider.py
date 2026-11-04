@@ -26,7 +26,7 @@ _B_PINS = [
 _C_PROVIDER = [
     ("manage/admission/gate.py", "_rt_precheck", "realtime_cost"),
     ("generate/execution/adapters.py", "_call_once", "realtime_cost"),
-    ("experiment.py", "_call", "realtime_cost"),
+    ("analyze/measurement/experiment.py", "_call", "realtime_cost"),
 ]
 
 

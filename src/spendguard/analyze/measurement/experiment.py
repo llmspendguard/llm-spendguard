@@ -16,10 +16,10 @@ The baseline cost is computed from the stored sample (no spend); only the varian
 CLI: `spendguard experiment --intent X [--model M]... [--instruction "..."]... [--n 20] [--run]`.
 """
 
-from .capability_cli_parsing import add_registered_cli_argument
+from ...capability_cli_parsing import add_registered_cli_argument
 import json
-from . import callio, calls, config, pricing
-from .submit import _count_tokens
+from ... import callio, calls, config, pricing
+from ...submit import _count_tokens
 
 META = "spendguard"
 KILL_PILOT = 5        # samples in the cheap first stage
@@ -60,7 +60,7 @@ def _call(model, prompt, effort=None):
     hand-picked cap: it is billed on ACTUAL tokens, so the ceiling is free and never truncates a measured answer. An
     explicit `effort` is resolved through the ONE reasoning home (models.normalize_reasoning) and DROPPED when that
     returns None (a non-reasoning model), never sent as a raw unaccepted literal."""
-    from . import adapters, models
+    from ... import adapters, models
     prov = adapters.provider_for(model)
     key = config.api_key(adapters.PROVIDERS[prov]["key_env"])
     kw = models.apply_call_params(model, {"model": model, "max_tokens": adapters.output_budget(model, vendor=prov),
@@ -133,7 +133,7 @@ def experiment(intent, models=None, instructions=None, n=20, run=False, reconsid
     never paid in full). SIDE EFFECTS when run: metered spend, console progress, and the ineffective-model denylist is
     updated. Returns a summary of the per-variant results (cost / score / verdict). A per-call failure is COUNTED, never
     silently swallowed; a deliberate spend stop or cap refusal propagates."""
-    from . import models as M
+    from ... import models as M
     base_model = _base_model(intent)
     samples = _samples(intent, base_model, n) if base_model else []
     if not samples:
@@ -174,7 +174,7 @@ def experiment(intent, models=None, instructions=None, n=20, run=False, reconsid
           f"(meta ${config.meta_cap():.0f}/day · spent {_spent})")
     if not run:
         print("  variants: " + ", ".join(v["label"] for v in variants))
-        from . import ui; ui.estimate_only(action="run the A/B experiment", cost=est)
+        from ... import ui; ui.estimate_only(action="run the A/B experiment", cost=est)
         return dict(ok=True, est=est)
 
     # GRADUATED: pilot small → kill clear losers cheap → expand survivors → report match ± stderr.
@@ -261,7 +261,7 @@ def experiment(intent, models=None, instructions=None, n=20, run=False, reconsid
 def _meta():
     """Meta spend today, or None if the ledger could not be READ. Returning 0.0 told the operator nothing had
     been spent when the truth was that nobody could tell — the same inversion as advisor._meta_spent."""
-    from . import budget, config
+    from ... import budget, config
     try:
         return budget.meta_spent_today()
     except Exception as e:
@@ -307,7 +307,7 @@ def _promote_batch(intent, model, instr, items, run):
     its own request build (the OpenAI Batch API serves only OpenAI ids). custom_id defaults to a GLOBAL 'i<index>' so ids
     stay unique across chunks; a per-chunk cap refusal from guarded_submit propagates (HALTS) after earlier chunks —
     which are real, kept production work — have already submitted."""
-    from . import adapters, models as M
+    from ... import adapters, models as M
     import tempfile, os
     prov = adapters.provider_for(model)
     chunks = [items[i:i + _BATCH_MAX] for i in range(0, len(items), _BATCH_MAX)]
@@ -317,7 +317,7 @@ def _promote_batch(intent, model, instr, items, run):
         # tasks = {custom_id, content} with the promote instruction folded into the prompt; the shared builder writes the
         # /v1/chat/completions envelope (per-model params + the model output budget + resolve_effort). reasoning=None
         # preserves promote's no-reasoning-effort behavior (and makes no discovery probe).
-        from .submit import build_chat_batch_jsonl, guarded_submit
+        from ...submit import build_chat_batch_jsonl, guarded_submit
         batches = []
         for ci, chunk in enumerate(chunks):
             fd, tasks_path = tempfile.mkstemp(suffix=".jsonl", prefix=f"promote_tasks_{intent.replace('/', '_')}_{ci}_")
@@ -339,11 +339,11 @@ def _promote_batch(intent, model, instr, items, run):
         if run:
             print("  retrieve results with `spendguard fetch-io` or the batch output files when complete.")
         else:
-            from . import ui; ui.estimate_only(action=f"submit {len(chunks)} batch(es)", note="WORKLOAD caps apply")
+            from ... import ui; ui.estimate_only(action=f"submit {len(chunks)} batch(es)", note="WORKLOAD caps apply")
         return dict(ok=True, provider=prov, chunks=len(chunks), batches=batches,
                     jsonls=[b["jsonl"] for b in batches], submitted=[b["batch"] for b in batches if b["batch"]])
     else:  # anthropic — gate estimates + caps on create; submit under workload context (OpenAI Batch API is OpenAI-only)
-        from . import gate
+        from ... import gate
         batches, total_est = [], 0.0
         for ci, chunk in enumerate(chunks):
             reqs_body = [(cid or f"i{ci * _BATCH_MAX + idx}",
@@ -364,7 +364,7 @@ def _promote_batch(intent, model, instr, items, run):
             batches.append({"batch": b.id})
             print(f"  [batch {ci + 1}/{len(chunks)}] submitted Anthropic batch {b.id}; retrieve results when complete.")
         if not run:
-            from . import ui
+            from ... import ui
             ui.estimate_only(action=f"submit {len(chunks)} batch(es)", cost=total_est, note="WORKLOAD caps apply")
             return dict(ok=True, provider=prov, chunks=len(chunks), est=total_est)
         return dict(ok=True, provider=prov, chunks=len(chunks), batches=batches, submitted=[b["batch"] for b in batches])
@@ -392,7 +392,7 @@ def promote(intent, model, instruction="", input=None, out=None, n=None, run=Fal
     print(f"promote — run winner {model} on {len(items)} inputs for '{intent}', KEEP output as production")
     print(f"  ⚠ this is WORKLOAD spend (real intent → your normal caps, NOT the meta cage). est ~${est:.4f}")
     if not run:
-        from . import ui; ui.estimate_only(action="produce + keep the output", cost=est, note="WORKLOAD spend")
+        from ... import ui; ui.estimate_only(action="produce + keep the output", cost=est, note="WORKLOAD spend")
         return dict(ok=True, est=est, items=len(items))
     out = out or f"promote_{intent.replace('/', '_')}.jsonl"
     kept, tot = 0, 0.0

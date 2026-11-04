@@ -1,12 +1,12 @@
 """Read-only realized-routing history from the calls ledger. No calls, probes, or prices."""
 
-from .capability_cli_parsing import add_registered_cli_argument
+from ...capability_cli_parsing import add_registered_cli_argument
 
 import argparse
 import json
 from pathlib import Path
 
-from . import config, ledger_read
+from ... import config, ledger_read
 
 
 def route_realized_report(intent, *, since=None, as_of=None, limit=20):

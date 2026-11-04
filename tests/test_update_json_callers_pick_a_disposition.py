@@ -32,6 +32,7 @@ _MOVED_CLUSTER_A_PATHS = {
     "catalog_price_authoring.py": ("store", "reference_data", "catalog_price_authoring.py"),
     "sync.py": ("store", "reference_data", "sync.py"),
     "sync_capabilities.py": ("store", "reference_data", "sync_capabilities.py"),
+    "review.py": ("analyze", "measurement", "review.py"),
 }
 
 # The files whose update_json callers were fixed in cluster A. Every update_json call in these files must carry a

@@ -453,8 +453,8 @@ check("the shared transport always passes a timeout",
 # cachetest had a second, weaker system-prompt extractor whose regex truncated at an escaped quote — and the
 # truncated length feeds the "is this worth caching" threshold.
 check("cachetest uses the AST extractor, not a second regex scan",
-      "_sys_assignments_ast" in (SRC / "cachetest.py").read_text()
-      and "_SYS_ASSIGN" not in (SRC / "cachetest.py").read_text())
+        "_sys_assignments_ast" in (SRC / "analyze/measurement/cachetest.py").read_text()
+        and "_SYS_ASSIGN" not in (SRC / "analyze/measurement/cachetest.py").read_text())
 
 
 # ── silent failures that SURVIVED adversarial refutation (2026-08-11) ─────────────────────────────────────
@@ -497,7 +497,7 @@ check("the caller keeps UNKNOWN and zero apart too", "if n is None:" in _gsrc an
 # Two copies of "meta spend today" returned 0.0 when the ledger could not be read, and both figures are
 # shown to an operator deciding whether to approve a run.
 for _path, _m, _f in (("analyze/learning/advisor.py", "advisor", "_meta_spent"),
-                      ("experiment.py", "experiment", "_meta")):
+                      ("analyze/measurement/experiment.py", "experiment", "_meta")):
     check(f"{_m}.{_f} says UNKNOWN rather than $0 when the ledger is unreadable",
           "return 0.0" not in (SRC / _path).read_text().split(f"def {_f}(")[1].split("def ")[0])
 

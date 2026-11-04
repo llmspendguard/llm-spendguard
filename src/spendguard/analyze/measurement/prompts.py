@@ -11,7 +11,7 @@ snippet-based checks), never guessed; prices come from pricing.py only. Each fin
 next command to run. Zero LLM spend — pure corpus analysis.
 """
 
-from .capability_cli_parsing import add_registered_cli_argument
+from ...capability_cli_parsing import add_registered_cli_argument
 
 MIN_CALLS = 5          # fewer samples than this → not judged (law of small numbers)
 LCP_MIN_CHARS = 60     # a shared prefix shorter than this isn't worth restructuring
@@ -28,7 +28,7 @@ def _batchable_verdict(intent, model, n, med_in):
     reasonable people can disagree — a bulk classify vs a chat turn), so a meta-caged LLM decides it, never a rule.
     Returns {batchable: bool, why: str}, or None when the judge is unavailable (→ the candidate is not emitted).
     A deliberate spend refusal (caps.meta) PROPAGATES — it halts the analysis, never degrades to a silent skip."""
-    from . import adapters, calls, config, gate, plan_admission
+    from ... import adapters, calls, config, gate, plan_admission
     judge_model = plan_admission.ready_meta_model(config.advisor_judge_model())  # route this meta call off a CAPPED plan to a READY provider
     q = (f"A job-type '{intent}' made {n} separate REALTIME LLM calls on {model}, each with a small (~{med_in}-token) "
          f"prompt. Are these INDEPENDENT items of one job that could be PACKED many-per-call or sent via the async "
@@ -70,7 +70,7 @@ def _lcp(strings):
 def _in_price_per_tok(model):
     """$/input-token from pricing.py (never hardcoded); None when unpriced."""
     try:
-        from . import pricing
+        from ... import pricing
         p = pricing.price(model)
         per_m = p.get("in_") if isinstance(p, dict) else None   # pricing.price -> {'in_','out','cached_in',...} $/1M
         return (float(per_m) / 1e6) if per_m else None
@@ -78,7 +78,7 @@ def _in_price_per_tok(model):
         # "UNPRICED" AND "THE PRICE LOOKUP BROKE" ARE DIFFERENT FACTS and this collapsed them. Both return
         # None here because the caller can only do one thing about it, but the second one is a bug someone
         # needs to hear about rather than a model legitimately missing from the table.
-        from . import config
+        from ... import config
         config.warn_once(f"[spendguard] price lookup FAILED for {model!r} ({type(e).__name__}) — this is a "
                          f"lookup error, not an unpriced model.")
         return None
@@ -93,7 +93,7 @@ def lint(intent=None, since=None, min_calls=MIN_CALLS, judge_batchable=False):
     and that is a MEANING judgement, not a threshold. So it is emitted ONLY under `judge_batchable=True`, which asks a
     small meta-caged LLM to rule packability per candidate (never a free $0 threshold-verdict). Default off → $0."""
     import sqlite3
-    from . import ledger_read
+    from ... import ledger_read
     try:
         rows = ledger_read.read_prompt_lint_evidence(intent, since)
     except ledger_read.LedgerReadOpenError:
@@ -198,7 +198,7 @@ def lint(intent=None, since=None, min_calls=MIN_CALLS, judge_batchable=False):
     # candidate is emitted only when the model rules it PACKABLE; a latency-sensitive interactive workload is skipped.
     # EVERY candidate's outcome is COUNTED (emitted / not-packable / judge-unavailable) and the tally surfaced — a
     # dropped candidate is never silent.
-    from . import pricing, gate, config as _cfg
+    from ... import pricing, gate, config as _cfg
     _considered, _emitted, _notpack, _unjudged = len(_batch_cands), 0, 0, 0
     for it, dominant, rt, med_in, metered in _batch_cands:
         v = _batchable_verdict(it, dominant, len(rt), med_in)

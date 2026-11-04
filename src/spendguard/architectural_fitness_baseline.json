@@ -3,9 +3,6 @@
   "package": "spendguard",
   "recorded_legacy_flat_modules": [
     "__main__.py",
-    "bakeoff.py",
-    "cacheaudit.py",
-    "cachetest.py",
     "capability_cli_callable_generation.py",
     "capability_cli_dispatch_generation.py",
     "capability_cli_help_generation.py",
@@ -19,7 +16,6 @@
     "codex_broker_owner.py",
     "codex_daemon.py",
     "codex_daemon_broker.py",
-    "compare.py",
     "comprehend.py",
     "crossllm.py",
     "delegate_jobs.py",
@@ -29,30 +25,16 @@
     "dispatch.py",
     "domain_context_surface.py",
     "domain_legacy_path_shim.py",
-    "effort_titration.py",
-    "equivalence.py",
     "execution_journal.py",
-    "experiment.py",
-    "guard.py",
     "kimi_daemon.py",
-    "lane_eligibility.py",
     "lane_queue.py",
     "lane_recovery.py",
-    "lane_servability.py",
     "mcp_fd_lifecycle.py",
     "mcp_server.py",
-    "measurement.py",
     "process_group_reaper.py",
-    "prompts.py",
     "queue_planner.py",
-    "realized.py",
-    "reliability.py",
-    "requirement_judge.py",
     "resource_state.py",
-    "review.py",
-    "route_realized.py",
     "serve.py",
-    "stability.py",
     "storm_coalescer.py",
     "storm_route.py",
     "storm_submit.py",
@@ -275,10 +257,6 @@
             "max_cc": 26,
             "mi": 58.04126694582299
           },
-          "src/spendguard/bakeoff.py": {
-            "max_cc": 70,
-            "mi": 37.37718121692871
-          },
           "src/spendguard/analyze/treasury/balances.py": {
             "max_cc": 17,
             "mi": 44.30921065898892
@@ -306,14 +284,6 @@
           "src/spendguard/manage/admission/bulkgate.py": {
             "max_cc": 35,
             "mi": 5.594718570362755
-          },
-          "src/spendguard/cacheaudit.py": {
-            "max_cc": 14,
-            "mi": 50.42783901471761
-          },
-          "src/spendguard/cachetest.py": {
-            "max_cc": 33,
-            "mi": 51.39788798944255
           },
           "src/spendguard/analyze/cost_estimation/calibrate.py": {
             "max_cc": 24,
@@ -387,10 +357,6 @@
             "max_cc": 18,
             "mi": 18.420720204206486
           },
-          "src/spendguard/compare.py": {
-            "max_cc": 27,
-            "mi": 69.39536668279646
-          },
           "src/spendguard/comprehend.py": {
             "max_cc": 21,
             "mi": 39.06540928307973
@@ -455,10 +421,6 @@
             "max_cc": 6,
             "mi": 41.66662944278332
           },
-          "src/spendguard/effort_titration.py": {
-            "max_cc": 34,
-            "mi": 32.6940631176573
-          },
           "src/spendguard/egress/__init__.py": {
             "max_cc": 0,
             "mi": 100.0
@@ -466,10 +428,6 @@
           "src/spendguard/egress/emit.py": {
             "max_cc": 11,
             "mi": 57.44704323569343
-          },
-          "src/spendguard/equivalence.py": {
-            "max_cc": 12,
-            "mi": 59.64239033958754
           },
           "src/spendguard/manage/admission/escalation_ladder.py": {
             "max_cc": 12,
@@ -490,10 +448,6 @@
           "src/spendguard/analyze/cost_estimation/expected_output.py": {
             "max_cc": 24,
             "mi": 58.90544946287266
-          },
-          "src/spendguard/experiment.py": {
-            "max_cc": 32,
-            "mi": 35.098998371583306
           },
           "src/spendguard/platform/fleet.py": {
             "max_cc": 26,
@@ -547,10 +501,6 @@
             "max_cc": 9,
             "mi": 75.54347430315269
           },
-          "src/spendguard/guard.py": {
-            "max_cc": 14,
-            "mi": 31.76708361776414
-          },
           "src/spendguard/analyze/learning/history.py": {
             "max_cc": 20,
             "mi": 39.278100741257006
@@ -587,10 +537,6 @@
             "max_cc": 28,
             "mi": 24.950450138602857
           },
-          "src/spendguard/lane_eligibility.py": {
-            "max_cc": 8,
-            "mi": 63.97364202920713
-          },
           "src/spendguard/lane_queue.py": {
             "max_cc": 56,
             "mi": 0.0
@@ -610,10 +556,6 @@
           "src/spendguard/store/reference_data/lane_registry.py": {
             "max_cc": 2,
             "mi": 88.70953110460482
-          },
-          "src/spendguard/lane_servability.py": {
-            "max_cc": 15,
-            "mi": 42.483868661843154
           },
           "src/spendguard/analyze/treasury/lane_value.py": {
             "max_cc": 20,
@@ -663,10 +605,6 @@
             "max_cc": 26,
             "mi": 7.141417127958235
           },
-          "src/spendguard/measurement.py": {
-            "max_cc": 19,
-            "mi": 36.18241532204339
-          },
           "src/spendguard/store/reference_data/model_catalog.py": {
             "max_cc": 43,
             "mi": 12.608930133037463
@@ -715,10 +653,6 @@
             "max_cc": 9,
             "mi": 73.39668068181851
           },
-          "src/spendguard/prompts.py": {
-            "max_cc": 69,
-            "mi": 42.1937791045013
-          },
           "src/spendguard/generate/execution/provider_kit.py": {
             "max_cc": 8,
             "mi": 71.42390592091552
@@ -734,10 +668,6 @@
           "src/spendguard/queue_planner.py": {
             "max_cc": 22,
             "mi": 45.710623967324935
-          },
-          "src/spendguard/realized.py": {
-            "max_cc": 16,
-            "mi": 59.47712586910378
           },
           "src/spendguard/analyze/reconciliation/realtime_oracle.py": {
             "max_cc": 15,
@@ -783,17 +713,9 @@
             "max_cc": 13,
             "mi": 55.98988472290109
           },
-          "src/spendguard/reliability.py": {
-            "max_cc": 24,
-            "mi": 17.7048922886874
-          },
           "src/spendguard/platform/remote.py": {
             "max_cc": 26,
             "mi": 49.869055626025805
-          },
-          "src/spendguard/requirement_judge.py": {
-            "max_cc": 10,
-            "mi": 66.56730370721212
           },
           "src/spendguard/manage/admission/residency_gate.py": {
             "max_cc": 25,
@@ -803,10 +725,6 @@
             "max_cc": 14,
             "mi": 54.671288944145104
           },
-          "src/spendguard/review.py": {
-            "max_cc": 12,
-            "mi": 49.0267487779889
-          },
           "src/spendguard/manage/routing/route_economics.py": {
             "max_cc": 29,
             "mi": 39.53850196386189
@@ -814,10 +732,6 @@
           "src/spendguard/manage/routing/route_horizon.py": {
             "max_cc": 47,
             "mi": 34.35506439931096
-          },
-          "src/spendguard/route_realized.py": {
-            "max_cc": 4,
-            "mi": 65.52491089544914
           },
           "src/spendguard/manage/routing/route_utility.py": {
             "max_cc": 44,
@@ -854,10 +768,6 @@
           "src/spendguard/egress/signal.py": {
             "max_cc": 22,
             "mi": 52.382591807655835
-          },
-          "src/spendguard/stability.py": {
-            "max_cc": 31,
-            "mi": 63.60816196785601
           },
           "src/spendguard/store/__init__.py": {
             "max_cc": 0,
@@ -1118,6 +1028,78 @@
           "src/spendguard/generate/spend_capture/resources.py": {
             "max_cc": 45,
             "mi": 0.0
+          },
+          "src/spendguard/analyze/measurement/measurement.py": {
+            "max_cc": 19,
+            "mi": 36.18241532204339
+          },
+          "src/spendguard/analyze/measurement/bakeoff.py": {
+            "max_cc": 70,
+            "mi": 37.37718121692871
+          },
+          "src/spendguard/analyze/measurement/compare.py": {
+            "max_cc": 27,
+            "mi": 69.39536668279646
+          },
+          "src/spendguard/analyze/measurement/experiment.py": {
+            "max_cc": 32,
+            "mi": 35.098998371583306
+          },
+          "src/spendguard/analyze/measurement/equivalence.py": {
+            "max_cc": 12,
+            "mi": 59.64239033958754
+          },
+          "src/spendguard/analyze/measurement/requirement_judge.py": {
+            "max_cc": 10,
+            "mi": 66.56730370721212
+          },
+          "src/spendguard/analyze/measurement/stability.py": {
+            "max_cc": 31,
+            "mi": 63.60816196785601
+          },
+          "src/spendguard/analyze/measurement/effort_titration.py": {
+            "max_cc": 34,
+            "mi": 32.6940631176573
+          },
+          "src/spendguard/analyze/measurement/reliability.py": {
+            "max_cc": 24,
+            "mi": 17.7048922886874
+          },
+          "src/spendguard/analyze/measurement/lane_servability.py": {
+            "max_cc": 15,
+            "mi": 42.483868661843154
+          },
+          "src/spendguard/analyze/measurement/route_realized.py": {
+            "max_cc": 4,
+            "mi": 65.52491089544914
+          },
+          "src/spendguard/analyze/measurement/realized.py": {
+            "max_cc": 16,
+            "mi": 59.47712586910378
+          },
+          "src/spendguard/analyze/measurement/guard.py": {
+            "max_cc": 14,
+            "mi": 31.76708361776414
+          },
+          "src/spendguard/analyze/measurement/cacheaudit.py": {
+            "max_cc": 14,
+            "mi": 50.42783901471761
+          },
+          "src/spendguard/analyze/measurement/cachetest.py": {
+            "max_cc": 33,
+            "mi": 51.39788798944255
+          },
+          "src/spendguard/analyze/measurement/prompts.py": {
+            "max_cc": 69,
+            "mi": 42.1937791045013
+          },
+          "src/spendguard/analyze/measurement/review.py": {
+            "max_cc": 12,
+            "mi": 49.0267487779889
+          },
+          "src/spendguard/analyze/measurement/lane_eligibility.py": {
+            "max_cc": 8,
+            "mi": 63.97364202920713
           }
         },
         "measured_extremes": {
@@ -1275,10 +1257,6 @@
             "max_cc": 26,
             "mi": 57.823471510010044
           },
-          "src/spendguard/bakeoff.py": {
-            "max_cc": 70,
-            "mi": 37.25114364783685
-          },
           "src/spendguard/analyze/treasury/balances.py": {
             "max_cc": 17,
             "mi": 44.12875407505603
@@ -1306,14 +1284,6 @@
           "src/spendguard/manage/admission/bulkgate.py": {
             "max_cc": 35,
             "mi": 5.535784108388101
-          },
-          "src/spendguard/cacheaudit.py": {
-            "max_cc": 14,
-            "mi": 50.16647942664449
-          },
-          "src/spendguard/cachetest.py": {
-            "max_cc": 33,
-            "mi": 50.84226846972301
           },
           "src/spendguard/analyze/cost_estimation/calibrate.py": {
             "max_cc": 24,
@@ -1387,10 +1357,6 @@
             "max_cc": 18,
             "mi": 18.40491755798936
           },
-          "src/spendguard/compare.py": {
-            "max_cc": 27,
-            "mi": 68.0064916641366
-          },
           "src/spendguard/comprehend.py": {
             "max_cc": 21,
             "mi": 38.987113926607044
@@ -1455,10 +1421,6 @@
             "max_cc": 6,
             "mi": 41.66662944278332
           },
-          "src/spendguard/effort_titration.py": {
-            "max_cc": 34,
-            "mi": 32.6940631176573
-          },
           "src/spendguard/egress/__init__.py": {
             "max_cc": 0,
             "mi": 100.0
@@ -1466,10 +1428,6 @@
           "src/spendguard/egress/emit.py": {
             "max_cc": 11,
             "mi": 57.44704323569343
-          },
-          "src/spendguard/equivalence.py": {
-            "max_cc": 12,
-            "mi": 59.64239033958754
           },
           "src/spendguard/manage/admission/escalation_ladder.py": {
             "max_cc": 12,
@@ -1490,10 +1448,6 @@
           "src/spendguard/analyze/cost_estimation/expected_output.py": {
             "max_cc": 24,
             "mi": 58.80727569095695
-          },
-          "src/spendguard/experiment.py": {
-            "max_cc": 32,
-            "mi": 34.65440375053294
           },
           "src/spendguard/platform/fleet.py": {
             "max_cc": 26,
@@ -1547,10 +1501,6 @@
             "max_cc": 9,
             "mi": 75.54347430315269
           },
-          "src/spendguard/guard.py": {
-            "max_cc": 14,
-            "mi": 31.76708361776414
-          },
           "src/spendguard/analyze/learning/history.py": {
             "max_cc": 20,
             "mi": 39.189145306363805
@@ -1587,10 +1537,6 @@
             "max_cc": 28,
             "mi": 24.64482091758812
           },
-          "src/spendguard/lane_eligibility.py": {
-            "max_cc": 8,
-            "mi": 63.750721527426336
-          },
           "src/spendguard/lane_queue.py": {
             "max_cc": 56,
             "mi": 0.0
@@ -1610,10 +1556,6 @@
           "src/spendguard/store/reference_data/lane_registry.py": {
             "max_cc": 2,
             "mi": 88.70953110460482
-          },
-          "src/spendguard/lane_servability.py": {
-            "max_cc": 15,
-            "mi": 42.483868661843154
           },
           "src/spendguard/analyze/treasury/lane_value.py": {
             "max_cc": 20,
@@ -1663,10 +1605,6 @@
             "max_cc": 26,
             "mi": 7.0930201685008685
           },
-          "src/spendguard/measurement.py": {
-            "max_cc": 19,
-            "mi": 36.18241532204339
-          },
           "src/spendguard/store/reference_data/model_catalog.py": {
             "max_cc": 43,
             "mi": 12.608930133037463
@@ -1715,10 +1653,6 @@
             "max_cc": 9,
             "mi": 73.39668068181851
           },
-          "src/spendguard/prompts.py": {
-            "max_cc": 69,
-            "mi": 42.140705104566536
-          },
           "src/spendguard/generate/execution/provider_kit.py": {
             "max_cc": 8,
             "mi": 71.42390592091552
@@ -1734,10 +1668,6 @@
           "src/spendguard/queue_planner.py": {
             "max_cc": 22,
             "mi": 45.61682434748873
-          },
-          "src/spendguard/realized.py": {
-            "max_cc": 16,
-            "mi": 59.09429866379758
           },
           "src/spendguard/analyze/reconciliation/realtime_oracle.py": {
             "max_cc": 15,
@@ -1783,17 +1713,9 @@
             "max_cc": 13,
             "mi": 55.98988472290109
           },
-          "src/spendguard/reliability.py": {
-            "max_cc": 24,
-            "mi": 17.650601686181226
-          },
           "src/spendguard/platform/remote.py": {
             "max_cc": 26,
             "mi": 49.680205169070675
-          },
-          "src/spendguard/requirement_judge.py": {
-            "max_cc": 10,
-            "mi": 66.56730370721212
           },
           "src/spendguard/manage/admission/residency_gate.py": {
             "max_cc": 25,
@@ -1803,10 +1725,6 @@
             "max_cc": 14,
             "mi": 54.671288944145104
           },
-          "src/spendguard/review.py": {
-            "max_cc": 12,
-            "mi": 48.64262788372663
-          },
           "src/spendguard/manage/routing/route_economics.py": {
             "max_cc": 29,
             "mi": 39.53850196386189
@@ -1814,10 +1732,6 @@
           "src/spendguard/manage/routing/route_horizon.py": {
             "max_cc": 47,
             "mi": 34.35506439931096
-          },
-          "src/spendguard/route_realized.py": {
-            "max_cc": 4,
-            "mi": 64.7666115595946
           },
           "src/spendguard/manage/routing/route_utility.py": {
             "max_cc": 44,
@@ -1854,10 +1768,6 @@
           "src/spendguard/egress/signal.py": {
             "max_cc": 22,
             "mi": 51.96146984645848
-          },
-          "src/spendguard/stability.py": {
-            "max_cc": 31,
-            "mi": 63.498638387214235
           },
           "src/spendguard/store/__init__.py": {
             "max_cc": 0,
@@ -2118,6 +2028,78 @@
           "src/spendguard/generate/spend_capture/resources.py": {
             "max_cc": 45,
             "mi": 0.0
+          },
+          "src/spendguard/analyze/measurement/measurement.py": {
+            "max_cc": 19,
+            "mi": 36.18241532204339
+          },
+          "src/spendguard/analyze/measurement/bakeoff.py": {
+            "max_cc": 70,
+            "mi": 37.25114364783685
+          },
+          "src/spendguard/analyze/measurement/compare.py": {
+            "max_cc": 27,
+            "mi": 68.0064916641366
+          },
+          "src/spendguard/analyze/measurement/experiment.py": {
+            "max_cc": 32,
+            "mi": 34.65440375053294
+          },
+          "src/spendguard/analyze/measurement/equivalence.py": {
+            "max_cc": 12,
+            "mi": 59.64239033958754
+          },
+          "src/spendguard/analyze/measurement/requirement_judge.py": {
+            "max_cc": 10,
+            "mi": 66.56730370721212
+          },
+          "src/spendguard/analyze/measurement/stability.py": {
+            "max_cc": 31,
+            "mi": 63.498638387214235
+          },
+          "src/spendguard/analyze/measurement/effort_titration.py": {
+            "max_cc": 34,
+            "mi": 32.6940631176573
+          },
+          "src/spendguard/analyze/measurement/reliability.py": {
+            "max_cc": 24,
+            "mi": 17.650601686181226
+          },
+          "src/spendguard/analyze/measurement/lane_servability.py": {
+            "max_cc": 15,
+            "mi": 42.483868661843154
+          },
+          "src/spendguard/analyze/measurement/route_realized.py": {
+            "max_cc": 4,
+            "mi": 64.7666115595946
+          },
+          "src/spendguard/analyze/measurement/realized.py": {
+            "max_cc": 16,
+            "mi": 59.09429866379758
+          },
+          "src/spendguard/analyze/measurement/guard.py": {
+            "max_cc": 14,
+            "mi": 31.76708361776414
+          },
+          "src/spendguard/analyze/measurement/cacheaudit.py": {
+            "max_cc": 14,
+            "mi": 50.16647942664449
+          },
+          "src/spendguard/analyze/measurement/cachetest.py": {
+            "max_cc": 33,
+            "mi": 50.84226846972301
+          },
+          "src/spendguard/analyze/measurement/prompts.py": {
+            "max_cc": 69,
+            "mi": 42.140705104566536
+          },
+          "src/spendguard/analyze/measurement/review.py": {
+            "max_cc": 12,
+            "mi": 48.64262788372663
+          },
+          "src/spendguard/analyze/measurement/lane_eligibility.py": {
+            "max_cc": 8,
+            "mi": 63.750721527426336
           }
         },
         "measured_extremes": {
@@ -2128,7 +2110,7 @@
     },
     "reviewed_delegate_lifecycle": "2026-10-30: Reviewed complete changed worker, router, job controls, journal adoption and shared warm broker bodies. Increased branches implement PID/birth-verified cancellation, locked identity validation before stale recovery can declare an adopted worker lost, terminal waits, generated CLI controls and race-safe warm cancellation through the existing daemon journal boundary. Worker reuses existing governed completion. Exact Radon 6.0.1 measurements independently recorded under Python 3.11 and 3.12; all other ratchet limits unchanged. Targeting lifetime, cancellation, wait, stream and warm tests include mutation proofs.",
     "reviewed_delegate_isolation_and_provider_results": "2026-10-30: Reviewed both complete new modules. delegate_worktrees is standard-library-only git isolation: snapshots tracked dirty and untracked inputs, collects the complete binary delta, retains failures, and cleans accepted workspaces through injected durable metadata/envelope writers. Concurrent actual-router and detached success/cancel tests exercise primary-checkout confinement, cleanup and retained inspection; bypassing isolation makes targeting tests red. subscription_cli_results extracts existing fixed-shape provider decoding and warm fallback contracts with injected transports, preserving errors and usage without package imports or semantic routing decisions. Provider execution targeting tests and read-only-routing mutations cover its consumers. Exact Radon 6.0.1 new-file measurements independently match on Python 3.11 and 3.12; existing file ratchets and cyclic-edge limits are unchanged.",
-    "reviewed_doctor_bounded_load_scale_and_regen": "2026-10-31: Reviewed the complete changed bodies for the doctor-bounded load-scale branch. capability_readiness_gates.run_capability_script_readiness_gate now pulls measure_isolated_runner_budget_scale from the chunked_suite harness namespace and threads the measured runner_budget_scale into run_isolated_script, fixing the missing-argument regression that broke the offline readiness-evidence step; its size-sensitive MI falls 47.38754686040469 to 47.21367827153188 with max CC 14 unchanged \u2014 the only file whose measurement regresses the frozen baseline on this branch. architectural_fitness additionally gains the shared architectural_complexity_metrics_regress predicate \u2014 now the single regression rule read by both run_architectural_fitness_gate and the regenerator \u2014 and the surgical, justification-gated regenerate_architectural_complexity_baseline, which records only measured per-interpreter regressions (routing its write through config.update_json with keep_backups=0 so the atomic replace and always-on path~ backup are kept while no undeclared timestamped .json is left in the package dir) and leaves every other ratchet untouched; with those additions architectural_fitness measures max CC 30 and MI 22.221214118439754, improving on both axes versus the stored 31 / 20.935514428828085, so it does not regress and its baseline entry is intentionally left unchanged. Independently remeasured with Radon 6.0.1 under Python 3.11 and 3.12; only capability_readiness_gates.py's baseline changes, identically on each interpreter. All other complexity, cycle, duplication and dead-code ratchets remain unchanged.",
+    "reviewed_doctor_bounded_load_scale_and_regen": "2026-10-31: Reviewed the complete changed bodies for the doctor-bounded load-scale branch. capability_readiness_gates.run_capability_script_readiness_gate now pulls measure_isolated_runner_budget_scale from the chunked_suite harness namespace and threads the measured runner_budget_scale into run_isolated_script, fixing the missing-argument regression that broke the offline readiness-evidence step; its size-sensitive MI falls 47.38754686040469 to 47.21367827153188 with max CC 14 unchanged — the only file whose measurement regresses the frozen baseline on this branch. architectural_fitness additionally gains the shared architectural_complexity_metrics_regress predicate — now the single regression rule read by both run_architectural_fitness_gate and the regenerator — and the surgical, justification-gated regenerate_architectural_complexity_baseline, which records only measured per-interpreter regressions (routing its write through config.update_json with keep_backups=0 so the atomic replace and always-on path~ backup are kept while no undeclared timestamped .json is left in the package dir) and leaves every other ratchet untouched; with those additions architectural_fitness measures max CC 30 and MI 22.221214118439754, improving on both axes versus the stored 31 / 20.935514428828085, so it does not regress and its baseline entry is intentionally left unchanged. Independently remeasured with Radon 6.0.1 under Python 3.11 and 3.12; only capability_readiness_gates.py's baseline changes, identically on each interpreter. All other complexity, cycle, duplication and dead-code ratchets remain unchanged.",
     "reviewed_ledger_performance_benchmark": "Measured offline ledger performance benchmark core and relative baseline comparison.",
     "reviewed_ledger_performance_profile_wiring": "Reviewed benchmark profile wiring adds bounded metadata derivation, fixture construction, and read-only source-ledger integration.",
     "reviewed_selfcheck_named_unreviewed_exit_policy": "Reviewed the explicit selfcheck exit-policy helper and repeatable CLI array parsing; both are small mechanical policy/argument adapters with can-still-fail coverage.",
@@ -6082,13 +6064,13 @@
     "src/spendguard/manage/admission/gate.py:2755",
     "src/spendguard/generate/spend_capture/gpu_port.py:278",
     "src/spendguard/analyze/learning/lane_bandit.py:290",
-    "src/spendguard/lane_servability.py:292",
+    "src/spendguard/analyze/measurement/lane_servability.py:292",
     "src/spendguard/platform/lanes.py:64",
     "src/spendguard/generate/spend_capture/sources.py:77"
   ],
   "max_largest_scc_size": 142,
   "max_cyclic_edge_count": 943,
-  "max_legacy_shim_count": 165,
+  "max_legacy_shim_count": 183,
   "recorded_cross_context_nonsurface_imports": [
     [
       "spendguard",
@@ -6148,7 +6130,7 @@
     ],
     [
       "spendguard.generate.execution.adapters",
-      "spendguard.cacheaudit"
+      "spendguard.analyze.measurement.cacheaudit"
     ],
     [
       "spendguard.generate.execution.adapters",
@@ -6196,7 +6178,7 @@
     ],
     [
       "spendguard.generate.execution.adapters",
-      "spendguard.guard"
+      "spendguard.analyze.measurement.guard"
     ],
     [
       "spendguard.generate.execution.adapters",
@@ -6224,7 +6206,7 @@
     ],
     [
       "spendguard.generate.execution.adapters",
-      "spendguard.lane_servability"
+      "spendguard.analyze.measurement.lane_servability"
     ],
     [
       "spendguard.generate.execution.adapters",
@@ -6260,7 +6242,7 @@
     ],
     [
       "spendguard.generate.execution.adapters",
-      "spendguard.reliability"
+      "spendguard.analyze.measurement.reliability"
     ],
     [
       "spendguard.generate.execution.adapters",
@@ -6308,7 +6290,7 @@
     ],
     [
       "spendguard.analyze.learning.advise",
-      "spendguard.route_realized"
+      "spendguard.analyze.measurement.route_realized"
     ],
     [
       "spendguard.analyze.learning.advisor",
@@ -6463,43 +6445,43 @@
       "spendguard.analyze.reconciliation.reconcile_openai"
     ],
     [
-      "spendguard.bakeoff",
+      "spendguard.analyze.measurement.bakeoff",
       "spendguard.generate.execution.adapters"
     ],
     [
-      "spendguard.bakeoff",
+      "spendguard.analyze.measurement.bakeoff",
       "spendguard.analyze.learning.advise"
     ],
     [
-      "spendguard.bakeoff",
+      "spendguard.analyze.measurement.bakeoff",
       "spendguard.analyze.learning.advisor"
     ],
     [
-      "spendguard.bakeoff",
+      "spendguard.analyze.measurement.bakeoff",
       "spendguard.store.call_corpus.callio"
     ],
     [
-      "spendguard.bakeoff",
+      "spendguard.analyze.measurement.bakeoff",
       "spendguard.store.call_corpus.calls"
     ],
     [
-      "spendguard.bakeoff",
+      "spendguard.analyze.measurement.bakeoff",
       "spendguard.capability_cli_parsing"
     ],
     [
-      "spendguard.bakeoff",
+      "spendguard.analyze.measurement.bakeoff",
       "spendguard.store.configuration.config"
     ],
     [
-      "spendguard.bakeoff",
+      "spendguard.analyze.measurement.bakeoff",
       "spendguard.manage.admission.gate"
     ],
     [
-      "spendguard.bakeoff",
+      "spendguard.analyze.measurement.bakeoff",
       "spendguard.store.reference_data.pricing"
     ],
     [
-      "spendguard.bakeoff",
+      "spendguard.analyze.measurement.bakeoff",
       "spendguard.generate.execution.submit"
     ],
     [
@@ -6620,7 +6602,7 @@
     ],
     [
       "spendguard.analyze.learning.bootstrap",
-      "spendguard.review"
+      "spendguard.analyze.measurement.review"
     ],
     [
       "spendguard.analyze.learning.bootstrap",
@@ -6747,55 +6729,55 @@
       "spendguard.generate.work_integrity.output_contract"
     ],
     [
-      "spendguard.cacheaudit",
+      "spendguard.analyze.measurement.cacheaudit",
       "spendguard.store.call_corpus.callio"
     ],
     [
-      "spendguard.cacheaudit",
+      "spendguard.analyze.measurement.cacheaudit",
       "spendguard.capability_cli_parsing"
     ],
     [
-      "spendguard.cacheaudit",
+      "spendguard.analyze.measurement.cacheaudit",
       "spendguard.store.configuration.config"
     ],
     [
-      "spendguard.cacheaudit",
+      "spendguard.analyze.measurement.cacheaudit",
       "spendguard.store.reference_data.pricing"
     ],
     [
-      "spendguard.cacheaudit",
+      "spendguard.analyze.measurement.cacheaudit",
       "spendguard.generate.execution.submit"
     ],
     [
-      "spendguard.cachetest",
+      "spendguard.analyze.measurement.cachetest",
       "spendguard.generate.execution.adapters"
     ],
     [
-      "spendguard.cachetest",
+      "spendguard.analyze.measurement.cachetest",
       "spendguard.store.call_corpus.callio"
     ],
     [
-      "spendguard.cachetest",
+      "spendguard.analyze.measurement.cachetest",
       "spendguard.store.call_corpus.calls"
     ],
     [
-      "spendguard.cachetest",
+      "spendguard.analyze.measurement.cachetest",
       "spendguard.capability_cli_parsing"
     ],
     [
-      "spendguard.cachetest",
+      "spendguard.analyze.measurement.cachetest",
       "spendguard.store.configuration.config"
     ],
     [
-      "spendguard.cachetest",
+      "spendguard.analyze.measurement.cachetest",
       "spendguard.store.reference_data.pricing"
     ],
     [
-      "spendguard.cachetest",
+      "spendguard.analyze.measurement.cachetest",
       "spendguard.generate.execution.submit"
     ],
     [
-      "spendguard.cachetest",
+      "spendguard.analyze.measurement.cachetest",
       "spendguard.ui"
     ],
     [
@@ -6960,15 +6942,15 @@
     ],
     [
       "spendguard.manage.routing.cascade",
-      "spendguard.equivalence"
+      "spendguard.analyze.measurement.equivalence"
     ],
     [
       "spendguard.manage.routing.cascade",
-      "spendguard.experiment"
+      "spendguard.analyze.measurement.experiment"
     ],
     [
       "spendguard.manage.routing.cascade",
-      "spendguard.guard"
+      "spendguard.analyze.measurement.guard"
     ],
     [
       "spendguard.manage.routing.cascade",
@@ -7148,7 +7130,7 @@
     ],
     [
       "spendguard.cli",
-      "spendguard.guard"
+      "spendguard.analyze.measurement.guard"
     ],
     [
       "spendguard.cli",
@@ -7316,7 +7298,7 @@
     ],
     [
       "spendguard.generate.spend_capture.compaction",
-      "spendguard.guard"
+      "spendguard.analyze.measurement.guard"
     ],
     [
       "spendguard.generate.spend_capture.compaction",
@@ -7327,11 +7309,11 @@
       "spendguard.ui"
     ],
     [
-      "spendguard.compare",
+      "spendguard.analyze.measurement.compare",
       "spendguard.generate.execution.adapters"
     ],
     [
-      "spendguard.compare",
+      "spendguard.analyze.measurement.compare",
       "spendguard.capability_cli_parsing"
     ],
     [
@@ -7624,7 +7606,7 @@
     ],
     [
       "spendguard.delegate_router",
-      "spendguard.guard"
+      "spendguard.analyze.measurement.guard"
     ],
     [
       "spendguard.delegate_router",
@@ -7656,7 +7638,7 @@
     ],
     [
       "spendguard.delegate_router",
-      "spendguard.reliability"
+      "spendguard.analyze.measurement.reliability"
     ],
     [
       "spendguard.delegate_worker",
@@ -7723,55 +7705,55 @@
       "spendguard.mcp_server"
     ],
     [
-      "spendguard.effort_titration",
+      "spendguard.analyze.measurement.effort_titration",
       "spendguard.generate.execution.adapters"
     ],
     [
-      "spendguard.effort_titration",
+      "spendguard.analyze.measurement.effort_titration",
       "spendguard.analyze.learning.advisor"
     ],
     [
-      "spendguard.effort_titration",
+      "spendguard.analyze.measurement.effort_titration",
       "spendguard.manage.admission.budget"
     ],
     [
-      "spendguard.effort_titration",
+      "spendguard.analyze.measurement.effort_titration",
       "spendguard.store.call_corpus.calls"
     ],
     [
-      "spendguard.effort_titration",
+      "spendguard.analyze.measurement.effort_titration",
       "spendguard.capability_cli_parsing"
     ],
     [
-      "spendguard.effort_titration",
+      "spendguard.analyze.measurement.effort_titration",
       "spendguard.store.configuration.config"
     ],
     [
-      "spendguard.effort_titration",
+      "spendguard.analyze.measurement.effort_titration",
       "spendguard.manage.admission.gate"
     ],
     [
-      "spendguard.effort_titration",
+      "spendguard.analyze.measurement.effort_titration",
       "spendguard.store.spend_search.ledger_read"
     ],
     [
-      "spendguard.effort_titration",
+      "spendguard.analyze.measurement.effort_titration",
       "spendguard.store.money_ledger.ledger_writer"
     ],
     [
-      "spendguard.effort_titration",
+      "spendguard.analyze.measurement.effort_titration",
       "spendguard.store.reference_data.models"
     ],
     [
-      "spendguard.effort_titration",
+      "spendguard.analyze.measurement.effort_titration",
       "spendguard.store.reference_data.money_scale"
     ],
     [
-      "spendguard.effort_titration",
+      "spendguard.analyze.measurement.effort_titration",
       "spendguard.store.reference_data.pricing"
     ],
     [
-      "spendguard.effort_titration",
+      "spendguard.analyze.measurement.effort_titration",
       "spendguard.generate.execution.submit"
     ],
     [
@@ -7783,11 +7765,11 @@
       "spendguard.store.configuration.config"
     ],
     [
-      "spendguard.equivalence",
+      "spendguard.analyze.measurement.equivalence",
       "spendguard.generate.execution.adapters"
     ],
     [
-      "spendguard.equivalence",
+      "spendguard.analyze.measurement.equivalence",
       "spendguard.manage.admission.gate"
     ],
     [
@@ -7859,47 +7841,47 @@
       "spendguard.store.reference_data.pricing"
     ],
     [
-      "spendguard.experiment",
+      "spendguard.analyze.measurement.experiment",
       "spendguard.generate.execution.adapters"
     ],
     [
-      "spendguard.experiment",
+      "spendguard.analyze.measurement.experiment",
       "spendguard.manage.admission.budget"
     ],
     [
-      "spendguard.experiment",
+      "spendguard.analyze.measurement.experiment",
       "spendguard.store.call_corpus.callio"
     ],
     [
-      "spendguard.experiment",
+      "spendguard.analyze.measurement.experiment",
       "spendguard.store.call_corpus.calls"
     ],
     [
-      "spendguard.experiment",
+      "spendguard.analyze.measurement.experiment",
       "spendguard.capability_cli_parsing"
     ],
     [
-      "spendguard.experiment",
+      "spendguard.analyze.measurement.experiment",
       "spendguard.store.configuration.config"
     ],
     [
-      "spendguard.experiment",
+      "spendguard.analyze.measurement.experiment",
       "spendguard.manage.admission.gate"
     ],
     [
-      "spendguard.experiment",
+      "spendguard.analyze.measurement.experiment",
       "spendguard.store.reference_data.models"
     ],
     [
-      "spendguard.experiment",
+      "spendguard.analyze.measurement.experiment",
       "spendguard.store.reference_data.pricing"
     ],
     [
-      "spendguard.experiment",
+      "spendguard.analyze.measurement.experiment",
       "spendguard.generate.execution.submit"
     ],
     [
-      "spendguard.experiment",
+      "spendguard.analyze.measurement.experiment",
       "spendguard.ui"
     ],
     [
@@ -8016,7 +7998,7 @@
     ],
     [
       "spendguard.manage.admission.gate",
-      "spendguard.guard"
+      "spendguard.analyze.measurement.guard"
     ],
     [
       "spendguard.manage.admission.gate",
@@ -8056,7 +8038,7 @@
     ],
     [
       "spendguard.manage.admission.gate",
-      "spendguard.reliability"
+      "spendguard.analyze.measurement.reliability"
     ],
     [
       "spendguard.manage.admission.gate",
@@ -8087,35 +8069,35 @@
       "spendguard.egress.saas"
     ],
     [
-      "spendguard.guard",
+      "spendguard.analyze.measurement.guard",
       "spendguard.generate.execution.adapters"
     ],
     [
-      "spendguard.guard",
+      "spendguard.analyze.measurement.guard",
       "spendguard.manage.admission.budget"
     ],
     [
-      "spendguard.guard",
+      "spendguard.analyze.measurement.guard",
       "spendguard.store.configuration.config"
     ],
     [
-      "spendguard.guard",
+      "spendguard.analyze.measurement.guard",
       "spendguard.store.spend_search.ledger_read"
     ],
     [
-      "spendguard.guard",
+      "spendguard.analyze.measurement.guard",
       "spendguard.store.money_ledger.ledger_writer"
     ],
     [
-      "spendguard.guard",
+      "spendguard.analyze.measurement.guard",
       "spendguard.store.reference_data.money_scale"
     ],
     [
-      "spendguard.guard",
+      "spendguard.analyze.measurement.guard",
       "spendguard.store.call_corpus.routing_audit"
     ],
     [
-      "spendguard.guard",
+      "spendguard.analyze.measurement.guard",
       "spendguard.store.money_ledger.schema_indexes"
     ],
     [
@@ -8407,15 +8389,15 @@
       "spendguard.analyze.spend_reporting.receipt"
     ],
     [
-      "spendguard.lane_eligibility",
+      "spendguard.analyze.measurement.lane_eligibility",
       "spendguard.store.call_corpus.calls"
     ],
     [
-      "spendguard.lane_eligibility",
+      "spendguard.analyze.measurement.lane_eligibility",
       "spendguard.store.configuration.config"
     ],
     [
-      "spendguard.lane_eligibility",
+      "spendguard.analyze.measurement.lane_eligibility",
       "spendguard.store.reference_data.pricing"
     ],
     [
@@ -8503,27 +8485,27 @@
       "spendguard.manage.admission.gate"
     ],
     [
-      "spendguard.lane_servability",
+      "spendguard.analyze.measurement.lane_servability",
       "spendguard.generate.execution.adapters"
     ],
     [
-      "spendguard.lane_servability",
+      "spendguard.analyze.measurement.lane_servability",
       "spendguard.store.call_corpus.calls"
     ],
     [
-      "spendguard.lane_servability",
+      "spendguard.analyze.measurement.lane_servability",
       "spendguard.store.reference_data.catalog"
     ],
     [
-      "spendguard.lane_servability",
+      "spendguard.analyze.measurement.lane_servability",
       "spendguard.store.configuration.config"
     ],
     [
-      "spendguard.lane_servability",
+      "spendguard.analyze.measurement.lane_servability",
       "spendguard.store.reference_data.lane_catalog"
     ],
     [
-      "spendguard.lane_servability",
+      "spendguard.analyze.measurement.lane_servability",
       "spendguard.generate.execution.vendor_call"
     ],
     [
@@ -8592,7 +8574,7 @@
     ],
     [
       "spendguard.platform.lanes",
-      "spendguard.lane_eligibility"
+      "spendguard.analyze.measurement.lane_eligibility"
     ],
     [
       "spendguard.platform.lanes",
@@ -8612,7 +8594,7 @@
     ],
     [
       "spendguard.platform.lanes",
-      "spendguard.lane_servability"
+      "spendguard.analyze.measurement.lane_servability"
     ],
     [
       "spendguard.platform.lanes",
@@ -8624,7 +8606,7 @@
     ],
     [
       "spendguard.platform.lanes",
-      "spendguard.reliability"
+      "spendguard.analyze.measurement.reliability"
     ],
     [
       "spendguard.platform.lanes",
@@ -8824,7 +8806,7 @@
     ],
     [
       "spendguard.mcp_server",
-      "spendguard.bakeoff"
+      "spendguard.analyze.measurement.bakeoff"
     ],
     [
       "spendguard.mcp_server",
@@ -8876,7 +8858,7 @@
     ],
     [
       "spendguard.mcp_server",
-      "spendguard.guard"
+      "spendguard.analyze.measurement.guard"
     ],
     [
       "spendguard.mcp_server",
@@ -8924,7 +8906,7 @@
     ],
     [
       "spendguard.mcp_server",
-      "spendguard.reliability"
+      "spendguard.analyze.measurement.reliability"
     ],
     [
       "spendguard.mcp_server",
@@ -8936,38 +8918,38 @@
     ],
     [
       "spendguard.mcp_server",
-      "spendguard.route_realized"
+      "spendguard.analyze.measurement.route_realized"
     ],
     [
       "spendguard.mcp_server",
-      "spendguard.stability"
+      "spendguard.analyze.measurement.stability"
     ],
     [
       "spendguard.mcp_server",
       "spendguard.manage.routing.whole_job"
     ],
     [
-      "spendguard.measurement",
+      "spendguard.analyze.measurement.measurement",
       "spendguard.platform._version"
     ],
     [
-      "spendguard.measurement",
+      "spendguard.analyze.measurement.measurement",
       "spendguard.store.call_corpus.callio"
     ],
     [
-      "spendguard.measurement",
+      "spendguard.analyze.measurement.measurement",
       "spendguard.capability_cli_parsing"
     ],
     [
-      "spendguard.measurement",
+      "spendguard.analyze.measurement.measurement",
       "spendguard.store.configuration.config"
     ],
     [
-      "spendguard.measurement",
+      "spendguard.analyze.measurement.measurement",
       "spendguard.store.spend_search.ledger_read"
     ],
     [
-      "spendguard.measurement",
+      "spendguard.analyze.measurement.measurement",
       "spendguard.store.reference_data.money_scale"
     ],
     [
@@ -9112,7 +9094,7 @@
     ],
     [
       "spendguard.manage.admission.plan_admission",
-      "spendguard.reliability"
+      "spendguard.analyze.measurement.reliability"
     ],
     [
       "spendguard.manage.admission.plan_admission",
@@ -9135,35 +9117,35 @@
       "spendguard.ui"
     ],
     [
-      "spendguard.prompts",
+      "spendguard.analyze.measurement.prompts",
       "spendguard.generate.execution.adapters"
     ],
     [
-      "spendguard.prompts",
+      "spendguard.analyze.measurement.prompts",
       "spendguard.store.call_corpus.calls"
     ],
     [
-      "spendguard.prompts",
+      "spendguard.analyze.measurement.prompts",
       "spendguard.capability_cli_parsing"
     ],
     [
-      "spendguard.prompts",
+      "spendguard.analyze.measurement.prompts",
       "spendguard.store.configuration.config"
     ],
     [
-      "spendguard.prompts",
+      "spendguard.analyze.measurement.prompts",
       "spendguard.manage.admission.gate"
     ],
     [
-      "spendguard.prompts",
+      "spendguard.analyze.measurement.prompts",
       "spendguard.store.spend_search.ledger_read"
     ],
     [
-      "spendguard.prompts",
+      "spendguard.analyze.measurement.prompts",
       "spendguard.manage.admission.plan_admission"
     ],
     [
-      "spendguard.prompts",
+      "spendguard.analyze.measurement.prompts",
       "spendguard.store.reference_data.pricing"
     ],
     [
@@ -9231,15 +9213,15 @@
       "spendguard.manage.routing.route_economics"
     ],
     [
-      "spendguard.realized",
+      "spendguard.analyze.measurement.realized",
       "spendguard.capability_cli_parsing"
     ],
     [
-      "spendguard.realized",
+      "spendguard.analyze.measurement.realized",
       "spendguard.store.configuration.config"
     ],
     [
-      "spendguard.realized",
+      "spendguard.analyze.measurement.realized",
       "spendguard.store.spend_search.ledger_read"
     ],
     [
@@ -9308,7 +9290,7 @@
     ],
     [
       "spendguard.analyze.spend_reporting.receipt",
-      "spendguard.guard"
+      "spendguard.analyze.measurement.guard"
     ],
     [
       "spendguard.analyze.spend_reporting.receipt",
@@ -9352,7 +9334,7 @@
     ],
     [
       "spendguard.analyze.spend_reporting.receipt",
-      "spendguard.reliability"
+      "spendguard.analyze.measurement.reliability"
     ],
     [
       "spendguard.analyze.spend_reporting.receipt",
@@ -9463,59 +9445,59 @@
       "spendguard.store.configuration.config"
     ],
     [
-      "spendguard.reliability",
+      "spendguard.analyze.measurement.reliability",
       "spendguard.generate.execution.adapters"
     ],
     [
-      "spendguard.reliability",
+      "spendguard.analyze.measurement.reliability",
       "spendguard.manage.admission.budget"
     ],
     [
-      "spendguard.reliability",
+      "spendguard.analyze.measurement.reliability",
       "spendguard.store.call_corpus.calls"
     ],
     [
-      "spendguard.reliability",
+      "spendguard.analyze.measurement.reliability",
       "spendguard.capability_cli_parsing"
     ],
     [
-      "spendguard.reliability",
+      "spendguard.analyze.measurement.reliability",
       "spendguard.store.reference_data.catalog"
     ],
     [
-      "spendguard.reliability",
+      "spendguard.analyze.measurement.reliability",
       "spendguard.store.configuration.config"
     ],
     [
-      "spendguard.reliability",
+      "spendguard.analyze.measurement.reliability",
       "spendguard.manage.admission.gate"
     ],
     [
-      "spendguard.reliability",
+      "spendguard.analyze.measurement.reliability",
       "spendguard.store.reference_data.lane_registry"
     ],
     [
-      "spendguard.reliability",
+      "spendguard.analyze.measurement.reliability",
       "spendguard.platform.lanes"
     ],
     [
-      "spendguard.reliability",
+      "spendguard.analyze.measurement.reliability",
       "spendguard.store.spend_search.ledger_read"
     ],
     [
-      "spendguard.reliability",
+      "spendguard.analyze.measurement.reliability",
       "spendguard.store.money_ledger.ledger_writer"
     ],
     [
-      "spendguard.reliability",
+      "spendguard.analyze.measurement.reliability",
       "spendguard.store.reference_data.model_catalog"
     ],
     [
-      "spendguard.reliability",
+      "spendguard.analyze.measurement.reliability",
       "spendguard.manage.admission.model_preflight"
     ],
     [
-      "spendguard.reliability",
+      "spendguard.analyze.measurement.reliability",
       "spendguard.store.reference_data.pricing"
     ],
     [
@@ -9580,7 +9562,7 @@
     ],
     [
       "spendguard.analyze.spend_reporting.report",
-      "spendguard.realized"
+      "spendguard.analyze.measurement.realized"
     ],
     [
       "spendguard.analyze.spend_reporting.report",
@@ -9596,22 +9578,22 @@
     ],
     [
       "spendguard.analyze.spend_reporting.report",
-      "spendguard.review"
+      "spendguard.analyze.measurement.review"
     ],
     [
       "spendguard.analyze.spend_reporting.report",
       "spendguard.egress.saas"
     ],
     [
-      "spendguard.requirement_judge",
+      "spendguard.analyze.measurement.requirement_judge",
       "spendguard.generate.execution.adapters"
     ],
     [
-      "spendguard.requirement_judge",
+      "spendguard.analyze.measurement.requirement_judge",
       "spendguard.store.call_corpus.calls"
     ],
     [
-      "spendguard.requirement_judge",
+      "spendguard.analyze.measurement.requirement_judge",
       "spendguard.store.configuration.config"
     ],
     [
@@ -9703,47 +9685,47 @@
       "spendguard.ui"
     ],
     [
-      "spendguard.review",
+      "spendguard.analyze.measurement.review",
       "spendguard.generate.execution.adapters"
     ],
     [
-      "spendguard.review",
+      "spendguard.analyze.measurement.review",
       "spendguard.analyze.learning.advisor"
     ],
     [
-      "spendguard.review",
+      "spendguard.analyze.measurement.review",
       "spendguard.manage.admission.budget"
     ],
     [
-      "spendguard.review",
+      "spendguard.analyze.measurement.review",
       "spendguard.store.call_corpus.callio"
     ],
     [
-      "spendguard.review",
+      "spendguard.analyze.measurement.review",
       "spendguard.store.call_corpus.calls"
     ],
     [
-      "spendguard.review",
+      "spendguard.analyze.measurement.review",
       "spendguard.capability_cli_parsing"
     ],
     [
-      "spendguard.review",
+      "spendguard.analyze.measurement.review",
       "spendguard.store.configuration.config"
     ],
     [
-      "spendguard.review",
+      "spendguard.analyze.measurement.review",
       "spendguard.analyze.learning.learn"
     ],
     [
-      "spendguard.review",
+      "spendguard.analyze.measurement.review",
       "spendguard.store.reference_data.pricing"
     ],
     [
-      "spendguard.review",
+      "spendguard.analyze.measurement.review",
       "spendguard.generate.execution.submit"
     ],
     [
-      "spendguard.review",
+      "spendguard.analyze.measurement.review",
       "spendguard.ui"
     ],
     [
@@ -9795,15 +9777,15 @@
       "spendguard.queue_planner"
     ],
     [
-      "spendguard.route_realized",
+      "spendguard.analyze.measurement.route_realized",
       "spendguard.capability_cli_parsing"
     ],
     [
-      "spendguard.route_realized",
+      "spendguard.analyze.measurement.route_realized",
       "spendguard.store.configuration.config"
     ],
     [
-      "spendguard.route_realized",
+      "spendguard.analyze.measurement.route_realized",
       "spendguard.store.spend_search.ledger_read"
     ],
     [
@@ -9908,7 +9890,7 @@
     ],
     [
       "spendguard.egress.saas",
-      "spendguard.guard"
+      "spendguard.analyze.measurement.guard"
     ],
     [
       "spendguard.egress.saas",
@@ -9996,7 +9978,7 @@
     ],
     [
       "spendguard.manage.admission.semcache",
-      "spendguard.guard"
+      "spendguard.analyze.measurement.guard"
     ],
     [
       "spendguard.manage.admission.semcache",
@@ -10147,11 +10129,11 @@
       "spendguard.generate.execution.provider_plugins"
     ],
     [
-      "spendguard.stability",
+      "spendguard.analyze.measurement.stability",
       "spendguard.generate.execution.adapters"
     ],
     [
-      "spendguard.stability",
+      "spendguard.analyze.measurement.stability",
       "spendguard.capability_cli_parsing"
     ],
     [
@@ -10492,7 +10474,7 @@
     ],
     [
       "spendguard.manage.routing.whole_job",
-      "spendguard.guard"
+      "spendguard.analyze.measurement.guard"
     ],
     [
       "spendguard.manage.routing.whole_job",

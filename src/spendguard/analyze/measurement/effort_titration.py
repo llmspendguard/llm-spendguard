@@ -24,16 +24,16 @@ the sample. Every meta call is deadline-bounded and every prompt size-bounded so
 the early-stop and the cap are logged. Estimate-first, meta-capped.
 """
 
-from .capability_cli_parsing import add_registered_cli_argument
+from ...capability_cli_parsing import add_registered_cli_argument
 import datetime
 import json
 import sys
 
-from . import adapters, advisor, bakeoff, budget, calls, config, gate, models, pricing
+from ... import adapters, advisor, bakeoff, budget, calls, config, gate, models, pricing
 from decimal import Decimal, localcontext
 import logging
-from .ledger_writer import serialize_ledger_function
-from .money_scale import real_usd_to_nano_usd, nano_usd_to_usd, assert_nano_total_matches
+from ...ledger_writer import serialize_ledger_function
+from ...money_scale import real_usd_to_nano_usd, nano_usd_to_usd, assert_nano_total_matches
 
 EFFORT_PROGRESS_NANO_COLUMNS = {column: f"{column}_nano" for column in ("cost",)}
 
@@ -91,7 +91,7 @@ def _initialize_effort_progress_nano_schema(connection):
         _backfill_effort_progress_nano_columns(connection, missing_columns)
 
 
-from .submit import _count_tokens
+from ...submit import _count_tokens
 
 _LADDER = ("minimal", "low", "medium", "high")   # default tiers to A/B; the send-side heal drops any an endpoint rejects
 _PILOT = 4                 # prompts per effort in the first round (the smallest useful read)
@@ -320,7 +320,7 @@ def _pilot_estimate(intent, model, efforts, prompts, judge_model, requirement_aw
     total += _price(judge_model, sum(_count_tokens(p, judge_model) for p in pilot) * len(efforts),
                     _SCORE_OUT * n_score)                              # scoring judge (the screen — always runs)
     if requirement_aware:                                              # + extraction (once/pilot prompt) + opus ceiling/score
-        from . import requirement_judge, config as _cfg
+        from ... import requirement_judge, config as _cfg
         ex = _cfg.advisor_model()
         adj = adjudicator_model or _cfg.advisor_adjudicator_model()
         total += _price(ex, sum(_count_tokens(p, ex) for p in pilot), requirement_judge._EXTRACT_OUT * len(pilot))
@@ -332,7 +332,7 @@ def _pilot_estimate(intent, model, efforts, prompts, judge_model, requirement_aw
 
 def _most_used_model(intent):
     """The model with the most recorded rows for this intent — its de-facto default, the cheapest to titrate."""
-    from . import ledger_read
+    from ... import ledger_read
     rows = ledger_read.read_intent_model_usage(intent)
     r = rows[0] if rows else None
     if not r:

@@ -87,7 +87,7 @@ def _embed_cosine(ref, out, model="text-embedding-3-small"):
     embedding home (adapters.embed), which marks an oversized item FAILED (a named gap) and never truncates — a truncated
     embedding would miss the tail where the two answers DIFFER, calling them equivalent. None → grade() degrades, never a
     wrong 'equivalent'."""
-    from . import adapters, gate as _g
+    from ... import adapters, gate as _g
     try:
         r = adapters.embed([ref, out], model=model)
     except Exception as e:
@@ -112,7 +112,7 @@ def _llm_rubric(ref, out, model):
     """LLM judge of semantic equivalence (CAGED). Returns 0..1. Both answers are fed WHOLE — a judge truncated to
     3000 chars could miss the tail where the two DIFFER and call them equivalent (the evidence-truncation rule); an
     over-window pair is refused loudly by adapters.call, never silently clipped."""
-    from . import adapters
+    from ... import adapters
     r = adapters.call(model, _RUBRIC.format(a=ref, b=out), sig="spendguard:equivalence")
     if r.get("error"):
         return None                              # judge FAILED (adapter error) — not a verdict of 'not equivalent'

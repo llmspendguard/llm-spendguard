@@ -9,9 +9,9 @@ insights — IF {task_class/regime/output_shape} THEN {action} BECAUSE {mechanis
 so each learning is reusable and (when scrubbed) shareable. Caged (spendguard:review), estimate-first.
 """
 
-from .capability_cli_parsing import add_registered_cli_argument
-from . import calls, callio, learn, config, pricing
-from .submit import _count_tokens
+from ...capability_cli_parsing import add_registered_cli_argument
+from ... import calls, callio, learn, config, pricing
+from ...submit import _count_tokens
 
 META = "spendguard"
 _OUT = 1600
@@ -121,13 +121,13 @@ def review(run=False, top=10):
     cost = pricing.realtime_cost(model, in_tok, _OUT)
     print(f"  {len(bundles)} usage bundles (cost+quality+token-ratio+sample+chat).  ESTIMATE (zero paid calls):")
     print(f"    realtime {model} 1 call · in~{in_tok:,} out≤{_OUT:,} -> ~${cost:.4f}")
-    from . import budget
+    from ... import budget
     print(f"  meta budget: ${config.meta_cap():.2f}/day · spent today ${budget.meta_spent_today():.4f}")
     if not run:
-        from . import ui; ui.estimate_only(action="run the practice audit", cost=cost)
+        from ... import ui; ui.estimate_only(action="run the practice audit", cost=cost)
         return dict(requests=1, in_tok=in_tok, out_tok=_OUT, cost=cost, model=model)
 
-    from . import adapters
+    from ... import adapters
     with calls.context(intent=f"{META}:review"):
         r = adapters.call(model, prompt, max_tokens=_OUT, system=_SYS)
     if r["error"]:
@@ -139,7 +139,7 @@ def review(run=False, top=10):
 
 
 def _persist_review_insight(text):
-    from .advisor import _parse_insights
+    from ...advisor import _parse_insights
     data = _parse_insights(text)
     if data is None:
         learn.add_insight(None, text.strip()[:500], source="review", confidence=0.4)
@@ -180,7 +180,7 @@ def auto_fresh(now=None):
     (state: ~/.spendguard/review_state.json). Bounded by caps.meta like all advisor spend; returns a summary
     dict and NEVER raises (the daily report calls this — a refresh failure must not break the report)."""
     import json, time
-    from . import config
+    from ... import config
     try:
         mode = str(config._cfg_get("advisor", "auto_fresh", "weekly")).lower()
         import os

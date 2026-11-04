@@ -14,10 +14,10 @@ This reports the prefix fraction (high fraction = cache it), the savings per 100
 script-defined system prompts to cache, and per-provider setup. CLI: `spendguard cache-audit [--repo]`.
 """
 
-from .capability_cli_parsing import add_registered_cli_argument
+from ...capability_cli_parsing import add_registered_cli_argument
 import ast, os, re, glob
-from . import callio, pricing
-from .submit import _count_tokens
+from ... import callio, pricing
+from ...submit import _count_tokens
 
 # OpenAI auto-caches only prefixes at/above this; Anthropic explicit cache_control has lower minimums.
 _MIN_CACHE_TOKENS = 1024
@@ -137,7 +137,7 @@ def _script_system_prompts(repo, min_tokens=400):
 
 def _realized_hit_rate():
     """cached vs total input from whatever usage we have (the gate realtime log). 0 known = opportunity unrealized."""
-    from .config import RT_LOG
+    from ...config import RT_LOG
     import json
     tot = cached = 0
     if os.path.exists(RT_LOG):

@@ -10,15 +10,15 @@ PAST run from the `calls` corpus — and marks the judge `unknown` (it was never
 never a guess. "Cannot tell" is not "clean."
 """
 
-from .capability_cli_parsing import add_registered_cli_argument
+from ...capability_cli_parsing import add_registered_cli_argument
 import json
 import logging
 import sqlite3
 import time
 from decimal import Decimal, localcontext
 
-from . import config
-from .money_scale import real_usd_to_nano_usd, nano_usd_to_usd, assert_nano_total_matches
+from ... import config
+from ...money_scale import real_usd_to_nano_usd, nano_usd_to_usd, assert_nano_total_matches
 
 
 def _backfill_measurement_nano_columns(connection):
@@ -133,7 +133,7 @@ def _sg_version():
     # produced it — NOT importlib.metadata, which under an editable install returns the frozen install-time version
     # and would mis-tag a reading with a stale version (see _version.py / warden 2026-09-25).
     try:
-        from ._version import __version__
+        from ..._version import __version__
         return __version__
     except Exception:
         return "?"
@@ -215,7 +215,7 @@ def reconstruct_reading(intent):
     candidates, good_rate, N and the date range — but the JUDGE is 'unknown': it was never stamped before receipts
     existed, and an unstamped judge is an absence of evidence, NEVER a guessed model. This is the RECONSTRUCT
     identity applied to a measurement; going forward, record_reading stamps the real judge so inspect shows it."""
-    from . import ledger_read
+    from ... import ledger_read
     rows = ledger_read.read_bakeoff_measurements(intent)
     if not rows:
         return None
@@ -290,7 +290,7 @@ def _recover_sample(intent, sample_ids):
     """Recover the ACTUAL prompts for a reading's sample (stored as item_id content-hashes) from the corpus, so a
     rerun replays the SAME items. Returns (prompts_in_order, missing_ids). A missing id = that item is no longer
     recorded → the sample cannot be fully reproduced, and the caller must re-baseline rather than pretend."""
-    from . import callio
+    from ... import callio
     # callio's OWN connection (the call_io table lives in config.db_path(), where record_io_sample writes) — never a
     # hand-rolled path, so a rerun reads exactly what the corpus stored. A real DB failure PROPAGATES; it is not
     # masked as 'nothing recovered' (which would mis-report a broken corpus as 'sample_unreproducible').

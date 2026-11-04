@@ -14,7 +14,7 @@ exclusions (embeddings by kind, the Batch-API paths, spendguard's own meta calls
 meaning judgement; only the independent-one-shot-vs-interactive call is agentic."""
 import datetime
 
-from . import config, calls
+from ... import config, calls
 
 _CACHE_KEY = "lane_eligibility_verdicts"      # SPENDGUARD_HOME state: {intent: {eligible, why, model, asof}}
 _VERDICT_PROMPT_TOK_EST = 90                  # the judge prompt is a fixed shape (~90 input tokens) — for the pre-spend ESTIMATE only
@@ -41,7 +41,7 @@ def _judge_unit_cost():
     (~_VERDICT_PROMPT_TOK_EST in) plus the small schemaed JSON out. Priced from pricing.py only; 0.0 when the judge
     model is unpriced (the estimate then under-counts rather than inventing a price). Pre-spend ESTIMATE only."""
     try:
-        from . import pricing, prompts
+        from ... import pricing, prompts
         p = pricing.price(config.advisor_judge_model()) or {}
         in_per = float(p.get("in_") or 0) / 1e6
         out_per = float(p.get("out") or 0) / 1e6

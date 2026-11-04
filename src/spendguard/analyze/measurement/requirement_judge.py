@@ -26,7 +26,7 @@ guess.
 """
 import hashlib
 
-from . import adapters, calls, config
+from ... import adapters, calls, config
 
 _EXTRACT_SYS = ("You are given a TASK PROMPT that was sent to an LLM. Name the concrete SUCCESS REQUIREMENTS a "
                 "correct answer to it must satisfy — the testable criteria you would check an answer against "

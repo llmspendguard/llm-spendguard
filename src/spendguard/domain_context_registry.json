@@ -504,24 +504,24 @@
       "surface_module": "spendguard.analyze.measurement",
       "layer": "L2",
       "backing_modules": [
-        "measurement",
-        "bakeoff",
-        "compare",
-        "experiment",
-        "equivalence",
-        "requirement_judge",
-        "stability",
-        "effort_titration",
-        "reliability",
-        "lane_servability",
-        "route_realized",
-        "realized",
-        "guard",
-        "cacheaudit",
-        "cachetest",
-        "prompts",
-        "review",
-        "lane_eligibility"
+        "analyze.measurement.measurement",
+        "analyze.measurement.bakeoff",
+        "analyze.measurement.compare",
+        "analyze.measurement.experiment",
+        "analyze.measurement.equivalence",
+        "analyze.measurement.requirement_judge",
+        "analyze.measurement.stability",
+        "analyze.measurement.effort_titration",
+        "analyze.measurement.reliability",
+        "analyze.measurement.lane_servability",
+        "analyze.measurement.route_realized",
+        "analyze.measurement.realized",
+        "analyze.measurement.guard",
+        "analyze.measurement.cacheaudit",
+        "analyze.measurement.cachetest",
+        "analyze.measurement.prompts",
+        "analyze.measurement.review",
+        "analyze.measurement.lane_eligibility"
       ],
       "published_names": []
     },
@@ -1615,6 +1615,96 @@
     {
       "legacy_module": "spendguard.resources",
       "current_module": "spendguard.generate.spend_capture.resources",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.measurement",
+      "current_module": "spendguard.analyze.measurement.measurement",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.bakeoff",
+      "current_module": "spendguard.analyze.measurement.bakeoff",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.compare",
+      "current_module": "spendguard.analyze.measurement.compare",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.experiment",
+      "current_module": "spendguard.analyze.measurement.experiment",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.equivalence",
+      "current_module": "spendguard.analyze.measurement.equivalence",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.requirement_judge",
+      "current_module": "spendguard.analyze.measurement.requirement_judge",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.stability",
+      "current_module": "spendguard.analyze.measurement.stability",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.effort_titration",
+      "current_module": "spendguard.analyze.measurement.effort_titration",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.reliability",
+      "current_module": "spendguard.analyze.measurement.reliability",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.lane_servability",
+      "current_module": "spendguard.analyze.measurement.lane_servability",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.route_realized",
+      "current_module": "spendguard.analyze.measurement.route_realized",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.realized",
+      "current_module": "spendguard.analyze.measurement.realized",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.guard",
+      "current_module": "spendguard.analyze.measurement.guard",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.cacheaudit",
+      "current_module": "spendguard.analyze.measurement.cacheaudit",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.cachetest",
+      "current_module": "spendguard.analyze.measurement.cachetest",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.prompts",
+      "current_module": "spendguard.analyze.measurement.prompts",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.review",
+      "current_module": "spendguard.analyze.measurement.review",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.lane_eligibility",
+      "current_module": "spendguard.analyze.measurement.lane_eligibility",
       "moved_in_phase": 3
     }
   ],

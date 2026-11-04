@@ -16,7 +16,7 @@ routing."""
 import os
 import sys
 
-from . import config
+from ... import config
 
 # Policy thresholds — DEFAULTS here, each overridable via config [lane_servability] or the matching env var, so a
 # different estate tunes them without editing source (no-hardcode rule). They are counts over MEASURED outcomes.
@@ -87,7 +87,7 @@ def _servability_provider_lanes():
     """The configured subscription lanes and each one's metered PROVIDER (for a /models cross-check), derived from
     adapters._LANES ({provider: (lane, model)}) — never a hardcoded list."""
     try:
-        from . import adapters
+        from ... import adapters
         return {lane: prov for prov, (lane, _m) in adapters._LANES.items()}
     except Exception:
         return {}
@@ -103,7 +103,7 @@ def observed_lane_models(lane, window_hours=None):
     if not lane:
         return out
     try:
-        from . import calls
+        from ... import calls
         wh = int(window_hours if window_hours is not None else _window_hours())
         min_fail = _int_cfg("min_fail", _MIN_FAIL_DEFAULT, "SPENDGUARD_LANE_SERVABILITY_MIN_FAIL")
         min_prior_ok = _int_cfg("min_prior_ok", _MIN_PRIOR_OK_DEFAULT, "SPENDGUARD_LANE_SERVABILITY_MIN_PRIOR_OK")
@@ -135,7 +135,7 @@ def _served_provider_model_ids(provider):
     """The provider's live METERED /models ids right now — a free GET via the catalog's own fetch primitive. None on
     any failure (cannot-check, never read as 'gone')."""
     try:
-        from . import vendor_call
+        from ... import vendor_call
         res = vendor_call.list_models(provider)
         if res.get("error"):
             return None
@@ -153,7 +153,7 @@ def _classify_drop(provider, model, metered_ids):
         return {"kind": "unknown", "replacement": None}
     if model not in set(metered_ids):
         try:
-            from . import vendor_call
+            from ... import vendor_call
             near = vendor_call.closest_served(provider, model)
         except Exception:
             near = None
@@ -231,7 +231,7 @@ def lane_served_substitute(lane, requested):
     if not lane or not requested:
         return requested, None
     try:
-        from . import catalog, lane_catalog
+        from ... import catalog, lane_catalog
         rejected = set(catalog.lane_unserved_ids(lane) or [])
         if requested not in rejected:
             return requested, None                        # not known-dead on this lane → nothing to resolve
@@ -286,10 +286,10 @@ def _resolve_servability_lane_module(lane):
     the lane is unknown or its module cannot be imported."""
     try:
         import importlib
-        from . import adapters
+        from ... import adapters
         for _prov, (ln, mod) in adapters._LANES.items():
             if ln == lane:
-                return importlib.import_module(f".{mod}", __package__)
+                return importlib.import_module(f"...{mod}", __package__)
     except Exception:
         return None
     return None
@@ -305,7 +305,7 @@ def reprobe_rejected(lane):
     {"recovered", "still", "probed"}. $0 (plan-lane calls); never raises."""
     out = {"recovered": [], "still": [], "probed": 0}
     try:
-        from . import catalog, reliability
+        from ... import catalog, reliability
         rejected = list(catalog.lane_unserved_ids(lane) or [])
         if not rejected:
             return out
@@ -328,7 +328,7 @@ def reprobe_rejected(lane):
                 # only in the health/catalog caches a ledger-based refresh would overwrite. Without this fresh `ok` the
                 # shift re-fires on every refresh until the stale failures age out of the window (the false-banner bug).
                 try:
-                    from . import calls as _calls_rec
+                    from ... import calls as _calls_rec
                     _calls_rec.record_call(provider=provider, model=m, kind="subscription", cost=0.0,
                                            in_tok=int(r.get("in_tok") or 0), out_tok=r.get("out_tok"),
                                            latency=r.get("latency"), intent="spendguard:lane-reprobe",
@@ -354,7 +354,7 @@ def refresh_lane_servability(lane=None, announce=True, reprobe=False):
     {lane: {"served", "rejected", "shifted", "shifts", "recovered"}}. Never raises."""
     out = {}
     try:
-        from . import catalog
+        from ... import catalog
         lanes = [lane] if lane else list(_servability_provider_lanes().keys())
         for ln in lanes:
             obs = observed_lane_models(ln)

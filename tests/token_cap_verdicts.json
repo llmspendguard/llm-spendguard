@@ -1,19 +1,19 @@
 {
-  "spendguard/cachetest.py::_run_calls::max_completion_tokens=16": {
+  "spendguard/analyze/measurement/cachetest.py::_run_calls::max_completion_tokens=16": {
     "verdict": "harmless_probe",
     "why": "The code ignores the reply's content and only reads r.usage.prompt_tokens_details, making this a cache-behaviour probe where the generated text is discarded.",
     "model": "claude-opus-4-8",
     "value": 16,
-    "file": "spendguard/cachetest.py",
+    "file": "spendguard/analyze/measurement/cachetest.py",
     "symbol": "_run_calls",
     "kwarg": "max_completion_tokens"
   },
-  "spendguard/cachetest.py::_run_calls::max_tokens=16": {
+  "spendguard/analyze/measurement/cachetest.py::_run_calls::max_tokens=16": {
     "verdict": "harmless_probe",
     "why": "The code only reads m.usage (token/cache accounting) from each response and never consumes m.content or the reply text, which is characteristic of a cache-behaviour probe.",
     "model": "claude-opus-4-8",
     "value": 16,
-    "file": "spendguard/cachetest.py",
+    "file": "spendguard/analyze/measurement/cachetest.py",
     "symbol": "_run_calls",
     "kwarg": "max_tokens"
   },

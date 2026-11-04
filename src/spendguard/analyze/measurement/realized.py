@@ -12,7 +12,7 @@ Sync is INCREMENTAL and idempotent: state in ~/.spendguard/realized_state.json t
 counted per intent, so re-running never double-records. Zero LLM spend — pure corpus arithmetic.
 """
 
-from .capability_cli_parsing import add_registered_cli_argument
+from ...capability_cli_parsing import add_registered_cli_argument
 import logging
 from pathlib import Path
 
@@ -24,7 +24,7 @@ def measure(intent=None, min_each=MIN_EACH):
     """[{intent, adopted_ts, before_rate, after_rate, delta_per_call, after_calls, realized_usd}] —
     adoption point = the EARLIEST non-refuted insight recorded for that intent."""
     import sqlite3
-    from . import config, ledger_read
+    from ... import config, ledger_read
     # adoption point per intent = the EARLIEST non-refuted insight ts. insights_full() doesn't expose ts,
     # so read it straight from the insights table (same sqlite as the rest of the learning layer).
     if not Path(config.db_path()).exists():
@@ -65,7 +65,7 @@ def sync_to_guarded(rows=None):
     """Record POSITIVE realized deltas into the guarded pipeline (source='realized'), incrementally:
     only calls not yet counted for an intent contribute, so re-runs never double-record. Returns
     {synced_usd, intents}. Regressions (negative delta) are reported by measure() but never 'saved'."""
-    from . import config, guard
+    from ... import config, guard
     rows = measure() if rows is None else rows
     state = config.load_state("realized", {})
     synced, intents = 0.0, 0
@@ -98,7 +98,7 @@ def sync_to_guarded(rows=None):
     # idempotent: every subsequent run re-credits the same work, and the savings figure climbs on its own
     # with nothing anywhere saying why. The write still does not raise — a sync that credited real savings
     # should return what it did — but the caller is TOLD, and the result says so.
-    from . import config
+    from ... import config
     persisted = True
     try:
         if config.update_json(config.state_path("realized"), lambda _d: state) is None:

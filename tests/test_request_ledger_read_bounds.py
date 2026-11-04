@@ -30,6 +30,8 @@ REQUEST_LEDGER_MOVED_MODULE_PATHS = {
     "provider_tokens": ("analyze", "cost_estimation", "provider_tokens.py"),
     "receipt": ("analyze", "spend_reporting", "receipt.py"),
     "semcache": ("manage", "admission", "semcache.py"),
+    "guard": ("analyze", "measurement", "guard.py"),
+    "reliability": ("analyze", "measurement", "reliability.py"),
 }
 REQUEST_LEDGER_REQUIRED_EDGES = {
     "ledger_read": {

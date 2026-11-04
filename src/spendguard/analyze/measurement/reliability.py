@@ -11,14 +11,14 @@ ESTIMATE-FIRST (the spend protocol): sweep(run=False) returns the plan + a $ est
 sweep(run=True) executes and returns the reachability matrix — per resource {reachable, executor, cost, reason}.
 """
 
-from .capability_cli_parsing import registered_cli_option_token
+from ...capability_cli_parsing import registered_cli_option_token
 import hashlib
 import json
 import logging
 import traceback
 
-from . import adapters, config
-from .ledger_writer import (best_effort_ledger_function,
+from ... import adapters, config
+from ...ledger_writer import (best_effort_ledger_function,
                             run_ledger_write, current_ledger_writer_connection)
 
 _PROBE_IN, _PROBE_OUT = 12, 8          # a one-line probe prompt + a one-word reply
@@ -29,7 +29,7 @@ def _probe_default(provider):
     the provider's lowest OUTPUT-priced catalog entry. No hardcoded per-provider literal (those drift — the catalog
     once named a stale 'gemini-flash-latest' here). None when the catalog has no priced model for the provider; the
     caller then falls back to the cheapest LIVE-served model. reliability.probe_models config still overrides."""
-    from . import model_catalog
+    from ... import model_catalog
     best = None
     for rid, rec in model_catalog.all_records().items():
         if rec.get("provider") != provider:
@@ -56,13 +56,13 @@ def _metered_target(provider):
     # the check verifies the ids you DEPEND on (e.g. kimi-k3) rather than merely the cheapest one served. Explicit
     # `reliability.probe_models` still wins above.
     try:
-        from . import model_preflight, gate as _g
+        from ... import model_preflight, gate as _g
         for spec in model_preflight.configured_specs():
             if _g._provider_of(spec) == provider:
                 return spec.split(":", 1)[-1]
     except Exception:
         pass
-    from . import catalog, pricing
+    from ... import catalog, pricing
     live = set(catalog.live_model_ids(provider) or [])
     default = _probe_default(provider)                    # catalog-derived cheapest (SSOT), not a hardcoded literal
     if default and (not live or default in live):        # trust the default unless the catalog positively lacks it
@@ -95,7 +95,7 @@ def plan():
 
 def sweep_estimate(pl=None):
     """Zero-spend $ estimate of the metered half (the lanes are $0). Tiny prompt + reply per provider."""
-    from . import pricing
+    from ... import pricing
     pl = pl or plan()
     rows, total = [], 0.0
     for prov, mid in pl["metered"]:
@@ -179,7 +179,7 @@ def sweep(run=False, timeout_s=20):
     out = {"estimate": sweep_estimate(pl), "lanes": {}, "metered": {}}
     if not run:
         return out
-    from . import lanes as _lanes
+    from ... import lanes as _lanes
     for r in _lanes.probe(timeout_s=timeout_s):          # $0 subscription probe — bounded + concurrent inside lanes.probe
         if r.get("skipped"):
             continue                                     # a lane the executor did not enable is not a reachability row
@@ -219,7 +219,7 @@ _REMEDIATE_SCHEMA = {"type": "object", "properties": {
 
 
 def _remediation_db():
-    from . import budget
+    from ... import budget
     if current_ledger_writer_connection() is None:
         run_ledger_write(_remediation_db)
         return budget._ledger_db()
@@ -245,7 +245,7 @@ def _classify_remediation(kind, resource, reason, model=None):
     AGENTICALLY (what an error means + how to fix it is a judgement). The WHOLE error is sent (never truncated).
     Fail-open: on any non-deliberate failure, a generic remediation (never breaks the health check); a DELIBERATE
     stop propagates."""
-    from . import budget, adapters, calls, config, gate
+    from ... import budget, adapters, calls, config, gate
     sig = _remediation_signature(kind, resource, reason)
     _remediation_db()
     with config.ledger_op(budget.BUDGET_AUXILIARY_POOL_KEY,
@@ -278,7 +278,7 @@ def _classify_remediation(kind, resource, reason, model=None):
 @best_effort_ledger_function
 def _persist_lane_remediation_verdict(sig, kind, resource, out):
     import datetime
-    from . import budget
+    from ... import budget
     db = _remediation_db()
     with budget._lock:                                    # cache a REAL verdict so the next routine check is $0 for it
         db.execute("INSERT OR REPLACE INTO lane_remediation VALUES (?,?,?,?,?,?,?)",
@@ -307,7 +307,7 @@ def lane_login_hint(lane):
     not a judgement about an error). '' if unknown. Used to surface the fix inline when a lane could not serve — the
     full auth-vs-other diagnosis remains the AGENTIC _classify_remediation on the health path."""
     try:
-        from . import lane_registry
+        from ... import lane_registry
         spec = lane_registry.lane_spec(lane)
         login = spec.get("login") if spec else None
         if isinstance(login, (tuple, list)):
@@ -324,7 +324,7 @@ def lane_fallback_spend(since=None):
     was down lives in each row's outcome/provider_error and in lane_health; this answers only "how much did it cost."
     `since` is an inclusive ISO-timestamp lower bound on ts (e.g. the week's start). Returns
     [{lane, n_calls, metered_usd}]; [] on any error or a ledger not yet carrying the column. $0, read-only."""
-    from . import ledger_read
+    from ... import ledger_read
     try:
         rows = ledger_read.read_lane_fallback_costs(since)
         return [{"lane": r[0], "n_calls": int(r[1]), "metered_usd": round(float(r[2] or 0.0), 4)} for r in rows]
@@ -336,7 +336,7 @@ _EVENT_NOTIFY_THROTTLE_S = 1800          # per-lane: notify on a mid-use failure
 
 
 def _health_db():
-    from . import budget
+    from ... import budget
     if current_ledger_writer_connection() is None:
         run_ledger_write(_health_db)
         return budget._ledger_db()
@@ -365,7 +365,7 @@ def note_lane_down(lane, reason):
     Throttled. $0, no LLM. NEVER raises — on the call path."""
     try:
         import datetime
-        from . import budget
+        from ... import budget
         now = datetime.datetime.now(datetime.timezone.utc)
         db = _health_db()
         with budget._lock:
@@ -419,7 +419,7 @@ def note_lane_ok(lane):
     for a healthy lane (the WHERE matches nothing). Never touches a sweep's authoritative row. NEVER raises."""
     try:
         import datetime
-        from . import budget
+        from ... import budget
         db = _health_db()
         with budget._lock:
             db.execute("UPDATE lane_health SET reachable=1, reason=NULL, source='event-recovered', ts=? "
@@ -450,7 +450,7 @@ def note_lane_auth_down(lane, cmd="", sustained_only=True):
     LLM. NEVER raises — this rides the call path."""
     try:
         import datetime
-        from . import budget, lane_registry
+        from ... import budget, lane_registry
         now = datetime.datetime.now(datetime.timezone.utc)
         cmd = cmd or str((lane_registry.lane_spec(lane) or {}).get("relogin_cmd") or "")
         fix = "re-login to restore the $0 plan lane (its calls bill the metered API until you do)" + (f": {cmd}" if cmd else "")
@@ -499,7 +499,7 @@ def note_lane_model_shift(lane, model, diagnosis):
     notified_ts. $0, no LLM. NEVER raises."""
     try:
         import datetime
-        from . import budget
+        from ... import budget
         now = datetime.datetime.now(datetime.timezone.utc)
         resource = f"{lane}:{model}"
         db = _health_db()
@@ -535,7 +535,7 @@ def note_lane_model_ok(lane, model):
     once it answers again. NEVER raises."""
     try:
         import datetime
-        from . import budget
+        from ... import budget
         db = _health_db()
         with budget._lock:
             db.execute("UPDATE lane_health SET reachable=1, reason=NULL, source='event-shift-recovered', ts=? "
@@ -561,7 +561,7 @@ def _persist_health(sweep_result, acts=None):
     no acts: a resource that is STILL unreachable keeps its known fix until a fresh remediation replaces it; a
     resource that RECOVERED clears its fix (a healthy lane has no fix). So fix loss is impossible from a bare sweep."""
     import datetime
-    from . import budget
+    from ... import budget
     fixes = {(a["kind"], a["resource"]): a for a in (acts or [])}
     ts = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
     db = _health_db()
@@ -595,7 +595,7 @@ def health_reds(since_hours=48):
     so a caller can tell a STALE KEY apart from a transient outage. $0 — a cached read, safe to call from the receipt
     on every turn. [] when all healthy or no recent check."""
     import datetime
-    from . import budget
+    from ... import budget
     cutoff = (datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=since_hours)).isoformat(timespec="seconds")
     try:
         _health_db()
@@ -608,7 +608,7 @@ def health_reds(since_hours=48):
         for resource, kind, reason, fix, command, source, row_ts, failure_kind in rows:
             if source == "event" and kind == "lane":     # an EVENT down is stale once the lane stops cooling: it
                 try:                                      # RECOVERED. Resolve it (below) rather than silently drop it.
-                    from . import adapters
+                    from ... import adapters
                     if not adapters._lane_cooling(resource):
                         recovered.append(resource)
                         continue
@@ -636,7 +636,7 @@ def health_reds(since_hours=48):
                 # residue below. Full timestamps matter: same-day sweep/probe ordering must remain exact. Fail safe
                 # and keep the red if either timestamp is absent/malformed or the probe cache cannot be read.
                 try:
-                    from . import lanes
+                    from ... import lanes
                     probe_ok, probe_ts = lanes._last_probe_ok(resource)
                     sweep_at = datetime.datetime.fromisoformat(row_ts.replace("Z", "+00:00"))
                     probe_at = datetime.datetime.fromisoformat(probe_ts.replace("Z", "+00:00"))
@@ -655,7 +655,7 @@ def health_reds(since_hours=48):
 
 @best_effort_ledger_function
 def _prune_superseded_lane_health(recovered, stale, stale_lanes):
-        from . import budget
+        from ... import budget
         db = _health_db()
         if recovered:                                    # SELF-HEAL, traced (a DB write, not a silent skip): a recovered
             with budget._lock:                            # event-lane is marked reachable so it clears everywhere at once
@@ -683,7 +683,7 @@ def metered_key_ok(provider, since_hours=48):
     validators, which must ride the raw metered API for a concurrency-invariant verdict) preflights THIS before
     spending on validators that would otherwise all 401 at runtime."""
     import datetime
-    from . import budget
+    from ... import budget
     cutoff = (datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=since_hours)).isoformat(timespec="seconds")
     try:
         _health_db()

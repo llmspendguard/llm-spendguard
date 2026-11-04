@@ -8,9 +8,9 @@ metered by the gate. Opt-in.
   spendguard compare --prompt-file p.txt --models ... --max-tokens 800 --show
 """
 
-from .capability_cli_parsing import add_registered_cli_argument
+from ...capability_cli_parsing import add_registered_cli_argument
 import argparse
-from . import adapters
+from ... import adapters
 
 
 def main(argv=None):

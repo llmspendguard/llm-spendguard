@@ -871,7 +871,7 @@
     "help_entries": [
       {
         "group": "see the money",
-        "description": "daily \u00b7 weekly \u00b7 monthly, per provider (+ leak alert)",
+        "description": "daily · weekly · monthly, per provider (+ leak alert)",
         "group_order": 1,
         "entry_order": 2,
         "name": "report"
@@ -960,14 +960,14 @@
       "route_realized.cmd"
     ],
     "handler_evidence": [
-      "src/spendguard/route_realized.py:33 (route_realized.cmd)"
+      "src/spendguard/analyze/measurement/route_realized.py:33 (route_realized.cmd)"
     ],
     "parser_kind": "argparse",
     "nested_grammar_summary": "",
     "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [
       {
-        "source_scope": "src/spendguard/route_realized.py:33",
+        "source_scope": "src/spendguard/analyze/measurement/route_realized.py:33",
         "selector": null,
         "operations": [
           {
@@ -1202,7 +1202,7 @@
     "help_entries": [
       {
         "group": "see the money",
-        "description": "import an OTel GenAI trace (OpenLLMetry/Traceloop) \u2192 spend_events (idempotent)",
+        "description": "import an OTel GenAI trace (OpenLLMetry/Traceloop) → spend_events (idempotent)",
         "group_order": 1,
         "entry_order": 7,
         "name": "otel-ingest"
@@ -1259,7 +1259,7 @@
     "help_entries": [
       {
         "group": "setup & plumbing",
-        "description": "resolve model ids (served + priced; stale\u2192fix) BEFORE a batch \u2014 catches a bad id for $0",
+        "description": "resolve model ids (served + priced; stale→fix) BEFORE a batch — catches a bad id for $0",
         "group_order": 4,
         "entry_order": 13,
         "name": "preflight"
@@ -1311,7 +1311,7 @@
     "help_entries": [
       {
         "group": "setup & plumbing",
-        "description": "self-check every money path: model ids \u00b7 failover map \u00b7 keys \u00b7 economics (--probe = live)",
+        "description": "self-check every money path: model ids · failover map · keys · economics (--probe = live)",
         "group_order": 4,
         "entry_order": 14,
         "name": "verify"
@@ -1416,7 +1416,7 @@
     "help_entries": [
       {
         "group": "see the money",
-        "description": "`reconcile all|openai|anthropic` \u2014 ledger vs the provider's BILL",
+        "description": "`reconcile all|openai|anthropic` — ledger vs the provider's BILL",
         "group_order": 1,
         "entry_order": 3,
         "name": "reconcile"
@@ -1537,7 +1537,7 @@
                 "literal": "spendguard calibrate"
               },
               "description": {
-                "literal": "learned cost estimator \u2014 predicts a job's $ from YOUR captured history, correcting the naive tokens\u00d7price estimate (zero LLM spend)"
+                "literal": "learned cost estimator — predicts a job's $ from YOUR captured history, correcting the naive tokens×price estimate (zero LLM spend)"
               }
             }
           },
@@ -1636,7 +1636,7 @@
             ],
             "attributes": {
               "help": {
-                "literal": "held-out MAPE, learned vs naive \u2014 the ship gate"
+                "literal": "held-out MAPE, learned vs naive — the ship gate"
               }
             }
           },
@@ -1673,14 +1673,14 @@
       "measurement.cmd"
     ],
     "handler_evidence": [
-      "src/spendguard/measurement.py:343 (measurement.cmd)"
+      "src/spendguard/analyze/measurement/measurement.py:343 (measurement.cmd)"
     ],
     "parser_kind": "argparse",
     "nested_grammar_summary": "inspect <reading_id>; list; reconstruct <intent>; rerun <reading_id>; compare <baseline> <candidate>",
     "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [
       {
-        "source_scope": "src/spendguard/measurement.py:343",
+        "source_scope": "src/spendguard/analyze/measurement/measurement.py:343",
         "selector": null,
         "operations": [
           {
@@ -1839,7 +1839,7 @@
     "help_entries": [
       {
         "group": "spend less (measured, not guessed)",
-        "description": "receipts for a judged number: `measurement inspect|list|reconstruct` \u2014 the judge/sample/rubric behind it",
+        "description": "receipts for a judged number: `measurement inspect|list|reconstruct` — the judge/sample/rubric behind it",
         "group_order": 2,
         "entry_order": 11,
         "name": "measurement"
@@ -2171,7 +2171,7 @@
     "help_entries": [
       {
         "group": "start here",
-        "description": "run ONE prompt across many LLMs \u2014 honest per-vendor coverage, $0 lanes",
+        "description": "run ONE prompt across many LLMs — honest per-vendor coverage, $0 lanes",
         "group_order": 0,
         "entry_order": 6,
         "name": "ask"
@@ -2288,7 +2288,7 @@
     "help_entries": [
       {
         "group": "start here",
-        "description": "fan a CORPUS across the $0 lanes (doc-mining/gap-analysis) \u2014 NOT Claude sub-agents; estimate-first",
+        "description": "fan a CORPUS across the $0 lanes (doc-mining/gap-analysis) — NOT Claude sub-agents; estimate-first",
         "group_order": 0,
         "entry_order": 7,
         "name": "comprehend"
@@ -2345,7 +2345,7 @@
     "help_entries": [
       {
         "group": "start here",
-        "description": "the ask surface over localhost HTTP \u2014 POST /ask from any tool/language",
+        "description": "the ask surface over localhost HTTP — POST /ask from any tool/language",
         "group_order": 0,
         "entry_order": 9,
         "name": "serve"
@@ -2507,7 +2507,7 @@
     "help_entries": [
       {
         "group": "setup & plumbing",
-        "description": "run the full gate, then promote committed HEAD \u2192 green pointer (running MCP servers roll onto latest+best)",
+        "description": "run the full gate, then promote committed HEAD → green pointer (running MCP servers roll onto latest+best)",
         "group_order": 4,
         "entry_order": 20,
         "name": "deploy"
@@ -2578,14 +2578,14 @@
       "bakeoff.main"
     ],
     "handler_evidence": [
-      "src/spendguard/bakeoff.py:375 (bakeoff.main)"
+      "src/spendguard/analyze/measurement/bakeoff.py:375 (bakeoff.main)"
     ],
     "parser_kind": "argparse",
     "nested_grammar_summary": "",
     "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [
       {
-        "source_scope": "src/spendguard/bakeoff.py:375",
+        "source_scope": "src/spendguard/analyze/measurement/bakeoff.py:375",
         "selector": null,
         "operations": [
           {
@@ -2598,7 +2598,7 @@
                 "literal": "spendguard bakeoff"
               },
               "description": {
-                "literal": "Measure cost\u00d7quality for a slate of models on a sample of an intent's tasks."
+                "literal": "Measure cost×quality for a slate of models on a sample of an intent's tasks."
               }
             }
           },
@@ -2665,7 +2665,7 @@
     "help_entries": [
       {
         "group": "spend less (measured, not guessed)",
-        "description": "measure cost\u00d7quality for a SLATE of untried models on an intent's tasks (feeds advise); --temperature/--seed for a deterministic A/B",
+        "description": "measure cost×quality for a SLATE of untried models on an intent's tasks (feeds advise); --temperature/--seed for a deterministic A/B",
         "group_order": 2,
         "entry_order": 1,
         "name": "bakeoff"
@@ -2680,14 +2680,14 @@
       "stability.cmd"
     ],
     "handler_evidence": [
-      "src/spendguard/stability.py:92 (stability.cmd)"
+      "src/spendguard/analyze/measurement/stability.py:92 (stability.cmd)"
     ],
     "parser_kind": "argparse",
     "nested_grammar_summary": "",
     "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [
       {
-        "source_scope": "src/spendguard/stability.py:92",
+        "source_scope": "src/spendguard/analyze/measurement/stability.py:92",
         "selector": null,
         "operations": [
           {
@@ -2747,7 +2747,7 @@
     "help_entries": [
       {
         "group": "spend less (measured, not guessed)",
-        "description": "measure a model/lane's RUN-TO-RUN variance at production settings (replicates) \u2014 the stability question temp=0 can't answer",
+        "description": "measure a model/lane's RUN-TO-RUN variance at production settings (replicates) — the stability question temp=0 can't answer",
         "group_order": 2,
         "entry_order": 2,
         "name": "stability"
@@ -2762,14 +2762,14 @@
       "effort_titration.main"
     ],
     "handler_evidence": [
-      "src/spendguard/effort_titration.py:452 (effort_titration.main)"
+      "src/spendguard/analyze/measurement/effort_titration.py:452 (effort_titration.main)"
     ],
     "parser_kind": "argparse",
     "nested_grammar_summary": "",
     "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [
       {
-        "source_scope": "src/spendguard/effort_titration.py:452",
+        "source_scope": "src/spendguard/analyze/measurement/effort_titration.py:452",
         "selector": null,
         "operations": [
           {
@@ -2905,7 +2905,7 @@
     "help_entries": [
       {
         "group": "setup & plumbing",
-        "description": "rebuild spend_events from charges (exact Decimal); proves \u03a3 preserved",
+        "description": "rebuild spend_events from charges (exact Decimal); proves Σ preserved",
         "group_order": 4,
         "entry_order": 29,
         "name": "migrate"
@@ -3151,7 +3151,7 @@
     "help_entries": [
       {
         "group": "setup & plumbing",
-        "description": "`config` show all \u00b7 `config set <section.key> <value>`",
+        "description": "`config` show all · `config set <section.key> <value>`",
         "group_order": 4,
         "entry_order": 0,
         "name": "config"
@@ -3582,7 +3582,7 @@
     "help_entries": [
       {
         "group": "teams",
-        "description": "`saas link|sync|push|reconcile|reattribute` \u2014 org roll-up (opt-in)",
+        "description": "`saas link|sync|push|reconcile|reattribute` — org roll-up (opt-in)",
         "group_order": 3,
         "entry_order": 0,
         "name": "saas"
@@ -4641,14 +4641,14 @@
       "review.main"
     ],
     "handler_evidence": [
-      "src/spendguard/review.py:162 (review.main)"
+      "src/spendguard/analyze/measurement/review.py:162 (review.main)"
     ],
     "parser_kind": "argparse",
     "nested_grammar_summary": "",
     "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [
       {
-        "source_scope": "src/spendguard/review.py:162",
+        "source_scope": "src/spendguard/analyze/measurement/review.py:162",
         "selector": null,
         "operations": [
           {
@@ -4688,14 +4688,14 @@
       "cacheaudit.main"
     ],
     "handler_evidence": [
-      "src/spendguard/cacheaudit.py:199 (cacheaudit.main)"
+      "src/spendguard/analyze/measurement/cacheaudit.py:199 (cacheaudit.main)"
     ],
     "parser_kind": "argparse",
     "nested_grammar_summary": "",
     "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [
       {
-        "source_scope": "src/spendguard/cacheaudit.py:199",
+        "source_scope": "src/spendguard/analyze/measurement/cacheaudit.py:199",
         "selector": null,
         "operations": [
           {
@@ -4730,14 +4730,14 @@
       "cachetest.main"
     ],
     "handler_evidence": [
-      "src/spendguard/cachetest.py:199 (cachetest.main)"
+      "src/spendguard/analyze/measurement/cachetest.py:199 (cachetest.main)"
     ],
     "parser_kind": "argparse",
     "nested_grammar_summary": "",
     "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [
       {
-        "source_scope": "src/spendguard/cachetest.py:199",
+        "source_scope": "src/spendguard/analyze/measurement/cachetest.py:199",
         "selector": null,
         "operations": [
           {
@@ -4840,14 +4840,14 @@
       "experiment.main"
     ],
     "handler_evidence": [
-      "src/spendguard/experiment.py:411 (experiment.main)"
+      "src/spendguard/analyze/measurement/experiment.py:411 (experiment.main)"
     ],
     "parser_kind": "argparse",
     "nested_grammar_summary": "",
     "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [
       {
-        "source_scope": "src/spendguard/experiment.py:411",
+        "source_scope": "src/spendguard/analyze/measurement/experiment.py:411",
         "selector": null,
         "operations": [
           {
@@ -4936,14 +4936,14 @@
       "experiment.promote_main"
     ],
     "handler_evidence": [
-      "src/spendguard/experiment.py:432 (experiment.promote_main)"
+      "src/spendguard/analyze/measurement/experiment.py:432 (experiment.promote_main)"
     ],
     "parser_kind": "argparse",
     "nested_grammar_summary": "",
     "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [
       {
-        "source_scope": "src/spendguard/experiment.py:432",
+        "source_scope": "src/spendguard/analyze/measurement/experiment.py:432",
         "selector": null,
         "operations": [
           {
@@ -5253,7 +5253,7 @@
     "help_entries": [
       {
         "group": "see the money",
-        "description": "is what we recorded \u2248 what you were billed?",
+        "description": "is what we recorded ≈ what you were billed?",
         "group_order": 1,
         "entry_order": 4,
         "name": "trust"
@@ -5355,14 +5355,14 @@
       "realized.main"
     ],
     "handler_evidence": [
-      "src/spendguard/realized.py:115 (realized.main)"
+      "src/spendguard/analyze/measurement/realized.py:115 (realized.main)"
     ],
     "parser_kind": "argparse",
     "nested_grammar_summary": "",
     "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [
       {
-        "source_scope": "src/spendguard/realized.py:115",
+        "source_scope": "src/spendguard/analyze/measurement/realized.py:115",
         "selector": null,
         "operations": [
           {
@@ -5426,7 +5426,7 @@
     "help_entries": [
       {
         "group": "spend less (measured, not guessed)",
-        "description": "what spendguard SAVED \u2014 measured + counterfactual, by source (the 3rd axis, never summed)",
+        "description": "what spendguard SAVED — measured + counterfactual, by source (the 3rd axis, never summed)",
         "group_order": 2,
         "entry_order": 10,
         "name": "savings"
@@ -5455,7 +5455,7 @@
     "help_entries": [
       {
         "group": "spend less (measured, not guessed)",
-        "description": "per-provider token factors: `tokens calibrate` picks o200k\u2192native AGENTICALLY from call_io stats (--dry-run=$0)",
+        "description": "per-provider token factors: `tokens calibrate` picks o200k→native AGENTICALLY from call_io stats (--dry-run=$0)",
         "group_order": 2,
         "entry_order": 8,
         "name": "tokens"
@@ -5470,14 +5470,14 @@
       "prompts.main"
     ],
     "handler_evidence": [
-      "src/spendguard/prompts.py:238 (prompts.main)"
+      "src/spendguard/analyze/measurement/prompts.py:238 (prompts.main)"
     ],
     "parser_kind": "argparse",
     "nested_grammar_summary": "",
     "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [
       {
-        "source_scope": "src/spendguard/prompts.py:238",
+        "source_scope": "src/spendguard/analyze/measurement/prompts.py:238",
         "selector": null,
         "operations": [
           {
@@ -5675,7 +5675,7 @@
     "help_entries": [
       {
         "group": "start here",
-        "description": "where can this machine spend? providers \u00b7 agent tools \u00b7 ungated venvs",
+        "description": "where can this machine spend? providers · agent tools · ungated venvs",
         "group_order": 0,
         "entry_order": 3,
         "name": "sources"
@@ -5703,7 +5703,7 @@
     "help_entries": [
       {
         "group": "start here",
-        "description": "what your local coding-agent work costs \u2014 no key, no network, 10s",
+        "description": "what your local coding-agent work costs — no key, no network, 10s",
         "group_order": 0,
         "entry_order": 0,
         "name": "scan"
@@ -5826,7 +5826,7 @@
     "help_entries": [
       {
         "group": "teams",
-        "description": "bulk-lane routing groups: show/validate + `tiers set <group> <model\u2026>`",
+        "description": "bulk-lane routing groups: show/validate + `tiers set <group> <model…>`",
         "group_order": 3,
         "entry_order": 2,
         "name": "tiers"
@@ -5993,14 +5993,14 @@
       "compare.main"
     ],
     "handler_evidence": [
-      "src/spendguard/compare.py:14 (compare.main)"
+      "src/spendguard/analyze/measurement/compare.py:14 (compare.main)"
     ],
     "parser_kind": "argparse",
     "nested_grammar_summary": "",
     "review_status": "whole_handler_body_read; exact argparse topology and reviewed typed manual controls declared; execution preserves legacy raw argv policies",
     "parser_graphs": [
       {
-        "source_scope": "src/spendguard/compare.py:14",
+        "source_scope": "src/spendguard/analyze/measurement/compare.py:14",
         "selector": null,
         "operations": [
           {
@@ -6147,7 +6147,7 @@
     "help_entries": [
       {
         "group": "setup & plumbing",
-        "description": "sync per-model capabilities (vision, response_schema, \u2026) + upper bounds from LiteLLM",
+        "description": "sync per-model capabilities (vision, response_schema, …) + upper bounds from LiteLLM",
         "group_order": 4,
         "entry_order": 10,
         "name": "sync-capabilities"
@@ -6190,7 +6190,7 @@
       "reliability.main"
     ],
     "handler_evidence": [
-      "src/spendguard/reliability.py:734 (reliability.main)"
+      "src/spendguard/analyze/measurement/reliability.py:734 (reliability.main)"
     ],
     "parser_kind": "manual argv",
     "nested_grammar_summary": "",

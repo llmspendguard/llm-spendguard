@@ -11,11 +11,11 @@ import datetime
 import math
 from pathlib import Path
 
-from . import budget, config
+from ... import budget, config
 from decimal import Decimal, localcontext
 import logging
-from .ledger_writer import best_effort_ledger_function
-from .money_scale import NANO_USD_PER_USD, real_usd_to_nano_usd, nano_usd_to_usd, assert_nano_total_matches
+from ...ledger_writer import best_effort_ledger_function
+from ...money_scale import NANO_USD_PER_USD, real_usd_to_nano_usd, nano_usd_to_usd, assert_nano_total_matches
 
 SAVINGS_NANO_COLUMNS = {column: f"{column}_nano" for column in ("amount",)}
 
@@ -142,7 +142,7 @@ def record_saving(source, amount, confidence=None, project=None):
         if amount <= 0:
             return
         if source in _RESERVED_SOURCES:           # plan-served $ is the EST-VALUE axis — booking it here double-counts
-            from . import config
+            from ... import config
             config.warn_once(f"[spendguard] record_saving({source!r}) REFUSED — plan-served savings are the est-value "
                              f"axis (est_chat_usd), not the savings ledger; booking them here double-counts the same "
                              f"avoided dollars. (guard._RESERVED_SOURCES)")
@@ -180,7 +180,7 @@ def _lognormal_cumulants(mu, cv):
 
 def by_dims_guarded(since=None):
     """Per (day, project, source): event count + SUMMED cumulants — the additive payload the server rolls up."""
-    from .ledger_read import LedgerSQLReadRequest, ledger_read_table_exists, read_ledger_sql
+    from ...ledger_read import LedgerSQLReadRequest, ledger_read_table_exists, read_ledger_sql
     if not Path(config.db_path()).exists() or not ledger_read_table_exists("savings"):
         return []
     cond, args = [], []
@@ -206,7 +206,7 @@ def saved_since(since=None):
     collapsed to per-source means for a local readout). `certain` sums the MEASURED sources (CERTAIN); everything
     else is `counterfactual` — kept SEPARATE so the two are never blurred into one over-confident number. This is a
     THIRD axis (avoided $), never added into real-$ (billed) or est-value (plan)."""
-    from .ledger_read import LedgerSQLReadRequest, ledger_read_table_exists, read_ledger_sql
+    from ...ledger_read import LedgerSQLReadRequest, ledger_read_table_exists, read_ledger_sql
     if not Path(config.db_path()).exists() or not ledger_read_table_exists("savings"):
         per = {}
     else:
@@ -256,8 +256,8 @@ def _decisions_db():
 
 
 def _ensure_guard_decisions_schema(db):
-    from . import routing_audit
-    from .schema_indexes import ensure_ordered_indexes_coverage
+    from ... import routing_audit
+    from ...schema_indexes import ensure_ordered_indexes_coverage
     routing_audit.ensure_decisions_call_fk_schema(db, commit=False)
     # forward-only additive column: `why` = the SPECIFIC routing reason ("bandit → codex (gpt-5.6-sol)", "tier-3
     # base fallback", "lane-miss → metered", "best-value") so "why did X run instead of the model requested" is a
@@ -287,7 +287,7 @@ def record_decision(intent, requested_model, chosen_model, counterfactual_usd, a
         db = _decisions_db()
         with budget._lock:
             cls = reason_class if reason_class in _DECISION_REASON_CLASSES else None
-            from . import routing_audit
+            from ... import routing_audit
             db.execute("INSERT INTO decisions (ts,day,project,intent,basis,requested_model,requested_effort,"
                        "chosen_model,chosen_effort,counterfactual_usd,actual_usd,saved_usd,why,reason_class,call_id,"
                        "counterfactual_usd_nano,actual_usd_nano,saved_usd_nano) "
@@ -305,7 +305,7 @@ def record_decision(intent, requested_model, chosen_model, counterfactual_usd, a
 
 def decisions_since(since=None):
     """Per-decision rows since `since` (day, YYYY-MM-DD), newest first — the forensic detail behind the tally."""
-    from .ledger_read import LedgerSQLReadRequest, ledger_read_table_exists, read_ledger_sql
+    from ...ledger_read import LedgerSQLReadRequest, ledger_read_table_exists, read_ledger_sql
     if not Path(config.db_path()).exists() or not ledger_read_table_exists("decisions"):
         return []
     cond, args = [], []
@@ -335,7 +335,7 @@ def decisions_summary(since=None, intent_limit=None):
             b["saved_usd"] = _decision_nullable_round(b["saved_usd"], 4)
         return {"decisions": len(rows), "saved_usd": _decision_nullable_round(total, 4),
                 "by_intent": sorted(by_intent.values(), key=lambda x: (x["saved_usd"] is not None, x["saved_usd"] or 0), reverse=True)}
-    from .ledger_read import LedgerSQLReadRequest, ledger_read_table_exists, read_ledger_sql
+    from ...ledger_read import LedgerSQLReadRequest, ledger_read_table_exists, read_ledger_sql
     if not Path(config.db_path()).exists() or not ledger_read_table_exists("decisions"):
         return {"decisions": 0, "saved_usd": 0.0, "by_intent": []}
     total_sql = DECISIONS_SUMMARY_TOTAL_SINCE_SQL if since else DECISIONS_SUMMARY_TOTAL_SQL.format(where="")
@@ -437,7 +437,7 @@ def shed_summary(since=None):
     one case shedding saves REAL money — a plan on paid overage would have billed); quota_preserved_usd sums the
     'quota'/'proactive' classes (est-value moved to another free lane, NOT real money) — kept on a SEPARATE axis so
     the two are never blurred (the same split the cost doctrine requires for billed vs est-value)."""
-    from . import adapters
+    from ... import adapters
     def _lane_of(model):
         try:
             return adapters._LANES.get(adapters.provider_for(model), (None,))[0] or adapters.provider_for(model)

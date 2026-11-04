@@ -20,7 +20,7 @@
     ],
     "attributes": {
       "help": {
-        "literal": "the model you're about to use \u2014 shows the delta vs the recommendation"
+        "literal": "the model you're about to use — shows the delta vs the recommendation"
       }
     },
     "evidence": "src/spendguard/advise.py:272"
@@ -35,7 +35,7 @@
     ],
     "attributes": {
       "help": {
-        "literal": "replay the advisor as of this date (YYYY-MM-DD) \u2014 backtest"
+        "literal": "replay the advisor as of this date (YYYY-MM-DD) — backtest"
       }
     },
     "evidence": "src/spendguard/advise.py:273"
@@ -200,7 +200,7 @@
       "intent"
     ],
     "attributes": {},
-    "evidence": "src/spendguard/bakeoff.py:380"
+    "evidence": "src/spendguard/analyze/measurement/bakeoff.py:380"
   },
   {
     "declaration_id": "bakeoff/bakeoff.main/ap/--candidates",
@@ -218,7 +218,7 @@
         "literal": "comma-separated vendor:model slate to test"
       }
     },
-    "evidence": "src/spendguard/bakeoff.py:381"
+    "evidence": "src/spendguard/analyze/measurement/bakeoff.py:381"
   },
   {
     "declaration_id": "bakeoff/bakeoff.main/ap/--sample",
@@ -239,7 +239,7 @@
         "literal": "how many recorded prompts to replay (default 5)"
       }
     },
-    "evidence": "src/spendguard/bakeoff.py:382"
+    "evidence": "src/spendguard/analyze/measurement/bakeoff.py:382"
   },
   {
     "declaration_id": "bakeoff/bakeoff.main/ap/--efforts",
@@ -251,10 +251,10 @@
     ],
     "attributes": {
       "help": {
-        "literal": "comma-separated reasoning ladder to sweep PER model, e.g. 'minimal,low,medium,high' \u2014 finds the cheapest (model, effort) that holds quality. Omitted \u2192 one arm per model at its default effort."
+        "literal": "comma-separated reasoning ladder to sweep PER model, e.g. 'minimal,low,medium,high' — finds the cheapest (model, effort) that holds quality. Omitted → one arm per model at its default effort."
       }
     },
-    "evidence": "src/spendguard/bakeoff.py:383"
+    "evidence": "src/spendguard/analyze/measurement/bakeoff.py:383"
   },
   {
     "declaration_id": "bakeoff/bakeoff.main/ap/--run",
@@ -272,7 +272,7 @@
         "literal": "actually spend (default: estimate only)"
       }
     },
-    "evidence": "src/spendguard/bakeoff.py:386"
+    "evidence": "src/spendguard/analyze/measurement/bakeoff.py:386"
   },
   {
     "declaration_id": "bakeoff/bakeoff.main/ap/--budget",
@@ -290,7 +290,7 @@
         "literal": "refuse if the estimate exceeds this"
       }
     },
-    "evidence": "src/spendguard/bakeoff.py:387"
+    "evidence": "src/spendguard/analyze/measurement/bakeoff.py:387"
   },
   {
     "declaration_id": "bakeoff/bakeoff.main/ap/--requirement-aware",
@@ -308,7 +308,7 @@
         "literal": "judge each output against the PROMPT'S OWN requirements, two-tier (screen -> opus adjudicator)"
       }
     },
-    "evidence": "src/spendguard/bakeoff.py:388"
+    "evidence": "src/spendguard/analyze/measurement/bakeoff.py:388"
   },
   {
     "declaration_id": "bakeoff/bakeoff.main/ap/--adjudicator",
@@ -323,7 +323,7 @@
         "literal": "opus-tier adjudicator model for --requirement-aware (default config.advisor_adjudicator_model)"
       }
     },
-    "evidence": "src/spendguard/bakeoff.py:390"
+    "evidence": "src/spendguard/analyze/measurement/bakeoff.py:390"
   },
   {
     "declaration_id": "bakeoff/bakeoff.main/ap/--temperature",
@@ -338,10 +338,10 @@
         "expression": "float"
       },
       "help": {
-        "literal": "DETERMINISM: run each arm as a measurement at this temperature (e.g. 0) \u2014 one deterministic pass per arm instead of n replicates. FORCES the metered API (a $0 lane has no temperature channel). Omit to run at production settings on the $0 lane."
+        "literal": "DETERMINISM: run each arm as a measurement at this temperature (e.g. 0) — one deterministic pass per arm instead of n replicates. FORCES the metered API (a $0 lane has no temperature channel). Omit to run at production settings on the $0 lane."
       }
     },
-    "evidence": "src/spendguard/bakeoff.py:391"
+    "evidence": "src/spendguard/analyze/measurement/bakeoff.py:391"
   },
   {
     "declaration_id": "bakeoff/bakeoff.main/ap/--top-p",
@@ -362,7 +362,7 @@
         "literal": "DETERMINISM: nucleus top_p for the measurement (metered)."
       }
     },
-    "evidence": "src/spendguard/bakeoff.py:394"
+    "evidence": "src/spendguard/analyze/measurement/bakeoff.py:394"
   },
   {
     "declaration_id": "bakeoff/bakeoff.main/ap/--seed",
@@ -380,7 +380,7 @@
         "literal": "DETERMINISM: sampling seed for the measurement (OpenAI-only; dropped on vendors without a seed param, recorded in gen_params_dropped)."
       }
     },
-    "evidence": "src/spendguard/bakeoff.py:395"
+    "evidence": "src/spendguard/analyze/measurement/bakeoff.py:395"
   },
   {
     "declaration_id": "bootstrap/bootstrap.main/ap/--repo",
@@ -515,7 +515,7 @@
         "literal": "repo to scan for big system prompts (default: cwd)"
       }
     },
-    "evidence": "src/spendguard/cacheaudit.py:202"
+    "evidence": "src/spendguard/analyze/measurement/cacheaudit.py:202"
   },
   {
     "declaration_id": "cache-test/cachetest.main/ap/--script",
@@ -530,7 +530,7 @@
         "literal": "extract the big system prompt from this .py to test"
       }
     },
-    "evidence": "src/spendguard/cachetest.py:202"
+    "evidence": "src/spendguard/analyze/measurement/cachetest.py:202"
   },
   {
     "declaration_id": "cache-test/cachetest.main/ap/--from-intent",
@@ -545,7 +545,7 @@
         "literal": "use the common prefix of this intent's recovered prompts"
       }
     },
-    "evidence": "src/spendguard/cachetest.py:203"
+    "evidence": "src/spendguard/analyze/measurement/cachetest.py:203"
   },
   {
     "declaration_id": "cache-test/cachetest.main/ap/--model",
@@ -560,7 +560,7 @@
         "literal": "model to test (default: advisor_judge_model)"
       }
     },
-    "evidence": "src/spendguard/cachetest.py:204"
+    "evidence": "src/spendguard/analyze/measurement/cachetest.py:204"
   },
   {
     "declaration_id": "cache-test/cachetest.main/ap/--n",
@@ -581,7 +581,7 @@
         "literal": "calls to run (1 cold + n-1 warm)"
       }
     },
-    "evidence": "src/spendguard/cachetest.py:205"
+    "evidence": "src/spendguard/analyze/measurement/cachetest.py:205"
   },
   {
     "declaration_id": "cache-test/cachetest.main/ap/--run",
@@ -599,7 +599,7 @@
         "literal": "actually call (default: estimate). Caged by caps.meta."
       }
     },
-    "evidence": "src/spendguard/cachetest.py:206"
+    "evidence": "src/spendguard/analyze/measurement/cachetest.py:206"
   },
   {
     "declaration_id": "calibrate/calibrate.main/pr/--label",
@@ -888,7 +888,7 @@
         "literal": true
       },
       "help": {
-        "literal": "cheap\u2192strong, comma-separated (e.g. gpt-5-nano,gpt-5-mini,gpt-5.5)"
+        "literal": "cheap→strong, comma-separated (e.g. gpt-5-nano,gpt-5-mini,gpt-5.5)"
       }
     },
     "evidence": "src/spendguard/cascade.py:98"
@@ -1525,7 +1525,7 @@
     ],
     "attributes": {
       "help": {
-        "literal": "who is registering these (e.g. warden) \u2014 recorded so doctor attributes them"
+        "literal": "who is registering these (e.g. warden) — recorded so doctor attributes them"
       }
     },
     "evidence": "src/spendguard/cli.py:1455"
@@ -1627,7 +1627,7 @@
         "literal": "store_true"
       },
       "help": {
-        "literal": "ACCOUNT-level view: provider truth is account-wide; on a shared account each org's statement residual includes its siblings \u2014 this view shows the account axis whole"
+        "literal": "ACCOUNT-level view: provider truth is account-wide; on a shared account each org's statement residual includes its siblings — this view shows the account axis whole"
       }
     },
     "evidence": "src/spendguard/close.py:86"
@@ -1641,7 +1641,7 @@
       "--prompt"
     ],
     "attributes": {},
-    "evidence": "src/spendguard/compare.py:16"
+    "evidence": "src/spendguard/analyze/measurement/compare.py:16"
   },
   {
     "declaration_id": "compare/compare.main/ap/--prompt-file",
@@ -1652,7 +1652,7 @@
       "--prompt-file"
     ],
     "attributes": {},
-    "evidence": "src/spendguard/compare.py:17"
+    "evidence": "src/spendguard/analyze/measurement/compare.py:17"
   },
   {
     "declaration_id": "compare/compare.main/ap/--models",
@@ -1670,7 +1670,7 @@
         "literal": "comma-separated; 'provider:model' to force a provider"
       }
     },
-    "evidence": "src/spendguard/compare.py:18"
+    "evidence": "src/spendguard/analyze/measurement/compare.py:18"
   },
   {
     "declaration_id": "compare/compare.main/ap/--max-tokens",
@@ -1688,7 +1688,7 @@
         "literal": 512
       }
     },
-    "evidence": "src/spendguard/compare.py:19"
+    "evidence": "src/spendguard/analyze/measurement/compare.py:19"
   },
   {
     "declaration_id": "compare/compare.main/ap/--system",
@@ -1699,7 +1699,7 @@
       "--system"
     ],
     "attributes": {},
-    "evidence": "src/spendguard/compare.py:20"
+    "evidence": "src/spendguard/analyze/measurement/compare.py:20"
   },
   {
     "declaration_id": "compare/compare.main/ap/--show",
@@ -1717,7 +1717,7 @@
         "literal": "print each model's full output"
       }
     },
-    "evidence": "src/spendguard/compare.py:21"
+    "evidence": "src/spendguard/analyze/measurement/compare.py:21"
   },
   {
     "declaration_id": "comprehend/comprehend.cmd/ap/patterns",
@@ -2158,7 +2158,7 @@
         "literal": null
       },
       "help": {
-        "literal": "use only this many of the vendors (the first N) \u2014 you pick the panel size"
+        "literal": "use only this many of the vendors (the first N) — you pick the panel size"
       }
     },
     "evidence": "src/spendguard/crossllm.py:425"
@@ -2604,7 +2604,7 @@
       "intent"
     ],
     "attributes": {},
-    "evidence": "src/spendguard/effort_titration.py:456"
+    "evidence": "src/spendguard/analyze/measurement/effort_titration.py:456"
   },
   {
     "declaration_id": "effort-titrate/effort_titration.main/ap/--model",
@@ -2619,7 +2619,7 @@
         "literal": "model to titrate (default: the intent's most-used model)"
       }
     },
-    "evidence": "src/spendguard/effort_titration.py:457"
+    "evidence": "src/spendguard/analyze/measurement/effort_titration.py:457"
   },
   {
     "declaration_id": "effort-titrate/effort_titration.main/ap/--efforts",
@@ -2634,7 +2634,7 @@
         "literal": "comma-separated ladder to A/B (default: minimal,low,medium,high)"
       }
     },
-    "evidence": "src/spendguard/effort_titration.py:458"
+    "evidence": "src/spendguard/analyze/measurement/effort_titration.py:458"
   },
   {
     "declaration_id": "effort-titrate/effort_titration.main/ap/--sample",
@@ -2655,7 +2655,7 @@
         "expression": "'max prompts per effort (default %d)' % _MAX_SAMPLE"
       }
     },
-    "evidence": "src/spendguard/effort_titration.py:459"
+    "evidence": "src/spendguard/analyze/measurement/effort_titration.py:459"
   },
   {
     "declaration_id": "effort-titrate/effort_titration.main/ap/--run",
@@ -2673,7 +2673,7 @@
         "literal": "actually spend (default: estimate only)"
       }
     },
-    "evidence": "src/spendguard/effort_titration.py:460"
+    "evidence": "src/spendguard/analyze/measurement/effort_titration.py:460"
   },
   {
     "declaration_id": "effort-titrate/effort_titration.main/ap/--budget",
@@ -2691,7 +2691,7 @@
         "literal": "refuse if the pilot estimate exceeds this"
       }
     },
-    "evidence": "src/spendguard/effort_titration.py:461"
+    "evidence": "src/spendguard/analyze/measurement/effort_titration.py:461"
   },
   {
     "declaration_id": "effort-titrate/effort_titration.main/ap/--requirement-aware",
@@ -2709,7 +2709,7 @@
         "literal": "score with the two-tier REQUIREMENT judge (screen -> opus adjudicator) vs the prompt's own criteria"
       }
     },
-    "evidence": "src/spendguard/effort_titration.py:462"
+    "evidence": "src/spendguard/analyze/measurement/effort_titration.py:462"
   },
   {
     "declaration_id": "effort-titrate/effort_titration.main/ap/--adjudicator",
@@ -2724,7 +2724,7 @@
         "literal": "opus-tier adjudicator model for --requirement-aware (default config.advisor_adjudicator_model)"
       }
     },
-    "evidence": "src/spendguard/effort_titration.py:464"
+    "evidence": "src/spendguard/analyze/measurement/effort_titration.py:464"
   },
   {
     "declaration_id": "estimate/estimate.main/ap/--items",
@@ -2913,7 +2913,7 @@
     ],
     "attributes": {
       "help": {
-        "literal": "activity/intent \u2014 adds the LEARNED estimate from your history (spendguard calibrate) next to this naive projection"
+        "literal": "activity/intent — adds the LEARNED estimate from your history (spendguard calibrate) next to this naive projection"
       }
     },
     "evidence": "src/spendguard/estimate.py:124"
@@ -2931,7 +2931,7 @@
         "literal": true
       }
     },
-    "evidence": "src/spendguard/experiment.py:417"
+    "evidence": "src/spendguard/analyze/measurement/experiment.py:417"
   },
   {
     "declaration_id": "experiment/experiment.main/ap/--model",
@@ -2949,7 +2949,7 @@
         "literal": "a cheaper model variant to test (repeatable)"
       }
     },
-    "evidence": "src/spendguard/experiment.py:418"
+    "evidence": "src/spendguard/analyze/measurement/experiment.py:418"
   },
   {
     "declaration_id": "experiment/experiment.main/ap/--instruction",
@@ -2967,7 +2967,7 @@
         "literal": "an output-format instruction variant (repeatable)"
       }
     },
-    "evidence": "src/spendguard/experiment.py:419"
+    "evidence": "src/spendguard/analyze/measurement/experiment.py:419"
   },
   {
     "declaration_id": "experiment/experiment.main/ap/--n",
@@ -2988,7 +2988,7 @@
         "literal": "samples to test per variant"
       }
     },
-    "evidence": "src/spendguard/experiment.py:420"
+    "evidence": "src/spendguard/analyze/measurement/experiment.py:420"
   },
   {
     "declaration_id": "experiment/experiment.main/ap/--reconsider",
@@ -3006,7 +3006,7 @@
         "literal": "also test models previously marked ineffective"
       }
     },
-    "evidence": "src/spendguard/experiment.py:421"
+    "evidence": "src/spendguard/analyze/measurement/experiment.py:421"
   },
   {
     "declaration_id": "experiment/experiment.main/ap/--semantic",
@@ -3018,10 +3018,10 @@
     ],
     "attributes": {
       "help": {
-        "literal": "judge tier: embed | rubric | custom:<module.fn> (your own callable (ref,out)->0..1 \u2014 wrap promptfoo assertions or any domain check). For PROSE outputs: a caged semantic equivalence tier (embed=embedding cosine, rubric=LLM judge) \u2014 costs extra, meta-capped"
+        "literal": "judge tier: embed | rubric | custom:<module.fn> (your own callable (ref,out)->0..1 — wrap promptfoo assertions or any domain check). For PROSE outputs: a caged semantic equivalence tier (embed=embedding cosine, rubric=LLM judge) — costs extra, meta-capped"
       }
     },
-    "evidence": "src/spendguard/experiment.py:422"
+    "evidence": "src/spendguard/analyze/measurement/experiment.py:422"
   },
   {
     "declaration_id": "experiment/experiment.main/ap/--run",
@@ -3039,7 +3039,7 @@
         "literal": "actually call (default: estimate). Caged by caps.meta."
       }
     },
-    "evidence": "src/spendguard/experiment.py:425"
+    "evidence": "src/spendguard/analyze/measurement/experiment.py:425"
   },
   {
     "declaration_id": "promote/experiment.promote_main/ap/--intent",
@@ -3054,7 +3054,7 @@
         "literal": true
       }
     },
-    "evidence": "src/spendguard/experiment.py:439"
+    "evidence": "src/spendguard/analyze/measurement/experiment.py:439"
   },
   {
     "declaration_id": "promote/experiment.promote_main/ap/--model",
@@ -3072,7 +3072,7 @@
         "literal": "the winning model"
       }
     },
-    "evidence": "src/spendguard/experiment.py:440"
+    "evidence": "src/spendguard/analyze/measurement/experiment.py:440"
   },
   {
     "declaration_id": "promote/experiment.promote_main/ap/--instruction",
@@ -3087,7 +3087,7 @@
         "literal": "the winning output-format instruction (optional)"
       }
     },
-    "evidence": "src/spendguard/experiment.py:441"
+    "evidence": "src/spendguard/analyze/measurement/experiment.py:441"
   },
   {
     "declaration_id": "promote/experiment.promote_main/ap/--input",
@@ -3102,7 +3102,7 @@
         "literal": "chunk to process (batch .jsonl / {prompt} jsonl / plain text)"
       }
     },
-    "evidence": "src/spendguard/experiment.py:442"
+    "evidence": "src/spendguard/analyze/measurement/experiment.py:442"
   },
   {
     "declaration_id": "promote/experiment.promote_main/ap/--out",
@@ -3114,10 +3114,10 @@
     ],
     "attributes": {
       "help": {
-        "literal": "where to write kept outputs (jsonl) \u2014 realtime mode"
+        "literal": "where to write kept outputs (jsonl) — realtime mode"
       }
     },
-    "evidence": "src/spendguard/experiment.py:443"
+    "evidence": "src/spendguard/analyze/measurement/experiment.py:443"
   },
   {
     "declaration_id": "promote/experiment.promote_main/ap/--n",
@@ -3135,7 +3135,7 @@
         "literal": "cap inputs"
       }
     },
-    "evidence": "src/spendguard/experiment.py:444"
+    "evidence": "src/spendguard/analyze/measurement/experiment.py:444"
   },
   {
     "declaration_id": "promote/experiment.promote_main/ap/--batch",
@@ -3153,7 +3153,7 @@
         "literal": "use the Batch API (50%% off, async) for large chunks"
       }
     },
-    "evidence": "src/spendguard/experiment.py:445"
+    "evidence": "src/spendguard/analyze/measurement/experiment.py:445"
   },
   {
     "declaration_id": "promote/experiment.promote_main/ap/--run",
@@ -3171,7 +3171,7 @@
         "literal": "actually produce+keep (default: estimate). WORKLOAD spend."
       }
     },
-    "evidence": "src/spendguard/experiment.py:446"
+    "evidence": "src/spendguard/analyze/measurement/experiment.py:446"
   },
   {
     "declaration_id": "mine-history/history.main/ap/op",
@@ -3358,7 +3358,7 @@
       "reading_id"
     ],
     "attributes": {},
-    "evidence": "src/spendguard/measurement.py:350"
+    "evidence": "src/spendguard/analyze/measurement/measurement.py:350"
   },
   {
     "declaration_id": "measurement/measurement.cmd/p_l/--intent",
@@ -3373,7 +3373,7 @@
         "literal": null
       }
     },
-    "evidence": "src/spendguard/measurement.py:352"
+    "evidence": "src/spendguard/analyze/measurement/measurement.py:352"
   },
   {
     "declaration_id": "measurement/measurement.cmd/p_l/--limit",
@@ -3391,7 +3391,7 @@
         "literal": 25
       }
     },
-    "evidence": "src/spendguard/measurement.py:353"
+    "evidence": "src/spendguard/analyze/measurement/measurement.py:353"
   },
   {
     "declaration_id": "measurement/measurement.cmd/p_r/intent",
@@ -3402,7 +3402,7 @@
       "intent"
     ],
     "attributes": {},
-    "evidence": "src/spendguard/measurement.py:355"
+    "evidence": "src/spendguard/analyze/measurement/measurement.py:355"
   },
   {
     "declaration_id": "measurement/measurement.cmd/p_rr/reading_id",
@@ -3413,7 +3413,7 @@
       "reading_id"
     ],
     "attributes": {},
-    "evidence": "src/spendguard/measurement.py:357"
+    "evidence": "src/spendguard/analyze/measurement/measurement.py:357"
   },
   {
     "declaration_id": "measurement/measurement.cmd/p_rr/--budget",
@@ -3434,7 +3434,7 @@
         "literal": "spend up to this; OMIT for an estimate only (0 spend)"
       }
     },
-    "evidence": "src/spendguard/measurement.py:358"
+    "evidence": "src/spendguard/analyze/measurement/measurement.py:358"
   },
   {
     "declaration_id": "measurement/measurement.cmd/p_rr/--fresh",
@@ -3452,7 +3452,7 @@
         "literal": "re-baseline on a FRESH sample (same judge, a new instrument)"
       }
     },
-    "evidence": "src/spendguard/measurement.py:359"
+    "evidence": "src/spendguard/analyze/measurement/measurement.py:359"
   },
   {
     "declaration_id": "measurement/measurement.cmd/p_c/baseline",
@@ -3463,7 +3463,7 @@
       "baseline"
     ],
     "attributes": {},
-    "evidence": "src/spendguard/measurement.py:361"
+    "evidence": "src/spendguard/analyze/measurement/measurement.py:361"
   },
   {
     "declaration_id": "measurement/measurement.cmd/p_c/candidate",
@@ -3474,7 +3474,7 @@
       "candidate"
     ],
     "attributes": {},
-    "evidence": "src/spendguard/measurement.py:362"
+    "evidence": "src/spendguard/analyze/measurement/measurement.py:362"
   },
   {
     "declaration_id": "metadata/metadata_audit.main/ap/--sync",
@@ -3540,7 +3540,7 @@
     ],
     "attributes": {
       "help": {
-        "literal": "tasks .jsonl \u2014 each line {\"custom_id\": <id>, \"content\": <user text>}; spendguard builds the per-model request envelope (RECOMMENDED \u2014 the caller never hand-rolls a body, so a model-wrong param like max_tokens-vs-max_completion_tokens can't reach the API)"
+        "literal": "tasks .jsonl — each line {\"custom_id\": <id>, \"content\": <user text>}; spendguard builds the per-model request envelope (RECOMMENDED — the caller never hand-rolls a body, so a model-wrong param like max_tokens-vs-max_completion_tokens can't reach the API)"
       }
     },
     "evidence": "src/spendguard/openai_batch_cli.py:29"
@@ -3555,7 +3555,7 @@
     ],
     "attributes": {
       "help": {
-        "literal": "a PRE-BUILT request .jsonl (legacy \u2014 you own each body's per-model params)"
+        "literal": "a PRE-BUILT request .jsonl (legacy — you own each body's per-model params)"
       }
     },
     "evidence": "src/spendguard/openai_batch_cli.py:32"
@@ -3714,7 +3714,7 @@
         "literal": null
       },
       "help": {
-        "literal": "tag this batch's spend with a job-type intent (e.g. symgrep-block-index) \u2014 else it attributes to '(none)', exactly like an untagged realtime call"
+        "literal": "tag this batch's spend with a job-type intent (e.g. symgrep-block-index) — else it attributes to '(none)', exactly like an untagged realtime call"
       }
     },
     "evidence": "src/spendguard/openai_batch_cli.py:44"
@@ -3837,7 +3837,7 @@
         "literal": "lint one intent only"
       }
     },
-    "evidence": "src/spendguard/prompts.py:242"
+    "evidence": "src/spendguard/analyze/measurement/prompts.py:242"
   },
   {
     "declaration_id": "prompts/prompts.main/ap/--since",
@@ -3852,7 +3852,7 @@
         "literal": "ISO date/ts lower bound"
       }
     },
-    "evidence": "src/spendguard/prompts.py:243"
+    "evidence": "src/spendguard/analyze/measurement/prompts.py:243"
   },
   {
     "declaration_id": "prompts/prompts.main/ap/--min-calls",
@@ -3870,7 +3870,7 @@
         "expression": "MIN_CALLS"
       }
     },
-    "evidence": "src/spendguard/prompts.py:244"
+    "evidence": "src/spendguard/analyze/measurement/prompts.py:244"
   },
   {
     "declaration_id": "prompts/prompts.main/ap/--json",
@@ -3888,7 +3888,7 @@
         "literal": "machine-readable output"
       }
     },
-    "evidence": "src/spendguard/prompts.py:245"
+    "evidence": "src/spendguard/analyze/measurement/prompts.py:245"
   },
   {
     "declaration_id": "prompts/prompts.main/ap/--judge-batchable",
@@ -3903,10 +3903,10 @@
         "literal": "store_true"
       },
       "help": {
-        "literal": "agentically judge batching candidates (packable job items vs latency-sensitive interactive) and emit `batch_savings` \u2014 SPENDS a small meta-caged call per candidate"
+        "literal": "agentically judge batching candidates (packable job items vs latency-sensitive interactive) and emit `batch_savings` — SPENDS a small meta-caged call per candidate"
       }
     },
-    "evidence": "src/spendguard/prompts.py:246"
+    "evidence": "src/spendguard/analyze/measurement/prompts.py:246"
   },
   {
     "declaration_id": "realized/realized.main/ap/--intent",
@@ -3921,7 +3921,7 @@
         "literal": "one intent only"
       }
     },
-    "evidence": "src/spendguard/realized.py:119"
+    "evidence": "src/spendguard/analyze/measurement/realized.py:119"
   },
   {
     "declaration_id": "realized/realized.main/ap/--json",
@@ -3936,7 +3936,7 @@
         "literal": "store_true"
       }
     },
-    "evidence": "src/spendguard/realized.py:120"
+    "evidence": "src/spendguard/analyze/measurement/realized.py:120"
   },
   {
     "declaration_id": "realized/realized.main/ap/--sync",
@@ -3954,7 +3954,7 @@
         "literal": "record NEW positive realized $ into the guarded pipeline (idempotent)"
       }
     },
-    "evidence": "src/spendguard/realized.py:121"
+    "evidence": "src/spendguard/analyze/measurement/realized.py:121"
   },
   {
     "declaration_id": "reconcile/reconcile_anthropic.main/ap/--since",
@@ -4139,7 +4139,7 @@
         "literal": "how many top-cost (intent,model) usages to audit"
       }
     },
-    "evidence": "src/spendguard/review.py:165"
+    "evidence": "src/spendguard/analyze/measurement/review.py:165"
   },
   {
     "declaration_id": "review/review.main/ap/--run",
@@ -4157,7 +4157,7 @@
         "literal": "actually spend (default: estimate). Capped by caps.meta."
       }
     },
-    "evidence": "src/spendguard/review.py:166"
+    "evidence": "src/spendguard/analyze/measurement/review.py:166"
   },
   {
     "declaration_id": "route-cost/route_economics.cmd/ap/intent",
@@ -4313,7 +4313,7 @@
         "literal": "+"
       },
       "help": {
-        "literal": "intent:n[:urgent|deferrable] \u2014 e.g. loinc-map:5000 triage:50:urgent"
+        "literal": "intent:n[:urgent|deferrable] — e.g. loinc-map:5000 triage:50:urgent"
       }
     },
     "evidence": "src/spendguard/route_horizon.py:273"
@@ -4439,7 +4439,7 @@
         "literal": "exact calls.intent label"
       }
     },
-    "evidence": "src/spendguard/route_realized.py:35"
+    "evidence": "src/spendguard/analyze/measurement/route_realized.py:35"
   },
   {
     "declaration_id": "route-realized/route_realized.cmd/ap/--since",
@@ -4454,7 +4454,7 @@
         "literal": "inclusive lower ts bound (ISO date/timestamp string)"
       }
     },
-    "evidence": "src/spendguard/route_realized.py:36"
+    "evidence": "src/spendguard/analyze/measurement/route_realized.py:36"
   },
   {
     "declaration_id": "route-realized/route_realized.cmd/ap/--as-of",
@@ -4472,7 +4472,7 @@
         "literal": "inclusive upper ts bound (ISO date/timestamp string)"
       }
     },
-    "evidence": "src/spendguard/route_realized.py:37"
+    "evidence": "src/spendguard/analyze/measurement/route_realized.py:37"
   },
   {
     "declaration_id": "route-realized/route_realized.cmd/ap/--limit",
@@ -4493,7 +4493,7 @@
         "literal": "maximum recent samples (default 20)"
       }
     },
-    "evidence": "src/spendguard/route_realized.py:38"
+    "evidence": "src/spendguard/analyze/measurement/route_realized.py:38"
   },
   {
     "declaration_id": "route-realized/route_realized.cmd/ap/--json",
@@ -4511,7 +4511,7 @@
         "literal": "emit the full report as JSON"
       }
     },
-    "evidence": "src/spendguard/route_realized.py:39"
+    "evidence": "src/spendguard/analyze/measurement/route_realized.py:39"
   },
   {
     "declaration_id": "dedup/semcache.dedup_main/ap/--input",
@@ -4748,7 +4748,7 @@
         "literal": "store_true"
       },
       "help": {
-        "literal": "gate the per-USER site of the target python (covers `python3 \u2026` from anywhere for that interpreter \u2014 the system-python bypass)"
+        "literal": "gate the per-USER site of the target python (covers `python3 …` from anywhere for that interpreter — the system-python bypass)"
       }
     },
     "evidence": "src/spendguard/setup.py:886"
@@ -4763,7 +4763,7 @@
     ],
     "attributes": {
       "help": {
-        "literal": "target interpreter for --user (default: current python). Use the system python you want to gate, e.g. /opt/homebrew/bin/python3 \u2014 writes a path-injecting usercustomize, NO pip, so it works on PEP668-managed pythons"
+        "literal": "target interpreter for --user (default: current python). Use the system python you want to gate, e.g. /opt/homebrew/bin/python3 — writes a path-injecting usercustomize, NO pip, so it works on PEP668-managed pythons"
       }
     },
     "evidence": "src/spendguard/setup.py:888"
@@ -4904,7 +4904,7 @@
         "literal": "the job-type whose recorded prompts to replay, or '-' to read prompts from stdin"
       }
     },
-    "evidence": "src/spendguard/stability.py:103"
+    "evidence": "src/spendguard/analyze/measurement/stability.py:103"
   },
   {
     "declaration_id": "stability/stability.cmd/ap/--model",
@@ -4922,7 +4922,7 @@
         "literal": "the model/lane to measure (e.g. gpt-6-luna)"
       }
     },
-    "evidence": "src/spendguard/stability.py:104"
+    "evidence": "src/spendguard/analyze/measurement/stability.py:104"
   },
   {
     "declaration_id": "stability/stability.cmd/ap/--k",
@@ -4943,7 +4943,7 @@
         "expression": "f'replicates per prompt (default {DEFAULT_REPLICATES})'"
       }
     },
-    "evidence": "src/spendguard/stability.py:105"
+    "evidence": "src/spendguard/analyze/measurement/stability.py:105"
   },
   {
     "declaration_id": "stability/stability.cmd/ap/--sample",
@@ -4964,7 +4964,7 @@
         "literal": "how many recorded prompts to replay when sampling the intent (default 5)"
       }
     },
-    "evidence": "src/spendguard/stability.py:106"
+    "evidence": "src/spendguard/analyze/measurement/stability.py:106"
   },
   {
     "declaration_id": "stability/stability.cmd/ap/--prompts-file",
@@ -4979,7 +4979,7 @@
         "literal": "read prompts one-per-line from this file instead of sampling the intent"
       }
     },
-    "evidence": "src/spendguard/stability.py:107"
+    "evidence": "src/spendguard/analyze/measurement/stability.py:107"
   },
   {
     "declaration_id": "stability/stability.cmd/ap/--marker",
@@ -4991,10 +4991,10 @@
     ],
     "attributes": {
       "help": {
-        "literal": "parse each reply's OUTCOME as the text after this marker (e.g. 'DECISION:') \u2014 scores stability on the decision label, not incidental wording"
+        "literal": "parse each reply's OUTCOME as the text after this marker (e.g. 'DECISION:') — scores stability on the decision label, not incidental wording"
       }
     },
-    "evidence": "src/spendguard/stability.py:108"
+    "evidence": "src/spendguard/analyze/measurement/stability.py:108"
   },
   {
     "declaration_id": "stability/stability.cmd/ap/--system",
@@ -5009,7 +5009,7 @@
         "literal": "optional system prompt sent with every replicate"
       }
     },
-    "evidence": "src/spendguard/stability.py:110"
+    "evidence": "src/spendguard/analyze/measurement/stability.py:110"
   },
   {
     "declaration_id": "sync-capabilities/sync_capabilities.cmd/a/--dry-run",
@@ -5132,7 +5132,7 @@
         "literal": null
       },
       "help": {
-        "literal": "budget_usd \u2014 estimate-first cap; REQUIRED to --execute"
+        "literal": "budget_usd — estimate-first cap; REQUIRED to --execute"
       }
     },
     "evidence": "src/spendguard/whole_job.py:493"

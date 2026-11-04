@@ -14,11 +14,11 @@ otherwise, and the quality JUDGE is an LLM (never a keyword rule) — the same j
   bakeoff('code-review', candidates=[...], sample_n=5, run=True, budget_usd=0.50)                 # measure
 """
 
-from .capability_cli_parsing import add_registered_cli_argument
+from ...capability_cli_parsing import add_registered_cli_argument
 import json
 
-from . import calls, config, pricing, callio
-from .submit import _count_tokens
+from ... import calls, config, pricing, callio
+from ...submit import _count_tokens
 
 _BAKEOFF_OUT_EST = 500     # per-call OUTPUT tokens for the PRE-FLIGHT estimate only — a budget guard, not a cap;
 #                            the real call floors output at the model max and bills ACTUAL tokens. Named, not inline.
@@ -100,7 +100,7 @@ def _judge_one(prompt, output, judge_model, images=None):
     the image (images=…): a caption's faithfulness CANNOT be judged from text alone, so a judge that scored it
     without seeing the image would be measuring nothing. images is passed ONLY when present — a text task is
     byte-for-byte the prior call."""
-    from . import adapters, advisor, calls
+    from ... import adapters, advisor, calls
     # WHOLE evidence: the judge scores the candidate's FULL output — a [:4000] slice would rate only its head,
     # evidence-truncating the very thing being judged. no_substitution PINS the judge so every candidate is rated
     # by the SAME ruler, never a lane-swapped one (a judge that varies per candidate is not a comparable number).
@@ -134,7 +134,7 @@ def _plan(intent, candidates, prompts, judge_model, efforts, requirement_aware=F
     IMAGE input tokens — via adapters._image_input_tokens, the provider-aware corrected estimator, never a hardcoded
     per-image number — to EVERY call that sees the image: the candidate run, the screen/generic judge, and the
     adjudicator (extraction reads the prompt TEXT only). A text-only slate is priced exactly as before."""
-    from . import gate, adapters
+    from ... import gate, adapters
     _stop = gate.deliberate_stop_types()               # SpendGateRefused / DispatchTimeout must PROPAGATE — never be
     n_eff = max(1, len(efforts))                        # swallowed into a false-low estimate by the broad guards below
     tasks = [_task_parts(p) for p in prompts]           # (prompt_text, images_or_None) — a string yields (string, None)
@@ -239,7 +239,7 @@ def bakeoff(intent, candidates=None, prompts=None, sample_n=5, run=False, budget
                          "or shrink the slate/sample/efforts.")
 
     with config.scoped_intent_cap((intent, "spendguard:bakeoff-judge", "spendguard:requirement-extract", "spendguard:requirement-screen", "spendguard:requirement-adjudicate"), budget_usd):
-        from . import adapters
+        from ... import adapters
         results = {}
         req_seen = []                                                   # requirement-aware: the union of criteria the judge applied (for the receipt rubric)
         for c in candidates:
@@ -305,7 +305,7 @@ def bakeoff(intent, candidates=None, prompts=None, sample_n=5, run=False, budget
                             verdict = _judge_one(judge_task, r.get("text"), judge_model,
                                                  **({"images": imgs} if imgs else {}))  # generic LLM judge — the quality signal
                     except Exception as _je:
-                        from . import gate
+                        from ... import gate
                         if gate.is_deliberate_stop(_je):
                             raise
                         verdict = None                                  # UNLABELED, not a crash — the arm's output still counts as a run
@@ -341,7 +341,7 @@ def bakeoff(intent, candidates=None, prompts=None, sample_n=5, run=False, budget
             import sys as _sys
             _sys.stderr.write("[spendguard] bakeoff WARNING: %s\n" % _zero_label_warn)
 
-        from . import advise, measurement
+        from ... import advise, measurement
         import time as _time
         ranked = advise.ranked(intent=intent)                          # per-model re-rank (existing shape)
         frontier = advise.ranked(intent=intent, by_effort=True)        # the (model, effort) frontier advise/titration read
