@@ -10,7 +10,6 @@ Independent SQLite read leases need no subsystem lock; SQLite supplies their sna
 import atexit
 import contextvars
 import contextlib
-import functools
 import os
 import math
 import queue
@@ -23,6 +22,8 @@ import sqlite3
 from concurrent.futures import Future, TimeoutError as FutureTimeoutError
 
 from ... import config
+from . import ledger_write_decorators
+from .ledger_write_decorators import best_effort_ledger_function, serialize_ledger_function  # noqa: F401  (public re-export: callers importing the decorators from ledger_writer keep resolving after the move to the leaf)
 
 LEDGER_WRITER_QUEUE_CAPACITY = 256
 LEDGER_WRITER_IDLE_SECONDS = 60.0
@@ -484,41 +485,6 @@ def ledger_writer_bulk_transaction(path=None):
                     owner.connection = None
 
 
-def serialize_ledger_function(function):
-    """Route an existing mutation entry point without changing its public API."""
-    @functools.wraps(function)
-    def invoke_serialized_ledger_function(*args, **kwargs):
-        return run_ledger_write(lambda: function(*args, **kwargs))
-    return invoke_serialized_ledger_function
-
-
-def best_effort_ledger_function(function=None, *, failure_result=None):
-    """Keep optional writer startup and dispatch inside a never-raises boundary.
-
-    Required mutations must use serialize_ledger_function instead. The recorder
-    body retains its normal return and warning behavior.
-    """
-    if function is None:
-        return functools.partial(best_effort_ledger_function, failure_result=failure_result)
-
-    @functools.wraps(function)
-    def invoke_best_effort_ledger_function(*args, **kwargs):
-        try:
-            return run_ledger_write(lambda: function(*args, **kwargs))
-        except Exception as bookkeeping_error:
-            from ... import gate
-            if gate.is_deliberate_stop(bookkeeping_error):
-                raise
-            try:
-                config.warn_once(
-                    f"[spendguard] {function.__module__}.{function.__name__} write failed "
-                    f"({type(bookkeeping_error).__name__}) — optional bookkeeping was not recorded")
-            except Exception:
-                pass
-            return failure_result
-    return invoke_best_effort_ledger_function
-
-
 def close_ledger_writers():
     """Drain admitted writes and close owner handles (shutdown or fd recycling)."""
     with _ledger_writer_registry_lock:
@@ -542,3 +508,26 @@ def close_ledger_writers():
 
 
 atexit.register(close_ledger_writers)
+
+
+def _wire_run_ledger_write(write_thunk):
+    # Late-bound on purpose: resolve the module global run_ledger_write at CALL time, not at wire
+    # time, so a test (or any caller) that monkeypatches ledger_writer.run_ledger_write is honored
+    # by the decorators exactly as it was before the decorators moved to the neutral leaf.
+    return run_ledger_write(write_thunk)
+
+
+def _wire_decorator_warn_once(message):
+    config.warn_once(message)
+
+
+def _wire_decorator_is_deliberate_stop(error):
+    from ... import gate
+    return gate.is_deliberate_stop(error)
+
+
+ledger_write_decorators.set_run_ledger_write_provider(_wire_run_ledger_write)
+ledger_write_decorators.set_decorator_warn_once_provider(_wire_decorator_warn_once)
+ledger_write_decorators.set_decorator_is_deliberate_stop_provider(
+    _wire_decorator_is_deliberate_stop
+)

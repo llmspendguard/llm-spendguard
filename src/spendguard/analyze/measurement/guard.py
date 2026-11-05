@@ -14,7 +14,7 @@ from pathlib import Path
 from ... import budget, config
 from decimal import Decimal, localcontext
 import logging
-from ...ledger_writer import best_effort_ledger_function
+from spendguard.store.money_ledger.ledger_write_decorators import best_effort_ledger_function
 from ...money_scale import NANO_USD_PER_USD, real_usd_to_nano_usd, nano_usd_to_usd, assert_nano_total_matches
 
 SAVINGS_NANO_COLUMNS = {column: f"{column}_nano" for column in ("amount",)}

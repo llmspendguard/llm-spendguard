@@ -21,7 +21,7 @@ import datetime
 import random
 
 from ... import config
-from ...ledger_writer import best_effort_ledger_function
+from spendguard.store.money_ledger.ledger_write_decorators import best_effort_ledger_function
 
 _rng = random.Random()          # module-level so tests can seed it deterministically
 DECAY_DEFAULT = 0.95            # exponential forgetting per trial — recent results weigh more (relearn)

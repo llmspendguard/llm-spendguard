@@ -34,7 +34,7 @@ import json
 import statistics
 import threading
 from ... import config
-from ...ledger_writer import serialize_ledger_function
+from spendguard.store.money_ledger.ledger_write_decorators import serialize_ledger_function
 
 # The last-resort char→token ratio, used ONLY when tiktoken is entirely absent AND no measured ratio exists for
 # the provider. Documented, not silent: ~4 chars/token is the classic English-prose rule of thumb this replaces.

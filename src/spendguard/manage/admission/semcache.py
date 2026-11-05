@@ -17,7 +17,7 @@ from ...capability_cli_parsing import add_registered_cli_argument
 import sqlite3, struct, hashlib, threading, datetime
 from ... import config
 from ...ledger_fork_locks import new_fork_reset_ledger_state
-from ...ledger_writer import best_effort_ledger_function
+from spendguard.store.money_ledger.ledger_write_decorators import best_effort_ledger_function
 from ...schema_indexes import ensure_ordered_index_coverage, table_index_coverages
 
 _lock = new_fork_reset_ledger_state(globals(), "_lock", threading.RLock)

@@ -19,7 +19,7 @@ import logging
 import traceback
 from ... import config
 from ...ledger_fork_locks import new_fork_reset_ledger_state
-from ...ledger_writer import best_effort_ledger_function, serialize_ledger_function
+from spendguard.store.money_ledger.ledger_write_decorators import best_effort_ledger_function, serialize_ledger_function
 from .content_compression import compress_retained_text
 
 _lock = new_fork_reset_ledger_state(globals(), "_lock", threading.RLock)

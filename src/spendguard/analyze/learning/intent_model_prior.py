@@ -22,7 +22,7 @@ import hashlib
 import json
 
 from ... import config, gate, model_catalog, pricing
-from ...ledger_writer import best_effort_ledger_function
+from spendguard.store.money_ledger.ledger_write_decorators import best_effort_ledger_function
 
 _PRIOR_OUT = 800         # the whole top-k JSON ({task_type, top:[{id, why}]}) — sized for the FULL output, not a magic cut
 

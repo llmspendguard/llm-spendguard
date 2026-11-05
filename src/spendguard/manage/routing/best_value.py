@@ -30,7 +30,7 @@ import hashlib
 import json
 
 from ... import advisor, calls, config, gate, models
-from ...ledger_writer import best_effort_ledger_function
+from spendguard.store.money_ledger.ledger_write_decorators import best_effort_ledger_function
 
 _INFER_OUT = 80          # the intent classifier returns one tiny JSON label ({"intent": "<known-label>"|null}); a small,
 #                          named output cap (not a call-site magic number) — and adapters.call self-heals a truncation anyway

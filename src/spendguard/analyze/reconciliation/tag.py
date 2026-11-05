@@ -8,7 +8,7 @@
 """
 
 import sys
-from ...ledger_writer import serialize_ledger_function
+from spendguard.store.money_ledger.ledger_write_decorators import serialize_ledger_function
 
 
 _EMPTY_PROJECT = "(project_primary IS NULL OR project_primary='')"   # an untagged row, in spend_events terms

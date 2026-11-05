@@ -32,7 +32,7 @@ import sys
 from ... import adapters, advisor, bakeoff, budget, calls, config, gate, models, pricing
 from decimal import Decimal, localcontext
 import logging
-from ...ledger_writer import serialize_ledger_function
+from spendguard.store.money_ledger.ledger_write_decorators import serialize_ledger_function
 from ...money_scale import real_usd_to_nano_usd, nano_usd_to_usd, assert_nano_total_matches
 
 EFFORT_PROGRESS_NANO_COLUMNS = {column: f"{column}_nano" for column in ("cost",)}

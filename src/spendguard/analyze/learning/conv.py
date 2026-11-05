@@ -20,7 +20,7 @@ CLI: `spendguard mine-conv {index,synth} [--transcripts PATH] [--limit N] [--run
 from ...capability_cli_parsing import add_registered_cli_argument, registered_cli_option_token
 import os, re, json, glob, hashlib, functools, datetime
 from ... import config, calls, learn
-from ...ledger_writer import best_effort_ledger_function, serialize_ledger_function
+from spendguard.store.money_ledger.ledger_write_decorators import best_effort_ledger_function, serialize_ledger_function
 
 _DEFAULT_TDIR = os.path.expanduser("~/.claude/projects")
 _CACHE = os.path.join(str(config.HOME), "conv_index.json")

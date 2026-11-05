@@ -8,7 +8,7 @@ conversation/decision/script nodes + edges come in Layer 2 (mining).
 import datetime, threading, json
 from ... import config
 from ...ledger_fork_locks import new_fork_reset_ledger_state
-from ...ledger_writer import serialize_ledger_function
+from spendguard.store.money_ledger.ledger_write_decorators import serialize_ledger_function
 
 _lock = new_fork_reset_ledger_state(globals(), "_lock", threading.RLock)
 

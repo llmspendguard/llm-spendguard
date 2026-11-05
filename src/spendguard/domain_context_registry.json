@@ -160,6 +160,7 @@
       "backing_modules": [
         "store.money_ledger.ledger",
         "store.money_ledger.ledger_writer",
+        "store.money_ledger.ledger_write_decorators",
         "store.money_ledger.ledger_schema_migrations",
         "store.money_ledger.schema_indexes",
         "store.money_ledger.ledger_fork_locks",

@@ -12,7 +12,7 @@ an intent) which then surface in `profile()` and CLI. Per-model best-practices a
 """
 import json
 import re
-from ...ledger_writer import serialize_ledger_function
+from spendguard.store.money_ledger.ledger_write_decorators import serialize_ledger_function
 
 # ordered family rules — first match wins; later stored facts override fields
 _RULES = [

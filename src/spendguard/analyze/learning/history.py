@@ -19,7 +19,7 @@ is caged by caps.meta. CLI: `spendguard mine-history {intents,graph,git} [--repo
 from ...capability_cli_parsing import add_registered_cli_argument
 import os, re, json, glob, subprocess
 from ... import calls, learn
-from ...ledger_writer import serialize_ledger_function
+from spendguard.store.money_ledger.ledger_write_decorators import serialize_ledger_function
 
 
 # ─────────────────────────── intent reconstruction ───────────────────────────
