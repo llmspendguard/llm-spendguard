@@ -71,6 +71,7 @@ def _remove_codex_worker_home(worker_home):
 
 def _reap_orphaned_codex_worker_homes(worker_home_root, now=None):
     """Remove stale, marked worker homes only when their pid+create-time owner is provably dead."""
+    from ... import codex_exec
     from .warm_stdio_daemon import (
         WARM_OWNER_BOOT_ENV, WARM_OWNER_IDENTITY_DEAD, WARM_OWNER_PID_ENV, _warm_owner_identity_state,
     )
@@ -81,7 +82,7 @@ def _reap_orphaned_codex_worker_homes(worker_home_root, now=None):
     current_time = time.time() if now is None else now
     stale_age_s = config.codex_daemon_worker_home_stale_age_s()
     for worker_home in root.iterdir():
-        if not worker_home.is_dir() or not worker_home.name.startswith(config.CODEX_POOL_WORKER_PREFIX):
+        if not worker_home.is_dir() or not worker_home.name.startswith(codex_exec.CODEX_POOL_WORKER_PREFIX):
             continue
         marker_path = _codex_worker_home_marker_path(worker_home)
         if not marker_path.is_file():
@@ -466,8 +467,9 @@ class _CodexDaemonPool:
         self._pool_degraded = {}
 
     def _configure_pool_worker(self, index, worker, isolate_homes):
+        from ... import codex_exec
         worker._keep_warm = True
-        home = config.codex_daemon_worker_home(index) if isolate_homes else None
+        home = codex_exec.codex_daemon_worker_home(index) if isolate_homes else None
         if home is None:
             return
         _mark_codex_worker_home_owned(home)

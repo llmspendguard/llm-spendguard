@@ -24,7 +24,6 @@ install_domain_context_surface(globals(), {
     "class_cap": "spendguard.store.configuration.config:class_cap",
     "codex_daemon_admission_settings": "spendguard.store.configuration.config:codex_daemon_admission_settings",
     "codex_daemon_pool_settings": "spendguard.store.configuration.config:codex_daemon_pool_settings",
-    "codex_daemon_worker_home": "spendguard.store.configuration.config:codex_daemon_worker_home",
     "codex_daemon_worker_home_stale_age_s": "spendguard.store.configuration.config:codex_daemon_worker_home_stale_age_s",
     "codex_session_reap_settings": "spendguard.store.configuration.config:codex_session_reap_settings",
     "configured_agent_near_cap_threshold": "spendguard.store.configuration.config_schema:configured_agent_near_cap_threshold",

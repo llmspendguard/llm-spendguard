@@ -34,6 +34,7 @@ import time
 import logging
 import threading
 import contextlib
+from pathlib import Path
 from ...execution_journal import (
     _protect_durable_execution_io,
     capture_execution_codex_thread as capture_execution_codex_thread,
@@ -62,6 +63,14 @@ CODEX_DELEGATE_REQUIRED_MCP_READ_ONLY_TOOLS = {
     "spendguard": (),
 }
 CODEX_DELEGATE_REQUIRED_MCP_SERVERS = tuple(CODEX_DELEGATE_REQUIRED_MCP_READ_ONLY_TOOLS)
+CODEX_POOL_DIRECTORY = "codex-daemon-workers"
+CODEX_POOL_WORKER_PREFIX = "worker-"
+CODEX_POOL_AUTH_FILENAME = "auth.json"
+CODEX_POOL_CONFIG_FILENAME = "config.toml"
+CODEX_POOL_PRIVATE_FILE_MODE = 0o600
+CODEX_POOL_PRIVATE_DIRECTORY_MODE = 0o700
+CODEX_POOL_CREDENTIAL_STORE_KEY = "cli_auth_credentials_store"
+CODEX_POOL_CREDENTIAL_STORE_VALUE = "file"
 
 
 def _codex_stdio_reap_policy(env, cwd=None):
@@ -478,6 +487,66 @@ def _codex_home():
     """Codex's state dir: $CODEX_HOME, else the documented default ~/.codex. Not hardcoded to one path — an override
     or a relocated home still resolves (and _plugin_disable_flags already reads config.toml from the same home)."""
     return os.environ.get("CODEX_HOME") or os.path.expanduser("~/.codex")
+
+
+def _codex_pool_file_store_toml(source_text):
+    """Set the root credential-store assignment using TOML parsing, preserving all other config evidence."""
+    try:
+        import tomllib
+    except ImportError:
+        import tomli as tomllib
+    parsed = tomllib.loads(source_text)
+    assignment = (f"{CODEX_POOL_CREDENTIAL_STORE_KEY} = "
+                  f"{json.dumps(CODEX_POOL_CREDENTIAL_STORE_VALUE)}\n")
+    if CODEX_POOL_CREDENTIAL_STORE_KEY not in parsed:
+        return assignment + source_text
+    # A complete parsed prefix identifies the assignment's syntactic span, including multiline values;
+    # no keyword/regex approximation can silently rewrite an unrelated table or comment.
+    prefix = ""
+    previous_complete_end = 0
+    for source_line in source_text.splitlines(keepends=True):
+        prefix += source_line
+        try:
+            partial = tomllib.loads(prefix)
+        except tomllib.TOMLDecodeError:
+            continue
+        if CODEX_POOL_CREDENTIAL_STORE_KEY in partial:
+            result = source_text[:previous_complete_end] + assignment + source_text[len(prefix):]
+            assert tomllib.loads(result)[CODEX_POOL_CREDENTIAL_STORE_KEY] == CODEX_POOL_CREDENTIAL_STORE_VALUE
+            return result
+        previous_complete_end = len(prefix)
+    raise ValueError("could not locate parsed Codex credential-store assignment")
+
+
+def codex_daemon_worker_home(index):
+    """Prepare an isolated worker home only when requested; shared mode leaves the environment untouched."""
+    from ... import config
+    if not config.codex_daemon_pool_settings()["isolate_homes"]:
+        return None
+    configured_root = os.getenv("SPENDGUARD_CODEX_DAEMON_POOL_HOME_ROOT")
+    if configured_root is None:
+        configured_root = config._cfg_get("advisor", "codex_daemon_pool_home_root", None)
+    root = Path(configured_root).expanduser() if configured_root else config.HOME / CODEX_POOL_DIRECTORY
+    worker_home = (root / f"{CODEX_POOL_WORKER_PREFIX}{index}").resolve()
+    worker_home.mkdir(parents=True, exist_ok=True, mode=CODEX_POOL_PRIVATE_DIRECTORY_MODE)
+    worker_home.chmod(CODEX_POOL_PRIVATE_DIRECTORY_MODE)
+    source_home = Path(_codex_home()).expanduser().resolve()
+    payloads = {
+        CODEX_POOL_AUTH_FILENAME: (source_home / CODEX_POOL_AUTH_FILENAME).read_bytes(),
+        CODEX_POOL_CONFIG_FILENAME: _codex_pool_file_store_toml(
+            (source_home / CODEX_POOL_CONFIG_FILENAME).read_text()).encode(),
+    }
+    for filename, payload in payloads.items():
+        descriptor, temporary_name = tempfile.mkstemp(dir=worker_home, prefix=filename)
+        temporary_path = Path(temporary_name)
+        try:
+            with os.fdopen(descriptor, "wb") as output:
+                os.fchmod(output.fileno(), CODEX_POOL_PRIVATE_FILE_MODE)
+                output.write(payload)
+            os.replace(temporary_path, worker_home / filename)
+        finally:
+            temporary_path.unlink(missing_ok=True)
+    return worker_home
 
 
 def gc_shell_snapshots(max_age_days=7, apply=False):

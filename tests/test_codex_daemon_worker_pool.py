@@ -66,7 +66,7 @@ def test_pool_shutdown_removes_isolated_worker_home():
         created_homes = []
 
         def create_isolated_worker_home(index):
-            worker_home = pathlib.Path(temp_root) / f"{config.CODEX_POOL_WORKER_PREFIX}{index}"
+            worker_home = pathlib.Path(temp_root) / f"{codex_exec.CODEX_POOL_WORKER_PREFIX}{index}"
             worker_home.mkdir()
             created_homes.append(worker_home)
             return worker_home
@@ -75,7 +75,7 @@ def test_pool_shutdown_removes_isolated_worker_home():
             "size": 1, "isolate_homes": True, "health_interval_s": POOL_EVENT_TIMEOUT_S,
             "respawn_backoff_s": POOL_QUEUE_TIMEOUT_S,
         }
-        with patch.object(config, "codex_daemon_worker_home", side_effect=create_isolated_worker_home), \
+        with patch.object(codex_exec, "codex_daemon_worker_home", side_effect=create_isolated_worker_home), \
                 patch.object(config, "codex_daemon_pool_settings", return_value=settings):
             pool = codex_daemon._CodexDaemonPool(_pool_guard_fake_child)
             assert created_homes[0].is_dir()
@@ -86,8 +86,8 @@ def test_pool_shutdown_removes_isolated_worker_home():
 def test_worker_home_reaper_preserves_live_owner_and_removes_dead_owner():
     with tempfile.TemporaryDirectory(prefix=POOL_CHAOS_TEMP_PREFIX) as temp_root, patch.object(
             config, "codex_daemon_worker_home_stale_age_s", return_value=IMMEDIATE_STALE_AGE_S):
-        live_home = pathlib.Path(temp_root) / f"{config.CODEX_POOL_WORKER_PREFIX}live"
-        dead_home = pathlib.Path(temp_root) / f"{config.CODEX_POOL_WORKER_PREFIX}dead"
+        live_home = pathlib.Path(temp_root) / f"{codex_exec.CODEX_POOL_WORKER_PREFIX}live"
+        dead_home = pathlib.Path(temp_root) / f"{codex_exec.CODEX_POOL_WORKER_PREFIX}dead"
         live_home.mkdir()
         dead_home.mkdir()
         live_marker = {
@@ -232,8 +232,8 @@ def test_pool_shared_and_isolated_homes_preserve_environment_and_private_copies(
         fixture_root = pathlib.Path(temporary)
         source_home = fixture_root / "source"
         source_home.mkdir()
-        (source_home / config.CODEX_POOL_AUTH_FILENAME).write_bytes(POOL_AUTH_FIXTURE)
-        (source_home / config.CODEX_POOL_CONFIG_FILENAME).write_text(POOL_CONFIG_FIXTURE)
+        (source_home / codex_exec.CODEX_POOL_AUTH_FILENAME).write_bytes(POOL_AUTH_FIXTURE)
+        (source_home / codex_exec.CODEX_POOL_CONFIG_FILENAME).write_text(POOL_CONFIG_FIXTURE)
         common_environment = {
             "SPENDGUARD_CODEX_DAEMON_POOL_HOME_ROOT": str(fixture_root / "workers"),
             "SPENDGUARD_CODEX_DAEMON_POOL_SIZE": str(POOL_GUARD_SIZE),
@@ -272,16 +272,16 @@ def test_pool_shared_and_isolated_homes_preserve_environment_and_private_copies(
                             assert home.is_absolute()
                             worker_homes.add(home)
                             assert "HOME" not in overrides
-                            auth_path = home / config.CODEX_POOL_AUTH_FILENAME
-                            config_path = home / config.CODEX_POOL_CONFIG_FILENAME
+                            auth_path = home / codex_exec.CODEX_POOL_AUTH_FILENAME
+                            config_path = home / codex_exec.CODEX_POOL_CONFIG_FILENAME
                             assert auth_path.read_bytes() == POOL_AUTH_FIXTURE
-                            assert auth_path.stat().st_mode & 0o777 == config.CODEX_POOL_PRIVATE_FILE_MODE
-                            assert config_path.stat().st_mode & 0o777 == config.CODEX_POOL_PRIVATE_FILE_MODE
+                            assert auth_path.stat().st_mode & 0o777 == codex_exec.CODEX_POOL_PRIVATE_FILE_MODE
+                            assert config_path.stat().st_mode & 0o777 == codex_exec.CODEX_POOL_PRIVATE_FILE_MODE
                             import tomllib
                             copied_config = tomllib.loads(config_path.read_text())
                             source_config = tomllib.loads(POOL_CONFIG_FIXTURE)
-                            assert copied_config.pop(config.CODEX_POOL_CREDENTIAL_STORE_KEY) == (
-                                config.CODEX_POOL_CREDENTIAL_STORE_VALUE)
+                            assert copied_config.pop(codex_exec.CODEX_POOL_CREDENTIAL_STORE_KEY) == (
+                                codex_exec.CODEX_POOL_CREDENTIAL_STORE_VALUE)
                             assert copied_config == source_config
                         assert len(worker_homes) == (POOL_GUARD_SIZE if isolated else 0)
                     finally:

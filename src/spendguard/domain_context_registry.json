@@ -64,7 +64,6 @@
         "class_cap",
         "codex_daemon_admission_settings",
         "codex_daemon_pool_settings",
-        "codex_daemon_worker_home",
         "codex_daemon_worker_home_stale_age_s",
         "codex_session_reap_settings",
         "configured_agent_near_cap_threshold",
