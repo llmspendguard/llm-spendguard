@@ -18,7 +18,8 @@ are never slowed. Callbacks run inline — keep them fast.
 """
 import json, os, threading, queue, datetime, urllib.request
 from typing import Any, Callable
-from .. import config
+from ..store.configuration.config_accessors import home_dir, open_ssl_context
+from ..manage.admission.budget_accessors import conv_id, project_tag
 
 _callbacks = []
 _q = None
@@ -36,7 +37,7 @@ def on_event(fn: "Callable[[dict], Any]") -> "Callable[[dict], Any]":
 
 def _emit_config():
     global _cfg_cache, _cfg_mtime
-    p = config.HOME / "config.json"
+    p = home_dir() / "config.json"
     try:
         mtime = p.stat().st_mtime if p.exists() else 0.0
     except OSError:
@@ -89,7 +90,7 @@ def _drain():
                 # `with` — the response socket was left to the GC. This runs on a long-lived background
                 # thread draining a queue, so the leak accumulates for the life of the process rather
                 # than being cleaned up at the end of a short call.
-                with urllib.request.urlopen(req, context=config.ssl_context(), timeout=5) as resp:
+                with urllib.request.urlopen(req, context=open_ssl_context(), timeout=5) as resp:
                     resp.read()
             except Exception:
                 pass
@@ -153,7 +154,8 @@ def envelope(event):
     """Normalize an event into the standard message envelope: { v, type, id, ts, conv_id, project, ...payload }.
     Tolerant — fills any missing envelope field, preserves everything else, never raises. `type` defaults from the
     event's `kind` (batch|realtime|…) so existing emitters need no change; `id` is a unique event id; `ts` is UTC
-    ISO. `conv_id`/`project` are the SAME attribution the ledger records (budget._conv/_project) so a consumer
+    ISO. `conv_id`/`project` are the SAME attribution the ledger records
+    (budget_accessors.conv_id/project_tag) so a consumer
     (e.g. a live dashboard) can attach the event to the exact conversation/repo that spent the money."""
     import uuid
     e = dict(event or {})
@@ -162,9 +164,8 @@ def envelope(event):
     e.setdefault("id", uuid.uuid4().hex)
     e.setdefault("ts", datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"))
     try:
-        from .. import budget as _budget
-        e.setdefault("conv_id", _budget._conv())
-        e.setdefault("project", _budget._project())
+        e.setdefault("conv_id", conv_id())
+        e.setdefault("project", project_tag())
     except Exception:
         pass
     return e

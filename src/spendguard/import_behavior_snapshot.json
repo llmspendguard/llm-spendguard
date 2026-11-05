@@ -943,6 +943,7 @@
     "spendguard.manage.admission",
     "spendguard.manage.admission.agent_spawn_gate",
     "spendguard.manage.admission.budget",
+    "spendguard.manage.admission.budget_accessors",
     "spendguard.manage.admission.bulkgate",
     "spendguard.manage.admission.disk_guard",
     "spendguard.manage.admission.escalation_ladder",

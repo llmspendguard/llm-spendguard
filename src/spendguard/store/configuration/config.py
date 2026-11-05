@@ -2395,7 +2395,8 @@ def disk_guard_floor_bytes():
 
 # Expose config's state/value accessors to modules that must not import config — breaks the
 # resource_state/route_realized/disk_guard→config cycles (all read via the config_accessors leaf).
-set_config_accessors(load_state, save_state, _cfg_get, db_path, disk_guard_floor_bytes, ledger_op, pooled_ledger_conn, uid)
+set_config_accessors(load_state, save_state, _cfg_get, db_path, disk_guard_floor_bytes, ledger_op, pooled_ledger_conn, uid,
+                     lambda: HOME, ssl_context)
 
 
 # Cache publication never waits behind a spend writer; the authoritative heap is available.

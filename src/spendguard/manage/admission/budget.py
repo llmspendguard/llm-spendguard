@@ -1627,3 +1627,7 @@ def exceeded(pending=0.0, kind="llm", *, deadline_s=config.LEDGER_QUERY_DEADLINE
         if capv is not None and sp + pending > capv:
             return (scope, capv, sp + pending)
     return None
+
+
+from spendguard.manage.admission import budget_accessors
+budget_accessors.set_budget_accessors(lambda: _conv(), lambda: _project())

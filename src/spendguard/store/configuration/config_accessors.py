@@ -13,14 +13,17 @@ _disk_guard_floor_bytes = None
 _ledger_op = None
 _pooled_ledger_conn = None
 _uid = None
+_home_getter = None
+_ssl_context = None
 
 
 def set_config_accessors(load_state, save_state, cfg_get, db_path, disk_guard_floor_bytes,
-                         ledger_op, pooled_ledger_conn, uid):
+                         ledger_op, pooled_ledger_conn, uid, home_getter, ssl_context):
     """Injected by config with the existing five functions plus config.ledger_op,
-    config.pooled_ledger_conn, and config.uid."""
+    config.pooled_ledger_conn, config.uid, config.HOME via a live getter, and
+    config.ssl_context."""
     global _load_persisted_state, _save_persisted_state, _get_config_value, _db_path, _disk_guard_floor_bytes
-    global _ledger_op, _pooled_ledger_conn, _uid
+    global _ledger_op, _pooled_ledger_conn, _uid, _home_getter, _ssl_context
     _load_persisted_state = load_state
     _save_persisted_state = save_state
     _get_config_value = cfg_get
@@ -29,6 +32,8 @@ def set_config_accessors(load_state, save_state, cfg_get, db_path, disk_guard_fl
     _ledger_op = ledger_op
     _pooled_ledger_conn = pooled_ledger_conn
     _uid = uid
+    _home_getter = home_getter
+    _ssl_context = ssl_context
 
 
 def load_persisted_state(name, default=None):
@@ -77,3 +82,15 @@ def new_uid(n=16):
     if _uid is None:
         raise RuntimeError("import spendguard before creating a uid so config can wire its accessors")
     return _uid(n)
+
+
+def home_dir():
+    if _home_getter is None:
+        raise RuntimeError("import spendguard before reading the home directory so config can wire its accessors")
+    return _home_getter()
+
+
+def open_ssl_context():
+    if _ssl_context is None:
+        raise RuntimeError("import spendguard before opening an SSL context so config can wire its accessors")
+    return _ssl_context()

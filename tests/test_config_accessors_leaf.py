@@ -1,7 +1,9 @@
 """Verify the dependency-free config accessor bridge preserves config-backed resource state."""
 import ast
 import os
+from pathlib import Path
 import sys
+from unittest.mock import patch
 
 os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
@@ -46,6 +48,8 @@ def main():
     assert config_accessors._ledger_op is config.ledger_op
     assert config_accessors._pooled_ledger_conn is config.pooled_ledger_conn
     assert config_accessors._uid is config.uid
+    assert config_accessors._ssl_context is config.ssl_context
+    assert config_accessors.home_dir() == config.HOME
     original_accessors = (
         config_accessors._load_persisted_state,
         config_accessors._save_persisted_state,
@@ -55,6 +59,8 @@ def main():
         config_accessors._ledger_op,
         config_accessors._pooled_ledger_conn,
         config_accessors._uid,
+        config_accessors._home_getter,
+        config_accessors._ssl_context,
     )
 
     recorded_calls = []
@@ -91,6 +97,14 @@ def main():
         recorded_calls.append(("uid", n))
         return "stub-uid"
 
+    def record_home_getter():
+        recorded_calls.append(("home",))
+        return "sentinel-home"
+
+    def record_ssl_context():
+        recorded_calls.append(("ssl",))
+        return "sentinel-ssl"
+
     try:
         config_accessors.set_config_accessors(
             record_load_persisted_state,
@@ -101,6 +115,8 @@ def main():
             record_ledger_op,
             record_pooled_ledger_conn,
             record_uid,
+            record_home_getter,
+            record_ssl_context,
         )
         assert config_accessors.load_persisted_state("x", {}) == {}
         assert config_accessors.save_persisted_state("x", {}, loud=False) is True
@@ -110,6 +126,8 @@ def main():
         assert config_accessors.open_ledger_op("learn", lambda c: None) == "stub-cm"
         assert config_accessors.open_pooled_ledger_conn("learn", lambda c: None) == "stub-conn"
         assert config_accessors.new_uid() == "stub-uid"
+        assert config_accessors.home_dir() == "sentinel-home"
+        assert config_accessors.open_ssl_context() == "sentinel-ssl"
         assert recorded_calls == [
             ("load", "x", {}),
             ("save", "x", {}, False),
@@ -119,6 +137,8 @@ def main():
             ("ledger_op", "learn"),
             ("pooled", "learn"),
             ("uid", 16),
+            ("home",),
+            ("ssl",),
         ]
 
         config_accessors._load_persisted_state = None
@@ -168,8 +188,30 @@ def main():
             pass
         else:
             raise AssertionError("new_uid must fail loudly when its accessor is unset")
+
+        config_accessors._home_getter = None
+        try:
+            config_accessors.home_dir()
+        except RuntimeError:
+            pass
+        else:
+            raise AssertionError("home_dir must fail loudly when its accessor is unset")
+
+        config_accessors._ssl_context = None
+        try:
+            config_accessors.open_ssl_context()
+        except RuntimeError:
+            pass
+        else:
+            raise AssertionError("open_ssl_context must fail loudly when its accessor is unset")
     finally:
         config_accessors.set_config_accessors(*original_accessors)
+
+    sentinel_home = Path("/tmp/_ctx17_home_probe")
+    with patch.object(config, "HOME", sentinel_home):
+        assert config_accessors.home_dir() == sentinel_home, "home_dir must honor patch.object(config,'HOME',...) live"
+    import ssl as _ssl
+    assert isinstance(config_accessors.open_ssl_context(), _ssl.SSLContext)
 
     from spendguard.manage.token_operations import resource_state
     from spendguard.manage.admission import disk_guard

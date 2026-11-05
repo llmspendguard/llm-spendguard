@@ -2153,7 +2153,6 @@
       "spendguard.analyze.treasury.lane_quota_cost",
       "spendguard.analyze.treasury.lane_value",
       "spendguard.analyze.treasury.overage",
-      "spendguard.egress.emit",
       "spendguard.egress.saas",
       "spendguard.egress.share",
       "spendguard.egress.signal",
@@ -2234,10 +2233,6 @@
     ]
   ],
   "recorded_cyclic_edges": [
-    [
-      "spendguard",
-      "spendguard.egress.emit"
-    ],
     [
       "spendguard",
       "spendguard.generate.spend_capture.bedrock_adapter"
@@ -3375,14 +3370,6 @@
       "spendguard.store.spend_search.ledger_read"
     ],
     [
-      "spendguard.egress.emit",
-      "spendguard.manage.admission.budget"
-    ],
-    [
-      "spendguard.egress.emit",
-      "spendguard.store.configuration.config"
-    ],
-    [
       "spendguard.egress.saas",
       "spendguard"
     ],
@@ -4321,10 +4308,6 @@
     [
       "spendguard.manage.admission.gate",
       "spendguard.analyze.spend_reporting.receipt"
-    ],
-    [
-      "spendguard.manage.admission.gate",
-      "spendguard.egress.emit"
     ],
     [
       "spendguard.manage.admission.gate",
@@ -5689,8 +5672,8 @@
     "src/spendguard/manage/token_operations/delegate_router.py:481",
     "src/spendguard/platform/lanes.py:64"
   ],
-  "max_largest_scc_size": 126,
-  "max_cyclic_edge_count": 860,
+  "max_largest_scc_size": 125,
+  "max_cyclic_edge_count": 856,
   "max_legacy_shim_count": 219,
   "recorded_cross_context_nonsurface_imports": [
     [
@@ -7379,11 +7362,11 @@
     ],
     [
       "spendguard.egress.emit",
-      "spendguard.manage.admission.budget"
+      "spendguard.manage.admission.budget_accessors"
     ],
     [
       "spendguard.egress.emit",
-      "spendguard.store.configuration.config"
+      "spendguard.store.configuration.config_accessors"
     ],
     [
       "spendguard.egress.focus_export",

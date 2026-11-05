@@ -410,6 +410,7 @@
         "manage.admission.semcache",
         "manage.admission.gate",
         "manage.admission.budget",
+        "manage.admission.budget_accessors",
         "manage.admission.spend_refusal_error",
         "manage.admission.gate_event_sink"
       ],
