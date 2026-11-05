@@ -1,13 +1,28 @@
 """Git-backed edit isolation for every governed agentic provider."""
 import json
 import os
+import datetime
 from pathlib import Path
 import shutil
 import subprocess
 import tempfile
 
+from . import config
+
 DELEGATE_WORKTREE_DIRECTORY = "delegate-worktrees"
 DELEGATE_WORKTREE_METADATA_FILENAME = "worktree.json"
+DELEGATE_WORKTREE_DEFAULT_RETENTION_S = 1500
+# Orphans have no authoritative deadline, so grant twice the normal inspection
+# floor before reclaiming them to avoid shortening retention after journal loss.
+DELEGATE_WORKTREE_DEFAULT_ORPHAN_GRACE_S = DELEGATE_WORKTREE_DEFAULT_RETENTION_S * 2
+DELEGATE_WORKTREE_RETENTION_S = float(config._cfg_get(
+    "delegate", "worktree_retention_s", DELEGATE_WORKTREE_DEFAULT_RETENTION_S)
+    or DELEGATE_WORKTREE_DEFAULT_RETENTION_S)
+DELEGATE_WORKTREE_ORPHAN_GRACE_S = float(config._cfg_get(
+    "delegate", "worktree_orphan_grace_s", DELEGATE_WORKTREE_DEFAULT_ORPHAN_GRACE_S)
+    or DELEGATE_WORKTREE_DEFAULT_ORPHAN_GRACE_S)
+DELEGATE_WORKTREE_GITDIR_PREFIX = "gitdir: "
+DELEGATE_WORKTREE_GITDIR_MARKER = "/.git/worktrees/"
 
 
 def _delegate_worktree_git(cwd, *arguments, input_bytes=None):
@@ -28,12 +43,19 @@ def read_delegate_worktree_details(envelope_path):
     return {"worktree": json.loads(workspace_metadata.read_text(encoding="utf-8"))} if workspace_metadata.exists() else {}
 
 
-def run_isolated_delegate(executor, cwd, *, worktree_root, metadata_writer=None):
+def _delegate_worktree_reclaim_timestamp(now, retention_s):
+    current = now or datetime.datetime.now(datetime.timezone.utc)
+    return (current + datetime.timedelta(seconds=float(retention_s))).isoformat(timespec="seconds")
+
+
+def run_isolated_delegate(executor, cwd, *, worktree_root, metadata_writer=None, now=None,
+                          retention_s=DELEGATE_WORKTREE_RETENTION_S):
     """Snapshot dirty inputs into a git worktree and collect a complete patch.
 
     The primary index and working directory are never modified. Ignored inputs stay
     excluded according to git's own policy. Validation later removes accepted
-    trees via ``finalize_delegate_worktree``; every failure retains its tree.
+    trees only after the configured retention floor; every failure receives the
+    same inspectable retention window.
     """
     primary = Path(cwd).expanduser().resolve()
     root = Path(_delegate_worktree_git(primary, "rev-parse", "--show-toplevel").decode().strip())
@@ -76,18 +98,92 @@ def run_isolated_delegate(executor, cwd, *, worktree_root, metadata_writer=None)
         return {**execution, "worktree": metadata} if isinstance(execution, dict) else execution
     except BaseException:
         if workspace.is_dir():
+            metadata["reclaim_not_before"] = _delegate_worktree_reclaim_timestamp(now, retention_s)
             persist_delegate_worktree_metadata()
         raise
 
 
-def finalize_delegate_worktree(execution, *, metadata_writer=None, envelope_writer=None):
-    """Remove an accepted result's tree only after full result validation."""
+def schedule_delegate_worktree_reclaim(execution, *, metadata_writer=None, envelope_writer=None,
+                                       now=None, retention_s=DELEGATE_WORKTREE_RETENTION_S):
+    """Stamp the retention floor; periodic reap cadence determines the ceiling."""
     metadata = execution.get("worktree")
     if not metadata or not metadata.get("retained"):
         return
-    _delegate_worktree_git(metadata["primary_cwd"], "worktree", "remove", "--force", metadata["path"])
-    metadata["retained"] = False
+    metadata["reclaim_not_before"] = _delegate_worktree_reclaim_timestamp(now, retention_s)
     if metadata_writer:
         metadata_writer(metadata)
     if envelope_writer:
         envelope_writer(execution)
+
+
+def _delegate_worktree_primary_cwd_from_gitfile(worktree_path):
+    gitfile = Path(worktree_path) / ".git"
+    content = gitfile.read_text(encoding="utf-8").strip()
+    if not content.startswith(DELEGATE_WORKTREE_GITDIR_PREFIX):
+        raise ValueError("worktree .git file has no gitdir prefix")
+    gitdir = content[len(DELEGATE_WORKTREE_GITDIR_PREFIX):]
+    marker_index = gitdir.rfind(DELEGATE_WORKTREE_GITDIR_MARKER)
+    if marker_index < 0:
+        raise ValueError("worktree gitdir has no registered-worktree marker")
+    return Path(gitdir[:marker_index])
+
+
+def reclaim_expired_delegate_worktrees(now=None, *, worktree_root=None,
+                                       orphan_grace_s=DELEGATE_WORKTREE_ORPHAN_GRACE_S):
+    """Reclaim after the TTL floor; scheduled invocation frequency sets the ceiling.
+
+    Sidecar deadlines are authoritative. Journal-less directories receive the
+    longer orphan grace because no authoritative deadline survived.
+    """
+    report = {"reclaimed": 0, "retained": 0, "gaps": []}
+    root = Path(worktree_root or config._cfg_get("delegate", "worktree_root", None)
+                or config.HOME / DELEGATE_WORKTREE_DIRECTORY).expanduser()
+    if not root.is_dir():
+        return report
+    current = now or datetime.datetime.now(datetime.timezone.utc)
+    from .execution_journal import durable_execution_store_root
+    journal_root = durable_execution_store_root()
+    governed_paths = set()
+    # Warm executions may use an alternate journal root; their sidecars are intentionally absent here,
+    # so their worktrees fall through to the longer orphan-grace path rather than becoming unreclaimable.
+    sidecars = journal_root.glob(f"*/{DELEGATE_WORKTREE_METADATA_FILENAME}") if journal_root.is_dir() else ()
+    for sidecar in sidecars:
+        try:
+            metadata = json.loads(sidecar.read_text(encoding="utf-8"))
+            worktree_path = Path(metadata["path"]).expanduser()
+            governed_paths.add(worktree_path.resolve())
+            if not metadata.get("retained"):
+                continue
+            deadline_text = metadata.get("reclaim_not_before")
+            if not deadline_text:
+                report["gaps"].append({"path": os.fspath(worktree_path),
+                                       "reason": "retained sidecar has no reclaim deadline"})
+                continue
+            deadline = datetime.datetime.fromisoformat(deadline_text)
+            if deadline.tzinfo is None:
+                deadline = deadline.replace(tzinfo=datetime.timezone.utc)
+            if current < deadline:
+                report["retained"] += 1
+                continue
+            _delegate_worktree_git(metadata["primary_cwd"], "worktree", "remove", "--force",
+                                   os.fspath(worktree_path))
+            metadata["retained"] = False
+            config.update_json(sidecar, lambda previous, updated=metadata: updated,
+                               reason="persist reclaimed delegate workspace", required=True)
+            report["reclaimed"] += 1
+        except Exception as error:
+            report["gaps"].append({"path": os.fspath(sidecar), "reason": str(error)})
+    orphan_cutoff = current.timestamp() - float(orphan_grace_s)
+    for worktree_path in root.iterdir():
+        try:
+            if not worktree_path.is_dir() or worktree_path.resolve() in governed_paths:
+                continue
+            if worktree_path.stat().st_mtime > orphan_cutoff:
+                report["retained"] += 1
+                continue
+            primary_cwd = _delegate_worktree_primary_cwd_from_gitfile(worktree_path)
+            _delegate_worktree_git(primary_cwd, "worktree", "remove", "--force", os.fspath(worktree_path))
+            report["reclaimed"] += 1
+        except Exception as error:
+            report["gaps"].append({"path": os.fspath(worktree_path), "reason": str(error)})
+    return report

@@ -37,8 +37,17 @@ def settle_execution_codex_session(thread_id, worker_pid, *, release=False):
 
 
 def reap_execution_codex_sessions(**dependencies):
-    """Run journal reclamation using transport-owned process dependencies."""
+    """Run scheduled session and worktree reclamation.
+
+    Worktree TTL is a floor; this reap path's cadence determines its ceiling.
+    """
     from .delegate_jobs import reap_terminal_codex_sessions
+    from .delegate_worktrees import reclaim_expired_delegate_worktrees
+    try:
+        reclaim_expired_delegate_worktrees()
+    except Exception as error:
+        from . import config
+        config.warn_once(f"[spendguard] delegate worktree sweep failed: {error}")
     return reap_terminal_codex_sessions(**dependencies)
 
 

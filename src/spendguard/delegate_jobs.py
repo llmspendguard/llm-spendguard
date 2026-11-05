@@ -124,6 +124,11 @@ def create_delegate_job(*, kind, task_fingerprint, cwd, provider, intent, dirty_
                         model=None):
     """Insert one running delegate job and immediately return its UUID4 hex id."""
     prune_delegate_jobs()
+    try:
+        from .delegate_worktrees import reclaim_expired_delegate_worktrees
+        reclaim_expired_delegate_worktrees()
+    except Exception as error:
+        config.warn_once(f"[spendguard] delegate worktree sweep failed: {error}")
     job_id = uuid.uuid4().hex
     from .execution_journal import begin_durable_execution
     from .delegate_router import codex_agentic_events_path, CODEX_AGENTIC_EVENTS_SCHEMA_VERSION
