@@ -116,11 +116,13 @@ def exercise_delegate_worktree_contract(*, fail_worker=False, missing_peer=False
         assert paths[0] != paths[1]
         for item in results:
             assert execution_journal.current_durable_execution_id() is None
-            delegate_router._finalize_accepted_delegate_workspace(item)
+            delegate_router._schedule_terminal_delegate_workspace_reclaim(item)
             metadata_path = delegate_worktrees.delegate_worktree_metadata_path(
                 execution_journal.durable_execution_payload_paths(item["execution_id"])["envelope"])
-            assert json.loads(metadata_path.read_text())["retained"] is False
-        assert all(not Path(path).exists() for path in paths)
+            persisted_metadata = json.loads(metadata_path.read_text())
+            assert persisted_metadata["retained"] is True
+            assert persisted_metadata["reclaim_not_before"]
+        assert all(Path(path).exists() for path in paths)
         assert all(WORKTREE_FIXTURE_BINARY_NAME in item["worktree"]["changed_files"] for item in results)
         assert all("GIT binary patch" in item["worktree"]["patch"] for item in results)
         assert source.read_text() == WORKTREE_FIXTURE_DIRTY_TEXT
@@ -129,7 +131,7 @@ def exercise_delegate_worktree_contract(*, fail_worker=False, missing_peer=False
             cwd=repo, provider=WORKTREE_FIXTURE_PROVIDER, intent=WORKTREE_FIXTURE_INTENT, dirty_before=set())
         execution_id = delegate_jobs.read_delegate_job(job_id)["execution_id"]
         def assemble_isolated_fixture(execution, **kwargs):
-            delegate_router._finalize_accepted_delegate_workspace(execution)
+            delegate_router._schedule_terminal_delegate_workspace_reclaim(execution)
             return {"status": "executed", "execution": execution,
                     "changed_files": kwargs["changed_files"]}
         with patch.object(codex_exec, "run_prompt", provider_edits_isolated_fixture), patch.object(
@@ -139,15 +141,18 @@ def exercise_delegate_worktree_contract(*, fail_worker=False, missing_peer=False
                 intent=WORKTREE_FIXTURE_INTENT)
         collected = delegate_jobs.read_delegate_job_result(job_id)
         assert collected["state"] == "done" and WORKTREE_FIXTURE_BINARY_NAME in collected["changed_files"]
-        assert delegate_jobs.read_delegate_job(job_id)["worktree"]["retained"] is False
+        job_worktree = delegate_jobs.read_delegate_job(job_id)["worktree"]
+        assert job_worktree["retained"] is True and job_worktree["reclaim_not_before"]
         recovered = execution_journal.recover_durable_execution(execution_id)
         assert recovered["state"] == "success"
         assert WORKTREE_FIXTURE_BINARY_NAME in json.loads(execution_journal.durable_execution_payload_paths(
             execution_id)["envelope"].read_text())["worktree"]["changed_files"]
         failed = delegate_router._run_isolated_agentic_provider(lambda path: {"error": WORKTREE_FIXTURE_FAILURE}, repo)
         assert failed["worktree"]["retained"] and Path(failed["worktree"]["path"]).exists()
-        subprocess.check_call(["git", "-C", str(repo), "worktree", "remove", "--force", failed["worktree"]["path"]],
-                              timeout=WORKTREE_FIXTURE_OPERATION_BUDGET_S)
+        for retained_path in [*paths, job_worktree["path"], failed["worktree"]["path"]]:
+            if Path(retained_path).exists():
+                subprocess.check_call(["git", "-C", str(repo), "worktree", "remove", "--force", retained_path],
+                                      timeout=WORKTREE_FIXTURE_OPERATION_BUDGET_S)
         try:
             delegate_router._run_isolated_agentic_provider(edit_isolated_fixture, Path(temporary))
         except RuntimeError:

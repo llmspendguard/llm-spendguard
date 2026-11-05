@@ -21,6 +21,11 @@ DETACHED_TEST_GUARD_PREFIX = "sg-detached-join-guard-"
 DETACHED_TEST_GUARD_EXECUTION_ID = "offline-guard-execution"
 
 
+def remove_detached_test_worktree(repository, worktree):
+    subprocess.run(["git", "-C", str(repository), "worktree", "remove", "--force", worktree["path"]],
+                   capture_output=True, check=True)
+
+
 def wait_for_detached_test_state_processes(directory):
     """Wait until persisted detached workers and children can no longer touch the test root."""
     state_paths = list(directory.glob("delegate-executions/*/state.json"))
@@ -88,7 +93,7 @@ def install_detached_lifetime_fixture():
             lambda: delegate_router._run_isolated_agentic_provider(execute_detached_lifetime_fixture, cwd),
             plan=plan, model=model, cwd=cwd))
     def assemble_detached_lifetime_result(execution, **kwargs):
-        delegate_router._finalize_accepted_delegate_workspace(execution)
+        delegate_router._schedule_terminal_delegate_workspace_reclaim(execution)
         return {"status": "executed", "execution": execution}
     delegate_router._assemble_delegate_execution_result = assemble_detached_lifetime_result
 
@@ -152,6 +157,7 @@ def check_detached_lifetime_boundary(cancel_isolated_job=False):
             assert not (repository / DETACHED_TEST_EDIT_FILENAME).exists()
             assert Path(retained["path"]) != repository
             wait_for_detached_test_state_processes(directory)
+            remove_detached_test_worktree(repository, retained)
             print("4 passed: detached isolated cancel, retained collect metadata, primary unchanged, separate workspace")
             return
         assert isinstance(result, dict) and result.get("execution", {}).get("text") == "offline detached result", result
@@ -162,14 +168,16 @@ def check_detached_lifetime_boundary(cancel_isolated_job=False):
         assert state["worker_pid"] and state["worker_birth"], state
         assert state["state"] == "success", state
         worktree = result["execution"]["worktree"]
-        assert Path(worktree["path"]) != repository and not Path(worktree["path"]).exists(), worktree
-        assert worktree["retained"] is False and DETACHED_TEST_EDIT_FILENAME in worktree["changed_files"], worktree
+        assert Path(worktree["path"]) != repository and Path(worktree["path"]).exists(), worktree
+        assert worktree["retained"] is True and worktree["reclaim_not_before"], worktree
+        assert DETACHED_TEST_EDIT_FILENAME in worktree["changed_files"], worktree
         assert DETACHED_TEST_EDIT_CONTENT.strip() in worktree["patch"], worktree
         assert not (repository / DETACHED_TEST_EDIT_FILENAME).exists()
         persisted = json.loads((states[0].parent / "worktree.json").read_text())
         assert persisted == worktree, persisted
         wait_for_detached_test_state_processes(directory)
-        print("9 passed: detached completion/collection, PID identity, terminal signal, isolated patch/cleanup")
+        remove_detached_test_worktree(repository, worktree)
+        print("9 passed: detached completion/collection, PID identity, terminal signal, retained isolated patch")
 
 
 def check_explicit_warm_delegate_transport():
