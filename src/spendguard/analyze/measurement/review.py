@@ -46,7 +46,7 @@ def _conversation_for(intent):
     """conversation_event labels linked (comments_on) to this intent's runs — the before/after frame."""
     if not intent:
         return []
-    with learn.config.ledger_op('learn', learn._ensure_insights_schema) as ledger_read_handle:
+    with learn.insights_ledger_op() as ledger_read_handle:
         rows = ledger_read_handle.execute(
             "SELECT DISTINCT n.label FROM graph_nodes n JOIN graph_edges e ON n.id=e.src "
             "JOIN graph_nodes r ON e.dst=r.id WHERE e.rel='comments_on' AND r.type='run' "

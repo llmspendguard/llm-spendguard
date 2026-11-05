@@ -19,6 +19,7 @@ LOCK_ORDER_SECOND_LEASE = 2
 def exercise_writer_subsystem_interleaving(probe_case):
     from spendguard import backfill, brief, cacheaudit, cachetest, callio, calls, config, experiment, learn, review
     from spendguard.ledger_writer import current_ledger_writer_connection
+    from spendguard.store.configuration import config_accessors
 
     reader_at_schema = threading.Event()
     writer_at_lock = threading.Event()
@@ -66,6 +67,7 @@ def exercise_writer_subsystem_interleaving(probe_case):
 
     with patch.object(subsystem, "_lock", ObservedWriterSubsystemLock()), \
             patch.object(config, "ledger_op", synchronized_reader_schema), \
+            patch.object(config_accessors, "_ledger_op", synchronized_reader_schema), \
             patch.object(calls, "cost_summary", return_value=[]), \
             patch.object(callio, "good_rates", return_value={}), \
             patch.object(learn, "insights", return_value=[]), \

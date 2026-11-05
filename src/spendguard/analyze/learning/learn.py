@@ -6,7 +6,7 @@ script_version/insight/outcome) + timestamped causal edges. Layer 1 seeds `run` 
 conversation/decision/script nodes + edges come in Layer 2 (mining).
 """
 import datetime, threading, json
-from ... import config
+from ...store.configuration.config_accessors import open_ledger_op, open_pooled_ledger_conn, new_uid
 from ...ledger_fork_locks import new_fork_reset_ledger_state
 from spendguard.store.money_ledger.ledger_write_decorators import serialize_ledger_function
 
@@ -72,14 +72,20 @@ def _ensure_insights_schema(c):
     c.commit()
 
 
+def insights_ledger_op():
+    """Own one insights/graph operation on learn's pooled ledger (keyed 'learn', schema ensured). The single entry
+    point other modules use instead of reaching through learn's config import."""
+    return open_ledger_op('learn', _ensure_insights_schema)
+
+
 def _insights_db():
     """The insights / graph / seg_attribution tables, on the shared pooled ledger connection (config.pooled_ledger_conn,
     keyed 'learn') — reused, tuned, fork-safe. `_lock` still serializes the module's read-modify-write sites."""
-    return config.pooled_ledger_conn("learn", _ensure_insights_schema)
+    return open_pooled_ledger_conn("learn", _ensure_insights_schema)
 
 
 def _uid():
-    return config.uid()          # one implementation; callio.py carried a byte-identical copy
+    return new_uid()          # one implementation; callio.py carried a byte-identical copy
 
 
 def _now():
@@ -128,7 +134,7 @@ def insights(intent=None, min_conf=0.0, include_refuted=False, scope=None):
         where.append("(status IS NULL OR status != 'refuted')")
     if scope:
         where.append("scope = ?"); args.append(scope)
-    with config.ledger_op('learn', _ensure_insights_schema) as ledger_read_handle:
+    with insights_ledger_op() as ledger_read_handle:
         return ledger_read_handle.execute(
             f"SELECT intent, lesson, source, confidence, evidence FROM insights "
             f"WHERE {' AND '.join(where)} ORDER BY {_STATUS_RANK} DESC, confidence DESC", args).fetchall()
@@ -141,7 +147,7 @@ def insights_full(intent=None, include_refuted=False):
     if intent:
         where.append("intent = ?"); args.append(intent)
     w = ("WHERE " + " AND ".join(where)) if where else ""
-    with config.ledger_op('learn', _ensure_insights_schema) as ledger_read_handle:
+    with insights_ledger_op() as ledger_read_handle:
         cur = ledger_read_handle.execute(
             f"SELECT id,intent,lesson,evidence,source,confidence,status,support,contradiction,"
             f"last_validated,version,scope,{','.join(_CTX)} FROM insights {w} "
@@ -191,8 +197,8 @@ def add_edge(src, dst, rel, ts=None, attrs=None):
 
 
 def graph_stats():
-    with config.ledger_op('learn', _ensure_insights_schema) as ledger_read_handle:
+    with insights_ledger_op() as ledger_read_handle:
         nodes = ledger_read_handle.execute("SELECT type, COUNT(*) FROM graph_nodes GROUP BY type ORDER BY 2 DESC").fetchall()
-    with config.ledger_op('learn', _ensure_insights_schema) as ledger_read_handle:
+    with insights_ledger_op() as ledger_read_handle:
         edges = ledger_read_handle.execute("SELECT rel, COUNT(*) FROM graph_edges GROUP BY rel ORDER BY 2 DESC").fetchall()
     return nodes, edges

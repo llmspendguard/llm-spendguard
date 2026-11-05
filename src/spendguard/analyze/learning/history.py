@@ -126,7 +126,7 @@ def scan_intent_map(repo, content_scan=True, max_bytes=1_000_000):
 
 def reconstruct_intents(repo, apply=False):
     """Match the mined intent map against our run nodes; report coverage; optionally write it on."""
-    with learn.config.ledger_op('learn', learn._ensure_insights_schema) as ledger_read_handle:
+    with learn.insights_ledger_op() as ledger_read_handle:
         runs = ledger_read_handle.execute("SELECT id, attrs FROM graph_nodes WHERE type='run'").fetchall()
     run_ids = {r[0] for r in runs}
     attrs_by_id = {r[0]: json.loads(r[1] or "{}") for r in runs}

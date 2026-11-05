@@ -357,7 +357,7 @@ def linked_sample(limit=5):
 # ─────────────────────────── provider retrieval (free) ───────────────────────────
 def _runs_with_intent():
     from ... import learn
-    with learn.config.ledger_op('learn', learn._ensure_insights_schema) as ledger_read_handle:
+    with learn.insights_ledger_op() as ledger_read_handle:
         rows = ledger_read_handle.execute(
             "SELECT id, label, attrs FROM graph_nodes WHERE type='run' ORDER BY ts DESC").fetchall()
     out = []

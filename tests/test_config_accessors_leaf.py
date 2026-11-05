@@ -43,12 +43,18 @@ def main():
     assert config_accessors._get_config_value is config._cfg_get
     assert config_accessors._db_path is config.db_path
     assert config_accessors._disk_guard_floor_bytes is config.disk_guard_floor_bytes
+    assert config_accessors._ledger_op is config.ledger_op
+    assert config_accessors._pooled_ledger_conn is config.pooled_ledger_conn
+    assert config_accessors._uid is config.uid
     original_accessors = (
         config_accessors._load_persisted_state,
         config_accessors._save_persisted_state,
         config_accessors._get_config_value,
         config_accessors._db_path,
         config_accessors._disk_guard_floor_bytes,
+        config_accessors._ledger_op,
+        config_accessors._pooled_ledger_conn,
+        config_accessors._uid,
     )
 
     recorded_calls = []
@@ -73,6 +79,18 @@ def main():
         recorded_calls.append(("disk_guard_floor_bytes",))
         return 123456
 
+    def record_ledger_op(key, ensure_schema, path=None):
+        recorded_calls.append(("ledger_op", key))
+        return "stub-cm"
+
+    def record_pooled_ledger_conn(key, ensure_schema, path=None):
+        recorded_calls.append(("pooled", key))
+        return "stub-conn"
+
+    def record_uid(n=16):
+        recorded_calls.append(("uid", n))
+        return "stub-uid"
+
     try:
         config_accessors.set_config_accessors(
             record_load_persisted_state,
@@ -80,18 +98,27 @@ def main():
             record_get_config_value,
             record_db_path,
             record_disk_guard_floor_bytes,
+            record_ledger_op,
+            record_pooled_ledger_conn,
+            record_uid,
         )
         assert config_accessors.load_persisted_state("x", {}) == {}
         assert config_accessors.save_persisted_state("x", {}, loud=False) is True
         assert config_accessors.get_config_value("a", "b", 1) == 1
         assert config_accessors.get_db_path() == "sentinel-ledger-path"
         assert config_accessors.get_disk_guard_floor_bytes() == 123456
+        assert config_accessors.open_ledger_op("learn", lambda c: None) == "stub-cm"
+        assert config_accessors.open_pooled_ledger_conn("learn", lambda c: None) == "stub-conn"
+        assert config_accessors.new_uid() == "stub-uid"
         assert recorded_calls == [
             ("load", "x", {}),
             ("save", "x", {}, False),
             ("get", "a", "b", 1),
             ("db_path",),
             ("disk_guard_floor_bytes",),
+            ("ledger_op", "learn"),
+            ("pooled", "learn"),
+            ("uid", 16),
         ]
 
         config_accessors._load_persisted_state = None
@@ -117,15 +144,44 @@ def main():
             pass
         else:
             raise AssertionError("get_disk_guard_floor_bytes must fail loudly when its accessor is unset")
+
+        config_accessors._ledger_op = None
+        try:
+            config_accessors.open_ledger_op("learn", lambda c: None)
+        except RuntimeError:
+            pass
+        else:
+            raise AssertionError("open_ledger_op must fail loudly when its accessor is unset")
+
+        config_accessors._pooled_ledger_conn = None
+        try:
+            config_accessors.open_pooled_ledger_conn("learn", lambda c: None)
+        except RuntimeError:
+            pass
+        else:
+            raise AssertionError("open_pooled_ledger_conn must fail loudly when its accessor is unset")
+
+        config_accessors._uid = None
+        try:
+            config_accessors.new_uid()
+        except RuntimeError:
+            pass
+        else:
+            raise AssertionError("new_uid must fail loudly when its accessor is unset")
     finally:
         config_accessors.set_config_accessors(*original_accessors)
 
     from spendguard.manage.token_operations import resource_state
     from spendguard.manage.admission import disk_guard
+    from spendguard.analyze.learning import learn
 
     assert not hasattr(resource_state, "config")
     assert not hasattr(disk_guard, "config")
     assert disk_guard.get_disk_guard_floor_bytes is config_accessors.get_disk_guard_floor_bytes
+    assert not hasattr(learn, "config")
+    assert callable(learn.insights_ledger_op)
+    with learn.insights_ledger_op() as handle:
+        assert handle.execute("SELECT 1").fetchone()[0] == 1
     resource_key = "lane:_ctx13_test"
     resource_state.cool(resource_key, 1, "test")
     assert resource_state.cooling(resource_key) is True

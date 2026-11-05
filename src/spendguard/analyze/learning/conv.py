@@ -93,7 +93,7 @@ def _events_in(path, run_ids):
 
 # ─────────────────────────── index (cached, deterministic) ───────────────────────────
 def _run_ids():
-    with learn.config.ledger_op('learn', learn._ensure_insights_schema) as ledger_read_handle:
+    with learn.insights_ledger_op() as ledger_read_handle:
         return {r[0] for r in ledger_read_handle.execute("SELECT id FROM graph_nodes WHERE type='run'").fetchall()}
 
 
@@ -261,7 +261,7 @@ def classify_user_asks(items, run=True):
         return res
     hashes = {c["id"]: _chash(c["text"]) for c in items}
     todo = []
-    with learn.config.ledger_op('learn', learn._ensure_insights_schema) as db:
+    with learn.insights_ledger_op() as db:
         for c in items:
             r = db.execute("SELECT is_ask FROM user_ask_class WHERE hash=?", (hashes[c["id"]],)).fetchone()
             if r is not None:
@@ -391,7 +391,7 @@ def _seg_get_all():
     from . import learn
     out = {}
     try:
-        with learn.config.ledger_op('learn', learn._ensure_insights_schema) as ledger_read_handle:
+        with learn.insights_ledger_op() as ledger_read_handle:
             for r in ledger_read_handle.execute(
                     "SELECT seg_id, project, org, team, confidence, source, model FROM seg_attribution"):
                 out[r[0]] = {"project": r[1] or "", "org": r[2] or "", "team": r[3] or "",
@@ -437,7 +437,7 @@ def seg_record(seg_id):
     """Full recorded row for ONE segment incl. the stored DETERMINATION + model + ts — for audit / re-derive /
     deciding whether to re-run. Returns None if not recorded."""
     from . import learn
-    with learn.config.ledger_op('learn', learn._ensure_insights_schema) as ledger_read_handle:
+    with learn.insights_ledger_op() as ledger_read_handle:
         r = ledger_read_handle.execute(
             "SELECT seg_id,sid,cwd,prompt,project,org,team,confidence,source,model,ts,determination "
             "FROM seg_attribution WHERE seg_id=?", (seg_id,)).fetchone()
@@ -529,7 +529,7 @@ def session_classification(sid):
     Returns None if the session has no agentic/human classification yet."""
     from . import learn
     rows = []
-    with learn.config.ledger_op('learn', learn._ensure_insights_schema) as ledger_read_handle:
+    with learn.insights_ledger_op() as ledger_read_handle:
         for r in ledger_read_handle.execute(
                 "SELECT project,org,team,confidence,ts FROM seg_attribution "
                 "WHERE sid=? AND source IN ('llm','human') AND (project<>'' OR org<>'')", (sid,)):
@@ -748,7 +748,7 @@ def _evidence_db():
 
 def _evidence_cached(hashes):
     out = {}
-    with learn.config.ledger_op('learn', learn._ensure_insights_schema) as db:
+    with learn.insights_ledger_op() as db:
         for h in set(hashes):
             r = db.execute("SELECT spend_evidence,kind,cost_lesson FROM evidence_class WHERE hash=?", (h,)).fetchone()
             if r:
