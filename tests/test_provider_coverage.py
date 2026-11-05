@@ -89,6 +89,7 @@ sys.modules["botocore"] = fake_botocore; sys.modules["botocore.client"] = fake_b
 try:
     from spendguard import bedrock_adapter
     record_script_check(fails, "install_bedrock wires (force)", bedrock_adapter.install(force=True) is True)
+    bedrock_adapter.set_bedrock_realtime_recorder(gate._record_rt)
     record_script_check(fails, "BaseClient._make_api_call patched", getattr(BaseClient._make_api_call, "_spend_gated", False) is True)
     br = BaseClient("bedrock-runtime")
     REC.clear()

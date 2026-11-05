@@ -1631,3 +1631,5 @@ def exceeded(pending=0.0, kind="llm", *, deadline_s=config.LEDGER_QUERY_DEADLINE
 
 from spendguard.manage.admission import budget_accessors
 budget_accessors.set_budget_accessors(lambda: _conv(), lambda: _project())
+from spendguard.manage.admission import budget_unpriced_sink
+budget_unpriced_sink.set_unpriced_recorder(record_unpriced)

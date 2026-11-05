@@ -2162,7 +2162,6 @@
       "spendguard.generate.execution.submit",
       "spendguard.generate.execution.vendor_call",
       "spendguard.generate.spend_capture.backfill",
-      "spendguard.generate.spend_capture.bedrock_adapter",
       "spendguard.generate.spend_capture.chat",
       "spendguard.generate.spend_capture.claudecode",
       "spendguard.generate.spend_capture.codex",
@@ -2232,10 +2231,6 @@
     ]
   ],
   "recorded_cyclic_edges": [
-    [
-      "spendguard",
-      "spendguard.generate.spend_capture.bedrock_adapter"
-    ],
     [
       "spendguard",
       "spendguard.interface.crossllm"
@@ -3767,14 +3762,6 @@
     [
       "spendguard.generate.spend_capture.backfill",
       "spendguard.store.reference_data.pricing"
-    ],
-    [
-      "spendguard.generate.spend_capture.bedrock_adapter",
-      "spendguard.manage.admission.budget"
-    ],
-    [
-      "spendguard.generate.spend_capture.bedrock_adapter",
-      "spendguard.manage.admission.gate"
     ],
     [
       "spendguard.generate.spend_capture.chat",
@@ -5663,8 +5650,8 @@
     "src/spendguard/manage/token_operations/delegate_router.py:481",
     "src/spendguard/platform/lanes.py:64"
   ],
-  "max_largest_scc_size": 124,
-  "max_cyclic_edge_count": 854,
+  "max_largest_scc_size": 123,
+  "max_cyclic_edge_count": 851,
   "max_legacy_shim_count": 219,
   "recorded_cross_context_nonsurface_imports": [
     [
@@ -7906,6 +7893,10 @@
     [
       "spendguard.generate.spend_capture.bedrock_adapter",
       "spendguard.manage.admission.budget"
+    ],
+    [
+      "spendguard.generate.spend_capture.bedrock_adapter",
+      "spendguard.manage.admission.budget_unpriced_sink"
     ],
     [
       "spendguard.generate.spend_capture.bedrock_adapter",

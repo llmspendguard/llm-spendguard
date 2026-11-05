@@ -7,6 +7,15 @@ Opt-in: `spendguard.install_bedrock()` after importing boto3 (botocore is heavy/
 auto-wires it if botocore is already imported — never force-imports it for non-AWS users). Patching the ONE class
 method covers every boto3 client, created before or after."""
 import functools, sys
+from ...manage.admission.budget_unpriced_sink import record_unpriced_event
+
+_bedrock_realtime_recorder = None
+
+
+def set_bedrock_realtime_recorder(recorder):
+    """Inject the realtime ledger sink (gate._record_rt) before any captured Bedrock call runs."""
+    global _bedrock_realtime_recorder
+    _bedrock_realtime_recorder = recorder
 
 _OPS = {"Converse", "InvokeModel"}     # non-stream model invocations whose usage we can read without consuming the body
 
@@ -45,17 +54,15 @@ def _wrap(orig):
         if operation_name in _STREAM_OPS:
             resp = orig(self, operation_name, api_params)          # untouched: the body is the caller's
             try:
-                from ... import budget
-                budget.record_unpriced("bedrock", (api_params or {}).get("modelId") or "?", "realtime")
+                record_unpriced_event("bedrock", (api_params or {}).get("modelId") or "?", "realtime")
             except Exception as e:
                 print(f"[spend_gate] WARN bedrock stream capture failed ({e}); call unaffected", file=sys.stderr)
             return resp
         resp = orig(self, operation_name, api_params)              # the real AWS call — untouched, errors propagate
         try:
-            from ... import gate
             model = (api_params or {}).get("modelId") or ""
             in_tok, out_tok = _toks(operation_name, resp)
-            gate._record_rt(model, {"model": model}, in_tok, out_tok, provider="bedrock")
+            _bedrock_realtime_recorder(model, {"model": model}, in_tok, out_tok, provider="bedrock")
         except Exception as e:
             print(f"[spend_gate] WARN bedrock capture failed ({e}); call unaffected", file=sys.stderr)
         return resp

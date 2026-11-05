@@ -50,7 +50,7 @@ def _load_public_api_and_install_gate():
     global compute_job_fingerprint, guard_resume, compare_fingerprints, read_fingerprint
     global write_fingerprint, JobPlanDrift, JobMethodUndecided
     global _install_litellm, _install_bedrock, _install_vertex
-    global _set_litellm_realtime_recorder, _set_vertex_realtime_recorder
+    global _set_litellm_realtime_recorder, _set_bedrock_realtime_recorder, _set_vertex_realtime_recorder
 
     if "install" in globals():
         return
@@ -69,11 +69,13 @@ def _load_public_api_and_install_gate():
                                   write_fingerprint, JobPlanDrift, JobMethodUndecided)
     from .litellm_adapter import (install as _install_litellm,
                                   set_litellm_realtime_recorder as _set_litellm_realtime_recorder)
-    from .bedrock_adapter import install as _install_bedrock
+    from .bedrock_adapter import (install as _install_bedrock,
+                                  set_bedrock_realtime_recorder as _set_bedrock_realtime_recorder)
     from .vertex_adapter import (install as _install_vertex,
                                  set_vertex_realtime_recorder as _set_vertex_realtime_recorder)
     _set_litellm_realtime_recorder(_record_rt)
     _set_vertex_realtime_recorder(_record_rt)
+    _set_bedrock_realtime_recorder(_record_rt)
     _auto_install()
     from .capability_surface_generation import document_existing_capability_exports
     document_existing_capability_exports(globals())
@@ -90,6 +92,7 @@ def install_litellm() -> bool:
 def install_bedrock() -> bool:
     """Capture direct AWS Bedrock (boto3) model-invocation spend. Call once, AFTER `import boto3`. Returns True if
     botocore is present and now patched. (Not needed if you call Bedrock through LiteLLM — that's already covered.)"""
+    _set_bedrock_realtime_recorder(_record_rt)
     return _install_bedrock(force=True)
 
 

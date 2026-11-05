@@ -150,6 +150,7 @@ def test_provider_breadth_recorders_keep_reported_zero_input():
         with patch.object(gate, "_record_rt") as captured:
             litellm_adapter.set_litellm_realtime_recorder(captured)
             vertex_adapter.set_vertex_realtime_recorder(captured)
+            bedrock_adapter.set_bedrock_realtime_recorder(captured)
             litellm_adapter.record_litellm({"model": PARTIAL_USAGE_MODEL}, {"usage": usage})
             vertex_adapter._capture_vertex_result({"model": PARTIAL_USAGE_MODEL},
                                                    SimpleNamespace(usage_metadata=vertex_usage))
@@ -159,6 +160,7 @@ def test_provider_breadth_recorders_keep_reported_zero_input():
             assert all(call.args[2:4] == (0, output_count) for call in captured.call_args_list)
     litellm_adapter.set_litellm_realtime_recorder(gate._record_rt)
     vertex_adapter.set_vertex_realtime_recorder(gate._record_rt)
+    bedrock_adapter.set_bedrock_realtime_recorder(gate._record_rt)
 
 
 if __name__ == "__main__":
