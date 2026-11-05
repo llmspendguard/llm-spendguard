@@ -49,6 +49,9 @@ def main():
     assert config_accessors._pooled_ledger_conn is config.pooled_ledger_conn
     assert config_accessors._uid is config.uid
     assert config_accessors._ssl_context is config.ssl_context
+    assert config_accessors._api_key is config.api_key
+    assert config_accessors._keys_env is config.KEYS_ENV
+    assert config_accessors._warn_once is config.warn_once
     assert config_accessors.home_dir() == config.HOME
     original_accessors = (
         config_accessors._load_persisted_state,
@@ -61,6 +64,9 @@ def main():
         config_accessors._uid,
         config_accessors._home_getter,
         config_accessors._ssl_context,
+        config_accessors._api_key,
+        config_accessors._keys_env,
+        config_accessors._warn_once,
     )
 
     recorded_calls = []
@@ -105,6 +111,14 @@ def main():
         recorded_calls.append(("ssl",))
         return "sentinel-ssl"
 
+    def record_api_key(name):
+        recorded_calls.append(("api_key", name))
+        return "sentinel-key"
+
+    def record_warn_once(msg, prefix=""):
+        recorded_calls.append(("warn_once", msg, prefix))
+        return None
+
     try:
         config_accessors.set_config_accessors(
             record_load_persisted_state,
@@ -117,6 +131,9 @@ def main():
             record_uid,
             record_home_getter,
             record_ssl_context,
+            record_api_key,
+            "sentinel-keys-env",
+            record_warn_once,
         )
         assert config_accessors.load_persisted_state("x", {}) == {}
         assert config_accessors.save_persisted_state("x", {}, loud=False) is True
@@ -128,6 +145,9 @@ def main():
         assert config_accessors.new_uid() == "stub-uid"
         assert config_accessors.home_dir() == "sentinel-home"
         assert config_accessors.open_ssl_context() == "sentinel-ssl"
+        assert config_accessors.resolve_provider_api_key("OPENAI_API_KEY") == "sentinel-key"
+        assert config_accessors.config_keys_env_path() == "sentinel-keys-env"
+        assert config_accessors.emit_config_warn_once("warn-msg", "pfx") is None
         assert recorded_calls == [
             ("load", "x", {}),
             ("save", "x", {}, False),
@@ -139,6 +159,8 @@ def main():
             ("uid", 16),
             ("home",),
             ("ssl",),
+            ("api_key", "OPENAI_API_KEY"),
+            ("warn_once", "warn-msg", "pfx"),
         ]
 
         config_accessors._load_persisted_state = None
@@ -204,6 +226,30 @@ def main():
             pass
         else:
             raise AssertionError("open_ssl_context must fail loudly when its accessor is unset")
+
+        config_accessors._api_key = None
+        try:
+            config_accessors.resolve_provider_api_key("x")
+        except RuntimeError:
+            pass
+        else:
+            raise AssertionError("resolve_provider_api_key must fail loudly when its accessor is unset")
+
+        config_accessors._keys_env = None
+        try:
+            config_accessors.config_keys_env_path()
+        except RuntimeError:
+            pass
+        else:
+            raise AssertionError("config_keys_env_path must fail loudly when its accessor is unset")
+
+        config_accessors._warn_once = None
+        try:
+            config_accessors.emit_config_warn_once("x")
+        except RuntimeError:
+            pass
+        else:
+            raise AssertionError("emit_config_warn_once must fail loudly when its accessor is unset")
     finally:
         config_accessors.set_config_accessors(*original_accessors)
 

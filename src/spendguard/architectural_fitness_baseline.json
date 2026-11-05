@@ -2945,10 +2945,6 @@
     ],
     [
       "spendguard.analyze.reconciliation.ledger_sync",
-      "spendguard.analyze.reconciliation.reconcile_openai"
-    ],
-    [
-      "spendguard.analyze.reconciliation.ledger_sync",
       "spendguard.analyze.reconciliation.workdone"
     ],
     [
@@ -3042,14 +3038,6 @@
     [
       "spendguard.analyze.reconciliation.reconcile_maintenance_owner",
       "spendguard.store.spend_search.ledger_read"
-    ],
-    [
-      "spendguard.analyze.reconciliation.reconcile_openai",
-      "spendguard.store.configuration.config"
-    ],
-    [
-      "spendguard.analyze.reconciliation.reconcile_openai",
-      "spendguard.store.reference_data.pricing"
     ],
     [
       "spendguard.analyze.reconciliation.tag",
@@ -3226,10 +3214,6 @@
     [
       "spendguard.analyze.spend_reporting.report",
       "spendguard.analyze.reconciliation.reconcile_anthropic"
-    ],
-    [
-      "spendguard.analyze.spend_reporting.report",
-      "spendguard.analyze.reconciliation.reconcile_openai"
     ],
     [
       "spendguard.analyze.spend_reporting.report",
@@ -3458,10 +3442,6 @@
     [
       "spendguard.egress.signal",
       "spendguard.analyze.learning.conv"
-    ],
-    [
-      "spendguard.egress.signal",
-      "spendguard.analyze.reconciliation.reconcile_openai"
     ],
     [
       "spendguard.egress.signal",
@@ -3742,10 +3722,6 @@
     [
       "spendguard.generate.spend_capture.backfill",
       "spendguard.analyze.reconciliation.reconcile_anthropic"
-    ],
-    [
-      "spendguard.generate.spend_capture.backfill",
-      "spendguard.analyze.reconciliation.reconcile_openai"
     ],
     [
       "spendguard.generate.spend_capture.backfill",
@@ -5626,8 +5602,8 @@
     "src/spendguard/manage/token_operations/delegate_router.py:481",
     "src/spendguard/platform/lanes.py:64"
   ],
-  "max_largest_scc_size": 121,
-  "max_cyclic_edge_count": 845,
+  "max_largest_scc_size": 120,
+  "max_cyclic_edge_count": 839,
   "max_legacy_shim_count": 219,
   "recorded_cross_context_nonsurface_imports": [
     [
@@ -6940,11 +6916,11 @@
     ],
     [
       "spendguard.analyze.reconciliation.reconcile_openai",
-      "spendguard.store.configuration.config"
+      "spendguard.store.configuration.config_accessors"
     ],
     [
       "spendguard.analyze.reconciliation.reconcile_openai",
-      "spendguard.store.reference_data.pricing"
+      "spendguard.store.reference_data.pricing_accessors"
     ],
     [
       "spendguard.analyze.reconciliation.tag",

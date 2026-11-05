@@ -15,15 +15,20 @@ _pooled_ledger_conn = None
 _uid = None
 _home_getter = None
 _ssl_context = None
+_api_key = None
+_keys_env = None
+_warn_once = None
 
 
 def set_config_accessors(load_state, save_state, cfg_get, db_path, disk_guard_floor_bytes,
-                         ledger_op, pooled_ledger_conn, uid, home_getter, ssl_context):
+                         ledger_op, pooled_ledger_conn, uid, home_getter, ssl_context,
+                         api_key, keys_env, warn_once):
     """Injected by config with the existing five functions plus config.ledger_op,
     config.pooled_ledger_conn, config.uid, config.HOME via a live getter, and
     config.ssl_context."""
     global _load_persisted_state, _save_persisted_state, _get_config_value, _db_path, _disk_guard_floor_bytes
     global _ledger_op, _pooled_ledger_conn, _uid, _home_getter, _ssl_context
+    global _api_key, _keys_env, _warn_once
     _load_persisted_state = load_state
     _save_persisted_state = save_state
     _get_config_value = cfg_get
@@ -34,6 +39,9 @@ def set_config_accessors(load_state, save_state, cfg_get, db_path, disk_guard_fl
     _uid = uid
     _home_getter = home_getter
     _ssl_context = ssl_context
+    _api_key = api_key
+    _keys_env = keys_env
+    _warn_once = warn_once
 
 
 def load_persisted_state(name, default=None):
@@ -94,3 +102,21 @@ def open_ssl_context():
     if _ssl_context is None:
         raise RuntimeError("import spendguard before opening an SSL context so config can wire its accessors")
     return _ssl_context()
+
+
+def resolve_provider_api_key(name):
+    if _api_key is None:
+        raise RuntimeError("import spendguard before resolving a provider API key so config can wire its accessors")
+    return _api_key(name)
+
+
+def config_keys_env_path():
+    if _keys_env is None:
+        raise RuntimeError("import spendguard before reading the keys environment path so config can wire its accessors")
+    return _keys_env
+
+
+def emit_config_warn_once(msg, prefix=""):
+    if _warn_once is None:
+        raise RuntimeError("import spendguard before emitting a config warning so config can wire its accessors")
+    return _warn_once(msg, prefix)

@@ -844,7 +844,8 @@ def verify_pricing():
 # Expose pricing's cost math + cache/unit constants + the unpriced-model error to modules that must not
 # import pricing — breaks the cost_integrity→pricing cycle.
 set_pricing_accessors(batch_cost, realtime_cost, price, CACHE_WRITE_5M_MULTIPLIER,
-                      CACHE_WRITE_1H_MULTIPLIER, ONE_MILLION, PriceUnknownError)
+                      CACHE_WRITE_1H_MULTIPLIER, ONE_MILLION, PriceUnknownError,
+                      cost_or_unpriced, normalize, PRICING_SOURCE, PRICING_VERIFIED)
 
 
 def main():

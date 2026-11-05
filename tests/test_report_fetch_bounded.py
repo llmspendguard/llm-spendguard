@@ -25,7 +25,7 @@ os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
 from _script_checks import record_script_check
-from spendguard import reconcile_openai as ro, report, config      # noqa: E402
+from spendguard import reconcile_openai as ro, report      # noqa: E402
 from urllib.parse import urlparse, parse_qs                         # noqa: E402
 
 fails = []
@@ -100,9 +100,13 @@ class _Advancing:
         return _Resp({"data": [_batch(f"b{self.calls}", 2026, 9, 5)], "has_more": True})
 
 
-config.ssl_context = lambda: None                      # keep the stub network-free
+# reconcile_openai resolves ssl + warn_once via its dependency-free leaf, whose slots captured
+# config.ssl_context / config.warn_once at wire time — so patch the resolvers the consumer looks up,
+# not config.*. emit_config_warn_once forwards (msg, prefix); the stub must accept the prefix kwarg or
+# _warn_paging's `except Exception` would swallow an arity error and leave _warns empty.
+ro.config_accessors.open_ssl_context = lambda: None    # keep the stub network-free
 _warns = []
-config.warn_once = lambda m: _warns.append(m)
+ro.config_accessors.emit_config_warn_once = lambda m, prefix="": _warns.append(m)
 
 
 # ── NON-ADVANCING CURSOR TERMINATES (the hang guard) ──

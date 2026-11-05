@@ -45,13 +45,14 @@ os.environ["OPENAI_API_KEY"] = "sk-test-OFFLINE-123"
 check("load_key returns env key", ro.load_key() == "sk-test-OFFLINE-123")
 
 print("-- load_key(): missing key -> RAISES (not sys.exit), never a network call --")
-# Stub config.api_key to '' (a repo-local ./.env may hold a real key; never depend on its
-# absence and never read it). load_key imports api_key from .config at call time. It must RAISE a normal
-# Exception (KeyMissing), NOT sys.exit — SystemExit is a BaseException that escapes the `except Exception`
-# guards in degradable callers (leak_line / `spendguard doctor`) and aborts them.
-import spendguard.config as _cfg
-_orig_api_key = _cfg.api_key
-_cfg.api_key = lambda name: ""
+# Stub the api-key resolver to '' (a repo-local ./.env may hold a real key; never depend on its
+# absence and never read it). load_key resolves the key via config_accessors.resolve_provider_api_key,
+# whose slot captured config.api_key at wire time — so patch the resolver the consumer looks up, not
+# config.api_key. It must RAISE a normal Exception (KeyMissing), NOT sys.exit — SystemExit is a
+# BaseException that escapes the `except Exception` guards in degradable callers (leak_line /
+# `spendguard doctor`) and aborts them.
+_orig_api_key = ro.config_accessors.resolve_provider_api_key
+ro.config_accessors.resolve_provider_api_key = lambda name: ""
 try:
     ro.load_key()
     check("missing key raises", False)
@@ -61,7 +62,7 @@ except Exception as e:
     check("missing key raises KeyMissing with a clear message",
           isinstance(e, ro.KeyMissing) and "OPENAI_API_KEY not found" in str(e))
 finally:
-    _cfg.api_key = _orig_api_key
+    ro.config_accessors.resolve_provider_api_key = _orig_api_key
 
 print("-- main(): smoke run, fully stubbed (no network), exercises aggregation+print branches --")
 # canned batch rows in the OpenAI Batch object shape main() reads — one of each status path:

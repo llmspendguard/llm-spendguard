@@ -19,7 +19,8 @@ from ...capability_cli_parsing import add_registered_cli_argument
 import json, argparse, urllib.request, urllib.error, datetime
 from collections import defaultdict
 
-from ...pricing import cost_or_unpriced, normalize, PRICING_SOURCE, PRICING_VERIFIED
+from ...store.configuration import config_accessors
+from ...store.reference_data import pricing_accessors
 
 # Paging bounds for /v1/batches. The listing is newest-first, so a `since` window can stop early; the cap +
 # cursor-advance guard + per-request timeout are what stop a stuck `has_more`/non-advancing cursor from spinning
@@ -82,12 +83,13 @@ def _http_error_detail(e):
 
 
 def load_key():
-    from ...config import api_key
-    k = api_key("OPENAI_API_KEY")
+    k = config_accessors.resolve_provider_api_key("OPENAI_API_KEY")
     if not k:
         # name the file `init` actually CREATES (keys.env), not the legacy .env nothing scaffolds.
-        from ...config import KEYS_ENV
-        raise KeyMissing(f"OPENAI_API_KEY not found (set it in the environment, or add it to {KEYS_ENV})")
+        raise KeyMissing(
+            "OPENAI_API_KEY not found (set it in the environment, or add it to "
+            f"{config_accessors.config_keys_env_path()})"
+        )
     return k
 
 
@@ -100,13 +102,12 @@ def fetch_batches(key, since=None, max_pages=BATCH_MAX_PAGES, timeout_s=BATCH_HT
       • timeout_s on every request → a stalled socket fails fast instead of hanging the run.
     Returns raw batch dicts newest-first; callers still filter by day(), so a trailing partly-out-of-window page
     is harmless (the window sums are identical to an unbounded pull — this avoids work, it does not change the answer)."""
-    from ...config import ssl_context
     rows, after, seen = [], None, set()
     for _page in range(max_pages):
         url = f"https://api.openai.com/v1/batches?limit={BATCH_PAGE_LIMIT}" + (f"&after={after}" if after else "")
         req = urllib.request.Request(url, headers={"Authorization": f"Bearer {key}"})
         try:
-            with urllib.request.urlopen(req, context=ssl_context(), timeout=timeout_s) as _r:
+            with urllib.request.urlopen(req, context=config_accessors.open_ssl_context(), timeout=timeout_s) as _r:
                 d = json.load(_r)
         except urllib.error.HTTPError as e:                   # 401/403/429/5xx — a resolved-but-unauthorized key,
             _detail = _http_error_detail(e)                   # throttling, or a server error (was a raw traceback).
@@ -138,8 +139,7 @@ def fetch_batches(key, since=None, max_pages=BATCH_MAX_PAGES, timeout_s=BATCH_HT
 def _warn_paging(msg):
     """Surface a paging-bound event once (stuck cursor / page-cap truncation) without taking the report down."""
     try:
-        from ... import config
-        config.warn_once("[spendguard] " + msg)
+        config_accessors.emit_config_warn_once("[spendguard] " + msg)
     except Exception:
         pass
 
@@ -179,15 +179,18 @@ def main():
         # cost_or_unpriced, not batch_cost: an unpriced model must not abort the whole report. The Anthropic
         # reconcile has degraded gracefully since day one; this OpenAI copy never grew the guard (unpriced → 0,
         # and the model is RECORDED via note_unpriced so the gap surfaces).
-        c = cost_or_unpriced(b.get("model"), it, ot, (u.get("input_tokens_details") or {}).get("cached_tokens", 0))
-        m = normalize(b.get("model") or "?")
+        c = pricing_accessors.priced_cost_or_unpriced(
+            b.get("model"), it, ot, (u.get("input_tokens_details") or {}).get("cached_tokens", 0)
+        )
+        m = pricing_accessors.normalize_priced_model_name(b.get("model") or "?")
         v = by_model[m]; v["in"] += it; v["out"] += ot; v["cost"] += c; v["n"] += 1
         by_day[day(b)] += c
         if status == "cancelled":
             cancelled_waste += c
         total += c
 
-    print(f"# OpenAI batch spend  (priced via canonical pricing.py — {PRICING_SOURCE}, verified {PRICING_VERIFIED})")
+    print("# OpenAI batch spend  (priced via canonical pricing.py — "
+          f"{pricing_accessors.pricing_source_url()}, verified {pricing_accessors.pricing_verified_date()})")
     if a.since:
         print(f"# window: created >= {a.since} (UTC)")
     print(f"\n{'model':<22}{'batches':>8}{'in_tok':>15}{'out_tok':>14}{'cost$':>12}")
