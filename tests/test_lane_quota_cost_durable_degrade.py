@@ -75,3 +75,10 @@ def test_lane_cost_timeout_without_durable_evidence_remains_visible():
                              side_effect=ledger_read.LedgerQueryDeadline(DURABLE_DEGRADE_TIMEOUT_BUDGET)):
             with pytest.raises(ledger_read.LedgerQueryDeadline):
                 lane_quota_cost.measured_lane_token_cost(DURABLE_DEGRADE_TEST_INTENT)
+
+
+if __name__ == "__main__":
+    test_durable_lane_cost_maxima_survive_cold_module_state_and_never_decrease()
+    test_lane_cost_timeout_without_durable_evidence_remains_visible()
+    print("2 passed: durable lane-cost degradation stays conservative across cold state; "
+          "unsupported timeouts stay visible")
