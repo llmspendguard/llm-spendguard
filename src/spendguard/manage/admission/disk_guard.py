@@ -2,8 +2,8 @@
 import shutil
 from pathlib import Path
 
-from ... import config
-from .gate import SpendGateRefused
+from ...store.configuration.config_accessors import get_disk_guard_floor_bytes
+from .spend_refusal_error import SpendGateRefused
 
 
 def require_disk_space(target):
@@ -14,7 +14,7 @@ def require_disk_space(target):
     """
     destination = Path(target).expanduser().absolute()
     try:
-        floor = config.disk_guard_floor_bytes()
+        floor = get_disk_guard_floor_bytes()
         probe = destination
         while not probe.exists():
             if probe == probe.parent:

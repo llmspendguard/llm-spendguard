@@ -42,11 +42,13 @@ def main():
     assert config_accessors._save_persisted_state is config.save_state
     assert config_accessors._get_config_value is config._cfg_get
     assert config_accessors._db_path is config.db_path
+    assert config_accessors._disk_guard_floor_bytes is config.disk_guard_floor_bytes
     original_accessors = (
         config_accessors._load_persisted_state,
         config_accessors._save_persisted_state,
         config_accessors._get_config_value,
         config_accessors._db_path,
+        config_accessors._disk_guard_floor_bytes,
     )
 
     recorded_calls = []
@@ -67,22 +69,29 @@ def main():
         recorded_calls.append(("db_path",))
         return "sentinel-ledger-path"
 
+    def record_disk_guard_floor_bytes():
+        recorded_calls.append(("disk_guard_floor_bytes",))
+        return 123456
+
     try:
         config_accessors.set_config_accessors(
             record_load_persisted_state,
             record_save_persisted_state,
             record_get_config_value,
             record_db_path,
+            record_disk_guard_floor_bytes,
         )
         assert config_accessors.load_persisted_state("x", {}) == {}
         assert config_accessors.save_persisted_state("x", {}, loud=False) is True
         assert config_accessors.get_config_value("a", "b", 1) == 1
         assert config_accessors.get_db_path() == "sentinel-ledger-path"
+        assert config_accessors.get_disk_guard_floor_bytes() == 123456
         assert recorded_calls == [
             ("load", "x", {}),
             ("save", "x", {}, False),
             ("get", "a", "b", 1),
             ("db_path",),
+            ("disk_guard_floor_bytes",),
         ]
 
         config_accessors._load_persisted_state = None
@@ -100,12 +109,23 @@ def main():
             pass
         else:
             raise AssertionError("get_db_path must fail loudly when its accessor is unset")
+
+        config_accessors._disk_guard_floor_bytes = None
+        try:
+            config_accessors.get_disk_guard_floor_bytes()
+        except RuntimeError:
+            pass
+        else:
+            raise AssertionError("get_disk_guard_floor_bytes must fail loudly when its accessor is unset")
     finally:
         config_accessors.set_config_accessors(*original_accessors)
 
     from spendguard.manage.token_operations import resource_state
+    from spendguard.manage.admission import disk_guard
 
     assert not hasattr(resource_state, "config")
+    assert not hasattr(disk_guard, "config")
+    assert disk_guard.get_disk_guard_floor_bytes is config_accessors.get_disk_guard_floor_bytes
     resource_key = "lane:_ctx13_test"
     resource_state.cool(resource_key, 1, "test")
     assert resource_state.cooling(resource_key) is True

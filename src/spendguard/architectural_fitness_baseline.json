@@ -2179,7 +2179,6 @@
       "spendguard.interface.mcp_server",
       "spendguard.manage.admission.budget",
       "spendguard.manage.admission.bulkgate",
-      "spendguard.manage.admission.disk_guard",
       "spendguard.manage.admission.escalation_ladder",
       "spendguard.manage.admission.gate",
       "spendguard.manage.admission.model_preflight",
@@ -4246,10 +4245,6 @@
     ],
     [
       "spendguard.manage.admission.budget",
-      "spendguard.manage.admission.disk_guard"
-    ],
-    [
-      "spendguard.manage.admission.budget",
       "spendguard.manage.admission.gate"
     ],
     [
@@ -4311,14 +4306,6 @@
     [
       "spendguard.manage.admission.bulkgate",
       "spendguard.store.reference_data.models"
-    ],
-    [
-      "spendguard.manage.admission.disk_guard",
-      "spendguard.manage.admission.gate"
-    ],
-    [
-      "spendguard.manage.admission.disk_guard",
-      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.manage.admission.escalation_ladder",
@@ -5747,8 +5734,8 @@
     "src/spendguard/manage/token_operations/delegate_router.py:481",
     "src/spendguard/platform/lanes.py:64"
   ],
-  "max_largest_scc_size": 128,
-  "max_cyclic_edge_count": 874,
+  "max_largest_scc_size": 127,
+  "max_cyclic_edge_count": 871,
   "max_legacy_shim_count": 219,
   "recorded_cross_context_nonsurface_imports": [
     [
@@ -8709,7 +8696,7 @@
     ],
     [
       "spendguard.manage.admission.disk_guard",
-      "spendguard.store.configuration.config"
+      "spendguard.store.configuration.config_accessors"
     ],
     [
       "spendguard.manage.admission.escalation_ladder",

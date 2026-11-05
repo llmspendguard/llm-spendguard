@@ -2329,10 +2329,6 @@ def save_state(name, obj, loud=True):
         return False
 
 
-# Expose config's state/value accessors to modules that must not import config — breaks the resource_state→config cycle.
-set_config_accessors(load_state, save_state, _cfg_get, db_path)
-
-
 def uid(n=16):
     """A short random identifier. callio and learn each carried a byte-identical private copy of this."""
     import uuid
@@ -2395,6 +2391,11 @@ def disk_guard_floor_bytes():
     if floor <= 0:
         raise ValueError("disk_guard.floor_bytes must be a positive integer byte count")
     return floor
+
+
+# Expose config's state/value accessors to modules that must not import config — breaks the
+# resource_state/route_realized/disk_guard→config cycles (all read via the config_accessors leaf).
+set_config_accessors(load_state, save_state, _cfg_get, db_path, disk_guard_floor_bytes)
 
 
 # Cache publication never waits behind a spend writer; the authoritative heap is available.
