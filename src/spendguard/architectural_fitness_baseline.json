@@ -2229,7 +2229,6 @@
       "spendguard.store.money_ledger.ledger_wal_maintenance",
       "spendguard.store.money_ledger.ledger_writer",
       "spendguard.store.reference_data.catalog",
-      "spendguard.store.reference_data.catalog_price_authoring",
       "spendguard.store.reference_data.lane_catalog",
       "spendguard.store.reference_data.models",
       "spendguard.store.reference_data.pricing",
@@ -3560,10 +3559,6 @@
     [
       "spendguard.egress.saas",
       "spendguard.store.reference_data.catalog"
-    ],
-    [
-      "spendguard.egress.saas",
-      "spendguard.store.reference_data.catalog_price_authoring"
     ],
     [
       "spendguard.egress.saas",
@@ -5698,10 +5693,6 @@
       "spendguard.store.configuration.config"
     ],
     [
-      "spendguard.store.reference_data.catalog_price_authoring",
-      "spendguard.store.configuration.config"
-    ],
-    [
       "spendguard.store.reference_data.lane_catalog",
       "spendguard.generate.execution.adapters"
     ],
@@ -5756,10 +5747,6 @@
     [
       "spendguard.store.reference_data.pricing",
       "spendguard.store.reference_data.catalog"
-    ],
-    [
-      "spendguard.store.reference_data.pricing",
-      "spendguard.store.reference_data.catalog_price_authoring"
     ],
     [
       "spendguard.store.reference_data.pricing",
@@ -5872,8 +5859,8 @@
     "src/spendguard/platform/lanes.py:64",
     "src/spendguard/generate/spend_capture/sources.py:77"
   ],
-  "max_largest_scc_size": 133,
-  "max_cyclic_edge_count": 904,
+  "max_largest_scc_size": 132,
+  "max_cyclic_edge_count": 901,
   "max_legacy_shim_count": 219,
   "recorded_cross_context_nonsurface_imports": [
     [
@@ -6787,10 +6774,6 @@
     [
       "spendguard.store.reference_data.catalog",
       "spendguard.generate.execution.vendor_call"
-    ],
-    [
-      "spendguard.store.reference_data.catalog_price_authoring",
-      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.generate.spend_capture.chat",

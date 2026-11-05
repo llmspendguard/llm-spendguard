@@ -164,9 +164,33 @@ def _catalog_local_author_ids(document):
     return set(identifiers)
 
 
+_catalog_update_json_provider = None
+
+
+def set_catalog_update_json_provider(provider):
+    """Inject the atomic catalog-file rewriter — a callable with config.update_json's signature
+    (path, mutator, *, required=…). catalog_price_authoring is a dependency-free leaf by design: it must NOT import
+    config (that edge pulls it into the configuration import cycle). Its sole config use — the safe merge-under-lock
+    write in merge_synced_catalog_layer — therefore receives the rewriter through this provider, wired once by a
+    same-context consumer (pricing sets `config.update_json` at import). Idempotent; last writer wins."""
+    global _catalog_update_json_provider
+    _catalog_update_json_provider = provider
+
+
+def _resolve_catalog_update_json():
+    """The atomic catalog-file rewriter via the injected provider. Fail LOUD if unset — a missing wiring is a bug to
+    surface, never a silently-skipped write (spendguard fail-loud doctrine). Import spendguard (which loads pricing,
+    the wirer) before writing the catalog layer."""
+    if _catalog_update_json_provider is None:
+        raise RuntimeError(
+            "catalog_price_authoring update-json provider is not set; import spendguard (or "
+            "spendguard.store.reference_data.pricing) so the catalog rewriter is wired before writing the catalog "
+            "layer.")
+    return _catalog_update_json_provider
+
+
 def merge_synced_catalog_layer(models):
     """Refresh server records under the price-author lock, preserving local authored records."""
-    from ... import config
     catalog_path = Path(model_catalog.catalog_authoring_path())
     catalog_path.parent.mkdir(parents=True, exist_ok=True)
     with Path(str(catalog_path) + CATALOG_AUTHOR_LOCK_SUFFIX).open("a+b") as lock:
@@ -186,5 +210,10 @@ def merge_synced_catalog_layer(models):
             backup.write_bytes(original)
             if backup.read_bytes() != original:
                 raise OSError("catalog snapshot verification failed")
-        config.update_json(catalog_path, lambda _previous: document, required=True)
+        # The injected rewriter IS config.update_json (wired by pricing); bind it to its own name so the
+        # disposition this caller CHOOSES stays visible at the choosing site — required=True (the irreplaceable
+        # catalog SSOT: RAISE on a corrupt file, never the silent-decline default). See
+        # tests/test_update_json_callers_pick_a_disposition.py.
+        update_json = _resolve_catalog_update_json()
+        update_json(catalog_path, lambda _previous: document, required=True)
     return len(models)

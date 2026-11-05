@@ -40,6 +40,22 @@ def _catalog_home_from_config():
 _price_catalog.set_catalog_home_provider(_catalog_home_from_config)
 
 
+from . import catalog_price_authoring as _price_authoring
+
+
+def _catalog_update_json_from_config(*args, **kwargs):
+    """Resolve config.update_json for catalog_price_authoring's merge-under-lock catalog write. The config import is
+    DEFERRED to call time: catalog_price_authoring stays a config-free leaf (it no longer imports config —
+    architectural acyclicity), and pricing already depends on both catalog_price_authoring and config, so this wiring
+    adds no new import coupling. It runs at runtime, when config is fully loaded, so there is no import-time circular
+    hazard."""
+    from ... import config
+    return config.update_json(*args, **kwargs)
+
+
+_price_authoring.set_catalog_update_json_provider(_catalog_update_json_from_config)
+
+
 _ANTHROPIC_CACHE_MODIFIERS = _price_catalog.cache_modifier_table()["anthropic"]
 CACHE_WRITE_5M_MULTIPLIER = _ANTHROPIC_CACHE_MODIFIERS["write_5m"]
 CACHE_WRITE_1H_MULTIPLIER = _ANTHROPIC_CACHE_MODIFIERS["write_1h"]
