@@ -31,6 +31,9 @@ DISTRIBUTION_PROBE_TIMEOUT_S = consumer_audit.CONSUMER_AUDIT_PROBE_TIMEOUT_SECON
 DISTRIBUTION_INSTALL_TIMEOUT_S = fleet._CONSUMER_EDITABLE_REFRESH_TIMEOUT_S
 DISTRIBUTION_CHECKOUT_DIRECTORY = "distribution-checkouts"
 DISTRIBUTION_VERSION_SYMBOL = "__version__"
+DISTRIBUTION_PYTHON_MODULE_SUFFIX = ".py"
+DISTRIBUTION_GIT_TREE_LIST_ARGUMENTS = ("ls-tree", "-r", "--name-only", "--full-tree")
+DISTRIBUTION_GIT_REPOSITORY_ROOT_ARGUMENTS = ("rev-parse", "--show-toplevel")
 DISTRIBUTION_WHEELS_DIRECTORY = "distribution-wheels"
 DISTRIBUTION_EPHEMERAL_MARKER = ".spendguard-ephemeral"
 DISTRIBUTION_BUILD_TIMEOUT_SETTING = "install_timeout_s"
@@ -86,25 +89,58 @@ def distribution_policy():
     return policy
 
 
+def distribution_version_candidates_at_commit(sha):
+    """Return package modules in ``sha`` that declare the distribution version at module level."""
+    tree = release._git_src(*DISTRIBUTION_GIT_TREE_LIST_ARGUMENTS, sha)
+    if tree is None:
+        raise ValueError("cannot enumerate deployed SHA")
+    package_name = __package__ or __name__.rpartition(".")[0]
+    package_parts = tuple(package_name.split("."))
+    candidates = []
+    for tree_path_text in tree.splitlines():
+        tree_path = Path(tree_path_text)
+        tree_parts = tree_path.parts
+        package_starts = range(len(tree_parts) - len(package_parts) + 1)
+        belongs_to_package = any(
+            tree_parts[package_start:package_start + len(package_parts)] == package_parts
+            for package_start in package_starts
+        )
+        if not belongs_to_package or tree_path.suffix != DISTRIBUTION_PYTHON_MODULE_SUFFIX:
+            continue
+        source = release._git_src("show", f"{sha}:{tree_path.as_posix()}")
+        if source is None:
+            raise ValueError(f"cannot read deployed module {tree_path.as_posix()!r}")
+        try:
+            assignments = ast.parse(source, filename=tree_path.as_posix()).body
+        except SyntaxError as exc:
+            raise ValueError(f"cannot parse deployed module {tree_path.as_posix()!r}") from exc
+        for node in assignments:
+            if not isinstance(node, ast.Assign) or not any(
+                    isinstance(name, ast.Name) and name.id == DISTRIBUTION_VERSION_SYMBOL for name in node.targets):
+                continue
+            try:
+                candidate_version = ast.literal_eval(node.value)
+            except (ValueError, TypeError) as exc:
+                raise ValueError("deployed version is not uniquely established") from exc
+            candidates.append((tree_path.as_posix(), candidate_version))
+    return candidates
+
+
 def resolve_distribution_target(version=None):
-    """Resolve version from the blessed commit, never this process's installed version."""
-    from . import _version
+    """Resolve version from the blessed commit's own tree, never the running package layout."""
     pointer = release.green_pointer()
     if not pointer:
         raise ValueError("no deployed green pointer")
-    repository = Path(__file__).resolve().parents[2]
-    version_path = Path(_version.__file__).resolve().relative_to(repository).as_posix()
-    source = release._git_src("show", f"{pointer['sha']}:{version_path}")
-    if not source:
-        raise ValueError("cannot read version from deployed SHA")
-    assignments = ast.parse(source).body
-    versions = [ast.literal_eval(node.value) for node in assignments if isinstance(node, ast.Assign)
-                and any(isinstance(name, ast.Name) and name.id == DISTRIBUTION_VERSION_SYMBOL for name in node.targets)]
-    if len(versions) != 1 or not isinstance(versions[0], str) or not versions[0]:
+    candidates = distribution_version_candidates_at_commit(pointer["sha"])
+    if len(candidates) != 1 or not isinstance(candidates[0][1], str) or not candidates[0][1]:
         raise ValueError("deployed version is not uniquely established")
-    if pointer.get("version") and pointer["version"] != versions[0]:
+    green_version = candidates[0][1]
+    if pointer.get("version") and pointer["version"] != green_version:
         raise ValueError("pointer version disagrees with deployed commit")
-    return {"sha": pointer["sha"], "version": version or versions[0], "green_version": versions[0],
+    repository = release._git_src(*DISTRIBUTION_GIT_REPOSITORY_ROOT_ARGUMENTS)
+    if not repository:
+        raise ValueError("cannot resolve deployed repository")
+    return {"sha": pointer["sha"], "version": version or green_version, "green_version": green_version,
             "checkout": str(repository)}
 
 

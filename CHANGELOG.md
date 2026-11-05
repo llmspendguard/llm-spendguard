@@ -4,6 +4,23 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 
 ## [Unreleased]
 
+## [0.16.30] — 2026-11-05
+
+**The release pointer now proves the promoted revision exists and describes that same commit.**
+`promote_release` previously used `git rev-parse <sha>`, which echoes a well-formed nonexistent 40-hex object id
+with success, so a measured all-zero sha was blessed and written to the live pointer. Its default `git describe`
+also described HEAD rather than a non-HEAD commit being promoted. Promotion now peels `<rev>^{commit}` before any
+write, preserving symbolic revisions while refusing a missing or non-commit object without changing the pointer;
+the default description is explicitly resolved from the promoted commit. Hermetic guards prove the nonexistent
+object refusal preserves the pointer byte-for-byte and that a tagged non-HEAD promotion records the tag.
+
+**Fleet distribution now resolves the version SSOT from the blessed commit's own tree.** The reader previously
+derived a version-module path from the running process and applied that path to a historical commit; after the
+Phase-4 module move, the 0.16.29 pointer could not be resolved and the fleet could not be converged. Resolution now
+enumerates the blessed tree, parses package modules with AST, and accepts exactly one module-level `__version__`
+assignment. Guards exercise a historical module at a different path and fail closed when the tree declares zero or
+multiple version candidates.
+
 ## [0.16.29] — 2026-11-05
 
 Three evidence-integrity and reliability fixes, plus a retention TTL that stops delegate worktrees being reclaimed
@@ -31,8 +48,8 @@ fail-closed: it returns a `DegradedLaneTokenCostSnapshot` on basis `degraded_cac
 rather than fabricating a cheaper number, and a genuine deadline can still surface.
 
 **Delegate worktrees are retained for a declared TTL before reclaim (#295).** Reclaim ran at terminal state, so a
-worktree could vanish while its patch was still being retrieved — two measured losses. `DELEGATE_WORKTREE_RETENTION_S`
-(default 1500s) and `DELEGATE_WORKTREE_ORPHAN_GRACE_S` (2× that) now govern it: `schedule_delegate_worktree_reclaim`
+worktree could vanish while its patch was still being retrieved — two measured losses. `DELEGATE_WORKTREE_DEFAULT_RETENTION_S`
+(default 1500s) and `DELEGATE_WORKTREE_DEFAULT_ORPHAN_GRACE_S` (2× that) now govern it: `schedule_delegate_worktree_reclaim`
 stamps `reclaim_not_before` into the sidecar instead of removing anything, and a new reaper
 `reclaim_expired_delegate_worktrees` removes only expired trees, only via `git worktree remove --force`, returning
 `{"reclaimed", "retained", "gaps"}` so a tree it could not account for is reported as a named gap rather than
