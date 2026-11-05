@@ -2204,7 +2204,6 @@
       "spendguard.manage.token_operations.lane_queue",
       "spendguard.manage.token_operations.lane_recovery",
       "spendguard.manage.token_operations.queue_planner",
-      "spendguard.manage.token_operations.resource_state",
       "spendguard.manage.token_operations.storm_route",
       "spendguard.manage.token_operations.storm_submit",
       "spendguard.manage.token_operations.warm_stdio_daemon",
@@ -2341,10 +2340,6 @@
     [
       "spendguard.analyze.assurance.verify",
       "spendguard.manage.admission.model_preflight"
-    ],
-    [
-      "spendguard.analyze.assurance.verify",
-      "spendguard.manage.token_operations.resource_state"
     ],
     [
       "spendguard.analyze.assurance.verify",
@@ -3640,10 +3635,6 @@
     ],
     [
       "spendguard.generate.execution.adapters",
-      "spendguard.manage.token_operations.resource_state"
-    ],
-    [
-      "spendguard.generate.execution.adapters",
       "spendguard.manage.token_operations.storm_route"
     ],
     [
@@ -4756,10 +4747,6 @@
     ],
     [
       "spendguard.manage.routing.route_utility",
-      "spendguard.manage.token_operations.resource_state"
-    ],
-    [
-      "spendguard.manage.routing.route_utility",
       "spendguard.platform.lanes"
     ],
     [
@@ -5112,10 +5099,6 @@
     ],
     [
       "spendguard.manage.token_operations.queue_planner",
-      "spendguard.store.configuration.config"
-    ],
-    [
-      "spendguard.manage.token_operations.resource_state",
       "spendguard.store.configuration.config"
     ],
     [
@@ -5781,8 +5764,8 @@
     "src/spendguard/manage/token_operations/delegate_router.py:481",
     "src/spendguard/platform/lanes.py:64"
   ],
-  "max_largest_scc_size": 130,
-  "max_cyclic_edge_count": 882,
+  "max_largest_scc_size": 129,
+  "max_cyclic_edge_count": 878,
   "max_legacy_shim_count": 219,
   "recorded_cross_context_nonsurface_imports": [
     [
@@ -9595,7 +9578,7 @@
     ],
     [
       "spendguard.manage.token_operations.resource_state",
-      "spendguard.store.configuration.config"
+      "spendguard.store.configuration.config_accessors"
     ],
     [
       "spendguard.manage.token_operations.storm_route",

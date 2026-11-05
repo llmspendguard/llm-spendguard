@@ -19,6 +19,7 @@ from urllib.parse import parse_qs, unquote, urlsplit
 from functools import lru_cache, partialmethod
 from pathlib import Path
 from spendguard.ledger_fork_locks import new_fork_reset_ledger_state
+from spendguard.store.configuration.config_accessors import set_config_accessors
 
 DEFAULT_SPENDGUARD_HOME = Path.home() / ".spendguard"
 HOME = Path(os.getenv("SPENDGUARD_HOME") or DEFAULT_SPENDGUARD_HOME)
@@ -2326,6 +2327,10 @@ def save_state(name, obj, loud=True):
             _sys.stderr.write(f"  ⚠ could not save {name} state ({type(e).__name__}: {str(e)[:70]}). The next "
                               f"run will re-read from the last saved watermark, which may double-count.\n")
         return False
+
+
+# Expose config's state/value accessors to modules that must not import config — breaks the resource_state→config cycle.
+set_config_accessors(load_state, save_state, _cfg_get)
 
 
 def uid(n=16):

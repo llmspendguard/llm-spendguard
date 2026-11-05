@@ -1039,6 +1039,7 @@
     "spendguard.store",
     "spendguard.store.call_corpus",
     "spendguard.store.configuration",
+    "spendguard.store.configuration.config_accessors",
     "spendguard.store.money_ledger",
     "spendguard.store.money_ledger.ledger_write_decorators",
     "spendguard.store.reference_data",

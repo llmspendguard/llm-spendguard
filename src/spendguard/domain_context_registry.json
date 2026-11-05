@@ -35,7 +35,8 @@
       ],
       "backing_modules": [
         "store.configuration.config_schema",
-        "store.configuration.config"
+        "store.configuration.config",
+        "store.configuration.config_accessors"
       ],
       "published_names": [
         "ConfigurationReadError",

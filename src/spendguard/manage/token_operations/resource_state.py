@@ -19,9 +19,9 @@ adapters helpers (_lane_cool/_lane_cooling/…) keep their exact behaviour and n
 import time
 import threading
 
-from ... import config
+from ...store.configuration.config_accessors import load_persisted_state, save_persisted_state, get_config_value
 
-_STATE_NAME = "resource_state"   # persisted under SPENDGUARD_HOME via the shared config.load_state/save_state
+_STATE_NAME = "resource_state"   # persisted under SPENDGUARD_HOME via the shared accessor bridge
 _lock = threading.Lock()
 _state = {}                      # key -> {"cooldown": {"until": ts, "reason": str}, ...more axes later...}
 
@@ -53,11 +53,11 @@ def _load_state():
     persistence the other _load_state adapters use, and whose save_state refuses to overwrite a file it could not
     read (so a corrupt file is preserved, never clobbered into 'no cooldowns')."""
     global _state
-    _state = _prune(config.load_state(_STATE_NAME, {}))
+    _state = _prune(load_persisted_state(_STATE_NAME, {}))
 
 
 def _save():
-    config.save_state(_STATE_NAME, _prune(_state), loud=False)     # per-module persisted state; quiet (frequent writes)
+    save_persisted_state(_STATE_NAME, _prune(_state), loud=False)  # per-module persisted state; quiet (frequent writes)
 
 
 def _rec(key):
@@ -141,7 +141,7 @@ def _size_retest_s():
     import os
     try:
         return float(os.environ.get("SPENDGUARD_SIZE_CEILING_RETEST_S")
-                     or config._cfg_get("advisor", "size_ceiling_retest_s", 21600))
+                     or get_config_value("advisor", "size_ceiling_retest_s", 21600))
     except Exception:
         return 21600.0
 
