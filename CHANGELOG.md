@@ -4,6 +4,41 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 
 ## [Unreleased]
 
+## [0.16.29] — 2026-11-05
+
+Three evidence-integrity and reliability fixes, plus a retention TTL that stops delegate worktrees being reclaimed
+out from under a running job.
+
+**Whole evidence reaches every LLM judgement in the chat attribution path (#290).** The conversation classifier
+truncated the material it then decided over: a top-50 conversation cap, and `[:90]` / `[:200]` / `[:80]` / `[:170]`
+/ `[:300]` slices on the per-conversation digests handed to the model. Each cut formed a verdict without seeing
+what it dropped, and nothing in the mechanism signalled it. The classifier now sends the whole corpus through a
+chunked map-reduce instead of a head, accounts for rejections rather than silently discarding them, and
+checkpoints each page atomically. `max_new` became a first-class cap so a capped fetch can no longer drive a
+destructive server-side `replace` over the un-fetched remainder.
+
+**`_digest_conv` stores the whole `first_user` (#292).** The same family of defect one layer down: the digest
+persisted a 300-character prefix, so every downstream reader — classification, attribution, the story view —
+reasoned from a truncation it could not see. The stored digest is now complete.
+
+**Hook-time ledger reads own an independent read-only connection (#294).** A bounded read issued from a hook
+could refuse with `LedgerQueryDeadline` while the ledger was perfectly healthy. The root cause was pool
+*admission saturation*, not WAL contention: the read waited behind the pool's admission gate, and an in-flight
+writer handoff held it past the budget. Bounded reads now take their own read-only connection via
+`open_ledger_connection` under `closing`, outside the pool. `LEDGER_QUERY_DEADLINE_S` is unchanged at 5.0s in
+both directions — the budget was never the defect, so it was not raised to hide one. The degrade path stays
+fail-closed: it returns a `DegradedLaneTokenCostSnapshot` on basis `degraded_cached_max` and refuses admission
+rather than fabricating a cheaper number, and a genuine deadline can still surface.
+
+**Delegate worktrees are retained for a declared TTL before reclaim (#295).** Reclaim ran at terminal state, so a
+worktree could vanish while its patch was still being retrieved — two measured losses. `DELEGATE_WORKTREE_RETENTION_S`
+(default 1500s) and `DELEGATE_WORKTREE_ORPHAN_GRACE_S` (2× that) now govern it: `schedule_delegate_worktree_reclaim`
+stamps `reclaim_not_before` into the sidecar instead of removing anything, and a new reaper
+`reclaim_expired_delegate_worktrees` removes only expired trees, only via `git worktree remove --force`, returning
+`{"reclaimed", "retained", "gaps"}` so a tree it could not account for is reported as a named gap rather than
+counted clean. It is wired opportunistically into `create_delegate_job` and onto the existing
+`com.spendguard.codex-orphan-reap` launchd job — no new plist and no new capability-registry entry.
+
 ## [0.16.28] — 2026-11-02
 
 The ambient request-scope deadline no longer refuses ledger operations centrally, at the two root gates (#291) —
