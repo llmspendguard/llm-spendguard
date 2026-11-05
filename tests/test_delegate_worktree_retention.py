@@ -33,7 +33,7 @@ RETENTION_TEST_INTENT = "retention-test-intent"
 RETENTION_TEST_SESSION_REAP_RESULT = {"reaped": [RETENTION_TEST_JOB_ID], "errors": []}
 
 
-def _raise_retention_reaper_failure():
+def _raise_retention_reaper_failure(*_positional_arguments, **_keyword_arguments):
     raise RuntimeError(RETENTION_TEST_REAPER_FAILURE)
 
 
