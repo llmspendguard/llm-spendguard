@@ -170,14 +170,14 @@ def promote_release(sha=None, *, describe=None, gate="", actor="deploy", allow_d
         sha = _git_src("rev-parse", "HEAD")
     if not sha:
         raise ValueError("promote_release: no git HEAD to promote (is this a git checkout?)")
-    full = _git_src("rev-parse", sha)                 # resolve/validate the ref → a full sha
+    full = _git_src("rev-parse", f"{sha}^{{commit}}")  # peel and prove the revision names an existing commit
     if not full:
         raise ValueError(f"promote_release: git cannot resolve {sha!r}")
     if _tracked_dirty() and not allow_dirty:
         raise ValueError("promote_release: the working tree has uncommitted changes to tracked files — commit "
                          "first so the pointer names committed code, or pass allow_dirty=True deliberately.")
     rec = {"sha": full, "short": full[:7],
-           "describe": describe or _git_src("describe", "--tags", "--always") or full[:7],
+           "describe": describe or _git_src("describe", "--tags", "--always", full) or full[:7],
            "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
            "gate": gate, "actor": actor, "host": os.uname().nodename if hasattr(os, "uname") else ""}
     config.update_json(pointer_path(), lambda _cur: rec, reason="deploy")
