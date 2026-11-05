@@ -1,12 +1,14 @@
 """Best-effort WAL reclamation with explicit contention and failure outcomes."""
 import logging
 import math
+import os
 import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from spendguard import config
+from spendguard.store.configuration import ledger_connection_accessors
+from spendguard.store.spend_search import ledger_read_accessors
 
 _WAL_MAINTENANCE_LOG = logging.getLogger(__name__)
 WAL_CHECKPOINT_SUCCESS = "complete"
@@ -31,8 +33,8 @@ def _reset_ledger_wal_cadence_in_child():
     _DEFAULT_WAL_MAINTENANCE_CADENCE = LedgerWalMaintenanceCadence()
 
 
-if hasattr(config.os, "register_at_fork"):
-    config.os.register_at_fork(after_in_child=_reset_ledger_wal_cadence_in_child)
+if hasattr(os, "register_at_fork"):
+    os.register_at_fork(after_in_child=_reset_ledger_wal_cadence_in_child)
 
 
 @dataclass(frozen=True)
@@ -53,33 +55,34 @@ def truncate_ledger_wal_bounded(path=None, *, deadline_s=None):
     filesystem I/O itself remains subject to OS scheduling, as with ledger opens.
     No row contents change; contention is a visible BUSY report, never retried inline.
     """
-    from ...ledger_read import effective_ledger_admission_deadline, LedgerReadError
-    duration = config.LEDGER_READ_TIME_BUDGET_S if deadline_s is None else deadline_s
+    duration = (ledger_connection_accessors.get_wal_ledger_read_time_budget_seconds()
+                if deadline_s is None else deadline_s)
     connection = None
     try:
         if not math.isfinite(duration) or duration <= 0:
             raise ValueError("WAL checkpoint deadline must be positive and finite")
-        deadline_at = effective_ledger_admission_deadline(time.monotonic() + duration)
-        busy_timeout_ms = config.ledger_wal_checkpoint_busy_timeout_ms()
+        deadline_at = ledger_read_accessors.resolve_ledger_admission_deadline(time.monotonic() + duration)
+        busy_timeout_ms = ledger_connection_accessors.read_wal_checkpoint_busy_timeout_milliseconds()
+        timeout_ms_per_s = ledger_connection_accessors.get_wal_ledger_timeout_milliseconds_per_second()
         checkpoint_deadline_at = min(deadline_at, time.monotonic()
-                                     + busy_timeout_ms / config.LEDGER_TIMEOUT_MS_PER_S)
-        connection = config.open_ledger_connection(
-            path, timeout=busy_timeout_ms / config.LEDGER_TIMEOUT_MS_PER_S,
+                                     + busy_timeout_ms / timeout_ms_per_s)
+        connection = ledger_connection_accessors.open_wal_ledger_connection(
+            path, timeout=busy_timeout_ms / timeout_ms_per_s,
             tune=False, deadline_at=checkpoint_deadline_at, isolation_level=None)
         # SQLite's busy handler does not run the VM progress handler. Bound it
         # separately to the remaining admission/query deadline as well as cadence.
-        remaining_ms = max(0, int((checkpoint_deadline_at - time.monotonic()) * config.LEDGER_TIMEOUT_MS_PER_S))
+        remaining_ms = max(0, int((checkpoint_deadline_at - time.monotonic()) * timeout_ms_per_s))
         connection.execute(f"PRAGMA busy_timeout={min(busy_timeout_ms, remaining_ms)}")
         connection.set_progress_handler(lambda: time.monotonic() >= checkpoint_deadline_at,
-                                        config.LEDGER_QUERY_PROGRESS_VM_INSTRUCTIONS)
+                                        ledger_connection_accessors.get_wal_ledger_query_progress_vm_instructions())
         busy, log_frames, checkpointed_frames = connection.execute(WAL_CHECKPOINT_SQL).fetchone()
         if time.monotonic() >= deadline_at:
             raise TimeoutError("WAL checkpoint deadline exceeded")
         report = LedgerWalCheckpointReport(WAL_CHECKPOINT_BUSY if busy else WAL_CHECKPOINT_SUCCESS,
                                           busy, log_frames, checkpointed_frames)
-    except LedgerReadError:
+    except ledger_read_accessors.ledger_read_error_type():
         raise
-    except (Exception, config.LedgerConnectionLimitError) as error:
+    except (Exception, ledger_connection_accessors.wal_ledger_connection_limit_error_type()) as error:
         report = LedgerWalCheckpointReport(WAL_CHECKPOINT_FAILED, error=f"{type(error).__name__}: {error}")
     finally:
         if connection is not None:
@@ -95,7 +98,6 @@ def maintain_ledger_wal_if_due(path=None, *, cadence=None):
     The process lock is nonblocking so concurrent callers never queue behind
     maintenance. BUSY/failed attempts are logged and retried on a later operation.
     """
-    from ...ledger_read import LedgerReadError, effective_ledger_admission_deadline
     # Best-effort maintenance must NEVER abort the serving operation that happens to trigger it. A serving
     # surface can hold an expired/abandoned request scope (e.g. a long inline delegate turn ran under a
     # request-lifetime ledger_request_scope whose absolute deadline has since passed); raising that request's
@@ -103,16 +105,16 @@ def maintain_ledger_wal_if_due(path=None, *, cadence=None):
     # ledger_op re-raise it). With no live budget there is nothing to reclaim within bound anyway, so SKIP and
     # let a later unpressured open run it — SQLite's own wal_autocheckpoint still bounds the WAL meanwhile.
     try:
-        effective_ledger_admission_deadline()
-    except LedgerReadError:
+        ledger_read_accessors.resolve_ledger_admission_deadline()
+    except ledger_read_accessors.ledger_read_error_type():
         return LedgerWalCheckpointReport(WAL_CHECKPOINT_SKIPPED)
     if cadence is None:
         cadence = _DEFAULT_WAL_MAINTENANCE_CADENCE
     if not cadence.lock.acquire(blocking=False):
         return LedgerWalCheckpointReport(WAL_CHECKPOINT_SKIPPED)
     try:
-        ledger = str(Path(path or config.db_path()).resolve())
-        interval = config.ledger_wal_checkpoint_interval_s()
+        ledger = str(Path(path or ledger_connection_accessors.resolve_wal_ledger_db_path()).resolve())
+        interval = ledger_connection_accessors.read_wal_checkpoint_interval_seconds()
         now = time.monotonic()
         last_attempt = cadence.attempts.get(ledger)
         if last_attempt is not None and now - last_attempt < interval:
@@ -121,11 +123,11 @@ def maintain_ledger_wal_if_due(path=None, *, cadence=None):
         from .ledger_daily_rollup import schedule_rollup_fingerprint_audit
         schedule_rollup_fingerprint_audit(ledger)
         return truncate_ledger_wal_bounded(ledger)
-    except LedgerReadError:
+    except ledger_read_accessors.ledger_read_error_type():
         # The ambient request expired/aborted mid-checkpoint: best-effort maintenance SKIPS rather than
         # propagating the serving caller's deadline out of a non-mandatory checkpoint (see the pre-check above).
         return LedgerWalCheckpointReport(WAL_CHECKPOINT_SKIPPED)
-    except (Exception, config.LedgerConnectionLimitError) as error:
+    except (Exception, ledger_connection_accessors.wal_ledger_connection_limit_error_type()) as error:
         report = LedgerWalCheckpointReport(WAL_CHECKPOINT_FAILED, error=f"{type(error).__name__}: {error}")
         _WAL_MAINTENANCE_LOG.warning("Ledger WAL maintenance: %s", report)
         return report

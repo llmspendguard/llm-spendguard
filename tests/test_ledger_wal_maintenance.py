@@ -90,7 +90,8 @@ def test_wal_checkpoint_reports_pin_then_retries_after_release(tmp_path, monkeyp
         writer.commit()
         clock = [WAL_GUARD_CLOCK_START_S]
         monkeypatch.setattr(maintenance.time, "monotonic", lambda: clock[0])
-        monkeypatch.setattr(config, "ledger_wal_checkpoint_interval_s", lambda: WAL_GUARD_INTERVAL_S)
+        monkeypatch.setattr(maintenance.ledger_connection_accessors,
+                            "read_wal_checkpoint_interval_seconds", lambda: WAL_GUARD_INTERVAL_S)
         first = maintenance.maintain_ledger_wal_if_due(ledger_path)
         assert first.status == maintenance.WAL_CHECKPOINT_BUSY, first
         assert warnings and warnings[-1][-1].status == maintenance.WAL_CHECKPOINT_BUSY

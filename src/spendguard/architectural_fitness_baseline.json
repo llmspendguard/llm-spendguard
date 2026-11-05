@@ -5369,10 +5369,6 @@
     ],
     [
       "spendguard.store.configuration.config",
-      "spendguard.store.money_ledger.ledger_wal_maintenance"
-    ],
-    [
-      "spendguard.store.configuration.config",
       "spendguard.store.money_ledger.ledger_writer"
     ],
     [
@@ -5437,14 +5433,6 @@
     ],
     [
       "spendguard.store.money_ledger.ledger_deadletter",
-      "spendguard.store.spend_search.ledger_read"
-    ],
-    [
-      "spendguard.store.money_ledger.ledger_wal_maintenance",
-      "spendguard.store.configuration.config"
-    ],
-    [
-      "spendguard.store.money_ledger.ledger_wal_maintenance",
       "spendguard.store.spend_search.ledger_read"
     ],
     [
@@ -5638,8 +5626,8 @@
     "src/spendguard/manage/token_operations/delegate_router.py:481",
     "src/spendguard/platform/lanes.py:64"
   ],
-  "max_largest_scc_size": 122,
-  "max_cyclic_edge_count": 848,
+  "max_largest_scc_size": 121,
+  "max_cyclic_edge_count": 845,
   "max_legacy_shim_count": 219,
   "recorded_cross_context_nonsurface_imports": [
     [
@@ -9908,11 +9896,11 @@
     ],
     [
       "spendguard.store.money_ledger.ledger_wal_maintenance",
-      "spendguard.store.configuration.config"
+      "spendguard.store.configuration.ledger_connection_accessors"
     ],
     [
       "spendguard.store.money_ledger.ledger_wal_maintenance",
-      "spendguard.store.spend_search.ledger_read"
+      "spendguard.store.spend_search.ledger_read_accessors"
     ],
     [
       "spendguard.store.money_ledger.ledger_writer",

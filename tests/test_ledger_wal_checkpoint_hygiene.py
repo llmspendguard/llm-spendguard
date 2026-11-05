@@ -178,7 +178,7 @@ def check_wal_checkpoint_config_keys_present(monkeypatch):
     assert 0 < config.LEDGER_READ_BUSY_TIMEOUT_MS < config.LEDGER_BUSY_TIMEOUT_MS
     source = pathlib.Path(maintenance.__file__).read_text()
     assert "PRAGMA busy_timeout=0" not in source
-    assert "ledger_wal_checkpoint_busy_timeout_ms" in source
+    assert "read_wal_checkpoint_busy_timeout_milliseconds" in source
     # Each owner-facing config.json key is live, not merely declared in schema.
     settings = {
         "wal_checkpoint_busy_timeout_ms": WAL_HYGIENE_WAIT_MS,

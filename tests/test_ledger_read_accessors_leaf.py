@@ -43,12 +43,16 @@ def main():
     assert ledger_read_accessors._ledger_calls_table == ledger_read.LEDGER_CALLS_TABLE
     assert ledger_read_accessors._read_cost_integrity_buckets is ledger_read.read_cost_integrity_buckets
     assert ledger_read_accessors._ledger_read_schema_error is ledger_read.LedgerReadSchemaError
+    assert ledger_read_accessors._effective_ledger_admission_deadline is ledger_read.effective_ledger_admission_deadline
+    assert ledger_read_accessors._ledger_read_error is ledger_read.LedgerReadError
     original_accessors = (
         ledger_read_accessors._ledger_table_exists,
         ledger_read_accessors._read_routing_history,
         ledger_read_accessors._ledger_calls_table,
         ledger_read_accessors._read_cost_integrity_buckets,
         ledger_read_accessors._ledger_read_schema_error,
+        ledger_read_accessors._effective_ledger_admission_deadline,
+        ledger_read_accessors._ledger_read_error,
     )
     recorded_calls = []
 
@@ -64,7 +68,14 @@ def main():
         recorded_calls.append(("cost_integrity_buckets", since_days, path))
         return ["stub-bucket"]
 
+    def record_admission_deadline(deadline_at=None):
+        recorded_calls.append(("admission_deadline", deadline_at))
+        return "stub-deadline"
+
     class StubLedgerReadSchemaError(Exception):
+        pass
+
+    class StubLedgerReadError(RuntimeError):
         pass
 
     try:
@@ -74,16 +85,21 @@ def main():
             "stubbed-calls-table",
             record_cost_integrity_buckets,
             StubLedgerReadSchemaError,
+            record_admission_deadline,
+            StubLedgerReadError,
         )
         assert ledger_read_accessors.read_ledger_table_exists("calls") is True
         assert ledger_read_accessors.read_routing_history("x", since="s", as_of="a", limit=3) == {"intent": "x"}
         assert ledger_read_accessors.get_ledger_calls_table() == "stubbed-calls-table"
         assert ledger_read_accessors.read_metered_cost_buckets(5, "p") == ["stub-bucket"]
         assert ledger_read_accessors.ledger_read_schema_error_type() is StubLedgerReadSchemaError
+        assert ledger_read_accessors.resolve_ledger_admission_deadline(123) == "stub-deadline"
+        assert ledger_read_accessors.ledger_read_error_type() is StubLedgerReadError
         assert recorded_calls == [
             ("table_exists", "calls"),
             ("routing_history", "x", "s", "a", 3),
             ("cost_integrity_buckets", 5, "p"),
+            ("admission_deadline", 123),
         ]
 
         ledger_read_accessors._ledger_table_exists = None

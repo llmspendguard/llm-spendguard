@@ -20,6 +20,7 @@ from functools import lru_cache, partialmethod
 from pathlib import Path
 from spendguard.ledger_fork_locks import new_fork_reset_ledger_state
 from spendguard.store.configuration.config_accessors import set_config_accessors
+from spendguard.store.configuration.ledger_connection_accessors import set_ledger_connection_accessors
 
 DEFAULT_SPENDGUARD_HOME = Path.home() / ".spendguard"
 HOME = Path(os.getenv("SPENDGUARD_HOME") or DEFAULT_SPENDGUARD_HOME)
@@ -2397,6 +2398,12 @@ def disk_guard_floor_bytes():
 # resource_state/route_realized/disk_guard→config cycles (all read via the config_accessors leaf).
 set_config_accessors(load_state, save_state, _cfg_get, db_path, disk_guard_floor_bytes, ledger_op, pooled_ledger_conn, uid,
                      lambda: HOME, ssl_context)
+set_ledger_connection_accessors(
+    open_ledger_connection, db_path, ledger_wal_checkpoint_interval_s,
+    ledger_wal_checkpoint_busy_timeout_ms, LEDGER_READ_TIME_BUDGET_S,
+    LEDGER_TIMEOUT_MS_PER_S, LEDGER_QUERY_PROGRESS_VM_INSTRUCTIONS,
+    LedgerConnectionLimitError,
+)
 
 
 # Cache publication never waits behind a spend writer; the authoritative heap is available.
