@@ -2952,6 +2952,21 @@ def _stale_editable_install():
     return bool(meta_v and meta_v != code_v), code_v, meta_v
 
 
+def validate_advisor():
+    """Both advisor models MUST be priced in pricing.py (else the meta estimate/cap can't be computed).
+    Returns a list of human-readable problems (empty = OK). Lives here beside its sole caller
+    (control_gate_runtime's doctor advisor check), not in store.configuration: the pricing coupling belongs
+    at the admission layer that consumes it, keeping config free of a reference_data (pricing) import."""
+    from ... import config
+    problems = []
+    for role, m in (("advisor.model", config.advisor_model()), ("advisor.judge_model", config.advisor_judge_model())):
+        try:
+            pricing.price(m)
+        except Exception as e:
+            problems.append(f"{role}={m!r}: {e}")
+    return problems
+
+
 def control_gate_runtime(cmd: str = "status", live: bool = False):
     _stale_install = False              # set True when _stale_editable_install() finds code!=metadata (a broken install)
     _consumer_install_drift_found = False
@@ -3083,8 +3098,7 @@ def control_gate_runtime(cmd: str = "status", live: bool = False):
         # estimate-first discipline silently degrades to "run it and find out". doctor is where a user goes
         # to ask whether this machine is configured correctly, so it is where the answer belongs.
         try:
-            from ... import config as _c
-            _probs = _c.validate_advisor()
+            _probs = validate_advisor()
             print(f"  advisor   : {'🟢 both models priced' if not _probs else '🔴 UNPRICED — the meta cap cannot be computed'}")
             for _p in _probs:
                 print(f"      {_p}")

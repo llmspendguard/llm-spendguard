@@ -106,7 +106,6 @@ install_domain_context_surface(globals(), {
     "tune_ledger_connection": "spendguard.store.configuration.config:tune_ledger_connection",
     "uid": "spendguard.store.configuration.config:uid",
     "update_json": "spendguard.store.configuration.config:update_json",
-    "validate_advisor": "spendguard.store.configuration.config:validate_advisor",
     "validate_isolated_sqlite_open_path": "spendguard.store.configuration.config:validate_isolated_sqlite_open_path",
     "warn_once": "spendguard.store.configuration.config:warn_once",
     "with_ledger_read_lease": "spendguard.store.configuration.config:with_ledger_read_lease",

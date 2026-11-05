@@ -1083,19 +1083,6 @@ def recall_model():
     return os.getenv("SPENDGUARD_RECALL_MODEL") or _cfg_get("advisor", "recall_model", "gpt-5-nano")
 
 
-def validate_advisor():
-    """Both advisor models MUST be priced in pricing.py (else the meta estimate/cap can't be computed).
-    Returns a list of human-readable problems (empty = OK)."""
-    from ... import pricing
-    problems = []
-    for role, m in (("advisor.model", advisor_model()), ("advisor.judge_model", advisor_judge_model())):
-        try:
-            pricing.price(m)
-        except Exception as e:
-            problems.append(f"{role}={m!r}: {e}")
-    return problems
-
-
 def budget_backend():
     return _cfg_get("budget", "backend", "memory")
 

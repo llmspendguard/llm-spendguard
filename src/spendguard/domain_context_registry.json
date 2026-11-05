@@ -146,7 +146,6 @@
         "tune_ledger_connection",
         "uid",
         "update_json",
-        "validate_advisor",
         "validate_isolated_sqlite_open_path",
         "warn_once",
         "with_ledger_read_lease"
