@@ -216,11 +216,15 @@ def main():
     from spendguard.manage.token_operations import resource_state
     from spendguard.manage.admission import disk_guard
     from spendguard.analyze.learning import learn
+    from spendguard.egress import share
 
     assert not hasattr(resource_state, "config")
     assert not hasattr(disk_guard, "config")
     assert disk_guard.get_disk_guard_floor_bytes is config_accessors.get_disk_guard_floor_bytes
     assert not hasattr(learn, "config")
+    assert not hasattr(share, "config")
+    assert share.get_config_value is config_accessors.get_config_value
+    assert hasattr(share, "learn")
     assert callable(learn.insights_ledger_op)
     with learn.insights_ledger_op() as handle:
         assert handle.execute("SELECT 1").fetchone()[0] == 1

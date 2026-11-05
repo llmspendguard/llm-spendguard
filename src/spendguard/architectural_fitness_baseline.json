@@ -2154,7 +2154,6 @@
       "spendguard.analyze.treasury.lane_value",
       "spendguard.analyze.treasury.overage",
       "spendguard.egress.saas",
-      "spendguard.egress.share",
       "spendguard.egress.signal",
       "spendguard.generate.execution.adapters",
       "spendguard.generate.execution.antigravity_exec",
@@ -3427,10 +3426,6 @@
     ],
     [
       "spendguard.egress.saas",
-      "spendguard.egress.share"
-    ],
-    [
-      "spendguard.egress.saas",
       "spendguard.egress.signal"
     ],
     [
@@ -3472,10 +3467,6 @@
     [
       "spendguard.egress.saas",
       "spendguard.store.reference_data.sync"
-    ],
-    [
-      "spendguard.egress.share",
-      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.egress.signal",
@@ -5672,8 +5663,8 @@
     "src/spendguard/manage/token_operations/delegate_router.py:481",
     "src/spendguard/platform/lanes.py:64"
   ],
-  "max_largest_scc_size": 125,
-  "max_cyclic_edge_count": 856,
+  "max_largest_scc_size": 124,
+  "max_cyclic_edge_count": 854,
   "max_legacy_shim_count": 219,
   "recorded_cross_context_nonsurface_imports": [
     [
@@ -7499,6 +7490,10 @@
     [
       "spendguard.egress.share",
       "spendguard.interface.capability_cli_parsing"
+    ],
+    [
+      "spendguard.egress.share",
+      "spendguard.store.configuration.config_accessors"
     ],
     [
       "spendguard.egress.signal",
