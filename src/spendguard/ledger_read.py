@@ -1,6 +1,6 @@
 """Bounded, admission-counted, read-only ledger requests shared by every skin."""
 from collections.abc import Iterator, Mapping
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -652,9 +652,12 @@ def _ledger_bounded_read_handle(path, time_budget, *, bulk_chunked=False):
             raise LedgerReadTimeout(time_budget)
         empty_spend_compatibility = _CONSUMER_EMPTY_SPEND_COMPATIBILITY.get()
         read_path = _consumer_ledger_read_target(ledger_path)
-        read_owner = config.managed_ledger_read_connection(read_path, uri=True,
-            timeout=min(config.LEDGER_CONNECT_TIMEOUT_S, remaining),
-            deadline_at=deadline_at)
+        # Bounded consumer reads own an independent read-only WAL snapshot.
+        # They must not queue behind legacy pooled writer handles: hook
+        # processes need their first read even while another owner is writing.
+        read_owner = closing(config.open_ledger_connection(read_path, uri=True,
+            tune=False, timeout=min(config.LEDGER_CONNECT_TIMEOUT_S, remaining),
+            deadline_at=deadline_at))
         connection = read_owner.__enter__()
     except TimeoutError as exc:
         raise LedgerReadTimeout(time_budget) from exc

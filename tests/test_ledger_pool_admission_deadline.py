@@ -1,4 +1,4 @@
-"""Aggregate deadlines include a saturated read pool's admission wait."""
+"""Bounded snapshots bypass legacy pool saturation; direct leases remain bounded."""
 import sys
 import threading
 import time
@@ -21,11 +21,11 @@ ADMISSION_REPRO_HOLD_MULTIPLIER = 9000
 ADMISSION_REPRO_SCHEDULING_MULTIPLIER = 1500
 
 
-def test_ambient_scope_refuses_deadlineless_read_pool_admission():
+def test_ambient_scope_bounded_reads_bypass_saturated_legacy_pool():
     current = ledger.SpendLedger()
     for accessor in (lambda: current.get(__name__), lambda: current.history(__name__),
                      current.verify_audit_chain):
-        assert_ambient_pool_refusal(current, accessor)
+        assert_bounded_read_ignores_saturated_legacy_pool(current, accessor)
 
 
 def test_ambient_scope_refuses_direct_read_pool_admission():
@@ -66,7 +66,32 @@ def assert_ambient_pool_refusal(current, accessor):
         assert not holder.is_alive()
 
 
-def test_aggregate_deadline_expires_before_pool_release():
+def assert_bounded_read_ignores_saturated_legacy_pool(current, accessor):
+    occupied = threading.Event()
+    release = threading.Event()
+    hold_s = ADMISSION_REPRO_DEADLINE_S * ADMISSION_REPRO_HOLD_MULTIPLIER
+
+    def occupy_independent_read_legacy_pool():
+        with config.managed_ledger_read_connection(current.db_path):
+            occupied.set()
+            release.wait(timeout=hold_s)
+
+    with patch.object(config, "ledger_read_pool_settings", return_value=(ADMISSION_REPRO_CAP, hold_s)):
+        holder = threading.Thread(target=occupy_independent_read_legacy_pool)
+        holder.start()
+        try:
+            assert occupied.wait(timeout=config.LEDGER_WRITE_TIMEOUT_S)
+            with ledger_read.ledger_request_scope(
+                    deadline_s=ledger_read.DEFAULT_LEDGER_READ_TIME_BUDGET_S):
+                accessor()
+            assert holder.is_alive(), "bounded snapshot must complete before legacy lease release"
+        finally:
+            release.set()
+            holder.join(timeout=config.LEDGER_WRITE_TIMEOUT_S)
+        assert not holder.is_alive()
+
+
+def test_aggregate_bounded_read_bypasses_saturated_legacy_pool():
     current = ledger.SpendLedger()
     hold_s = ADMISSION_REPRO_DEADLINE_S * ADMISSION_REPRO_HOLD_MULTIPLIER
     for accessor in (current.spent_dec, current.running_llm_total_dec):
@@ -83,16 +108,8 @@ def test_aggregate_deadline_expires_before_pool_release():
             holder.start()
             try:
                 assert occupied.wait(timeout=config.LEDGER_WRITE_TIMEOUT_S)
-                started = time.monotonic()
-                try:
-                    accessor(deadline_s=ADMISSION_REPRO_DEADLINE_S)
-                except ledger_read.LedgerQueryDeadline:
-                    pass
-                else:
-                    raise AssertionError("saturated admission must raise LedgerQueryDeadline")
-                assert time.monotonic() - started < (
-                    ADMISSION_REPRO_DEADLINE_S * ADMISSION_REPRO_SCHEDULING_MULTIPLIER) * runner_budget_scale
-                assert holder.is_alive(), "timeout must precede lease release"
+                accessor(deadline_s=ledger_read.DEFAULT_LEDGER_READ_TIME_BUDGET_S)
+                assert holder.is_alive(), "bounded snapshot must precede legacy lease release"
             finally:
                 release.set()
                 holder.join(timeout=config.LEDGER_WRITE_TIMEOUT_S)

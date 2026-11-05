@@ -192,7 +192,7 @@ def test_ledger_query_deadline_observer_setup_degrades_to_heap():
     seed_deadline_guard_ledger()
     close_deadline_guard_thread_ledger()
     baseline = config.ledger_connection_count()
-    original_read_owner = config.managed_ledger_read_connection
+    original_read_open = config.open_ledger_connection
     observer_failures = [TimeoutError(DEADLINE_GUARD_FAILURE_MESSAGE),
                          ledger_read.LedgerReadTimeout(DEADLINE_GUARD_BUDGET_S)]
     for sqlite_code in (sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED,
@@ -207,7 +207,6 @@ def test_ledger_query_deadline_observer_setup_degrades_to_heap():
         fatal_observer_failure = getattr(observer_failure, "sqlite_errorcode", None) in (
             sqlite3.SQLITE_CORRUPT, sqlite3.SQLITE_ERROR)
 
-        @contextmanager
         def inject_deadline_guard_observer_open(*args, owners=opened_owners,
                                                exhaust=exhaust_budget, stage=failure_stage,
                                                failure=observer_failure, **kwargs):
@@ -218,18 +217,18 @@ def test_ledger_query_deadline_observer_setup_degrades_to_heap():
                 request.deadline_at = time.monotonic()
             if is_observer and stage == DEADLINE_GUARD_BEFORE_OBSERVER_OPEN:
                 raise failure
-            with original_read_owner(*args, **kwargs) as connection:
-                if is_observer:
-                    if stage == DEADLINE_GUARD_OBSERVER_GENERATION_READ:
-                        proxy = Mock(wraps=connection)
-                        proxy.execute.side_effect = failure
-                        yield proxy
-                        return
-                    raise failure
-                yield connection
+            connection = original_read_open(*args, **kwargs)
+            if is_observer:
+                if stage == DEADLINE_GUARD_OBSERVER_GENERATION_READ:
+                    proxy = Mock(wraps=connection)
+                    proxy.execute.side_effect = failure
+                    return proxy
+                connection.close()
+                raise failure
+            return connection
 
         try:
-            with patch.object(config, "managed_ledger_read_connection",
+            with patch.object(config, "open_ledger_connection",
                               side_effect=inject_deadline_guard_observer_open):
                 try:
                     result = budget.spent_since(DEADLINE_GUARD_DAY)
