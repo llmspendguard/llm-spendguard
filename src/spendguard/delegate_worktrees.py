@@ -7,20 +7,12 @@ import shutil
 import subprocess
 import tempfile
 
-from . import config
-
 DELEGATE_WORKTREE_DIRECTORY = "delegate-worktrees"
 DELEGATE_WORKTREE_METADATA_FILENAME = "worktree.json"
 DELEGATE_WORKTREE_DEFAULT_RETENTION_S = 1500
 # Orphans have no authoritative deadline, so grant twice the normal inspection
 # floor before reclaiming them to avoid shortening retention after journal loss.
 DELEGATE_WORKTREE_DEFAULT_ORPHAN_GRACE_S = DELEGATE_WORKTREE_DEFAULT_RETENTION_S * 2
-DELEGATE_WORKTREE_RETENTION_S = float(config._cfg_get(
-    "delegate", "worktree_retention_s", DELEGATE_WORKTREE_DEFAULT_RETENTION_S)
-    or DELEGATE_WORKTREE_DEFAULT_RETENTION_S)
-DELEGATE_WORKTREE_ORPHAN_GRACE_S = float(config._cfg_get(
-    "delegate", "worktree_orphan_grace_s", DELEGATE_WORKTREE_DEFAULT_ORPHAN_GRACE_S)
-    or DELEGATE_WORKTREE_DEFAULT_ORPHAN_GRACE_S)
 DELEGATE_WORKTREE_GITDIR_PREFIX = "gitdir: "
 DELEGATE_WORKTREE_GITDIR_MARKER = "/.git/worktrees/"
 
@@ -49,7 +41,7 @@ def _delegate_worktree_reclaim_timestamp(now, retention_s):
 
 
 def run_isolated_delegate(executor, cwd, *, worktree_root, metadata_writer=None, now=None,
-                          retention_s=DELEGATE_WORKTREE_RETENTION_S):
+                          retention_s=DELEGATE_WORKTREE_DEFAULT_RETENTION_S):
     """Snapshot dirty inputs into a git worktree and collect a complete patch.
 
     The primary index and working directory are never modified. Ignored inputs stay
@@ -104,7 +96,7 @@ def run_isolated_delegate(executor, cwd, *, worktree_root, metadata_writer=None,
 
 
 def schedule_delegate_worktree_reclaim(execution, *, metadata_writer=None, envelope_writer=None,
-                                       now=None, retention_s=DELEGATE_WORKTREE_RETENTION_S):
+                                       now=None, retention_s=DELEGATE_WORKTREE_DEFAULT_RETENTION_S):
     """Stamp the retention floor; periodic reap cadence determines the ceiling."""
     metadata = execution.get("worktree")
     if not metadata or not metadata.get("retained"):
@@ -128,21 +120,19 @@ def _delegate_worktree_primary_cwd_from_gitfile(worktree_path):
     return Path(gitdir[:marker_index])
 
 
-def reclaim_expired_delegate_worktrees(now=None, *, worktree_root=None,
-                                       orphan_grace_s=DELEGATE_WORKTREE_ORPHAN_GRACE_S):
+def reclaim_expired_delegate_worktrees(now=None, *, journal_root_resolver, metadata_updater, worktree_root,
+                                       orphan_grace_s=DELEGATE_WORKTREE_DEFAULT_ORPHAN_GRACE_S):
     """Reclaim after the TTL floor; scheduled invocation frequency sets the ceiling.
 
     Sidecar deadlines are authoritative. Journal-less directories receive the
     longer orphan grace because no authoritative deadline survived.
     """
     report = {"reclaimed": 0, "retained": 0, "gaps": []}
-    root = Path(worktree_root or config._cfg_get("delegate", "worktree_root", None)
-                or config.HOME / DELEGATE_WORKTREE_DIRECTORY).expanduser()
+    root = Path(worktree_root).expanduser()
     if not root.is_dir():
         return report
     current = now or datetime.datetime.now(datetime.timezone.utc)
-    from .execution_journal import durable_execution_store_root
-    journal_root = durable_execution_store_root()
+    journal_root = Path(journal_root_resolver()).expanduser()
     governed_paths = set()
     # Warm executions may use an alternate journal root; their sidecars are intentionally absent here,
     # so their worktrees fall through to the longer orphan-grace path rather than becoming unreclaimable.
@@ -168,8 +158,8 @@ def reclaim_expired_delegate_worktrees(now=None, *, worktree_root=None,
             _delegate_worktree_git(metadata["primary_cwd"], "worktree", "remove", "--force",
                                    os.fspath(worktree_path))
             metadata["retained"] = False
-            config.update_json(sidecar, lambda previous, updated=metadata: updated,
-                               reason="persist reclaimed delegate workspace", required=True)
+            metadata_updater(sidecar, lambda previous, updated=metadata: updated,
+                             reason="persist reclaimed delegate workspace", required=True)
             report["reclaimed"] += 1
         except Exception as error:
             report["gaps"].append({"path": os.fspath(sidecar), "reason": str(error)})

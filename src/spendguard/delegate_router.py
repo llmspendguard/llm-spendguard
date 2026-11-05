@@ -442,17 +442,27 @@ def _persist_delegate_workspace_metadata(metadata, execution_id):
             lambda previous: metadata, reason="persist isolated delegate workspace", required=True)
 
 
+def _configured_delegate_worktree_retention_seconds(default_retention_s):
+    return float(config._cfg_get("delegate", "worktree_retention_s", default_retention_s)
+                 or default_retention_s)
+
+
 def _run_isolated_agentic_provider(executor, cwd):
-    from .delegate_worktrees import DELEGATE_WORKTREE_DIRECTORY, run_isolated_delegate
+    from .delegate_worktrees import (
+        DELEGATE_WORKTREE_DEFAULT_RETENTION_S,
+        DELEGATE_WORKTREE_DIRECTORY,
+        run_isolated_delegate,
+    )
     from . import execution_journal
     execution_id = execution_journal.current_durable_execution_id()
     return run_isolated_delegate(executor, cwd, worktree_root=config._cfg_get("delegate", "worktree_root", None)
         or config.HOME / DELEGATE_WORKTREE_DIRECTORY,
-        metadata_writer=lambda metadata: _persist_delegate_workspace_metadata(metadata, execution_id))
+        metadata_writer=lambda metadata: _persist_delegate_workspace_metadata(metadata, execution_id),
+        retention_s=_configured_delegate_worktree_retention_seconds(DELEGATE_WORKTREE_DEFAULT_RETENTION_S))
 
 
 def _schedule_terminal_delegate_workspace_reclaim(execution):
-    from .delegate_worktrees import schedule_delegate_worktree_reclaim
+    from .delegate_worktrees import DELEGATE_WORKTREE_DEFAULT_RETENTION_S, schedule_delegate_worktree_reclaim
     from . import execution_journal
     execution_id = execution.get("execution_id") or execution_journal.current_durable_execution_id()
     def persist_terminal_delegate_envelope(payload):
@@ -460,7 +470,8 @@ def _schedule_terminal_delegate_workspace_reclaim(execution):
             execution_journal.persist_durable_execution_payload(execution_id, envelope=json.dumps(payload, ensure_ascii=False))
     schedule_delegate_worktree_reclaim(execution,
         metadata_writer=lambda metadata: _persist_delegate_workspace_metadata(metadata, execution_id),
-        envelope_writer=persist_terminal_delegate_envelope)
+        envelope_writer=persist_terminal_delegate_envelope,
+        retention_s=_configured_delegate_worktree_retention_seconds(DELEGATE_WORKTREE_DEFAULT_RETENTION_S))
 
 
 def _route_agentic(plan, prompt, model, timeout, cwd, warm=False):

@@ -1,13 +1,12 @@
 """Regression contracts for bounded delegate-worktree retention."""
 from datetime import datetime, timezone
-import importlib
 import json
 import os
 from pathlib import Path
 import tempfile
 from unittest.mock import MagicMock, patch
 
-from spendguard import config, delegate_jobs, delegate_worktrees, execution_journal
+from spendguard import config, delegate_jobs, delegate_router, delegate_worktrees, execution_journal
 
 
 RETENTION_TEST_NOW = datetime(2026, 1, 1, tzinfo=timezone.utc)
@@ -154,15 +153,18 @@ def test_deadline_floor_then_same_tree_is_reclaimed():
             "path": str(tree), "primary_cwd": str(primary), "retained": True,
             "reclaim_not_before": datetime.fromtimestamp(deadline, timezone.utc).isoformat(timespec="seconds")})
         calls = []
-        with patch("spendguard.execution_journal.durable_execution_store_root", return_value=journal), patch.object(
+        with patch("spendguard.execution_journal.durable_execution_store_root", return_value=journal) as resolver, patch.object(
                 delegate_worktrees, "_delegate_worktree_git", _fake_reclaiming_git(calls)):
             inside = delegate_worktrees.reclaim_expired_delegate_worktrees(
-                RETENTION_TEST_NOW, worktree_root=root, orphan_grace_s=RETENTION_TEST_ORPHAN_GRACE_S)
+                RETENTION_TEST_NOW, journal_root_resolver=resolver, metadata_updater=config.update_json,
+                worktree_root=root,
+                orphan_grace_s=RETENTION_TEST_ORPHAN_GRACE_S)
             assert inside == {"reclaimed": 0, "retained": 1, "gaps": []}
             assert tree.exists() and not calls
             after = delegate_worktrees.reclaim_expired_delegate_worktrees(
                 datetime.fromtimestamp(RETENTION_TEST_NOW.timestamp() + RETENTION_TEST_ADVANCE_S, timezone.utc),
-                worktree_root=root, orphan_grace_s=RETENTION_TEST_ORPHAN_GRACE_S)
+                journal_root_resolver=resolver, metadata_updater=config.update_json, worktree_root=root,
+                orphan_grace_s=RETENTION_TEST_ORPHAN_GRACE_S)
         assert after == {"reclaimed": 1, "retained": 0, "gaps": []}
         assert not tree.exists() and json.loads(sidecar.read_text())["retained"] is False
 
@@ -190,10 +192,12 @@ def test_orphan_age_and_unresolved_gap_are_visible():
         os.utime(young_tree, (young_timestamp, young_timestamp))
         journal = base / RETENTION_TEST_JOURNAL_NAME
         calls = []
-        with patch("spendguard.execution_journal.durable_execution_store_root", return_value=journal), patch.object(
+        with patch("spendguard.execution_journal.durable_execution_store_root", return_value=journal) as resolver, patch.object(
                 delegate_worktrees, "_delegate_worktree_git", _fake_reclaiming_git(calls)):
             report = delegate_worktrees.reclaim_expired_delegate_worktrees(
-                RETENTION_TEST_NOW, worktree_root=root, orphan_grace_s=RETENTION_TEST_ORPHAN_GRACE_S)
+                RETENTION_TEST_NOW, journal_root_resolver=resolver, metadata_updater=config.update_json,
+                worktree_root=root,
+                orphan_grace_s=RETENTION_TEST_ORPHAN_GRACE_S)
         assert report["reclaimed"] == 1 and report["retained"] == 1
         assert len(report["gaps"]) == 1 and report["gaps"][0]["path"] == str(unresolved_tree)
         assert not old_tree.exists() and young_tree.exists() and unresolved_tree.exists()
@@ -205,15 +209,14 @@ def test_retention_window_is_config_driven():
         if section == "delegate" and key == "worktree_retention_s":
             return RETENTION_TEST_CONFIGURED_WINDOW_S
         return original_get(section, key, default)
-    try:
-        with patch.object(config, "_cfg_get", configured_get):
-            reloaded = importlib.reload(delegate_worktrees)
-            execution = {"worktree": {"retained": True}}
-            reloaded.schedule_delegate_worktree_reclaim(execution, now=RETENTION_TEST_NOW)
-            stamped = datetime.fromisoformat(execution["worktree"]["reclaim_not_before"])
-            assert stamped.timestamp() - RETENTION_TEST_NOW.timestamp() == RETENTION_TEST_CONFIGURED_WINDOW_S
-    finally:
-        importlib.reload(delegate_worktrees)
+    with patch.object(config, "_cfg_get", configured_get):
+        execution = {"worktree": {"retained": True}}
+        retention_s = delegate_router._configured_delegate_worktree_retention_seconds(
+            delegate_worktrees.DELEGATE_WORKTREE_DEFAULT_RETENTION_S)
+        delegate_worktrees.schedule_delegate_worktree_reclaim(
+            execution, now=RETENTION_TEST_NOW, retention_s=retention_s)
+        stamped = datetime.fromisoformat(execution["worktree"]["reclaim_not_before"])
+        assert stamped.timestamp() - RETENTION_TEST_NOW.timestamp() == RETENTION_TEST_CONFIGURED_WINDOW_S
 
 
 def test_both_job_channels_project_reclaim_deadline():

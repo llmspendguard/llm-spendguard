@@ -44,11 +44,25 @@ def reap_execution_codex_sessions(**dependencies):
     from .delegate_jobs import reap_terminal_codex_sessions
     from .delegate_worktrees import reclaim_expired_delegate_worktrees
     try:
-        reclaim_expired_delegate_worktrees()
+        reclaim_expired_delegate_worktrees(**configured_delegate_worktree_reclaim_dependencies())
     except Exception as error:
         from . import config
         config.warn_once(f"[spendguard] delegate worktree sweep failed: {error}")
     return reap_terminal_codex_sessions(**dependencies)
+
+
+def configured_delegate_worktree_reclaim_dependencies():
+    from . import config
+    from .delegate_worktrees import DELEGATE_WORKTREE_DEFAULT_ORPHAN_GRACE_S, DELEGATE_WORKTREE_DIRECTORY
+    return {
+        "journal_root_resolver": durable_execution_store_root,
+        "metadata_updater": config.update_json,
+        "worktree_root": config._cfg_get("delegate", "worktree_root", None)
+        or config.HOME / DELEGATE_WORKTREE_DIRECTORY,
+        "orphan_grace_s": float(config._cfg_get(
+            "delegate", "worktree_orphan_grace_s", DELEGATE_WORKTREE_DEFAULT_ORPHAN_GRACE_S)
+            or DELEGATE_WORKTREE_DEFAULT_ORPHAN_GRACE_S),
+    }
 
 
 def parse_execution_codex_thread(stdout):
