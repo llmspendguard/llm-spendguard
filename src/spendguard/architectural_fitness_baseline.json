@@ -333,7 +333,7 @@
           },
           "src/spendguard/delegate_jobs.py": {
             "max_cc": 30,
-            "mi": 17.623099760090394
+            "mi": 17.263516706871165
           },
           "src/spendguard/delegate_router.py": {
             "max_cc": 48,
@@ -932,8 +932,8 @@
             "mi": 68.14868072197874
           },
           "src/spendguard/delegate_worktrees.py": {
-            "max_cc": 10,
-            "mi": 58.494595475720615
+            "max_cc": 15,
+            "mi": 47.20065899946486
           },
           "src/spendguard/subscription_cli_results.py": {
             "max_cc": 12,
@@ -1221,7 +1221,7 @@
           },
           "src/spendguard/delegate_jobs.py": {
             "max_cc": 30,
-            "mi": 17.623099760090394
+            "mi": 17.263516706871165
           },
           "src/spendguard/delegate_router.py": {
             "max_cc": 48,
@@ -1820,8 +1820,8 @@
             "mi": 68.14868072197874
           },
           "src/spendguard/delegate_worktrees.py": {
-            "max_cc": 10,
-            "mi": 58.494595475720615
+            "max_cc": 15,
+            "mi": 47.20065899946486
           },
           "src/spendguard/subscription_cli_results.py": {
             "max_cc": 12,
@@ -1859,7 +1859,8 @@
     "reviewed_storm_realtime_per_item_deadline": "storm_coalescer and storm_route whole-file maintainability fell slightly because the realtime coalescing path now applies a coordinator-derived per-item deadline to each callback it drives: a slow or wedged realtime callback can no longer stall the storm coalescer indefinitely, so the fan-out bounds its waits and fails closed on an exceeded per-item budget (reviewed in PR #273, axis-4 site 2/5). The added fail-closed deadline/timeout lines are essential and not extractable without reintroducing the unbounded-wait defect; max cyclomatic complexity of the worst functions is not what regressed, only whole-file MI from the few added bounded-wait lines. Regenerated as a zero-margin ceiling in the CI exact interpreter (python 3.12.15, linux/amd64).",
     "reviewed_ledger_read_expiry_debug_demote_ssot": "Promoting the self-healing managed-read-expiry deferral log line to a module-level SSOT message\nconstant (MANAGED_READ_EXPIRY_DEFERRED_LOG_MESSAGE) and demoting it from WARNING to DEBUG marginally\nlowers this file's maintainability index (max CC unchanged at 34; MI 29.6357 -> 29.5825). The demote\nis a deliberate, reviewed observability change: the deferral is routine under connection-step-lock\ncontention and self-healing (the background expiry sweep re-schedules; outcome flag\nMANAGED_READ_CLEANUP_DEFERRED), so DEBUG is the correct level. It stops production WARNING log spam and\nbenign leakage into tests that assert logger silence, while hiding no terminal error (raised\nLedgerQueryDeadline/LedgerReadTimeout paths are unchanged and still surface). The SSOT constant removes\na duplicated string literal so the one observability assertion can import it rather than re-hardcode it.\nReviewed and accepted as part of closing the busy-connection / ledger-read-expiry timing flake family.",
     "reviewed_supported_minor_parity_for_existing_lifecycle_guards": "Restore supported Python 3.11 measurement parity for existing reviewed changes already recorded under Python 3.12: delegate cancel-retention directory guard; managed read-expiry DEBUG SSOT observability; bounded ledger-writer shutdown drain; report whole-collector deadline; realtime storm per-item deadline. The six source files are unchanged by the broker fix. Their existing review narratives remain authoritative; this entry records only the omitted 3.11 Linux/amd64 Radon 6.0.1 measurements, preserving independent tokenizer-specific baselines. The same Linux measurement also records model_catalog MI 12.608930133037463 instead of 12.608930133037466, a platform floating-point difference with unchanged CC 43 and unchanged source. Broker execution_journal maximum CC remains 23 and MI improves, requiring no ratchet increase.",
-    "reviewed_protected_lane_leak_readiness": "Reviewed complete readiness gate body: reuses CLI probe and its terminal constants, captures the whole report, honestly exempts absent offline ledgers, and preserves uncertain states. The added live-state wrapper lowers module maintainability index; no existing function complexity or global ratchet is relaxed."
+    "reviewed_protected_lane_leak_readiness": "Reviewed complete readiness gate body: reuses CLI probe and its terminal constants, captures the whole report, honestly exempts absent offline ledgers, and preserves uncertain states. The added live-state wrapper lowers module maintainability index; no existing function complexity or global ratchet is relaxed.",
+    "reviewed_delegate_worktree_retention_ttl": "Reviewed the complete changed bodies for the delegate worktree retention-TTL fix (PR #295), which closes premature reclamation: delegate worktrees were being reaped while still live, destroying a running job's only copy of its work. delegate_worktrees.py max CC rises 10 -> 15 and MI falls 58.4946 -> 47.2007, because reclaim_expired_delegate_worktrees now makes the retention decision explicitly: a deadline-governed retention-TTL branch, a journal-reference branch, and an orphan-grace branch. Every one of those added branches is a decision NOT to delete, so they are the retention guarantee itself and are not extractable without reintroducing the defect -- hoisting them into a helper would relocate the lines without reducing the decision count, and collapsing them into one test is precisely the unconditional sweep that lost live worktrees. The guard sequence deliberately stays in one function so no caller can run a subset of it and reclaim a worktree that is still referenced. delegate_jobs.py max CC is unchanged at 30 and only whole-file MI falls, 17.6231 -> 17.2635, from the few lines where create_delegate_job calls the opportunistic sweep inside a failure branch, so a sweep error can never fail job creation. The same change makes delegate_worktrees.py a stdlib-only leaf whose journal_root_resolver, metadata_updater and worktree_root dependencies are required keyword-only parameters: that inversion is what removes the delegate_worktrees <-> execution_journal import cycle (the cycles ratchet measures 0 new cyclic edges), and requiring rather than defaulting them means a forgetful caller raises TypeError instead of silently skipping journal governance. Both files were measured under python 3.11.2 and python 3.12.15 (the CI minor) and measure IDENTICALLY on the two, so each minor records the same zero-margin ceiling; an earlier 3.12 entry of MI 16.7296 for delegate_jobs.py matched neither interpreter's measurement of this tree and was tightened away, because ratchet slack silently licenses the regression the ratchet exists to refuse."
   },
   "duplication": {
     "duplicate_lines": 303,
