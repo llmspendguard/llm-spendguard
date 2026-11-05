@@ -46,7 +46,7 @@ import json
 import os
 import sys
 
-from ...gate import SpendGateRefused
+from ...manage.admission.spend_refusal_error import SpendGateRefused
 
 # The marker row, written once as the first line of the output/checkpoint file. Readers that only want work rows
 # ignore it, because it carries no "work_key".

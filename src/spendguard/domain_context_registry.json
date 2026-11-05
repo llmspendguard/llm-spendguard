@@ -407,7 +407,8 @@
         "manage.admission.residency_gate",
         "manage.admission.semcache",
         "manage.admission.gate",
-        "manage.admission.budget"
+        "manage.admission.budget",
+        "manage.admission.spend_refusal_error"
       ],
       "published_names": []
     },

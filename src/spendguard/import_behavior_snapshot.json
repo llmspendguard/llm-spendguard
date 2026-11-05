@@ -951,6 +951,7 @@
     "spendguard.manage.admission.plan_admission",
     "spendguard.manage.admission.residency_gate",
     "spendguard.manage.admission.semcache",
+    "spendguard.manage.admission.spend_refusal_error",
     "spendguard.manage.admission.weekly_cap_guard",
     "spendguard.manage.routing.best_value",
     "spendguard.manage.routing.cascade",

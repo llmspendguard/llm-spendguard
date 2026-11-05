@@ -26,6 +26,8 @@ from ... import pricing
 from ... import calls as _calls
 from ...config import LOG, FLAG, cap as _cap, disabled as _disabled, allow as _allow
 from ...emit import emit as _emit
+from .spend_refusal_error import SpendGateRefused  # re-export: the refusal ROOT moved to a dependency-free leaf to
+#                                                    break the job_fingerprint→gate import cycle; identity preserved
 
 
 def _prompt_text(kw):
@@ -99,18 +101,6 @@ def budget_basis_estimate():
 def budget_basis_billed():
     from . import budget
     return budget.BASIS_BILLED
-
-
-class SpendGateRefused(RuntimeError):
-    """Raised to block a submission the user/policy declined. Propagates out of the SDK call.
-
-    This is the ROOT of every DELIBERATE gate refusal — the CONCEPT the fail-open handlers name. `_guard` and
-    the pre/post-call wrappers catch `SpendGateRefused` and re-raise it, while swallowing genuine malfunctions
-    (`database is locked`, a buggy register()'d fn) so a legitimate job never breaks. Subtypes of a refusal
-    (e.g. bulkgate.GateBlocked, the estimate+test-first lifecycle block) therefore propagate BY CONSTRUCTION;
-    a new refusal type must subclass this rather than be added to an enumerated `except (…)` list — the
-    enumeration is the latent hole that once let un-estimated batches through, live 2026-08-28 (guarded by
-    tests/test_deliberate_refusal_is_never_failopen.py)."""
 
 
 class MeteredCallRefused(SpendGateRefused):
