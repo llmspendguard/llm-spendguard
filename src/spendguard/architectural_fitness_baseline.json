@@ -2133,7 +2133,6 @@
       "spendguard.analyze.measurement.reliability",
       "spendguard.analyze.measurement.requirement_judge",
       "spendguard.analyze.measurement.review",
-      "spendguard.analyze.measurement.route_realized",
       "spendguard.analyze.measurement.stability",
       "spendguard.analyze.reconciliation.attribution",
       "spendguard.analyze.reconciliation.cost_integrity",
@@ -2456,10 +2455,6 @@
     [
       "spendguard.analyze.learning.advise",
       "spendguard.analyze.cost_estimation.calibrate"
-    ],
-    [
-      "spendguard.analyze.learning.advise",
-      "spendguard.analyze.measurement.route_realized"
     ],
     [
       "spendguard.analyze.learning.advise",
@@ -2928,14 +2923,6 @@
     [
       "spendguard.analyze.measurement.review",
       "spendguard.store.reference_data.pricing"
-    ],
-    [
-      "spendguard.analyze.measurement.route_realized",
-      "spendguard.store.configuration.config"
-    ],
-    [
-      "spendguard.analyze.measurement.route_realized",
-      "spendguard.store.spend_search.ledger_read"
     ],
     [
       "spendguard.analyze.measurement.stability",
@@ -4140,10 +4127,6 @@
     [
       "spendguard.interface.mcp_server",
       "spendguard.analyze.measurement.reliability"
-    ],
-    [
-      "spendguard.interface.mcp_server",
-      "spendguard.analyze.measurement.route_realized"
     ],
     [
       "spendguard.interface.mcp_server",
@@ -5764,8 +5747,8 @@
     "src/spendguard/manage/token_operations/delegate_router.py:481",
     "src/spendguard/platform/lanes.py:64"
   ],
-  "max_largest_scc_size": 129,
-  "max_cyclic_edge_count": 878,
+  "max_largest_scc_size": 128,
+  "max_cyclic_edge_count": 874,
   "max_legacy_shim_count": 219,
   "recorded_cross_context_nonsurface_imports": [
     [
@@ -6906,11 +6889,11 @@
     ],
     [
       "spendguard.analyze.measurement.route_realized",
-      "spendguard.store.configuration.config"
+      "spendguard.store.configuration.config_accessors"
     ],
     [
       "spendguard.analyze.measurement.route_realized",
-      "spendguard.store.spend_search.ledger_read"
+      "spendguard.store.spend_search.ledger_read_accessors"
     ],
     [
       "spendguard.analyze.measurement.stability",

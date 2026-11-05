@@ -6,6 +6,10 @@ import sys
 os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
+from _pytest_fixture_bridge import align_test_startup_home  # noqa: E402
+
+align_test_startup_home(prefix=__name__)
+
 import spendguard  # noqa: E402,F401
 from spendguard.store.configuration import config, config_accessors  # noqa: E402
 
@@ -37,10 +41,12 @@ def main():
     assert config_accessors._load_persisted_state is config.load_state
     assert config_accessors._save_persisted_state is config.save_state
     assert config_accessors._get_config_value is config._cfg_get
+    assert config_accessors._db_path is config.db_path
     original_accessors = (
         config_accessors._load_persisted_state,
         config_accessors._save_persisted_state,
         config_accessors._get_config_value,
+        config_accessors._db_path,
     )
 
     recorded_calls = []
@@ -57,19 +63,26 @@ def main():
         recorded_calls.append(("get", section, key, default))
         return default
 
+    def record_db_path():
+        recorded_calls.append(("db_path",))
+        return "sentinel-ledger-path"
+
     try:
         config_accessors.set_config_accessors(
             record_load_persisted_state,
             record_save_persisted_state,
             record_get_config_value,
+            record_db_path,
         )
         assert config_accessors.load_persisted_state("x", {}) == {}
         assert config_accessors.save_persisted_state("x", {}, loud=False) is True
         assert config_accessors.get_config_value("a", "b", 1) == 1
+        assert config_accessors.get_db_path() == "sentinel-ledger-path"
         assert recorded_calls == [
             ("load", "x", {}),
             ("save", "x", {}, False),
             ("get", "a", "b", 1),
+            ("db_path",),
         ]
 
         config_accessors._load_persisted_state = None
@@ -79,6 +92,14 @@ def main():
             pass
         else:
             raise AssertionError("load_persisted_state must fail loudly when its accessor is unset")
+
+        config_accessors._db_path = None
+        try:
+            config_accessors.get_db_path()
+        except RuntimeError:
+            pass
+        else:
+            raise AssertionError("get_db_path must fail loudly when its accessor is unset")
     finally:
         config_accessors.set_config_accessors(*original_accessors)
 

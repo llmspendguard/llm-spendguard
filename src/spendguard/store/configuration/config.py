@@ -2330,7 +2330,7 @@ def save_state(name, obj, loud=True):
 
 
 # Expose config's state/value accessors to modules that must not import config — breaks the resource_state→config cycle.
-set_config_accessors(load_state, save_state, _cfg_get)
+set_config_accessors(load_state, save_state, _cfg_get, db_path)
 
 
 def uid(n=16):

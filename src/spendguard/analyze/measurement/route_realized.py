@@ -6,13 +6,18 @@ import argparse
 import json
 from pathlib import Path
 
-from ... import config, ledger_read
+from ...store.configuration.config_accessors import get_db_path
+from ...store.spend_search.ledger_read_accessors import (
+    get_ledger_calls_table,
+    read_ledger_table_exists,
+    read_routing_history,
+)
 
 
 def route_realized_report(intent, *, since=None, as_of=None, limit=20):
     # An install with no call corpus has empty history; observing it must not initialize SQLite.
-    if (not Path(config.db_path()).exists()
-            or not ledger_read.ledger_read_table_exists(ledger_read.LEDGER_CALLS_TABLE)):
+    if (not Path(get_db_path()).exists()
+            or not read_ledger_table_exists(get_ledger_calls_table())):
         return {"intent": intent, "window": {"since": since, "as_of": as_of, "field": "ts"},
                 "totals": {"jobs": 0, "billed_cost": 0.0, "billed_jobs": 0,
                            "zero_cost_jobs": 0, "unknown_routing_jobs": 0},
@@ -22,7 +27,7 @@ def route_realized_report(intent, *, since=None, as_of=None, limit=20):
                 "shares": {"metered_share_jobs": None, "metered_share_cost": None,
                            "zero_lane_share_jobs": None, "unknown_share_jobs": None},
                 "samples": [], "caveats": ["no calls found for this intent in the requested ts window"]}
-    return ledger_read.read_routing_history_report(intent, since=since, as_of=as_of, limit=limit)
+    return read_routing_history(intent, since=since, as_of=as_of, limit=limit)
 
 
 def routing_summary(intent, *, since=None, as_of=None):

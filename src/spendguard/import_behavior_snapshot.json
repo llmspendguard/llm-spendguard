@@ -1056,6 +1056,7 @@
     "spendguard.store.reference_data.sync",
     "spendguard.store.reference_data.sync_capabilities",
     "spendguard.store.spend_search",
+    "spendguard.store.spend_search.ledger_read_accessors",
     "spendguard.storm_coalescer",
     "spendguard.storm_route",
     "spendguard.storm_submit",

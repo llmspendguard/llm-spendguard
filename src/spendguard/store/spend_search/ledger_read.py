@@ -20,6 +20,7 @@ import inspect
 from ... import config
 from ...calls import CALL_OBSERVATION_NANO_COLUMNS
 from .ledger_deadline_polling import LedgerDeadlinePolling
+from .ledger_read_accessors import set_ledger_read_accessors
 from ...money_scale import NANO_USD_PER_USD
 
 CC_RESIDENCY_SOURCE = "claude-code"
@@ -1610,3 +1611,7 @@ CC_ATTRIBUTION_FALLBACK_COLUMNS = tuple(value.format(**_SPEND_EVENT_SQL_SUBSTITU
 READ_DELEGATE_OVERAGE_EVIDENCE_COLUMNS = tuple(
     value.format(**_SPEND_EVENT_SQL_SUBSTITUTIONS)
     for value in _READ_DELEGATE_OVERAGE_EVIDENCE_COLUMNS_TEMPLATE)
+
+
+# Expose ledger_read's table probe + routing-history read + calls-table name to modules that must not import ledger_read — breaks the route_realized→ledger_read cycle.
+set_ledger_read_accessors(ledger_read_table_exists, read_routing_history_report, LEDGER_CALLS_TABLE)
