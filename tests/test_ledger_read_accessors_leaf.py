@@ -41,10 +41,14 @@ def main():
     assert ledger_read_accessors._ledger_table_exists is ledger_read.ledger_read_table_exists
     assert ledger_read_accessors._read_routing_history is ledger_read.read_routing_history_report
     assert ledger_read_accessors._ledger_calls_table == ledger_read.LEDGER_CALLS_TABLE
+    assert ledger_read_accessors._read_cost_integrity_buckets is ledger_read.read_cost_integrity_buckets
+    assert ledger_read_accessors._ledger_read_schema_error is ledger_read.LedgerReadSchemaError
     original_accessors = (
         ledger_read_accessors._ledger_table_exists,
         ledger_read_accessors._read_routing_history,
         ledger_read_accessors._ledger_calls_table,
+        ledger_read_accessors._read_cost_integrity_buckets,
+        ledger_read_accessors._ledger_read_schema_error,
     )
     recorded_calls = []
 
@@ -56,18 +60,30 @@ def main():
         recorded_calls.append(("routing_history", intent, since, as_of, limit))
         return {"intent": intent}
 
+    def record_cost_integrity_buckets(since_days, path=None):
+        recorded_calls.append(("cost_integrity_buckets", since_days, path))
+        return ["stub-bucket"]
+
+    class StubLedgerReadSchemaError(Exception):
+        pass
+
     try:
         ledger_read_accessors.set_ledger_read_accessors(
             record_ledger_table_exists,
             record_routing_history,
             "stubbed-calls-table",
+            record_cost_integrity_buckets,
+            StubLedgerReadSchemaError,
         )
         assert ledger_read_accessors.read_ledger_table_exists("calls") is True
         assert ledger_read_accessors.read_routing_history("x", since="s", as_of="a", limit=3) == {"intent": "x"}
         assert ledger_read_accessors.get_ledger_calls_table() == "stubbed-calls-table"
+        assert ledger_read_accessors.read_metered_cost_buckets(5, "p") == ["stub-bucket"]
+        assert ledger_read_accessors.ledger_read_schema_error_type() is StubLedgerReadSchemaError
         assert recorded_calls == [
             ("table_exists", "calls"),
             ("routing_history", "x", "s", "a", 3),
+            ("cost_integrity_buckets", 5, "p"),
         ]
 
         ledger_read_accessors._ledger_table_exists = None

@@ -2920,14 +2920,6 @@
       "spendguard.store.reference_data.pricing"
     ],
     [
-      "spendguard.analyze.reconciliation.cost_integrity",
-      "spendguard.store.reference_data.pricing"
-    ],
-    [
-      "spendguard.analyze.reconciliation.cost_integrity",
-      "spendguard.store.spend_search.ledger_read"
-    ],
-    [
       "spendguard.analyze.reconciliation.ledger_sync",
       "spendguard.analyze.learning.conv"
     ],
@@ -4274,10 +4266,6 @@
     [
       "spendguard.manage.admission.gate",
       "spendguard.analyze.measurement.reliability"
-    ],
-    [
-      "spendguard.manage.admission.gate",
-      "spendguard.analyze.reconciliation.cost_integrity"
     ],
     [
       "spendguard.manage.admission.gate",
@@ -5650,8 +5638,8 @@
     "src/spendguard/manage/token_operations/delegate_router.py:481",
     "src/spendguard/platform/lanes.py:64"
   ],
-  "max_largest_scc_size": 123,
-  "max_cyclic_edge_count": 851,
+  "max_largest_scc_size": 122,
+  "max_cyclic_edge_count": 848,
   "max_legacy_shim_count": 219,
   "recorded_cross_context_nonsurface_imports": [
     [
@@ -6832,11 +6820,11 @@
     ],
     [
       "spendguard.analyze.reconciliation.cost_integrity",
-      "spendguard.store.reference_data.pricing"
+      "spendguard.store.reference_data.pricing_accessors"
     ],
     [
       "spendguard.analyze.reconciliation.cost_integrity",
-      "spendguard.store.spend_search.ledger_read"
+      "spendguard.store.spend_search.ledger_read_accessors"
     ],
     [
       "spendguard.analyze.reconciliation.ledger_sync",
@@ -7331,14 +7319,6 @@
       "spendguard.store.spend_search.ledger_read"
     ],
     [
-      "spendguard.analyze.treasury.subscription_headroom_surfaces",
-      "spendguard.store.configuration.config"
-    ],
-    [
-      "spendguard.egress.deid",
-      "spendguard.store.configuration.config"
-    ],
-    [
       "spendguard.egress.emit",
       "spendguard.manage.admission.budget_accessors"
     ],
@@ -7361,10 +7341,6 @@
     [
       "spendguard.egress.focus_export",
       "spendguard.store.spend_search.ledger_read"
-    ],
-    [
-      "spendguard.egress.notify",
-      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.egress.saas",
@@ -7892,15 +7868,7 @@
     ],
     [
       "spendguard.generate.spend_capture.bedrock_adapter",
-      "spendguard.manage.admission.budget"
-    ],
-    [
-      "spendguard.generate.spend_capture.bedrock_adapter",
       "spendguard.manage.admission.budget_unpriced_sink"
-    ],
-    [
-      "spendguard.generate.spend_capture.bedrock_adapter",
-      "spendguard.manage.admission.gate"
     ],
     [
       "spendguard.generate.spend_capture.chat",
@@ -8071,10 +8039,6 @@
       "spendguard.store.configuration.config"
     ],
     [
-      "spendguard.generate.spend_capture.litellm_adapter",
-      "spendguard.manage.admission.gate"
-    ],
-    [
       "spendguard.generate.spend_capture.modal_adapter",
       "spendguard.store.configuration.config"
     ],
@@ -8173,18 +8137,6 @@
     [
       "spendguard.generate.spend_capture.sources",
       "spendguard.store.reference_data.lane_registry"
-    ],
-    [
-      "spendguard.generate.spend_capture.vertex_adapter",
-      "spendguard.manage.admission.gate"
-    ],
-    [
-      "spendguard.generate.work_integrity.bulk_resilience",
-      "spendguard.store.configuration.config"
-    ],
-    [
-      "spendguard.generate.work_integrity.item_ledger",
-      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.generate.work_integrity.job_fingerprint",
@@ -9377,10 +9329,6 @@
     [
       "spendguard.manage.token_operations.execution_journal",
       "spendguard.store.configuration.config"
-    ],
-    [
-      "spendguard.manage.token_operations.kimi_daemon",
-      "spendguard.generate.execution.kimi_exec"
     ],
     [
       "spendguard.manage.token_operations.kimi_daemon",

@@ -7,7 +7,8 @@ import logging
 import math
 import traceback
 
-from ... import ledger_read, pricing
+from ...store.reference_data import pricing_accessors
+from ...store.spend_search import ledger_read_accessors
 
 COST_INTEGRITY_LOGGER = logging.getLogger(__name__)
 COST_INTEGRITY_LEGACY_WIDTH = 7
@@ -17,31 +18,31 @@ _CEIL_EPS = 1e-6     # relative float-rounding tolerance comparing cost to the c
 
 def _max_token_cost(model, in_tok, out_tok, batch):
     """The MAXIMUM cost the pricing model can assign to these tokens: every input token billed as a cache WRITE at
-    the largest write multiplier the model defines (pricing.CACHE_WRITE_1H_MULTIPLIER), output at list. No honest
+    the largest write multiplier the model defines (pricing accessor's one-hour multiplier), output at list. No honest
     call can cost more, so a recorded cost above this is a provable token UNDER-RECORDING — not a judgement. None
     when the model is unpriced (the bound is unknowable). Decomposed via the public cost fns (input-only + output-
     only) so it tracks their real rates for realtime vs batch without re-deriving the per-model price table."""
     if in_tok is None or out_tok is None:
         return None
-    fn = pricing.batch_cost if batch else pricing.realtime_cost
+    fn = pricing_accessors.priced_batch_cost if batch else pricing_accessors.priced_realtime_cost
     in_only = fn(model, int(in_tok), 0)
     out_only = fn(model, 0, int(out_tok))
     if in_only is None or out_only is None:
         return None
-    return float(in_only) * float(pricing.CACHE_WRITE_1H_MULTIPLIER) + float(out_only)
+    return float(in_only) * float(pricing_accessors.cache_write_1h_multiplier()) + float(out_only)
 
 
 def _reconstruct_split_token_cost(model, in_tok, out_tok, cache_read_tok, cache_write_tok, batch,
                                   *, charge_date=None, recorded_rates=None):
-    """Price disjoint token axes without pricing._cost's missing-cache-rate fallback.
+    """Price disjoint token axes without the pricing cost helper's missing-cache-rate fallback.
 
     in_tok here is fresh input (as in spend_events), whereas pricing's public helpers include reads in input.
-    Cache creation uses the same five-minute multiplier as pricing._cost; one-hour evidence needs its own axis.
+    Cache creation uses the same five-minute multiplier as the pricing cost helper; one-hour evidence needs its own axis.
     """
     counts = (in_tok, out_tok, cache_read_tok, cache_write_tok)
     if any(value is None or not math.isfinite(float(value)) or float(value) < 0 for value in counts):
         raise ValueError(f"Incomplete or invalid token axes: {counts!r}")
-    rates = pricing.price(model, as_of=charge_date) if recorded_rates is None else recorded_rates
+    rates = pricing_accessors.priced_model_rates(model, as_of=charge_date) if recorded_rates is None else recorded_rates
     input_key, output_key = ("batch_in", "batch_out") if batch else ("in_", "out")
     read_key = "batch_cached_in" if batch else "cached_in"
     input_rate, output_rate = rates[input_key], rates[output_key]
@@ -50,8 +51,8 @@ def _reconstruct_split_token_cost(model, in_tok, out_tok, cache_read_tok, cache_
     if write_rate is None:
         if cache_write_tok and rates.get("provider") != "anthropic":
             raise ValueError(f"No authoritative cache-write rate for {model!r}: {rates!r}")
-        write_rate = input_rate * pricing.CACHE_WRITE_5M_MULTIPLIER
-    components = tuple(float(tokens) * float(rate) / pricing.ONE_MILLION
+        write_rate = input_rate * pricing_accessors.cache_write_5m_multiplier()
+    components = tuple(float(tokens) * float(rate) / pricing_accessors.one_million()
                        for tokens, rate in zip(counts, (input_rate, output_rate, read_rate, write_rate)))
     if not all(math.isfinite(component) and component >= 0 for component in components):
         raise ValueError(f"Invalid priced token components: {components!r}")
@@ -94,7 +95,7 @@ def classify_impossible_cost_buckets(rows, *, gaps=None):
             lc = float(ledger_cost)
             if not math.isfinite(lc) or lc < 0:
                 raise ValueError(f"Invalid ledger cost: {ledger_cost!r}")
-        except pricing.PriceUnknownError as exc:
+        except pricing_accessors.price_unknown_error_type() as exc:
             # Missing catalog data is incomplete coverage, retained as a named gap.
             unpriced += 1
             if gaps is not None:
@@ -124,8 +125,8 @@ def audit_metered_cost_vs_tokens(since_days=7):
     ITSELF FAILED — a distinct, honest UNKNOWN that callers must NOT render as clean (a missing column or locked db
     is not 'no findings'). Read-only; own short-lived connection."""
     try:
-        rows = ledger_read.read_cost_integrity_buckets(since_days)
-    except ledger_read.LedgerReadSchemaError as e:
+        rows = ledger_read_accessors.read_metered_cost_buckets(since_days)
+    except ledger_read_accessors.ledger_read_schema_error_type() as e:
         return {"ok": False, "error": str(e), "findings": [], "unpriced": 0, "checked": 0}
     except Exception as e:
         COST_INTEGRITY_LOGGER.exception("Cost integrity ledger read failed")

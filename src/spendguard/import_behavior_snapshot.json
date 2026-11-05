@@ -1053,6 +1053,7 @@
     "spendguard.store.reference_data.models",
     "spendguard.store.reference_data.money_scale",
     "spendguard.store.reference_data.pricing",
+    "spendguard.store.reference_data.pricing_accessors",
     "spendguard.store.reference_data.reasoning_equivalence",
     "spendguard.store.reference_data.refresh",
     "spendguard.store.reference_data.sync",

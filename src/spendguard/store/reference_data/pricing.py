@@ -26,6 +26,7 @@ from typing import Optional
 
 # Authored multipliers and provenance live with all other price data in the catalog.
 from . import model_catalog as _price_catalog
+from .pricing_accessors import set_pricing_accessors
 
 
 def _catalog_home_from_config():
@@ -838,6 +839,12 @@ def verify_pricing():
     _need(price("gpt-5.5")["in_"] == 5.00 and price("gpt-5.5")["out"] == 30.00, "gpt-5.5 realtime wrong")
     _need(normalize("gpt-5.5-2026-04-23") == "gpt-5.5", "gpt-5.5 normalize wrong")
     return True
+
+
+# Expose pricing's cost math + cache/unit constants + the unpriced-model error to modules that must not
+# import pricing — breaks the cost_integrity→pricing cycle.
+set_pricing_accessors(batch_cost, realtime_cost, price, CACHE_WRITE_5M_MULTIPLIER,
+                      CACHE_WRITE_1H_MULTIPLIER, ONE_MILLION, PriceUnknownError)
 
 
 def main():

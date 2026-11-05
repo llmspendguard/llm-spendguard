@@ -12,6 +12,8 @@ os.environ.setdefault("SPENDGUARD_HOME", tempfile.mkdtemp(prefix="sg-cache-axes-
 os.environ["SPENDGUARD_NO_AUTOINSTALL"] = "1"
 
 from spendguard import calls, cost_integrity, ledger_read, pricing
+from spendguard.store.reference_data import pricing_accessors
+from spendguard.store.spend_search import ledger_read_accessors
 
 CACHE_AXIS_MODEL = "claude-opus-4-8"
 CACHE_AXIS_FRESH = 1234
@@ -99,16 +101,16 @@ assert any(row["cache_read_tok"] == CACHE_AXIS_READ for row in cache_axis_rows)
 cache_axis_gaps = []
 cost_integrity.classify_impossible_cost_buckets((row.values for row in cache_axis_rows), gaps=cache_axis_gaps)
 assert any(gap["gap"] == "legacy_cache_split_missing" for gap in cache_axis_gaps)
-with patch.object(pricing, "price", side_effect=RuntimeError(CACHE_AXIS_FAILURE)):
+with patch.object(pricing_accessors, "priced_model_rates", side_effect=RuntimeError(CACHE_AXIS_FAILURE)):
     cache_axis_gaps = []
     assert cost_integrity.classify_impossible_cost_buckets([cache_axis_row], gaps=cache_axis_gaps) == ([], 1)
     assert CACHE_AXIS_FAILURE in cache_axis_gaps[0]["error"] and "Traceback" in cache_axis_gaps[0]["error"]
 cache_axis_missing_rates = {key: value for key, value in cache_axis_rates.items() if key != cache_axis_read_key}
-with patch.object(pricing, "price", return_value=cache_axis_missing_rates):
+with patch.object(pricing_accessors, "priced_model_rates", return_value=cache_axis_missing_rates):
     cache_axis_gaps = []
     assert cost_integrity.classify_impossible_cost_buckets([cache_axis_row], gaps=cache_axis_gaps) == ([], 1)
     assert "token_cost_reconstruction_unavailable" == cache_axis_gaps[0]["gap"]
-with patch.object(ledger_read, "read_cost_integrity_buckets", side_effect=RuntimeError(CACHE_AXIS_FAILURE)):
+with patch.object(ledger_read_accessors, "read_metered_cost_buckets", side_effect=RuntimeError(CACHE_AXIS_FAILURE)):
     cache_axis_audit = cost_integrity.audit_metered_cost_vs_tokens()
     assert not cache_axis_audit["ok"] and "Traceback" in cache_axis_audit["error"]
 # Old schema is usable only as named best effort, never as verified zero-cache usage.
@@ -117,7 +119,7 @@ with sqlite3.connect(cache_axis_path) as cache_axis_connection:
         cache_axis_connection.execute(f"ALTER TABLE calls DROP COLUMN {cache_axis_column}")
 cache_axis_rows = ledger_read.read_cost_integrity_buckets(CACHE_AXIS_DAYS, cache_axis_path)
 assert all(cache_axis_rows[0][column] is None for column in ledger_read.COST_INTEGRITY_CACHE_COLUMNS)
-with patch.object(ledger_read, "read_cost_integrity_buckets", return_value=cache_axis_rows):
+with patch.object(ledger_read_accessors, "read_metered_cost_buckets", return_value=cache_axis_rows):
     assert any("legacy_cache_split_missing" in line for line in cost_integrity.cost_integrity_lines())
 print("OK cache axis reconstruction, legacy coverage, and injected failures")
 

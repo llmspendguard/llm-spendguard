@@ -1614,4 +1614,5 @@ READ_DELEGATE_OVERAGE_EVIDENCE_COLUMNS = tuple(
 
 
 # Expose ledger_read's table probe + routing-history read + calls-table name to modules that must not import ledger_read — breaks the route_realized→ledger_read cycle.
-set_ledger_read_accessors(ledger_read_table_exists, read_routing_history_report, LEDGER_CALLS_TABLE)
+set_ledger_read_accessors(ledger_read_table_exists, read_routing_history_report, LEDGER_CALLS_TABLE,
+                          read_cost_integrity_buckets, LedgerReadSchemaError)

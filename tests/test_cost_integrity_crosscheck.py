@@ -61,8 +61,8 @@ ratios = [(f["ratio"] if f["ratio"] is not None else float("inf")) for f in foun
 record_script_check(fails, "findings sorted by ratio descending", ratios == sorted(ratios, reverse=True), extra=str(ratios))
 
 print("-- render: read failure is UNKNOWN, never green --")
-with patch.object(ci.ledger_read, "read_cost_integrity_buckets",
-                  side_effect=ci.ledger_read.LedgerReadSchemaError("no such table: calls")), \
+with patch.object(ci.ledger_read_accessors, "read_metered_cost_buckets",
+                  side_effect=ci.ledger_read_accessors.ledger_read_schema_error_type()("no such table: calls")), \
         patch.object(ci.COST_INTEGRITY_LOGGER, "exception") as unexpected_schema_traceback:
     schema_gap_result = ci.audit_metered_cost_vs_tokens()
 record_script_check(fails, "an unmigrated first-run ledger is a named UNKNOWN, not a propagated crash",

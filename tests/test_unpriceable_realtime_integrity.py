@@ -11,6 +11,7 @@ os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="sg-unpriceable-integrit
 os.environ["SPENDGUARD_NO_AUTOINSTALL"] = "1"
 
 from spendguard import budget, cost_integrity, model_catalog, pricing, receipt
+from spendguard.store.reference_data import pricing_accessors
 
 INTEGRITY_UNKNOWN_MODEL = "fixture-unpriceable-realtime-model"
 INTEGRITY_KNOWN_MODEL = "fixture-priced-realtime-model"
@@ -55,7 +56,7 @@ integrity_log_output = io.StringIO()
 integrity_log_handler = logging.StreamHandler(integrity_log_output)
 cost_integrity.COST_INTEGRITY_LOGGER.addHandler(integrity_log_handler)
 try:
-    with patch.object(pricing, "realtime_cost", side_effect=inject_realtime_integrity_unknown_price) as integrity_price:
+    with patch.object(pricing_accessors, "priced_realtime_cost", side_effect=inject_realtime_integrity_unknown_price) as integrity_price:
         with ThreadPoolExecutor(max_workers=INTEGRITY_CONCURRENT_SCANS) as integrity_scan_pool:
             integrity_scan_results = list(integrity_scan_pool.map(
                 run_concurrent_unpriceable_integrity_scan, range(INTEGRITY_CONCURRENT_SCANS)))
