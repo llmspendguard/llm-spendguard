@@ -2175,7 +2175,6 @@
       "spendguard.generate.spend_capture.http_capture",
       "spendguard.generate.spend_capture.resources",
       "spendguard.generate.spend_capture.sources",
-      "spendguard.generate.work_integrity.work_integrity",
       "spendguard.interface.crossllm",
       "spendguard.interface.mcp_fd_lifecycle",
       "spendguard.interface.mcp_server",
@@ -3721,10 +3720,6 @@
     ],
     [
       "spendguard.generate.execution.batch_tracker",
-      "spendguard.generate.work_integrity.work_integrity"
-    ],
-    [
-      "spendguard.generate.execution.batch_tracker",
       "spendguard.manage.admission.gate"
     ],
     [
@@ -3770,10 +3765,6 @@
     [
       "spendguard.generate.execution.submit",
       "spendguard.generate.execution.vendor_call"
-    ],
-    [
-      "spendguard.generate.execution.submit",
-      "spendguard.generate.work_integrity.work_integrity"
     ],
     [
       "spendguard.generate.execution.submit",
@@ -4086,10 +4077,6 @@
     [
       "spendguard.generate.spend_capture.sources",
       "spendguard.store.configuration.config_schema"
-    ],
-    [
-      "spendguard.generate.work_integrity.work_integrity",
-      "spendguard.manage.admission.gate"
     ],
     [
       "spendguard.interface.crossllm",
@@ -4833,10 +4820,6 @@
     ],
     [
       "spendguard.manage.routing.whole_job",
-      "spendguard.generate.work_integrity.work_integrity"
-    ],
-    [
-      "spendguard.manage.routing.whole_job",
       "spendguard.manage.admission.gate"
     ],
     [
@@ -5058,10 +5041,6 @@
     [
       "spendguard.manage.token_operations.lane_queue",
       "spendguard.generate.execution.vendor_call"
-    ],
-    [
-      "spendguard.manage.token_operations.lane_queue",
-      "spendguard.generate.work_integrity.work_integrity"
     ],
     [
       "spendguard.manage.token_operations.lane_queue",
@@ -5795,15 +5774,15 @@
     "src/spendguard/generate/execution/adapters.py:447",
     "src/spendguard/generate/spend_capture/gpu_port.py:278",
     "src/spendguard/generate/spend_capture/sources.py:77",
-    "src/spendguard/manage/admission/gate.py:2697",
-    "src/spendguard/manage/admission/gate.py:2708",
-    "src/spendguard/manage/admission/gate.py:2750",
+    "src/spendguard/manage/admission/gate.py:2701",
+    "src/spendguard/manage/admission/gate.py:2712",
+    "src/spendguard/manage/admission/gate.py:2754",
     "src/spendguard/manage/token_operations/delegate_router.py:227",
     "src/spendguard/manage/token_operations/delegate_router.py:481",
     "src/spendguard/platform/lanes.py:64"
   ],
-  "max_largest_scc_size": 131,
-  "max_cyclic_edge_count": 887,
+  "max_largest_scc_size": 130,
+  "max_cyclic_edge_count": 882,
   "max_legacy_shim_count": 219,
   "recorded_cross_context_nonsurface_imports": [
     [
@@ -8336,7 +8315,11 @@
     ],
     [
       "spendguard.generate.work_integrity.work_integrity",
-      "spendguard.manage.admission.gate"
+      "spendguard.manage.admission.gate_event_sink"
+    ],
+    [
+      "spendguard.generate.work_integrity.work_integrity",
+      "spendguard.manage.admission.spend_refusal_error"
     ],
     [
       "spendguard.interface.cli",

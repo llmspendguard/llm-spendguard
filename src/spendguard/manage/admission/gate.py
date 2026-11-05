@@ -26,6 +26,7 @@ from ... import pricing
 from ... import calls as _calls
 from ...config import LOG, FLAG, cap as _cap, disabled as _disabled, allow as _allow
 from ...emit import emit as _emit
+from .gate_event_sink import set_gate_event_sink
 from .spend_refusal_error import SpendGateRefused  # re-export: the refusal ROOT moved to a dependency-free leaf to
 #                                                    break the job_fingerprint→gate import cycle; identity preserved
 
@@ -443,6 +444,9 @@ def _log(rec):
     except Exception:
         pass
     _emit({**rec, "kind": rec.get("kind", "batch")})
+
+
+set_gate_event_sink(_log)  # expose _log to modules that must not import gate — breaks the work_integrity→gate cycle
 
 
 def _submit_receipt(est):

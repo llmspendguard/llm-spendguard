@@ -5,10 +5,11 @@ These proofs own no storage, transport, retry, or scheduling mechanism.
 from dataclasses import dataclass, field
 from typing import Iterable
 
-from ... import gate
+from ...manage.admission.gate_event_sink import emit_gate_event
+from ...manage.admission.spend_refusal_error import SpendGateRefused
 
 
-class WorkIntegrityViolation(gate.SpendGateRefused):
+class WorkIntegrityViolation(SpendGateRefused):
     """A commit would hide a missing or multiply accounted unit of work."""
 
 
@@ -28,6 +29,6 @@ class WorkIntegrityProof:
                  "dispositions": dispositions,
                  "decision": "allowed" if valid else "refused"}
         self.events.append(event)
-        gate._log(event)
+        emit_gate_event(event)
         if not valid:
             raise WorkIntegrityViolation("non-partitioned work at " + self.guarantee + ": " + repr(event))

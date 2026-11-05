@@ -408,7 +408,8 @@
         "manage.admission.semcache",
         "manage.admission.gate",
         "manage.admission.budget",
-        "manage.admission.spend_refusal_error"
+        "manage.admission.spend_refusal_error",
+        "manage.admission.gate_event_sink"
       ],
       "published_names": []
     },
