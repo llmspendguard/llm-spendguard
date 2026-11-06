@@ -2360,10 +2360,6 @@
       "spendguard.manage.admission.bulkgate"
     ],
     [
-      "spendguard.analyze.cost_estimation.expected_output",
-      "spendguard.store.reference_data.models"
-    ],
-    [
       "spendguard.analyze.cost_estimation.provider_tokens",
       "spendguard.generate.execution.adapters"
     ],
@@ -3293,10 +3289,6 @@
     ],
     [
       "spendguard.generate.execution.adapters",
-      "spendguard.store.reference_data.models"
-    ],
-    [
-      "spendguard.generate.execution.adapters",
       "spendguard.store.reference_data.reasoning_equivalence"
     ],
     [
@@ -3344,10 +3336,6 @@
       "spendguard.store.call_corpus.calls"
     ],
     [
-      "spendguard.generate.execution.price_identity_judge",
-      "spendguard.store.reference_data.models"
-    ],
-    [
       "spendguard.generate.execution.submit",
       "spendguard.analyze.cost_estimation.content_tokens"
     ],
@@ -3374,10 +3362,6 @@
     [
       "spendguard.generate.execution.submit",
       "spendguard.store.call_corpus.calls"
-    ],
-    [
-      "spendguard.generate.execution.submit",
-      "spendguard.store.reference_data.models"
     ],
     [
       "spendguard.generate.execution.vendor_call",
@@ -3414,10 +3398,6 @@
     [
       "spendguard.generate.execution.vendor_call",
       "spendguard.store.reference_data.catalog"
-    ],
-    [
-      "spendguard.generate.execution.vendor_call",
-      "spendguard.store.reference_data.models"
     ],
     [
       "spendguard.generate.spend_capture.backfill",
@@ -3808,10 +3788,6 @@
       "spendguard.store.call_corpus.calls"
     ],
     [
-      "spendguard.manage.admission.bulkgate",
-      "spendguard.store.reference_data.models"
-    ],
-    [
       "spendguard.manage.admission.escalation_ladder",
       "spendguard.store.call_corpus.calls"
     ],
@@ -4030,10 +4006,6 @@
     [
       "spendguard.manage.routing.best_value",
       "spendguard.store.call_corpus.calls"
-    ],
-    [
-      "spendguard.manage.routing.best_value",
-      "spendguard.store.reference_data.models"
     ],
     [
       "spendguard.manage.routing.lane_balance",
@@ -4828,10 +4800,6 @@
       "spendguard.manage.routing.route_utility"
     ],
     [
-      "spendguard.store.reference_data.models",
-      "spendguard.generate.execution.vendor_call"
-    ],
-    [
       "spendguard.store.reference_data.reasoning_equivalence",
       "spendguard.generate.execution.adapters"
     ],
@@ -4846,10 +4814,6 @@
     [
       "spendguard.store.reference_data.reasoning_equivalence",
       "spendguard.store.reference_data.lane_catalog"
-    ],
-    [
-      "spendguard.store.reference_data.reasoning_equivalence",
-      "spendguard.store.reference_data.models"
     ],
     [
       "spendguard.store.reference_data.sync",
@@ -4889,10 +4853,6 @@
     ],
     [
       "spendguard.store.spend_search.ledger_read",
-      "spendguard.store.reference_data.models"
-    ],
-    [
-      "spendguard.store.spend_search.ledger_read",
       "spendguard.store.spend_search.ledger_request_cursor"
     ],
     [
@@ -4918,8 +4878,8 @@
     "src/spendguard/manage/token_operations/delegate_router.py:481",
     "src/spendguard/platform/lanes.py:64"
   ],
-  "max_largest_scc_size": 118,
-  "max_cyclic_edge_count": 668,
+  "max_largest_scc_size": 117,
+  "max_cyclic_edge_count": 658,
   "max_legacy_shim_count": 219,
   "recorded_cross_context_nonsurface_imports": [
     [

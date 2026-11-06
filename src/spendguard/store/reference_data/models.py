@@ -459,9 +459,9 @@ def heal_reasoning(model, kw, err):
     # confirm_reasoning marks it verified once a retry with it actually succeeds, so one good heal serves every
     # later call (and normalize_reasoning, so a BATCH builder reading it sends the right value up front).
     try:
-        from ... import vendor_call as _vc
+        from . import reference_data_accessors as _rda
         _prov = model.split(":", 1)[0] if ":" in model else (profile(model).get("provider") or "")
-        _acc = (_vc.discover_efforts(_prov, model.split(":", 1)[-1]) or {}).get("accepted")
+        _acc = (_rda.resolve_effort_discovery(_prov, model.split(":", 1)[-1]) or {}).get("accepted")
     except Exception:
         _acc = None
     pick = _pick_effort(sent, _acc)
@@ -499,9 +499,9 @@ def resolve_effort(model, level):
     if base is None or not (prof.get("provider") == "openai" or ":" in str(model)):
         return base                                      # non-reasoning model, or not an OpenAI-shape endpoint
     try:
-        from ... import vendor_call as _vc
+        from . import reference_data_accessors as _rda
         _prov = str(model).split(":", 1)[0] if ":" in str(model) else prof.get("provider")
-        _acc = (_vc.discover_efforts(_prov, str(model).split(":", 1)[-1]) or {}).get("accepted")
+        _acc = (_rda.resolve_effort_discovery(_prov, str(model).split(":", 1)[-1]) or {}).get("accepted")
     except Exception:
         _acc = None
     if _acc and base not in set(_acc):                   # the family value is NOT actually accepted → correct it

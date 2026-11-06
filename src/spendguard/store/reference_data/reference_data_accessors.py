@@ -4,6 +4,7 @@ import threading
 
 _model_ceiling_resolver = None
 _model_facts_resolver = None
+_effort_discovery_resolver = None
 _reference_data_resolver_lock = threading.Lock()
 
 
@@ -37,3 +38,19 @@ def resolve_model_facts(model):
     if model_facts_resolver is None:
         raise RuntimeError("model facts resolver is not wired")
     return model_facts_resolver(model)
+
+
+def set_effort_discovery_resolver(effort_discovery_resolver):
+    """Wire the resolver for live reasoning-effort discovery."""
+    global _effort_discovery_resolver
+    with _reference_data_resolver_lock:
+        _effort_discovery_resolver = effort_discovery_resolver
+
+
+def resolve_effort_discovery(provider, model_id):
+    """Discover accepted reasoning efforts through the eagerly wired provider."""
+    with _reference_data_resolver_lock:
+        effort_discovery_resolver = _effort_discovery_resolver
+    if effort_discovery_resolver is None:
+        raise RuntimeError("effort discovery resolver is not wired")
+    return effort_discovery_resolver(provider, model_id)

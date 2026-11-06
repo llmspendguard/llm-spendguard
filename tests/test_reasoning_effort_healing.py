@@ -44,6 +44,14 @@ models.facts = lambda m: _FACTS.get(m, {})
 models.add_fact = lambda m, k, v, **kw: _FACTS.setdefault(m, {}).__setitem__(
     k, (v, kw.get("confidence", 0.9), kw.get("source", ""), kw.get("verified", False)))
 
+# ctx#28 dependency inversion: models.heal_reasoning / resolve_effort no longer import vendor_call;
+# they reach live effort-discovery through the dep-free reference_data_accessors leaf. Wire the leaf
+# once to FORWARD to whatever discover_efforts stub the assertions below install on vendor_call, so
+# each swap is picked up at call time (keeps this test offline — no network, no spend).
+from spendguard.store.reference_data import reference_data_accessors
+reference_data_accessors.set_effort_discovery_resolver(
+    lambda prov, model, **kw: vendor_call.discover_efforts(prov, model, **kw))
+
 # ── _pick_effort: ordinal mapping onto the accepted set ──
 record_script_check(fails, "_pick_effort floor request → lowest accepted", models._pick_effort("minimal", ["none", "low", "medium", "high"]) == "none")
 record_script_check(fails, "_pick_effort named tier accepted → itself", models._pick_effort("high", ["none", "low", "medium", "high"]) == "high")

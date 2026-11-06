@@ -1020,6 +1020,11 @@ def discover_efforts(vendor, model, refresh=False):
     return out
 
 
+from ...store.reference_data import reference_data_accessors as _rda
+
+_rda.set_effort_discovery_resolver(discover_efforts)
+
+
 def _write_efforts(vendor, model, out):
     path = _caps_path()
     try:
