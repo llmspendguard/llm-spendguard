@@ -186,8 +186,8 @@ def capability_recommend_operation(args: dict):
     """Agentic top-K on the cost×quality frontier for an intent, with an intent-set quality bar. This tool
     SPENDS a small, meta-capped LLM synthesis, so it fails closed if the interpreter is not gated, estimates
     first, and refuses when the estimate exceeds `budget_usd`."""
-    import spendguard
-    spendguard.require()                    # this tool spends → fail closed if the gate is not enforcing here
+    from spendguard.manage.admission import admission_accessors
+    admission_accessors.resolve_require()   # this tool spends → fail closed if the gate is not enforcing here
     from .. import advisor
     intent, k, qbar = args.get("intent"), int(args.get("k") or 5), args.get("quality_bar")
     est = advisor.recommend_models(intent=intent, k=k, quality_bar=qbar, run=False)
@@ -207,8 +207,8 @@ def capability_bakeoff_operation(args: dict):
     $/good. A bakeoff makes REAL, metered workload calls — so it fails closed if not gated, and (crucially) it
     only RUNS when the caller passes an explicit `budget_usd`; without one it returns the ESTIMATE only, never
     spending on its own."""
-    import spendguard
-    spendguard.require()                    # real spend → fail closed if the gate is not enforcing here
+    from spendguard.manage.admission import admission_accessors
+    admission_accessors.resolve_require()   # real spend → fail closed if the gate is not enforcing here
     from .. import bakeoff as _bk
     # `efforts` sweeps the reasoning ladder PER model (finds the cheapest (model, effort) that holds quality);
     # a list or a comma string, both accepted. Omitted → one arm per model at its default effort.
@@ -235,8 +235,8 @@ def capability_stability_operation(args: dict):
     metered), parses each reply's outcome (by `marker`, e.g. 'DECISION:', when given — a fixed shape, not a judgement),
     and reports stable_frac + the per-label between-run rate band. Replicates spend subscription-plan usage ($0 billed
     on a $0 lane); fails closed if the gate is not enforcing."""
-    import spendguard
-    spendguard.require()
+    from spendguard.manage.admission import admission_accessors
+    admission_accessors.resolve_require()
     from .. import stability as _st, bakeoff as _bk
     prompts = args.get("prompts")
     if not prompts and args.get("intent"):
@@ -290,8 +290,8 @@ def capability_vision_operation(args: dict):
     idempotent: a paid result is cached by request content (atomic fsync), so a crash after spend does not lose it
     and an identical re-request is served for $0 (pass no_cache=true to force fresh). A dynamic-key MAP schema is
     refused BEFORE any spend (strict → {}); total image bytes are capped before load."""
-    import spendguard
-    spendguard.require()                     # real spend → fail closed if the gate is not enforcing here
+    from spendguard.manage.admission import admission_accessors
+    admission_accessors.resolve_require()    # real spend → fail closed if the gate is not enforcing here
     import json as _json
     import os
     from .. import pricing
@@ -593,12 +593,12 @@ def capability_version_operation(args: dict):
     import os
     from importlib import metadata
     from pathlib import Path
-    import spendguard
+    from spendguard.platform._version import __version__
     from .. import config
     from spendguard.platform import platform_accessors as _platform_accessors
     import spendguard.manage.admission.admission_accessors as gate
     return {**_platform_accessors.resolve_release_status(), "pid": os.getpid(),
-            "imported_version": spendguard.__version__,
+            "imported_version": __version__,
             "metadata_version": metadata.version("llm-spendguard"),
             "gate_enforcing": bool(not config.disabled() and gate.resolve__enforcement_armed()),
             "ledger_path": str(Path(config.db_path()).resolve())}
@@ -788,11 +788,11 @@ def handle(req):
     method, rid = req.get("method"), req.get("id")
     is_notification = "id" not in req
     if method == "initialize":
-        import spendguard
+        from spendguard.platform._version import __version__
         from spendguard.platform import platform_accessors as _platform_accessors
         client_ver = (req.get("params") or {}).get("protocolVersion")
         _sv = _platform_accessors.resolve_served_sha() or {}
-        _ver = getattr(spendguard, "__version__", "0") + (f"+{_sv['short']}" if _sv.get("short") else "")
+        _ver = __version__ + (f"+{_sv['short']}" if _sv.get("short") else "")
         return _ok(rid, {"protocolVersion": client_ver or PROTOCOL_VERSION,
                          # listChanged: this server may send notifications/tools/list_changed (serve_stdio does,
                          # after its first substantive request) so a client re-fetches tools/list — the path by

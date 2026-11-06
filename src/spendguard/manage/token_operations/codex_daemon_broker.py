@@ -36,7 +36,7 @@ class _BrokerAttachImportFailure:
 
 
 def _stale_consumer_attach_error(error):
-    from ... import __version__
+    from spendguard.platform._version import __version__
     install_root = Path(__file__).resolve().parents[4]
     return {"error": (f"spendguard install in this venv is stale/broken (running {__version__}; "
                       f"attach-client import failed: {error}) — run `pip install -e {install_root}`; "

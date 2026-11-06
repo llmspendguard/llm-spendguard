@@ -98,6 +98,9 @@ spendguard.which_package = real
 from spendguard import gate
 spendguard.which_package = lambda: ["llm-spendguard", "spendguard"]
 _expect = spendguard.shadowing_dists()            # ['spendguard'] under this monkeypatch (asserted at line 91)
+spendguard.which_package = real
+_real_packages_distributions = _md.packages_distributions
+_md.packages_distributions = lambda: {"spendguard": ["llm-spendguard", "spendguard"]}
 _out, _real_stdout = io.StringIO(), sys.stdout
 try:
     sys.stdout = _out
@@ -107,6 +110,7 @@ try:
         pass                                      # `cmd == "doctor"` gate was False and the ENTIRE doctor block —
 finally:                                          # the shadow row with it — never ran. The test wasn't exercising
     sys.stdout = _real_stdout                     # the feature at all.
+    _md.packages_distributions = _real_packages_distributions
     spendguard.which_package = real
 # Asserts only that the shadowing dist NAME reaches the report — a fact about our own rendering, which is
 # format. Deliberately NOT keyword-matching the wording for "shadow"/"conflict": whether the sentence reads

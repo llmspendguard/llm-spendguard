@@ -108,7 +108,7 @@ def stale_vs_green():
 
 def current_respawn_decision():
     """Return the total, traceable install-aware replacement decision for this process."""
-    from .. import __version__
+    from spendguard.platform._version import __version__
     from .manifest import (MANIFEST_EDITABLE_KIND, MANIFEST_WHEEL_KIND,
                            inspect_current_interpreter_install_kind)
     install = inspect_current_interpreter_install_kind()

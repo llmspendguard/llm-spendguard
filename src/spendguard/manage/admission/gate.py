@@ -2927,7 +2927,7 @@ def _stale_editable_install():
     installed here, so a lazy import fails at runtime (the 'reviewer unavailable' / ImportError class the caller hit).
     meta_v is None when metadata is unreadable — that is 'unknown', NOT a skew (we never flag on a failed read)."""
     try:
-        from ... import __version__ as code_v
+        from spendguard.platform._version import __version__ as code_v
     except Exception:
         return False, None, None
     try:
@@ -3294,8 +3294,10 @@ def control_gate_runtime(cmd: str = "status", live: bool = False):
             except Exception:
                 pass
             try:                                          # import-name shadowing: reported HERE (the diagnostic
-                import spendguard as _sg                  # command), never as an ambient warning on every start
-                _sh = _sg.shadowing_dists()
+                from importlib.metadata import packages_distributions
+                _sh = [distribution for distribution in sorted(
+                    packages_distributions().get("spendguard", []) or []
+                ) if distribution.replace("_", "-").lower() != "llm-spendguard"]
                 if _sh:
                     print(f"  package   : ⚠ `spendguard` is also provided by {_sh} — last install wins, so this "
                           f"may not be llm-spendguard. Usually a stale pre-rename egg-info; remove it or "

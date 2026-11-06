@@ -126,10 +126,10 @@ def _judge_residency_delegability(tool_name, tool_input, result_text):
     if cached is not None:
         return cached
     try:
-        import spendguard
+        from spendguard.manage.admission import admission_accessors
         from ... import plan_admission
         from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
-        spendguard.require()
+        admission_accessors.resolve_require()
         model = plan_admission.ready_meta_model(config.advisor_judge_model())
         rationale_max_chars = max(1, _residency_configured_integer("judge_rationale_max_chars"))
         judge_output_tokens = max(

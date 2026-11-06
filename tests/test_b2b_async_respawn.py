@@ -9,6 +9,7 @@ from unittest.mock import patch
 
 from spendguard import codex_daemon_broker, fleet, lane_queue, mcp_fd_lifecycle, mcp_server, release, serve
 from spendguard import manifest
+from spendguard.platform import _version as platform_version
 
 B2B_RUNNING_VERSION = "1.0.running"
 B2B_INSTALLED_VERSION = "1.1.installed"
@@ -25,13 +26,12 @@ B2B_UNRESOLVED_IMPORT_PACKAGE = f"{manifest.MANIFEST_IMPORT_PACKAGE_NAME}_fixtur
 
 
 def test_b2b_install_kind_aware_respawn_is_loop_safe():
-    import spendguard
-    with patch.object(spendguard, "__version__", B2B_RUNNING_VERSION), patch.object(
+    with patch.object(platform_version, "__version__", B2B_RUNNING_VERSION), patch.object(
             manifest, "inspect_current_interpreter_install_kind",
             return_value={"install_kind": manifest.MANIFEST_WHEEL_KIND,
                           "wheel_version": B2B_INSTALLED_VERSION}):
         assert release.should_respawn() is True
-    with patch.object(spendguard, "__version__", B2B_RUNNING_VERSION), patch.object(
+    with patch.object(platform_version, "__version__", B2B_RUNNING_VERSION), patch.object(
             manifest, "inspect_current_interpreter_install_kind",
             return_value={"install_kind": manifest.MANIFEST_WHEEL_KIND,
                           "wheel_version": B2B_RUNNING_VERSION}):

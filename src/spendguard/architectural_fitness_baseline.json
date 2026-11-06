@@ -2210,30 +2210,6 @@
   },
   "recorded_cycle_components": [
     [
-      "spendguard",
-      "spendguard.egress.egress_resolver_bootstrap",
-      "spendguard.egress.saas",
-      "spendguard.egress.signal",
-      "spendguard.interface.mcp_server",
-      "spendguard.manage.admission.admission_resolver_bootstrap",
-      "spendguard.manage.admission.budget",
-      "spendguard.manage.admission.bulkgate",
-      "spendguard.manage.admission.gate",
-      "spendguard.manage.admission.model_preflight",
-      "spendguard.manage.admission.residency_gate",
-      "spendguard.manage.token_operations.codex_broker_owner",
-      "spendguard.manage.token_operations.codex_daemon",
-      "spendguard.manage.token_operations.codex_daemon_broker",
-      "spendguard.manage.token_operations.token_operations_resolver_bootstrap",
-      "spendguard.platform.distribution",
-      "spendguard.platform.distribution_daemon",
-      "spendguard.platform.fleet",
-      "spendguard.platform.manifest",
-      "spendguard.platform.platform_resolver_bootstrap",
-      "spendguard.platform.release",
-      "spendguard.platform.setup"
-    ],
-    [
       "spendguard.analyze.learning.advise",
       "spendguard.analyze.learning.advisor",
       "spendguard.analyze.learning.intent_model_prior",
@@ -2272,9 +2248,32 @@
       "spendguard.analyze.measurement.measurement"
     ],
     [
+      "spendguard.egress.saas",
+      "spendguard.egress.signal"
+    ],
+    [
+      "spendguard.manage.admission.budget",
+      "spendguard.manage.admission.bulkgate",
+      "spendguard.manage.admission.gate",
+      "spendguard.manage.admission.model_preflight"
+    ],
+    [
+      "spendguard.manage.token_operations.codex_broker_owner",
+      "spendguard.manage.token_operations.codex_daemon",
+      "spendguard.manage.token_operations.codex_daemon_broker"
+    ],
+    [
       "spendguard.manage.token_operations.delegate_jobs",
       "spendguard.manage.token_operations.delegate_router",
       "spendguard.manage.token_operations.execution_journal"
+    ],
+    [
+      "spendguard.platform.distribution",
+      "spendguard.platform.distribution_daemon",
+      "spendguard.platform.fleet",
+      "spendguard.platform.manifest",
+      "spendguard.platform.release",
+      "spendguard.platform.setup"
     ],
     [
       "spendguard.store.spend_search.ledger_read",
@@ -2282,38 +2281,6 @@
     ]
   ],
   "recorded_cyclic_edges": [
-    [
-      "spendguard",
-      "spendguard.egress.egress_resolver_bootstrap"
-    ],
-    [
-      "spendguard",
-      "spendguard.manage.admission.admission_resolver_bootstrap"
-    ],
-    [
-      "spendguard",
-      "spendguard.manage.admission.budget"
-    ],
-    [
-      "spendguard",
-      "spendguard.manage.admission.bulkgate"
-    ],
-    [
-      "spendguard",
-      "spendguard.manage.admission.gate"
-    ],
-    [
-      "spendguard",
-      "spendguard.manage.token_operations.token_operations_resolver_bootstrap"
-    ],
-    [
-      "spendguard",
-      "spendguard.platform.fleet"
-    ],
-    [
-      "spendguard",
-      "spendguard.platform.platform_resolver_bootstrap"
-    ],
     [
       "spendguard.analyze.learning.advise",
       "spendguard.manage.routing.route_economics"
@@ -2397,14 +2364,6 @@
     [
       "spendguard.analyze.treasury.lane_quota_cost",
       "spendguard.analyze.treasury.lane_economics"
-    ],
-    [
-      "spendguard.egress.egress_resolver_bootstrap",
-      "spendguard.egress.saas"
-    ],
-    [
-      "spendguard.egress.saas",
-      "spendguard"
     ],
     [
       "spendguard.egress.saas",
@@ -2535,28 +2494,12 @@
       "spendguard.generate.spend_capture.gpu_port"
     ],
     [
-      "spendguard.interface.mcp_server",
-      "spendguard"
-    ],
-    [
-      "spendguard.manage.admission.admission_resolver_bootstrap",
-      "spendguard.manage.admission.model_preflight"
-    ],
-    [
-      "spendguard.manage.admission.admission_resolver_bootstrap",
-      "spendguard.manage.admission.residency_gate"
-    ],
-    [
       "spendguard.manage.admission.budget",
       "spendguard.manage.admission.gate"
     ],
     [
       "spendguard.manage.admission.bulkgate",
       "spendguard.manage.admission.gate"
-    ],
-    [
-      "spendguard.manage.admission.gate",
-      "spendguard"
     ],
     [
       "spendguard.manage.admission.gate",
@@ -2573,10 +2516,6 @@
     [
       "spendguard.manage.admission.model_preflight",
       "spendguard.manage.admission.gate"
-    ],
-    [
-      "spendguard.manage.admission.residency_gate",
-      "spendguard"
     ],
     [
       "spendguard.manage.routing.best_value",
@@ -2637,10 +2576,6 @@
     [
       "spendguard.manage.token_operations.codex_daemon",
       "spendguard.manage.token_operations.codex_daemon_broker"
-    ],
-    [
-      "spendguard.manage.token_operations.codex_daemon_broker",
-      "spendguard"
     ],
     [
       "spendguard.manage.token_operations.codex_daemon_broker",
@@ -2727,14 +2662,6 @@
       "spendguard.manage.token_operations.queue_planner"
     ],
     [
-      "spendguard.manage.token_operations.token_operations_resolver_bootstrap",
-      "spendguard.manage.token_operations.codex_broker_owner"
-    ],
-    [
-      "spendguard.manage.token_operations.token_operations_resolver_bootstrap",
-      "spendguard.manage.token_operations.codex_daemon"
-    ],
-    [
       "spendguard.platform.distribution",
       "spendguard.platform.distribution_daemon"
     ],
@@ -2756,15 +2683,7 @@
     ],
     [
       "spendguard.platform.distribution_daemon",
-      "spendguard.interface.mcp_server"
-    ],
-    [
-      "spendguard.platform.distribution_daemon",
       "spendguard.platform.fleet"
-    ],
-    [
-      "spendguard.platform.fleet",
-      "spendguard"
     ],
     [
       "spendguard.platform.fleet",
@@ -2785,22 +2704,6 @@
     [
       "spendguard.platform.manifest",
       "spendguard.platform.setup"
-    ],
-    [
-      "spendguard.platform.platform_resolver_bootstrap",
-      "spendguard.platform.distribution"
-    ],
-    [
-      "spendguard.platform.platform_resolver_bootstrap",
-      "spendguard.platform.release"
-    ],
-    [
-      "spendguard.platform.platform_resolver_bootstrap",
-      "spendguard.platform.setup"
-    ],
-    [
-      "spendguard.platform.release",
-      "spendguard"
     ],
     [
       "spendguard.platform.release",
@@ -2809,10 +2712,6 @@
     [
       "spendguard.platform.release",
       "spendguard.platform.manifest"
-    ],
-    [
-      "spendguard.platform.setup",
-      "spendguard.interface.mcp_server"
     ],
     [
       "spendguard.platform.setup",
@@ -2841,8 +2740,8 @@
     "src/spendguard/manage/token_operations/delegate_router.py:483",
     "src/spendguard/platform/lanes.py:65"
   ],
-  "max_largest_scc_size": 22,
-  "max_cyclic_edge_count": 136,
+  "max_largest_scc_size": 20,
+  "max_cyclic_edge_count": 111,
   "max_legacy_shim_count": 219,
   "recorded_cross_context_nonsurface_imports": [
     [

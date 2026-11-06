@@ -3,7 +3,7 @@
 Vision must ride the metered API (lanes are text-only). This tool exposes that to non-Python consumers with the
 same rails the labeler needed: estimate-first (no budget → 0 spend), a dynamic-key MAP schema refused BEFORE any
 spend (strict mode empties it to {}), and a durable content-keyed cache so an identical re-request is $0. Offline:
-spendguard.require / adapters.vision / pricing stubbed — no gate, no network, no LLM. Assertions are STRUCTURAL
+admission_accessors.resolve_require / adapters.vision / pricing stubbed — no gate, no network, no LLM. Assertions are STRUCTURAL
 (did it spend? via a captured-call list and a control), never substring-matching on error text.
 """
 import os
@@ -15,16 +15,16 @@ os.environ.setdefault("SPENDGUARD_TEST_ISOLATED", "1")
 os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
-import spendguard
 from _script_checks import record_script_check
 from spendguard import mcp_server, adapters, pricing
+from spendguard.manage.admission import admission_accessors
 
 fails = []
 
 
 
 
-spendguard.require = lambda: None                         # offline: do not require a live gate
+admission_accessors.resolve_require = lambda: None        # offline: do not require a live gate
 adapters._load_image = lambda i: {"w": 1, "h": 1, "media_type": "image/png", "b64": "x", "data_uri": str(i)}
 adapters._image_input_tokens = lambda imgs, prov, raw: 10
 pricing.cost_or_unpriced = lambda *a, **k: 0.005          # fixed estimate so budget comparisons are deterministic

@@ -53,7 +53,7 @@ def saas_connection():
 
 def _client_version():
     try:
-        from .. import __version__
+        from spendguard.platform._version import __version__
         return __version__
     except Exception:
         return "0"

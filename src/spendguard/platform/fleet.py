@@ -833,7 +833,7 @@ def _consumer_install_is_verified_fresh(install_state, source_version, catalog_v
 
 def consumer_install_drift():
     """Return actionable install skew for registered consumer venvs; read-only and idempotent."""
-    from .. import __version__
+    from spendguard.platform._version import __version__
     repo_root = pathlib.Path(__file__).resolve().parents[3]
     drift = []
     try:
@@ -881,7 +881,7 @@ def refresh_stale_installs(apply=False):
     if not distinct:
         return {"refreshed": [], "skipped_current": [], "failed": [], "no_consumers": True}
 
-    from .. import __version__
+    from spendguard.platform._version import __version__
     repo_root = pathlib.Path(__file__).resolve().parents[3]
     try:
         current = _dependency_fingerprint(repo_root / "pyproject.toml")
@@ -981,7 +981,8 @@ def discover_host_spendguard_installations(cli_paths=None, pipx_document=None):
 
 def verify_and_refresh_registered_interpreters(apply=False):
     """Touch every registered deployment and prove version + catalog freshness after isolated refresh attempts."""
-    from .. import __version__, pricing
+    from spendguard.platform._version import __version__
+    from .. import pricing
     repo_root = pathlib.Path(__file__).resolve().parents[3]
     try:
         rows = registered_interpreters()
