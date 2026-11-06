@@ -319,3 +319,8 @@ def run_prompt(prompt, system=None, model=None, timeout=TIMEOUT_S, reasoning=Non
             shutil.rmtree(neutral_cwd, ignore_errors=True)
     from .subscription_cli_results import antigravity_completed_response
     return antigravity_completed_response(r, t0, _result_obj, _usage_from_result, _error_result)
+
+
+from . import execution_accessors as _execution_accessors
+
+_execution_accessors.set_model_ids_resolver(lambda *a, **k: model_ids(*a, **k))

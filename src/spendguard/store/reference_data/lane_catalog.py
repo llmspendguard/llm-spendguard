@@ -8,13 +8,14 @@ lane's `gemini-3.7-flash-low`). Everything downstream reads THIS:
   • the ledger records the FULL use-name, so we see exactly what ran (reasoning level and all);
   • the lane BANDIT's arms ARE catalog entries — so it can learn which lane AND which reasoning level wins.
 
-DERIVED, not hardcoded: the provider comes from `adapters._LANES`, the configured base from `advisor.lane_models`,
+DERIVED, not hardcoded: the provider comes from `_execution_accessors.resolve__LANES()`, the configured base from `advisor.lane_models`,
 the rate from `pricing.py`. The ONLY thing defined here is each lane's reasoning QUIRK — a fixed protocol of that
 lane's CLI/API, grounded in the lane execs (codex none…max, Gemini `-low/-high` suffix, zai none, claude thinking).
-Add a lane in `adapters._LANES` + a `lane_models` entry and it shows up here automatically; a new reasoning style
+Add a lane in `_execution_accessors.resolve__LANES()` + a `lane_models` entry and it shows up here automatically; a new reasoning style
 is one edit to REASONING_QUIRK.
 """
-from ... import adapters, config, lane_registry
+from spendguard.generate.execution import execution_accessors as _execution_accessors
+from ... import config, lane_registry
 
 # HOW EACH LANE EXPRESSES REASONING EFFORT is a field on each lane's row in lane_registry (one place per lane):
 # `style="suffix"` (gemini) rides the USE-NAME `<base>-<level>`; the others (`param` codex, `thinking` claude-code,
@@ -24,13 +25,13 @@ _DEFAULT_QUIRK = {"style": "none", "levels": (), "default": None}
 
 def lanes():
     """Every configured lane name (from the provider→lane registry), sorted for stable display/iteration."""
-    return sorted({name for name, _mod in adapters._LANES.values()})
+    return sorted({name for name, _mod in _execution_accessors.resolve__LANES().values()})
 
 
 def lane_provider(lane):
-    """The PROVIDER a lane bills against — reversed out of adapters._LANES (the one registry that owns it), so pricing
+    """The PROVIDER a lane bills against — reversed out of _execution_accessors.resolve__LANES() (the one registry that owns it), so pricing
     can disambiguate a model two vendors both publish. None if the lane is not registered."""
-    for prov, (name, _mod) in adapters._LANES.items():
+    for prov, (name, _mod) in _execution_accessors.resolve__LANES().items():
         if name == lane:
             return prov
     return None
@@ -146,13 +147,13 @@ def arms(lanes_filter=None):
 
 def audit_lane_fallback():
     """For EVERY configured lane use-name: the metered-API id it FALLS BACK to when the lane is down (via the one
-    equivalence fn adapters.metered_fallback_id), and whether that id is PRICED and — when the model catalog is
+    equivalence fn _execution_accessors.resolve_metered_fallback_id), and whether that id is PRICED and — when the model catalog is
     synced — SERVED by the provider. This is the guard for 'a lane's naming must not break its own metered fallback':
     a row with priced=False or served='stale' is a lane that would STRAND a call when its plan is exhausted, instead
     of degrading to the paid API. Read-only, $0 (served_check is cache-first + returns a status, never raises; a
     can't-check is 'unchecked', never a failure). Returns [{lane, provider, use_name, metered_id, reasoning, priced,
     served, ok}] — ok is False only on a CONFIRMED break (unpriced, or a catalog-CONFIRMED stale id)."""
-    from ... import adapters, pricing
+    from ... import pricing
     try:
         from ... import vendor_call as _vc
     except ImportError:
@@ -162,7 +163,7 @@ def audit_lane_fallback():
         prov = lane_provider(lane)
         uns = use_names(lane) or ([configured_base(lane)] if configured_base(lane) else [])
         for un in uns:
-            mid, tier = adapters.metered_fallback_id(prov, un)
+            mid, tier = _execution_accessors.resolve_metered_fallback_id(prov, un)
             try:
                 pricing.realtime_cost(mid, 1000, 100)
                 priced = True

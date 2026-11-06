@@ -16,6 +16,7 @@ This module is PURE STATE (no LLM): choose / record / score / decay, persisted i
 never re-pay to re-learn. The agentic BAKE-OFF judge and the routing wiring build on top — separately, gated and
 estimate-first — because those spend.
 """
+from spendguard.generate.execution import execution_accessors as _execution_accessors
 import contextlib
 import datetime
 import random
@@ -88,11 +89,11 @@ def _arm_cooling(lane, use_name):
     cooldown the adapter learned. Reuses the SAME backoff the metered path uses, so the bandit never routes onto a
     known-bad arm."""
     try:
-        from ... import adapters, lane_catalog
-        if adapters._lane_cooling(lane):
+        from ... import lane_catalog
+        if _execution_accessors.resolve__lane_cooling(lane):
             return True
         base, _lv = lane_catalog.parse_use_name(use_name, lane)
-        return adapters._lane_model_cooling(lane, base)
+        return _execution_accessors.resolve__lane_model_cooling(lane, base)
     except Exception:
         return False
 
@@ -243,7 +244,7 @@ def bakeoff_judge(task, out_a, out_b, arm_a, arm_b, cost_a=None, cost_b=None):
     formula; without costs it is a pure-quality judge. Returns (winner_arm or None, reason). The DECISION is the LLM's —
     only the fixed A/B/TIE token is parsed. Caged under the meta intent (attributed, never recurses into the bandit); an
     EMPTY output loses by default, so no judge call is spent when a side is blank (or when the two are identical).
-    No max_tokens is passed — the reply is one word (bills ~1 token), and adapters.call REFUSES an oversize pair loudly
+    No max_tokens is passed — the reply is one word (bills ~1 token), and _execution_accessors.resolve_call REFUSES an oversize pair loudly
     rather than silently clipping the evidence."""
     a, b = (out_a or "").strip(), (out_b or "").strip()
     if a and not b:
@@ -256,11 +257,11 @@ def bakeoff_judge(task, out_a, out_b, arm_a, arm_b, cost_a=None, cost_b=None):
         return None, "identical outputs (no judge spend)"
     prompt = _value_judge_prompt(task, a, b, cost_a, cost_b)
     try:
-        from ... import adapters, gate
+        from ... import gate
         from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
         from .advisor import META                                   # ONE source of the meta-intent prefix
         with _call_corpus_accessors.resolve_calls_context(intent=f"{META}:bandit-judge"):          # caged: attributed, never bandit-routed
-            r = adapters.call(_bandit_judge_model(), prompt)
+            r = _execution_accessors.resolve_call(_bandit_judge_model(), prompt)
         txt = (r.get("text") or "").strip()
     except Exception as e:
         if gate.is_deliberate_stop(e):                 # a spend refusal / deadline is NOT a tie — propagate, never fail-open
@@ -283,11 +284,11 @@ def _run_arm(arm, task, system, reasoning, timeout_s):
     (reasoning INCLUDED, since it bills as output) so the EXPLOIT path can detect a cost-runaway (A2.3)."""
     lane, use_name = arm
     try:
-        from ... import adapters, lane_catalog
+        from ... import lane_catalog
         from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
         import importlib
         prov = lane_catalog.lane_provider(lane)
-        entry = adapters._LANES.get(prov)
+        entry = _execution_accessors.resolve__LANES().get(prov)
         if not entry:
             return "", 0
         mod = importlib.import_module("." + entry[1], "spendguard")

@@ -18,6 +18,7 @@ LOCK_ORDER_SECOND_LEASE = 2
 
 def exercise_writer_subsystem_interleaving(probe_case):
     from spendguard import backfill, brief, cacheaudit, cachetest, callio, calls, config, experiment, learn, review
+    from spendguard.generate.execution import submit
     from spendguard.ledger_writer import current_ledger_writer_connection
     from spendguard.store.configuration import config_accessors
 
@@ -71,7 +72,7 @@ def exercise_writer_subsystem_interleaving(probe_case):
             patch.object(calls, "cost_summary", return_value=[]), \
             patch.object(callio, "good_rates", return_value={}), \
             patch.object(learn, "insights", return_value=[]), \
-            patch.object(cacheaudit, "_count_tokens", side_effect=lambda text, model: len(text)):
+            patch.object(submit, "_count_tokens", side_effect=lambda text, model: len(text)):
         competing_writer = threading.Thread(target=persist_competing_subsystem_row, daemon=True)
         competing_writer.start()
         if probe_case == "token-ratio":

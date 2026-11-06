@@ -19,7 +19,7 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
     os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="spendguard-metadata-")
     os.execv(sys.executable, [sys.executable] + sys.argv)
 
-from spendguard import metadata_audit   # noqa: E402
+from spendguard import metadata_audit, vendor_call   # noqa: E402
 
 fails = 0
 
@@ -39,7 +39,7 @@ def _run(cache_models, age_days, published, measured_caps):
     metadata_audit.pricing.CONTEXT_LIMITS = cache_models
     metadata_audit.sync.cache_age_days = lambda: age_days
     metadata_audit.pricing.max_output_tokens = lambda m: published.get(m)
-    metadata_audit.vendor_call.caps = lambda: measured_caps
+    vendor_call.caps = lambda: measured_caps
     return metadata_audit.backbone_health()
 
 

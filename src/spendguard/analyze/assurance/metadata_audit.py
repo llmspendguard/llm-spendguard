@@ -23,11 +23,12 @@ judgement), so it is code, not an LLM call. It reports UNKNOWN separately from O
     spendguard metadata --sync     # refresh the LiteLLM cache first, then report
     from spendguard import metadata_audit; r = metadata_audit.backbone_health()   # {ok, cache, drift, ...}
 """
+from spendguard.generate.execution import execution_accessors as _execution_accessors
 
 from ...capability_cli_parsing import add_registered_cli_argument
 import argparse
 
-from ... import pricing, sync, vendor_call
+from ... import pricing, sync
 
 # Named thresholds (values with a name; the audit's own limits, not call-site literals).
 MODEL_METADATA_STALE_DAYS = 14     # a limits cache older than this is stale enough to alarm (sync refreshes daily)
@@ -62,7 +63,7 @@ def _cap_drift():
        drift   = measured < published  → stale probe starving a model (the kimi shape)
        unknown = no published max      → cannot compare; measured is the sole authority (a too-new model). Not a fault."""
     drift, unknown = [], []
-    caps = vendor_call.caps() or {}
+    caps = _execution_accessors.resolve_caps() or {}
     for key, rec in caps.items():
         if not isinstance(rec, dict):
             continue

@@ -16,6 +16,7 @@ digest cache (work/story/show never re-hit the network). Value + work are attrib
 so a multi-day conversation lands on the right days. Org+project are assigned AGENTICALLY (`chat classify`) — a
 caged LLM reads each conversation and picks the best (org, project) from your taxonomy; nothing hardcoded.
 """
+from spendguard.generate.execution import execution_accessors as _execution_accessors
 
 from ...capability_cli_parsing import registered_cli_option_token
 import os, sys, json, sqlite3, hashlib, subprocess, urllib.request, urllib.error, pathlib, tempfile, datetime, time
@@ -663,7 +664,7 @@ def _parse_story(txt):
 
 def story(by="week", days=7, run=False):
     """Caged synth over the period's chat conversations → narrative STORY + private WORK INSIGHTS. Estimate-first."""
-    from ... import adapters, ui
+    from ... import ui
     from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
     convs = _convs_in_range(_load_state(), days)
     if not convs:
@@ -684,7 +685,7 @@ def story(by="week", days=7, run=False):
         ui.estimate_only(action="synthesize the chat work story + private insights", cost=est)
         return 0
     with _call_corpus_accessors.resolve_calls_context(intent="spendguard:worklog"):
-        r = adapters.call(model, prompt, max_tokens=OUT, system=_STORY_SYS)
+        r = _execution_accessors.resolve_call(model, prompt, max_tokens=OUT, system=_STORY_SYS)
     if r.get("error"):
         print("  error:", r["error"])
         return 1
@@ -753,7 +754,7 @@ _DISCOVER_SYS = (
 def discover_taxonomy(run=False, days=None, sample=None, apply=True):
     """AGENTICALLY propose the org→project taxonomy from the conversation corpus (caged, estimate-first). Writes the
     proposal to config chat.taxonomy (review/edit it), so classification doesn't depend on hand-written config."""
-    from ... import adapters, ui
+    from ... import ui
     from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
     st = _load_state()
     convs = _convs_in_range(st, days) if days else list(st.get("convs", {}).values())
@@ -782,7 +783,7 @@ def discover_taxonomy(run=False, days=None, sample=None, apply=True):
         ui.estimate_only(action="propose an org→project taxonomy from your chat history", cost=est)
         return 0
     with _call_corpus_accessors.resolve_calls_context(intent="spendguard:categorize"):
-        r = adapters.call(model, prompt, max_tokens=OUT, system=_DISCOVER_SYS)
+        r = _execution_accessors.resolve_call(model, prompt, max_tokens=OUT, system=_DISCOVER_SYS)
     if r.get("error"):
         print("  error:", r["error"])
         return 1
@@ -865,7 +866,7 @@ def _chat_allocation_prompt(taxo, batch):
 def classify_chat_allocations(run=False, days=None, recls=False, batch_size=25):
     """Agentically assign (org, project) to conversations from their content. Caged (spendguard:categorize),
     estimate-first. Only classifies UNCLASSIFIED conversations unless --reclassify."""
-    from ... import adapters, ui
+    from ... import ui
     from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
     st = _load_state()
     convs = _convs_in_range(st, days) if days else list(st.get("convs", {}).values())
@@ -890,7 +891,7 @@ def classify_chat_allocations(run=False, days=None, recls=False, batch_size=25):
     assigned = 0
     for bi, b in enumerate(batches):
         with _call_corpus_accessors.resolve_calls_context(intent="spendguard:categorize"):
-            r = adapters.call(model, _chat_allocation_prompt(taxo, b), max_tokens=80 * len(b) + 120, system=None)
+            r = _execution_accessors.resolve_call(model, _chat_allocation_prompt(taxo, b), max_tokens=80 * len(b) + 120, system=None)
         if r.get("error"):
             print(f"  batch {bi}: error {r['error']}")
             continue

@@ -6,6 +6,7 @@ Restoring optimize's ins[:12] mutation must fail this guard.
 from unittest.mock import patch
 
 from spendguard import advisor
+from spendguard.generate.execution import submit
 
 
 LEGACY_INSIGHT_CUTOFF = 12
@@ -27,7 +28,7 @@ with (
     patch.object(advisor, "_evidence_table", return_value=("fixture evidence", 1)),
     patch.object(advisor.learn, "insights", return_value=OPTIMIZE_INSIGHT_ROWS),
     patch.object(advisor, "_meta_spent_str", return_value="fixture"),
-    patch.object(advisor, "_count_tokens", return_value=0) as optimize_token_counter,
+    patch.object(submit, "_count_tokens", return_value=0) as optimize_token_counter,
     patch.object(advisor.pricing, "realtime_cost", return_value=0),
     patch("spendguard.ui.estimate_only"),
     patch("spendguard.adapters.call", return_value={

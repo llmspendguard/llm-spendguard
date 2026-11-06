@@ -13,13 +13,13 @@ otherwise, and the quality JUDGE is an LLM (never a keyword rule) — the same j
   bakeoff('code-review', candidates=['openai:gpt-5.5','deepseek:deepseek-v4-flash'], sample_n=5)  # estimate
   bakeoff('code-review', candidates=[...], sample_n=5, run=True, budget_usd=0.50)                 # measure
 """
+from spendguard.generate.execution import execution_accessors as _execution_accessors
 
 from ...capability_cli_parsing import add_registered_cli_argument
 import json
 
 from ... import config, pricing, callio
 from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
-from ...submit import _count_tokens
 
 _BAKEOFF_OUT_EST = 500     # per-call OUTPUT tokens for the PRE-FLIGHT estimate only — a budget guard, not a cap;
 #                            the real call floors output at the model max and bills ACTUAL tokens. Named, not inline.
@@ -45,7 +45,7 @@ def _task_parts(task):
     """A bakeoff task is EITHER a plain prompt STRING (the text-only surface, unchanged) OR a dict
     {"prompt": str, "images": [path | data-url, …]} for a VISION task. Returns (prompt_text, images) where
     `images` is None for a text task or the list of image refs for a vision task — the SAME shape
-    adapters.call(images=…) accepts. Backward-compatible: a string yields (string, None), so every text path is
+    _execution_accessors.resolve_call(images=…) accepts. Backward-compatible: a string yields (string, None), so every text path is
     untouched."""
     if isinstance(task, dict):
         imgs = task.get("images") or None
@@ -108,18 +108,18 @@ def _judge_one(prompt, output, judge_model, images=None):
     the image (images=…): a caption's faithfulness CANNOT be judged from text alone, so a judge that scored it
     without seeing the image would be measuring nothing. images is passed ONLY when present — a text task is
     byte-for-byte the prior call."""
-    from ... import adapters, advisor
+    from ... import advisor
     from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
     # WHOLE evidence: the judge scores the candidate's FULL output — a [:4000] slice would rate only its head,
     # evidence-truncating the very thing being judged. no_substitution PINS the judge so every candidate is rated
     # by the SAME ruler, never a lane-swapped one (a judge that varies per candidate is not a comparable number).
     # META CONTEXT: this is spendguard's OWN ruler call, so it must be attributed to spendguard:* and meta-capped —
     # NOT the caller's workload intent. Passing sig="spendguard:…" is not enough: inside a caller's ambient
-    # `with _call_corpus_accessors.resolve_calls_context(intent=…)` (a bakeoff runs under one), adapters.call does NOT override the ambient intent, so
+    # `with _call_corpus_accessors.resolve_calls_context(intent=…)` (a bakeoff runs under one), _execution_accessors.resolve_call does NOT override the ambient intent, so
     # the judge's $ would land under the caller's intent (the warden 2026-09-25 attribution split). An explicit nested
     # context forces it, exactly as requirement_judge._meta_call already does.
     with _call_corpus_accessors.resolve_calls_context(intent="spendguard:bakeoff-judge"):
-        r = adapters.call(judge_model, advisor._judge_prompt(prompt, output or ""),
+        r = _execution_accessors.resolve_call(judge_model, advisor._judge_prompt(prompt, output or ""),
                           max_tokens=_JUDGE_OUT, system=_JUDGE_SYS, schema=_JUDGE_SCHEMA,
                           sig="spendguard:bakeoff-judge", no_substitution=True,
                           **({"images": images} if images else {}))
@@ -127,7 +127,7 @@ def _judge_one(prompt, output, judge_model, images=None):
         return None
     # The adapter's OWN fence-tolerant decode (r['parsed']) — a bare json.loads here choked on a $0 lane's
     # ```json fence, so the generic judge silently labeled 0/N on lane-served candidates.
-    j = adapters.structured_reply(r)
+    j = _execution_accessors.resolve_structured_reply(r)
     return bool(j["good"]) if isinstance(j, dict) and isinstance(j.get("good"), bool) else None
 
 
@@ -140,23 +140,23 @@ def _plan(intent, candidates, prompts, judge_model, efforts, requirement_aware=F
     `requirement_aware` adds the two-tier judge's extra cost as a CEILING: requirement extraction once per prompt +
     a worst-case one opus adjudication per judge call (real runs escalate only when the screen is unsure, so actual
     lands under this — a budget guard is meant to be high, never low). A VISION task (dict with images) adds the
-    IMAGE input tokens — via adapters._image_input_tokens, the provider-aware corrected estimator, never a hardcoded
+    IMAGE input tokens — via _execution_accessors.resolve__image_input_tokens, the provider-aware corrected estimator, never a hardcoded
     per-image number — to EVERY call that sees the image: the candidate run, the screen/generic judge, and the
     adjudicator (extraction reads the prompt TEXT only). A text-only slate is priced exactly as before."""
-    from ... import gate, adapters
+    from ... import gate
     _stop = gate.deliberate_stop_types()               # SpendGateRefused / DispatchTimeout must PROPAGATE — never be
     n_eff = max(1, len(efforts))                        # swallowed into a false-low estimate by the broad guards below
     tasks = [_task_parts(p) for p in prompts]           # (prompt_text, images_or_None) — a string yields (string, None)
-    loaded = [([adapters._load_image(i) for i in imgs] if imgs else None) for _txt, imgs in tasks]  # dims for the token est ($0 read)
+    loaded = [([_execution_accessors.resolve__load_image(i) for i in imgs] if imgs else None) for _txt, imgs in tasks]  # dims for the token est ($0 read)
     contract_inputs = []
     for task, (txt, _im) in zip(prompts, tasks):
         contract = ({k: task[k] for k in ("system", "schema", "max_tokens") if task.get(k) is not None}
                     if isinstance(task, dict) else {})
         contract_inputs.append(json.dumps({"prompt": txt, **contract}, ensure_ascii=False) if contract else txt)
-    in_text = [_count_tokens(txt, candidates[0] if candidates else "gpt-5.5") for txt in contract_inputs]
+    in_text = [_execution_accessors.resolve__count_tokens(txt, candidates[0] if candidates else "gpt-5.5") for txt in contract_inputs]
 
     def _img_tok(model, i):                             # provider-aware IMAGE input tokens for task i on `model` (0 = text task)
-        return (adapters._image_input_tokens(loaded[i], adapters.provider_for(model), model.split(":", 1)[-1])
+        return (_execution_accessors.resolve__image_input_tokens(loaded[i], _execution_accessors.resolve_provider_for(model), model.split(":", 1)[-1])
                 if loaded[i] else 0)
 
     total, detail = 0.0, {}
@@ -174,7 +174,7 @@ def _plan(intent, candidates, prompts, judge_model, efforts, requirement_aware=F
         total += (detail[c] or 0.0)
     n_judge = len(candidates) * len(prompts) * n_eff                    # one small judge call per (candidate, prompt, effort)
     try:                                                               # the generic/screen judge SEES the image on a vision task
-        judge_in = sum(_count_tokens(contract_inputs[i], judge_model) + _img_tok(judge_model, i)
+        judge_in = sum(_execution_accessors.resolve__count_tokens(contract_inputs[i], judge_model) + _img_tok(judge_model, i)
                        for i, (txt, _im) in enumerate(tasks)) * len(candidates) * n_eff
         total += pricing.realtime_cost(judge_model, judge_in, _JUDGE_OUT * n_judge)
     except _stop:
@@ -185,9 +185,9 @@ def _plan(intent, candidates, prompts, judge_model, efforts, requirement_aware=F
         from . import requirement_judge
         ex, adj = config.advisor_model(), (adjudicator_model or config.advisor_adjudicator_model())
         try:
-            total += pricing.realtime_cost(ex, sum(_count_tokens(txt, ex) for txt in contract_inputs),
+            total += pricing.realtime_cost(ex, sum(_execution_accessors.resolve__count_tokens(txt, ex) for txt in contract_inputs),
                                            requirement_judge._EXTRACT_OUT * len(prompts))
-            adj_in = sum(_count_tokens(contract_inputs[i], adj) + _img_tok(adj, i)     # the adjudicator SEES the image too
+            adj_in = sum(_execution_accessors.resolve__count_tokens(contract_inputs[i], adj) + _img_tok(adj, i)     # the adjudicator SEES the image too
                          for i, (txt, _im) in enumerate(tasks)) * len(candidates) * n_eff
             total += pricing.realtime_cost(adj, adj_in, requirement_judge._JUDGE_OUT * n_judge)
         except _stop:
@@ -248,7 +248,6 @@ def bakeoff(intent, candidates=None, prompts=None, sample_n=5, run=False, budget
                          "or shrink the slate/sample/efforts.")
 
     with config.scoped_intent_cap((intent, "spendguard:bakeoff-judge", "spendguard:requirement-extract", "spendguard:requirement-screen", "spendguard:requirement-adjudicate"), budget_usd):
-        from ... import adapters
         results = {}
         req_seen = []                                                   # requirement-aware: the union of criteria the judge applied (for the receipt rubric)
         for c in candidates:
@@ -278,7 +277,7 @@ def bakeoff(intent, candidates=None, prompts=None, sample_n=5, run=False, budget
                     _call_corpus_accessors.resolve_calls_set_context(intent=intent, who="bakeoff", root_call=_measurement_call_id, attempt=1,
                                       requested_model=c, measurement=True)
                     try:
-                        r = adapters.call(c, txt, sig=intent, timeout_s=120, reasoning=replay_effort, no_substitution=True,
+                        r = _execution_accessors.resolve_call(c, txt, sig=intent, timeout_s=120, reasoning=replay_effort, no_substitution=True,
                                           **replay_contract,
                                           **({"measurement": True} if _det else {}), **_det,
                                           **({"images": imgs} if imgs else {}))
@@ -326,7 +325,7 @@ def bakeoff(intent, candidates=None, prompts=None, sample_n=5, run=False, budget
                     # RECORD per (intent, model, EFFORT) into the corpus advise/best_value read — this is the learning.
                     _served_model = r.get("model") or c.split(":", 1)[-1]
                     _call_corpus_accessors.resolve_calls_finalize_bakeoff_measurement(
-                        _measurement_call_id, r.get("provider") or adapters.provider_for(_served_model),
+                        _measurement_call_id, r.get("provider") or _execution_accessors.resolve_provider_for(_served_model),
                         c, _served_model, cost, r.get("in_tok"), r.get("out_tok"),
                         intent, q, r.get("chosen_effort", replay_effort),
                         r.get("resolved_lane") or r.get("executor") or "api",

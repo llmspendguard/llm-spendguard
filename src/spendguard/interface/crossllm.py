@@ -5,7 +5,7 @@ vendor_call internals to fan out across models.
 namespace by `from .crossllm import ask`, the exact module-vs-function collision the estimate/estimate_cost
 note in __init__ exists to prevent. The public surface is the function `spendguard.ask`.)
 
-This is the public surface over the primitives that already exist (`vendor_call.fan_out` / `first_ok` /
+This is the public surface over the primitives that already exist (`_execution_accessors.resolve_fan_out` / `first_ok` /
 `consensus`) plus the two things every real cross-LLM caller re-implements badly:
 
   1. ESTIMATE-FIRST ADMISSION. Before firing, estimate the metered spend (lanes are $0 and excluded); if a
@@ -28,15 +28,16 @@ Concurrency/rate limiting is automatic: every call routes through the dispatch g
     for text in r.answers:                          # only OK results; failures are never in here
         ...
 """
+from spendguard.generate.execution import execution_accessors as _execution_accessors
 
 from .capability_cli_parsing import add_registered_cli_argument
-from .. import vendor_call, pricing, gate, config
+from .. import pricing, gate, config
 from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
 
 # Named defaults (a value with a name, overridable per call) — never a literal at a call site.
 _DEFAULT_DEADLINE_S = 200.0        # per-vendor default when the caller names none; time_budget refines it per model
 _BUDGET_EST_OUTPUT_TOKENS = 4000   # OUTPUT tokens, PRE-FLIGHT COST ESTIMATE ONLY — NOT a send-time max_tokens cap, and
-                                   # NOT any input bound. The real call floors OUTPUT at adapters.TOKEN_FLOOR (32k) and the
+                                   # NOT any input bound. The real call floors OUTPUT at _execution_accessors.TOKEN_FLOOR (32k) and the
                                    # ledger bills ACTUAL tokens; this figure only prices the fan-out before it runs.
 _CHARS_PER_TOKEN = 4               # rough INPUT-token proxy for that same estimate; the real input count is metered downstream
 
@@ -100,7 +101,7 @@ def _inject_unmet(fan, unmet_rows):
     (not every requested vendor answered); mode='first' → completeness stays need-met (an uncalled model cannot
     un-meet it). The un-called models cost $0 and carry no text (the Result invariant holds)."""
     for r in unmet_rows:
-        res = vendor_call.Result(vendor_call.PREFLIGHT_UNMET, r.get("provider") or "?", r.get("model") or "?",
+        res = _execution_accessors.Result(_execution_accessors.PREFLIGHT_UNMET, r.get("provider") or "?", r.get("model") or "?",
                                  error=r.get("note") or "not callable as written (failed preflight)")
         fan["results"].append(res)
         fan["failed"].append(res)
@@ -149,8 +150,7 @@ def _is_metered(vendor):
     """True when this vendor is NOT riding an active $0 subscription lane — i.e. the call actually bills.
     A lane ($0, kind=subscription) contributes nothing to the budget estimate."""
     try:
-        from .. import adapters
-        return not adapters._lane_for((vendor or "").strip().lower())
+        return not _execution_accessors.resolve__lane_for((vendor or "").strip().lower())
     except Exception:
         return True                    # unknown → treat as metered (conservative: never under-count a budget)
 
@@ -245,7 +245,7 @@ class AskResult:
     def consensus(self, require=None):
         """The OK results, but only if enough vendors answered THIS run — else raises NotOk. Defaults to all
         (mode='all') or `need` (mode='first'). This is the call that refuses a false N-of-N."""
-        return vendor_call.consensus(self._fan, require=require)
+        return _execution_accessors.resolve_consensus(self._fan, require=require)
 
     def as_dict(self):
         """Machine-readable and HONEST: answers carry text; failures carry kind + error, never text. This is
@@ -321,19 +321,19 @@ def ask(prompt, *, vendors=None, n=None, schema=None, system=None, purpose="ask"
     with config.scoped_intent_cap(purpose or _call_corpus_accessors.resolve_calls_current().get("intent"), budget_usd):
         dl = float(deadline_s or _DEFAULT_DEADLINE_S)
         if mode == "first":
-            fan = vendor_call.first_ok(vlist, prompt, deadline_s=dl, need=int(require or 1), purpose=purpose,
+            fan = _execution_accessors.resolve_first_ok(vlist, prompt, deadline_s=dl, need=int(require or 1), purpose=purpose,
                                        system=system, schema=schema, max_tokens=max_tokens,
                                        no_metered_fallback=refuse_billed,
                                        **({"wait_for_inflight": True} if budget_usd is not None else {}))
         elif mode == "all":
-            fan = vendor_call.fan_out(vlist, prompt, deadline_s=dl, purpose=purpose, system=system,
+            fan = _execution_accessors.resolve_fan_out(vlist, prompt, deadline_s=dl, purpose=purpose, system=system,
                                       schema=schema, max_tokens=max_tokens,
                                       no_metered_fallback=refuse_billed)
         else:
             raise ValueError(f"mode must be 'all' or 'first', not {mode!r}")
         if budget_usd is not None:
             for result in fan.get("results", []):
-                if result.kind == vendor_call.GATE_REFUSED:
+                if result.kind == _execution_accessors.GATE_REFUSED:
                     raise gate.SpendGateRefused(result.error)
         return AskResult(_inject_unmet(fan, unmet), mode, estimate=estimate)
 
@@ -357,7 +357,7 @@ def ask_vision(prompt, images, vendors, *, schema=None, system=None, budget_usd=
 
     Returns {results:[{vendor,text,cost,executor,error}], ok, n, n_ok, complete, estimate_usd} — or the estimate."""
     import os
-    from .. import adapters, pricing, lane_balance
+    from .. import pricing, lane_balance
     vlist = [v if isinstance(v, str) else f"{v[0]}:{v[1]}" for v in (vendors or [])]
     if not vlist:
         raise ValueError("ask_vision needs at least one vendor (a vision-capable 'vendor:model')")
@@ -375,13 +375,13 @@ def ask_vision(prompt, images, vendors, *, schema=None, system=None, budget_usd=
         raise ValueError(f"images total {total // 1024}KB exceeds the {_ASK_VISION_MAX_TOTAL_IMAGE_BYTES // 1024}KB "
                          f"cap — send fewer/smaller images")
     # per-vendor ESTIMATE (image tokens are provider-aware; conservative output)
-    loaded = [adapters._load_image(i) for i in imgs]
+    loaded = [_execution_accessors.resolve__load_image(i) for i in imgs]
     out_est = int(max_out_tokens or _ASK_VISION_OUT_EST)
     per, est, unpriced = [], 0.0, []
     for v in vlist:
-        prov = adapters.provider_for(v)
+        prov = _execution_accessors.resolve_provider_for(v)
         raw = v.split(":", 1)[1] if ":" in v else v
-        in_tok = adapters._image_input_tokens(loaded, prov, raw) + (len(prompt) + len(system or "")) // 4
+        in_tok = _execution_accessors.resolve__image_input_tokens(loaded, prov, raw) + (len(prompt) + len(system or "")) // 4
         # UNPRICED detection CONSISTENT with the estimate: cost_or_unpriced returns 0.0 AND records the model in
         # UNPRICED_SEEN when it has no price card. A $0 estimate for an unpriced vendor would sail past ANY budget_usd
         # and then spend unbounded (unpriced != free), so we refuse below. Reading the SAME call's side-effect (not a

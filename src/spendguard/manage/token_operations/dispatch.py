@@ -19,7 +19,7 @@ job's I/O fan-out, not a distributed queue; a broker would be a different produc
 semaphore already does.
 
 KEYING. Vendors that ride the SAME subscription lane share ONE budget — one plan, one CLI, one throttle — so the
-key is the lane name when `adapters._lane_for(vendor)` is active, else the vendor. That is the whole reason a
+key is the lane name when `_execution_accessors.resolve__lane_for(vendor)` is active, else the vendor. That is the whole reason a
 lane and a vendor cannot share a concurrency counter.
 
 HONESTY UNDER LOAD. Waiting for a slot counts against the caller's deadline (a caller who asks for an answer in
@@ -31,6 +31,7 @@ Limits are NAMED DEFAULTS + config/env overrides — never a literal at a call s
 concurrency bound protects the lanes, RPM pacing is off (0) until a deployment sets a real number, and a
 four-vendor panel is unconstrained by either.
 """
+from spendguard.generate.execution import execution_accessors as _execution_accessors
 import os
 import threading
 import time
@@ -805,7 +806,7 @@ class Governor:
     def _key_and_limit(self, vendor, model, skip_lane=False):
         """(key, concurrency_limit, rpm, is_lane) for this call. Lane vendors collapse to one key + the lane
         budget; metered vendors key by vendor with the vendor budget. `is_lane` is the AUTHORITATIVE signal
-        from adapters._lane_for (whether this vendor rides an active subscription lane) — returned as data so
+        from _execution_accessors.resolve__lane_for (whether this vendor rides an active subscription lane) — returned as data so
         no caller has to re-derive lane-ness by parsing the key string. Config can override either limit.
 
         `skip_lane=True` forces the VENDOR key even for a vendor that rides a lane: the caller is deliberately
@@ -815,8 +816,7 @@ class Governor:
         lane = None
         if not skip_lane:
             try:
-                from ... import adapters
-                got = adapters._lane_for(vendor)
+                got = _execution_accessors.resolve__lane_for(vendor)
                 lane = got[0] if got else None
             except Exception:
                 lane = None
@@ -1002,7 +1002,7 @@ def release(vendor, model, skip_lane=False, sla_class=None):
 
 def holding():
     """True when THIS thread is already inside an acquire()d dispatch slot (governed / bulk_delegate already admitted
-    this logical call). The universal-admission path in adapters.call reads it so a call that is ALREADY governed by an
+    this logical call). The universal-admission path in _execution_accessors.resolve_call reads it so a call that is ALREADY governed by an
     outer acquire never takes a SECOND slot — one admission per logical call, exactly as _route_guard is one record per
     logical call. Every acquire() (even the OFF/no-deadline no-op) pushes the per-thread stack, so this is authoritative
     for 'am I under the governor right now' without re-deriving it from vendor/model."""
@@ -1010,7 +1010,7 @@ def holding():
 
 
 # ── GOVERNED ADMISSION WITH SHED-TO-METERED — the ONE owner of that policy ────────────────────────────────────────
-# So vendor_call.call and adapters.call(governed=True) SHARE it and can never drift (the exact 'one brain, two
+# So vendor_call.call and _execution_accessors.resolve_call(governed=True) SHARE it and can never drift (the exact 'one brain, two
 # entries' the capability map is about). A lane vendor SPLITS its deadline (LANE_QUEUE_SHARE): the lane may queue for
 # up to this share, and the rest is RESERVED so a saturated-lane shed to the metered twin can still complete.
 LANE_QUEUE_SHARE = 0.5
@@ -1045,7 +1045,7 @@ def admit(vendor, model, deadline_s, no_metered_fallback=False, est_tokens=0, sh
 
     `shed=False` DISABLES the lane→metered shed: a saturated $0 lane just queues out (.ok=False) rather than moving the
     call onto the paid API. It is for a MANAGED SERIAL call (universal admission), where silently paying to escape a
-    busy lane would be surprise spend on a plain adapters.call — a fan WANTS the shed (throughput), a lone call does
+    busy lane would be surprise spend on a plain _execution_accessors.resolve_call — a fan WANTS the shed (throughput), a lone call does
     not. With shed=False the lane vendor also gets the FULL deadline (no reserve is held back for a shed that can't
     happen). `skip_lane=True` gates on the metered VENDOR bucket even for a vendor that rides a lane — for a
     metered_only call, which hits the paid API and so must be paced by that vendor's RPM/TPM, not the $0 lane's
@@ -1053,8 +1053,7 @@ def admit(vendor, model, deadline_s, no_metered_fallback=False, est_tokens=0, sh
     if not deadline_s or float(deadline_s) <= 0:
         return _Admission(True, False, False, vendor, model, False)
     try:
-        from ... import adapters
-        rode_lane = (not skip_lane) and bool(adapters._lane_for(vendor))   # skip_lane=True (a metered_only call) →
+        rode_lane = (not skip_lane) and bool(_execution_accessors.resolve__lane_for(vendor))   # skip_lane=True (a metered_only call) →
     except Exception:                                                      # gate on the metered VENDOR bucket (with
         rode_lane = False                                                  # its RPM/TPM), never the $0 lane bucket
     t0 = time.monotonic()

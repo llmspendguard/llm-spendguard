@@ -7,6 +7,7 @@ mean / median / std / skewness / excess-kurtosis + p10..p90. Saving events are r
 ledger as charges (a separate `savings` table). Sources beyond cache/block/cascade (advisor, plan-vs-API) call
 record_saving() too — same pipe.
 """
+from spendguard.generate.execution import execution_accessors as _execution_accessors
 import datetime
 import math
 from pathlib import Path
@@ -437,10 +438,9 @@ def shed_summary(since=None):
     one case shedding saves REAL money — a plan on paid overage would have billed); quota_preserved_usd sums the
     'quota'/'proactive' classes (est-value moved to another free lane, NOT real money) — kept on a SEPARATE axis so
     the two are never blurred (the same split the cost doctrine requires for billed vs est-value)."""
-    from ... import adapters
     def _lane_of(model):
         try:
-            return adapters._LANES.get(adapters.provider_for(model), (None,))[0] or adapters.provider_for(model)
+            return _execution_accessors.resolve__LANES().get(_execution_accessors.resolve_provider_for(model), (None,))[0] or _execution_accessors.resolve_provider_for(model)
         except Exception:
             return model
     by_route, n, avoided, preserved, free_n, paid_n = {}, 0, 0.0, 0.0, 0, 0

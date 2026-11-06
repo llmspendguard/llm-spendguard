@@ -2,7 +2,7 @@
 answer.
 
 THE TWO QUESTIONS ARE DIFFERENT (and only one is a determinism problem):
-  • "which arm is better" — a priced A/B. Answered at temperature=0 / seed (adapters.call measurement=True), ONE pass
+  • "which arm is better" — a priced A/B. Answered at temperature=0 / seed (_execution_accessors.resolve_call measurement=True), ONE pass
     per arm, no run noise. Determinism removes the between-run term so a single pass is decisive.
   • "is the shipped screen STABLE" — must be measured at the configuration that SHIPS: the $0 subscription lane, at the
     plan CLI's own default sampling (which spendguard cannot set and the CLIs do not publish — so a claimed lane
@@ -13,9 +13,9 @@ By construction this measures PRODUCTION: it sets no determinism knobs and does 
 rides its normal path (the $0 lane where available) at production sampling. $0 billed on a $0 lane; records nothing
 (pure measurement). The replicate count k is the caller's — more replicates tighten the estimate of the spread.
 """
+from spendguard.generate.execution import execution_accessors as _execution_accessors
 
 from ...capability_cli_parsing import add_registered_cli_argument
-from ... import adapters
 
 DEFAULT_REPLICATES = 5          # enough to SEE a spread; the caller raises it to tighten the estimate
 
@@ -44,7 +44,7 @@ def measure_stability(prompts, model, k=DEFAULT_REPLICATES, intent=None, system=
     for _run in range(int(k)):
         row = []
         for p in prompts:
-            r = adapters.call(model, p, intent=intent, system=system, reasoning=reasoning)
+            r = _execution_accessors.resolve_call(model, p, intent=intent, system=system, reasoning=reasoning)
             if r.get("error") or r.get("text") is None:
                 row.append((None, r.get("error") or "empty-reply", r.get("executor")))
                 continue

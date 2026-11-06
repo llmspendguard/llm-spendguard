@@ -16,6 +16,7 @@ Two stages:
 
 CLI: `spendguard mine-conv {index,synth} [--transcripts PATH] [--limit N] [--run]`.
 """
+from spendguard.generate.execution import execution_accessors as _execution_accessors
 
 from ...capability_cli_parsing import add_registered_cli_argument, registered_cli_option_token
 import os, re, json, glob, hashlib, functools, datetime
@@ -255,7 +256,6 @@ def classify_user_asks(items, run=True):
     Same shape as classify_evidence: batched, cached by content hash so re-runs and the second consumer read
     free, caged under spendguard:user-ask, cheap model. FAILS OPEN — an unjudged or failed item comes back
     True, because the damaging error here is deleting a real ask, not keeping a spurious one."""
-    from ... import adapters
     from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
     items = [c for c in items if (c.get("text") or "").strip()]
     res = {c["id"]: True for c in items}                  # fail-open default, applied before anything can fail
@@ -280,7 +280,7 @@ def classify_user_asks(items, run=True):
                   'typed it as a request.')
         try:
             with _call_corpus_accessors.resolve_calls_context(intent="spendguard:user-ask"):
-                r = adapters.call(model, prompt, max_tokens=8 * len(b) + 120, system=_ASK_SYS)
+                r = _execution_accessors.resolve_call(model, prompt, max_tokens=8 * len(b) + 120, system=_ASK_SYS)
             if r.get("error"):
                 continue                                  # stays True — fail open, never a silent drop
             verdicts = {}
@@ -814,7 +814,7 @@ def classify_evidence(chunks, run=False, batch_size=20):
     replacing their separate keyword pre-filters. chunks: [{"id","text"}] → {id: {spend_evidence,kind,cost_lesson}}.
     A BROAD deterministic cost-SHAPE cut runs first (never a topic keyword → no silent drops); only candidates reach
     the LLM. Cached by content hash (re-runs + BOTH consumers read free). Estimate-first: run=False → no spend."""
-    from ... import adapters, pricing, ui, attribution
+    from ... import pricing, ui, attribution
     from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
     chunks = [c for c in chunks if (c.get("text") or "").strip()]
     res = {c["id"]: dict(_NONE_EV) for c in chunks}
@@ -845,7 +845,7 @@ def classify_evidence(chunks, run=False, batch_size=20):
     def _run_batch(arg):                                  # one nano call per batch; PARALLEL (corpus = 100s of batches)
         b, body = arg
         with _call_corpus_accessors.resolve_calls_context(intent="spendguard:classify_evidence"):
-            r = adapters.call(model, body, max_tokens=25 * len(b) + 200, system=_EVIDENCE_SYS)
+            r = _execution_accessors.resolve_call(model, body, max_tokens=25 * len(b) + 200, system=_EVIDENCE_SYS)
         return b, r
     with _cf.ThreadPoolExecutor(max_workers=8) as ex:
         for b, r in ex.map(_run_batch, zip(batches, bodies)):
@@ -1169,7 +1169,6 @@ def _dedup_top(events, k):
 
 
 def synth(tdir=None, run=False, limit=40):
-    from ...submit import _count_tokens
     model = config.advisor_model()
     index, _ = build_conversation_event_index(tdir)
     events = _dedup_top(list(_all_events(index)), limit)
@@ -1180,7 +1179,7 @@ def synth(tdir=None, run=False, limit=40):
     body = "\n".join(f"- ({ev.get('ts','?')[:10]} {ev.get('role','?')}) {ev['text']}" for ev in events)
     sys = _SYS.replace("{{k}}", str(min(10, max(4, limit // 4))))   # .replace, not .format — _SYS has literal JSON braces
     prompt = f"Decision snippets ({len(events)}):\n{body}"
-    in_tok = _count_tokens(sys + prompt, model)
+    in_tok = _execution_accessors.resolve__count_tokens(sys + prompt, model)
     out_tok = 1500
     from ... import pricing
     cost = pricing.realtime_cost(model, in_tok, out_tok)
@@ -1192,9 +1191,8 @@ def synth(tdir=None, run=False, limit=40):
         from ... import ui; ui.estimate_only(action="synthesize from the conversations", cost=cost)
         return dict(requests=1, in_tok=in_tok, out_tok=out_tok, cost=cost, model=model)
 
-    from ... import adapters
     with _call_corpus_accessors.resolve_calls_context(intent="spendguard:conv-synth"):
-        r = adapters.call(model, prompt, max_tokens=out_tok, system=sys)
+        r = _execution_accessors.resolve_call(model, prompt, max_tokens=out_tok, system=sys)
     if r["error"]:
         print(f"  ERROR: {r['error']}")
         return dict(error=r["error"])

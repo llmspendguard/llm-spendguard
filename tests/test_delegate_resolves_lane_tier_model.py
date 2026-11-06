@@ -55,7 +55,6 @@ def main():
         return {"text": "OK", "cost": 0.0, "executor": "codex"}
 
     adapters.call = capture_call
-    lane_balance.adapters.call = capture_call
 
     # ── codex lane at low reasoning → the CHEAP tier model, as a valid "provider:id" (no dict stringification) ──
     captured.clear()

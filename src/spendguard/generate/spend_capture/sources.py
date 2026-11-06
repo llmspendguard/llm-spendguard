@@ -32,6 +32,7 @@ entry point (the same group the GPU adapters use) and ride `scan` / `sources` wi
 Fail-open per adapter, exactly like gpu_port: a broken source warns once and is skipped — it can never break
 the others or the command.
 """
+from spendguard.generate.execution import execution_accessors as _execution_accessors
 
 from ...capability_cli_parsing import registered_cli_option_token
 import sys
@@ -158,8 +159,7 @@ def providers_paid():
     NEVER returns or prints the key itself — only whether one resolves."""
     from ... import config, config_schema
     try:
-        from ... import adapters
-        llm_envs = {p["key_env"] for p in adapters.PROVIDERS.values()}
+        llm_envs = {p["key_env"] for p in _execution_accessors.PROVIDERS.values()}
     except Exception:
         llm_envs = set()
     seen, out = set(), []

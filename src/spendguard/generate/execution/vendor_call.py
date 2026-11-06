@@ -27,34 +27,12 @@ import concurrent.futures as cf
 import threading
 import time
 
+from .execution_accessors import (  # noqa: F401  (public home re-exports include constants unused internally)
+    DEADLINE_EXCEEDED, EMPTY, FAILURES, GATE_REFUSED, KINDS, OK, OVERLOADED,
+    PAYLOAD_REJECTED, PREFLIGHT_UNMET, REFUSED, RETRYABLE, SCHEMA_VIOLATION,
+    TRANSPORT_ERROR, TRUNCATED, UNFUNDED, NotOk, Result, run_id,
+)
 from ... import config
-
-# The kinds. Exactly one is a success; the rest are failures with a reason attached.
-OK = "ok"
-TRUNCATED = "truncated"          # the model was cut off — an incomplete JSON body parses to nothing
-EMPTY = "empty"                  # HTTP 200, zero characters. The failure that logged as success.
-REFUSED = "refused"              # the model declined (content policy, safety stop)
-TRANSPORT_ERROR = "transport_error"
-DEADLINE_EXCEEDED = "deadline_exceeded"
-SCHEMA_VIOLATION = "schema_violation"
-UNFUNDED = "unfunded"            # the account cannot pay — deterministic, actionable, and NOT retryable
-GATE_REFUSED = "gate_refused"    # spendguard's OWN gate DELIBERATELY refused (budget / meta / realtime / batch-1 /
-#                                  intent-door cap — a SpendGateRefused). A deliberate spend stop, NEVER a vendor fault:
-#                                  it must be recorded, .text must raise on it, and it must NEVER ride the transient
-#                                  retry loop (retrying just re-hits the same cap — the [deliberate-refusal never
-#                                  fail-open] doctrine as a first-class outcome, not a message mislabelled transport).
-OVERLOADED = "overloaded"        # 429/529 — the vendor is rate-limited/overloaded: TRANSIENT, retry (honor Retry-After)
-PAYLOAD_REJECTED = "payload_rejected"  # 400/413/414/401/403 — bad/oversized/unauthenticated request: PERMANENT, never retried
-PREFLIGHT_UNMET = "preflight_unmet"    # never called: the model failed preflight (stale/unpriced/unknown id). A
-#                                        HONEST coverage state — the caller sees WHICH model was skipped and why,
-#                                        instead of the whole cross-LLM batch being refused for one bad id.
-KINDS = (OK, TRUNCATED, EMPTY, REFUSED, TRANSPORT_ERROR, DEADLINE_EXCEEDED, SCHEMA_VIOLATION, UNFUNDED,
-         OVERLOADED, PAYLOAD_REJECTED, PREFLIGHT_UNMET, GATE_REFUSED)
-FAILURES = tuple(k for k in KINDS if k != OK)
-# Transient classes worth retrying: a broken connection (transport) or a vendor asking us to slow down
-# (overloaded). Everything else is deterministic — a truncation, an empty body, a refusal, a bad payload, an
-# unfunded account, a blown deadline — where a retry only spends the deadline and the money to get the same answer.
-RETRYABLE = (TRANSPORT_ERROR, OVERLOADED)
 
 # IN-PROCESS transient-retry budget: how many times call() re-tries a RETRYABLE outcome (a broken connection or a
 # 429/529 overload) on the SAME vendor/model within ONE synchronous call, bounded ALWAYS by the total deadline_s.
@@ -66,7 +44,6 @@ RETRYABLE = (TRANSPORT_ERROR, OVERLOADED)
 # refused, truncated, schema, unfunded, deadline) are not in RETRYABLE and break on the first occurrence regardless.
 IN_PROCESS_RETRY_ATTEMPTS = 3
 
-_RUN_ID = None
 _lock = threading.RLock()
 # The shed-to-metered + deadline-split policy for a saturated $0 lane lives in ONE place — dispatch.admit (shared by
 # this module's call() and adapters.call(governed=True)). LANE_QUEUE_SHARE moved there with it.
@@ -82,84 +59,6 @@ class BadBound(ValueError):
     site, every time. So the library refuses the literal instead of describing why it is wrong.
 
     The way to never see this: do not pass a bound. Omit max_tokens and the measured one is used."""
-
-
-class NotOk(RuntimeError):
-    """Raised when a caller reads `.text` off a result that is not `ok`. The point is that this CANNOT be
-    ignored: there is no path from a truncated or empty response to a string a caller can use by accident."""
-
-
-class Result:
-    """The outcome of one call. INVARIANT: `.text` is readable only when `kind == 'ok'`; every other kind raises
-    on access. `.ok` is the boolean to branch on, and `.stop_reason` carries the vendor's own word for it."""
-
-    __slots__ = ("kind", "_text", "vendor", "model", "stop_reason", "in_tok", "out_tok", "cost",
-                 "latency", "error", "prompt_sha", "run_id", "ts", "purpose", "payload",
-                 "http_status", "provider_error", "attempts", "text_head")
-
-    def __init__(self, kind, vendor, model, text=None, stop_reason=None, in_tok=None, out_tok=None, cost=None,
-                 latency=0.0, error=None, prompt_sha="", purpose="", payload=None,
-                 http_status=None, provider_error=None, attempts=1, text_head=None):
-        if kind not in KINDS:
-            raise ValueError(f"unknown result kind {kind!r} — one of {KINDS}")
-        self.kind, self._text = kind, (text if kind == OK else None)
-        self.vendor, self.model, self.stop_reason = vendor, model, stop_reason
-        self.in_tok, self.out_tok, self.cost, self.latency = in_tok, out_tok, cost, latency
-        self.error, self.prompt_sha, self.purpose, self.payload = error, prompt_sha, purpose, payload
-        # FULL failure detail a caller can log verbatim (honestreview reads these): the HTTP status (separates a
-        # 429/529 overload from a 400 rejection), the provider's own error BODY (the real reason, not str(e)), how
-        # many attempts it took, and a peek at any (possibly partial) body — captured even for a non-ok result.
-        self.http_status, self.provider_error, self.attempts = http_status, provider_error, int(attempts or 1)
-        self.text_head = (text_head if text_head is not None else (text or ""))[:200]
-        self.run_id, self.ts = run_id(), time.time()
-
-    @property
-    def ok(self):
-        return self.kind == OK
-
-    @property
-    def elapsed_s(self):
-        """honestreview's name for latency (seconds, wall-clock over every attempt)."""
-        return round(self.latency, 3)
-
-    @property
-    def finish_reason(self):
-        """honestreview's name for stop_reason (the vendor's own word for how the response ended)."""
-        return self.stop_reason
-
-    @property
-    def text(self):
-        if self.kind != OK:
-            raise NotOk(f"{self.vendor}/{self.model}: result is {self.kind!r} "
-                        f"(stop_reason={self.stop_reason!r}, error={self.error!r}) — there is no usable text. "
-                        f"A {self.kind} response is a FAILURE; treating it as content is the bug this prevents.")
-        return self._text
-
-    def as_row(self):
-        """The persisted shape — enough for a consumer to tell THIS run's answer from a previous one, AND to log a
-        failure verbatim. Carries both spendguard's names (latency/stop_reason) and honestreview's (elapsed_s/
-        finish_reason) so either consumer reads what it expects."""
-        return {"run_id": self.run_id, "ts": self.ts, "vendor": self.vendor, "model": self.model,
-                "purpose": self.purpose, "kind": self.kind, "stop_reason": self.stop_reason,
-                "finish_reason": self.stop_reason, "prompt_sha": self.prompt_sha,
-                "in_tok": self.in_tok, "out_tok": self.out_tok, "cost": self.cost,
-                "latency": round(self.latency, 3), "elapsed_s": round(self.latency, 3), "error": self.error,
-                "http_status": self.http_status, "provider_error": self.provider_error,
-                "attempts": self.attempts, "text_head": self.text_head}
-
-    def __repr__(self):
-        return f"<Result {self.kind} {self.vendor}/{self.model} out={self.out_tok} {self.latency:.1f}s>"
-
-
-def run_id():
-    """A stable id for THIS process's run. Every result carries it, which is what lets a merge step tell a
-    fresh answer from one written by an earlier run — the check whose absence republished a stale file."""
-    global _RUN_ID
-    if _RUN_ID is None:
-        with _lock:
-            if _RUN_ID is None:
-                _RUN_ID = "run-%d-%s" % (int(time.time()), os.urandom(3).hex())
-    return _RUN_ID
 
 
 def _sha(s):
@@ -1350,3 +1249,15 @@ def consensus(fan, require=None):
             % (fan["n_ok"], fan["n"], fan["run_id"], need,
                ", ".join(f"{r.vendor}/{r.model}={r.kind}" for r in fan["failed"]) or "none"))
     return fan["ok"]
+
+
+from . import execution_accessors as _execution_accessors
+
+_execution_accessors.set__classify_resolver(lambda *a, **k: _classify(*a, **k))
+_execution_accessors.set_caps_resolver(lambda *a, **k: caps(*a, **k))
+_execution_accessors.set_closest_served_resolver(lambda *a, **k: closest_served(*a, **k))
+_execution_accessors.set_consensus_resolver(lambda *a, **k: consensus(*a, **k))
+_execution_accessors.set_fan_out_resolver(lambda *a, **k: fan_out(*a, **k))
+_execution_accessors.set_first_ok_resolver(lambda *a, **k: first_ok(*a, **k))
+_execution_accessors.set_list_models_resolver(lambda *a, **k: list_models(*a, **k))
+_execution_accessors.set_served_check_resolver(lambda *a, **k: served_check(*a, **k))

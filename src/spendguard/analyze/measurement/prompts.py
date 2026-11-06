@@ -10,6 +10,7 @@ Findings are MEASURED from the calls table (opt-in corpus: `calls.enabled` + `ca
 snippet-based checks), never guessed; prices come from pricing.py only. Each finding carries the exact
 next command to run. Zero LLM spend — pure corpus analysis.
 """
+from spendguard.generate.execution import execution_accessors as _execution_accessors
 
 from ...capability_cli_parsing import add_registered_cli_argument
 
@@ -28,7 +29,7 @@ def _batchable_verdict(intent, model, n, med_in):
     reasonable people can disagree — a bulk classify vs a chat turn), so a meta-caged LLM decides it, never a rule.
     Returns {batchable: bool, why: str}, or None when the judge is unavailable (→ the candidate is not emitted).
     A deliberate spend refusal (caps.meta) PROPAGATES — it halts the analysis, never degrades to a silent skip."""
-    from ... import adapters, config, gate, plan_admission
+    from ... import config, gate, plan_admission
     from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
     judge_model = plan_admission.ready_meta_model(config.advisor_judge_model())  # route this meta call off a CAPPED plan to a READY provider
     q = (f"A job-type '{intent}' made {n} separate REALTIME LLM calls on {model}, each with a small (~{med_in}-token) "
@@ -37,11 +38,11 @@ def _batchable_verdict(intent, model, n, med_in):
          f'Return JSON only: {{"batchable": true|false, "why": "<one sentence>"}}.')
     try:
         with _call_corpus_accessors.resolve_calls_context(intent="spendguard:batchable-judge"):           # meta-caged (caps.meta)
-            r = adapters.call(judge_model, q, sig="spendguard:batchable-judge",
+            r = _execution_accessors.resolve_call(judge_model, q, sig="spendguard:batchable-judge",
                               max_tokens=_BATCH_JUDGE_OUT,
                               schema={"type": "object", "additionalProperties": False, "required": ["batchable"],
                                       "properties": {"batchable": {"type": "boolean"}, "why": {"type": "string"}}})
-        j = adapters.structured_reply(r)
+        j = _execution_accessors.resolve_structured_reply(r)
         return j if isinstance(j, dict) and isinstance(j.get("batchable"), bool) else None
     except gate.deliberate_stop_types():                                   # a spend refusal must HALT, not skip silently
         raise

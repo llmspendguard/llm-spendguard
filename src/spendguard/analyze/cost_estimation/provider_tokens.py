@@ -28,6 +28,7 @@ FAIL-OPEN: token estimation must never break a call. tiktoken absent → a per-p
 (median, the last-resort fallback), then CHARS_PER_TOKEN_DEFAULT. Every path returns an int. A DELIBERATE stop
 (spend refusal / dispatch deadline / a locked accounting period) is the one thing NOT swallowed — it propagates.
 """
+from spendguard.generate.execution import execution_accessors as _execution_accessors
 
 from ...capability_cli_parsing import registered_cli_option_token
 import json
@@ -261,14 +262,14 @@ def _choose_factors_agentically(stats_by_provider, model):
     confidence + rationale. Returns ({provider: {factor, confidence, why}}, cost). A DELIBERATE stop propagates; any
     other failure returns (None, cost) so the caller can leave those providers on the neutral proxy (never a
     mechanical substitute dressed as the judged choice). The WHOLE panel is sent (never truncated)."""
-    from ... import adapters, config
+    from ... import config
     from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
     model = model or config.advisor_model()
     prompt = "Per-provider token-ratio statistics (ratio = provider_in_tok / o200k_count):\n" + json.dumps(
         stats_by_provider, indent=2, sort_keys=True) + "\n\nChoose a factor for each provider listed."
     try:
         with _call_corpus_accessors.resolve_calls_context(intent="spendguard:token-calibrate"):
-            r = adapters.call(model, prompt, max_tokens=_FACTOR_OUT, system=_FACTOR_SYS,
+            r = _execution_accessors.resolve_call(model, prompt, max_tokens=_FACTOR_OUT, system=_FACTOR_SYS,
                               schema=_FACTOR_SCHEMA, sig="spendguard:token-calibrate")
     except Exception as e:
         if _stop_or_locked(e):
@@ -277,7 +278,7 @@ def _choose_factors_agentically(stats_by_provider, model):
     cost = r.get("cost") or 0.0
     if r.get("error"):
         return None, cost
-    j = adapters.structured_reply(r)
+    j = _execution_accessors.resolve_structured_reply(r)
     if not isinstance(j, dict) or not isinstance(j.get("providers"), list):
         return None, cost
     out = {}
@@ -292,10 +293,10 @@ def _choose_factors_agentically(stats_by_provider, model):
 def _estimate_choice_cost(stats_by_provider, model=None):
     """$0 estimate of the ONE factor-choice meta call, for --dry-run (the estimate-first discipline). A DELIBERATE
     stop from pricing (EstimateNotGrounded / a refusal) PROPAGATES — it is not masked into a None estimate."""
-    from ... import config, pricing, adapters
+    from ... import config, pricing
     model = model or config.advisor_model()
     prompt = _FACTOR_SYS + "\n" + json.dumps(stats_by_provider, sort_keys=True)
-    in_tok = count_text(prompt, provider=adapters.provider_for(model), model=model)
+    in_tok = count_text(prompt, provider=_execution_accessors.resolve_provider_for(model), model=model)
     try:
         return round(float(pricing.realtime_cost(model, in_tok, _FACTOR_OUT) or 0.0), 6)
     except Exception as e:

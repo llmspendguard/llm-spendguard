@@ -14,12 +14,12 @@ SEPARATE meta budget (config.meta_cap, default $2/day) and is excluded from the 
 The model for each role is configurable (see config.advisor_model / advisor_judge_model). The
 estimate path makes ZERO paid calls — it only counts tokens and prices via pricing.py.
 """
+from spendguard.generate.execution import execution_accessors as _execution_accessors
 
 from ...capability_cli_parsing import add_registered_cli_argument
 import json
 from ... import learn, config, pricing
 from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
-from ...submit import _count_tokens
 
 META = "spendguard"   # intent prefix → routed to the meta budget by the gate
 
@@ -129,7 +129,7 @@ def reconstruct_advisor_history(run=False, per=15, limit=None):
               "(recovers them from the providers, free). 0 spend.")
         return dict(requests=0, cost=0.0, model=judge)
 
-    in_tok = sum(_count_tokens(_JUDGE_SYS + _judge_prompt(p, o), judge) for _, _, _, p, o in samples)
+    in_tok = sum(_execution_accessors.resolve__count_tokens(_JUDGE_SYS + _judge_prompt(p, o), judge) for _, _, _, p, o in samples)
     out_tok = _JUDGE_OUT_CEILING * len(samples)
     cost = pricing.realtime_cost(judge, in_tok, out_tok)
     print("  ESTIMATE (zero paid calls):")
@@ -139,14 +139,13 @@ def reconstruct_advisor_history(run=False, per=15, limit=None):
         from ... import ui; ui.estimate_only(action="judge output quality", cost=cost)
         return dict(requests=len(samples), in_tok=in_tok, out_tok=out_tok, cost=cost, model=judge)
 
-    from ... import adapters
     good = bad = err = 0
     with _call_corpus_accessors.resolve_calls_context(intent=f"{META}:reconstruct"):
         for io_id, _intent, _model, p, o in samples:
             try:
                 # no_substitution: the verdict is recorded via callio.set_quality(src="judge") and reported as model=judge
                 # — the bandit must not serve a different model than the judge these quality labels are attributed to
-                r = adapters.call(judge, _judge_prompt(p, o), max_tokens=_JUDGE_OUT_CEILING, system=_JUDGE_SYS,
+                r = _execution_accessors.resolve_call(judge, _judge_prompt(p, o), max_tokens=_JUDGE_OUT_CEILING, system=_JUDGE_SYS,
                                   no_substitution=True)
                 if r["error"]:
                     err += 1
@@ -180,7 +179,7 @@ def mine(run=False, intent=None):
         print("  → no evidence yet. Run `spendguard backfill` and record some calls first. 0 spend.")
         return dict(requests=0, cost=0.0, model=model)
     prompt = f"Evidence ({n} model rows){' for intent ' + intent if intent else ''}:\n{table}"
-    in_tok = _count_tokens(_MINE_SYS + prompt, model)
+    in_tok = _execution_accessors.resolve__count_tokens(_MINE_SYS + prompt, model)
     cost = pricing.realtime_cost(model, in_tok, _MINE_OUT)
     print("  ESTIMATE (zero paid calls):")
     _est_line("realtime", model, 1, in_tok, _MINE_OUT, cost)
@@ -189,9 +188,8 @@ def mine(run=False, intent=None):
         from ... import ui; ui.estimate_only(action="synthesize the insights", cost=cost)
         return dict(requests=1, in_tok=in_tok, out_tok=_MINE_OUT, cost=cost, model=model)
 
-    from ... import adapters
     with _call_corpus_accessors.resolve_calls_context(intent=f"{META}:mine"):
-        r = adapters.call(model, prompt, max_tokens=_MINE_OUT, system=_MINE_SYS)  # gate → meta cap
+        r = _execution_accessors.resolve_call(model, prompt, max_tokens=_MINE_OUT, system=_MINE_SYS)  # gate → meta cap
     if r["error"]:
         print(f"  ERROR: {r['error']}")
         return dict(error=r["error"])
@@ -268,7 +266,7 @@ def optimize(intent=None, plan=None, run=False):
     prompt = (f"Intent: {intent or 'all'}\nPlanned model: {plan or 'unspecified'}\n\n"
               f"Evidence:\n{table}\n\nMined insights:\n{ins_txt}\n\n"
               f"Recommend how to run the next job most cheaply without losing quality.")
-    in_tok = _count_tokens(_OPT_SYS + prompt, model)
+    in_tok = _execution_accessors.resolve__count_tokens(_OPT_SYS + prompt, model)
     cost = pricing.realtime_cost(model, in_tok, _OPT_OUT)
     print("  ESTIMATE (zero paid calls):")
     _est_line("realtime", model, 1, in_tok, _OPT_OUT, cost)
@@ -277,11 +275,10 @@ def optimize(intent=None, plan=None, run=False):
         from ... import ui; ui.estimate_only(action="produce the recommendation", cost=cost)
         return dict(requests=1, in_tok=in_tok, out_tok=_OPT_OUT, cost=cost, model=model)
 
-    from ... import adapters
     with _call_corpus_accessors.resolve_calls_context(intent=f"{META}:optimize"):
         # no_substitution: this returns model=model as the recommender of record — the bandit must not silently serve
         # another model while we report this one produced the recommendation (measurement-identity integrity)
-        r = adapters.call(model, prompt, max_tokens=_OPT_OUT, system=_OPT_SYS, no_substitution=True)
+        r = _execution_accessors.resolve_call(model, prompt, max_tokens=_OPT_OUT, system=_OPT_SYS, no_substitution=True)
     if r["error"]:
         print(f"  ERROR: {r['error']}")
         return dict(error=r["error"])
@@ -321,22 +318,21 @@ def recommend_models(intent=None, k=5, quality_bar=None, run=False):
     bar_txt = f"The caller REQUIRES this quality bar: {quality_bar}\n" if quality_bar else ""
     prompt = (f"Intent (job-type): {intent or 'all'}\nReturn AT MOST {int(k)} models.\n{bar_txt}\n"
               f"Cost×quality evidence — rank ONLY these candidates:\n" + "\n".join(lines))
-    in_tok = _count_tokens(_REC_SYS + prompt, model)
+    in_tok = _execution_accessors.resolve__count_tokens(_REC_SYS + prompt, model)
     cost = pricing.realtime_cost(model, in_tok, _REC_OUT)
     if not run:
         return dict(intent=intent, requests=1, in_tok=in_tok, out_tok=_REC_OUT, cost=cost, model=model,
                     estimate_only=True, candidates=[m["id"] for m in ev["models"]],
                     unmeasured_for_intent=ev["unmeasured_for_intent"],
                     note=f"estimate only (~${cost:.4f}); call with run=True to produce the ranking (meta-caged).")
-    from ... import adapters
     with _call_corpus_accessors.resolve_calls_context(intent=f"{META}:recommend"):
         # no_substitution: the ranking is reported as produced by `model` (returned as model=model) — pin it so the
         # bandit can't silently swap the model of record for this measurement
-        r = adapters.call(model, prompt, max_tokens=_REC_OUT, system=_REC_SYS, schema=_REC_SCHEMA, no_substitution=True)
+        r = _execution_accessors.resolve_call(model, prompt, max_tokens=_REC_OUT, system=_REC_SYS, schema=_REC_SCHEMA, no_substitution=True)
     if r.get("error"):
         return dict(intent=intent, error=r["error"], model=model, cost=r.get("cost"),
                     unmeasured_for_intent=ev["unmeasured_for_intent"])
-    parsed = adapters.structured_reply(r)
+    parsed = _execution_accessors.resolve_structured_reply(r)
     if not isinstance(parsed, dict):
         return dict(intent=intent, model=model, cost=r.get("cost"), quality_bar=None, top=[],
                     unmeasured_for_intent=ev["unmeasured_for_intent"],

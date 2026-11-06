@@ -25,6 +25,7 @@ keeps the named model and only supplies its learned effort, so a member is titra
 a global "pick the best model" would cause is impossible. No measured basis → model=None and the caller keeps its
 named model (the honest unresolved path). Never raises except to PROPAGATE a deliberate stop (a spend refusal).
 """
+from spendguard.generate.execution import execution_accessors as _execution_accessors
 import datetime
 import hashlib
 import json
@@ -34,7 +35,7 @@ from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_a
 from spendguard.store.money_ledger.ledger_write_decorators import best_effort_ledger_function
 
 _INFER_OUT = 80          # the intent classifier returns one tiny JSON label ({"intent": "<known-label>"|null}); a small,
-#                          named output cap (not a call-site magic number) — and adapters.call self-heals a truncation anyway
+#                          named output cap (not a call-site magic number) — and _execution_accessors.resolve_call self-heals a truncation anyway
 
 # (intent, quality_target, evidence_fingerprint) -> {"model","considered","why"} — the recommend_models-derived model
 # pick ONLY (effort is re-applied live, never cached). This dict is L1; the ledger-backed L2 below preserves the same
@@ -233,7 +234,7 @@ def _infer_intent(prompt):
     key = hashlib.sha256(prompt.encode("utf-8", "replace")).hexdigest()
     if key in _intent_cache:
         return _intent_cache[key]
-    from ... import adapters, config
+    from ... import config
     from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
     result = None
     known = _call_corpus_accessors.resolve_calls_recorded_intents(min_calls=3)                # only intents with enough evidence to be worth routing to
@@ -247,10 +248,10 @@ def _infer_intent(prompt):
             from ... import plan_admission
             _judge = plan_admission.ready_meta_model(config.advisor_judge_model())  # off a capped plan to a READY provider
             with _call_corpus_accessors.resolve_calls_context(intent="spendguard:infer-intent"):
-                r = adapters.call(_judge,
+                r = _execution_accessors.resolve_call(_judge,
                                   "Known intents:\n%s\n\nTASK PROMPT:\n%s" % ("\n".join("- " + k for k in known), prompt),
                                   system=_sys, schema=_schema, sig="spendguard:infer-intent", max_tokens=_INFER_OUT, timeout_s=60)
-            j = adapters.structured_reply(r)
+            j = _execution_accessors.resolve_structured_reply(r)
             cand = (j or {}).get("intent") if isinstance(j, dict) else None
             if cand in known:                                  # accept ONLY a label from the list — never a hallucinated one
                 result = cand

@@ -20,6 +20,7 @@ cadence and by `spendguard balances`. The agentic read is cached per (vendor, ra
 never re-pays for the extraction. Billed axis: the balance FETCH is $0 (a GET); the one-time read per refresh is
 a few tenths of a cent of metered LLM, recorded under intent spendguard:balance-read.
 """
+from spendguard.generate.execution import execution_accessors as _execution_accessors
 
 from ...capability_cli_parsing import registered_cli_option_token
 import os
@@ -149,8 +150,7 @@ def fetch_balance_raw(vendor, timeout_s=15):
     ep = _endpoints().get(vendor)
     if not ep:
         return None
-    from ... import adapters
-    spec = adapters.PROVIDERS.get(vendor) or {}
+    spec = _execution_accessors.PROVIDERS.get(vendor) or {}
     key = config.api_key(spec.get("key_env") or "")
     if not key:
         return None
@@ -172,7 +172,6 @@ def extract_available(vendor, raw, run=True):
     map). run=False estimates only (no spend). On any failure returns available=None (source stays 'unknown' —
     never a fabricated number). The WHOLE response is shown to the model (a balance body is tiny; never truncate
     what an LLM must read, or the balance/expiry field could be the part cut off)."""
-    from ... import adapters
     from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
     prompt = (f"Vendor: {vendor}\nIts account-balance API returned this JSON:\n{json.dumps(raw)}\n\n"
               "Report the spendable available balance now.")
@@ -185,7 +184,7 @@ def extract_available(vendor, raw, run=True):
             # NO hardcoded cap: the reply IS content (the balance number), so a literal max_tokens would be a cap on
             # a content call — the exact truncate-to-wrong-number defect. The sig lets _call_guarded floor + measure
             # the budget and clamp it to the model ceiling, so a tiny JSON reply is never cut off.
-            r = adapters.call(_meta, prompt, system=_BALANCE_SYS,
+            r = _execution_accessors.resolve_call(_meta, prompt, system=_BALANCE_SYS,
                               schema=_BALANCE_SCHEMA, sig="spendguard:balance-read")
         if r.get("error"):
             return {"available": None, "currency": None, "expiring": None, "note": f"read failed: {r.get('error')}"}
@@ -291,7 +290,7 @@ def all_balances(refresh=False):
     balance) PLUS every config-declared vendor with no endpoint (openai/anthropic/gemini — declared-minus-spend).
     One 'how much is available' view across all providers, from cache (or a live refresh of the API ones)."""
     api_rows = refresh_balances() if refresh else (list((_load_cache().get("vendors") or {}).values()) or refresh_balances())
-    # vendor names are canonical provider ids (adapters.PROVIDERS keys — a controlled vocabulary, no aliases); the
+    # vendor names are canonical provider ids (_execution_accessors.PROVIDERS keys — a controlled vocabulary, no aliases); the
     # only slip is case, so dedup case-insensitively (a mechanical case-fold, not a semantic match) to avoid a
     # declared vendor also shown from the API path.
     seen = {(r.get("vendor") or "").lower() for r in api_rows}

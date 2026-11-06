@@ -644,3 +644,10 @@ def status():
             raise
         config.rollback_ledger_conn("batch_jobs")
         return {}
+
+
+from . import execution_accessors as _execution_accessors
+
+_execution_accessors.set_poll_resolver(lambda *a, **k: poll(*a, **k))
+_execution_accessors.set_status_resolver(lambda *a, **k: status(*a, **k))
+_execution_accessors.set_submit_offload_resolver(lambda *a, **k: submit_offload(*a, **k))

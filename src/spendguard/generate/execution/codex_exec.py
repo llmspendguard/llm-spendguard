@@ -49,7 +49,7 @@ CODEX_ORPHAN_PARENT_PID = 1
 CODEX_CONFIG_FILENAME = "config.toml"
 CODEX_DEFAULT_HOME = "~/.codex"
 CODEX_MCP_DEFAULT_URL_PORTS = {"http": 80, "https": 443}
-CODEX_APP_SERVER_RATE_LIMITS_METHOD = "account/rateLimits/read"
+from .execution_accessors import CODEX_APP_SERVER_RATE_LIMITS_METHOD, CODEX_POOL_WORKER_PREFIX
 CODEX_EXEC_WORK_DIRECTORY_PREFIX = "spendguard-codex-"
 CODEX_USAGE_UNKNOWN_SAMPLE_COUNT = 0
 CODEX_DELEGATE_OUTPUT_FILENAME = "delegate-final.txt"
@@ -64,7 +64,6 @@ CODEX_DELEGATE_REQUIRED_MCP_READ_ONLY_TOOLS = {
 }
 CODEX_DELEGATE_REQUIRED_MCP_SERVERS = tuple(CODEX_DELEGATE_REQUIRED_MCP_READ_ONLY_TOOLS)
 CODEX_POOL_DIRECTORY = "codex-daemon-workers"
-CODEX_POOL_WORKER_PREFIX = "worker-"
 CODEX_POOL_AUTH_FILENAME = "auth.json"
 CODEX_POOL_CONFIG_FILENAME = "config.toml"
 CODEX_POOL_PRIVATE_FILE_MODE = 0o600
@@ -890,3 +889,18 @@ def _run_agentic_codex_exec(prompt, system=None, model=None, timeout=TIMEOUT_S, 
                 "approval_mode": CODEX_AGENTIC_APPROVAL_FLAG,
                 "required_mcp_servers": list(CODEX_DELEGATE_REQUIRED_MCP_SERVERS),
                 "latency": round(time.time() - started_at, 2), "effort": effort, "error": None}
+
+
+from . import execution_accessors as _execution_accessors
+
+_execution_accessors.set__bin_resolver(lambda *a, **k: _bin(*a, **k))
+_execution_accessors.set__codex_effort_resolver(lambda *a, **k: _codex_effort(*a, **k))
+_execution_accessors.set__daemon_enabled_resolver(lambda *a, **k: _daemon_enabled(*a, **k))
+_execution_accessors.set__mcp_disable_flags_resolver(lambda *a, **k: _mcp_disable_flags(*a, **k))
+_execution_accessors.set__plugin_disable_flags_resolver(lambda *a, **k: _plugin_disable_flags(*a, **k))
+_execution_accessors.set_capture_execution_codex_thread_resolver(lambda *a, **k: capture_execution_codex_thread(*a, **k))
+_execution_accessors.set_codex_daemon_worker_home_resolver(lambda *a, **k: codex_daemon_worker_home(*a, **k))
+_execution_accessors.set_hold_execution_codex_session_resolver(lambda *a, **k: hold_execution_codex_session(*a, **k))
+_execution_accessors.set_reap_execution_codex_sessions_resolver(lambda *a, **k: reap_execution_codex_sessions(*a, **k))
+_execution_accessors.set_run_cold_prompt_resolver(lambda *a, **k: run_cold_prompt(*a, **k))
+_execution_accessors.set_settle_execution_codex_session_resolver(lambda *a, **k: settle_execution_codex_session(*a, **k))

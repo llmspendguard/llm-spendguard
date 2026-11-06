@@ -9,6 +9,7 @@ model in a group), turning a silent misconfiguration into an error when someone 
 
 route_utility owns the ROUTING (rank_for_tier); this module owns the DECLARATION + validation + CLI.
 """
+from spendguard.generate.execution import execution_accessors as _execution_accessors
 
 from ...capability_cli_parsing import registered_cli_option_token
 import time
@@ -92,13 +93,13 @@ _REACH_SNAPSHOT = "tier_reachability"        # persisted so doctor/tiers render 
 def reachability_probe(save=True):
     """The check tier_config_report CANNOT make: does each ENABLED lane's DECLARED tier model actually SERVE $0 on
     its lane, or does the lane CLI REJECT it and silently fall back to the METERED API (the 'green report, inert
-    lane' class, one level below tier_config_report)? Dispatches through adapters.call — the SAME production path,
+    lane' class, one level below tier_config_report)? Dispatches through _execution_accessors.resolve_call — the SAME production path,
     so the lane-boundary resolution (e.g. the Gemini composer that turns a base id into a served tier suffix) is
     applied exactly as a real fungible call would be. PINNED (no_substitution) + no_metered_fallback => $0 BY
     CONSTRUCTION: a lane miss is an error, never a metered call. served = the lane answered (text, no error).
     Persists a snapshot (save) so doctor/tiers render it without re-probing. Returns
     {asof, rows:[{lane, model, tiers, served, error}]}."""
-    from ... import adapters, gate, lanes
+    from ... import gate, lanes
     groups = route_utility.tiers()
     enabled = {ln["lane"] for ln in lanes.lanes_status()["lanes"] if ln["enabled"]}
     targets = {}                                         # (lane, model) -> the tiers that declare it (probe each once)
@@ -114,7 +115,7 @@ def reachability_probe(save=True):
         prov = lane_catalog.lane_provider(ln)            # the provider namespace whose atomic pair IS this lane
         pinned = f"{prov}:{model}" if prov and ":" not in str(model) else model
         try:
-            r = adapters.call(pinned, _REACH_PROMPT, no_substitution=True, no_metered_fallback=True,
+            r = _execution_accessors.resolve_call(pinned, _REACH_PROMPT, no_substitution=True, no_metered_fallback=True,
                               sig="spendguard:reachability-probe", timeout_s=_REACH_TIMEOUT_S)
         except Exception as e:
             if gate.is_deliberate_stop(e):               # a deadline/refusal (DispatchTimeout, SpendGateRefused) HALTS

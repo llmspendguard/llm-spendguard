@@ -29,6 +29,7 @@ portable, self-contained surfaces (see serve.py). `handle(request)` is a pure fu
 dict|None) so the protocol is unit-tested without a live pipe. Read-only tools do NOT spend, so this server does
 not require the gate; a spending tool (bakeoff) will `require()` before it runs.
 """
+from spendguard.generate.execution import execution_accessors as _execution_accessors
 
 from .capability_cli_parsing import add_registered_cli_argument
 import json
@@ -290,7 +291,7 @@ def capability_vision_operation(args: dict):
     spendguard.require()                     # real spend → fail closed if the gate is not enforcing here
     import json as _json
     import os
-    from .. import adapters, pricing
+    from .. import pricing
     model, prompt = args.get("model"), args.get("prompt")
     images = args.get("images") or []
     schema = args.get("schema") if isinstance(args.get("schema"), dict) else None
@@ -301,8 +302,8 @@ def capability_vision_operation(args: dict):
         return {"error": "images must be a non-empty list of file paths or data: URLs — a vision call needs an image"}
     # SCHEMA guard BEFORE any spend: a dynamic-key map collapses to {} under OpenAI strict mode
     if schema is not None:
-        _v = adapters.strict_map_violation(schema)
-        if _v and adapters.provider_for(model) == "openai":
+        _v = _execution_accessors.resolve_strict_map_violation(schema)
+        if _v and _execution_accessors.resolve_provider_for(model) == "openai":
             return {"error": f"schema at {_v} is a dynamic-key map; OpenAI strict mode would return {{}} — use an "
                              f"ARRAY of {{key,value}} objects (e.g. results:[{{id,label}}])"}
     # DURABLE cache: an identical prior request is served for $0 (idempotent), and this is where a paid result lands
@@ -322,12 +323,12 @@ def capability_vision_operation(args: dict):
                          f"per-call cap — send fewer/smaller images or downscale"}
     # 0-spend ESTIMATE (pixel-priced input + a conservative output)
     try:
-        prov = adapters.provider_for(model)
+        prov = _execution_accessors.resolve_provider_for(model)
         raw = model.split(":", 1)[1] if ":" in model else model
-        loaded = [adapters._load_image(i) for i in images]
+        loaded = [_execution_accessors.resolve__load_image(i) for i in images]
     except Exception as e:
         return {"error": f"could not load an image ({type(e).__name__}: {str(e)[:80]})"}
-    in_tok = adapters._image_input_tokens(loaded, prov, raw) + (len(prompt) + len(system or "")) // 4
+    in_tok = _execution_accessors.resolve__image_input_tokens(loaded, prov, raw) + (len(prompt) + len(system or "")) // 4
     out_est = int(args.get("max_out_tokens") or _VISION_OUT_EST)
     _seen = pricing.UNPRICED_SEEN.get(model, 0)
     est = pricing.cost_or_unpriced(model, in_tok, out_est, batch=False, provider=prov)   # records model in UNPRICED_SEEN if no card
@@ -341,7 +342,7 @@ def capability_vision_operation(args: dict):
                          f"is not a $0 model)", "estimate_usd": round(est, 6), "unpriced": True}
     if est > float(budget):
         return {"error": f"refused: estimate ${est:.4f} exceeds budget_usd ${float(budget):.4f}", "estimate_usd": round(est, 6)}
-    r = adapters.vision(model, prompt, images, schema=schema, system=system, sig="mcp-vision",
+    r = _execution_accessors.resolve_vision(model, prompt, images, schema=schema, system=system, sig="mcp-vision",
                         timeout_s=int(args.get("timeout_s") or _VISION_TIMEOUT_S))   # bounded: a hung call cannot wedge
     out = {"text": r.get("text"), "cost": r.get("cost"), "executor": r.get("executor"), "error": r.get("error"),
            "in_tok": r.get("in_tok"), "out_tok": r.get("out_tok"), "estimate_usd": round(est, 6)}
@@ -623,12 +624,12 @@ def capability_route_horizon_operation(args: dict):
 def capability_plan_queue_operation(args: dict):
     """The $0 PREDICTIVE planner + async BATCH-JOB tracker state — the MCP twin of `spendguard plan-queue`, wrapping
     the same queue_planner.tick() (forecast of which vendor is about to 429, which intents to OFFLOAD to the Batch API
-    and how to chunk them, which to PACE) plus batch_tracker.status() (open/settled/failed async batch jobs). DECIDES
+    and how to chunk them, which to PACE) plus _execution_accessors.resolve_status() (open/settled/failed async batch jobs). DECIDES
     only; the drain executes — so this is safe to call any time. $0, read-only arithmetic on live governor + queue state."""
-    from .. import queue_planner, batch_tracker
+    from .. import queue_planner
     t = queue_planner.tick()
     try:
-        t["batch_jobs"] = batch_tracker.status()
+        t["batch_jobs"] = _execution_accessors.resolve_status()
     except Exception:
         t["batch_jobs"] = {}
     return t
@@ -817,7 +818,7 @@ def handle(req):
                              "SELF-CONTAINED subtask to another provider plan; dry-run by default. It does NOT "
                              "reroute this calling agent's own turns.\n"
                              "TO MAKE SPENDGUARD PICK FOR YOU on a real call (not just advise): the programmatic API "
-                             "(adapters.call / vendor_call) takes reasoning='best-value' with an intent — it resolves "
+                             "(_execution_accessors.resolve_call / vendor_call) takes reasoning='best-value' with an intent — it resolves "
                              "the cheapest (model, effort) whose measured quality holds for that intent, and books the "
                              "saving vs the counterfactual. Learn the per-intent effort with `spendguard effort-titrate "
                              "<intent>` (CLI, estimate-first).\n"
@@ -995,9 +996,9 @@ def _prewarm_codex_daemon():
     try:
         import threading
 
-        from .. import codex_daemon, codex_exec
+        from .. import codex_daemon
 
-        if not codex_exec._daemon_enabled():
+        if not _execution_accessors.resolve__daemon_enabled():
             return
 
         def _run():

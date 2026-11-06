@@ -8,12 +8,13 @@ fresh so served_check answers a served id from cache without a network call.
 
 Mirrors sync.py (the price-breadth cache): a per-provider list of live model ids is fetched with a short TTL,
 cached in SPENDGUARD_HOME/served_model_ids.json, refreshed on the `saas sync` cadence and by `spendguard sync-catalog`.
-The FETCH is not reinvented — it reuses vendor_call.list_models(), which GETs each provider's /models list ($0)
+The FETCH is not reinvented — it reuses _execution_accessors.resolve_list_models(), which GETs each provider's /models list ($0)
 and returns ids in the DISPATCH form (its own `_dispatch_form` strips Gemini's `models/` listing prefix), so the
 cached ids compare directly against a requested id. live_model_ids(vendor) returns the cached list, or None when
 this vendor was never cached — None is 'not maintained here', which served_check treats as 'unchecked' (proceed),
 never as 'no'.
 """
+from spendguard.generate.execution import execution_accessors as _execution_accessors
 import os
 import json
 import datetime
@@ -28,22 +29,21 @@ _WARNED = set()                                 # warn at most once per provider
 
 
 def pull_live_catalog(providers=None, timeout_s=20):
-    """Fetch the live model-id list for every KEYED provider (or the given subset) via vendor_call.list_models and
+    """Fetch the live model-id list for every KEYED provider (or the given subset) via _execution_accessors.resolve_list_models and
     write the cache atomically. Returns (n_providers_ok, n_ids, errors_by_provider). Fail-soft PER provider: one
     provider's fetch error is recorded and the rest still cache — a partial catalog is better than none, and the
     error is surfaced, never silent."""
-    from ... import adapters, vendor_call
-    provs = list(providers) if providers else sorted(adapters.PROVIDERS)
+    provs = list(providers) if providers else sorted(_execution_accessors.PROVIDERS)
     models, errors, ceilings = {}, {}, {}
     for prov in provs:
-        spec = adapters.PROVIDERS.get(prov)
+        spec = _execution_accessors.PROVIDERS.get(prov)
         if not spec:
             errors[prov] = "unknown provider"
             continue
         if not config.api_key(spec.get("key_env") or ""):
             continue                            # no key → we don't call it, so we don't catalog it (not an error)
         try:
-            res = vendor_call.list_models(prov, timeout_s=timeout_s)
+            res = _execution_accessors.resolve_list_models(prov, timeout_s=timeout_s)
         except Exception as e:
             errors[prov] = str(e)[:120]
             continue
@@ -70,8 +70,7 @@ def pull_live_catalog(providers=None, timeout_s=20):
     # the vendor's own id convention names the family. Fail-soft: agy absent → no lane_models, no regression.
     lane_models = {}
     try:
-        from ... import antigravity_exec
-        agy_gemini = sorted({m for m in antigravity_exec.model_ids() if m.startswith("gemini-")})
+        agy_gemini = sorted({m for m in _execution_accessors.resolve_model_ids() if m.startswith("gemini-")})
         if agy_gemini:
             lane_models["gemini"] = agy_gemini
     except Exception as e:

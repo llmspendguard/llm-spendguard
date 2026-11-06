@@ -12,6 +12,7 @@ Two hooks feed this (wired by receipt._install_claude_code):
 
 Everything here is best-effort and NEVER raises — a hook must not break the session. $0, pure parse + tiny state.
 """
+from spendguard.generate.execution import execution_accessors as _execution_accessors
 import datetime
 import json
 import os
@@ -168,7 +169,7 @@ def agentic_advise(transcript_path, run=False, model=None):
     preserve. The judgement is the LLM's (not a threshold). Runs UNDER spendguard's own gate, caged (intent
     spendguard:compact-advise), estimate-first. Returns the verdict dict on run; prints the estimate + returns None
     otherwise. Never raises out to a hook."""
-    from ... import config, adapters, pricing, ui, claudecode
+    from ... import config, pricing, ui, claudecode
     from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
     convo = _recent_convo(transcript_path)
     if not convo:
@@ -197,7 +198,7 @@ def agentic_advise(transcript_path, run=False, model=None):
         ui.estimate_only(action="agentically decide whether/how to compact THIS conversation", cost=est)
         return None
     with _call_corpus_accessors.resolve_calls_context(intent="spendguard:compact-advise"):     # caged → meta budget, gated like every LLM call
-        r = adapters.call(model, convo, max_tokens=OUT, system=_ADVISE_SYS)
+        r = _execution_accessors.resolve_call(model, convo, max_tokens=OUT, system=_ADVISE_SYS)
     if r.get("error"):
         print("compact --tailor error:", r["error"])
         return None

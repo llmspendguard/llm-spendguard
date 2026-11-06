@@ -781,3 +781,10 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+from . import execution_accessors as _execution_accessors
+
+_execution_accessors.set__count_tokens_resolver(lambda *a, **k: _count_tokens(*a, **k))
+_execution_accessors.set_submit_chat_tasks_resolver(lambda *a, **k: submit_chat_tasks(*a, **k))
+_execution_accessors.set_submit_message_batch_resolver(lambda *a, **k: submit_message_batch(*a, **k))

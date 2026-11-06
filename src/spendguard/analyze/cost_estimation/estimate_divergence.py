@@ -22,6 +22,7 @@ disagree about a given pair, which is the definition of a judgement, so a model 
 The code's only jobs are to find every pair, hand each one over, and REFUSE when the judgement says the
 estimate was not grounded. Finding and refusing are mechanical. Deciding is not.
 """
+from spendguard.generate.execution import execution_accessors as _execution_accessors
 import json
 import sqlite3
 from contextlib import closing
@@ -79,15 +80,15 @@ def _pairs():
 
 def adjudicate_grounding(pair, model=None):
     """Was THIS estimate grounded? Agentic — the answer depends on how the number was produced."""
-    from ... import adapters, config, output_contract
+    from ... import config, output_contract
     from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
     model = model or config.advisor_model()
     body = json.dumps({k: v for k, v in dict(pair).items() if k not in ("prompt", "output")}, default=str)
     with _call_corpus_accessors.resolve_calls_context(intent="spendguard:estimate-divergence"):
-        r = adapters.call(model,
+        r = _execution_accessors.resolve_call(model,
                           f"An estimate and the actual bill for the same job:\n\n{body}\n\n"   # WHOLE body — a grounding
                           # judge truncated at 2000 chars can lose the fields the verdict turns on; over-window is
-                          # refused loudly by adapters.call, never clipped.
+                          # refused loudly by _execution_accessors.resolve_call, never clipped.
                           f"Was the estimate GROUNDED in measurement?\nReply JSON only: {JUDGE_SCHEMA}",
                           sig="probe:estimate-divergence", system=JUDGE_SYS, reasoning="minimal")
     if r.get("error") or not r.get("text"):

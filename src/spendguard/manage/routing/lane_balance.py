@@ -12,7 +12,8 @@ paid capacity. Ash's conversation-mining idea (limit-signals in Claude Code tran
 Numbers come from the receipt's OWN per-source est-value cache, re-windowed the same way — so they MATCH the receipt
 rather than being a parallel computation that could disagree.
 """
-from ... import config, adapters, bulk_resilience
+from spendguard.generate.execution import execution_accessors as _execution_accessors
+from ... import config, bulk_resilience
 
 
 BulkResilienceRefused = bulk_resilience.BulkResilienceRefused
@@ -110,8 +111,8 @@ def lane_utilization():
         data = {}                                         # no cache yet → every lane reads as idle (nothing recorded)
     total_fee, fee_default = receipt._plan_usd()
     idle_r, hot_r = _utilization_ratio_setting("lane_idle_ratio", IDLE_RATIO_DEFAULT), _utilization_ratio_setting("lane_hot_ratio", HOT_RATIO_DEFAULT)
-    # LANE -> provider from the ONE source of truth (adapters._LANES); the est-value SOURCE string is the lane name.
-    lane_prov = {lane: prov for prov, (lane, _mod) in adapters._LANES.items()}
+    # LANE -> provider from the ONE source of truth (_execution_accessors.resolve__LANES()); the est-value SOURCE string is the lane name.
+    lane_prov = {lane: prov for prov, (lane, _mod) in _execution_accessors.resolve__LANES().items()}
     lanes = sorted(lane_prov)
     recent = _recent_calls_by_lane(24)                    # volume signal the $-gauge misses (cheap lanes read idle)
     out = []
@@ -228,11 +229,10 @@ def delegate(task, system=None, lanes=None, reasoning="low", max_tokens=None, in
     is flagged `billed=True`). Returns {text, lane, model, cost, billed, executor, tried} or {text:None, error, tried}.
     The model that answered is the one recorded — attribution stays honest.
 
-    `schema` (a JSON Schema) forces STRUCTURED output — threaded to adapters.call, which folds the shape into the
+    `schema` (a JSON Schema) forces STRUCTURED output — threaded to _execution_accessors.resolve_call, which folds the shape into the
     lane's prompt, validates the reply locally (output_contract), and falls back to that model's metered API (strict
     on OpenAI/Anthropic) if a lane's output is off-shape. The JSON answer stays in `text`. (A schema request skips
     the text-only lane bandit and uses this cheapest-idle path, which still gets adapters-level lane arbitrage.)"""
-    from ... import adapters
     from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
     intent = intent or "spendguard:delegate"
     if enqueue:                                   # durable fire-and-forget: park it for the drainer, don't run now
@@ -245,7 +245,7 @@ def delegate(task, system=None, lanes=None, reasoning="low", max_tokens=None, in
     # for THIS intent — equal-start → bake-off-judge → exploit — instead of the static cheapest-idle heuristic below,
     # and echoes which lane served. Falls through to the heuristic if it had no live arm / none answered.
     if schema is None and str(config._cfg_get("advisor", "lane_bandit", False)).strip().lower() in ("1", "true", "yes", "on"):
-        # bandit_call is TEXT-only — a schema request skips it and takes the adapters.call path below, which folds
+        # bandit_call is TEXT-only — a schema request skips it and takes the _execution_accessors.resolve_call path below, which folds
         # the shape into the lane prompt, validates locally, and falls back to the (strict) API if off-shape.
         try:
             from ... import lane_bandit
@@ -262,7 +262,7 @@ def delegate(task, system=None, lanes=None, reasoning="low", max_tokens=None, in
     lm = config._cfg_get("advisor", "lane_models", None) or {}
     util = {l["lane"]: (l["utilization"] if l.get("utilization") is not None else 0.0)
             for l in lane_utilization()["lanes"]}
-    prov_of = {ln: prov for prov, (ln, _m) in adapters._LANES.items()}
+    prov_of = {ln: prov for prov, (ln, _m) in _execution_accessors.resolve__LANES().items()}
     order = sorted([l for l in viable if isinstance(lm, dict) and lm.get(l) and prov_of.get(l)],
                    key=lambda l: util.get(l, 0.0))
     # TIER by reasoning: a one-shot delegate at low/minimal effort takes the lane's CHEAP model, else its STRONG one.
@@ -290,7 +290,7 @@ def delegate(task, system=None, lanes=None, reasoning="low", max_tokens=None, in
         # Omitted budgets stay omitted; explicit caller values still reach adapters for its warning.
         budget_kwargs = {} if max_tokens is None else {"max_tokens": max_tokens}
         with _call_corpus_accessors.resolve_calls_context(intent=intent):
-            r = adapters.call(model, task, system=system, reasoning=reasoning, sig=intent,
+            r = _execution_accessors.resolve_call(model, task, system=system, reasoning=reasoning, sig=intent,
                               schema=schema, no_metered_fallback=refuse_billed, **budget_kwargs)
         txt = (r.get("text") or "").strip()
         if txt and not r.get("error"):
@@ -344,8 +344,8 @@ def quality_equivalent_free_substitutes(intent, primary_model, excluded=None):
     """
     from ... import advisor, lane_catalog, lanes as lane_status, route_utility
     blocked = set(excluded or ())
-    primary_provider = adapters.provider_for(primary_model)
-    primary_lane = adapters._LANES.get(primary_provider, (None,))[0]
+    primary_provider = _execution_accessors.resolve_provider_for(primary_model)
+    primary_lane = _execution_accessors.resolve__LANES().get(primary_provider, (None,))[0]
     confirmed = list(substitutes_for(intent))
     if not confirmed:
         return []
@@ -359,8 +359,8 @@ def quality_equivalent_free_substitutes(intent, primary_model, excluded=None):
         if r.get("id") and r.get("meets_bar") is True}
     candidates = []
     for spec in confirmed:
-        provider = adapters.provider_for(spec)
-        lane = adapters._LANES.get(provider, (None,))[0]
+        provider = _execution_accessors.resolve_provider_for(spec)
+        lane = _execution_accessors.resolve__LANES().get(provider, (None,))[0]
         use_name = spec.split(":", 1)[1] if ":" in spec else spec
         from ... import plan_admission
         if (not lane or lane == primary_lane or lane in blocked or not plan_admission._ready(lane)
@@ -482,16 +482,16 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None,
     spread across EVERY good lane, not one.
 
     `metered_only=True` forces a PINNED (`model_for`) matrix onto the METERED half of its atomic pair — every vote
-    skips the $0 lane and rides the paid API (adapters.call(metered_only=True)). The opt-in for a consistency-
+    skips the $0 lane and rides the paid API (_execution_accessors.resolve_call(metered_only=True)). The opt-in for a consistency-
     sensitive fan (a verdict-cached refuter) that needs the concurrency-invariant metered path serial-equivalently,
     where the lane CLI's own reasoning scale + warm-daemon concurrency would drift the verdict. It BILLS — the
     deliberate trade for a fan where the verdict distribution is the product. Default False = the faithful-for-
     capability atomic pair (lane first, same-provider metered fallback). Applies to the pinned/vision runner only.
 
-    `record_route=True` (default): with advisor.route_through_queue ON, each per-task adapters.call records its OWN
+    `record_route=True` (default): with advisor.route_through_queue ON, each per-task _execution_accessors.resolve_call records its OWN
     durable queue row (observability + crash-recovery) as usual. `record_route=False` SUPPRESSES that per-task record
     — set ONLY by lane_queue.drain / lane_queue.submit, because those tasks ARE already leased queue rows and a
-    per-task record would open a SECOND row for the same logical work (a double-record). It threads to adapters.call
+    per-task record would open a SECOND row for the same logical work (a double-record). It threads to _execution_accessors.resolve_call
     as `_route=`, so it holds across the plain runner AND the hedge's nested threads (a thread-local guard would not).
 
     DURABLE (the CHUNK-never-single-shot rule): tasks run in chunks of `chunk_size`; when `checkpoint` (a jsonl path)
@@ -503,7 +503,7 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None,
 
     `schema` (a JSON Schema) forces STRUCTURED output on every task — so a JSON-envelope job (e.g. warden's
     {results:[{id,…}]} contract with cross-model strict-mode parity) can ride the parallel lane fan instead of being
-    forced through per-call adapters.call. It is threaded straight to adapters.call: the shape rides each lane's
+    forced through per-call _execution_accessors.resolve_call. It is threaded straight to _execution_accessors.resolve_call: the shape rides each lane's
     prompt and is validated locally (output_contract), and a lane whose reply is off-shape falls back to that model's
     metered API (strict on OpenAI/Anthropic) — so the envelope holds on every lane. The result stays in `text` (the
     JSON string), so the success contract, checkpoint/resume, and tier confinement are unchanged.
@@ -535,7 +535,7 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None,
     `images_for` + `vision_model` are the IMAGE case of that same runner — the lane executors are text-only CLIs with
     no image channel (the trap behind a labeler that cold-400'd). Pass `images_for` = a callable (task → the image
     path(s)/data-URL(s)) or a single image list, and `vision_model` = a vision-capable API model (e.g.
-    'openai:gpt-5-nano'), or `model_for` for a per-task VISION panel. Every task rides adapters.call(images=…) —
+    'openai:gpt-5-nano'), or `model_for` for a per-task VISION panel. Every task rides _execution_accessors.resolve_call(images=…) —
     governed, checkpointed/resumed, refuse-billed and arity-checked, just a different per-task runner. lanes/tier/arms
     do not apply to either pinned shape; vision_model (or model_for) is REQUIRED when images_for is set (else every
     task errors, re-runnable). Hedging/bandit are lane-only — a pinned task must not race onto another vendor.
@@ -596,7 +596,7 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None,
     import threading as _th
     import time as _time
     import concurrent.futures as _cf
-    from ... import adapters, dispatch, lane_catalog
+    from ... import dispatch, lane_catalog
     from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
 
     _bulk_who = (_call_corpus_accessors.resolve_calls_current() or {}).get("who") or _call_corpus_accessors.resolve_calls_caller()   # ORIGINATING caller, captured on THIS submitting
@@ -716,7 +716,7 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None,
     # (undescribed, re-runnable); we never widen off-tier and never fall onto a strong/Opus lane.
     # The GOVERNED PINNED-MODEL runner (below) rides the metered API directly, NOT a lane, for two shapes that both
     # want "each task to its EXACT named model, never substituted, concurrency bounded by the governor":
-    #   · VISION (images_for set) — the lane CLIs are text-only, so an image task must ride adapters.call(images=…).
+    #   · VISION (images_for set) — the lane CLIs are text-only, so an image task must ride _execution_accessors.resolve_call(images=…).
     #   · a per-task PINNED-VENDOR MATRIX (model_for set) — a cross-vendor CONSENSUS panel (N files × M named vendors,
     #     e.g. honestreview's repo review): each task pinned to its vendor, no bandit substitution. This is the TEXT
     #     case of the same runner — model_for selects the model whether or not there are images.
@@ -745,7 +745,7 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None,
         # now → retry later). They demand opposite responses and used to be one message, indistinguishable as N misses.
         _pool = lanes or lane_catalog.lanes()
         _declared = [(ln, m) for ln in _pool if (m := lane_catalog.lane_model_for_tier(ln, tier))]
-        arms = [(ln, m) for ln, m in _declared if not adapters._lane_cooling(ln)]
+        arms = [(ln, m) for ln, m in _declared if not _execution_accessors.resolve__lane_cooling(ln)]
         if not arms:
             if not _declared:                            # PERMANENT: nothing serves this group → refuses every run
                 _reason, _msg = "tier_undeclared", (
@@ -943,7 +943,7 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None,
             _big = _image_too_big(_imgs)
             if _big:
                 return i, {**_b, "reason": _big[0], "outcome": _vc.PREFLIGHT_UNMET, "error": _big[1]}
-        _prov = adapters.provider_for(_vm)
+        _prov = _execution_accessors.resolve_provider_for(_vm)
         import time as _tmod
         # RE-ADMIT loop: the QUEUE/GOVERNOR absorbs a burst by making excess work WAIT under the dynamic connection window
         # until a slot frees — the whole point of admission. On ANY rate-limit 429/529 the window already backed off in
@@ -951,7 +951,7 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None,
         # now-tighter window and keeps waiting+re-admitting until it is SERVED or its own deadline_s budget is genuinely
         # spent — bounded ONLY by deadline_s (never N×deadline, never a wedge). A deadline exhaustion is SIGNALED (not a
         # silent drop) so a truly-unservable burst is VISIBLE, per the SLO "queued-for-later, never a silent miss". The
-        # serial adapters.call path runs the SAME re-admit loop by recursion — one unified mechanism.
+        # serial _execution_accessors.resolve_call path runs the SAME re-admit loop by recursion — one unified mechanism.
         r = {}
         _t_budget0 = _tmod.monotonic()
         _cr = 0
@@ -965,7 +965,7 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None,
                 break
             try:
                 _waited = dispatch.acquire_or_none(_prov, _raw, _remaining, sla_class=sla_class,   # governor: bound in-flight PER-VENDOR metered calls
-                                                   est_tokens=adapters._est_call_tokens(_p, system, None))
+                                                   est_tokens=_execution_accessors.resolve__est_call_tokens(_p, system, None))
             except _STOP_TYPES:
                 raise                                       # a genuine SPEND REFUSAL halts the fan (refusal-containment)
             except Exception as e:
@@ -975,7 +975,7 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None,
             _raised = None
             try:
                 _call_corpus_accessors.resolve_calls_set_context(intent=intent, who=_bulk_who)   # tag this worker's calls: intent + ORIGINATING caller
-                r = adapters.call(_vm, _p, system=system, reasoning=reasoning, sig=intent,
+                r = _execution_accessors.resolve_call(_vm, _p, system=system, reasoning=reasoning, sig=intent,
                                   timeout_s=deadline_s, no_metered_fallback=refuse_billed, schema=schema,
                                   images=(_imgs or None), no_substitution=True,   # NAMED model — never swap it (pinned)
                                   _internal_pin=True,   # CONFINEMENT, not a caller effort-insistence → an un-honorable effort
@@ -994,7 +994,7 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None,
                 return i, {**_b, "reason": "call_raised", "error": str(_raised)[:80]}
             r = r if isinstance(r, dict) else {}
             if r.get("status_code") in (429, 529):   # ANY rate-limit → the window already backed off in _call_guarded
-                _cr += 1                             # (the single LOSS point, run inside this adapters.call); loop to
+                _cr += 1                             # (the single LOSS point, run inside this _execution_accessors.resolve_call); loop to
                 continue                             # RE-ADMIT (WAIT) under the tightened window until served or deadline
             break
         _sp, _sm = r.get("provider") or _prov, r.get("model") or _raw
@@ -1006,7 +1006,7 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None,
                "model": f"{_sp}:{_sm}", "billed": bool(r.get("cost")), "cost": r.get("cost"),   # actual $ → guardrail D
                "served_by_metered_api": (r.get("executor") or "api") in ("api", "api-fallback"),
                # PARITY AUDIT: the reasoning tier REQUESTED and the effort the call reports it APPLIED. On this
-               # metered pinned runner they match the serial adapters.call exactly (same model, same reasoning) — so a
+               # metered pinned runner they match the serial _execution_accessors.resolve_call exactly (same model, same reasoning) — so a
                # consistency-sensitive fan (a refuter, a verdict-cached classifier) reproduces its serial distribution.
                "reasoning": reasoning, "effort": r.get("effort"),
                "parsed": (r.get("parsed") if schema is not None else None),
@@ -1030,14 +1030,14 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None,
         _start = i % _n_arms
         if _os.environ.get("SPENDGUARD_LANE_STATIC_DISPATCH"):   # opt-out to the OLD static round-robin (A/B + safety)
             lane, use_name = arms[_start]
-            if adapters._lane_cooling(lane) and _n_arms > 1:
+            if _execution_accessors.resolve__lane_cooling(lane) and _n_arms > 1:
                 for _j in range(1, _n_arms):
                     _al, _au = arms[(i + _j) % _n_arms]
-                    if not adapters._lane_cooling(_al):
+                    if not _execution_accessors.resolve__lane_cooling(_al):
                         lane, use_name = _al, _au
                         break
             return lane, use_name
-        return _least_loaded_arm(arms, i, dispatch.lane_free, adapters._lane_cooling)
+        return _least_loaded_arm(arms, i, dispatch.lane_free, _execution_accessors.resolve__lane_cooling)
 
     def _attempt_on_lane(i, task, lane, use_name, no_fallback):
         # ONE attempt on ONE named lane — the body shared by the plain path AND each side of a hedge race. `no_fallback`
@@ -1065,7 +1065,7 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None,
             # prompt_for that maps id->prompt); resolve it to the real prompt, exactly as _run_task_on_api does. Without
             # this the lane path sent the KEY as the prompt (a job id like "rev-2" -> the model asked "clarify rev-2").
             _p = prompt_for(task) if callable(prompt_for) else task
-            r = adapters.call(model, _p, system=system, reasoning=reasoning,   # sig=intent → the OUTPUT budget is this
+            r = _execution_accessors.resolve_call(model, _p, system=system, reasoning=reasoning,   # sig=intent → the OUTPUT budget is this
                               sig=intent, intent=intent, timeout_s=deadline_s,   # call-class's measured p99; no_fallback
                               no_metered_fallback=_eff_no_fallback,              # → a lane miss errors, never a paid retry
                               schema=schema,                                     # STRUCTURED output: adapters folds the shape
@@ -1086,10 +1086,10 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None,
             # (receipt suppressed via set_context above, not the context manager)  each reply feeds that measurement
         except _STOP_TYPES:
             raise                                            # a deliberate stop (refusal / deadline) propagates — it is
-            #                                                  NOT downgraded to a textless row (adapters.call is not
+            #                                                  NOT downgraded to a textless row (_execution_accessors.resolve_call is not
             #                                                  supposed to raise these, but if one escapes, halt not hide)
         except Exception as e:
-            # reason='call_raised' — adapters.call itself raised (it normally returns an error dict); a distinct cause
+            # reason='call_raised' — _execution_accessors.resolve_call itself raised (it normally returns an error dict); a distinct cause
             # from a shape/empty/quota miss, so a caller can tell "the call machinery broke" from "the model missed".
             return i, {"text": None, "lane": lane, "use_name": use_name, "model": model, "billed": False,
                        "reason": "call_raised", "error": str(e)[:80]}
@@ -1182,14 +1182,14 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None,
             # primary is SLOW (still running) or MISSED — hedge on the most-free OTHER non-cooling lane. The lambda
             # forces the primary's own free to -1 so _least_loaded_arm can never re-pick it (it prefers strictly-more).
             hlane, hname = _least_loaded_arm(
-                arms, i, lambda l: -1.0 if l == lane else float(dispatch.lane_free(l)), adapters._lane_cooling)
+                arms, i, lambda l: -1.0 if l == lane else float(dispatch.lane_free(l)), _execution_accessors.resolve__lane_cooling)
             # SPARE-CAPACITY GATE — this is what makes hedging SAFE on any fan size. Only hedge if the chosen OTHER
             # lane has a genuinely free dispatch slot RIGHT NOW (lane_free>0, a pure read of the governor). On a
             # SATURATED bulk fan every lane's free is 0, so no hedge fires and the duplicate never piles onto busy
             # slots — auto-avoiding the measured N=96/hedge_ms=3000 → 2.3x-SLOWER trap without the caller tuning
             # anything. On a small fan with spare capacity a free lane exists, so a straggler still gets raced.
             # (A bound on a real quantity — free slots — not a meaning-judgement; deliberately arithmetic.)
-            if hlane == lane or adapters._lane_cooling(hlane) or dispatch.lane_free(hlane) <= 0:
+            if hlane == lane or _execution_accessors.resolve__lane_cooling(hlane) or dispatch.lane_free(hlane) <= 0:
                 if res is not None:
                     return res
                 try:
@@ -1365,7 +1365,7 @@ def estimate_fan(tasks, intent, system=None, lanes=None, tier=None, out_est=None
         else `out_est`, else a config nominal — `out_basis` says which so the estimate is auditable.
     Mirrors crossllm's "budget_usd is None → estimate only, never spends" pattern for the lane fan."""
     import hashlib as _hl
-    from ... import adapters, lane_catalog, lane_economics, bulkgate, pricing, config, provider_tokens
+    from ... import lane_catalog, lane_economics, bulkgate, pricing, config, provider_tokens
 
     tasks = list(tasks)
     n_tasks = len(tasks)
@@ -1382,7 +1382,7 @@ def estimate_fan(tasks, intent, system=None, lanes=None, tier=None, out_est=None
     if tier:
         _pool = lanes or lane_catalog.lanes()
         _declared = [(ln, m) for ln in _pool if (m := lane_catalog.lane_model_for_tier(ln, tier))]
-        arms = [(ln, m) for ln, m in _declared if not adapters._lane_cooling(ln)]
+        arms = [(ln, m) for ln, m in _declared if not _execution_accessors.resolve__lane_cooling(ln)]
         if not arms:
             reason = "tier_undeclared" if not _declared else "all_lanes_cooling"
             return {"viable": False, "reason": reason, "n_tasks": n_tasks, "n_distinct": n_distinct, "arms": [],
@@ -1445,8 +1445,8 @@ def estimate_fan(tasks, intent, system=None, lanes=None, tier=None, out_est=None
 
 def _metered_substitute(subs, primary_spec):
     """Cheapest AFFORDABLE confirmed metered substitute for an intent, or None. A 'provider:model' spec counts as
-    METERED here when its provider has NO subscription lane (adapters._LANES) — so it can only be served by the paid
-    API — and is a provider we can actually call (adapters.PROVIDERS). Ranked by route_utility.rank_metered
+    METERED here when its provider has NO subscription lane (_execution_accessors.resolve__LANES()) — so it can only be served by the paid
+    API — and is a provider we can actually call (_execution_accessors.PROVIDERS). Ranked by route_utility.rank_metered
     (cheapest-per-token that still has prepay first; an exhausted sunk-pool balance surfaces available=False and is
     skipped, never picked). route_decision is prompt-free, so the ranking uses a config NOMINAL call size
     (ROUTE_EST_IN/OUT) — a stable unit-price PROXY for WHICH cheap substitute to pick; the real call is billed
@@ -1454,8 +1454,8 @@ def _metered_substitute(subs, primary_spec):
     paying full price on the ORIGINAL model, and it never leaves the user-CONFIRMED substitute set."""
     metered = [s for s in subs
                if s != primary_spec
-               and not adapters._LANES.get(s.split(":", 1)[0], (None,))[0]      # no subscription lane → paid API only
-               and s.split(":", 1)[0] in adapters.PROVIDERS]                    # …and a provider we can actually call
+               and not _execution_accessors.resolve__LANES().get(s.split(":", 1)[0], (None,))[0]      # no subscription lane → paid API only
+               and s.split(":", 1)[0] in _execution_accessors.PROVIDERS]                    # …and a provider we can actually call
     if not metered:
         return None
     from . import route_utility
@@ -1598,7 +1598,7 @@ def route_decision(intent, model, reactive=False):
         if _bandit_on and not str(intent).startswith(_META) and _eligible:
             try:
                 from ... import lane_bandit, lane_catalog, lane_economics
-                _prim_lane = adapters._LANES.get(adapters.provider_for(model), (None,))[0]
+                _prim_lane = _execution_accessors.resolve__LANES().get(_execution_accessors.resolve_provider_for(model), (None,))[0]
                 # exclude the primary lane AND any prompt-metered lane whose self-use cap is reached (reserve its
                 # stops-dead prompt budget for real coding rather than spend it on discretionary bandit work)
                 _arms = [a for a in lane_catalog.arms(config._cfg_get("advisor", "delegate_lanes", None))
@@ -1609,9 +1609,9 @@ def route_decision(intent, model, reactive=False):
             except Exception:
                 pass
         return None, "no confirmed substitute for this intent (propose+confirm first)"
-    prov = adapters.provider_for(model)
+    prov = _execution_accessors.resolve_provider_for(model)
     util = {l["lane"]: l for l in lane_utilization()["lanes"]}
-    primary_lane = adapters._LANES.get(prov, (None,))[0]
+    primary_lane = _execution_accessors.resolve__LANES().get(prov, (None,))[0]
     _pu = (util.get(primary_lane) or {}).get("utilization")
     pu = float(_pu) if _pu is not None else 0.0
     # rank the acceptable, available substitutes by recent CALL VOLUME — LEAST-LOADED first (spread evenly across
@@ -1619,8 +1619,8 @@ def route_decision(intent, model, reactive=False):
     # quota was being spent). $-utilisation is the tiebreaker.
     ranked = []
     for spec in subs:
-        slane = adapters._LANES.get(spec.split(":", 1)[0], (None,))[0]
-        if not slane or slane == primary_lane or adapters._lane_cooling(slane):   # skip unknown/self/cooling lanes
+        slane = _execution_accessors.resolve__LANES().get(spec.split(":", 1)[0], (None,))[0]
+        if not slane or slane == primary_lane or _execution_accessors.resolve__lane_cooling(slane):   # skip unknown/self/cooling lanes
             continue
         _s = util.get(slane) or {}
         _su = _s.get("utilization")
@@ -1688,7 +1688,7 @@ def candidate_models():
     idle = set(idle_lanes())
     if not isinstance(lm, dict):
         return []
-    return [f"{prov}:{lm[lane]}" for prov, (lane, _m) in adapters._LANES.items()
+    return [f"{prov}:{lm[lane]}" for prov, (lane, _m) in _execution_accessors.resolve__LANES().items()
             if lane in idle and lm.get(lane)]
 
 
@@ -1708,7 +1708,7 @@ def propose_substitutes(intent, primary_model, candidates=None):
     with _call_corpus_accessors.resolve_calls_context(intent="spendguard:substitute"):
         # no_substitution: the proposal is RECORDED as proposed_by=judge below — the bandit must not serve a different
         # model than the judge we attribute the decision to (measurement-identity integrity)
-        r = adapters.call(judge, prompt, system=_PROPOSE_SYS, schema=_PROPOSE_SCHEMA, max_tokens=_PROPOSE_OUT,
+        r = _execution_accessors.resolve_call(judge, prompt, system=_PROPOSE_SYS, schema=_PROPOSE_SCHEMA, max_tokens=_PROPOSE_OUT,
                           no_substitution=True)
     from ... import output_contract
     obj, _ = output_contract.as_obj_lenient((r or {}).get("text") or "")   # lenient: malformed judge reply → (None,False), never raises
@@ -1754,10 +1754,10 @@ def adapt_system(intent, target_model, system, model=None):
         from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
         prompt = (f"TARGET model: {target_model}\nINTENT: {intent}\n\nSYSTEM PROMPT TO ADAPT:\n{system}\n\n"   # WHOLE
                   # prompt — adapting a version truncated at 8000 chars drops the tail of the instructions; an
-                  # over-window prompt is refused loudly by adapters.call, never clipped.
+                  # over-window prompt is refused loudly by _execution_accessors.resolve_call, never clipped.
                   f"Adapt it for the target model WITHOUT changing the task. Return {{adapted_system, changed, note}}.")
         with _call_corpus_accessors.resolve_calls_context(intent="spendguard:adapt"):
-            r = adapters.call(judge, prompt, system=_ADAPT_SYS, schema=_ADAPT_SCHEMA, max_tokens=_ADAPT_OUT)
+            r = _execution_accessors.resolve_call(judge, prompt, system=_ADAPT_SYS, schema=_ADAPT_SCHEMA, max_tokens=_ADAPT_OUT)
         obj, _ = output_contract.as_obj_lenient((r or {}).get("text") or "")   # lenient: malformed reply → (None,False), never raises
         result = (obj if isinstance(obj, dict) and obj.get("adapted_system")
                   else {"adapted_system": system, "changed": False, "note": "adaptation unparseable — kept original"})

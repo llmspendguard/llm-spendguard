@@ -18,6 +18,7 @@ Design for safety on a live submit path:
 
 Audit trail: data/spend_audit/gate_log.jsonl (one line per submission, with decision).
 """
+from spendguard.generate.execution import execution_accessors as _execution_accessors
 import contextlib
 import io
 import os, sys, json, functools, datetime, time
@@ -441,7 +442,7 @@ def estimate_message_batch(requests, intent=None, declared_out=None):
     never drift from the enforcement the gate applies at submit. `requests` is the inline list (each {custom_id,
     params}); `intent` keys the MEASURED output basis (per-intent learned p90), and `declared_out` is the caller's
     expected output tokens per request (the DECLARED basis). Returns {provider, model, requests, in_tok, out_tok, cost,
-    out_basis, ceiling_out, worst_case_cost, …}. No network, no spend (pure token counting). submit.submit_message_batch
+    out_basis, ceiling_out, worst_case_cost, …}. No network, no spend (pure token counting). _execution_accessors.resolve_submit_message_batch
     uses it for the pre-submit estimate + per-call cap; the gate re-runs it at create for the caps + the provisional row."""
     return _estimate_anthropic_requests(list(requests or []), intent=intent, declared_out=declared_out)
 
@@ -897,7 +898,7 @@ _rt_bypass = False        # interactive "allow rest of run's real-time calls" �
 
 # ── Guardrail D AT THE CALL DOOR (path-independent) ──────────────────────────────────────────────────────
 # guardrail D (a running $ cap) used to live ONLY inside bulk_delegate, so a HAND-ROLLED fan (a ThreadPoolExecutor over
-# adapters.call / spendrails.call) never reached it and blew past the coarse global cap — the warden 2026-09-23/24
+# _execution_accessors.resolve_call / spendrails.call) never reached it and blew past the coarse global cap — the warden 2026-09-23/24
 # ~$96 gpt-5.5 overspend. spendguard is the ONE seam EVERY metered call passes through (_rt_precheck_usd), so the
 # per-intent running cap is enforced HERE, on every path. Plus a velocity signal that flags a raw same-intent fan not
 # issued through bulk_delegate (which is already governed by bulkgate's estimate + budget_usd).
@@ -956,7 +957,7 @@ def _warn_ungated_fan_once(intent, n):
             sys.stderr.write(
                 f"[spend_gate] UN-GATED FAN: {n} '{intent}' metered calls within {_FAN_WINDOW_S:.0f}s NOT via "
                 f"bulk_delegate — the estimate, the per-intent running cap, and reasoning-aware sizing do not apply to "
-                f"a hand-rolled fan. Route bulk work through lane_balance.bulk_delegate (or adapters.call with "
+                f"a hand-rolled fan. Route bulk work through lane_balance.bulk_delegate (or _execution_accessors.resolve_call with "
                 f"reasoning='best-value').\n")
         except Exception:
             pass
@@ -1393,7 +1394,7 @@ def _provider_of(model):
     PROVIDER, so the OpenAI line looked over-attributed by exactly the amount the Moonshot and z.ai lines
     were missing, and the coverage/leak verdict computed from those numbers was wrong in both directions.
 
-    adapters.provider_for already answered this correctly for every one of those models and RAISES rather
+    _execution_accessors.resolve_provider_for already answered this correctly for every one of those models and RAISES rather
     than guess — the fourth thing today that existed and was not on the path that needed it. The price
     table is the second source (it carries a vendor per model id from the synced catalogue). If neither
     knows, the answer is UNKNOWN_PROVIDER: a row that names no vendor can be found and fixed, while one
@@ -1402,8 +1403,7 @@ def _provider_of(model):
     if not m:
         return UNKNOWN_PROVIDER
     try:
-        from ... import adapters
-        return adapters.provider_for(m)
+        return _execution_accessors.resolve_provider_for(m)
     except Exception:
         pass
     try:
@@ -1897,7 +1897,7 @@ def _autotune(kw, model):
     complete, cut = int(b.get("n") or 0), int(b.get("n_truncated") or 0)
     p95 = int(b.get("p95") or 0)
 
-    # THE 32K OUTPUT FLOOR IS THE LAW (adapters.TOKEN_FLOOR / pricing.OUTPUT_FLOOR) — the SAME floor output_budget
+    # THE 32K OUTPUT FLOOR IS THE LAW (_execution_accessors.TOKEN_FLOOR / pricing.OUTPUT_FLOOR) — the SAME floor output_budget
     # sends on the metered path. A send cap is billed on tokens GENERATED, so raising it is ALWAYS free and the only
     # failure mode is a cap set too LOW (it truncates). So no autotuned cap — in EITHER direction — may sit below the
     # floor, clamped DOWN only by the model's OWN published max when that is lower (never past what the endpoint will

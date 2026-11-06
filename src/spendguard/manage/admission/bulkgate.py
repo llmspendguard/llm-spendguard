@@ -14,6 +14,7 @@ LLM decides it); the gate's CHECK ("does a fresh passing eval exist?") is the on
 SPENDGUARD_ENFORCE = off | warn | block (default `warn` — log "would-block" — then `block`); the eval requirement is
 `gate.require_eval` (default on).
 """
+from spendguard.generate.execution import execution_accessors as _execution_accessors
 import os
 import time
 import json
@@ -1086,7 +1087,7 @@ def eval_job(sig, bar, sample, model=None):
     bar = (bar or "").strip()
     if not bar:
         raise ValueError("eval_job needs a STATED bar (what a passing output looks like) — pass bar='...'.")
-    from ... import adapters, config
+    from ... import config
     from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
     from ...advisor import META                                    # ONE source of the meta-intent prefix
     judge = model or _gate_setting("eval_model", None, str) or config.advisor_judge_model()
@@ -1098,7 +1099,7 @@ def eval_job(sig, bar, sample, model=None):
               "\n\nSAMPLE OUTPUTS from the small test run:\n" + shown + more +
               "\n\nDoes the SAMPLE meet the BAR? Return {pass, score 0..1, rationale}.")
     with _call_corpus_accessors.resolve_calls_context(intent=f"{META}:eval"):
-        r = adapters.call(judge, prompt, system=_EVAL_SYS, schema=_EVAL_SCHEMA, max_tokens=_EVAL_OUT_CEILING)
+        r = _execution_accessors.resolve_call(judge, prompt, system=_EVAL_SYS, schema=_EVAL_SCHEMA, max_tokens=_EVAL_OUT_CEILING)
     v = _eval_verdict_from_result(r)
     record_eval(sig, bar, v["pass"], score=v.get("score"), note=v.get("rationale"), model=judge)
     return v
@@ -1145,9 +1146,9 @@ def check_realtime(sig, model, est_usd=0.0, force=False, never_block=False, *, b
         config.warn_once(f"[spendguard] BATCH HAND-OFF: burst of {n} independent calls on {model}; "
                          f"realtime estimate ${float(est_usd or 0) * n:.6f} API. "
                          "Persist the complete task list with ordinals/custom_id='task-<ordinal>' (Anthropic-safe). "
-                         "Run submit.submit_chat_tasks(tasks, model, submit=False) for the exact Batch estimate "
-                         "(Anthropic: submit.submit_message_batch); APPROVE before submit=True. "
-                         "Use batch_tracker.submit_offload for exactly-once submission; collect via callio.")
+                         "Run _execution_accessors.resolve_submit_chat_tasks(tasks, model, submit=False) for the exact Batch estimate "
+                         "(Anthropic: _execution_accessors.resolve_submit_message_batch); APPROVE before submit=True. "
+                         "Use _execution_accessors.resolve_submit_offload for exactly-once submission; collect via callio.")
     return check_bulk(sig, model, n, (float(est_usd or 0.0)) * n, force=force)   # cumulative burst est (block mode stops at the cap)
 
 

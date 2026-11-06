@@ -10,6 +10,7 @@ the live catalog at dispatch, so a rotated id is caught, not sent blind.
 ESTIMATE-FIRST (the spend protocol): sweep(run=False) returns the plan + a $ estimate and spends NOTHING;
 sweep(run=True) executes and returns the reachability matrix — per resource {reachable, executor, cost, reason}.
 """
+from spendguard.generate.execution import execution_accessors as _execution_accessors
 
 from ...capability_cli_parsing import registered_cli_option_token
 import hashlib
@@ -17,7 +18,7 @@ import json
 import logging
 import traceback
 
-from ... import adapters, config
+from ... import config
 from ...ledger_writer import (best_effort_ledger_function,
                             run_ledger_write, current_ledger_writer_connection)
 
@@ -82,10 +83,10 @@ def plan():
     """{lanes: [(lane, model)], metered: [(provider, model)]} — every configured lane + every keyed metered
     provider with a derivable probe target."""
     lane_models = config._cfg_get("advisor", "lane_models", {}) or {}
-    lanes = [(lane, lane_models.get(lane)) for _p, (lane, _m) in sorted(adapters._LANES.items())]
+    lanes = [(lane, lane_models.get(lane)) for _p, (lane, _m) in sorted(_execution_accessors.resolve__LANES().items())]
     metered = []
-    for prov in sorted(adapters.PROVIDERS):
-        if not config.api_key((adapters.PROVIDERS[prov].get("key_env") or "")):
+    for prov in sorted(_execution_accessors.PROVIDERS):
+        if not config.api_key((_execution_accessors.PROVIDERS[prov].get("key_env") or "")):
             continue
         t = _metered_target(prov)
         if t:
@@ -125,7 +126,7 @@ def _probe_metered_one(prov, mid, timeout_s):
     import time as _t
     t0 = _t.time()
     try:
-        r = adapters.call(f"{prov}:{mid}", "Reply with one word: ok.", sig="spendguard:reliability-sweep",
+        r = _execution_accessors.resolve_call(f"{prov}:{mid}", "Reply with one word: ok.", sig="spendguard:reliability-sweep",
                           max_tokens=_PROBE_OUT_TOKENS, timeout_s=timeout_s, _probe=True, metered_only=True)
     except Exception as e:                               # a probe must never break the sweep — record it as down
         import traceback
@@ -155,7 +156,7 @@ def _probe_metered_one(prov, mid, timeout_s):
         else:
             _failure_kind = r.get("failure_kind")
             if _failure_kind is None:
-                _failure_kind = adapters._exception_failure_kind(None, r.get("status_code"))
+                _failure_kind = _execution_accessors.resolve__exception_failure_kind(None, r.get("status_code"))
             label = _FAILURE_KIND_LABELS.get(_failure_kind, _failure_kind.replace("_", " "))
             origin = " at %s" % r["error_origin"] if r.get("error_origin") else ""
             detail = "%s: %s" % (r.get("error_type"), _err) if r.get("error_type") else str(_err)
@@ -245,7 +246,7 @@ def _classify_remediation(kind, resource, reason, model=None):
     AGENTICALLY (what an error means + how to fix it is a judgement). The WHOLE error is sent (never truncated).
     Fail-open: on any non-deliberate failure, a generic remediation (never breaks the health check); a DELIBERATE
     stop propagates."""
-    from ... import budget, adapters, config, gate
+    from ... import budget, config, gate
     from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
     sig = _remediation_signature(kind, resource, reason)
     _remediation_db()
@@ -260,7 +261,7 @@ def _classify_remediation(kind, resource, reason, model=None):
         with _call_corpus_accessors.resolve_calls_context(intent="spendguard:lane-remediation"):
             # No max_tokens literal — the sig sizes the OUTPUT budget from this call-class's MEASURED p99 (the small
             # issue/fix/command JSON sits well under the floor), so there is no hand-picked cap to justify.
-            r = adapters.call(model, prompt, system=_REMEDIATE_SYS,
+            r = _execution_accessors.resolve_call(model, prompt, system=_REMEDIATE_SYS,
                               schema=_REMEDIATE_SCHEMA, sig="spendguard:lane-remediation")
     except Exception as e:
         if gate.is_deliberate_stop(e):
@@ -268,7 +269,7 @@ def _classify_remediation(kind, resource, reason, model=None):
         logging.getLogger(__name__).exception("Resource remediation failed")
         return {"issue": str(reason), "fix": "inspect the lane's auth/quota/model config", "command": "", "cached": False,
                 "diagnostic": {"exception": repr(e), "traceback": traceback.format_exc()}}
-    j = adapters.structured_reply(r)
+    j = _execution_accessors.resolve_structured_reply(r)
     if not isinstance(j, dict) or not j.get("issue"):
         return {"issue": str(reason)[:120], "fix": "inspect the lane's auth/quota/model config", "command": "", "cached": False}
     out = {"issue": str(j.get("issue"))[:200], "fix": str(j.get("fix"))[:200], "command": str(j.get("command") or "")[:200]}
@@ -609,8 +610,7 @@ def health_reds(since_hours=48):
         for resource, kind, reason, fix, command, source, row_ts, failure_kind in rows:
             if source == "event" and kind == "lane":     # an EVENT down is stale once the lane stops cooling: it
                 try:                                      # RECOVERED. Resolve it (below) rather than silently drop it.
-                    from ... import adapters
-                    if not adapters._lane_cooling(resource):
+                    if not _execution_accessors.resolve__lane_cooling(resource):
                         recovered.append(resource)
                         continue
                 except Exception:

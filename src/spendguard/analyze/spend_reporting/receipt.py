@@ -24,6 +24,8 @@ Cost: a local sqlite read + a small JSON read. Safe to emit always; it never spe
 """
 from __future__ import annotations
 
+from spendguard.generate.execution import execution_accessors as _execution_accessors
+
 from ...capability_cli_parsing import registered_cli_option_token
 
 import datetime as _dt
@@ -297,8 +299,7 @@ def _routed_lane_value():
     try:
         data = json.loads(_receipt_aggregate_cache_path().read_text()).get("routed_lane_value") or {}
         month = _windows()[2]
-        from ... import adapters
-        active = {name for name, _module in adapters._LANES.values()}
+        active = {name for name, _module in _execution_accessors.resolve__LANES().values()}
         for lane in active:
             rec = data.get(lane) or {}
             activity = sum(n for day, n in (rec.get("activity_by_day") or {}).items() if day >= month)

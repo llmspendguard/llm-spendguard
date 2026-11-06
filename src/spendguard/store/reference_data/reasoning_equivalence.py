@@ -5,15 +5,15 @@ MISS falls back to the SAME provider's paid API at EQUAL-OR-GREATER reasoning �
 LESS reasoning.
 
 WHY THIS EXISTS (the gap Ash named). The equivalence was real but SCATTERED — models.normalize_reasoning (the
-metered per-model floor), codex_exec._codex_effort (the codex lane scale), adapters._split/_compose_gemini_reasoning
+metered per-model floor), _execution_accessors.resolve__codex_effort (the codex lane scale), adapters._split/_compose_gemini_reasoning
 (the gemini suffix↔param bijection), lane_catalog.REASONING_QUIRK (each lane's protocol) and
-adapters.metered_fallback_id (the lane→metered id map). No single place tied them together, so the question "is the
+_execution_accessors.resolve_metered_fallback_id (the lane→metered id map). No single place tied them together, so the question "is the
 lane→metered fallback faithful?" could neither be READ nor PROVEN. This module unifies them into one derived +
 persisted map with a STATUS and PROVENANCE per cell, and a resolver the fallback and the pinned matrix both call.
 
 LANE NAMING — read this once so the map is unambiguous. Each subscription LANE is one PROVIDER's flat-fee plan, and
 its "metered twin" is that SAME provider's pay-per-token API. The lane name is NOT the provider name, so it is spelled
-out here (source of truth: adapters._LANES {provider: (lane, executor)}):
+out here (source of truth: _execution_accessors.resolve__LANES() {provider: (lane, executor)}):
   · lane "codex"       = the ChatGPT/Codex subscription for OPENAI models   (executor codex_exec)      ↔ OpenAI API
   · lane "claude-code" = the Claude (Max) subscription for ANTHROPIC models (executor subscription_exec)↔ Anthropic API
   · lane "gemini"      = AGY (Antigravity) — the GEMINI SUBSCRIPTION        (executor antigravity_exec) ↔ Gemini API
@@ -37,13 +37,14 @@ PIN SEMANTICS (Ash's definition). A pin is a PROVIDER + a reasoning FLOOR.
       3. ROUND-UP     — no equal available → the next GREATER reasoning the metered model accepts (never silently
                         under-reason on a fallback).
 
-DERIVED, not hardcoded: providers from adapters._LANES, models from advisor.lane_models, the lane scale from
+DERIVED, not hardcoded: providers from _execution_accessors.resolve__LANES(), models from advisor.lane_models, the lane scale from
 lane_catalog.REASONING_QUIRK / the execs, the metered floor from models.normalize_reasoning, the id map from
-adapters.metered_fallback_id. The ONLY authored constant is the canonical reasoning ORDINAL (_REASONING_ORDER) —
+_execution_accessors.resolve_metered_fallback_id. The ONLY authored constant is the canonical reasoning ORDINAL (_REASONING_ORDER) —
 the vendors' documented scale order, needed to compare "equal or greater". Bake-off learnings are stored and
 OVERLAID, so learning is maintained across re-derivations.
 """
-from ... import adapters, config, lane_catalog, models
+from spendguard.generate.execution import execution_accessors as _execution_accessors
+from ... import config, lane_catalog, models
 
 # The requested STANDARD levels a caller pins with. minimal|low|medium|high is the one knob callers use; each
 # channel realizes it on its own scale (below). Not user config — the caller-facing ordinal.
@@ -93,14 +94,13 @@ def _lane_effort(lane, model, level):
     q = lane_catalog.quirk(lane)
     style = q["style"]
     if style == "param":                              # codex: its OWN scale via _codex_effort (minimal→none, rest pass)
-        from ... import codex_exec
-        return codex_exec._codex_effort(level), "param"
+        return _execution_accessors.resolve__codex_effort(level), "param"
     if style == "suffix":                             # agy/Gemini SUBSCRIPTION: effort rides the id SUFFIX; quirk lists the tiers
         levels = q["levels"]                          # e.g. (low, medium, high) — there is NO 'minimal'/'none' agy spelling
         if level in levels:
             return level, "suffix"
         # a requested level with NO agy suffix spelling (e.g. 'minimal') → the agy lane runs its DEFAULT tier. This
-        # MATCHES adapters._compose_gemini_reasoning, which APPENDS this default tier suffix to a bare base id
+        # MATCHES _execution_accessors.resolve__compose_gemini_reasoning, which APPENDS this default tier suffix to a bare base id
         # (REASONING_QUIRK['gemini']['default'] = 'medium'): agy serves ONLY the tier-suffixed forms and REJECTS a
         # bare id, so the composer cannot rely on 'return unchanged → lane runs its default'; it must spell the
         # default. It does NOT silently floor to 'low' — to get 'low' on agy you must request 'low' explicitly.
@@ -215,9 +215,9 @@ def resolve_metered(lane, model, level):
     (Ash: the metered fallback may reason MORE if needed), never defects."""
     prov = lane_catalog.lane_provider(lane)
     if prov is None:
-        raise ValueError(f"reasoning_equivalence.resolve: {lane!r} is not a registered lane (adapters._LANES)")
+        raise ValueError(f"reasoning_equivalence.resolve: {lane!r} is not a registered lane (_execution_accessors.resolve__LANES())")
     lane_eff, mech = _lane_effort(lane, model, level)
-    metered_id, _suffix_tier = adapters.metered_fallback_id(prov, model)   # SAME provider — only the id spelling changes
+    metered_id, _suffix_tier = _execution_accessors.resolve_metered_fallback_id(prov, model)   # SAME provider — only the id spelling changes
     metered_norm = models.normalize_reasoning(metered_id, level)           # what the metered API would send by default
 
     # ── REASONING resolution: EQUAL → bake-off-proven LESSER → ROUND-UP to greater (never under-reason) ──────────
@@ -273,21 +273,21 @@ def resolve_lane(provider, metered_model, reasoning=None):
     """The REVERSE direction of the map (metered → lane) — so the mapping is BIDIRECTIONAL. Given a SAME-provider
     METERED (model, reasoning) — e.g. a name a USER requested in metered form — return the subscription LANE that
     serves it and the exact lane USE-NAME (how the lane is CALLED for that reasoning), or None if the provider has
-    NO lane (a metered-only vendor). This is the inverse of adapters.metered_fallback_id (lane use-name → metered
+    NO lane (a metered-only vendor). This is the inverse of _execution_accessors.resolve_metered_fallback_id (lane use-name → metered
     id + reasoning): the lane and the metered API can NAME the same model differently and pass reasoning
     differently, so both directions are needed to route a pin regardless of which form the caller holds.
 
     agy/Gemini is the case where the names DIFFER: the effort rides the id SUFFIX on the lane
     (gemini-3.8-flash + 'low' → gemini-3.8-flash-low) while the metered API takes the bare id + a reasoning param —
-    so this composes the suffix (adapters._compose_gemini_reasoning). Every other lane passes reasoning out-of-band
+    so this composes the suffix (_execution_accessors.resolve__compose_gemini_reasoning). Every other lane passes reasoning out-of-band
     (codex param / claude thinking / zai none), so the lane use-name IS the metered id. Round-trips with
     metered_fallback_id: split(compose(x)) == x and compose(split(x)) == x for a valid tier."""
-    lane = adapters._LANES.get(provider, (None,))[0]
+    lane = _execution_accessors.resolve__LANES().get(provider, (None,))[0]
     if not lane:
         return None                                      # metered-only vendor — no subscription-lane form exists
     q = lane_catalog.quirk(lane)
     if q["style"] == "suffix" and reasoning in q["levels"]:
-        use_name = adapters._compose_gemini_reasoning(metered_model, reasoning)   # bare id + tier → the suffixed lane id
+        use_name = _execution_accessors.resolve__compose_gemini_reasoning(metered_model, reasoning)   # bare id + tier → the suffixed lane id
     else:
         use_name = metered_model                         # param/thinking/none lanes: the use-name IS the metered id
     return {"lane": lane, "provider": provider, "lane_use_name": use_name, "reasoning": reasoning}

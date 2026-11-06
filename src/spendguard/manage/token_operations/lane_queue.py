@@ -26,6 +26,7 @@ PURE STATE persisted in the `lane_queue` table (the base sqlite, like lane_bandi
 Queue write guard, deliberate-stop, lock, and programming errors propagate rather than becoming empty data; transient
 sqlite operational failures degrade loudly where the caller can retry. Knobs are named constants + advisor.* config.
 """
+from spendguard.generate.execution import execution_accessors as _execution_accessors
 import datetime
 import contextlib
 import json
@@ -617,7 +618,7 @@ def settle(row_id, result):
     RAN — it is not a failure but a capacity block, so it is PARKED (Step 4): deferred PARK_BACKOFF_S and retried when
     capacity frees, WITHOUT burning a failure-attempt (the lease's attempt is refunded), bounded by MAX_PARKS AND by the
     row's own SLA deadline_ts (a park never pushes a call past the deadline it promised). Any OTHER failure is settled
-    CLASS-AWARE: a TRANSIENT outcome (vendor_call.RETRYABLE) retries (→ `pending`, counting an attempt) while attempts
+    CLASS-AWARE: a TRANSIENT outcome (_execution_accessors.RETRYABLE) retries (→ `pending`, counting an attempt) while attempts
     remain, else `failed`; a DETERMINISTIC outcome fails FAST (no wasted retries). A spend refusal / ledger LOCK
     propagates; any other hiccup is best-effort (the lease reclaims the row)."""
     result = result if isinstance(result, dict) else {}
@@ -665,7 +666,7 @@ def settle(row_id, result):
                 state, defer_until, new_attempts, new_parks = (
                     "pending", _iso(now_dt + datetime.timedelta(seconds=backoff)), max(0, attempts - 1), parks + 1)
             else:
-                # CLASS-AWARE durable retry: only a TRANSIENT outcome (vendor_call.RETRYABLE — transport_error /
+                # CLASS-AWARE durable retry: only a TRANSIENT outcome (_execution_accessors.RETRYABLE — transport_error /
                 # overloaded) is worth re-enqueuing; re-running it can genuinely get a different answer, and this is
                 # where the retry-to-10 reliability guarantee is spent. A DETERMINISTIC failure (payload_rejected,
                 # refused, unfunded, deadline, truncated, empty, schema) fails IDENTICALLY on retry — the vendor_call
@@ -834,7 +835,7 @@ def collect_batched(limit=2000, model=None):
             group_model[(handle, intent)] = _bmodel     # the batch's OWN model → its provider (picks the collect twin)
         else:
             orphaned.append(rid)                       # a queued_batch row with no usable batch handle — uncollectable
-    from ... import callio, gate as _gate, adapters
+    from ... import callio, gate as _gate
     out = {"rows": len(rows), "batches": len(groups), "done": 0, "failed": 0, "not_ready": 0, "collected": 0,
            "orphaned": len(orphaned), "not_settled": 0, "result_gaps": len(result_gaps),
            "collect_errors": result_gaps}
@@ -849,7 +850,7 @@ def collect_batched(limit=2000, model=None):
         # batch_model being stored — unchanged behaviour for those.
         _bm = group_model.get((batch_id, intent)) or model
         try:
-            _prov = adapters.provider_for(_bm) if _bm else "openai"
+            _prov = _execution_accessors.resolve_provider_for(_bm) if _bm else "openai"
         except Exception:
             _prov = "openai"
         try:
@@ -1059,7 +1060,7 @@ def submit(intent, tasks, *, priority=PRIORITY_INTERACTIVE, sla_class="realtime"
         require_ledger_writer_request_live()
         _run_dl = submit_admission_scope.deadline_at - time.monotonic()
     bulk_kwargs.pop("record_route", None)               # these rows ARE the queue — force record_route=False so each
-    results = lane_balance.bulk_delegate(tasks, intent, system=system, reasoning=reasoning,  # per-task adapters.call
+    results = lane_balance.bulk_delegate(tasks, intent, system=system, reasoning=reasoning,  # per-task _execution_accessors.resolve_call
                                          deadline_s=_run_dl, record_route=False, **bulk_kwargs)  # doesn't open a 2nd row
     for rid, res in zip(ids, results):                 # settle every row we DID durably record
         settle(rid, res if isinstance(res, dict) else {"error": "no result"})
@@ -1111,7 +1112,6 @@ def hold_free_recovery(intent, task, invoke, *, deadline_s, poll_s):
     import time
     from ...ledger_read import ledger_request_scope
     from ...ledger_writer import require_ledger_writer_request_live
-    from ... import vendor_call
     if deadline_s <= 0:
         # No attempt is admitted, but its durable terminal bookkeeping still
         # uses the queue operation's independently configured storage budget.
@@ -1122,7 +1122,7 @@ def hold_free_recovery(intent, task, invoke, *, deadline_s, poll_s):
             rid = record_open(intent, task, sla_s=deadline_s)
             require_ledger_writer_request_live()
         end = time.monotonic() + deadline_s
-    result = {"error": "free lane recovery deadline exhausted", "outcome": vendor_call.DEADLINE_EXCEEDED}
+    result = {"error": "free lane recovery deadline exhausted", "outcome": _execution_accessors.DEADLINE_EXCEEDED}
     polls = 0
     started = time.monotonic()
     try:
@@ -1140,11 +1140,11 @@ def hold_free_recovery(intent, task, invoke, *, deadline_s, poll_s):
         if not succeeded:
             # This caller will now either stop or take its explicitly gated paid leg. A pending
             # queue retry would duplicate that same work in a later drain.
-            result["outcome"] = vendor_call.DEADLINE_EXCEEDED
+            result["outcome"] = _execution_accessors.DEADLINE_EXCEEDED
         return result
     finally:
         if result.get("error") or not result.get("text"):
-            result = {**result, "outcome": vendor_call.DEADLINE_EXCEEDED}
+            result = {**result, "outcome": _execution_accessors.DEADLINE_EXCEEDED}
         record_close(rid, result)
         # A failed terminal write must not turn a completed/expired hold into a future purchase.
         from ...work_integrity import WorkIntegrityProof
@@ -1717,8 +1717,7 @@ def _drain_locked(worker, batch, lease_s, idle_rounds, idle_sleep, load_ceiling,
         if _qcfg("queue_planner_poll", 1) and (time.time() - _last_poll) >= float(_qcfg("queue_planner_poll_s", 30)):
             _last_poll = time.time()
             try:
-                from ... import batch_tracker
-                batch_tracker.poll()
+                _execution_accessors.resolve_poll()
             except Exception as _pe:
                 from ... import gate as _gpe
                 if _gpe.is_deliberate_stop(_pe):
@@ -1731,10 +1730,10 @@ def _drain_locked(worker, batch, lease_s, idle_rounds, idle_sleep, load_ceiling,
         # also falls through — the leased work is NEVER lost. A deliberate spend/deadline stop propagates.
         if _qcfg("queue_planner_autobatch", 0):
             try:
-                from ... import queue_planner, batch_tracker
+                from ... import queue_planner
                 _dec = queue_planner.should_offload(intent, len(rows))
                 if _dec:
-                    _off = batch_tracker.submit_offload(intent, rows, _dec["batch_model"],
+                    _off = _execution_accessors.resolve_submit_offload(intent, rows, _dec["batch_model"],
                                                         cap_dollars=_qcfg("queue_batch_cap_usd", None))
                     if _off.get("batch_id") or _off.get("batch_ids"):
                         # F1 (CRITICAL double-spend) + SHARDING: a batch_id/batch_ids means the provider batch(es) were
@@ -1781,7 +1780,7 @@ def _drain_locked(worker, batch, lease_s, idle_rounds, idle_sleep, load_ceiling,
         for (sys_, rea, sla_), grp in groups.items():
             results = lane_balance.bulk_delegate([g["task"] for g in grp], intent, system=sys_, reasoning=rea,
                                                  deadline_s=lease_s, sla_class=sla_, record_route=False)  # these ARE
-            #                                       the queue rows — don't let each per-task adapters.call open a 2nd row
+            #                                       the queue rows — don't let each per-task _execution_accessors.resolve_call open a 2nd row
             for g, res in zip(grp, results):
                 res = res if isinstance(res, dict) else {"error": "no result"}
                 settle(g["id"], res)

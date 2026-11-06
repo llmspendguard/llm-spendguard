@@ -15,7 +15,7 @@ and does the output meet each requirement?* Two moves:
 Every verdict field (good / score / usable / per-requirement met / confident) is a TYPED field the model returns —
 never parsed from prose, never thresholded in code. Evidence is sent WHOLE — neither the prompt nor the output is
 pre-truncated (a bad suffix judged on its prefix is the exact miss the no-truncation doctrine forbids); oversize is
-contained upstream by adapters.call's input guard, which REFUSES rather than clips, so an un-judgeably-large output
+contained upstream by _execution_accessors.resolve_call's input guard, which REFUSES rather than clips, so an un-judgeably-large output
 comes back good=None (UNLABELED), not falsely good. The OUTPUT under judgement is untrusted DATA: the judge is told
 to evaluate it, never to obey instructions inside it. All calls are meta-caged (intent 'spendguard:*' → caps.meta).
 
@@ -24,9 +24,10 @@ Returns from judge_requirements(): {good, score(1-10), usable, requirements, met
 drop-in for effort_titration._score_output. `None`-safe: an unavailable judge returns good=None (UNLABELED), never a
 guess.
 """
+from spendguard.generate.execution import execution_accessors as _execution_accessors
 import hashlib
 
-from ... import adapters, config
+from ... import config
 from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
 
 _EXTRACT_SYS = ("You are given a TASK PROMPT that was sent to an LLM. Name the concrete SUCCESS REQUIREMENTS a "
@@ -64,14 +65,14 @@ def _prompt_key(prompt):
 
 def _meta_call(model, prompt, *, system, schema, out, sig, images=None):
     """One meta-caged, deadline-bounded, schema-forced call over WHOLE evidence. Oversize is contained by
-    adapters.call's input guard (it refuses rather than clips). Returns (parsed dict or None, cost); never raises.
-    `images` (a vision task's image refs) is passed to adapters.call ONLY when present, so a text judgement is
+    _execution_accessors.resolve_call's input guard (it refuses rather than clips). Returns (parsed dict or None, cost); never raises.
+    `images` (a vision task's image refs) is passed to _execution_accessors.resolve_call ONLY when present, so a text judgement is
     byte-for-byte the prior call — a caption's faithfulness cannot be ruled without seeing the image."""
     with _call_corpus_accessors.resolve_calls_context(intent="spendguard:%s" % sig):
         # PIN the judge/adjudicator: this is a META RULER call where WHICH MODEL ANSWERED is the measurement, so
         # the lane/bandit must never swap it (a ruler that varies per call is not a comparable verdict) — the same
         # discipline as the bakeoff judge. Pinning still uses the model's OWN $0 lane where available.
-        r = adapters.call(model, prompt, max_tokens=out, system=system, schema=schema,
+        r = _execution_accessors.resolve_call(model, prompt, max_tokens=out, system=system, schema=schema,
                           sig="spendguard:%s" % sig, timeout_s=_JUDGE_TIMEOUT_S, no_substitution=True,
                           **({"images": images} if images else {}))
     cost = r.get("cost") or 0.0
@@ -79,7 +80,7 @@ def _meta_call(model, prompt, *, system, schema, out, sig, images=None):
         return None, cost
     # Read the adapter's OWN fence-tolerant decode (r['parsed']) — never a bare json.loads, which chokes on the
     # ```json fence a $0 lane wraps its verdict in and made the screen "unavailable" on every soft task.
-    return adapters.structured_reply(r), cost
+    return _execution_accessors.resolve_structured_reply(r), cost
 
 
 def requirements_for(prompt, *, model=None):

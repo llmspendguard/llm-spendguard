@@ -1,6 +1,8 @@
 """Deterministic, subprocess-isolated audit of workspace LLM consumers."""
 from __future__ import annotations
 
+from spendguard.generate.execution import execution_accessors as _execution_accessors
+
 from ...capability_cli_parsing import add_registered_cli_argument
 
 import argparse
@@ -10,7 +12,7 @@ import os
 from pathlib import Path
 import subprocess
 
-from ... import adapters, config
+from ... import config
 
 CONSUMER_AUDIT_PROBE_TIMEOUT_SECONDS = 10.0
 CONSUMER_AUDIT_GIT_TIMEOUT_SECONDS = 5.0
@@ -28,11 +30,11 @@ CONSUMER_AUDIT_PYTHON_EXECUTABLE_NAME = "python"
 CONSUMER_AUDIT_GIT_EXECUTABLE = "git"
 CONSUMER_AUDIT_GIT_HEAD_ARGUMENTS = ("rev-parse", "HEAD")
 CONSUMER_AUDIT_GIT_ORIGIN_MAIN_ARGUMENTS = ("rev-parse", "origin/main")
-CONSUMER_AUDIT_SPENDGUARD_IMPORT_NAME = adapters.SPENDGUARD_IMPORT_NAME
+CONSUMER_AUDIT_SPENDGUARD_IMPORT_NAME = _execution_accessors.SPENDGUARD_IMPORT_NAME
 
 
 def _consumer_audit_sdk_import_names():
-    return adapters.llm_capability_import_names() - {CONSUMER_AUDIT_SPENDGUARD_IMPORT_NAME}
+    return _execution_accessors.resolve_llm_capability_import_names() - {CONSUMER_AUDIT_SPENDGUARD_IMPORT_NAME}
 CONSUMER_AUDIT_SUCCESS = "GATED+LATEST"
 CONSUMER_AUDIT_NOT_ENFORCING = "NOT-ENFORCING"
 CONSUMER_AUDIT_NO_SPENDGUARD = "NO-SPENDGUARD"

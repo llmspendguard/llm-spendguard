@@ -213,3 +213,8 @@ def _judge_price_gaps(differs, run=False, advisor=None):
         verdict, why = verdicts.get(index, ("undecided", "judge did not answer"))
         out.append((*row, f"{verdict} — {why}" if why else verdict))
     return out
+
+
+from . import execution_accessors as _execution_accessors
+
+_execution_accessors.set_cross_check_openrouter_resolver(lambda *a, **k: cross_check_openrouter(*a, **k))

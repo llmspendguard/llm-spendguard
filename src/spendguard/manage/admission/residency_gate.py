@@ -13,6 +13,7 @@ plan), with the verdict CONTENT-HASH cached (keyed by the evidence, not the sess
 repeated pattern is judged once across sessions. It must NOT become the
 thing it warns about: never a subagent/session spawn to make this judgement (the symgrep grep-classifier failure —
 166 cold sessions, $70/day). FAIL-OPEN always: a nudge that crashes the hook would be worse than silence."""
+from spendguard.generate.execution import execution_accessors as _execution_accessors
 
 from ...capability_cli_parsing import registered_cli_option_token
 import hashlib
@@ -135,7 +136,7 @@ def _judge_residency_delegability(tool_name, tool_input, result_text):
         return cached
     try:
         import spendguard
-        from ... import adapters, plan_admission
+        from ... import plan_admission
         from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
         spendguard.require()
         model = plan_admission.ready_meta_model(config.advisor_judge_model())
@@ -154,14 +155,14 @@ def _judge_residency_delegability(tool_name, tool_input, result_text):
                   f'Reply JSON only: {{"delegable": true|false, "why": "<one short line, at most '
                   f'{rationale_max_chars} characters>"}}.')
         with _call_corpus_accessors.resolve_calls_context(intent="spendguard:residency-nudge"):
-            r = adapters.call(model, prompt, sig="spendguard:residency-nudge", reasoning="minimal",
+            r = _execution_accessors.resolve_call(model, prompt, sig="spendguard:residency-nudge", reasoning="minimal",
                               max_tokens=judge_output_tokens,
                               no_metered_fallback=True,
                               schema={"type": "object", "additionalProperties": False,
                                       "required": ["delegable", "why"],
                                       "properties": {"delegable": {"type": "boolean"},
                                                      "why": {"type": "string", "maxLength": rationale_max_chars}}})
-        j = adapters.structured_reply(r)
+        j = _execution_accessors.resolve_structured_reply(r)
     except LedgerReadError:
         raise
     except Exception:

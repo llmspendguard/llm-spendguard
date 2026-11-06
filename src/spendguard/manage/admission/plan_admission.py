@@ -1,4 +1,5 @@
 """Admission control for ordinary calls whose subscription lane is exhausted."""
+from spendguard.generate.execution import execution_accessors as _execution_accessors
 import os
 
 from ... import config, lane_catalog, lane_registry, lanes, overage
@@ -71,13 +72,13 @@ def _ready(lane):
     is excluded. An 'unknown' lane that is actually down fails over gracefully via the reactive ladder — strictly better
     than never routing to it (the old `auth != "ok"` gate excluded every no-status-probe lane, leaving only codex able
     to absorb a shed)."""
-    from ... import adapters, reliability
+    from ... import reliability
     provider = lane_catalog.lane_provider(lane)
     if any((r.get("kind") == "lane" and r.get("resource") == lane)
            or (r.get("kind") == "metered" and r.get("resource") == provider)
            for r in reliability.health_reds()):
         return False
-    if adapters._lane_cooling(lane):
+    if _execution_accessors.resolve__lane_cooling(lane):
         return False
     row = next((r for r in lanes.lanes_status().get("lanes", []) if r.get("lane") == lane), None)
     if not row or not row.get("enabled") or row.get("auth") not in ("ok", "unknown"):
@@ -139,9 +140,9 @@ def decide(model, intent, auth_over_quota=False):
     Alternatives come only from the existing propose→confirm registry: the agentic meaning decision has already
     happened. This hot path performs fixed structured filtering and never invents interchangeability.
     """
-    from ... import adapters, lane_balance, route_utility
-    provider = adapters.provider_for(model)
-    primary = adapters._LANES.get(provider, (None,))[0]
+    from ... import lane_balance, route_utility
+    provider = _execution_accessors.resolve_provider_for(model)
+    primary = _execution_accessors.resolve__LANES().get(provider, (None,))[0]
     if not primary:
         return {"action": "keep", "model": model, "risk": None, "candidate_estimates": None}
     risk = lane_risk(primary)
@@ -149,8 +150,8 @@ def decide(model, intent, auth_over_quota=False):
         return {"action": "keep", "model": model, "risk": risk, "candidate_estimates": []}
     candidates = []
     for candidate in lane_balance.substitutes_for(intent):
-        cprov = adapters.provider_for(candidate)
-        lane = adapters._LANES.get(cprov, (None,))[0]
+        cprov = _execution_accessors.resolve_provider_for(candidate)
+        lane = _execution_accessors.resolve__LANES().get(cprov, (None,))[0]
         if lane and lane != primary and _ready(lane):
             candidates.append((lane, candidate))
     if candidates:
@@ -168,7 +169,7 @@ def decide(model, intent, auth_over_quota=False):
                     "reason_class": _admission_reason_class(risk),
                     "requested_model": model, "risk": risk, "candidate_estimates": ranked}
     # AVAILABILITY FALLBACK — the proper shed. No PROVEN substitute exists for this intent, but this is a SUBSTITUTABLE
-    # call (a caller model-pin / measurement never reaches decide — the `not _caller_model_pin` gate in adapters.call),
+    # call (a caller model-pin / measurement never reaches decide — the `not _caller_model_pin` gate in _execution_accessors.resolve_call),
     # so SERVE it on the best READY alternative lane instead of refusing. The proven substitute above is PREFERRED
     # (quality-measured); this tier serves substitutable work on any ready free lane (same ranking ready_meta_model
     # uses), which is what lanes are FOR. Only refuse when NOTHING ready can serve. Config-gated
@@ -205,9 +206,8 @@ def ready_meta_model(default_model):
     substitute first, then falls back to the same availability core for substitutable USER calls.) $0 (cached lane
     status). Never raises — a meta call must not break on a routing read."""
     try:
-        from ... import adapters
-        prov = adapters.provider_for(default_model)
-        primary = adapters._LANES.get(prov, (None,))[0]
+        prov = _execution_accessors.resolve_provider_for(default_model)
+        primary = _execution_accessors.resolve__LANES().get(prov, (None,))[0]
         if not primary or not lane_risk(primary)["at_risk"]:
             return default_model                          # the default's own plan is healthy → keep it
         alt = _best_ready_alt_lane(primary, tier="cheap")  # shared availability core (same as decide's fallback)

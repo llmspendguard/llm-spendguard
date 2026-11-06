@@ -13,6 +13,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 WORK_EDGES = {"submit_chat_tasks", "submit_message_batch", "submit_offload", "collect_chat_tasks",
               "collect_message_batch", "collect_batched", "mark_batched", "_persist_pending",
               "hold_free_recovery", "record_close", "requeue_from_batch"}
+RESOLVER_WORK_EDGES = {f"resolve_{edge}": edge for edge in WORK_EDGES}
 # Exact reviewed ownership transfers. Counts cover multiple branches, not just unique callees.
 WORK_REVIEWED = {
     ("scripts/reliability/batch_loop_live_proof.py", "estimate_only", "submit.submit_chat_tasks"): 1,
@@ -23,6 +24,7 @@ WORK_REVIEWED = {
     ("src/spendguard/generate/execution/batch_tracker.py", "submit_offload", "lane_queue.mark_batched"): 2,
     ("src/spendguard/generate/execution/batch_tracker.py", "_fail_over", "lane_queue.requeue_from_batch"): 1,
     ("src/spendguard/generate/execution/batch_tracker.py", "poll", "lane_queue.collect_batched"): 1,
+    ("src/spendguard/generate/execution/batch_tracker.py", "module", "submit_offload"): 1,
     ("src/spendguard/generate/execution/batch_tracker.py", "submit_offload", "submit_offload"): 1,
     ("src/spendguard/generate/execution/batch_tracker.py", "submit_offload", "_submit.submit_message_batch"): 1,
     ("src/spendguard/generate/execution/batch_tracker.py", "submit_offload", "_submit.submit_chat_tasks"): 1,
@@ -30,12 +32,14 @@ WORK_REVIEWED = {
     ("src/spendguard/manage/token_operations/lane_queue.py", "hold_free_recovery", "record_close"): 1,
     ("src/spendguard/manage/token_operations/lane_queue.py", "collect_batched", "callio.collect_message_batch"): 1,
     ("src/spendguard/manage/token_operations/lane_queue.py", "collect_batched", "callio.collect_chat_tasks"): 1,
-    ("src/spendguard/manage/token_operations/lane_queue.py", "_drain_locked", "batch_tracker.submit_offload"): 1,
+    ("src/spendguard/manage/token_operations/lane_queue.py", "_drain_locked", "_execution_accessors.resolve_submit_offload"): 1,
     ("src/spendguard/manage/token_operations/storm_submit.py", "_run_durable_batch", "_bt.submit_offload"): 1,
     ("src/spendguard/manage/token_operations/storm_submit.py", "_run_durable_batch", "_lq.collect_batched"): 1,
+    ("src/spendguard/generate/execution/submit.py", "module", "submit_chat_tasks"): 1,
+    ("src/spendguard/generate/execution/submit.py", "module", "submit_message_batch"): 1,
     ("src/spendguard/generate/execution/submit.py", "submit_chat_tasks", "submit_chat_tasks"): 1,
     ("src/spendguard/generate/execution/submit.py", "submit_message_batch", "submit_message_batch"): 1,
-    ("src/spendguard/manage/routing/whole_job.py", "_run_batch_group", "_submit.submit_chat_tasks"): 1,
+    ("src/spendguard/manage/routing/whole_job.py", "_run_batch_group", "_execution_accessors.resolve_submit_chat_tasks"): 1,
     ("src/spendguard/manage/routing/whole_job.py", "collect_jobs", "callio.collect_chat_tasks"): 1,
     ("src/spendguard/manage/routing/whole_job.py", "run_jobs", "_persist_pending"): 1,
 }
@@ -64,11 +68,13 @@ def inventory_work_ownership_edges(sources):
             if not isinstance(node, ast.Call):
                 continue
             callee = ast.unparse(node.func)
+            callee_tail = callee.split(".")[-1]
+            work_edge = RESOLVER_WORK_EDGES.get(callee_tail, callee_tail)
             scope = node
             while scope in parents and not isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 scope = parents[scope]
             name = getattr(scope, "name", "module")
-            if callee.split(".")[-1] in WORK_EDGES:
+            if work_edge in WORK_EDGES:
                 found[(str(path), name, callee)] += 1
             if callee.split(".")[-1] in ("execute", "executemany", "executescript") and node.args:
                 sql = " ".join(n.value for n in ast.walk(node.args[0])
@@ -97,8 +103,9 @@ print(f"Axis-4 durable-state coverage: {sum(writes.values()) - sum(write_unrevie
 assert not write_unreviewed, write_unreviewed
 assert not write_removed, write_removed
 injected, _, _ = inventory_work_ownership_edges([
-    (pathlib.Path("new_edge.py"), "def bypass():\n    submit.submit_chat_tasks(tasks, model)\n")])
+    (pathlib.Path("new_edge.py"), "def bypass():\n    _execution_accessors.resolve_submit_chat_tasks(tasks, model)\n")])
 assert injected - collections.Counter(WORK_REVIEWED), "new ownership edge was silently accepted"
+print("planted resolver-form work-ownership violation: REJECTED")
 _, new_write, _ = inventory_work_ownership_edges([
     (pathlib.Path("new_writer.py"), 'def bypass():\n    c.execute("UPDATE lane_queue SET state=done")\n')])
 assert new_write - collections.Counter(STATE_WRITES_REVIEWED)

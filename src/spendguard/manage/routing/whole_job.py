@@ -33,6 +33,7 @@ CONTRACT
 
 Estimate-first, fail-closed on unknown cost, no silent loss, decisions are economics (not regex) — the doctrines apply.
 """
+from spendguard.generate.execution import execution_accessors as _execution_accessors
 
 from ...capability_cli_parsing import add_registered_cli_argument
 from ... import route_economics, config
@@ -72,12 +73,12 @@ def _strict_schema_planning_constraint(items, goal, resolved_model):
     adapters derives the vendor capability from its request dialect SSOT.  The model is the one economics already
     resolved; this helper never performs a second model-selection pass.
     """
-    from ... import adapters, output_contract
+    from ... import output_contract
     must_enforce = any(output_contract.needs_enforcement(job.get("schema")) for job in items)
     suppressed = any(job.get("no_metered_fallback") or job.get("refuse_billed") for job in items)
     suppressed = suppressed or bool((goal or {}).get("no_metered_fallback") or (goal or {}).get("refuse_billed"))
-    provider = adapters.provider_for(resolved_model) if resolved_model else None
-    return must_enforce and adapters.schema_capability(provider) == adapters.SCHEMA_STRICT, suppressed, provider
+    provider = _execution_accessors.resolve_provider_for(resolved_model) if resolved_model else None
+    return must_enforce and _execution_accessors.resolve_schema_capability(provider) == _execution_accessors.SCHEMA_STRICT, suppressed, provider
 
 
 def _record_set_schema_decision(intent, model, suppressed):
@@ -103,9 +104,8 @@ def _metered_schema_group_estimate(model, n, in_tok, out_tok):
 
 def _configured_batch_schema_provider():
     """Provider of the planner's configured batch leg, resolved from config rather than duplicated as a literal."""
-    from ... import adapters
     batch_model = config._cfg_get("advisor", "batch_model", None)
-    return adapters.provider_for(batch_model) if batch_model else None
+    return _execution_accessors.resolve_provider_for(batch_model) if batch_model else None
 
 
 def _method_for(intent, n, goal, in_tok, out_tok, items=None):
@@ -420,9 +420,9 @@ def _run_batch_group(intent, items, goal, budget_remaining):
     submission FAILED (surfaced by run_jobs, never discarded). Eligibility is decided STRUCTURALLY (the provider), not
     by parsing an error string. The cap is the remaining budget (submit_chat_tasks estimates→caps→submits through the
     ONE guarded chokepoint)."""
-    from ... import adapters, config, submit as _submit
+    from ... import config
     model = config.advisor_model()                    # v1: the account's advisor model (an OpenAI id rides the Batch API)
-    if adapters.provider_for(model) != "openai":      # structural eligibility — the Batch API serves only OpenAI ids
+    if _execution_accessors.resolve_provider_for(model) != "openai":      # structural eligibility — the Batch API serves only OpenAI ids
         return {"batch_id": None, "eligible": False, "intent": intent}
     tasks = []
     for j in items:
@@ -432,7 +432,7 @@ def _run_batch_group(intent, items, goal, budget_remaining):
         if j.get("system") is not None:
             t["system"] = j["system"]
         tasks.append(t)
-    r = _submit.submit_chat_tasks(tasks, model, schema=None, intent=intent, cap_dollars=budget_remaining)
+    r = _execution_accessors.resolve_submit_chat_tasks(tasks, model, schema=None, intent=intent, cap_dollars=budget_remaining)
     if r.get("error") or not r.get("batch_id"):
         return {"batch_id": None, "eligible": True, "intent": intent, "error": r.get("error") or "no batch_id returned"}
     return {"batch_id": r["batch_id"], "intent": intent, "model": model, "job_ids": [j["id"] for j in items]}

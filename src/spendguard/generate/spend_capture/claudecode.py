@@ -12,6 +12,7 @@ INCREMENTAL + idempotent (this is the "track what's analyzed, update only the ne
     totals, so the server upsert (keyed by row uid) stays correct as sessions grow.
 Cost ≈ pricing.realtime_cost(model, input+cache_create+cache_read, output, cached=cache_read). Project = cwd name.
 """
+from spendguard.generate.execution import execution_accessors as _execution_accessors
 
 from ...capability_cli_parsing import registered_cli_option_token
 import os, json, glob, pathlib, datetime, hashlib, time
@@ -1609,7 +1610,7 @@ _STORY_SYS = (
 def story(by="week", days=7, run=False):
     """Caged synth over the period's work rows → a narrative STORY + private WORK INSIGHTS (findings/decisions/
     gotchas/next — distinct from cost/LLM-usage learnings). Estimate-first; the LLM call is caged under caps.meta."""
-    from ... import config, adapters, pricing, ui
+    from ... import config, pricing, ui
     from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
     digs = _read_session_digests(days)                     # ONE home for the guard + glob (see _read_session_digests)
     if digs is None:                                       # projects dir missing/unreadable (named there)
@@ -1630,7 +1631,7 @@ def story(by="week", days=7, run=False):
         ui.estimate_only(action="synthesize the work story + private insights", cost=est)
         return 0
     with _call_corpus_accessors.resolve_calls_context(intent="spendguard:worklog"):     # caged → meta budget, excluded from the workload corpus
-        r = adapters.call(model, prompt, max_tokens=OUT, system=_STORY_SYS)
+        r = _execution_accessors.resolve_call(model, prompt, max_tokens=OUT, system=_STORY_SYS)
     if r.get("error"):
         print("  error:", r["error"]); return 1
     from .chat import _parse_story                         # tolerant parse (recovers story + insights if truncated)
@@ -1639,7 +1640,7 @@ def story(by="week", days=7, run=False):
     print("\n=== WORK INSIGHTS (private — your IP, never pooled) ===")
     for ins in (data.get("insights") or []):
         print(f"  [{ins.get('type', '?'):<8}] ({ins.get('project', '?')}) {ins.get('text', '')}")
-    # `or 0`, not `.get(..., 0)`: the default only applies when the KEY IS ABSENT. adapters.call returns
+    # `or 0`, not `.get(..., 0)`: the default only applies when the KEY IS ABSENT. _execution_accessors.resolve_call returns
     # cost=None for a model with no price, which reaches :.4f and raises — after the call was paid for.
     print(f"\n  (caged cost ${(r.get('cost') or 0):.4f}; intent spendguard:worklog)")
     return 0

@@ -17,7 +17,7 @@ script-defined system prompts to cache, and per-provider setup. CLI: `spendguard
 from ...capability_cli_parsing import add_registered_cli_argument
 import ast, os, re, glob
 from ... import callio, pricing
-from ...submit import _count_tokens
+from spendguard.generate.execution import execution_accessors as _execution_accessors
 
 # OpenAI auto-caches only prefixes at/above this; Anthropic explicit cache_control has lower minimums.
 _MIN_CACHE_TOKENS = 1024
@@ -55,8 +55,8 @@ def _intent_prefixes():
                 "AND model=? AND prompt!='' LIMIT 30", (intent, provider, model)).fetchall()]
         if len(prompts) < 3:
             continue
-        pref = _count_tokens(_common_prefix(prompts), model)
-        avg = max(1, sum(_count_tokens(p, model) for p in prompts) // len(prompts))
+        pref = _execution_accessors.resolve__count_tokens(_common_prefix(prompts), model)
+        avg = max(1, sum(_execution_accessors.resolve__count_tokens(p, model) for p in prompts) // len(prompts))
         try:
             p = pricing.price(model, provider=provider or None)   # provider (from the grouped row) pins a bare multi-vendor id's rate
             delta = p["in_"] - p.get("cached_in", p["in_"])
@@ -129,7 +129,7 @@ def _script_system_prompts(repo, min_tokens=400):
             if not re.search(r"\b(you are|given|classify|return|for each|output|task|expert|assistant|"
                              r"respond|estimate|judge|extract|rules?)\b", body[:400], re.I):
                 continue
-            tk = _count_tokens(body, "gpt-5.5")
+            tk = _execution_accessors.resolve__count_tokens(body, "gpt-5.5")
             if tk >= min_tokens:
                 hits.append((os.path.relpath(path, repo), tk, body[:80].replace("\n", " ")))
     return sorted(set(hits), key=lambda h: -h[1])[:15]

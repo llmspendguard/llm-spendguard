@@ -10,7 +10,7 @@ import os
 import glob
 import subprocess
 
-from ...adapters import llm_capability_import_names
+from spendguard.generate.execution import execution_accessors as _execution_accessors
 from ...setup import _PTH_SENTINEL, _SENTINEL
 
 
@@ -124,7 +124,8 @@ def audit_gating_coverage(roots=None):
         if not sp or sp in seen:
             continue
         seen.add(sp)
-        llm = sorted(p for p in llm_capability_import_names() if os.path.isdir(os.path.join(sp, p)))
+        llm = sorted(p for p in _execution_accessors.resolve_llm_capability_import_names()
+                     if os.path.isdir(os.path.join(sp, p)))
         if not llm:
             continue
         out.append({"venv": venv, "llm": llm, "gated": _is_gated(venv, sp),

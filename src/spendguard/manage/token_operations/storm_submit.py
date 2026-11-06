@@ -13,13 +13,14 @@ collects, id-keyed by custom_id (openai→submit_chat_tasks+collect_chat_tasks; 
 collect_message_batch). A caller passes its own only to override (e.g. the acceptance test passes a FakeProvider-backed
 one). The caller's blocked-thread risk is bounded by submit_storm's `collect_timeout_s` (a multi-hour batch ETA becomes
 typed backpressure, not a hang), independent of how long the batch worker itself polls. realtime rides the real
-governed metered path here (adapters.call → dispatch.admit → the cross-process rate window → _call_guarded)."""
+governed metered path here (_execution_accessors.resolve_call → dispatch.admit → the cross-process rate window → _call_guarded)."""
+from spendguard.generate.execution import execution_accessors as _execution_accessors
 import sys
 from dataclasses import dataclass
 import time
 from concurrent.futures import TimeoutError as FuturesTimeout
 
-from ... import adapters, dispatch
+from ... import dispatch
 from . import queue_planner
 from .storm_coalescer import StormCoalescer
 
@@ -49,12 +50,12 @@ def governed_realtime_executor(model, system, reasoning, intent, timeout_s):
     window → _call_guarded), metered (skip the $0 lane), never substituted, and OUT of both re-entrant paths —
     `_route=False` (no queue-record recursion) and `_coalesce_eligible=False` (no 4b re-coalescing: the caller IS the
     explicit fan / the coalescer's own leg). submit_storm sizes `timeout_s` from its deadline; storm_route passes None
-    so adapters.call derives the real per-prompt deadline from deadline_for (the urgency horizon sizes realtime CAPACITY,
+    so _execution_accessors.resolve_call derives the real per-prompt deadline from deadline_for (the urgency horizon sizes realtime CAPACITY,
     NOT a per-call reply deadline — using it as the timeout choked large replies → NO REPLY). `timeout_s` is the one
     parameter that differs between the two doors."""
     from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
     _who = (_call_corpus_accessors.resolve_calls_current() or {}).get("who")          # the ORIGINATING caller, captured HERE on the submitting thread
-    #   (the executor is built during the caller's own adapters.call, where the app frame is on the stack). The
+    #   (the executor is built during the caller's own _execution_accessors.resolve_call, where the app frame is on the stack). The
     #   storm-rt worker that runs the re-entry has NO app frame, so its calls.caller() lands None/thread-trampoline —
     #   carry who across the boundary exactly like intent, or the re-entrant call + its wall-clock daemon mis-attribute.
 
@@ -68,7 +69,7 @@ def governed_realtime_executor(model, system, reasoning, intent, timeout_s):
                         "error_type": "StormDeadlineExceeded", "status_code": None}
         if _who:
             _call_corpus_accessors.resolve_calls_set_context(who=_who)                # re-apply on the storm-rt worker so the re-entry inherits it
-        return adapters.call(model, contract.prompt, system=system, reasoning=reasoning, sig=intent,
+        return _execution_accessors.resolve_call(model, contract.prompt, system=system, reasoning=reasoning, sig=intent,
                              metered_only=True, governed=True, no_substitution=True,
                              _route=False, _coalesce_eligible=False, timeout_s=remaining,
                              schema=contract.schema, _storm_deadline_at=contract.deadline_at)
@@ -78,16 +79,16 @@ def governed_realtime_executor(model, system, reasoning, intent, timeout_s):
 def default_batch_executor(model, intent, system=None, reasoning="minimal", poll_interval_s=5.0, max_poll_s=86400.0):
     """The PRODUCTION provider-aware `execute_batch` submit_storm defaults to: submit the cohort to the vendor's Batch
     API keyed by custom_id, POLL until the batch ends, collect, and return {custom_id: result dict}. openai →
-    submit.submit_chat_tasks + callio.collect_chat_tasks; anthropic → submit.submit_message_batch +
+    _execution_accessors.resolve_submit_chat_tasks + callio.collect_chat_tasks; anthropic → _execution_accessors.resolve_submit_message_batch +
     callio.collect_message_batch (both ~half the realtime price, id-keyed by custom_id — the demux the coalescer needs).
     An UNSUPPORTED provider raises (fail-loud — route realtime/lane instead, never a silent wrong path). It blocks the
     BATCH-worker thread until the batch ends (bounded by max_poll_s); submit_storm's collect_timeout_s bounds the CALLER
     independently, so a slow batch never blocks the caller. A whole-submit failure returns a per-item error (never a
     silent drop); a per-request failure is surfaced by id."""
-    from ... import adapters as _adapters, callio as _callio, submit as _submit   # lazy — avoid import-time cycles
-    provider = _adapters.provider_for(model)
-    _pairs = {"openai": (_submit.submit_chat_tasks, _callio.collect_chat_tasks),
-              "anthropic": (_submit.submit_message_batch, _callio.collect_message_batch)}
+    from ... import callio as _callio   # lazy — avoid import-time cycles
+    provider = _execution_accessors.resolve_provider_for(model)
+    _pairs = {"openai": (_execution_accessors.resolve_submit_chat_tasks, _callio.collect_chat_tasks),
+              "anthropic": (_execution_accessors.resolve_submit_message_batch, _callio.collect_message_batch)}
     pair = _pairs.get(provider)
     if pair is None:
         raise ValueError("no Batch API wired for provider %r (model %r) — supported: %s; route realtime/lane instead"
@@ -151,7 +152,7 @@ def default_batch_executor(model, intent, system=None, reasoning="minimal", poll
 
 def durable_batch_executor(model, intent, batch_model=None, poll_interval_s=2.0, max_poll_s=86400.0):
     """3 — a CRASH-RESUMABLE, EXACTLY-ONCE batch executor (the durable alternative to default_batch_executor's in-memory
-    submit+poll). Per cohort: enqueue the items as durable lane_queue rows, offload them via batch_tracker.submit_offload
+    submit+poll). Per cohort: enqueue the items as durable lane_queue rows, offload them via _execution_accessors.resolve_submit_offload
     (EXACTLY-ONCE: a crash-retry of the same rows ADOPTS the existing provider batch, never double-submits), then poll
     lane_queue.collect_batched until the rows settle and return {custom_id: result}. The batch_id is durably recorded ON
     the rows at submit, so a SIGKILL mid-batch loses nothing: the rows persist (sqlite) and a restart/drain reconciles
@@ -213,9 +214,9 @@ def submit_storm(tasks, intent, model, execute_batch=None, deadline_s=30.0, syst
     tasks = list(tasks)                                   # materialize (a generator is truthy + single-use; see below)
     if not tasks:
         return []
-    provider = adapters.provider_for(model)
+    provider = _execution_accessors.resolve_provider_for(model)
     if not provider:                                      # fail LOUD on an unknown model, not an obscure downstream error
-        raise ValueError("unknown model %r — adapters.provider_for returned no provider" % (model,))
+        raise ValueError("unknown model %r — _execution_accessors.resolve_provider_for returned no provider" % (model,))
     if execute_batch is None:                             # default to the production provider-aware Batch-API seam (4a)
         execute_batch = default_batch_executor(model, intent, system=system, reasoning=reasoning)
     rate = sustainable_rate_per_s(provider, model)

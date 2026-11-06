@@ -17,10 +17,10 @@ _SRC = pathlib.Path(__file__).resolve().parent.parent / "src" / "spendguard"
 
 # B: (file, enclosing-func, callee-name, required kw=True). The callee is matched by its bare attribute/name.
 _B_PINS = [
-    ("analyze/learning/advisor.py", "optimize", "call", "no_substitution"),          # reports model=model (recommender of record)
-    ("analyze/learning/advisor.py", "recommend_models", "call", "no_substitution"),  # reports model=model (ranker of record)
-    ("analyze/learning/advisor.py", "reconstruct_advisor_history", "call", "no_substitution"),  # records judge quality for history
-    ("manage/routing/lane_balance.py", "propose_substitutes", "call", "no_substitution"),  # records proposed_by=judge
+    ("analyze/learning/advisor.py", "optimize", "resolve_call", "no_substitution"),          # reports model=model (recommender of record)
+    ("analyze/learning/advisor.py", "recommend_models", "resolve_call", "no_substitution"),  # reports model=model (ranker of record)
+    ("analyze/learning/advisor.py", "reconstruct_advisor_history", "resolve_call", "no_substitution"),  # records judge quality for history
+    ("manage/routing/lane_balance.py", "propose_substitutes", "resolve_call", "no_substitution"),  # records proposed_by=judge
 ]
 # C: (file, enclosing-func, callee-name, required kw present — any value). realtime_cost must receive provider=.
 _C_PROVIDER = [
@@ -55,8 +55,21 @@ def _has_kw(call, key):
     return any(kw.arg == key for kw in call.keywords)
 
 
+def _resolver_violation_is_detected():
+    planted = ast.parse(
+        "def measured():\n    _execution_accessors.resolve_call('model', 'prompt')\n"
+    )
+    function = _func_node(planted, "measured")
+    calls = list(_calls_to(function, "resolve_call"))
+    return bool(calls) and not any(_has_kw_true(call, "no_substitution") for call in calls)
+
+
 def main():
     fails = []
+    planted_rejected = _resolver_violation_is_detected()
+    print(f"  [{'OK' if planted_rejected else 'FAIL'}] planted resolver-form call missing no_substitution=True is rejected")
+    if not planted_rejected:
+        fails.append("planted resolver-form measurement violation was not detected")
 
     def _load(fname):
         p = _SRC / fname

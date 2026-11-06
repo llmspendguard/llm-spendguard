@@ -15,6 +15,7 @@ EXPLICIT STATES, never a bare pass/fail: a can't-check (catalog not synced → '
 red. Run it on a cadence — it is the guarantee that lanes + metered + failover + economics hold, not an assumption.
 
 Nothing here is spent in the default ($0) mode; --probe makes one tiny real metered call per lane (~$0.0002 each)."""
+from spendguard.generate.execution import execution_accessors as _execution_accessors
 
 from ...capability_cli_parsing import add_registered_cli_argument
 
@@ -29,8 +30,7 @@ def _key_present(provider):
     the call. present is None when the provider is unknown or declares no key env (nothing to resolve). config.api_key
     returns "" for an absent key — it does not raise — so no exception handling stands between a missing key and its
     honest False here."""
-    from ... import adapters
-    spec = adapters.PROVIDERS.get(provider)
+    spec = _execution_accessors.PROVIDERS.get(provider)
     if not spec:
         return None, None
     key_env = spec.get("key_env")
@@ -44,7 +44,7 @@ def _probe_failover(lane, prompt="Reply with exactly: OK"):
     result came from the metered API (executor='api') with no error, then restore the prior cooldown state. One real,
     tiny metered call — the only honest proof that a down plan bills the API instead of stranding. Never clears a
     cooldown the lane already had (a real backoff must survive the probe)."""
-    from ... import adapters, lane_catalog, resource_state
+    from ... import lane_catalog, resource_state
     prov = lane_catalog.lane_provider(lane)
     model = lane_catalog.configured_base(lane)
     if not prov or not model:
@@ -53,7 +53,7 @@ def _probe_failover(lane, prompt="Reply with exactly: OK"):
     was_cooling = resource_state.cooling(key)
     resource_state.cool(key, 120, reason="verify-failover-probe")
     try:
-        r = adapters.call(f"{prov}:{model}", prompt, max_tokens=2000, timeout_s=45, sig="spendguard:verify-failover")
+        r = _execution_accessors.resolve_call(f"{prov}:{model}", prompt, max_tokens=2000, timeout_s=45, sig="spendguard:verify-failover")
     finally:
         if not was_cooling:
             resource_state.clear_cooldown(key)             # restore: never leave a lane cooled by the probe itself

@@ -9,6 +9,7 @@ TIER 2 (separate, caged + opt-in): an LLM pass synthesizes a day's raw activity 
   spendguard workdone               # this month, per day · project
   spendguard workdone --since 2026-06-01 --by week
 """
+from spendguard.generate.execution import execution_accessors as _execution_accessors
 
 from ...capability_cli_parsing import add_registered_cli_argument
 import argparse, datetime, os, subprocess
@@ -187,12 +188,11 @@ def summarize(since=None, run=False, model=None):
         from ... import ui
         ui.estimate_only(action=f"summarize {len(prompts)} projects' work (caged · caps.meta)", cost=est)
         return {"projects": len(prompts), "est_usd": est, "model": model}
-    from ... import adapters
     from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
     out = {}
     with _call_corpus_accessors.resolve_calls_context(intent=f"{_META}:worksummary"):
         for p, pr in prompts.items():
-            r = adapters.call(model, pr, max_tokens=_SUMMARY_OUT, system=_SUMMARY_SYS)   # gate → meta cap
+            r = _execution_accessors.resolve_call(model, pr, max_tokens=_SUMMARY_OUT, system=_SUMMARY_SYS)   # gate → meta cap
             txt = (r.get("text") or "").strip()
             if txt and not r.get("error"):
                 out[p] = txt[:800]

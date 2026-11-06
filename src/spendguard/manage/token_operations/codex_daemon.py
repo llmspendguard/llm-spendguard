@@ -13,6 +13,7 @@ response is handled. CONTEXT: `thread/start` returns a thread id; passing it bac
 the conversation; omitting it (the default) starts a FRESH, context-isolated thread per call — that is what makes one
 warm server a POOL of independent prompts rather than one growing conversation.
 """
+from spendguard.generate.execution import execution_accessors as _execution_accessors
 import atexit
 import contextvars
 import json
@@ -71,7 +72,6 @@ def _remove_codex_worker_home(worker_home):
 
 def _reap_orphaned_codex_worker_homes(worker_home_root, now=None):
     """Remove stale, marked worker homes only when their pid+create-time owner is provably dead."""
-    from ... import codex_exec
     from .warm_stdio_daemon import (
         WARM_OWNER_BOOT_ENV, WARM_OWNER_IDENTITY_DEAD, WARM_OWNER_PID_ENV, _warm_owner_identity_state,
     )
@@ -82,7 +82,7 @@ def _reap_orphaned_codex_worker_homes(worker_home_root, now=None):
     current_time = time.time() if now is None else now
     stale_age_s = config.codex_daemon_worker_home_stale_age_s()
     for worker_home in root.iterdir():
-        if not worker_home.is_dir() or not worker_home.name.startswith(codex_exec.CODEX_POOL_WORKER_PREFIX):
+        if not worker_home.is_dir() or not worker_home.name.startswith(_execution_accessors.CODEX_POOL_WORKER_PREFIX):
             continue
         marker_path = _codex_worker_home_marker_path(worker_home)
         if not marker_path.is_file():
@@ -144,8 +144,7 @@ def _mcp_disable_flags():
     MCP-tool use in delegation is available only on the cold workspace-write path; exec's --approve-for-me
     does not apply to this app-server. Codex 0.160.1 gates configured servers on ``orchestrator.mcp.enabled``
     key; the global gate is used, not per-entry overrides (those can break the initialize handshake)."""
-    from ... import codex_exec
-    return codex_exec._mcp_disable_flags()
+    return _execution_accessors.resolve__mcp_disable_flags()
 
 
 class _CodexDaemon(_WarmStdioJsonRpcDaemon):
@@ -220,11 +219,10 @@ class _CodexDaemon(_WarmStdioJsonRpcDaemon):
 
     # ── codex spawn + handshake, overriding the base hooks ────────────────────────────────────────────────────
     def _spawn_cmd(self):
-        from ... import codex_exec
-        exe = codex_exec._bin()
+        exe = _execution_accessors.resolve__bin()
         if not exe:
             return None
-        return [exe, "app-server"] + codex_exec._plugin_disable_flags() + _mcp_disable_flags()
+        return [exe, "app-server"] + _execution_accessors.resolve__plugin_disable_flags() + _mcp_disable_flags()
 
     def _handshake(self, p):
         """`initialize` (multiplexed through the reader) then the fire-and-forget `initialized`."""
@@ -245,7 +243,6 @@ class _CodexDaemon(_WarmStdioJsonRpcDaemon):
 
     def read_worker_rate_limits(self, timeout=None):
         """Read plan limits through this daemon's existing correlated JSON-RPC channel."""
-        from ... import codex_exec
         effective_timeout = timeout if timeout and timeout > 0 else RATE_LIMITS_READ_TIMEOUT_S
         self._cancel_idle_shutdown()
         try:
@@ -257,7 +254,7 @@ class _CodexDaemon(_WarmStdioJsonRpcDaemon):
             try:
                 try:
                     self._write_rpc(process, {"jsonrpc": "2.0", "id": request_id,
-                                              "method": codex_exec.CODEX_APP_SERVER_RATE_LIMITS_METHOD,
+                                              "method": _execution_accessors.CODEX_APP_SERVER_RATE_LIMITS_METHOD,
                                               "params": None})
                 except (BrokenPipeError, OSError):
                     return {"rate_limits": None, "error": "codex warm rate-limits transport failed"}
@@ -324,7 +321,7 @@ class _CodexDaemon(_WarmStdioJsonRpcDaemon):
                 bare_model = model.split(":", 1)[-1] if model else None
                 approval_policy = "never"
                 if thread:
-                    from ...codex_exec import hold_execution_codex_session as register_codex_session_lease
+                    register_codex_session_lease = _execution_accessors.resolve_hold_execution_codex_session
                     register_codex_session_lease(thread, p.pid)
                     thread_method = "thread/resume"
                     thread_params = {"threadId": thread}
@@ -366,19 +363,18 @@ class _CodexDaemon(_WarmStdioJsonRpcDaemon):
                     return _codex_pool_error_result(msg["error"], thread)
                 new_thread = ((msg.get("result") or {}).get("thread") or {}).get("id") or thread
 
-                from ...codex_exec import (hold_execution_codex_session as register_codex_session_lease,
-                                         capture_execution_codex_thread as record_delegate_codex_thread)
+                register_codex_session_lease = _execution_accessors.resolve_hold_execution_codex_session
+                record_delegate_codex_thread = _execution_accessors.resolve_capture_execution_codex_thread
                 register_codex_session_lease(new_thread, p.pid)
                 record_delegate_codex_thread(new_thread, evidence_execution_id)
 
-                from ... import codex_exec
                 turn_params = {"threadId": new_thread, "input": [{"type": "text", "text": prompt}],
                                "cwd": task_cwd, "sandboxPolicy": {
                                    "type": "readOnly" if sandbox == "read-only" else "workspaceWrite"},
                                "approvalPolicy": approval_policy}
                 if bare_model:
                     turn_params["model"] = bare_model
-                effort = codex_exec._codex_effort(reasoning)
+                effort = _execution_accessors.resolve__codex_effort(reasoning)
                 if effort:
                     turn_params["effort"] = effort
                 turn_rid = self._next_id()
@@ -408,7 +404,7 @@ class _CodexDaemon(_WarmStdioJsonRpcDaemon):
                                 "error": "codex app-server turn failed after restart"}
                     continue
                 if turn_msg is not None and turn_msg.get("error"):
-                    from ...codex_exec import settle_execution_codex_session as settle_codex_session_lease
+                    settle_codex_session_lease = _execution_accessors.resolve_settle_execution_codex_session
                     settle_codex_session_lease(new_thread, p.pid)
                     return _codex_pool_error_result(turn_msg["error"], new_thread)
                 if turn_msg is None or completed_turn is None:
@@ -417,7 +413,7 @@ class _CodexDaemon(_WarmStdioJsonRpcDaemon):
                     return {"text": None, "thread": new_thread,
                             "error": f"codex warm call timeout ({eff_timeout:.0f}s)", "timed_out": True}
                 status = completed_turn.get("status")
-                from ...codex_exec import settle_execution_codex_session as settle_codex_session_lease
+                settle_codex_session_lease = _execution_accessors.resolve_settle_execution_codex_session
                 settle_codex_session_lease(new_thread, p.pid)
                 if status != "completed":
                     error = completed_turn.get("error") or f"codex turn {status or 'failed'}"
@@ -467,9 +463,8 @@ class _CodexDaemonPool:
         self._pool_degraded = {}
 
     def _configure_pool_worker(self, index, worker, isolate_homes):
-        from ... import codex_exec
         worker._keep_warm = True
-        home = codex_exec.codex_daemon_worker_home(index) if isolate_homes else None
+        home = _execution_accessors.resolve_codex_daemon_worker_home(index) if isolate_homes else None
         if home is None:
             return
         _mark_codex_worker_home_owned(home)
@@ -515,10 +510,9 @@ class _CodexDaemonPool:
             # Continuously reclaim orphaned codex app-servers (a host that died WHILE this pool runs leaks its
             # servers too), so the leak can never accumulate between restarts — the active reaper the user asked for.
             _reap_codex_orphans()
-            from ... import codex_exec
             from .warm_stdio_daemon import _warm_owner_identity_state, WARM_OWNER_IDENTITY_DEAD
-            codex_exec.reap_execution_codex_sessions(
-                executable=codex_exec._bin(), owner_identity_state=_warm_owner_identity_state,
+            _execution_accessors.resolve_reap_execution_codex_sessions(
+                executable=_execution_accessors.resolve__bin(), owner_identity_state=_warm_owner_identity_state,
                 dead_identity=WARM_OWNER_IDENTITY_DEAD)
             # Idle health work leases through the same bucket. Agentic leases have an independent
             # deadline in pool_run_warm, so even an invocation that never returns is reclaimed.

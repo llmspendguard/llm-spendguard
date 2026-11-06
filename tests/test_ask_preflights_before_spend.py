@@ -13,6 +13,7 @@ import sys
 from _script_checks import record_script_check  # noqa: E402
 
 from spendguard import crossllm
+from spendguard.generate.execution import vendor_call
 import spendguard.model_preflight as mp
 from spendguard.crossllm import ModelPreflightRefused
 from spendguard.gate import SpendGateRefused
@@ -25,7 +26,7 @@ record_script_check(fails, "ModelPreflightRefused is a SpendGateRefused (propaga
 _fan_calls = []
 def _fake_fan(vlist, prompt, **kw):
     _fan_calls.append(list(vlist))
-    results = [crossllm.vendor_call.Result(crossllm.vendor_call.OK, v, m, text="ok") for v, m in vlist]
+    results = [vendor_call.Result(vendor_call.OK, v, m, text="ok") for v, m in vlist]
     return {"results": results, "ok": list(results), "failed": [], "n": len(results), "n_ok": len(results),
             "complete": True, "run_id": "t"}
 
@@ -45,8 +46,8 @@ def _fake_pf(specs, correct=True):
                     "note": ("STALE — fix it" if s in _UNUSABLE else "ok")})
     return out
 
-_orig_fan, _orig_pf = crossllm.vendor_call.fan_out, mp.preflight_models
-crossllm.vendor_call.fan_out = _fake_fan
+_orig_fan, _orig_pf = vendor_call.fan_out, mp.preflight_models
+vendor_call.fan_out = _fake_fan
 mp.preflight_models = _fake_pf
 try:
     # 1. a BAD (stale) model → refuse, and fan_out is NEVER reached (no spend)
@@ -79,8 +80,8 @@ try:
     record_script_check(fails, "mix → fan_out reached with ONLY the usable model (bad one never handed to it)",
        len(_fan_calls) == 1 and _fan_calls[0] == [("a", "good-model")])
     record_script_check(fails, "mix → usable model answers, bad one is PREFLIGHT_UNMET in by_vendor (honest, not silently dropped)",
-       r.by_vendor.get("a") == crossllm.vendor_call.OK
-       and r.by_vendor.get("x") == crossllm.vendor_call.PREFLIGHT_UNMET)
+       r.by_vendor.get("a") == vendor_call.OK
+       and r.by_vendor.get("x") == vendor_call.PREFLIGHT_UNMET)
     record_script_check(fails, "mix → coverage INCOMPLETE (a requested model was skipped); n counts both, n_ok only the answer",
        r.complete is False and r.n == 2 and r.n_ok == 1)
     record_script_check(fails, "mix → the unmet model carries NO text (the Result invariant holds — never a failure-as-answer)",
@@ -94,7 +95,7 @@ try:
     except ModelPreflightRefused:
         record_script_check(fails, "all-bad set → ModelPreflightRefused (nothing callable), fan_out never reached", len(_fan_calls) == 0)
 finally:
-    crossllm.vendor_call.fan_out = _orig_fan
+    vendor_call.fan_out = _orig_fan
     mp.preflight_models = _orig_pf
 
 print(("\n[OK] " if not fails else "\n[FAIL] ") + "ask_preflights_before_spend: %d failure(s)" % len(fails))

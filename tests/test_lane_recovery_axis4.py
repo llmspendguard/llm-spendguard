@@ -11,13 +11,13 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 KEYS = {"metered_only", "_skip_lane", "shed"}
 # Exact reviewed edges: file, enclosing function, callee, paid-routing expressions.
 REVIEWED = {
-    ("reliability.py", "_probe_metered_one", "adapters.call", "metered_only=True"): "explicit paid health probe",
-    ("storm_submit.py", "_run_governed_realtime", "adapters.call", "metered_only=True"): "explicit paid storm",
+    ("reliability.py", "_probe_metered_one", "_execution_accessors.resolve_call", "metered_only=True"): "explicit paid health probe",
+    ("storm_submit.py", "_run_governed_realtime", "_execution_accessors.resolve_call", "metered_only=True"): "explicit paid storm",
     ("vendor_call.py", "call", "dispatch.admit", "shed=False"): "no saturation-to-paid bypass",
     ("vendor_call.py", "call", "_attempt", "metered_only=_shed_metered"): "admission cannot shed",
     ("vendor_call.py", "_run", "adapters.call", "metered_only=metered_only"): "caller-paid flag forwarded",
     ("vendor_call.py", "discover_efforts", "adapters.call", "metered_only=True"): "explicit paid measurement",
-    ("lane_balance.py", "_run_task_on_api", "adapters.call", "metered_only=metered_only"): "pinned opt-in paid fan",
+    ("lane_balance.py", "_run_task_on_api", "_execution_accessors.resolve_call", "metered_only=metered_only"): "pinned opt-in paid fan",
     ("adapters.py", "call", "dispatch.admit", "shed=False"): "no saturation-to-paid bypass",
     ("adapters.py", "call", "call", "metered_only=metered_only"): "retry preserves explicit caller choice",
     ("adapters.py", "_call_once", "_call_once", "_skip_lane=True"): "recovery-proof guarded transition",
@@ -83,8 +83,9 @@ assert "_recovery_proof.assert_metered_recovery" in ast.unparse(once)
 
 # Anti-vacuity: a new bypass anywhere in the scan is unreviewed, never silently clean.
 injected, _ = inventory_lane_paid_edges([(pathlib.Path("new_hook.py"),
-                                         "def hook():\n    adapters.call('m', 'p', metered_only=True)\n")])
+                                         "def hook():\n    _execution_accessors.resolve_call('m', 'p', metered_only=True)\n")])
 assert injected and injected[0][0] not in REVIEWED
+print("planted resolver-form paid-routing violation: REJECTED")
 
 # Also inventory direct SDK sends: these are explicit transport/capability experiments rather than
 # lane-eligible fallovers. The shared adapters' aliased create/stream sends are covered as sinks too.

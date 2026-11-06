@@ -2,6 +2,7 @@
 so they always match the code. `config` shows resolved values + where each came from; `init`
 runs the interview and writes ~/.spendguard/config.json (+ email.json), leaving API keys to env.
 """
+from spendguard.generate.execution import execution_accessors as _execution_accessors
 
 from ..capability_cli_parsing import add_registered_cli_argument, registered_cli_option_token
 import os, json
@@ -270,7 +271,7 @@ When you WRITE or RUN code that calls an LLM:
 8. **Prefer lane-routed comprehension over Claude sub-agents (biggest cost lever when the plan is capped).** For
    batchable comprehension / doc-mining / gap-analysis, run a spendguard-gated script that fans the work across your
    $0 subscription lanes — `spendguard comprehend <globs> --intent <job>` (or `spendguard ask`, or a script calling
-   `adapters.call(..., reasoning="best-value", intent=...)`) — NOT the coding agent's own sub-agents. A sub-agent runs
+   `_execution_accessors.resolve_call(..., reasoning="best-value", intent=...)`) — NOT the coding agent's own sub-agents. A sub-agent runs
    ONLY on the Claude/Anthropic plan: it bills the Max plan (hitting weekly overage) and cannot use the codex / gemini
    / zai plans, whereas a lane-routed script does the same work at $0 on another subscription. Matters most when the
    Claude plan is near its weekly cap (check `spendguard lanes --usage`): spendguard's router already sheds eligible
@@ -279,7 +280,7 @@ When you WRITE or RUN code that calls an LLM:
    INDEPENDENT one-shot prompt — lane-routes; INTERACTIVE code-editing, multi-step tool use, or worktrees do NOT
    (they are not one-shot and can't ride a lane), so a Claude subagent is the right tool THERE. Don't force lane
    routing onto work that needs a real agent. **Auto-route the batchable kind:** set `advisor.default_reasoning`
-   to `best-value` (or `SPENDGUARD_DEFAULT_REASONING=best-value`) so a LABELLED `adapters.call(intent=…)` that
+   to `best-value` (or `SPENDGUARD_DEFAULT_REASONING=best-value`) so a LABELLED `_execution_accessors.resolve_call(intent=…)` that
    didn't pin a model picks the cheapest (model, effort) whose MEASURED quality held — no per-call opt-in.
    **When the Anthropic plan is CAPPED / on paid overage, move even AGENTIC subwork off it — delegate to another
    provider's own CLI, never a Claude Task subagent.** The Claude Code agent and every Task/Agent subagent it spawns
@@ -1073,7 +1074,7 @@ def _chat_caps():
     """Conversational cap setup. Uses YOUR own key for ONE small realtime call, caged under caps.meta (intent
     spendguard:init — separate budget, excluded from the corpus), estimate-first. NEVER the server. Returns
     {llm,compute,total} monthly USD, or None to fall back to the deterministic prompts."""
-    from .. import gate, adapters
+    from .. import gate
     from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
     gate.install()   # ensure the gate is enforcing IN THIS PROCESS so the call is metered under caps.meta
     model = config.advisor_model()
@@ -1091,7 +1092,7 @@ def _chat_caps():
     print(f'\n  (this uses YOUR {model} key for one small call, caged under caps.meta ${config.meta_cap():.2f}/day, est ~$0.001 — never the server)')
     try:
         with _call_corpus_accessors.resolve_calls_context(intent="spendguard:init"):
-            r = adapters.call(model, ans, sig="spendguard:init", system=sys)
+            r = _execution_accessors.resolve_call(model, ans, sig="spendguard:init", system=sys)
     except Exception as e:
         print(f"  (conversational setup unavailable: {e} — falling back to prompts)")
         return None

@@ -13,6 +13,7 @@ writes the result into the catalog's lane_models/lane_unserved namespaces, and r
 Nothing here decides meaning with regex; thresholds are counts over MEASURED outcomes and are config-overridable, never
 hardcoded. $0 (ledger reads + a free /models GET). Never raises on the hot path — a servability read must not break
 routing."""
+from spendguard.generate.execution import execution_accessors as _execution_accessors
 import os
 import sys
 
@@ -85,10 +86,9 @@ def _since_iso(hours):
 
 def _servability_provider_lanes():
     """The configured subscription lanes and each one's metered PROVIDER (for a /models cross-check), derived from
-    adapters._LANES ({provider: (lane, model)}) — never a hardcoded list."""
+    _execution_accessors.resolve__LANES() ({provider: (lane, model)}) — never a hardcoded list."""
     try:
-        from ... import adapters
-        return {lane: prov for prov, (lane, _m) in adapters._LANES.items()}
+        return {lane: prov for prov, (lane, _m) in _execution_accessors.resolve__LANES().items()}
     except Exception:
         return {}
 
@@ -135,8 +135,7 @@ def _served_provider_model_ids(provider):
     """The provider's live METERED /models ids right now — a free GET via the catalog's own fetch primitive. None on
     any failure (cannot-check, never read as 'gone')."""
     try:
-        from ... import vendor_call
-        res = vendor_call.list_models(provider)
+        res = _execution_accessors.resolve_list_models(provider)
         if res.get("error"):
             return None
         return sorted({m.get("id") for m in (res.get("models") or []) if m.get("id")})
@@ -153,8 +152,7 @@ def _classify_drop(provider, model, metered_ids):
         return {"kind": "unknown", "replacement": None}
     if model not in set(metered_ids):
         try:
-            from ... import vendor_call
-            near = vendor_call.closest_served(provider, model)
+            near = _execution_accessors.resolve_closest_served(provider, model)
         except Exception:
             near = None
         if near and near != model:
@@ -282,12 +280,11 @@ _PROBE_TIMEOUT_S = 60                                   # a lane recovery probe 
 
 
 def _resolve_servability_lane_module(lane):
-    """The executor module for a lane (codex → codex_exec, …), from adapters._LANES — never a hardcoded map. None if
+    """The executor module for a lane (codex → codex_exec, …), from _execution_accessors.resolve__LANES() — never a hardcoded map. None if
     the lane is unknown or its module cannot be imported."""
     try:
         import importlib
-        from ... import adapters
-        for _prov, (ln, mod) in adapters._LANES.items():
+        for _prov, (ln, mod) in _execution_accessors.resolve__LANES().items():
             if ln == lane:
                 return importlib.import_module(f"...{mod}", __package__)
     except Exception:

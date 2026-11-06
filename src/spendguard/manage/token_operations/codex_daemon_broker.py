@@ -5,6 +5,7 @@ The app-server itself deliberately remains the existing private-stdio daemon.  T
 socket; every other process is a client.  Lock ownership, not a pid file or a signal, is the sole authority for stale
 socket reclamation.
 """
+from spendguard.generate.execution import execution_accessors as _execution_accessors
 import contextlib
 import json
 import os
@@ -349,8 +350,7 @@ class _CodexDaemonBroker:
                         timeout=None, recycle_on_timeout=None):
         if os.environ.get(config.CODEX_LEASE_ACTIVE_ENV):
             config.warn_once("[spendguard] nested-codex-lease -> cold-exec divert")
-            from ... import codex_exec
-            return codex_exec.run_cold_prompt(
+            return _execution_accessors.resolve_run_cold_prompt(
                 prompt, model=model, thread=thread, reasoning=reasoning, sandbox=sandbox, cwd=cwd,
                 timeout=timeout, recycle_on_timeout=recycle_on_timeout)
         kwargs = {"prompt": prompt, "model": model, "thread": thread, "reasoning": reasoning,

@@ -79,6 +79,34 @@ def _load_public_api_and_install_gate():
     _auto_install()
     from .capability_surface_generation import document_existing_capability_exports
     document_existing_capability_exports(globals())
+    _wire_execution_accessor_resolvers()
+
+
+def _wire_execution_accessor_resolvers():
+    """Trigger the execution domain seam's resolver wiring at startup, through an out-of-SCC bootstrap.
+
+    The execution seam (ctx#34) inverts every cross-domain inbound import into `generate.execution.*`
+    through the dep-free `generate.execution.execution_accessors` leaf: external callers read each fronted
+    symbol via a leaf resolver (`resolve_<sym>`), and each home module registers its forwarder
+    (`execution_accessors.set_<sym>_resolver(...)`) at its own module end. Those forwarders only run when the
+    home module is imported, and the execution homes are otherwise lazy-by-design, so without a startup
+    trigger every `resolve_<sym>` would raise "resolver not wired" the first time an external caller used it.
+
+    The trigger must NOT live here: the `spendguard` package root is itself a member of the import SCC (the
+    whole package does `import spendguard`), so importing the homes directly from this module would add a
+    cyclic edge per home. Instead the home imports live in `generate.execution.execution_resolver_bootstrap`,
+    a module that nothing in the SCC imports — so `spendguard -> bootstrap` and `bootstrap -> home` are both
+    cross-SCC (non-cyclic), exactly as the dep-free leaf keeps consumer->leaf edges out of the cycle.
+    Imports are cheap (~20ms total) and side-effect-free; a failure here must never break `import spendguard`.
+    """
+    try:
+        from .generate.execution import execution_resolver_bootstrap
+        execution_resolver_bootstrap.wire_execution_accessor_resolvers()
+    except Exception:
+        # Fail-open: a problem wiring the execution accessors must not stop the guard importing. The
+        # resolvers then raise their own clear "resolver not wired" error at the point of use, which is a
+        # louder, more localized signal than a failed `import spendguard`.
+        pass
 
 
 def install_litellm() -> bool:

@@ -10,7 +10,7 @@ WHAT IT DOES. Every subscription call already carries its token counts and its l
 module prices those tokens at API-equivalent rates (`pricing.realtime_cost`) and stamps a dedicated routed-value
 cache for the receipt's per-lane view. It does not write the session miners' broader transcript-value cache.
 
-WHICH LANES. Every executor in `adapters._LANES`, DERIVED from the lane registry. Session-mined transcript value is a
+WHICH LANES. Every executor in `_execution_accessors.resolve__LANES()`, DERIVED from the lane registry. Session-mined transcript value is a
 separate concept and is neither compared with nor merged into this routed ledger value.
 
 HONEST SCOPE. This values the calls spendguard DELEGATED through the lane (the ones in our ledger) — not other,
@@ -18,6 +18,8 @@ non-spendguard usage of that CLI, for which we have no log source. It is the val
 priced at what the metered API would have charged; $0 billed, because a flat-fee plan served it.
 """
 from __future__ import annotations
+
+from spendguard.generate.execution import execution_accessors as _execution_accessors
 
 from ...capability_cli_parsing import registered_cli_option_token
 
@@ -42,8 +44,7 @@ def _channel_for(executor: str) -> str:
 
 def ledger_valued_lanes() -> set:
     """Every active subscription-lane executor, derived from the routing registry."""
-    from ... import adapters
-    return {name for name, _mod in adapters._LANES.values()}
+    return {name for name, _mod in _execution_accessors.resolve__LANES().values()}
 
 
 def _subscription_rows(since: str, valued: set):

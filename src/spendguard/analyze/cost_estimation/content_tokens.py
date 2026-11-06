@@ -27,6 +27,7 @@ documented flat per-image estimate and mark the basis `fallback` — we never fa
 encoded string, because that is the bug. A gate whose estimate is wrong by 25× is worse than no gate: it
 teaches you to override it.
 """
+from spendguard.generate.execution import execution_accessors as _execution_accessors
 import base64
 import binascii
 import math
@@ -218,7 +219,7 @@ def openai_image_tokens(w, h, detail=None, model=None):
 
 
 def _wire_kind(provider):
-    """Which vision billing rule this provider uses, from `adapters.PROVIDERS[…]['kind']` — the registry that
+    """Which vision billing rule this provider uses, from `_execution_accessors.PROVIDERS[…]['kind']` — the registry that
     already answers 'which wire format is this provider'. An EXACT key lookup on a registry enum, never a
     substring guess: the caller is an interceptor installed on a specific SDK, so it knows its provider
     exactly, and a provider absent from the registry falls back to the documented default rather than being
@@ -226,8 +227,7 @@ def _wire_kind(provider):
     if not provider:
         return _DEFAULT_WIRE_KIND
     try:
-        from ... import adapters
-        spec = adapters.PROVIDERS.get(str(provider).strip().lower())
+        spec = _execution_accessors.PROVIDERS.get(str(provider).strip().lower())
     except Exception:
         spec = None
     if spec is None:

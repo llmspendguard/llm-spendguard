@@ -140,8 +140,8 @@ def lanes_status():
     and the exact activation step if not. DATA-DRIVEN — one row per lane in lane_registry, NO per-lane code here
     (add a lane's row and it appears). Free — no network, no model calls. No static login URL exists to print: each
     CLI generates a ONE-TIME OAuth link when you start its login; the row's `login` is the link-generator step."""
-    from ..adapters import _executor
-    ex = _executor()
+    from spendguard.generate.execution.execution_accessors import resolve__executor
+    ex = resolve__executor()
     out = []
     for lane in lane_registry.all_lanes():
         spec = lane_registry.lane_spec(lane)
@@ -381,7 +381,7 @@ def overage_nudge_line(do_fetch=False):
     # regardless, and the fix is always "fan the batchable work across whichever $0 lanes still have headroom".
     return (f"⚠ plan quota low ({names}) — route batchable comprehension / doc-mining to a $0 lane that still has "
             f"headroom (Claude sub-agents are Claude-only and bill the Max plan): `spendguard comprehend <globs> "
-            f"--intent <job>`, `spendguard ask`, or a script calling adapters.call(reasoning='best-value'). "
+            f"--intent <job>`, `spendguard ask`, or a script calling _execution_accessors.resolve_call(reasoning='best-value'). "
             f"`spendguard lanes --usage` for detail.")
 
 

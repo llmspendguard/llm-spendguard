@@ -16,7 +16,7 @@ os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
 from _script_checks import record_script_check
-from spendguard import reliability, lanes   # noqa: E402
+from spendguard import adapters, reliability, lanes   # noqa: E402
 
 fails = []
 
@@ -40,7 +40,7 @@ def _slow_call(model, prompt, **kw):
     return {"error": None, "executor": "api", "served_by_metered_api": True, "cost": 0.0001, "truncated": False}
 
 
-reliability.adapters.call = _slow_call
+adapters.call = _slow_call
 
 t0 = time.monotonic()
 res = reliability.sweep(run=True, timeout_s=5)

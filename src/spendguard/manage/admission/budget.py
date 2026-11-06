@@ -5,6 +5,7 @@ spend across ALL processes before allowing more. Default `backend = memory` keep
 real-time cap only (this module is then never touched). Per-call SQLite I/O is fine for moderate
 real-time volume; very high-volume loops should stay on the in-process cap.
 """
+from spendguard.generate.execution import execution_accessors as _execution_accessors
 import contextlib, datetime, hashlib, pathlib, tempfile, threading
 import sys
 import time
@@ -694,8 +695,7 @@ def reattribute_providers(apply=False, actor="reattribute_providers"):
     # that it served a call made before it existed.
     known = {}
     try:
-        from ... import adapters
-        for v in adapters.PROVIDERS:
+        for v in _execution_accessors.PROVIDERS:
             fp = config.key_fingerprint(v)
             if fp:
                 known[fp] = v

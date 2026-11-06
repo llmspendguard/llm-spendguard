@@ -25,6 +25,7 @@ The HTTP contract the server repo will implement (versioned under {url}/v1); ide
     GET  /v1/insights?scope=team|org     -> {"abstracts": [...]}                       (pull pooled learnings)
 All requests send `Authorization: Bearer <api_key>` and `X-Spendguard-Client: <version>`.
 """
+from spendguard.generate.execution import execution_accessors as _execution_accessors
 
 from ..capability_cli_parsing import registered_cli_option_token
 import json
@@ -675,8 +676,7 @@ def push_status(dry=False):
         pass
     drift = []
     try:                                                    # free, read-only OpenRouter price drift; tolerate offline
-        from ..generate.execution import price_identity_judge
-        rows, _m, _t = price_identity_judge.cross_check_openrouter()
+        rows, _m, _t = _execution_accessors.resolve_cross_check_openrouter()
         for model, oi, ri, oo, ro, flag in rows:
             if flag == "DRIFT":
                 base = ri if ri else oi          # reference price, ours as fallback — NOT `... or 1e-9`: a real zero

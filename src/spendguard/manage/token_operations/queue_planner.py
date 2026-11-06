@@ -10,14 +10,15 @@ It reads the LIVE state spendguard already assembles (`dispatch.queue_state`: pe
 projects the current backlog's token load against each vendor's tpm, returning a per-vendor risk + recommendation.
 
 The forecast is the INPUT to `tick()` (built next), which acts through machinery that ALREADY exists —
-`route_economics.route_report` (is batch cheaper?), `whole_job` / `submit.submit_chat_tasks` (the Batch-API legs), and
+`route_economics.route_report` (is batch cheaper?), `whole_job` / `_execution_accessors.resolve_submit_chat_tasks` (the Batch-API legs), and
 the dispatch governor (pacing). This module forecasts and recommends; it does not reimplement execution.
 """
+from spendguard.generate.execution import execution_accessors as _execution_accessors
 from . import dispatch
 
 # A per-call token estimate for the forecast when the caller supplies none. The governor exposes the backlog as CALL
 # COUNTS (in_flight + waiting); tpm is tokens/minute; so backlog_tokens = backlog_calls * avg_call_tokens. This mirrors
-# the nominal shape the dispatch bucket itself debits (a rough input + a nominal output, see adapters._est_call_tokens).
+# the nominal shape the dispatch bucket itself debits (a rough input + a nominal output, see _execution_accessors.resolve__est_call_tokens).
 # It is a FORECAST input, not a billing figure — the output labels it as an estimate. Overridable per call.
 NOMINAL_CALL_TOKENS = 3000
 
@@ -187,8 +188,8 @@ def offload_plan(pending_by_intent, *, avg_call_tokens=NOMINAL_CALL_TOKENS, fc=N
             saturated.add(key.split(":", 1)[0])        # the vendor half of the governor key (vendor[:model])
     plan, skipped = [], []
     if eligible:
-        from ... import route_economics, adapters, gate as _gate
-        bprov = adapters.provider_for(batch_model)     # the offload RUNS on batch_model (an OpenAI id) → chunk vs ITS caps
+        from ... import route_economics, gate as _gate
+        bprov = _execution_accessors.resolve_provider_for(batch_model)     # the offload RUNS on batch_model (an OpenAI id) → chunk vs ITS caps
         for intent, n in (pending_by_intent or {}).items():
             n = int(n or 0)
             if n <= 0:

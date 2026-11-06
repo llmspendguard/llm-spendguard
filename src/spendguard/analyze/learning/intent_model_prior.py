@@ -16,6 +16,7 @@ ONE small meta-caged call, estimate-FIRST (run=False → a zero-spend estimate),
 A deliberate stop (a spend refusal / deadline) PROPAGATES; any other hiccup degrades to an EMPTY prior (the caller then
 keeps its named model — no worse than today), never a crash.
 """
+from spendguard.generate.execution import execution_accessors as _execution_accessors
 import contextlib
 import datetime
 import hashlib
@@ -155,12 +156,10 @@ def rank_models_for_intent(intent, prompt=None, k=5, run=False):
     cached = _recall_intent_prior(intent, fp)                      # never re-pay: a stored prior for this catalog stands
     if cached is not None:
         return _as_result(intent, cached, ids, per_m_out, k, from_cache=True)
-
-    from ...submit import _count_tokens                             # the package's canonical token counter (as advisor uses)
     model = config.advisor_model()
     body = ("Intent (job-type): %s\n%sReturn AT MOST %d models, best-first.\n\nCatalog (rank ONLY these ids):\n%s" %
             (intent, ("Task prompt (DATA):\n%s\n\n" % prompt) if prompt else "", int(k), "\n".join(lines)))
-    in_tok = _count_tokens(_PRIOR_SYS + body, model)
+    in_tok = _execution_accessors.resolve__count_tokens(_PRIOR_SYS + body, model)
     est = pricing.realtime_cost(model, in_tok, _PRIOR_OUT)
     if not run:
         return dict(intent=intent, model=model, source="cold-start-prior", prior=True, estimate_only=True,
@@ -168,12 +167,11 @@ def rank_models_for_intent(intent, prompt=None, k=5, run=False):
                     note="estimate only (~$%.4f); call with run=True to produce the cold-start prior (meta-caged, "
                          "persisted so it is never re-paid)." % (est or 0.0))
 
-    from ... import adapters
     from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
     from .advisor import META                                      # ONE source of the meta-intent prefix (caged, never recurses)
     try:
         with _call_corpus_accessors.resolve_calls_context(intent="%s:cold-prior" % META):
-            r = adapters.call(model, body, system=_PRIOR_SYS, schema=_PRIOR_SCHEMA, max_tokens=_PRIOR_OUT,
+            r = _execution_accessors.resolve_call(model, body, system=_PRIOR_SYS, schema=_PRIOR_SCHEMA, max_tokens=_PRIOR_OUT,
                               no_substitution=True, sig="spendguard:cold-prior", timeout_s=90)
     except Exception as e:
         if isinstance(e, gate.deliberate_stop_types()):
@@ -183,7 +181,7 @@ def rank_models_for_intent(intent, prompt=None, k=5, run=False):
     if r.get("error"):
         return dict(intent=intent, model=model, cost=r.get("cost"), source="cold-start-prior", prior=True, top=[],
                     note="cold-start prior: ranker error (%s) — keep the named model." % r["error"])
-    parsed = adapters.structured_reply(r)
+    parsed = _execution_accessors.resolve_structured_reply(r)
     ranking = (parsed or {}).get("top") if isinstance(parsed, dict) else None
     ranking = [t for t in (ranking or []) if isinstance(t, dict) and t.get("id") in ids]   # real catalog ids ONLY
     if ranking:

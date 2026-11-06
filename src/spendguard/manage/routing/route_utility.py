@@ -16,6 +16,7 @@ Operator policy: the configured window reserve is a HARD cutoff, alongside react
 SCORES and RANKS; wiring the ranking into dispatch is route_decision/idle_lanes (the next stage). All tunables are
 config (advisor.*), never magic here.
 """
+from spendguard.generate.execution import execution_accessors as _execution_accessors
 import time
 
 from ... import config
@@ -350,7 +351,7 @@ def rank_for_tier(tier, est_in=0, est_out=0, lane_rows=None, cooling=None, now=N
     metered. Each: {kind 'lane'|'metered', target, provider, available, score, why}. The caller routes to the FIRST
     available=True. This is the single entry point that makes balance AUTOMATIC: no pinned model, no per-caller lane
     logic — name a group you declared, the economics pick the plan. Empty when the group is undeclared (advisor.tiers)."""
-    from ... import lanes as _lanes, lane_catalog, adapters
+    from ... import lanes as _lanes, lane_catalog
     rows = list(lane_rows if lane_rows is not None else _lanes.lane_headroom(do_fetch=False))
     # each lane's model FOR THIS group (its cheap model for `cheap`, strong for `strong`) — None if it serves none.
     tier_lane_model = {}
@@ -367,7 +368,7 @@ def rank_for_tier(tier, est_in=0, est_out=0, lane_rows=None, cooling=None, now=N
         if m in served:
             continue
         try:
-            metered_cands.append("%s:%s" % (adapters.provider_for(m), m))
+            metered_cands.append("%s:%s" % (_execution_accessors.resolve_provider_for(m), m))
         except Exception:
             pass
     ranked_metered = rank_metered(metered_cands, est_in, est_out)

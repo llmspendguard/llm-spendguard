@@ -8,11 +8,11 @@ and the reconstructed quality. The reasoner judges smart-vs-wasteful and emits C
 insights — IF {task_class/regime/output_shape} THEN {action} BECAUSE {mechanism}, with a quality_basis —
 so each learning is reusable and (when scrubbed) shareable. Caged (spendguard:review), estimate-first.
 """
+from spendguard.generate.execution import execution_accessors as _execution_accessors
 
 from ...capability_cli_parsing import add_registered_cli_argument
 from ... import callio, learn, config, pricing
 from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
-from ...submit import _count_tokens
 
 META = "spendguard"
 _OUT = 1600
@@ -37,8 +37,8 @@ def _token_ratio(intent, model, n=8):
             (intent, model, n)).fetchall()
     if not rows:
         return None
-    ins = [_count_tokens(p or "", model) for p, o, ot in rows]
-    outs = [(ot or _count_tokens(o or "", model)) for p, o, ot in rows]
+    ins = [_execution_accessors.resolve__count_tokens(p or "", model) for p, o, ot in rows]
+    outs = [(ot or _execution_accessors.resolve__count_tokens(o or "", model)) for p, o, ot in rows]
     return dict(avg_in=sum(ins) // len(ins), avg_out=max(1, sum(outs) // len(outs)),
                 prompt=rows[0][0] or "", output=rows[0][1] or "")
 
@@ -118,7 +118,7 @@ def review(run=False, top=10):
                    f"(e.g. don't push a cheaper model if quality was already shown insufficient):\n{known}"
                    if known else "")
     prompt = f"Audit these {len(bundles)} (intent, model) usages:\n\n{body}{constraints}"
-    in_tok = _count_tokens(_SYS + prompt, model)
+    in_tok = _execution_accessors.resolve__count_tokens(_SYS + prompt, model)
     cost = pricing.realtime_cost(model, in_tok, _OUT)
     print(f"  {len(bundles)} usage bundles (cost+quality+token-ratio+sample+chat).  ESTIMATE (zero paid calls):")
     print(f"    realtime {model} 1 call · in~{in_tok:,} out≤{_OUT:,} -> ~${cost:.4f}")
@@ -128,9 +128,8 @@ def review(run=False, top=10):
         from ... import ui; ui.estimate_only(action="run the practice audit", cost=cost)
         return dict(requests=1, in_tok=in_tok, out_tok=_OUT, cost=cost, model=model)
 
-    from ... import adapters
     with _call_corpus_accessors.resolve_calls_context(intent=f"{META}:review"):
-        r = adapters.call(model, prompt, max_tokens=_OUT, system=_SYS)
+        r = _execution_accessors.resolve_call(model, prompt, max_tokens=_OUT, system=_SYS)
     if r["error"]:
         print(f"  ERROR: {r['error']}")
         return dict(error=r["error"])

@@ -15,34 +15,10 @@ import sys
 from ... import config, pricing
 from spendguard.store.configuration import provider_key_env_registry as _pkenv
 
-SPENDGUARD_IMPORT_NAME = "spendguard"
-
-# name -> {base_url, key_env, prefixes, kind, optional sdk_import}
-PROVIDERS = {
-    "openai":    {"base_url": None, "key_env": _pkenv.BUILTIN_PROVIDER_KEY_ENV["openai"],
-                  "prefixes": ("gpt-", "o1", "o3", "chatgpt"), "kind": "openai", "batch": True},
-    "anthropic": {"base_url": None, "key_env": _pkenv.BUILTIN_PROVIDER_KEY_ENV["anthropic"],
-                  "prefixes": ("claude-",), "kind": "anthropic"},
-    "gemini":    {"base_url": "https://generativelanguage.googleapis.com/v1beta/openai/",
-                  "key_env": _pkenv.BUILTIN_PROVIDER_KEY_ENV["gemini"], "prefixes": ("gemini-",), "kind": "openai",
-                  "sdk_import": "google"},  # Native Google SDK is separate from spendguard's compat path.
-    "deepseek":  {"base_url": "https://api.deepseek.com",
-                  "key_env": _pkenv.BUILTIN_PROVIDER_KEY_ENV["deepseek"], "prefixes": ("deepseek",), "kind": "openai"},
-    "qwen":      {"base_url": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
-                  "key_env": _pkenv.BUILTIN_PROVIDER_KEY_ENV["qwen"], "prefixes": ("qwen", "qwq"), "kind": "openai"},
-    "zai":       {"base_url": "https://api.z.ai/api/paas/v4",   # z.ai / Zhipu GLM — OpenAI-compatible (verify base_url with your key)
-                  "key_env": _pkenv.BUILTIN_PROVIDER_KEY_ENV["zai"], "prefixes": ("glm-",), "kind": "openai",
-                  "sdk_import": "zhipuai"},  # Native Zhipu SDK is separate from spendguard's compat path.
-    "voyage":    {"base_url": "https://api.voyageai.com/v1",     # Voyage AI — OpenAI-compatible /EMBEDDINGS only (no
-                  #                                                chat, no async Batch API). Anthropic's recommended
-                  #                                                embeddings; reached via adapters.embed(model="voyage-…").
-                  "key_env": _pkenv.BUILTIN_PROVIDER_KEY_ENV["voyage"], "prefixes": ("voyage-",), "kind": "openai", "batch": False},
-    "moonshot":  {"base_url": "https://api.moonshot.ai/v1",     # Moonshot AI (Kimi) — OpenAI-compatible.
-                  # Prefixes cover the WHOLE family (kimi-k2/k2.5/k2.6/kimi-latest and any future kimi-*), so a
-                  # newer Kimi routes + prices itself the day the synced table carries it — no code change, no
-                  # hardcoded rate. Mainland-China accounts use api.moonshot.cn: register_provider() to override.
-                  "key_env": _pkenv.BUILTIN_PROVIDER_KEY_ENV["moonshot"], "prefixes": ("kimi", "moonshot-"), "kind": "openai"},
-}
+from .execution_accessors import (  # noqa: F401  (public home re-exports include constants unused internally)
+    LANE_MIN_TIMEOUT_S, MAX_TOKEN_CEILING, PROVIDERS, SCHEMA_STRICT,
+    SPENDGUARD_IMPORT_NAME, TOKEN_FLOOR,
+)
 
 
 def llm_capability_import_names() -> frozenset[str]:
@@ -578,7 +554,6 @@ def _schema_kind(provider):
     return "compat"
 
 
-SCHEMA_STRICT = "strict"              # the vendor ENFORCES the shape (anthropic forced-tool / openai strict)
 SCHEMA_JSON_OBJECT = "json_object"    # JSON is guaranteed, the SHAPE is not — output_contract validates it
 
 
@@ -2300,13 +2275,6 @@ def panel_providers(results):
 
 CONNECT_TIMEOUT_S = 10.0     # a live vendor's TCP+TLS handshake is well under this; a blackholed one must fail
                              # HERE, fast — not after tying up a panel slot for the whole read budget.
-LANE_MIN_TIMEOUT_S = 150.0   # a subscription LANE (CLI cold-start + ~14K context injection for codex, or a plan
-                             # HTTP round-trip) is far slower than a metered call, and it is $0 — so handing it a
-                             # metered call's tight 30s floor just times it out and churns it to the paid API it
-                             # exists to avoid. Floor lane deadlines here; a hung lane is still bounded by its own
-                             # TIMEOUT_S. MEASURED: codex timed out at exactly 30s on a real panel file and fell back.
-
-
 def _sdk_timeout_cls(sdk_base_client):
     """Resolve the Timeout class from the transport module imported by an SDK client.
 
@@ -3675,14 +3643,12 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
 # returned {"error": "AttributeError: ... no attribute 'OUTPUT_FLOOR'"}). getattr degrades the skew to the documented
 # floor so the import survives; the literal is used ONLY when the SSOT is unreachable, and the skew is made VISIBLE
 # (warn-once) rather than silent. SSOT is still pricing.OUTPUT_FLOOR whenever it is present.
-TOKEN_FLOOR = getattr(pricing, "OUTPUT_FLOOR", 32_000)
 if not hasattr(pricing, "OUTPUT_FLOOR"):
     try:
         config.warn_once("[spendguard] pricing.OUTPUT_FLOOR is missing — stale/skewed install (pricing older than "
                          "adapters). Using the 32K output floor default; update llm-spendguard so they match.")
     except Exception:
         pass
-MAX_TOKEN_CEILING = 128_000      # OUTPUT: absolute stop for the doubling retry — above the floor so retries have room
 # The auto-heal LEARNS a model's output ceiling by halving until the provider accepts a budget. Below this floor a
 # "success" is NOT evidence of a real output limit — no chat model caps output in the hundreds — it is a NON-budget
 # 400 (a malformed request, a transient error) that merely happened to pass at a tiny budget. Recording that value
@@ -4060,3 +4026,26 @@ def _call_guarded(model, prompt, max_tokens=None, sig=None, retries=2, **kw):
 # `call` now does everything this did. Kept as an alias so the callers wired to it this morning keep working
 # and so nothing reads as if there were two ways to make a call — there is one.
 call_complete = call
+
+
+from . import execution_accessors as _execution_accessors
+
+_execution_accessors.set__LANES_resolver(lambda: _LANES)
+_execution_accessors.set__compose_gemini_reasoning_resolver(lambda *a, **k: _compose_gemini_reasoning(*a, **k))
+_execution_accessors.set__est_call_tokens_resolver(lambda *a, **k: _est_call_tokens(*a, **k))
+_execution_accessors.set__exception_failure_kind_resolver(lambda *a, **k: _exception_failure_kind(*a, **k))
+_execution_accessors.set__executor_resolver(lambda *a, **k: _executor(*a, **k))
+_execution_accessors.set__image_input_tokens_resolver(lambda *a, **k: _image_input_tokens(*a, **k))
+_execution_accessors.set__lane_cooling_resolver(lambda *a, **k: _lane_cooling(*a, **k))
+_execution_accessors.set__lane_for_resolver(lambda *a, **k: _lane_for(*a, **k))
+_execution_accessors.set__lane_model_cooling_resolver(lambda *a, **k: _lane_model_cooling(*a, **k))
+_execution_accessors.set__load_image_resolver(lambda *a, **k: _load_image(*a, **k))
+_execution_accessors.set_call_resolver(lambda *a, **k: call(*a, **k))
+_execution_accessors.set_deadline_for_resolver(lambda *a, **k: deadline_for(*a, **k))
+_execution_accessors.set_llm_capability_import_names_resolver(lambda *a, **k: llm_capability_import_names(*a, **k))
+_execution_accessors.set_metered_fallback_id_resolver(lambda *a, **k: metered_fallback_id(*a, **k))
+_execution_accessors.set_provider_for_resolver(lambda *a, **k: provider_for(*a, **k))
+_execution_accessors.set_schema_capability_resolver(lambda *a, **k: schema_capability(*a, **k))
+_execution_accessors.set_strict_map_violation_resolver(lambda *a, **k: strict_map_violation(*a, **k))
+_execution_accessors.set_structured_reply_resolver(lambda *a, **k: structured_reply(*a, **k))
+_execution_accessors.set_vision_resolver(lambda *a, **k: vision(*a, **k))
