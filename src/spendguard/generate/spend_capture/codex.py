@@ -270,9 +270,9 @@ def show_codex_report(days=None):
     total = sum(p["cost"] for p in byproj.values())
     # stamp from ALL digests (not the day-filtered view) so the month window is complete. billed=false → est-value.
     try:
-        from ... import receipt
+        from ...analyze.spend_reporting import spend_reporting_accessors
         _cls = config.load_state("codex", {"sessions": {}, "cls": {}}).get("cls", {})        # ORG → TEAM → PROJECT, the agentic classification
-        receipt.stamp_est_value(
+        spend_reporting_accessors.resolve_stamp_est_value(
             [{"day": d["day"], "spend_micros": round(d["cost"] * 1_000_000), "billed": False,
               "org": (_cls.get(d["sid"]) or {}).get("org") or "",
               "team": (_cls.get(d["sid"]) or {}).get("team") or "",

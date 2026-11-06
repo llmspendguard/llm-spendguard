@@ -414,5 +414,12 @@ def generate_report(a):
     return rc
 
 
+from . import spend_reporting_accessors as _spend_reporting_accessors
+
+_spend_reporting_accessors.set_admin_billed_realtime_total_resolver(
+    lambda *args, **kwargs: admin_billed_realtime_total(*args, **kwargs))
+_spend_reporting_accessors.set_openai_by_day_resolver(lambda *args, **kwargs: openai_by_day(*args, **kwargs))
+
+
 if __name__ == "__main__":
     sys.exit(main())

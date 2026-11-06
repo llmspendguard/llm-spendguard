@@ -93,6 +93,7 @@ def _load_public_api_and_install_gate():
     _wire_reference_data_accessor_resolvers()
     _wire_egress_accessor_resolvers()
     _wire_call_corpus_accessor_resolvers()
+    _wire_spend_reporting_accessor_resolvers()
 
 
 def _wire_execution_accessor_resolvers():
@@ -163,6 +164,15 @@ def _wire_call_corpus_accessor_resolvers():
     try:
         from .store.call_corpus import call_corpus_resolver_bootstrap
         call_corpus_resolver_bootstrap.wire_call_corpus_accessor_resolvers()
+    except Exception:
+        pass
+
+
+def _wire_spend_reporting_accessor_resolvers():
+    """Trigger lazy spend-reporting resolver registration through its bootstrap."""
+    try:
+        from .analyze.spend_reporting import spend_reporting_resolver_bootstrap
+        spend_reporting_resolver_bootstrap.wire_spend_reporting_accessor_resolvers()
     except Exception:
         pass
 

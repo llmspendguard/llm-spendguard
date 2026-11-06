@@ -1340,9 +1340,9 @@ def show_claudecode_report(days=None):
     # in-chat footer can show plan-usage cheaply. billed=false → it stays out of actual-$; channel keyed so claude.ai
     # doesn't clobber it. Best-effort.
     try:
-        from ... import receipt
+        from ...analyze.spend_reporting import spend_reporting_accessors
         _cls = st.get("cls", {})       # ORG → TEAM → PROJECT, the agentic classification (same as the server push)
-        receipt.stamp_est_value(
+        spend_reporting_accessors.resolve_stamp_est_value(
             [{"day": d["day"], "spend_micros": round(d["cost"] * 1_000_000), "billed": False,
               "org": (_cls.get(d["sid"]) or {}).get("org") or "",
               "team": (_cls.get(d["sid"]) or {}).get("team") or "",

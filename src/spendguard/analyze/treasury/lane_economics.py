@@ -317,8 +317,8 @@ def _plan_total_fee():
     """(total_monthly_plan_fee, is_default) — reuse the receipt's plan total so this equals what `lanes --balance`
     already shows. Best-effort → (0.0, True) so the model degrades to $/token=None rather than raising."""
     try:
-        from ... import receipt
-        fee, default = receipt._plan_usd()
+        from ..spend_reporting import spend_reporting_accessors
+        fee, default = spend_reporting_accessors.resolve__plan_usd()
         return float(fee), bool(default)
     except Exception:
         return 0.0, True

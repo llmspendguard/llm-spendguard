@@ -71,11 +71,11 @@ def stamp_from_ledger(window_days: int = _WINDOW_DAYS) -> dict:
     from spendguard.store.spend_search.ledger_read_contracts import LedgerSettlementIncomplete
     out = {}
     try:
-        from ... import receipt
+        from ..spend_reporting import spend_reporting_accessors
         valued = ledger_valued_lanes()
         if not valued:
             return out
-        since = (receipt._utc_today() - _dt.timedelta(days=window_days)).strftime("%Y-%m-%d")
+        since = (spend_reporting_accessors.resolve__utc_today() - _dt.timedelta(days=window_days)).strftime("%Y-%m-%d")
         by_lane = {}
         from ...store.reference_data import reference_data_accessors
         for ex, ts, prov, model, in_tok, out_tok, project in _subscription_rows(since, valued):
@@ -93,15 +93,15 @@ def stamp_from_ledger(window_days: int = _WINDOW_DAYS) -> dict:
                 rec["unpriced_by_day"][day] = rec["unpriced_by_day"].get(day, 0) + 1
             else:
                 rec["by_day"][day] = rec["by_day"].get(day, 0.0) + val
-        month_start = receipt._windows()[2]
+        month_start = spend_reporting_accessors.resolve__windows()[2]
         for ex, rec in by_lane.items():
-            rec["asof"] = receipt._windows()[0]
+            rec["asof"] = spend_reporting_accessors.resolve__windows()[0]
             if not any(day >= month_start and n for day, n in rec["activity_by_day"].items()):
                 continue
             has_unpriced = any(day >= month_start and n for day, n in rec["unpriced_by_day"].items())
             out[ex] = None if has_unpriced else sum(
                 usd for day, usd in rec["by_day"].items() if day >= month_start)
-        p = receipt._receipt_aggregate_cache_path()
+        p = spend_reporting_accessors.resolve__receipt_aggregate_cache_path()
         p.parent.mkdir(parents=True, exist_ok=True)
         config.update_json(p, lambda d: d.update({"routed_lane_value": by_lane}), reason="lane-value")
         return out                                        # SUCCESS (out may be {} = no valued lanes / no rows)
@@ -115,8 +115,8 @@ def stamp_from_ledger(window_days: int = _WINDOW_DAYS) -> dict:
 def _mark_stamped() -> None:
     """Record WHEN the ledger lanes were last priced, so refresh_lane_value_if_stale can cheap-skip until stale."""
     try:
-        from ... import receipt
-        p = receipt._receipt_aggregate_cache_path()
+        from ..spend_reporting import spend_reporting_accessors
+        p = spend_reporting_accessors.resolve__receipt_aggregate_cache_path()
         p.parent.mkdir(parents=True, exist_ok=True)
         config.update_json(p, lambda d: d.__setitem__("lane_value_asof", time.time()) or d, reason="lane-value")
     except Exception:
@@ -127,8 +127,8 @@ def refresh_lane_value_if_stale(max_age_s: int = _REFRESH_MAX_AGE_S) -> None:
     """Re-price registered lanes when stale or when cached lane values are absent. Called from the every-turn
     receipt path; fresh, populated caches stay on the single-read fast path. Best-effort."""
     try:
-        from ... import receipt
-        p = receipt._receipt_aggregate_cache_path()
+        from ..spend_reporting import spend_reporting_accessors
+        p = spend_reporting_accessors.resolve__receipt_aggregate_cache_path()
         last = 0
         lane_values = None
         if p.exists():
@@ -153,12 +153,12 @@ def day_totals(member_ref, window_days: int = _WINDOW_DAYS):
     lane). Same pricing, shaped for the org dashboard so gemini/zai plan usage is visible THERE, not just locally —
     the client half of the server's EST_VALUE_CHANNELS. [] on no rows/error. day_totals is the est-value-source
     PROTOCOL (chat/claudecode implement it too), dispatched by each source's own sync."""
-    from ... import receipt
+    from ..spend_reporting import spend_reporting_accessors
     from ...store.reference_data import reference_data_accessors
     valued = ledger_valued_lanes()
     if not valued:
         return []
-    since = (receipt._utc_today() - _dt.timedelta(days=window_days)).strftime("%Y-%m-%d")
+    since = (spend_reporting_accessors.resolve__utc_today() - _dt.timedelta(days=window_days)).strftime("%Y-%m-%d")
     agg, skipped_no_day = {}, 0
     for ex, ts, prov, model, in_tok, out_tok, project in _subscription_rows(since, valued):
         day = (ts or "")[:10]

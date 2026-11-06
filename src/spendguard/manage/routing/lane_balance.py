@@ -105,13 +105,14 @@ def lane_utilization():
     "fee_is_default", "asof"}, state ∈ {idle, warm, hot}. Reuses receipt._receipt_aggregate_cache_path / _rewindow / _plan_usd so the
     figures equal the receipt's (and inherit its stale-cache guard: `fresh=False` means the number could be a frozen
     earlier-month value and must be refreshed, never shown as current)."""
-    from ... import receipt
+    from ...analyze.spend_reporting import spend_reporting_accessors
     import json
     try:
-        data = json.loads(receipt._receipt_aggregate_cache_path().read_text()).get("est_value_by_source") or {}
+        data = json.loads(spend_reporting_accessors.resolve__receipt_aggregate_cache_path().read_text()).get(
+            "est_value_by_source") or {}
     except Exception:
         data = {}                                         # no cache yet → every lane reads as idle (nothing recorded)
-    total_fee, fee_default = receipt._plan_usd()
+    total_fee, fee_default = spend_reporting_accessors.resolve__plan_usd()
     idle_r, hot_r = _utilization_ratio_setting("lane_idle_ratio", IDLE_RATIO_DEFAULT), _utilization_ratio_setting("lane_hot_ratio", HOT_RATIO_DEFAULT)
     # LANE -> provider from the ONE source of truth (_execution_accessors.resolve__LANES()); the est-value SOURCE string is the lane name.
     lane_prov = {lane: prov for prov, (lane, _mod) in _execution_accessors.resolve__LANES().items()}
@@ -120,7 +121,7 @@ def lane_utilization():
     out = []
     for lane in lanes:
         rec = data.get(lane) or {}
-        wins, fresh = receipt._rewindow(rec) if rec else ({"month": 0.0}, True)
+        wins, fresh = spend_reporting_accessors.resolve__rewindow(rec) if rec else ({"month": 0.0}, True)
         ev = float(wins.get("month") or 0.0)
         fee, fee_exact = _lane_fee(lane, len(lanes), total_fee)
         util = (ev / fee) if fee else None
@@ -131,7 +132,7 @@ def lane_utilization():
                     "calls_recent": int(recent.get(lane, 0)),   # 24h call VOLUME — the load-balance ordering key
                     "fee_exact": fee_exact, "state": state, "fresh": fresh})
     return {"lanes": out, "total_fee": round(float(total_fee), 2), "fee_is_default": fee_default,
-            "asof": receipt._windows()[0]}
+            "asof": spend_reporting_accessors.resolve__windows()[0]}
 
 
 def hot_lanes():

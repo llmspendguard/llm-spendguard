@@ -2235,33 +2235,17 @@
       "spendguard.platform.setup"
     ],
     [
-      "spendguard.analyze.cost_estimation.calibrate",
       "spendguard.analyze.learning.advise",
       "spendguard.analyze.learning.advisor",
-      "spendguard.analyze.learning.conv",
       "spendguard.analyze.learning.intent_model_prior",
       "spendguard.analyze.learning.lane_bandit",
-      "spendguard.analyze.measurement.review",
-      "spendguard.analyze.reconciliation.attribution",
-      "spendguard.analyze.reconciliation.ledger_sync",
-      "spendguard.analyze.reconciliation.reconcile",
-      "spendguard.analyze.reconciliation.workdone",
-      "spendguard.analyze.spend_reporting.receipt",
-      "spendguard.analyze.spend_reporting.report",
       "spendguard.analyze.treasury.lane_economics",
       "spendguard.analyze.treasury.lane_quota_cost",
-      "spendguard.analyze.treasury.lane_value",
       "spendguard.generate.execution.adapters",
       "spendguard.generate.execution.batch_tracker",
       "spendguard.generate.execution.price_identity_judge",
       "spendguard.generate.execution.submit",
       "spendguard.generate.execution.vendor_call",
-      "spendguard.generate.spend_capture.chat",
-      "spendguard.generate.spend_capture.claudecode",
-      "spendguard.generate.spend_capture.codex",
-      "spendguard.generate.spend_capture.compaction",
-      "spendguard.generate.spend_capture.gpu_port",
-      "spendguard.generate.spend_capture.resources",
       "spendguard.manage.routing.best_value",
       "spendguard.manage.routing.lane_balance",
       "spendguard.manage.routing.route_economics",
@@ -2271,6 +2255,18 @@
       "spendguard.manage.token_operations.queue_planner",
       "spendguard.manage.token_operations.storm_route",
       "spendguard.manage.token_operations.storm_submit"
+    ],
+    [
+      "spendguard.analyze.learning.conv",
+      "spendguard.analyze.reconciliation.attribution",
+      "spendguard.analyze.reconciliation.ledger_sync",
+      "spendguard.analyze.reconciliation.reconcile",
+      "spendguard.analyze.reconciliation.workdone",
+      "spendguard.generate.spend_capture.chat",
+      "spendguard.generate.spend_capture.claudecode",
+      "spendguard.generate.spend_capture.compaction",
+      "spendguard.generate.spend_capture.gpu_port",
+      "spendguard.generate.spend_capture.resources"
     ],
     [
       "spendguard.analyze.measurement.bakeoff",
@@ -2320,14 +2316,6 @@
       "spendguard.platform.platform_resolver_bootstrap"
     ],
     [
-      "spendguard.analyze.cost_estimation.calibrate",
-      "spendguard.analyze.spend_reporting.receipt"
-    ],
-    [
-      "spendguard.analyze.learning.advise",
-      "spendguard.analyze.cost_estimation.calibrate"
-    ],
-    [
       "spendguard.analyze.learning.advise",
       "spendguard.manage.routing.route_economics"
     ],
@@ -2338,10 +2326,6 @@
     [
       "spendguard.analyze.learning.advisor",
       "spendguard.analyze.learning.intent_model_prior"
-    ],
-    [
-      "spendguard.analyze.learning.conv",
-      "spendguard.analyze.learning.advisor"
     ],
     [
       "spendguard.analyze.learning.conv",
@@ -2376,10 +2360,6 @@
       "spendguard.analyze.measurement.bakeoff"
     ],
     [
-      "spendguard.analyze.measurement.review",
-      "spendguard.analyze.learning.advisor"
-    ],
-    [
       "spendguard.analyze.reconciliation.attribution",
       "spendguard.generate.spend_capture.chat"
     ],
@@ -2394,10 +2374,6 @@
     [
       "spendguard.analyze.reconciliation.ledger_sync",
       "spendguard.analyze.reconciliation.workdone"
-    ],
-    [
-      "spendguard.analyze.reconciliation.ledger_sync",
-      "spendguard.analyze.spend_reporting.report"
     ],
     [
       "spendguard.analyze.reconciliation.reconcile",
@@ -2416,56 +2392,12 @@
       "spendguard.analyze.learning.conv"
     ],
     [
-      "spendguard.analyze.spend_reporting.receipt",
-      "spendguard.analyze.treasury.lane_value"
-    ],
-    [
-      "spendguard.analyze.spend_reporting.receipt",
-      "spendguard.generate.spend_capture.claudecode"
-    ],
-    [
-      "spendguard.analyze.spend_reporting.receipt",
-      "spendguard.generate.spend_capture.codex"
-    ],
-    [
-      "spendguard.analyze.spend_reporting.receipt",
-      "spendguard.generate.spend_capture.compaction"
-    ],
-    [
-      "spendguard.analyze.spend_reporting.receipt",
-      "spendguard.manage.token_operations.lane_queue"
-    ],
-    [
-      "spendguard.analyze.spend_reporting.report",
-      "spendguard.analyze.cost_estimation.calibrate"
-    ],
-    [
-      "spendguard.analyze.spend_reporting.report",
-      "spendguard.analyze.measurement.review"
-    ],
-    [
-      "spendguard.analyze.spend_reporting.report",
-      "spendguard.analyze.reconciliation.ledger_sync"
-    ],
-    [
-      "spendguard.analyze.spend_reporting.report",
-      "spendguard.generate.spend_capture.resources"
-    ],
-    [
-      "spendguard.analyze.treasury.lane_economics",
-      "spendguard.analyze.spend_reporting.receipt"
-    ],
-    [
       "spendguard.analyze.treasury.lane_economics",
       "spendguard.manage.routing.lane_balance"
     ],
     [
       "spendguard.analyze.treasury.lane_quota_cost",
       "spendguard.analyze.treasury.lane_economics"
-    ],
-    [
-      "spendguard.analyze.treasury.lane_value",
-      "spendguard.analyze.spend_reporting.receipt"
     ],
     [
       "spendguard.egress.egress_resolver_bootstrap",
@@ -2568,10 +2500,6 @@
       "spendguard.analyze.reconciliation.workdone"
     ],
     [
-      "spendguard.generate.spend_capture.chat",
-      "spendguard.analyze.spend_reporting.receipt"
-    ],
-    [
       "spendguard.generate.spend_capture.claudecode",
       "spendguard.analyze.learning.conv"
     ],
@@ -2581,23 +2509,11 @@
     ],
     [
       "spendguard.generate.spend_capture.claudecode",
-      "spendguard.analyze.spend_reporting.receipt"
-    ],
-    [
-      "spendguard.generate.spend_capture.claudecode",
       "spendguard.generate.spend_capture.chat"
     ],
     [
       "spendguard.generate.spend_capture.claudecode",
       "spendguard.generate.spend_capture.compaction"
-    ],
-    [
-      "spendguard.generate.spend_capture.codex",
-      "spendguard.analyze.reconciliation.attribution"
-    ],
-    [
-      "spendguard.generate.spend_capture.codex",
-      "spendguard.analyze.spend_reporting.receipt"
     ],
     [
       "spendguard.generate.spend_capture.compaction",
@@ -2618,10 +2534,6 @@
     [
       "spendguard.generate.spend_capture.resources",
       "spendguard.analyze.reconciliation.reconcile"
-    ],
-    [
-      "spendguard.generate.spend_capture.resources",
-      "spendguard.analyze.spend_reporting.receipt"
     ],
     [
       "spendguard.generate.spend_capture.resources",
@@ -2690,10 +2602,6 @@
     [
       "spendguard.manage.routing.lane_balance",
       "spendguard.analyze.learning.lane_bandit"
-    ],
-    [
-      "spendguard.manage.routing.lane_balance",
-      "spendguard.analyze.spend_reporting.receipt"
     ],
     [
       "spendguard.manage.routing.lane_balance",
@@ -2942,8 +2850,8 @@
     "src/spendguard/manage/token_operations/delegate_router.py:483",
     "src/spendguard/platform/lanes.py:65"
   ],
-  "max_largest_scc_size": 36,
-  "max_cyclic_edge_count": 160,
+  "max_largest_scc_size": 23,
+  "max_cyclic_edge_count": 138,
   "max_legacy_shim_count": 219,
   "recorded_cross_context_nonsurface_imports": [
     [

@@ -897,8 +897,9 @@ def sync(dry=False):
     _meta = lambda p: _ptmap.get((p or "").lower(), ("", ""))      # (org, team) for a project
     allrows = vast_gpu_accounting_rows_by_day()
     try:                                                   # stamp the machine's billed REMOTE windows so the receipt
-        from ... import receipt                              # can show the Remote component (API + Subs + Remote) fast
-        receipt.stamp_remote([{"day": r["day"], "spend_micros": round(r["cost"] * 1_000_000), "billed": True} for r in allrows])
+        from ...analyze.spend_reporting import spend_reporting_accessors
+        spend_reporting_accessors.resolve_stamp_remote(
+            [{"day": r["day"], "spend_micros": round(r["cost"] * 1_000_000), "billed": True} for r in allrows])
     except Exception:
         pass
     rec = _reconcile(allrows, account_gpu_total() if c.get("owns_account") else 0, c, _ptmap)

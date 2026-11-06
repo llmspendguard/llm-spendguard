@@ -700,11 +700,12 @@ def show(label=None):
     if not cells:
         print("  nothing labeled yet — run `spendguard backfill`, or set calls.context(intent=…) in your jobs.")
     else:
-        from ... import receipt
+        from ..spend_reporting import spend_reporting_accessors
         print(f"{'activity':<28}{'model':<24}{'kind':<9}{'rows':>5}{'$ hist':>10}")
         for row in cells:
             it, m, k, n, usd = row.values
-            print(f"{(it or '—')[:27]:<28}{m[:23]:<24}{k:<9}{n:>5}{receipt._money(usd):>10}")
+            print(f"{(it or '—')[:27]:<28}{m[:23]:<24}{k:<9}{n:>5}"
+                  f"{spend_reporting_accessors.resolve__money(usd):>10}")
     pcon = _con()
     try:
         n_pred, n_paired = pcon.execute(

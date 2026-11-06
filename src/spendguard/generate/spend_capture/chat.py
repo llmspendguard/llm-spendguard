@@ -464,11 +464,12 @@ def show_chat_report(days=None, refresh=True):
     # Stamp claude.ai est-value windows (from the FULL history, not the day-filtered view) so `spendguard receipt`
     # and the in-chat footer sum claude-code + claude-ai. billed=false → stays out of actual-$. Best-effort.
     try:
-        from ... import receipt
+        from ...analyze.spend_reporting import spend_reporting_accessors
         # ORG → TEAM → PROJECT, the agentic classification (chats already carry it)
-        receipt.stamp_est_value([{"day": r["day"], "spend_micros": round(r["value"] * 1_000_000), "billed": False,
-                                  "org": r.get("org") or "", "team": r.get("team") or "", "project": r.get("project") or ""}
-                                 for r in _day_rows(st, None) if r.get("day")], source="claude-ai")
+        spend_reporting_accessors.resolve_stamp_est_value(
+            [{"day": r["day"], "spend_micros": round(r["value"] * 1_000_000), "billed": False,
+              "org": r.get("org") or "", "team": r.get("team") or "", "project": r.get("project") or ""}
+             for r in _day_rows(st, None) if r.get("day")], source="claude-ai")
     except Exception:
         pass
     tree = {}                                              # org → team → project (value), the additive scope view

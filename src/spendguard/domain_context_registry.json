@@ -604,7 +604,9 @@
       "backing_modules": [
         "analyze.spend_reporting.report",
         "analyze.spend_reporting.close",
-        "analyze.spend_reporting.receipt"
+        "analyze.spend_reporting.receipt",
+        "analyze.spend_reporting.spend_reporting_accessors",
+        "analyze.spend_reporting.spend_reporting_resolver_bootstrap"
       ],
       "published_names": [
         "ReceiptPlanAllocationRefused",

@@ -36,11 +36,12 @@ def _warn_fetch(provider, e):
 
 
 def _provider_batch_by_day(since):
-    from ...report import openai_by_day
+    from ..spend_reporting import spend_reporting_accessors
     from . import reconcile_anthropic as anth
     prov = {}
     try:
-        oai, pending = openai_by_day(since=since)         # page-bound the pull to the window (was all-history)
+        oai, pending = spend_reporting_accessors.resolve_openai_by_day(
+            since=since)                                  # page-bound the pull to the window (was all-history)
     except Exception as e:
         oai, pending = {}, 0
         _warn_fetch("openai", e)
@@ -284,8 +285,8 @@ def reconcile_into_ledger(since=None):
     prov = {}   # (provider, day) -> $ billed (truth)
     errors = {}   # NEVER silently undercount — a failed/partial provider fetch must be visible, not hidden
     try:
-        from ...report import openai_by_day
-        oai, _pending = openai_by_day()                        # NB: returns (by_day, pending)
+        from ..spend_reporting import spend_reporting_accessors
+        oai, _pending = spend_reporting_accessors.resolve_openai_by_day()  # NB: returns (by_day, pending)
         for d, v in oai.items():
             if d >= since:
                 prov[("openai", d)] = prov.get(("openai", d), 0.0) + float(v)
@@ -815,9 +816,9 @@ def _provider_total(since):
     import spendguard.manage.admission.admission_accessors as _g
     total, err = 0.0, False
     try:
-        from ...report import openai_by_day
+        from ..spend_reporting import spend_reporting_accessors
         _unpriced_before = sum(pricing.UNPRICED_SEEN.values())
-        oai, _ = openai_by_day()
+        oai, _ = spend_reporting_accessors.resolve_openai_by_day()
         if sum(pricing.UNPRICED_SEEN.values()) > _unpriced_before:
             err = True                                     # openai_by_day priced a model at $0 (unknown) → total INCOMPLETE
         total += sum(v for d, v in oai.items() if d >= since)
@@ -907,8 +908,9 @@ class RealtimeSource:
         self.estimate = None
         self.note = None
         if os.environ.get("SPENDGUARD_ADMIN_ORACLE"):         # DEV cross-check only — never the shipped-client path
-            from ...report import admin_billed_realtime_total
-            return admin_billed_realtime_total(since)                # None unless an admin key is also set
+            from ..spend_reporting import spend_reporting_accessors
+            return spend_reporting_accessors.resolve_admin_billed_realtime_total(
+                since)                                               # None unless an admin key is also set
         est = realtime_reconstruction_estimate(since)
         if est is None:
             self.note = "no realtime reconstruction yet — run scripts/reconstruct/realtime_find_batch.py (admin-free)"
