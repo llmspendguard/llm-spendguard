@@ -1135,3 +1135,5 @@ def cmd_summary(argv=None):
 from . import call_corpus_accessors as _call_corpus_accessors
 
 _call_corpus_accessors.set_calls_insert_resolver(lambda *a, **k: insert(*a, **k))
+_call_corpus_accessors.set_calls_cost_summary_resolver(lambda *a, **k: cost_summary(*a, **k))
+_call_corpus_accessors.set_calls_record_call_resolver(lambda *a, **k: record_call(*a, **k))

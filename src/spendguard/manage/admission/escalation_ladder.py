@@ -77,11 +77,12 @@ def cancel_on_zero_billable(run: Callable[[], object], soft_deadline_s: float, *
     if expired and proof and cancel is not None:
         cancelled = bool(cancel())
     if cancelled:
-        from ... import calls
-        calls.record_call(provider, model, "subscription" if transport == "subscription" else "realtime", 0.0,
-                          latency=time.monotonic() - started, intent=intent, outcome="deadline_exceeded",
-                          disposition="cancelled-stall-zerobill",
-                          disposition_reason="soft deadline exceeded; transport proved zero billable tokens")
+        from ...store.call_corpus import call_corpus_accessors as _call_corpus_accessors
+        _call_corpus_accessors.resolve_calls_record_call(
+            provider, model, "subscription" if transport == "subscription" else "realtime", 0.0,
+            latency=time.monotonic() - started, intent=intent, outcome="deadline_exceeded",
+            disposition="cancelled-stall-zerobill",
+            disposition_reason="soft deadline exceeded; transport proved zero billable tokens")
         return {"result": None, "stall_outcome": "stalled_zerobill_cancelled", "cost": 0.0,
                 "disposition": "cancelled-stall-zerobill"}
     done.wait()  # fail-safe: an unproved or unconfirmed cancellation never abandons a possibly billed request

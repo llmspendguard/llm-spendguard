@@ -2241,10 +2241,6 @@
     ],
     [
       "spendguard",
-      "spendguard.manage.admission.escalation_ladder"
-    ],
-    [
-      "spendguard",
       "spendguard.manage.admission.gate"
     ],
     [
@@ -2506,10 +2502,6 @@
     [
       "spendguard.analyze.learning.lane_bandit",
       "spendguard.store.reference_data.lane_catalog"
-    ],
-    [
-      "spendguard.analyze.learning.validate",
-      "spendguard.store.call_corpus.calls"
     ],
     [
       "spendguard.analyze.measurement.bakeoff",
@@ -3062,10 +3054,6 @@
     [
       "spendguard.egress.saas",
       "spendguard.analyze.cost_estimation.calibrate"
-    ],
-    [
-      "spendguard.egress.saas",
-      "spendguard.analyze.learning.validate"
     ],
     [
       "spendguard.egress.saas",
@@ -3745,10 +3733,6 @@
     ],
     [
       "spendguard.manage.admission.bulkgate",
-      "spendguard.store.call_corpus.calls"
-    ],
-    [
-      "spendguard.manage.admission.escalation_ladder",
       "spendguard.store.call_corpus.calls"
     ],
     [
@@ -4814,8 +4798,8 @@
     "src/spendguard/manage/token_operations/delegate_router.py:481",
     "src/spendguard/platform/lanes.py:64"
   ],
-  "max_largest_scc_size": 114,
-  "max_cyclic_edge_count": 642,
+  "max_largest_scc_size": 112,
+  "max_cyclic_edge_count": 638,
   "max_legacy_shim_count": 219,
   "recorded_cross_context_nonsurface_imports": [
     [
