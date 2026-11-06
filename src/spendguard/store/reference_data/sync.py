@@ -235,8 +235,8 @@ def refresh_if_stale():
         # snapshot time must never be promoted to row freshness; runtime refresh never mutates the curated SSOT.
         return {"refreshed": True, "models": n, "notes": msgs[:3]}
     except Exception as e:
-        from ... import gate as _g
-        if _g.is_deliberate_stop(e):
+        from . import reference_data_accessors as _reference_data_accessors
+        if _reference_data_accessors.resolve_deliberate_stop(e):
             raise                                       # a deliberate stop (refusal/deadline) is never downgraded to a fallback
         return {"error": str(e)[:120], "note": "existing cache + curated model catalog still in effect"}
 

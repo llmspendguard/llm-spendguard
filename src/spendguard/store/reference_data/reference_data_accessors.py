@@ -1,10 +1,11 @@
-"""Dependency-free runtime accessors for reference-data resolvers."""
+"""Dependency-free runtime accessors that reference-data modules consume without importing their providers."""
 import threading
 
 
 _model_ceiling_resolver = None
 _model_facts_resolver = None
 _effort_discovery_resolver = None
+_deliberate_stop_resolver = None
 _reference_data_resolver_lock = threading.Lock()
 
 
@@ -38,6 +39,22 @@ def resolve_model_facts(model):
     if model_facts_resolver is None:
         raise RuntimeError("model facts resolver is not wired")
     return model_facts_resolver(model)
+
+
+def set_deliberate_stop_resolver(deliberate_stop_resolver):
+    """Wire the predicate for deliberate-stop exceptions."""
+    global _deliberate_stop_resolver
+    with _reference_data_resolver_lock:
+        _deliberate_stop_resolver = deliberate_stop_resolver
+
+
+def resolve_deliberate_stop(exc):
+    """Identify a deliberate-stop exception through the eagerly wired provider."""
+    with _reference_data_resolver_lock:
+        deliberate_stop_resolver = _deliberate_stop_resolver
+    if deliberate_stop_resolver is None:
+        raise RuntimeError("deliberate stop resolver is not wired")
+    return deliberate_stop_resolver(exc)
 
 
 def set_effort_discovery_resolver(effort_discovery_resolver):

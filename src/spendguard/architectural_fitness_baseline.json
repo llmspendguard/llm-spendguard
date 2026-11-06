@@ -2289,10 +2289,6 @@
     ],
     [
       "spendguard.analyze.assurance.metadata_audit",
-      "spendguard.store.reference_data.sync"
-    ],
-    [
-      "spendguard.analyze.assurance.metadata_audit",
       "spendguard.store.reference_data.sync_capabilities"
     ],
     [
@@ -3156,10 +3152,6 @@
       "spendguard.store.reference_data.catalog"
     ],
     [
-      "spendguard.egress.saas",
-      "spendguard.store.reference_data.sync"
-    ],
-    [
       "spendguard.egress.signal",
       "spendguard.analyze.learning.conv"
     ],
@@ -3878,10 +3870,6 @@
     [
       "spendguard.manage.admission.gate",
       "spendguard.store.call_corpus.calls"
-    ],
-    [
-      "spendguard.manage.admission.gate",
-      "spendguard.store.reference_data.sync"
     ],
     [
       "spendguard.manage.admission.gate",
@@ -4788,20 +4776,12 @@
       "spendguard.store.reference_data.lane_catalog"
     ],
     [
-      "spendguard.store.reference_data.sync",
-      "spendguard.manage.admission.gate"
-    ],
-    [
       "spendguard.store.reference_data.sync_capabilities",
       "spendguard.egress.saas"
     ],
     [
       "spendguard.store.reference_data.sync_capabilities",
       "spendguard.manage.admission.gate"
-    ],
-    [
-      "spendguard.store.reference_data.sync_capabilities",
-      "spendguard.store.reference_data.sync"
     ],
     [
       "spendguard.store.spend_search.ledger_read",
@@ -4850,8 +4830,8 @@
     "src/spendguard/manage/token_operations/delegate_router.py:481",
     "src/spendguard/platform/lanes.py:64"
   ],
-  "max_largest_scc_size": 116,
-  "max_cyclic_edge_count": 651,
+  "max_largest_scc_size": 115,
+  "max_cyclic_edge_count": 646,
   "max_legacy_shim_count": 219,
   "recorded_cross_context_nonsurface_imports": [
     [

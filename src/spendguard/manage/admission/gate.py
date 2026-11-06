@@ -3330,3 +3330,8 @@ _cli = control_gate_runtime
 if __name__ == "__main__":
     sys.exit(_cli(sys.argv[1] if len(sys.argv) > 1 else "status",
                   live="--live" in sys.argv[2:]))
+
+
+from ...store.reference_data import reference_data_accessors as _reference_data_accessors
+
+_reference_data_accessors.set_deliberate_stop_resolver(lambda *a, **k: is_deliberate_stop(*a, **k))
