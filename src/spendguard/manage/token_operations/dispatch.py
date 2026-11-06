@@ -1121,8 +1121,8 @@ def admission_state():
     behind its own try so one being unavailable degrades to a named note, never breaks the snapshot."""
     out = {"manage_all": _managed_all_on(), "governor": queue_state(), "learned_limits": learned_limits()}
     try:
-        from . import lane_queue
-        out["queue"] = lane_queue.queue_depth()
+        from . import token_operations_accessors
+        out["queue"] = token_operations_accessors.resolve_queue_depth()
     except Exception as e:
         out["queue"] = {"error": "%s: %s" % (type(e).__name__, str(e)[:80])}
     try:

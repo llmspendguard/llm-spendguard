@@ -2225,7 +2225,6 @@
       "spendguard.manage.routing.lane_balance",
       "spendguard.manage.routing.route_economics",
       "spendguard.manage.routing.route_utility",
-      "spendguard.manage.token_operations.dispatch",
       "spendguard.manage.token_operations.lane_queue",
       "spendguard.manage.token_operations.queue_planner",
       "spendguard.manage.token_operations.storm_route",
@@ -2395,10 +2394,6 @@
     ],
     [
       "spendguard.generate.execution.adapters",
-      "spendguard.manage.token_operations.dispatch"
-    ],
-    [
-      "spendguard.generate.execution.adapters",
       "spendguard.manage.token_operations.lane_queue"
     ],
     [
@@ -2436,10 +2431,6 @@
     [
       "spendguard.generate.execution.vendor_call",
       "spendguard.generate.execution.price_identity_judge"
-    ],
-    [
-      "spendguard.generate.execution.vendor_call",
-      "spendguard.manage.token_operations.dispatch"
     ],
     [
       "spendguard.generate.spend_capture.chat",
@@ -2551,10 +2542,6 @@
     ],
     [
       "spendguard.manage.routing.lane_balance",
-      "spendguard.manage.token_operations.dispatch"
-    ],
-    [
-      "spendguard.manage.routing.lane_balance",
       "spendguard.manage.token_operations.lane_queue"
     ],
     [
@@ -2598,10 +2585,6 @@
       "spendguard.manage.token_operations.execution_journal"
     ],
     [
-      "spendguard.manage.token_operations.dispatch",
-      "spendguard.manage.token_operations.lane_queue"
-    ],
-    [
       "spendguard.manage.token_operations.execution_journal",
       "spendguard.manage.token_operations.delegate_jobs"
     ],
@@ -2615,10 +2598,6 @@
     ],
     [
       "spendguard.manage.token_operations.lane_queue",
-      "spendguard.manage.token_operations.dispatch"
-    ],
-    [
-      "spendguard.manage.token_operations.lane_queue",
       "spendguard.manage.token_operations.queue_planner"
     ],
     [
@@ -2627,15 +2606,7 @@
     ],
     [
       "spendguard.manage.token_operations.queue_planner",
-      "spendguard.manage.token_operations.dispatch"
-    ],
-    [
-      "spendguard.manage.token_operations.queue_planner",
       "spendguard.manage.token_operations.lane_queue"
-    ],
-    [
-      "spendguard.manage.token_operations.storm_route",
-      "spendguard.manage.token_operations.dispatch"
     ],
     [
       "spendguard.manage.token_operations.storm_route",
@@ -2648,10 +2619,6 @@
     [
       "spendguard.manage.token_operations.storm_submit",
       "spendguard.generate.execution.batch_tracker"
-    ],
-    [
-      "spendguard.manage.token_operations.storm_submit",
-      "spendguard.manage.token_operations.dispatch"
     ],
     [
       "spendguard.manage.token_operations.storm_submit",
@@ -2740,8 +2707,8 @@
     "src/spendguard/manage/token_operations/delegate_router.py:483",
     "src/spendguard/platform/lanes.py:65"
   ],
-  "max_largest_scc_size": 20,
-  "max_cyclic_edge_count": 111,
+  "max_largest_scc_size": 19,
+  "max_cyclic_edge_count": 103,
   "max_legacy_shim_count": 219,
   "recorded_cross_context_nonsurface_imports": [
     [

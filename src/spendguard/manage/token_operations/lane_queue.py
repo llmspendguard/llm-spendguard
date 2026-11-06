@@ -1798,3 +1798,8 @@ def _drain_locked(worker, batch, lease_s, idle_rounds, idle_sleep, load_ceiling,
     optimize_queue_db()          # refresh planner stats ONCE at drain completion (periodic, never per-op) — now on the
     #                              small lane_queue.db, not the 4.4GB ledger, so ANALYZE is cheap
     return s                     # the single-instance lock is released in drain()'s finally (F6)
+
+
+from . import token_operations_accessors
+
+token_operations_accessors.set_queue_depth_resolver(queue_depth)
