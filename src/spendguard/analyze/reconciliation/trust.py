@@ -94,8 +94,8 @@ def trust_report(since=None, with_server=True):
     out["ledger_verdict"] = {"level": lvl, "msg": msg}
     if with_server:
         try:
-            from ... import saas
-            x = saas.crosscheck(since=since)
+            from ...egress import saas_accessors
+            x = saas_accessors.resolve_crosscheck(since=since)
             if x.get("error"):
                 # A crosscheck that FAILED (network/auth) is NOT the same as "no server": dropping it left the CLI
                 # silent and the overall level untouched, so an UNVERIFIED server side read as fine. Surface it so

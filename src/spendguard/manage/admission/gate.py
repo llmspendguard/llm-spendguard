@@ -3141,14 +3141,14 @@ def control_gate_runtime(cmd: str = "status", live: bool = False):
                 print(f"  delegation lanes ready: UNKNOWN — check could not run ({type(_delegation_error).__name__})")
             # SaaS push readiness — confirm THIS repo will independently push to the aggregation server.
             try:
-                from ... import saas as _saas
-                c = _saas.saas_connection()
-                ok, reason = _saas.ready()
+                from ...egress import saas_accessors as _saas_accessors
+                c = _saas_accessors.resolve_saas_connection()
+                ok, reason = _saas_accessors.resolve_ready()
                 if c.get("enabled"):
                     print(f"  saas      : {'🟢 ' + reason if ok else '🔴 ' + reason}  url={c.get('url') or '(unset)'}")
-                    cok, cwhy = _saas.contributor_ok()
+                    cok, cwhy = _saas_accessors.resolve_contributor_ok()
                     print(f"  push-as   : project={c.get('project') or '(git repo name)'}  "
-                          f"contributor={'🟢' if cok else '🔴'} {_saas.contributor() or '(unresolved)'}  "
+                          f"contributor={'🟢' if cok else '🔴'} {_saas_accessors.resolve_contributor() or '(unresolved)'}  "
                           f"visibility={c.get('visibility', 'private')}")
                     if not cok:
                         print(f"    ⚠ {cwhy}")

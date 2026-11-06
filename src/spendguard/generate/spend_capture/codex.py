@@ -237,22 +237,22 @@ def day_totals(member_ref, org_label=None):
 def sync(dry=False):
     """Push Codex spend (channel=codex, billed=false) → the server, ORG-ROUTED by each session's classified org.
     Mirrors claudecode.sync."""
-    from ... import saas
-    c = saas.saas_connection()
+    from ...egress import saas_accessors
+    c = saas_accessors.resolve_saas_connection()
     if c.get("visibility", "private") == "private":
         return {"skipped": "visibility=private"}
-    cok, cwhy = saas.contributor_ok()
+    cok, cwhy = saas_accessors.resolve_contributor_ok()
     if not cok:
         return {"skipped": cwhy}
-    rows = day_totals(saas.contributor(), org_label=c.get("org"))
+    rows = day_totals(saas_accessors.resolve_contributor(), org_label=c.get("org"))
     for r in rows:
-        r["uid"] = saas._row_uid(r)
+        r["uid"] = saas_accessors.resolve__row_uid(r)
     if dry:
         return {"day_totals": rows}
     if not rows:
         return {"skipped": "no Codex spend for this connection's org"}
     try:
-        return saas._request("POST", "/v1/ledger", {"visibility": c.get("visibility"), "day_totals": rows})
+        return saas_accessors.resolve__request("POST", "/v1/ledger", {"visibility": c.get("visibility"), "day_totals": rows})
     except RuntimeError as e:
         if " 404" in str(e) or " 405" in str(e):
             return {"skipped": "server has no /v1/ledger endpoint yet"}

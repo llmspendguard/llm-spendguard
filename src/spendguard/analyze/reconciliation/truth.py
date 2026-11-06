@@ -37,8 +37,8 @@ def rows(since=None):
 def push_truth(since=None, dry=False, truth_rows=None):
     """Push truth rows → POST /v1/truth. Honors visibility (private = nothing leaves); tolerates a server
     that doesn't implement the endpoint yet (the same forward-compat pattern as push_insights)."""
-    from ... import saas
-    c = saas.saas_connection()
+    from ...egress import saas_accessors
+    c = saas_accessors.resolve_saas_connection()
     if c.get("visibility", "private") == "private":
         return {"skipped": "visibility=private — nothing leaves this machine"}
     # ACCOUNT-ANCHOR GUARD — ONE IMPLEMENTATION, in reconcile.owner_ok.
@@ -59,7 +59,7 @@ def push_truth(since=None, dry=False, truth_rows=None):
     if dry:
         return payload
     try:
-        return saas._request("POST", "/v1/truth", payload)
+        return saas_accessors.resolve__request("POST", "/v1/truth", payload)
     except RuntimeError as e:
         if " 404" in str(e) or " 405" in str(e):
             return {"skipped": "server has no /v1/truth endpoint yet"}

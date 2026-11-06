@@ -270,8 +270,8 @@ def reconcile_into_ledger(since=None):
     # attributes OTHER repos' provider spend to its own project (the bug where vision-pipeline absorbed nlp-pipeline's
     # batch). Standalone / unconnected use (no saas.json) still reconciles fully — the whole account is genuinely theirs.
     try:
-        from ... import saas as _saas
-        _conn = _saas.saas_connection()
+        from ...egress import saas_accessors as _saas_accessors
+        _conn = _saas_accessors.resolve_saas_connection()
     except Exception:
         _conn = {}
     from . import reconcile                                 # shared reconcile core (same account-anchor guard as GPU)
@@ -329,8 +329,8 @@ def reconcile_into_ledger(since=None):
     # repo's project, not truly 'unattributed' — that bucket is for genuinely MULTI-project repos only. This is the
     # "most-recent/primary task" rule the user asked for; it takes LLM attribution to ~100% for single-project orgs.
     try:
-        from ... import saas
-        _c = saas.saas_connection()
+        from ...egress import saas_accessors
+        _c = saas_accessors.resolve_saas_connection()
         _ps = _c.get("projects")
         fallback = "unattributed" if (isinstance(_ps, list) and len(_ps) > 1) else \
             (_c.get("project") or budget.resolve__project() or "unattributed").strip().lower()
@@ -568,8 +568,8 @@ def reconcile_realtime(since=None):
                   f"floor is a lower bound by their unknown cost.")
     gate_pd = budget.resolve_by_provider_day(kind="realtime", since=since)   # REAL gate realtime (markers just cleared)
     try:
-        from ... import saas
-        _c = saas.saas_connection()
+        from ...egress import saas_accessors
+        _c = saas_accessors.resolve_saas_connection()
         _ps = _c.get("projects")
         fallback = "unattributed" if (isinstance(_ps, list) and len(_ps) > 1) else \
             (_c.get("project") or budget.resolve__project() or "unattributed").strip().lower()
@@ -852,9 +852,9 @@ class LLMSource:
     name = "llm"
 
     def __init__(self, conn=None, since=None):
-        from ... import saas
+        from ...egress import saas_accessors
         try:
-            self._conn = conn if conn is not None else saas.saas_connection()
+            self._conn = conn if conn is not None else saas_accessors.resolve_saas_connection()
         except Exception:
             self._conn = {}
         self._since = since or config.month_start_utc()
@@ -886,9 +886,9 @@ class RealtimeSource:
     name = "realtime"
 
     def __init__(self, conn=None, since=None):
-        from ... import saas
+        from ...egress import saas_accessors
         try:
-            self._conn = conn if conn is not None else saas.saas_connection()
+            self._conn = conn if conn is not None else saas_accessors.resolve_saas_connection()
         except Exception:
             self._conn = {}
         self._since = since or config.month_start_utc()

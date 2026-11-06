@@ -26,6 +26,7 @@ The HTTP contract the server repo will implement (versioned under {url}/v1); ide
 All requests send `Authorization: Bearer <api_key>` and `X-Spendguard-Client: <version>`.
 """
 from spendguard.generate.execution import execution_accessors as _execution_accessors
+from . import saas_accessors as _saas_accessors
 
 from ..capability_cli_parsing import registered_cli_option_token
 import json
@@ -1182,3 +1183,25 @@ def cmd(argv=None):
             print(f"pull failed: {e}"); return 1
     print("usage: spendguard saas [status|ping|link|sync [--if-due]|push [--dry]|reconcile|audit|crosscheck|commands|pull [team|org]]")
     return 1
+
+
+_saas_accessors.set__conn_project_base_resolver(lambda *args, **kwargs: _conn_project_base(*args, **kwargs))
+_saas_accessors.set__project_filter_resolver(lambda *args, **kwargs: _project_filter(*args, **kwargs))
+_saas_accessors.set__request_resolver(lambda *args, **kwargs: _request(*args, **kwargs))
+_saas_accessors.set__row_uid_resolver(lambda *args, **kwargs: _row_uid(*args, **kwargs))
+_saas_accessors.set__set_state_resolver(lambda *args, **kwargs: _set_state(*args, **kwargs))
+_saas_accessors.set__state_resolver(lambda *args, **kwargs: _state(*args, **kwargs))
+_saas_accessors.set_contributor_resolver(lambda *args, **kwargs: contributor(*args, **kwargs))
+_saas_accessors.set_contributor_ok_resolver(lambda *args, **kwargs: contributor_ok(*args, **kwargs))
+_saas_accessors.set_crosscheck_resolver(lambda *args, **kwargs: crosscheck(*args, **kwargs))
+_saas_accessors.set_fetch_calibration_resolver(lambda *args, **kwargs: fetch_calibration(*args, **kwargs))
+_saas_accessors.set_fetch_models_resolver(lambda *args, **kwargs: fetch_models(*args, **kwargs))
+_saas_accessors.set_identity_for_org_resolver(lambda *args, **kwargs: identity_for_org(*args, **kwargs))
+_saas_accessors.set_pull_taxonomy_resolver(lambda *args, **kwargs: pull_taxonomy(*args, **kwargs))
+_saas_accessors.set_push_calibration_resolver(lambda *args, **kwargs: push_calibration(*args, **kwargs))
+_saas_accessors.set_push_taxonomy_resolver(lambda *args, **kwargs: push_taxonomy(*args, **kwargs))
+_saas_accessors.set_push_workdone_resolver(lambda *args, **kwargs: push_workdone(*args, **kwargs))
+_saas_accessors.set_ready_resolver(lambda *args, **kwargs: ready(*args, **kwargs))
+_saas_accessors.set_saas_connection_resolver(lambda *args, **kwargs: saas_connection(*args, **kwargs))
+_saas_accessors.set_sync_resolver(lambda *args, **kwargs: sync(*args, **kwargs))
+_saas_accessors.set_sync_catalog_overlay_resolver(lambda *args, **kwargs: sync_catalog_overlay(*args, **kwargs))

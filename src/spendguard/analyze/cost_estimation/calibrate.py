@@ -153,8 +153,9 @@ def _identity():
     """(user, project) this install attributes predictions to — from saas config, never hardcoded."""
     user = project = None
     try:
-        from ... import saas, config
-        user = saas.contributor()
+        from ... import config
+        from ...egress import saas_accessors
+        user = saas_accessors.resolve_contributor()
         project = config.saas_config().get("project")
     except Exception:
         pass
@@ -640,15 +641,16 @@ def cell_stats(as_of=None):
 def push_shared():
     """Package this install's calibration statistics and push them to the org server (visibility-gated,
     de-id'd labels, statistics only). Everyone contributes; everyone's prior improves."""
-    from ... import saas
-    return saas.push_calibration(cell_stats())
+    from ...egress import saas_accessors
+    return saas_accessors.resolve_push_calibration(cell_stats())
 
 
 def fetch_shared():
     """Pull the org-aggregated calibration (n-weighted across members) and cache it — estimate() then
     shrinks local stats toward the ORG's experience instead of the naive assumption."""
-    from ... import saas, config
-    r = saas.fetch_calibration()
+    from ... import config
+    from ...egress import saas_accessors
+    r = saas_accessors.resolve_fetch_calibration()
     cells = r.get("cells") or []
     if cells:
         config.update_json(

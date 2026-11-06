@@ -240,9 +240,9 @@ def produce_periodic_spend_report(*, alert_threshold: float | None = None, email
                 print(f"  EMAIL FAILED: {e}")
     # roll up to the team/org server if connected + due (respects saas.sync_interval; safe no-op otherwise)
     try:
-        from ... import saas
-        if saas.ready()[0]:
-            print(f"  saas sync: {saas.sync(if_due=True)}")
+        from ...egress import saas_accessors
+        if saas_accessors.resolve_ready()[0]:
+            print(f"  saas sync: {saas_accessors.resolve_sync(if_due=True)}")
     except Exception:
         pass
     return rc

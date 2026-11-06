@@ -1480,16 +1480,16 @@ def day_totals(member_ref, org_label=None):
 def sync(dry=False):
     """Push Claude Code spend (channel=claude-code) → the server. Honors visibility + contributor; ORG-ROUTED by the
     session's classified org (only rows whose org matches THIS connection — or are unclassified — push here)."""
-    from ... import saas
-    c = saas.saas_connection()
+    from ...egress import saas_accessors
+    c = saas_accessors.resolve_saas_connection()
     if c.get("visibility", "private") == "private":
         return {"skipped": "visibility=private"}
-    cok, cwhy = saas.contributor_ok()
+    cok, cwhy = saas_accessors.resolve_contributor_ok()
     if not cok:
         return {"skipped": cwhy}
-    rows = day_totals(saas.contributor(), org_label=c.get("org"))
+    rows = day_totals(saas_accessors.resolve_contributor(), org_label=c.get("org"))
     for r in rows:
-        r["uid"] = saas._row_uid(r)
+        r["uid"] = saas_accessors.resolve__row_uid(r)
     if dry:
         return {"day_totals": rows}
     if not rows:
@@ -1497,7 +1497,7 @@ def sync(dry=False):
     try:
         # day_totals() is the COMPLETE per-session est-value set → declare a replace so the server prunes this
         # contributor's orphaned claude-code rows (re-classification / dedup re-bucketing) instead of stacking them.
-        return saas._request("POST", "/v1/ledger", {"visibility": c.get("visibility"), "day_totals": rows,
+        return saas_accessors.resolve__request("POST", "/v1/ledger", {"visibility": c.get("visibility"), "day_totals": rows,
                                                     "replace": [{"channel": "claude-code", "billed": False}]})
     except RuntimeError as e:
         if " 404" in str(e) or " 405" in str(e):

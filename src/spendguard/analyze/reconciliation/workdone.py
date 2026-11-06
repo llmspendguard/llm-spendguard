@@ -213,9 +213,9 @@ def cmd(argv=None):
         print("workdone summarize:", summarize(since=a.since, run=a.run))
         return 0
     if a.push:
-        from ... import saas
+        from ...egress import saas_accessors
         # push monthly periods regardless of the display --by, to match the dashboard's current-month view
-        print("workdone push:", saas.push_workdone(since=a.since))
+        print("workdone push:", saas_accessors.resolve_push_workdone(since=a.since))
         return 0
     rows = rollup_workdone(since=a.since, by=a.by)
     print(f"WORK DONE — by {a.by}, per project (context for spend):")

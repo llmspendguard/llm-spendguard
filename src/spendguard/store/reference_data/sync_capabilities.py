@@ -42,12 +42,12 @@ def _fetch_server_catalog():
     daily-fresh catalog — announced LOUD (never a silent swap to possibly-staler local metadata), then {} so the local
     cache still carries the run. NOT memoised (a transient outage never stales the source for the process's life); a
     deliberate spend/deadline stop propagates."""
-    from ... import saas
-    ok, _reason = saas.ready()
+    from ...egress import saas_accessors
+    ok, _reason = saas_accessors.resolve_ready()
     if not ok:
         return {}                                      # no server configured → local is the source, not a fallback
     try:
-        m = saas.fetch_models()
+        m = saas_accessors.resolve_fetch_models()
     except Exception as e:
         import spendguard.manage.admission.admission_accessors as _g
         if _g.resolve_is_deliberate_stop(e):

@@ -224,10 +224,10 @@ class ProviderGPUSource:
     explicit per provider, so attribute_gap returns [] (the vast GPUSource doctrine)."""
 
     def __init__(self, provider, conn=None):
-        from ... import saas
+        from ...egress import saas_accessors
         self.provider = provider
         self.name = f"gpu:{provider.name}"
-        self._conn = conn if conn is not None else saas.saas_connection()
+        self._conn = conn if conn is not None else saas_accessors.resolve_saas_connection()
 
     def conn(self):
         return self._conn

@@ -593,7 +593,8 @@ def reconstruct_remote_llm(run=False, max_sessions=None, model_org_hints=None, f
     saas.identity_for_org). Magnitude from the numbers the boxes PRINTED (ground truth in the transcript); attribution
     from the shared classifier. DEDUP across sessions by run signature so a run discussed in N sessions isn't counted
     N× (the over-count guard). Estimate-first (run=False → cost only). The same Source pattern as batch/GPU."""
-    from ... import ui, pricing, conv, saas
+    from ... import ui, pricing, conv
+    from ...egress import saas_accessors
     from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
     # full=True → the AGENTIC source: full-conversation chunks (the LLM finds the realtime runs across ALL models,
     # incl Opus/GPT-5.5, in the lmm classification/co-occurrence/stats sessions). full=False → the legacy regex
@@ -641,7 +642,7 @@ def reconstruct_remote_llm(run=False, max_sessions=None, model_org_hints=None, f
             exp = next((o for k, o in (model_org_hints or {}).items() if k.lower() in ms), None)
             consistent = (not exp) or (not org) or (str(exp).lower() == str(org).lower())   # forensic: model corroborates session org?
             rows.append({"sid": sid, "project": sc.get("project") or "", "org": org, "team": sc.get("team") or "",
-                         "member_ref": saas.identity_for_org(org), "model": rn.get("model"),
+                         "member_ref": saas_accessors.resolve_identity_for_org(org), "model": rn.get("model"),
                          "in_tokens": in_tok, "out_tokens": out_tok, "usd": usd,
                          "token_usage_complete": token_usage_complete, "valuation_complete": usd is not None, "evidence": ev[:120],
                          "confidence": rn.get("confidence"), "org_consistent": consistent})
@@ -809,8 +810,9 @@ def _reconcile(allrows, account_total, conn, ptmap):
     Σ all recorded boxes), NEVER dumped on a project/org — and no flat per-day rows are fabricated. `by_org` is a
     diagnostic of where the recorded spend landed. residual → 0 only when every box is captured/recovered AND
     account_total is true consumption (top-ups carry a balance buffer)."""
-    from ... import reconcile, saas
-    base = saas._conn_project_base(conn)              # ORG-BASED scope (or legacy single-project / static list)
+    from ... import reconcile
+    from ...egress import saas_accessors
+    base = saas_accessors.resolve__conn_project_base(conn)  # ORG-BASED scope (or legacy single-project / static list)
     org_scoped = bool((conn.get("org") or "").strip())
     def _in_scope(r):
         p = (r.get("project") or "").lower()
@@ -859,8 +861,8 @@ class GPUSource:
     name = "gpu"
 
     def __init__(self, conn=None):
-        from ... import saas
-        self._conn = conn if conn is not None else saas.saas_connection()
+        from ...egress import saas_accessors
+        self._conn = conn if conn is not None else saas_accessors.resolve_saas_connection()
 
     def conn(self):
         return self._conn
@@ -886,9 +888,9 @@ def sync(dry=False):
     single repo) — the same agentic, per-item attribution as the LLM ledger. Account-anchored: the unrecoverable
     remainder is an EXPLICIT `residual` (account total − Σ recorded boxes), surfaced but NEVER dumped on a project/org
     (a shared vast.ai account would otherwise leak cross-org). record_instance_history() runs first so live boxes are captured."""
-    from ... import saas
-    c = saas.saas_connection()
-    ref = saas.contributor()
+    from ...egress import saas_accessors
+    c = saas_accessors.resolve_saas_connection()
+    ref = saas_accessors.resolve_contributor()
     record_instance_history()                                             # RECORD live instances first (so destroyed ones survive)
     from ... import attribution
     _ptmap = attribution.project_team_map(attribution.taxonomy()[0])
@@ -907,19 +909,19 @@ def sync(dry=False):
         day_totals.append({
             "day": r["day"], "provider": "vastai", "model": r["gpu"], "kind": "gpu", "channel": "realtime",
             "spend_micros": round(r["cost"] * 1_000_000), "calls": len(r["instances"]),
-            "member_ref": saas.identity_for_org(org, ref),        # the org's contributor (per-row, org-correct)
+            "member_ref": saas_accessors.resolve_identity_for_org(org, ref),  # org contributor (per-row, org-correct)
             "project": rp, "team": team,                          # ← each box keeps ITS OWN timing-matched project
             "tags": ",".join(["remote-compute", "gpu", r["gpu"].replace(" ", ""), "team:" + team,
                               "instances:" + "/".join(str(x) for x in r["instances"])]),
         })
     for row in day_totals:                                # per-row id, local↔server cross-check (gpu rows too)
-        row["uid"] = saas._row_uid(row)
+        row["uid"] = saas_accessors.resolve__row_uid(row)
     reconcile = {"account_total": rec["account_total"], "captured": rec["captured"],
                  "residual": rec["residual"], "by_org": rec["by_org"]}
     payload = {"visibility": c.get("visibility"), "day_totals": day_totals}
     if dry:
         return {**payload, "reconcile": reconcile}
-    ok, reason = saas.ready()
+    ok, reason = saas_accessors.resolve_ready()
     if not ok:
         return {"skipped": f"not connected: {reason}", "reconcile": reconcile}
     if c.get("visibility", "private") == "private":
@@ -927,7 +929,7 @@ def sync(dry=False):
     if not day_totals:                                    # nothing attributed to THIS org → don't 422 the push
         return {"skipped": "no attributed GPU for this org/scope — label your vast.ai instances (include the project "
                 "in the instance label) or set resources.vastai.label_map", "reconcile": reconcile}
-    res = saas._request("POST", "/v1/ledger", payload)
+    res = saas_accessors.resolve__request("POST", "/v1/ledger", payload)
     if isinstance(res, dict):
         res["reconcile"] = reconcile
     return res

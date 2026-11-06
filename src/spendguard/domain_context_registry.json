@@ -675,7 +675,9 @@
         "egress.share",
         "egress.emit",
         "egress.notify",
-        "egress.focus_export"
+        "egress.focus_export",
+        "egress.saas_accessors",
+        "egress.egress_resolver_bootstrap"
       ],
       "published_names": []
     },

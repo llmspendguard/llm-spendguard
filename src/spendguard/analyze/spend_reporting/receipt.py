@@ -1090,8 +1090,8 @@ def _render_scope(scope_all=False, conv=None, cwd=None, line=False, top=12, brea
 def _conv_org():
     """The org this conversation/connection belongs to (the repo's .spendguard.json org) — the default tree scope."""
     try:
-        from ... import saas
-        return (saas.saas_connection().get("org") or "").strip().lower() or None
+        from ...egress import saas_accessors
+        return (saas_accessors.resolve_saas_connection().get("org") or "").strip().lower() or None
     except Exception:
         return None
 

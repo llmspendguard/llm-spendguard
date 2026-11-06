@@ -1467,8 +1467,8 @@ def cmd_init(argv=None):
     # Contributor identity is a MUST (it's the billable/rollup user). Materialize + show the resolved id now so it's
     # never blank/unattributed; an email here also becomes the alert target.
     try:
-        from .. import saas as _saas
-        ident = _saas.contributor()
+        from ..egress import saas_accessors
+        ident = saas_accessors.resolve_contributor()
         if config.is_email(ident):
             print(f"Contributor: {ident}  (email — per-user roll-up, billing, AND alerts)")
         else:

@@ -554,8 +554,8 @@ def sync(dry=False):
     if not _chat_enabled() and not dry:
         return {"skipped": "chat adapter not enabled — `spendguard chat enable` (or set chat.enabled / "
                            "SPENDGUARD_CHAT_ENABLED=1). On-device, opt-in, your session only."}
-    from ... import saas
-    c = saas.saas_connection()
+    from ...egress import saas_accessors
+    c = saas_accessors.resolve_saas_connection()
     if not c.get("enabled"):
         # contributor_ok() returns (True, "n/a") for a DISABLED saas connection — that means "don't check", not
         # "contributor adequate". Without this, a disabled connection + non-private visibility would push an
@@ -563,16 +563,16 @@ def sync(dry=False):
         return {"skipped": "saas connection not enabled — nothing pushed"}
     if c.get("visibility", "private") == "private":
         return {"skipped": "visibility=private"}
-    cok, cwhy = saas.contributor_ok()
+    cok, cwhy = saas_accessors.resolve_contributor_ok()
     if not cok:
         return {"skipped": cwhy}
     try:
         _, info = refresh_chat_conversations()
     except Exception as e:
         return {"skipped": f"refresh failed: {e}"}
-    rows = day_totals(saas.contributor(), org_label=c.get("org"))     # org-routed: this connection's org only
+    rows = day_totals(saas_accessors.resolve_contributor(), org_label=c.get("org"))  # org-routed: this connection's org only
     for r in rows:
-        r["uid"] = saas._row_uid(r)
+        r["uid"] = saas_accessors.resolve__row_uid(r)
     if dry:
         return {"refresh": info, "day_totals": rows}
     if not rows:
@@ -583,7 +583,7 @@ def sync(dry=False):
         # or dedup re-bucketing left the old rows in place and added the new ones, so the same conversation's
         # value was counted twice and the org's est-value drifted upward on every sync. claudecode.sync always
         # sent this; chat.sync never did.
-        res = saas._request("POST", "/v1/ledger", {"visibility": c.get("visibility"), "day_totals": rows,
+        res = saas_accessors.resolve__request("POST", "/v1/ledger", {"visibility": c.get("visibility"), "day_totals": rows,
                                                    "replace": [{"channel": "claude-ai", "billed": False}]})
         res["refresh"] = info
         return res
@@ -717,8 +717,8 @@ def _taxonomy():
                 "projects": [t for t in tx if t.get("project")], "default_org": ""}, True
     orgs, projects = set(), set()
     try:
-        from ... import saas
-        cemail = (saas.contributor() or "")
+        from ...egress import saas_accessors
+        cemail = (saas_accessors.resolve_contributor() or "")
         if "@" in cemail:
             orgs.add(cemail.split("@", 1)[1].split(".")[0])
     except Exception:
@@ -1043,8 +1043,8 @@ def show_chat_adapter_status():
     """Show adapter state + any PENDING org attribution request (the consent surface)."""
     print(f"chat adapter: {'🟢 ENABLED' if _chat_enabled() else 'disabled'}")
     try:
-        from ... import saas
-        s = saas._state()
+        from ...egress import saas_accessors
+        s = saas_accessors.resolve__state()
         if s.get("chat_request_pending") and not _chat_enabled():
             by = s.get("chat_requested_by") or "your org"
             print(f"  ⚑ {by} has REQUESTED chat work-attribution.")
@@ -1064,9 +1064,9 @@ def accept_chat_org_taxonomy():
     """Consent to an org attribution request: enable + adopt the org's canonical taxonomy. Runs on next sync."""
     _set_enabled(True)
     try:
-        from ... import saas
-        saas._set_state(chat_request_pending=False)
-        t = saas.pull_taxonomy()
+        from ...egress import saas_accessors
+        saas_accessors.resolve__set_state(chat_request_pending=False)
+        t = saas_accessors.resolve_pull_taxonomy()
         v = (t or {}).get("version", "?") if isinstance(t, dict) else "?"
         print(f"  ✓ consented — adopted org taxonomy v{v}. Attribution runs on each `saas sync`,")
         print("    or now: `spendguard chat loop --run`.")
@@ -1081,8 +1081,8 @@ _accept = accept_chat_org_taxonomy
 
 
 def publish_chat_org_taxonomy() -> int:
-    from ... import saas
-    print("push-taxonomy:", saas.push_taxonomy())
+    from ...egress import saas_accessors
+    print("push-taxonomy:", saas_accessors.resolve_push_taxonomy())
     return 0
 
 

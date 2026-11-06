@@ -192,20 +192,20 @@ def sync(dry=False):
     dashboard's work-done / unit-economics count them (the client twin of the server's EST_VALUE_CHANNELS). Filters to
     THIS connection's owned projects (no cross-attribution); declares a per-channel replace so re-syncs never stack.
     Runs inside `saas sync` (hourly via launchd). Best-effort; never raises out."""
-    from ... import saas
-    c = saas.saas_connection()
+    from ...egress import saas_accessors
+    c = saas_accessors.resolve_saas_connection()
     if c.get("visibility", "private") == "private":
         return {"skipped": "visibility=private"}
-    cok, cwhy = saas.contributor_ok()
+    cok, cwhy = saas_accessors.resolve_contributor_ok()
     if not cok:
         return {"skipped": cwhy}
     stamp_from_ledger()                                   # keep the LOCAL receipt stamp fresh too (best-effort)
-    rows = day_totals(saas.contributor())
-    flt = saas._project_filter(c)                         # only this connection's projects (same guard as build_rollup_rows)
+    rows = day_totals(saas_accessors.resolve_contributor())
+    flt = saas_accessors.resolve__project_filter(c)       # only this connection's projects (same guard as build_rollup_rows)
     if flt is not None:
         rows = [r for r in rows if (r.get("project") or "").lower() in flt]
     for r in rows:
-        r["uid"] = saas._row_uid(r)
+        r["uid"] = saas_accessors.resolve__row_uid(r)
     if dry:
         return {"day_totals": rows}
     if any(not row["value_complete"] or not row["token_usage_complete"] for row in rows):
@@ -216,7 +216,7 @@ def sync(dry=False):
         return {"skipped": "no ledger-valued lane value for this connection"}
     channels = sorted({r["channel"] for r in rows})      # replace per (channel, billed=False) so re-syncs don't stack
     try:
-        return saas._request("POST", "/v1/ledger", {"visibility": c.get("visibility"), "day_totals": rows,
+        return saas_accessors.resolve__request("POST", "/v1/ledger", {"visibility": c.get("visibility"), "day_totals": rows,
                              "replace": [{"channel": ch, "billed": False} for ch in channels]})
     except RuntimeError as e:
         if " 404" in str(e) or " 405" in str(e):
