@@ -743,7 +743,7 @@ def served_check(vendor, model):
 
 def closest_served(vendor, stale_model):
     """(same_model_id | None, live_ids) — the currently-served id that names the SAME model as a stale one, decided
-    AGENTICALLY by pricing._same_model_as_ours (alias/version identity is a MEANING call — never a string-distance
+    AGENTICALLY by price_identity_judge._same_model_as_ours (alias/version identity is a MEANING call — never a string-distance
     match), plus the live served list for context. Best-effort; any failure returns (None, live_ids or []). The
     agentic call is tiny and fires ONLY on the refusal path (a stale id), never on the $0 served fast-path — so the
     pre-flight itself stays $0 (a catalog read) and only a confirmed-stale dispatch pays for one identity judgement."""
@@ -752,8 +752,10 @@ def closest_served(vendor, stale_model):
     if not live:
         return None, []
     try:
-        from ... import pricing
-        resolved, _ = pricing._same_model_as_ours([stale_model], live, run=True, fact_key="served_id")
+        from . import price_identity_judge
+        resolved, _ = price_identity_judge._same_model_as_ours(
+            [stale_model], live, run=True, fact_key="served_id"
+        )
         return resolved.get(stale_model), live
     except Exception as e:
         # A DELIBERATE stop from the tiny identity call — the spend gate, a budget cap, or a drawn-on-purpose dispatch

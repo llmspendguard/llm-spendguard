@@ -26,6 +26,7 @@ os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
 from spendguard import adapters, pricing, bulkgate, catalog                            # noqa: E402
+from spendguard.store.reference_data import reference_data_accessors                  # noqa: E402
 
 fails = []
 
@@ -56,6 +57,7 @@ def _budget(model, provided, published, cat_ceiling, fact):
     pricing.max_output_tokens = lambda m: published
     pricing.max_output = lambda m: fact
     catalog.model_ceiling = lambda v, m: cat_ceiling
+    reference_data_accessors.set_model_ceiling_resolver(catalog.model_ceiling)
     _captured.clear()
     adapters.call(model, "hi", max_tokens=provided, sig="test:ceiling")
     return _captured.get("budget")

@@ -18,6 +18,7 @@
         "store.reference_data.pricing",
         "store.reference_data.pricing_accessors",
         "store.reference_data.reasoning_equivalence",
+        "store.reference_data.reference_data_accessors",
         "store.reference_data.refresh",
         "store.reference_data.sync",
         "store.reference_data.sync_capabilities"
@@ -325,19 +326,20 @@
       "surface_module": "spendguard.generate.execution",
       "layer": "L1",
       "backing_modules": [
-        "generate.execution.vendor_call",
-        "generate.execution.submit",
+        "generate.execution.adapters",
+        "generate.execution.antigravity_exec",
         "generate.execution.batch_tracker",
-        "generate.execution.subscription_exec",
         "generate.execution.codex_exec",
         "generate.execution.kimi_exec",
-        "generate.execution.zai_exec",
-        "generate.execution.antigravity_exec",
-        "generate.execution.subscription_cli_results",
-        "generate.execution.provider_plugins",
+        "generate.execution.openai_batch_cli",
+        "generate.execution.price_identity_judge",
         "generate.execution.provider_kit",
-        "generate.execution.adapters",
-        "generate.execution.openai_batch_cli"
+        "generate.execution.provider_plugins",
+        "generate.execution.submit",
+        "generate.execution.subscription_cli_results",
+        "generate.execution.subscription_exec",
+        "generate.execution.vendor_call",
+        "generate.execution.zai_exec"
       ],
       "published_names": []
     },

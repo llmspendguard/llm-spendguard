@@ -20,6 +20,7 @@ os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
 from spendguard import pricing, catalog                                                # noqa: E402
+from spendguard.store.reference_data import reference_data_accessors                  # noqa: E402
 
 fails = []
 
@@ -54,6 +55,7 @@ def _resolve(model, published, cat, fact, backstop=128000, learned_floor=0, vend
     pricing.max_output_tokens = _pub
     pricing.max_output = _fact
     catalog.model_ceiling = _cat
+    reference_data_accessors.set_model_ceiling_resolver(_cat)
     val = pricing.output_ceiling(vendor, model, backstop, learned_floor=learned_floor)
     return val, seen
 
@@ -86,6 +88,7 @@ try:
     ck("catalog.model_ceiling received vendor='zai'", seen3.get("cat_vendor") == "zai")
 finally:
     pricing.max_output_tokens, pricing.max_output, catalog.model_ceiling = _orig
+    reference_data_accessors.set_model_ceiling_resolver(catalog.model_ceiling)
 
 print(f"\n{'[FAIL]' if fails else 'OK'} test_output_ceiling_resolver: {len(fails)} failure(s)")
 sys.exit(1 if fails else 0)

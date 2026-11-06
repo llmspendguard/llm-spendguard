@@ -200,6 +200,11 @@ def model_ceiling(vendor, model):
         return None
 
 
+from . import reference_data_accessors as _reference_data_accessors
+
+_reference_data_accessors.set_model_ceiling_resolver(model_ceiling)
+
+
 def catalog_age_hours():
     """Age of the catalog cache in hours, or None if absent/unreadable (= needs a fetch)."""
     data = _load_catalog()

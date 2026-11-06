@@ -8,7 +8,8 @@ os.environ.setdefault("SPENDGUARD_TEST_ISOLATED", "1")
 os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
-from spendguard import guard, lanes, overage, pricing, saas, setup  # noqa: E402
+from spendguard import guard, lanes, overage, saas, setup  # noqa: E402
+from spendguard.generate.execution import price_identity_judge  # noqa: E402
 
 fails = []
 
@@ -20,14 +21,14 @@ def ck(label, condition):
 
 
 originals = (lanes.lane_headroom, saas.saas_connection, saas.contributor_ok, saas.contributor, setup._probe,
-             pricing.cross_check_openrouter, guard.shed_summary, guard.decision_rollup,
+             price_identity_judge.cross_check_openrouter, guard.shed_summary, guard.decision_rollup,
              overage.current_overage_status)
 try:
     saas.saas_connection = lambda: {"visibility": "team"}
     saas.contributor_ok = lambda: (True, "ok")
     saas.contributor = lambda: "member"
     setup._probe = lambda executable: ("3", True, True)
-    pricing.cross_check_openrouter = lambda: ([], None, None)
+    price_identity_judge.cross_check_openrouter = lambda: ([], None, None)
     guard.shed_summary = lambda: {"n_sheds": 0}
     guard.decision_rollup = lambda: {"n": 0, "by_route": []}
     overage.current_overage_status = lambda: {
@@ -51,7 +52,7 @@ try:
     ck("empty lane snapshot is omitted", "lane_usage" not in empty)
 finally:
     (lanes.lane_headroom, saas.saas_connection, saas.contributor_ok, saas.contributor, setup._probe,
-     pricing.cross_check_openrouter, guard.shed_summary, guard.decision_rollup,
+     price_identity_judge.cross_check_openrouter, guard.shed_summary, guard.decision_rollup,
      overage.current_overage_status) = originals
 
 print(f"\n{'[FAIL]' if fails else 'OK'} test_push_lane_usage: {len(fails)} failure(s)")

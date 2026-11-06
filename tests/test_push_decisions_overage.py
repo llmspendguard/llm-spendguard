@@ -8,7 +8,8 @@ os.environ.setdefault("SPENDGUARD_TEST_ISOLATED", "1")
 os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
-from spendguard import guard, overage, pricing, saas, setup  # noqa: E402
+from spendguard import guard, overage, saas, setup  # noqa: E402
+from spendguard.generate.execution import price_identity_judge  # noqa: E402
 
 fails = []
 
@@ -25,7 +26,7 @@ def decision(requested, chosen, cls=None, basis="advisor", n=1, actual=1.0, coun
 
 
 originals = (guard.decisions_since, saas.saas_connection, saas.contributor_ok, saas.contributor, setup._probe,
-             pricing.cross_check_openrouter, guard.shed_summary, guard.decision_rollup,
+             price_identity_judge.cross_check_openrouter, guard.shed_summary, guard.decision_rollup,
              overage.current_overage_status)
 try:
     rows = (decision("a", "b", "paid-overage-admission", n=2)
@@ -63,7 +64,7 @@ try:
     saas.contributor_ok = lambda: (True, "ok")
     saas.contributor = lambda: "member"
     setup._probe = lambda executable: ("3", True, True)
-    pricing.cross_check_openrouter = lambda: ([], None, None)
+    price_identity_judge.cross_check_openrouter = lambda: ([], None, None)
     guard.shed_summary = lambda: {"n_sheds": 0}
     guard.decision_rollup = lambda: {"n": 1, "by_route": [{"reason_class": "other"}]}
     overage.current_overage_status = lambda: {
@@ -84,7 +85,7 @@ try:
     ck("empty decisions and overage omitted", "decisions" not in empty and "overage" not in empty)
 finally:
     (guard.decisions_since, saas.saas_connection, saas.contributor_ok, saas.contributor, setup._probe,
-     pricing.cross_check_openrouter, guard.shed_summary, guard.decision_rollup,
+     price_identity_judge.cross_check_openrouter, guard.shed_summary, guard.decision_rollup,
      overage.current_overage_status) = originals
 
 print(f"\n{'[FAIL]' if fails else 'OK'} test_push_decisions_overage: {len(fails)} failure(s)")

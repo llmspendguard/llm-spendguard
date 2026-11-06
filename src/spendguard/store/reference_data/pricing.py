@@ -180,8 +180,8 @@ def max_output(model):
     function is only the learned-fact tier: a value the adapter recorded after a provider refused a larger budget,
     or pulled from a live /models endpoint. None → the caller uses the floor and self-heals; unknown is unknown."""
     try:
-        from . import models as _m
-        fact = _m.facts(normalize(model)).get("max_output_tokens")
+        from . import reference_data_accessors as _rda
+        fact = _rda.resolve_model_facts(normalize(model)).get("max_output_tokens")
         if fact and int(fact[0]) > 0:
             return int(fact[0])
     except Exception:
@@ -288,8 +288,8 @@ def output_ceiling(vendor, model, backstop, learned_floor=OUTPUT_FLOOR):
     if pub:
         return int(pub)
     try:
-        from . import catalog as _cat
-        cat = _cat.model_ceiling(vendor, rid)          # 2. live /models — authoritative (cache-first, $0)
+        from . import reference_data_accessors as _rda
+        cat = _rda.resolve_model_ceiling(vendor, rid)  # 2. live /models — authoritative (cache-first, $0)
     except Exception:
         cat = None
     if cat:
@@ -336,204 +336,6 @@ def providers():
     out = {}
     for m, p in PROVIDERS.items():
         out.setdefault(p, []).append(m)
-    return out
-
-
-_OPENROUTER_URL = "https://openrouter.ai/api/v1/models"
-
-_SYS_SAME_MODEL = (
-    "You match model identifiers across two catalogs. Two ids name the SAME model only if they are the "
-    "same weights from the same vendor at the same version — a dated snapshot and its floating alias are "
-    "the same model. A different size, version, vendor, or modality is NOT the same model, however similar "
-    "the names look. If no candidate is the same model, say so; a wrong match is worse than no match.")
-
-
-def _same_model_as_ours(ours, their_ids, run=False, advisor=None, fact_key="openrouter_id"):
-    """{our_id: their_id} for ids that name the SAME model. AGENTIC, and the judgement is RECORDED.
-
-    `fact_key` is the per-model fact under which the resolution is stored/read, so this ONE agentic resolver serves
-    more than one catalog without collision: 'openrouter_id' for the price cross-check, 'served_id' for the live
-    served-catalog pre-flight (adapters dispatch). A different fact_key is a different question about the same
-    model, correctly kept in its own slot — never one namespace answering for another.
-
-    EXACT EQUALITY IS APPLIED FIRST and is the only mechanical rule here, because it is the only one that
-    is provably total: two identical ids are the same model, always. Everything after that is a judgement
-    about two vendors' naming conventions, and the previous implementation made it by deleting every
-    non-alphanumeric character and comparing what was left:
-
-        re.sub(r"[^a-z0-9]", "", model.lower())
-
-    That rule is wrong in BOTH directions and neither failure announces itself:
-      FALSE MATCH  `gpt-4o` and `gpt-4-o` both collapse to `gpt4o`, so two different price cards get
-                   compared and the difference is reported as DRIFT in our own table.
-      FALSE MISS   `gpt-5.5-2026-01-01` never equals `gpt-5.5`, so real drift is counted as "not on
-                   OpenRouter" — reported as COVERAGE, which reads like nothing is wrong.
-    It also took `id.split("/")[-1]`, discarding OpenRouter's vendor prefix: the same bare-name collision
-    this module was just fixed for on its own side, applied to somebody else's catalog.
-
-    Judged once and stored as a per-model fact, so it is never re-paid. models.py is THE per-model store;
-    this does not open a second one. An empty stored value means "judged: no counterpart exists" — which is
-    a real answer and must not be confused with "not yet asked"."""
-    from ... import adapters, calls, config, models as _models, ui
-    theirs = set(their_ids)
-    out, unresolved = {}, []
-    for m in ours:
-        if m in theirs:
-            out[m] = m                                   # identical ids: provable, free, no judgement
-            continue
-        rec = _models.facts(m).get(fact_key)
-        if rec is not None:
-            if rec[0]:
-                out[m] = rec[0]
-            continue                                     # "" = judged, no counterpart. Not "unasked".
-        unresolved.append(m)
-    stats = {"exact": len(out), "agentic": 0, "unresolved": len(unresolved)}
-    if not unresolved:
-        return out, stats
-
-    model = advisor or config.advisor_model()
-    prompt = ("Our catalog ids:\n" + "\n".join(f"  {m}" for m in unresolved)
-              + "\n\nCandidate ids from the other catalog:\n" + "\n".join(f"  {t}" for t in sorted(theirs))
-              + '\n\nFor each of OUR ids, give the candidate that names the same model, or null.\n'
-                'Reply JSON only: {"matches": [{"ours": "<id>", "theirs": "<id or null>"}]}')
-    if not run:
-        ui.estimate_only(action=f"resolve {len(unresolved)} model ids against the other catalog",
-                         cost=realtime_cost(model, max(1, len(_SYS_SAME_MODEL + prompt) // 4),
-                                            30 * len(unresolved)))
-        return out, stats
-    with calls.context(intent="spendguard:resolve-model-identity"):
-        r = adapters.call(model, prompt, max_tokens=30 * len(unresolved) + 400, system=_SYS_SAME_MODEL)
-    if r.get("error"):
-        return out, stats                                # unresolved stays unresolved — never guessed
-    try:
-        # regex PARSES the JSON envelope out of the reply. It decides nothing: the model already did.
-        blob = re.search(r"\{.*\}", r.get("text") or "", re.S)
-        matches = (json.loads(blob.group(0)).get("matches") if blob else []) or []
-    except Exception:
-        matches = []
-    for it in matches:
-        ours_id, theirs_id = (it or {}).get("ours"), (it or {}).get("theirs")
-        if ours_id not in set(unresolved):
-            continue
-        if theirs_id and theirs_id not in theirs:
-            continue                                     # a name it invented is not an answer
-        _models.add_fact(ours_id, fact_key, theirs_id or "", confidence=0.9,
-                         source=f"agentic id-resolution ({fact_key}, {model})", verified=False)
-        if theirs_id:
-            out[ours_id] = theirs_id
-            stats["agentic"] += 1
-    stats["unresolved"] = len(unresolved) - stats["agentic"]
-    return out, stats
-
-
-def cross_check_openrouter(run=False, scope=None):
-    """Price cross-check against OpenRouter's public models JSON. (rows, matched, total).
-
-    TWO JUDGEMENTS, BOTH AGENTIC. Which of their ids names the same model as ours (_same_model_as_ours),
-    and whether a rate gap means our number needs re-verifying (_judge_price_gaps). Everything mechanical
-    here is provable: fetching, exact id equality, and comparing two published numbers for inequality.
-
-    Neither judgement was agentic before. Identity was `re.sub(r"[^a-z0-9]", "", id.split("/")[-1])`, and
-    significance was `> 0.10`. Both are wrong in the direction that reads as healthy — a false miss and a
-    sub-threshold gap both render as "nothing to see".
-
-    `scope` bounds which of OUR ids get a paid identity resolution when they do not match exactly; it
-    defaults to the curated table, the prices we publish and are answerable for. Exact matching still runs
-    across the whole table for free, and what stayed unresolved is returned rather than hidden.
-
-    `run=False` makes this entirely zero-spend: both agentic steps report an estimate and decide nothing."""
-    import json as _json, urllib.request
-    from ... import config
-    req = urllib.request.Request(_OPENROUTER_URL, headers={"User-Agent": "spendguard/0.1"})
-    data = _json.loads(urllib.request.urlopen(req, context=config.ssl_context(), timeout=10).read())
-    ormap = {}
-    for m in data.get("data", []):
-        p = m.get("pricing") or {}
-        try:
-            # THE ID IS KEPT WHOLE. This used to be re.sub(r"[^a-z0-9]", "", id.split("/")[-1].lower()) —
-            # discarding OpenRouter's vendor prefix and then mangling what was left, which is the same
-            # bare-name collision this module was just fixed for on its OWN side, applied to somebody
-            # else's catalog. Identity is decided by _same_model_as_ours, not by what survives a strip.
-            ormap[m["id"]] = (float(p.get("prompt", 0)) * 1e6, float(p.get("completion", 0)) * 1e6)
-        except Exception:
-            pass
-    exact = {m: m for m in PRICING if m in ormap}     # identical ids: provable, free, across the whole table
-    from . import model_catalog
-    ours = list(scope) if scope is not None else list(model_catalog.all_records())
-    todo = [m for m in ours if m not in exact]
-    resolved, id_stats = _same_model_as_ours(todo, ormap.keys(), run=run)
-    pairs = {**exact, **resolved}
-    id_stats["exact"] = len(exact)
-    rows, differs = [], []
-    for model, their in sorted(pairs.items()):
-        pr = PRICING.get(model)
-        if not pr:
-            continue
-        oin, oout = ormap[their]
-        if (oin, oout) == (pr["in_"], pr["out"]):
-            # EXACT EQUALITY, not a tolerance. The two catalogs publish the identical number, so there is
-            # no gap for anyone to judge the significance of. Every row that differs by ANY amount goes to
-            # the judge below — nothing is filtered out by a size test before the decision is made.
-            rows.append((model, pr["in_"], oin, pr["out"], oout, "identical"))
-        else:
-            differs.append((model, pr["in_"], oin, pr["out"], oout))
-    # WHETHER A GAP MATTERS IS A JUDGEMENT, AND IT IS MADE BY A MODEL.
-    #
-    # This used to read `"DRIFT" if (din > tol or dout > tol)`. The arithmetic is provable — |a-b|/b has
-    # exactly one answer — but the LABEL is not: 0.10 is a hand-picked significance bar standing in for a
-    # question that depends on context we have and it does not. A 9% gap on a $30/1M output rate is $2.70
-    # per million tokens and is under the bar; a 12% gap on a $0.02 rate is nothing and is over it. Worse,
-    # the other catalog is not always comparing like with like — a reseller's markup, a different modality,
-    # or a stale listing all produce a gap that is not our price being wrong.
-    #
-    # So the mechanical step now decides only what is PROVABLE — do the two numbers differ at all — and
-    # every row that differs is sent to the judge. That is complete by construction: nothing is filtered
-    # out by a threshold before the decision, which is the failure mode a recall filter set at 0.10 had.
-    if differs:
-        rows.extend(_judge_price_gaps(differs, run=run))
-    return rows, len(rows), len(PRICING)
-
-
-_SYS_PRICE_GAP = (
-    "You audit a pricing table against a third-party catalog. For each row you are given OUR published "
-    "rate and THEIRS, in USD per 1M tokens. Decide whether the gap means OUR rate is likely WRONG or STALE "
-    "and should be re-verified against the vendor's own page. A gap is NOT evidence our rate is wrong when "
-    "the other catalog is plausibly quoting a reseller markup, a different modality or context tier, or a "
-    "stale listing. Judge each row on the size of the gap RELATIVE TO THE MONEY IT MOVES, not on a fixed "
-    "percentage.")
-
-
-def _judge_price_gaps(differs, run=False, advisor=None):
-    """[(model, our_in, their_in, our_out, their_out, verdict)] — verdict decided by a model.
-
-    Estimate-first and caged, like every other paid step here. On refusal or error the verdict is
-    "undecided", never "ok": a judge that did not answer is not a judge that cleared the row, and recording
-    it as clean is how a real price drift becomes a green dashboard."""
-    from ... import adapters, calls, config, ui
-    model = advisor or config.advisor_model()
-    listing = "\n".join(f"  {i}. {m}: ours in ${a}/out ${c} | theirs in ${b}/out ${d}"
-                        for i, (m, a, b, c, d) in enumerate(differs))
-    prompt = (listing + '\n\nReply JSON only: {"rows": [{"i": <index>, "recheck": true|false, '
-                        '"why": "<short>"}]}')
-    if not run:
-        ui.estimate_only(action=f"judge {len(differs)} price gaps against the other catalog",
-                         cost=realtime_cost(model, max(1, len(_SYS_PRICE_GAP + prompt) // 4), 40 * len(differs)))
-        return [(*r, "unjudged (estimate only)") for r in differs]
-    with calls.context(intent="spendguard:judge-price-drift"):
-        r = adapters.call(model, prompt, max_tokens=40 * len(differs) + 400, system=_SYS_PRICE_GAP)
-    verdicts = {}
-    if not r.get("error"):
-        try:
-            # regex PARSES the JSON envelope. The decision inside it was made by the model.
-            blob = re.search(r"\{.*\}", r.get("text") or "", re.S)
-            for it in (json.loads(blob.group(0)).get("rows") if blob else []) or []:
-                verdicts[int(it["i"])] = ("RECHECK" if it.get("recheck") else "ok", (it.get("why") or "")[:60])
-        except Exception:
-            verdicts = {}
-    out = []
-    for i, row in enumerate(differs):
-        v, why = verdicts.get(i, ("undecided", "judge did not answer"))
-        out.append((*row, f"{v} — {why}" if why else v))
     return out
 
 

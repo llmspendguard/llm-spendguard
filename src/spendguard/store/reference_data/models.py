@@ -116,6 +116,11 @@ def facts(model):
                                 (model,)).fetchall()}
 
 
+from . import reference_data_accessors as _reference_data_accessors
+
+_reference_data_accessors.set_model_facts_resolver(facts)
+
+
 def _decode_fact(raw):
     """Stored fact -> its original Python value. Rows written before add_fact stored JSON are bare strings
     (e.g. `minimal`, not `"minimal"`), which json.loads rejects — those load as the string they always were,

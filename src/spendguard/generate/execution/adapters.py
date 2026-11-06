@@ -3082,7 +3082,7 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
     # the served-list primitive vendor_call.served_check (cache-first, $0, no per-call latency; a would-be
     # rejection is CONFIRMED LIVE via serves() so a stale cache can't false-reject) at THIS single choke point, so
     # every vendor/lane path inherits it (vendor_call.call routes through here too). Only a CONFIRMED-stale id is
-    # refused — with the currently-served SAME model named agentically (closest_served → pricing._same_model_as_ours,
+            # refused — with the currently-served SAME model named agentically (closest_served → price_identity_judge._same_model_as_ours,
     # a meaning call, never string distance). 'unchecked' (no synced list, or discovery unavailable) proceeds: a
     # can't-check is never a rejection. `raw` is already respelled to the bare metered id for gemini above.
     try:

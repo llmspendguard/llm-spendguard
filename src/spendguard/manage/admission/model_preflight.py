@@ -3,7 +3,7 @@ spends a cent on it. The recurring failure it kills: a stale/renamed id (gemini-
 gemini-3-flash-preview) or an unpriced id discovered MID-RUN, after money is spent and every call 404s.
 
 It resolves a whole candidate list against the LIVE served-catalog + pricing FIRST, names the correction for a stale
-id AGENTICALLY (vendor_call.closest_served → pricing._same_model_as_ours, an identity MEANING call, never string
+id AGENTICALLY (vendor_call.closest_served → price_identity_judge._same_model_as_ours, an identity MEANING call, never string
 distance), and reports usable/not so the caller refuses or swaps the id before dispatch. $0 for a served id (a cached
 catalog read); a STALE id pays for exactly one tiny identity judgement — and closest_served RECORDS that judgement
 (fact_key 'served_id'), so a re-run reads the cache instead of re-paying. That, plus per-spec isolation below, is why

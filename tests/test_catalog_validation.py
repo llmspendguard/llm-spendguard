@@ -10,7 +10,7 @@ mirroring the input-window pre-flight already in vendor_call.call. Pins:
   (b) served_check is CACHE-FIRST ($0, no per-call latency), but a cache MISS is CONFIRMED LIVE before it is ever
       called 'stale' — a stale cache can never cause a false rejection;
   (c) 'unchecked' (no cached list, or live discovery unavailable) PROCEEDS — a can't-check is never a 'no';
-  (d) the closest-alternative is AGENTIC (pricing._same_model_as_ours, fact_key='served_id'), never string-distance;
+  (d) the closest-alternative is AGENTIC (price_identity_judge._same_model_as_ours, fact_key='served_id'), never string-distance;
   (e) at dispatch: a confirmed-stale id is REFUSED (StaleModelId) before the SDK, a served id proceeds, an
       unlistable vendor proceeds.
 
@@ -28,7 +28,8 @@ os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
 os.environ["GEMINI_API_KEY"] = "test-key-not-real"        # only gemini is keyed → only gemini gets cataloged
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
-from spendguard import vendor_call, catalog, adapters, pricing, config                         # noqa: E402
+from spendguard import vendor_call, catalog, adapters, config                                 # noqa: E402
+from spendguard.generate.execution import price_identity_judge                                # noqa: E402
 
 fails = []
 
@@ -90,7 +91,7 @@ class _SameModelStub:
 
 
 _same_stub = _SameModelStub()
-pricing._same_model_as_ours = _same_stub
+price_identity_judge._same_model_as_ours = _same_stub
 same, live_ids = vendor_call.closest_served("gemini", "gemini-3.6-flash")
 ck("closest_served returns the agentic SAME-model id", same == "gemini-3.7-flash")
 ck("...decided via _same_model_as_ours with its own fact_key ('served_id'), run=True",

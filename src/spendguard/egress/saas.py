@@ -675,8 +675,8 @@ def push_status(dry=False):
         pass
     drift = []
     try:                                                    # free, read-only OpenRouter price drift; tolerate offline
-        from .. import pricing
-        rows, _m, _t = pricing.cross_check_openrouter()
+        from ..generate.execution import price_identity_judge
+        rows, _m, _t = price_identity_judge.cross_check_openrouter()
         for model, oi, ri, oo, ro, flag in rows:
             if flag == "DRIFT":
                 base = ri if ri else oi          # reference price, ours as fallback — NOT `... or 1e-9`: a real zero

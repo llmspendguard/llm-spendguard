@@ -1039,9 +1039,9 @@ def cli_core_embed_gc(rest, cmd, argv):
 
 
 def cli_core_cross_check(rest, cmd, argv):
-        from .. import pricing as p
+        from ..generate.execution import price_identity_judge
         try:
-            rows, matched, total = p.cross_check_openrouter()
+            rows, matched, total = price_identity_judge.cross_check_openrouter()
         except Exception as e:
             print(f"cross-check failed (network?): {e}"); return 1
         print(f"price cross-check vs OpenRouter — {matched}/{total} models matched "
