@@ -5341,14 +5341,6 @@
     ],
     [
       "spendguard.store.configuration.config",
-      "spendguard.store.money_ledger.ledger_writer"
-    ],
-    [
-      "spendguard.store.configuration.config",
-      "spendguard.store.spend_search.ledger_read"
-    ],
-    [
-      "spendguard.store.configuration.config",
       "spendguard.store.spend_search.ledger_request_cursor"
     ],
     [
@@ -5595,7 +5587,7 @@
     "src/spendguard/platform/lanes.py:64"
   ],
   "max_largest_scc_size": 120,
-  "max_cyclic_edge_count": 837,
+  "max_cyclic_edge_count": 835,
   "max_legacy_shim_count": 219,
   "recorded_cross_context_nonsurface_imports": [
     [

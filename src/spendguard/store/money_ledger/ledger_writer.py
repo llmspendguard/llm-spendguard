@@ -23,6 +23,7 @@ from concurrent.futures import Future, TimeoutError as FutureTimeoutError
 
 from ... import config
 from . import ledger_write_decorators
+from . import ledger_writer_accessors
 from .ledger_write_decorators import best_effort_ledger_function, serialize_ledger_function  # noqa: F401  (public re-export: callers importing the decorators from ledger_writer keep resolving after the move to the leaf)
 
 LEDGER_WRITER_QUEUE_CAPACITY = 256
@@ -530,4 +531,9 @@ ledger_write_decorators.set_run_ledger_write_provider(_wire_run_ledger_write)
 ledger_write_decorators.set_decorator_warn_once_provider(_wire_decorator_warn_once)
 ledger_write_decorators.set_decorator_is_deliberate_stop_provider(
     _wire_decorator_is_deliberate_stop
+)
+ledger_writer_accessors.set_ledger_writer_accessors(
+    current_ledger_writer_connection, run_ledger_write, deadline_ledger_writer_lock,
+    abort_current_ledger_writer_transaction, ledger_connection_commit_deferred,
+    require_ledger_writer_request_live, isolate_nested_ledger_write,
 )

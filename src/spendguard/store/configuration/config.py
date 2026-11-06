@@ -21,6 +21,16 @@ from pathlib import Path
 from spendguard.ledger_fork_locks import new_fork_reset_ledger_state
 from spendguard.store.configuration.config_accessors import set_config_accessors
 from spendguard.store.configuration.ledger_connection_accessors import set_ledger_connection_accessors
+from spendguard.store.spend_search.ledger_read_accessors import resolve_ledger_admission_deadline
+from spendguard.store.money_ledger.ledger_writer_accessors import (
+    resolve_active_ledger_writer_connection,
+    run_wired_ledger_write,
+    acquire_ledger_writer_deadline_lock,
+    abort_active_ledger_writer_transaction,
+    probe_ledger_connection_commit_deferred,
+    require_live_ledger_writer_request,
+    enter_isolated_nested_ledger_write,
+)
 
 DEFAULT_SPENDGUARD_HOME = Path.home() / ".spendguard"
 HOME = Path(os.getenv("SPENDGUARD_HOME") or DEFAULT_SPENDGUARD_HOME)
@@ -1406,11 +1416,10 @@ class _CountedLedgerConnection(sqlite3.Connection):
         require_ledger_home_alignment(self._ledger_home_path,
                                      opened_path_identity=self._ledger_opened_path_identity)
         if operation is sqlite3.Connection.commit:
-            from ...ledger_writer import ledger_connection_commit_deferred, require_ledger_writer_request_live
-            if (ledger_connection_commit_deferred(self)
+            if (probe_ledger_connection_commit_deferred(self)
                     or getattr(self, "_ledger_writer_transaction_aborted", False)):
                 return None
-            require_ledger_writer_request_live()
+            require_live_ledger_writer_request()
         return operation(self, *args, **kwargs)
 
     def _create_home_aligned_ledger_cursor(self, factory=_HomeAlignedLedgerCursor):
@@ -1484,8 +1493,7 @@ class _CountedLedgerConnection(sqlite3.Connection):
 
 def open_ledger_connection(path=None, timeout=LEDGER_CONNECT_TIMEOUT_S, *, tune=True, deadline_at=None, **options):
     """Atomically admit, open and tune a connection; callers own its close."""
-    from spendguard.ledger_read import effective_ledger_admission_deadline
-    deadline_at = effective_ledger_admission_deadline(deadline_at)
+    deadline_at = resolve_ledger_admission_deadline(deadline_at)
     path = path or db_path()
     require_ledger_home_alignment(path)
     opened_path_identity = Path(path).expanduser().resolve()
@@ -1494,7 +1502,7 @@ def open_ledger_connection(path=None, timeout=LEDGER_CONNECT_TIMEOUT_S, *, tune=
     if deadline_at is None:
         generation.lock.acquire()
     elif not generation.lock.acquire(timeout=max(0.0, deadline_at - time.monotonic())):
-        effective_ledger_admission_deadline(deadline_at)
+        resolve_ledger_admission_deadline(deadline_at)
         raise TimeoutError("Ledger connection admission deadline exceeded")
     try:
         current = generation.live_count + generation.pending_count
@@ -1570,19 +1578,16 @@ def ensure_ledger_schema(c, schema):
     File identity cannot prove tables, additive columns or indexes still exist.
     Serialize local migrations; callbacks retain their cross-process race safety.
     """
-    from ...ledger_writer import current_ledger_writer_connection, run_ledger_write, deadline_ledger_writer_lock
     database_path = c.execute("PRAGMA database_list").fetchone()[2]
-    owner_connection = current_ledger_writer_connection(database_path) if database_path else None
+    owner_connection = resolve_active_ledger_writer_connection(database_path) if database_path else None
     native_connection = getattr(c, "_native_reconcile_connection", c)
     if database_path and owner_connection is not native_connection:
-        return run_ledger_write(lambda: ensure_ledger_schema(
-            current_ledger_writer_connection(database_path), schema), database_path)
-    with deadline_ledger_writer_lock(_LEDGER_SCHEMA_LOCK):
-        from ...ledger_writer import ledger_connection_commit_deferred
-        preserve_transaction = native_connection.in_transaction or ledger_connection_commit_deferred(native_connection)
+        return run_wired_ledger_write(lambda: ensure_ledger_schema(
+            resolve_active_ledger_writer_connection(database_path), schema), database_path)
+    with acquire_ledger_writer_deadline_lock(_LEDGER_SCHEMA_LOCK):
+        preserve_transaction = native_connection.in_transaction or probe_ledger_connection_commit_deferred(native_connection)
         if owner_connection is native_connection:
-            from ...ledger_writer import isolate_nested_ledger_write
-            with isolate_nested_ledger_write(native_connection, sql_connection=c):
+            with enter_isolated_nested_ledger_write(native_connection, sql_connection=c):
                 result = schema(c)
         else:
             result = schema(c)
@@ -1609,8 +1614,7 @@ def tune_ledger_connection(c, ceiling=None):
         forever: measured spend.db-wal at 1.3GB, 2026-10-08. This caps it; a periodic wal_checkpoint(TRUNCATE) drains it.
     All per-CONNECTION except WAL + journal_size_limit (file-persistent), so tuning one subsystem's connection never
     disturbs another's on the same file. Required tuning failures propagate; an untuned owner cannot serve writes."""
-    from ...ledger_writer import deadline_ledger_writer_lock
-    with deadline_ledger_writer_lock(_LEDGER_JOURNAL_MODE_LOCK):
+    with acquire_ledger_writer_deadline_lock(_LEDGER_JOURNAL_MODE_LOCK):
         with contextlib.closing(c.execute("PRAGMA journal_mode")) as journal_cursor:
             journal_mode = journal_cursor.fetchone()[0]
         if journal_mode.lower() != "wal":
@@ -1644,8 +1648,7 @@ def recycle_idle_ledger_connections(*, expired_only=False):
     _, idle_timeout = ledger_read_pool_settings()
     reclaimed = 0
     now = time.monotonic()
-    from ...ledger_writer import deadline_ledger_writer_lock
-    with deadline_ledger_writer_lock(_LEDGER_POOL_REGISTRY_LOCK):
+    with acquire_ledger_writer_deadline_lock(_LEDGER_POOL_REGISTRY_LOCK):
         for connection in tuple(_LEDGER_POOL_REGISTRY):
             if expired_only and now - connection._ledger_pool_last_used < idle_timeout:
                 continue
@@ -1671,13 +1674,11 @@ def managed_ledger_read_connection(path, *, timeout=LEDGER_CONNECT_TIMEOUT_S, de
     legacy pool uses the shared configured idle timeout for its remaining users.
     """
     global _LEDGER_READ_POOL_ACTIVE
-    from ...ledger_read import effective_ledger_admission_deadline
-    from ...ledger_writer import deadline_ledger_writer_lock
-    deadline_at = effective_ledger_admission_deadline(deadline_at)
+    deadline_at = resolve_ledger_admission_deadline(deadline_at)
     cap, idle_timeout = ledger_read_pool_settings()
-    with deadline_ledger_writer_lock(_LEDGER_READ_POOL_CONDITION, deadline_at=deadline_at):
+    with acquire_ledger_writer_deadline_lock(_LEDGER_READ_POOL_CONDITION, deadline_at=deadline_at):
         while True:
-            deadline_at = effective_ledger_admission_deadline(deadline_at)
+            deadline_at = resolve_ledger_admission_deadline(deadline_at)
             pooled_live = sum(not handle._ledger_released for handle in _LEDGER_POOL_REGISTRY)
             if _LEDGER_READ_POOL_ACTIVE + pooled_live >= cap:
                 recycle_idle_ledger_connections()
@@ -1724,10 +1725,8 @@ def pooled_ledger_conn(key, ensure_schema, path=None):
     (db_path()); a subsystem on its OWN file (e.g. lane_queue → lane_queue_db_path()) passes it, and the pool keys the
     connection by its path too, so the same key never returns a connection to the wrong file."""
     global _LEDGER_READ_POOL_ACTIVE
-    from ...ledger_writer import current_ledger_writer_connection, deadline_ledger_writer_lock
-    from ...ledger_read import effective_ledger_admission_deadline
-    effective_ledger_admission_deadline()
-    writer_connection = current_ledger_writer_connection(path)
+    resolve_ledger_admission_deadline()
+    writer_connection = resolve_active_ledger_writer_connection(path)
     if writer_connection is not None:
         schema_keys = writer_connection._ledger_writer_schema_keys
         if key not in schema_keys:
@@ -1746,12 +1745,12 @@ def pooled_ledger_conn(key, ensure_schema, path=None):
         return got[0]
     if got is not None:                                  # db path changed under us → close the stale connection first
         got[0].close()
-    with deadline_ledger_writer_lock(_LEDGER_POOL_REGISTRY_LOCK):
+    with acquire_ledger_writer_deadline_lock(_LEDGER_POOL_REGISTRY_LOCK):
         recycle_idle_ledger_connections(expired_only=True)
         cap, admission_timeout = ledger_read_pool_settings()
-        admission_deadline = effective_ledger_admission_deadline(time.monotonic() + admission_timeout)
+        admission_deadline = resolve_ledger_admission_deadline(time.monotonic() + admission_timeout)
         while True:
-            effective_ledger_admission_deadline(admission_deadline)
+            resolve_ledger_admission_deadline(admission_deadline)
             live = sum(not handle._ledger_released for handle in _LEDGER_POOL_REGISTRY)
             if live + _LEDGER_READ_POOL_ACTIVE < cap:
                 break
@@ -1769,7 +1768,7 @@ def pooled_ledger_conn(key, ensure_schema, path=None):
         c._ledger_pool_last_used = time.monotonic()
         c._ledger_operation_borrowed = True
         try:
-            with deadline_ledger_writer_lock(_LEDGER_POOL_REGISTRY_LOCK):
+            with acquire_ledger_writer_deadline_lock(_LEDGER_POOL_REGISTRY_LOCK):
                 _LEDGER_POOL_REGISTRY.add(c)
         except BaseException:
             c.close()
@@ -1796,8 +1795,7 @@ def rollback_ledger_conn(key):
     reused connection until this thread's next write. Best-effort + never raises; a no-op when there's nothing open or
     no connection yet. Writer rollback failures propagate: an owner that cannot abort must never commit.
     Unlike reset_ledger_conn it keeps the connection; only its aborted transaction needs clearing."""
-    from ...ledger_writer import abort_current_ledger_writer_transaction
-    if abort_current_ledger_writer_transaction():
+    if abort_active_ledger_writer_transaction():
         return
     conns = getattr(_LEDGER_POOL, "conns", None)
     if not conns:
@@ -1816,8 +1814,7 @@ def reset_ledger_conn(key):
     The writer closes after the active callback/bulk scope unwinds and reopens at next admission;
     no borrowed handle is closed underneath executing code.
     """
-    from ...ledger_writer import abort_current_ledger_writer_transaction
-    if abort_current_ledger_writer_transaction(reset=True):
+    if abort_active_ledger_writer_transaction(reset=True):
         return
     conns = getattr(_LEDGER_POOL, "conns", None)
     if not conns:
@@ -1836,21 +1833,18 @@ def ledger_op(key, ensure_schema, path=None):
     Caller-held references cannot keep an operation's SQLite descriptor alive.
     Every later operation obtains a new lease, including after BaseException.
     """
-    from ...ledger_writer import deadline_ledger_writer_lock
     while True:
         c = pooled_ledger_conn(key, ensure_schema, path=path)
-        with deadline_ledger_writer_lock(_LEDGER_POOL_REGISTRY_LOCK):
+        with acquire_ledger_writer_deadline_lock(_LEDGER_POOL_REGISTRY_LOCK):
             if c._ledger_released:
                 continue
             c._ledger_operation_borrowed = True
             c._ledger_operation_scope_depth = getattr(c, "_ledger_operation_scope_depth", 0) + 1
             break
-    from ...ledger_writer import current_ledger_writer_connection
-    writer_owned = c is current_ledger_writer_connection(path)
+    writer_owned = c is resolve_active_ledger_writer_connection(path)
     try:
         yield c
-        from ...ledger_writer import ledger_connection_commit_deferred
-        if c._ledger_operation_scope_depth == 1 and not ledger_connection_commit_deferred(c):
+        if c._ledger_operation_scope_depth == 1 and not probe_ledger_connection_commit_deferred(c):
             c.commit()
         if not writer_owned and c._ledger_operation_scope_depth == 1:
             from spendguard.ledger_wal_maintenance import maintain_ledger_wal_if_due
