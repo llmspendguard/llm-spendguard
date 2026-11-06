@@ -90,6 +90,7 @@ def _load_public_api_and_install_gate():
     _wire_execution_accessor_resolvers()
     _wire_admission_accessor_resolvers()
     _wire_platform_accessor_resolvers()
+    _wire_reference_data_accessor_resolvers()
 
 
 def _wire_execution_accessor_resolvers():
@@ -133,6 +134,15 @@ def _wire_platform_accessor_resolvers():
     try:
         from .platform import platform_resolver_bootstrap
         platform_resolver_bootstrap.wire_platform_accessor_resolvers()
+    except Exception:
+        pass
+
+
+def _wire_reference_data_accessor_resolvers():
+    """Trigger lazy reference-data-home resolver registration through its bootstrap."""
+    try:
+        from .store.reference_data import reference_data_resolver_bootstrap
+        reference_data_resolver_bootstrap.wire_reference_data_accessor_resolvers()
     except Exception:
         pass
 

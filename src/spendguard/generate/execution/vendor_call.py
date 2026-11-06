@@ -629,9 +629,9 @@ def served_check(vendor, model):
     this, serves() would live-confirm an agy id against the METERED /models, not find it, and wrongly call a
     perfectly-served lane id 'stale' — so the live confirm runs ONLY when a metered list exists and misses (a lane
     id absent from the metered namespace is expected, never stale)."""
-    from ... import catalog
-    ids = catalog.live_model_ids(vendor)               # cached METERED served ids (dispatch form), or None if not cached
-    lane_ids = catalog.lane_model_ids(vendor)          # cached SUBSCRIPTION-LANE ids (agy's own namespace), or None
+    from spendguard.store.reference_data import reference_data_accessors
+    ids = reference_data_accessors.resolve_live_model_ids(vendor)
+    lane_ids = reference_data_accessors.resolve_lane_model_ids(vendor)
     if ids is None and lane_ids is None:
         return "unchecked"                             # no maintained list of EITHER kind → dormant, no live fetch
     bare = model.split(":", 1)[-1]
@@ -696,13 +696,17 @@ def served_substitute(vendor, requested):
     import re as _re
     if served_check(vendor, requested) in ("served", "unchecked"):
         return requested, None                        # already callable (or can't-check) — nothing to resolve
-    from ... import catalog, models as _models
+    from ... import models as _models
+    from spendguard.store.reference_data import reference_data_accessors
     rec = _models.facts(requested).get("served_substitute")
     if rec is not None:                               # judged before ("" = judged: NO good substitute — a real answer)
         val, src = rec[0], (rec[2] if len(rec) > 2 else "")
         reason = src.split("::", 1)[1].strip() if isinstance(src, str) and "::" in src else None
         return (val, reason) if val else (requested, None)
-    cands = sorted(set(catalog.live_model_ids(vendor) or []) | set(catalog.lane_model_ids(vendor) or []))
+    cands = sorted(
+        set(reference_data_accessors.resolve_live_model_ids(vendor) or [])
+        | set(reference_data_accessors.resolve_lane_model_ids(vendor) or [])
+    )
     if not cands:
         return requested, None                        # no served id to choose from → dispatch errors honestly
     from ... import adapters, config, pricing

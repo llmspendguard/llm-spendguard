@@ -19,6 +19,7 @@
         "store.reference_data.pricing_accessors",
         "store.reference_data.reasoning_equivalence",
         "store.reference_data.reference_data_accessors",
+        "store.reference_data.reference_data_resolver_bootstrap",
         "store.reference_data.refresh",
         "store.reference_data.sync",
         "store.reference_data.sync_capabilities"

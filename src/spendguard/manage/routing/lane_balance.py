@@ -14,6 +14,7 @@ rather than being a parallel computation that could disagree.
 """
 import spendguard.manage.admission.spend_refusal_error as _admission_refusal_errors
 from spendguard.generate.execution import execution_accessors as _execution_accessors
+from spendguard.store.reference_data import reference_data_accessors as _reference_data_accessors
 from ... import config, bulk_resilience
 
 
@@ -319,10 +320,11 @@ def _bulk_arms(intent, lanes=None):
     proven total loser for this intent); that is a natural boundary, not a tuned threshold. Untried lanes are kept
     optimistically (explore), cooling lanes skipped. Spreading bulk across every remaining good lane is what makes it
     fast — they run in PARALLEL — so this returns the whole good set, not a single winner."""
-    from ... import lane_bandit, lane_catalog
+    from ... import lane_bandit
     st = lane_bandit.arm_stats(intent)
     best = {}
-    for arm in lane_catalog.arms(lanes or config._cfg_get("advisor", "delegate_lanes", None)):
+    for arm in _reference_data_accessors.resolve_arms(
+            lanes or config._cfg_get("advisor", "delegate_lanes", None)):
         if lane_bandit._arm_cooling(*arm):
             continue
         s = st.get(arm) or {}
@@ -344,7 +346,7 @@ def quality_equivalent_free_substitutes(intent, primary_model, excluded=None):
     is intersected with the intent's propose→confirm registry, so neither an unapproved model nor a cold prior can
     enter failover. `route_utility.rank_lanes` then orders those agentically-approved arms by provider headroom.
     """
-    from ... import advisor, lane_catalog, route_utility
+    from ... import advisor, route_utility
     from spendguard.platform import platform_accessors as _platform_accessors
     blocked = set(excluded or ())
     primary_provider = _execution_accessors.resolve_provider_for(primary_model)
@@ -373,12 +375,12 @@ def quality_equivalent_free_substitutes(intent, primary_model, excluded=None):
     if not candidates:
         return []
     snapshot = {r["lane"]: r for r in _platform_accessors.resolve_lane_headroom(do_fetch=False)}
-    rows = [snapshot.get(lane, {"lane": lane, "provider": lane_catalog.lane_provider(lane), "known": False,
+    rows = [snapshot.get(lane, {"lane": lane, "provider": _reference_data_accessors.resolve_lane_provider(lane), "known": False,
                                 "remaining_pct": None, "reset_ts": None}) for lane, _ in candidates]
     rank = {r["lane"]: i for i, r in enumerate(route_utility.rank_lanes(rows)) if r.get("available")}
     candidates = [a for a in candidates if a[0] in rank]
     candidates.sort(key=lambda a: rank[a[0]])
-    return [f"{lane_catalog.lane_provider(lane)}:{use_name}" for lane, use_name in candidates]
+    return [f"{_reference_data_accessors.resolve_lane_provider(lane)}:{use_name}" for lane, use_name in candidates]
 
 
 def _arm_fallback_pricey(lane, use_name):
@@ -389,8 +391,8 @@ def _arm_fallback_pricey(lane, use_name):
     OUTPUT tokens) — it classifies opus/sol as pricey and gemini/glm as fine. A pricing hiccup reads as NOT pricey (the
     guard never blocks a call on its OWN failure)."""
     try:
-        from ... import model_catalog as _mc, lane_catalog
-        prov = lane_catalog.lane_provider(lane)
+        from ... import model_catalog as _mc
+        prov = _reference_data_accessors.resolve_lane_provider(lane)
         p = _mc.model_price(f"{prov}:{use_name}") or _mc.model_price(use_name)
         rate = (p or {}).get("out")                                          # published $/1M OUTPUT tokens (a price LOOKUP, not a cost estimate — output dominates a runaway)
         thr = float(config._cfg_get("advisor", "bulk_max_fallback_usd_per_mtok", 10.0))
@@ -599,7 +601,7 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None,
     import threading as _th
     import time as _time
     import concurrent.futures as _cf
-    from ... import dispatch, lane_catalog
+    from ... import dispatch
     from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
 
     _bulk_who = (_call_corpus_accessors.resolve_calls_current() or {}).get("who") or _call_corpus_accessors.resolve_calls_caller()   # ORIGINATING caller, captured on THIS submitting
@@ -746,8 +748,9 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None,
         # Split the model-DECLARED lanes from the AVAILABLE ones so a PERMANENT config gap (no lane serves this group
         # at all → refuses every run) is DISTINGUISHABLE from a TRANSIENT one (lanes serve it but are all cooling right
         # now → retry later). They demand opposite responses and used to be one message, indistinguishable as N misses.
-        _pool = lanes or lane_catalog.lanes()
-        _declared = [(ln, m) for ln in _pool if (m := lane_catalog.lane_model_for_tier(ln, tier))]
+        _pool = lanes or _reference_data_accessors.resolve_lanes()
+        _declared = [(ln, m) for ln in _pool
+                     if (m := _reference_data_accessors.resolve_lane_model_for_tier(ln, tier))]
         arms = [(ln, m) for ln, m in _declared if not _execution_accessors.resolve__lane_cooling(ln)]
         if not arms:
             if not _declared:                            # PERMANENT: nothing serves this group → refuses every run
@@ -1046,7 +1049,7 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None,
         # ONE attempt on ONE named lane — the body shared by the plain path AND each side of a hedge race. `no_fallback`
         # is the caller's refuse_billed for the PRIMARY, but ALWAYS True for a HEDGE (a hedge can never bill — at worst
         # a free lane miss). Returns (i, row); a DELIBERATE stop RAISES (halts the fan), never a textless row.
-        prov = lane_catalog.lane_provider(lane)
+        prov = _reference_data_accessors.resolve_lane_provider(lane)
         model = f"{prov}:{use_name}"
         try:
             _waited = dispatch.acquire_or_none(prov, use_name, deadline_s, sla_class=sla_class)     # governor: bounds per-lane in-flight (fills, never swarms; sla_class="batch" respects the realtime reserve)
@@ -1169,7 +1172,7 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None,
 
         def _hedge_timeout_result():
             return i, {"text": None, "lane": lane, "use_name": use_name,
-                       "model": f"{lane_catalog.lane_provider(lane)}:{use_name}", "billed": False,
+                "model": f"{_reference_data_accessors.resolve_lane_provider(lane)}:{use_name}", "billed": False,
                        "reason": "hedge_coordinator_timeout",
                        "error": "hedge coordinator exceeded derived %.3fs ceiling" %
                                 (_hedge_coordinator_deadline - _hedge_started_at)}
@@ -1368,7 +1371,7 @@ def estimate_fan(tasks, intent, system=None, lanes=None, tier=None, out_est=None
         else `out_est`, else a config nominal — `out_basis` says which so the estimate is auditable.
     Mirrors crossllm's "budget_usd is None → estimate only, never spends" pattern for the lane fan."""
     import hashlib as _hl
-    from ... import lane_catalog, lane_economics, pricing, config, provider_tokens
+    from ... import lane_economics, pricing, config, provider_tokens
     import spendguard.manage.admission.admission_accessors as bulkgate
 
     tasks = list(tasks)
@@ -1384,8 +1387,9 @@ def estimate_fan(tasks, intent, system=None, lanes=None, tier=None, out_est=None
     # ARMS — resolved identically to bulk_delegate (tier group models, else the intent's good lanes), then the SAME
     # reserved-lane filter. A refusal here is a $0 "this fan can't run as asked" answer, not an error.
     if tier:
-        _pool = lanes or lane_catalog.lanes()
-        _declared = [(ln, m) for ln in _pool if (m := lane_catalog.lane_model_for_tier(ln, tier))]
+        _pool = lanes or _reference_data_accessors.resolve_lanes()
+        _declared = [(ln, m) for ln in _pool
+                     if (m := _reference_data_accessors.resolve_lane_model_for_tier(ln, tier))]
         arms = [(ln, m) for ln, m in _declared if not _execution_accessors.resolve__lane_cooling(ln)]
         if not arms:
             reason = "tier_undeclared" if not _declared else "all_lanes_cooling"
@@ -1426,7 +1430,7 @@ def estimate_fan(tasks, intent, system=None, lanes=None, tier=None, out_est=None
     est, n_unpriced, _sys = 0.0, 0, str(system or "")
     for j, t in enumerate(distinct_tasks):
         ln, use_name = arms[j % len(arms)]
-        prov = lane_catalog.lane_provider(ln)
+        prov = _reference_data_accessors.resolve_lane_provider(ln)
         model = f"{prov}:{use_name}"
         _txt = (_sys + "\n" + str(t)) if _sys else str(t)
         in_tok = provider_tokens.count_text(_txt, provider=prov, model=model)   # PROVIDER-AWARE (real BPE × factor)
@@ -1439,7 +1443,7 @@ def estimate_fan(tasks, intent, system=None, lanes=None, tier=None, out_est=None
         lane_quota_cost.planned_round_robin_lane_calls(n_distinct, [arm[0] for arm in arms]),
         intent=intent, auth_over_quota=True)
     return {"viable": True, "reason": None, "intent": intent, "n_tasks": n_tasks, "n_distinct": n_distinct,
-            "arms": [f"{lane_catalog.lane_provider(ln)}:{m}" for ln, m in arms],
+            "arms": [f"{_reference_data_accessors.resolve_lane_provider(ln)}:{m}" for ln, m in arms],
             "quota": quota,
             "est_metered_usd_worst": round(est, 6), "n_unpriced": n_unpriced, "out_tok": out_tok, "out_basis": out_basis,
             "note": f"$0 on the {len(arms)} plan lane(s); worst case ${round(est, 4)} if all {n_distinct} distinct "
@@ -1602,15 +1606,17 @@ def route_decision(intent, model, reactive=False):
             _eligible = _intent_listed(intent, config._cfg_get("advisor", "bandit_intents", None))
         if _bandit_on and not str(intent).startswith(_META) and _eligible:
             try:
-                from ... import lane_bandit, lane_catalog, lane_economics
+                from ... import lane_bandit, lane_economics
                 _prim_lane = _execution_accessors.resolve__LANES().get(_execution_accessors.resolve_provider_for(model), (None,))[0]
                 # exclude the primary lane AND any prompt-metered lane whose self-use cap is reached (reserve its
                 # stops-dead prompt budget for real coding rather than spend it on discretionary bandit work)
-                _arms = [a for a in lane_catalog.arms(config._cfg_get("advisor", "delegate_lanes", None))
+                _arms = [a for a in _reference_data_accessors.resolve_arms(
+                    config._cfg_get("advisor", "delegate_lanes", None))
                          if a[0] != _prim_lane and not lane_economics.prompt_lane_reserved(a[0])]
                 _arm = lane_bandit.choose_arm(intent, _arms)
                 if _arm:
-                    return f"{lane_catalog.lane_provider(_arm[0])}:{_arm[1]}", f"bandit → {_arm[0]} ({_arm[1]})"
+                    return (f"{_reference_data_accessors.resolve_lane_provider(_arm[0])}:{_arm[1]}",
+                            f"bandit → {_arm[0]} ({_arm[1]})")
             except Exception:
                 pass
         return None, "no confirmed substitute for this intent (propose+confirm first)"

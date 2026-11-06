@@ -64,8 +64,9 @@ def _metered_target(provider):
                 return spec.split(":", 1)[-1]
     except Exception:
         pass
-    from ... import catalog, pricing
-    live = set(catalog.live_model_ids(provider) or [])
+    from ... import pricing
+    from ...store.reference_data import reference_data_accessors
+    live = set(reference_data_accessors.resolve_live_model_ids(provider) or [])
     default = _probe_default(provider)                    # catalog-derived cheapest (SSOT), not a hardcoded literal
     if default and (not live or default in live):        # trust the default unless the catalog positively lacks it
         return default

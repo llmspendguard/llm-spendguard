@@ -44,6 +44,7 @@ the vendors' documented scale order, needed to compare "equal or greater". Bake-
 OVERLAID, so learning is maintained across re-derivations.
 """
 from spendguard.generate.execution import execution_accessors as _execution_accessors
+from . import reference_data_accessors as _reference_data_accessors
 from ... import config, lane_catalog, models
 
 # The requested STANDARD levels a caller pins with. minimal|low|medium|high is the one knob callers use; each
@@ -410,3 +411,7 @@ def format_map():
     else:
         lines.append("  every cell is EQUAL reasoning — the lane and its metered fallback apply identical effort.")
     return "\n".join(lines)
+
+
+_reference_data_accessors.set_format_map_resolver(lambda *args, **kwargs: format_map(*args, **kwargs))
+_reference_data_accessors.set_resolve_metered_resolver(lambda *args, **kwargs: resolve_metered(*args, **kwargs))

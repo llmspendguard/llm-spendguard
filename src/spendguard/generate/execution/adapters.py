@@ -15,6 +15,7 @@ import contextlib
 import sys
 from ... import config, pricing
 from spendguard.store.configuration import provider_key_env_registry as _pkenv
+from spendguard.store.reference_data import reference_data_accessors as _reference_data_accessors
 
 from .execution_accessors import (  # noqa: F401  (public home re-exports include constants unused internally)
     LANE_MIN_TIMEOUT_S, MAX_TOKEN_CEILING, PROVIDERS, SCHEMA_STRICT,
@@ -396,12 +397,11 @@ def _learn_from_fallback(lane_name, prompt, api_failed, model=None, transient=Fa
         _lane_model_cool(lane_name, model)          # retryable — back off THIS model on THIS lane, NOT a permanent
         if _repeat_miss:
             try:
-                from ... import catalog as _cat_un
                 # UNION with the lane's existing unserved set — merge_lane_observation REPLACES lane_unserved[lane]
                 # with what we pass (it is written for a full re-measurement), so passing only [model] would clobber
                 # any models already recorded unserved. served=[] keeps the prior served set (minus this model).
-                _rej = sorted(set(_cat_un.lane_unserved_ids(lane_name) or []) | {model})
-                _cat_un.merge_lane_observation(lane_name, [], _rej)
+                _rej = sorted(set(_reference_data_accessors.resolve_lane_unserved_ids(lane_name) or []) | {model})
+                _reference_data_accessors.resolve_merge_lane_observation(lane_name, [], _rej)
             except Exception:
                 pass
         try:                                        # a REPEATED model-miss may be a PERMANENT plan drop (codex 0.160.1
@@ -1214,11 +1214,11 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
     # so the work stays $0. Recorded via _resolved_from/_resolution exactly like served_substitute — never silent.
     if _route and not _probe and not getattr(_resolve_guard, "on", False):
         try:
-            from ... import catalog as _cat_ld
             _ldprov = provider_for(model)
             _ldraw = model.split(":", 1)[1] if ":" in model else model
             _ldlane = _LANES.get(_ldprov, (None, None))[0]
-            if _ldlane and _executor() in ("pool", _ldlane) and _ldraw in set(_cat_ld.lane_unserved_ids(_ldlane) or []):
+            if (_ldlane and _executor() in ("pool", _ldlane)
+                    and _ldraw in set(_reference_data_accessors.resolve_lane_unserved_ids(_ldlane) or [])):
                 if no_substitution or measurement:
                     metered_only = True                    # pin the literal id to the metered API (it serves it) — never swap a measurement
                 else:
@@ -2555,8 +2555,7 @@ def _compose_gemini_reasoning(model_id, reasoning):
         return base + "-" + tier
     if existing:                                         # already tier-suffixed → agy serves it, keep it
         return model_id
-    from ... import lane_catalog                           # a BARE base id → the lane's default served tier, never
-    return base + "-" + (lane_catalog.quirk("gemini").get("default") or "medium")   # the bare id agy rejects
+    return base + "-" + (_reference_data_accessors.resolve_quirk("gemini").get("default") or "medium")
 
 
 def _is_dated_variant(bare, candidate):
@@ -2578,8 +2577,7 @@ def _served_dated_id(provider, model_id):
     hop. Unchanged when the list is absent, the bare id is already served, or no dated variant exists (then
     served_check still flags it 'stale' and the runtime resolver takes over)."""
     try:
-        from ... import catalog
-        ids = catalog.live_model_ids(provider)             # cached metered served ids (dispatch form), or None
+        ids = _reference_data_accessors.resolve_live_model_ids(provider)
         if not ids or model_id in ids:
             return model_id                                # no list, or already served → nothing to resolve
         variants = sorted(m for m in ids if _is_dated_variant(model_id, m))
@@ -2990,9 +2988,10 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
         # $0 (cached) and wrapped so a map hiccup degrades to the prior behaviour, never breaks the fallback.
         _fb_model, _fb_reasoning = model, reasoning
         try:
-            from ... import reasoning_equivalence as _re, lane_catalog as _lc
-            _base_m, _suf_lv = _lc.parse_use_name(raw, lane_name)      # split any agy reasoning suffix off the id
-            _cell = _re.resolve_metered(lane_name, _base_m, reasoning or _suf_lv)
+            _base_m, _suf_lv = _reference_data_accessors.resolve_parse_use_name(raw, lane_name)
+            _cell = _reference_data_accessors.resolve_resolve_metered(
+                lane_name, _base_m, reasoning or _suf_lv
+            )
             _fb_reasoning = _cell["metered_effort"]                    # EQUAL, proven-lesser, or rounded-up (never less)
             if _cell.get("metered_model"):
                 _fb_model = f"{prov}:{_cell['metered_model']}"         # the SERVED equal-model id (resolves stale alias)
@@ -3066,7 +3065,7 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
     # a meaning call, never string distance). 'unchecked' (no synced list, or discovery unavailable) proceeds: a
     # can't-check is never a rejection. `raw` is already respelled to the bare metered id for gemini above.
     try:
-        from ... import vendor_call as _vc, catalog as _catalog
+        from ... import vendor_call as _vc
     except Exception:
         _vc = None                                     # packaging edge — nothing to validate against; skip silently
     if _vc is not None:
@@ -3079,7 +3078,7 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
                                if _live else ""))
                 return {**base, "executor": "api", "error_type": "StaleModelId",
                         "error": f"{prov} does not serve {raw!r} (not in its live /models catalog){_hint}."}
-            if _status == "unchecked" and _catalog.note_unknown_once(prov):
+            if _status == "unchecked" and _reference_data_accessors.resolve_note_unknown_once(prov):
                 import sys as _syscat
                 print(f"[spendguard] served-list not synced for {prov} — cannot verify {raw!r} is live; proceeding. "
                       f"Run `spendguard sync-catalog` to catch stale ids at dispatch.", file=_syscat.stderr)
@@ -3088,7 +3087,7 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
             # real call, but make it VISIBLE once per provider so it can't silently disable the stale-id protection
             # forever (the swallowed-exception blind spot). NOT a stale verdict: a check we couldn't run is unchecked.
             try:
-                if _catalog.note_unknown_once(prov):
+                if _reference_data_accessors.resolve_note_unknown_once(prov):
                     import sys as _scv
                     print(f"[spendguard] served-list check errored for {prov} ({str(_ce)[:80]}) — proceeding "
                           f"UNVALIDATED; a stale id would not be caught. Fix the catalog cache / `sync-catalog`.",

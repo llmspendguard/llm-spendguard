@@ -3,7 +3,8 @@ from spendguard.generate.execution import execution_accessors as _execution_acce
 import os
 
 from spendguard.platform import platform_accessors as _platform_accessors
-from ... import config, lane_catalog, lane_registry, overage
+from ... import config, lane_registry, overage
+from spendguard.store.reference_data import reference_data_accessors
 
 
 def hosting_plan_lane():
@@ -74,7 +75,7 @@ def _ready(lane):
     than never routing to it (the old `auth != "ok"` gate excluded every no-status-probe lane, leaving only codex able
     to absorb a shed)."""
     from ... import reliability
-    provider = lane_catalog.lane_provider(lane)
+    provider = reference_data_accessors.resolve_lane_provider(lane)
     if any((r.get("kind") == "lane" and r.get("resource") == lane)
            or (r.get("kind") == "metered" and r.get("resource") == provider)
            for r in reliability.health_reds()):
@@ -93,19 +94,20 @@ def _best_ready_alt_lane(primary, tier="cheap"):
     (lane, model) or None. This is the AVAILABILITY core shared by decide()'s fallback tier and ready_meta_model: an
     UNPROVEN but SUBSTITUTABLE call can still be SERVED on a ready free lane rather than refused, because the caller
     declared the model substitutable (a pinned / measurement call never reaches here). $0 (cached status), never raises."""
-    from ... import lane_catalog, route_utility
+    from ... import route_utility
     ready = []
-    for lane in lane_catalog.lanes():
+    for lane in reference_data_accessors.resolve_lanes():
         if lane == primary or not _ready(lane):
             continue
-        m = lane_catalog.lane_model_for_tier(lane, tier) or lane_catalog.configured_base(lane)
+        m = (reference_data_accessors.resolve_lane_model_for_tier(lane, tier)
+             or reference_data_accessors.resolve_configured_base(lane))
         if m:
             ready.append((lane, m))
     if not ready:
         return None
     snapshot = {r["lane"]: r for r in _platform_accessors.resolve_lane_headroom(do_fetch=False)}
     ranked = route_utility.rank_lanes([
-        snapshot.get(lane, {"lane": lane, "provider": lane_catalog.lane_provider(lane), "known": False,
+        snapshot.get(lane, {"lane": lane, "provider": reference_data_accessors.resolve_lane_provider(lane), "known": False,
                             "remaining_pct": None, "reset_ts": None})
         for lane, _m in ready])
     order = {row["lane"]: n for n, row in enumerate(ranked) if row.get("available")}
@@ -158,7 +160,7 @@ def decide(model, intent, auth_over_quota=False):
     if candidates:
         snapshot = {r["lane"]: r for r in _platform_accessors.resolve_lane_headroom(do_fetch=False)}
         ranked = route_utility.rank_lanes([
-            snapshot.get(lane, {"lane": lane, "provider": lane_catalog.lane_provider(lane), "known": False,
+            snapshot.get(lane, {"lane": lane, "provider": reference_data_accessors.resolve_lane_provider(lane), "known": False,
                                 "remaining_pct": None, "reset_ts": None})
             for lane, _model in candidates])
         order = {row["lane"]: n for n, row in enumerate(ranked) if row.get("available")}

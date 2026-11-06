@@ -15,6 +15,7 @@ this vendor was never cached — None is 'not maintained here', which served_che
 never as 'no'.
 """
 from spendguard.generate.execution import execution_accessors as _execution_accessors
+from . import reference_data_accessors as _reference_data_accessors
 import os
 import json
 import datetime
@@ -199,8 +200,6 @@ def model_ceiling(vendor, model):
         return None
 
 
-from . import reference_data_accessors as _reference_data_accessors
-
 _reference_data_accessors.set_model_ceiling_resolver(model_ceiling)
 
 
@@ -270,3 +269,15 @@ def main(argv=None):
     if n_cur:
         print(f"  curated overlay: {n_cur} models synced (source dates preserved) → {model_catalog._overlay_path()}")
     return 0
+
+
+_reference_data_accessors.set_lane_model_ids_resolver(lambda *args, **kwargs: lane_model_ids(*args, **kwargs))
+_reference_data_accessors.set_lane_unserved_ids_resolver(lambda *args, **kwargs: lane_unserved_ids(*args, **kwargs))
+_reference_data_accessors.set_live_model_ids_resolver(lambda *args, **kwargs: live_model_ids(*args, **kwargs))
+_reference_data_accessors.set_merge_lane_observation_resolver(
+    lambda *args, **kwargs: merge_lane_observation(*args, **kwargs)
+)
+_reference_data_accessors.set_note_unknown_once_resolver(lambda *args, **kwargs: note_unknown_once(*args, **kwargs))
+_reference_data_accessors.set_refresh_catalog_if_stale_resolver(
+    lambda *args, **kwargs: refresh_catalog_if_stale(*args, **kwargs)
+)

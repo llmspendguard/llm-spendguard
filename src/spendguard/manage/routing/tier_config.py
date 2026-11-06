@@ -14,7 +14,8 @@ from spendguard.generate.execution import execution_accessors as _execution_acce
 from ...capability_cli_parsing import registered_cli_option_token
 import time
 
-from ... import config, lane_catalog, route_utility
+from ... import config, route_utility
+from spendguard.store.reference_data import reference_data_accessors
 
 
 def _model_is_priced(model):
@@ -63,14 +64,15 @@ def tier_config_report():
     issues, warns, gout, lout = [], [], {}, {}
     for g, models in groups.items():
         unpriced = [m for m in models if not _model_is_priced(m)]
-        served_by = [ln for ln in lane_catalog.lanes() if lane_catalog.lane_model_for_tier(ln, g)]
+        served_by = [ln for ln in reference_data_accessors.resolve_lanes()
+                     if reference_data_accessors.resolve_lane_model_for_tier(ln, g)]
         gout[g] = {"models": list(models), "unpriced": unpriced, "lanes": served_by}
         if unpriced:
             issues.append(f"group {g!r}: unpriced model(s) {', '.join(unpriced)} — `spendguard sync-prices` or add to prices.json")
         if not served_by:
             issues.append(f"group {g!r}: declared but NO lane serves it → a `--tier {g}` fan refuses (reason=tier_undeclared)")
     for ln, decl in lane_models.items():
-        base = lane_catalog.configured_base(ln)
+        base = reference_data_accessors.resolve_configured_base(ln)
         in_groups = [g for g in groups if base in groups.get(g, [])] if base else []
         priced = _model_is_priced(base) if base else False
         lout[ln] = {"base": base, "in_groups": in_groups, "priced": priced, "per_tier": isinstance(decl, dict)}
@@ -105,16 +107,16 @@ def reachability_probe(save=True):
     groups = route_utility.tiers()
     enabled = {ln["lane"] for ln in _platform_accessors.resolve_lanes_status()["lanes"] if ln["enabled"]}
     targets = {}                                         # (lane, model) -> the tiers that declare it (probe each once)
-    for ln in lane_catalog.lanes():
+    for ln in reference_data_accessors.resolve_lanes():
         if ln not in enabled:
             continue
         for g in groups:
-            model = lane_catalog.lane_model_for_tier(ln, g)
+            model = reference_data_accessors.resolve_lane_model_for_tier(ln, g)
             if model:
                 targets.setdefault((ln, model), []).append(g)
     rows = []
     for (ln, model), tiers in targets.items():
-        prov = lane_catalog.lane_provider(ln)            # the provider namespace whose atomic pair IS this lane
+        prov = reference_data_accessors.resolve_lane_provider(ln)
         pinned = f"{prov}:{model}" if prov and ":" not in str(model) else model
         try:
             r = _execution_accessors.resolve_call(pinned, _REACH_PROMPT, no_substitution=True, no_metered_fallback=True,
@@ -165,7 +167,8 @@ def main(argv=None):
             return 2
         _write_advisor_cfg("tiers", {**route_utility.tiers(), group: list(models)})
         print(f"advisor.tiers[{group!r}] = {list(models)}   → {config.CONFIG_JSON}")
-        served = [ln for ln in lane_catalog.lanes() if lane_catalog.lane_model_for_tier(ln, group)]
+        served = [ln for ln in reference_data_accessors.resolve_lanes()
+                  if reference_data_accessors.resolve_lane_model_for_tier(ln, group)]
         if not served:
             print(f"  ⚠ no lane serves {group!r} yet → a `--tier {group}` fan still refuses (reason=tier_undeclared). "
                   f"Map one: `spendguard lanes set-model <lane> <a model in this group>`.")

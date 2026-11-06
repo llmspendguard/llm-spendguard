@@ -353,13 +353,13 @@ def rank_for_tier(tier, est_in=0, est_out=0, lane_rows=None, cooling=None, now=N
     available=True. This is the single entry point that makes balance AUTOMATIC: no pinned model, no per-caller lane
     logic — name a group you declared, the economics pick the plan. Empty when the group is undeclared (advisor.tiers)."""
     from spendguard.platform import platform_accessors as _platform_accessors
-    from ... import lane_catalog
+    from spendguard.store.reference_data import reference_data_accessors
     rows = list(lane_rows if lane_rows is not None else _platform_accessors.resolve_lane_headroom(do_fetch=False))
     # each lane's model FOR THIS group (its cheap model for `cheap`, strong for `strong`) — None if it serves none.
     tier_lane_model = {}
-    for ln in lane_catalog.lanes():
+    for ln in reference_data_accessors.resolve_lanes():
         try:
-            tier_lane_model[ln] = lane_catalog.lane_model_for_tier(ln, tier)
+            tier_lane_model[ln] = reference_data_accessors.resolve_lane_model_for_tier(ln, tier)
         except Exception:
             tier_lane_model[ln] = None
     tier_lane_rows = [r for r in rows if tier_lane_model.get(r["lane"])]     # lanes that SERVE this group

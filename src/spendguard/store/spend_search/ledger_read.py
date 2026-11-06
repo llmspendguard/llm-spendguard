@@ -1606,5 +1606,4 @@ set_ledger_read_accessors(ledger_read_table_exists, read_routing_history_report,
                           effective_ledger_admission_deadline, LedgerReadError)
 
 from . import ledger_request_cursor as _ledger_request_cursor  # noqa: F401,E402
-from ..reference_data import catalog as _reference_data_catalog  # noqa: F401,E402
 from ..reference_data import models as _reference_data_models  # noqa: F401,E402

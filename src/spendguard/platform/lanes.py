@@ -19,6 +19,7 @@ import time
 from pathlib import Path
 
 from .. import config, lane_registry   # config: probe cache via update_json; lane_registry: the ONE lane data table
+from spendguard.store.reference_data import reference_data_accessors
 
 # Per-lane auth artifacts, keychain services, probe tiers and login steps ALL live in lane_registry now (one place).
 # A test isolates a lane's artifacts by repointing its row's `creds` (lane_registry.lane_spec(x)["creds"] = (tmp,)).
@@ -387,9 +388,9 @@ def overage_nudge_line(do_fetch=False):
 
 def set_declared_lane_model(lane: str, model: str, *, tier: str | None = None) -> int:
     """Validate and persist the existing lane model declaration without clobbering other tiers."""
-    from .. import lane_catalog, config as _cfg, model_catalog, tier_config, route_utility
-    if lane not in lane_catalog.lanes():
-        print(f"unknown lane {lane!r} — known lanes: {', '.join(lane_catalog.lanes())}")
+    from .. import config as _cfg, model_catalog, tier_config, route_utility
+    if lane not in reference_data_accessors.resolve_lanes():
+        print(f"unknown lane {lane!r} — known lanes: {', '.join(reference_data_accessors.resolve_lanes())}")
         return 2
     if model_catalog.model_record(model) is None:
         print(f"refusing: {model!r} is not in model_catalog.json — a lane model must be catalogued so its "
@@ -424,7 +425,6 @@ def main(argv=None):
         # Declare the model a subscription LANE calls with (advisor.lane_models[lane]), VALIDATED at declaration: the
         # lane must be real and the model must be catalogued + priced. `set-model <lane> <model>` sets its single model;
         # `set-model <lane> <tier> <model>` sets ONE tier of its per-tier map, preserving the others (no clobber).
-        from .. import lane_catalog
         rest = argv[1:]
         if len(rest) == 2:
             lane, tier, model = rest[0], None, rest[1]
@@ -433,7 +433,7 @@ def main(argv=None):
         else:
             print("usage: spendguard lanes set-model <lane> <model>            (the lane's single model)")
             print("       spendguard lanes set-model <lane> <tier> <model>     (one tier of its per-tier map)")
-            print(f"  lanes: {', '.join(lane_catalog.lanes())}")
+            print(f"  lanes: {', '.join(reference_data_accessors.resolve_lanes())}")
             return 2
         return set_declared_lane_model(lane, model, tier=tier)
     # The operator LANE SUMMARY + fallback/eligibility alerts are for a person reading `spendguard lanes`. The
@@ -523,9 +523,8 @@ def main(argv=None):
                 _mark = "LANE-ELIGIBLE" if d["eligible"] else "legit-metered"
                 print(f"  ${d['usd']:>8.2f}  {_mark:<14} {d['intent']}  — {d['why']}")
     if registered_cli_option_token('lanes/--catalog') in argv:                               # the lane model catalog: use-names · provider · reasoning · $
-        from .. import lane_catalog
         print()
-        lane_catalog.main()
+        reference_data_accessors.resolve_main()
     if registered_cli_option_token('lanes/--learn') in argv:                                 # what the cross-lane BANDIT has learned per intent
         from .. import lane_bandit
         print()
@@ -563,9 +562,8 @@ def main(argv=None):
         print()
         print(lane_economics.format_economics())
     if registered_cli_option_token('lanes/--fallback') in argv:                              # lane→metered id equivalence: a down plan must degrade, not strand
-        from .. import lane_catalog
         print()
-        print(lane_catalog.format_lane_fallback())
+        print(reference_data_accessors.resolve_format_lane_fallback())
     if registered_cli_option_token('lanes/--fallback-spend') in argv:                        # $ actually spent falling over from down lanes (savings lost)
         from .. import reliability as _rel_fbs, config as _cfg_fbs
         _since = None
@@ -584,9 +582,8 @@ def main(argv=None):
         if _rows:
             print(f"  {'TOTAL':<14} ${_tot:>9.4f}  — metered spend that a logged-in lane would have served at $0")
     if registered_cli_option_token('lanes/--reasoning-map') in argv:                         # lane→metered REASONING equivalence: same model, equal-or-greater effort
-        from .. import reasoning_equivalence
         print()
-        print(reasoning_equivalence.format_map())
+        print(reference_data_accessors.resolve_format_map())
     if registered_cli_option_token('lanes/--propose') in argv:                               # model PROPOSES acceptable substitutes for an intent (PENDING)
         rest = [a for a in argv[argv.index(registered_cli_option_token('lanes/--propose')) + 1:] if not a.startswith("--")]
         if len(rest) < 2:

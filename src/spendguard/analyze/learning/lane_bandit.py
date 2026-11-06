@@ -89,10 +89,10 @@ def _arm_cooling(lane, use_name):
     cooldown the adapter learned. Reuses the SAME backoff the metered path uses, so the bandit never routes onto a
     known-bad arm."""
     try:
-        from ... import lane_catalog
+        from ...store.reference_data import reference_data_accessors
         if _execution_accessors.resolve__lane_cooling(lane):
             return True
-        base, _lv = lane_catalog.parse_use_name(use_name, lane)
+        base, _lv = reference_data_accessors.resolve_parse_use_name(use_name, lane)
         return _execution_accessors.resolve__lane_model_cooling(lane, base)
     except Exception:
         return False
@@ -136,19 +136,19 @@ def _intent_realized_costs(intent, arms):
     Never raises (a routing read must not break routing)."""
     costs = {}
     try:
-        from ... import lane_catalog
+        from ...store.reference_data import reference_data_accessors
         from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
         norms = _call_corpus_accessors.resolve_calls_mean_out_by_executor_model(intent)   # {(executor_or_provider, model): {mean_out, n}}
         for arm in (arms or []):
             lane, use_name = arm
-            base, _lv = lane_catalog.parse_use_name(use_name, lane)
+            base, _lv = reference_data_accessors.resolve_parse_use_name(use_name, lane)
             # match the (executor, model) the lane path RECORDS: suffix-style lanes (gemini) log the whole use-name
-            model = use_name if lane_catalog.quirk(lane)["style"] == "suffix" else base
+            model = use_name if reference_data_accessors.resolve_quirk(lane)["style"] == "suffix" else base
             rec = norms.get((lane, model))
             mean_out = (rec or {}).get("mean_out") or 0.0
             if mean_out <= 0:
                 continue                                   # no measured output for this arm/intent → neutral tilt
-            c = lane_catalog.use_name_cost(use_name, int(mean_out), int(mean_out), lane)   # price the REALIZED output
+            c = reference_data_accessors.resolve_use_name_cost(use_name, int(mean_out), int(mean_out), lane)
             if c:
                 costs[arm] = float(c)
     except Exception:
@@ -285,17 +285,17 @@ def _run_arm(arm, task, system, reasoning, timeout_s):
     (reasoning INCLUDED, since it bills as output) so the EXPLOIT path can detect a cost-runaway (A2.3)."""
     lane, use_name = arm
     try:
-        from ... import lane_catalog
+        from ...store.reference_data import reference_data_accessors
         from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
         import importlib
-        prov = lane_catalog.lane_provider(lane)
+        prov = reference_data_accessors.resolve_lane_provider(lane)
         entry = _execution_accessors.resolve__LANES().get(prov)
         if not entry:
             return "", 0
         mod = importlib.import_module("." + entry[1], "spendguard")
-        base, level = lane_catalog.parse_use_name(use_name, lane)
+        base, level = reference_data_accessors.resolve_parse_use_name(use_name, lane)
         # gemini carries effort in the model SUFFIX (pass the whole use-name); the others take it as `reasoning`
-        model = use_name if lane_catalog.quirk(lane)["style"] == "suffix" else base
+        model = use_name if reference_data_accessors.resolve_quirk(lane)["style"] == "suffix" else base
         cap = int(getattr(mod, "TIMEOUT_S", 300))
         r = mod.run_prompt(task, system=system, model=model, timeout=min(cap, int(timeout_s or cap)),
                            reasoning=(level or reasoning))
@@ -316,9 +316,9 @@ def run_bakeoff(intent, task, system=None, reasoning=None, timeout_s=None):
     """Run the two LEAST-tried live arms on the SAME task, judge which is better, record the outcome for BOTH, and
     RETURN the winner's text (the caller still gets a usable answer). None if fewer than 2 live arms. This is where
     the bandit LEARNS — two $0 lane calls + one cheap judge call."""
-    from ... import lane_catalog
+    from ...store.reference_data import reference_data_accessors
     dl = config._cfg_get("advisor", "delegate_lanes", None)
-    arms = lane_catalog.arms(dl) if dl else lane_catalog.arms()
+    arms = reference_data_accessors.resolve_arms(dl) if dl else reference_data_accessors.resolve_arms()
     live = [a for a in arms if not _arm_cooling(*a)]
     if len(live) < 2:
         return None
@@ -362,12 +362,12 @@ def _exploit_overshoot_reward(intent, arm, out_tok, pre_norm):
     try:
         if not out_tok or int(out_tok) <= 0:
             return 1.0
-        from ... import lane_catalog
+        from ...store.reference_data import reference_data_accessors
         import spendguard.manage.admission.admission_accessors as bulkgate
         lane, use_name = arm
-        base, _lv = lane_catalog.parse_use_name(use_name, lane)
+        base, _lv = reference_data_accessors.resolve_parse_use_name(use_name, lane)
         # the (executor, model) the lane path RECORDS under — suffix-style lanes (gemini) log the whole use-name
-        model = use_name if lane_catalog.quirk(lane)["style"] == "suffix" else base
+        model = use_name if reference_data_accessors.resolve_quirk(lane)["style"] == "suffix" else base
         rec = (pre_norm or {}).get((lane, model)) or {}
         mean_out, n = float(rec.get("mean_out") or 0.0), int(rec.get("n") or 0)
         if mean_out <= 0 or n < bulkgate.RUNAWAY_MIN_SAMPLES:
@@ -388,9 +388,9 @@ def bandit_call(intent, task, system=None, reasoning=None, timeout_s=None):
     """The bandit's ENTRY for a delegatable task: EXPLORE via a bake-off (while cold, or at rate ε) else EXPLOIT the
     learned-winner arm on its lane. Returns {text, lane, use_name, why} of the answering lane, or None if no arm
     could serve it (caller falls back to its normal path). Records outcomes so it keeps learning."""
-    from ... import lane_catalog
+    from ...store.reference_data import reference_data_accessors
     dl = config._cfg_get("advisor", "delegate_lanes", None)
-    arms = lane_catalog.arms(dl) if dl else lane_catalog.arms()
+    arms = reference_data_accessors.resolve_arms(dl) if dl else reference_data_accessors.resolve_arms()
     if should_bakeoff(intent, arms):
         res = run_bakeoff(intent, task, system, reasoning, timeout_s)
         if res and res.get("text"):

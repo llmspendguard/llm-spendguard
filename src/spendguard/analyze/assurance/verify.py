@@ -45,9 +45,10 @@ def _probe_failover(lane, prompt="Reply with exactly: OK"):
     result came from the metered API (executor='api') with no error, then restore the prior cooldown state. One real,
     tiny metered call — the only honest proof that a down plan bills the API instead of stranding. Never clears a
     cooldown the lane already had (a real backoff must survive the probe)."""
-    from ... import lane_catalog, resource_state
-    prov = lane_catalog.lane_provider(lane)
-    model = lane_catalog.configured_base(lane)
+    from ... import resource_state
+    from ...store.reference_data import reference_data_accessors
+    prov = reference_data_accessors.resolve_lane_provider(lane)
+    model = reference_data_accessors.resolve_configured_base(lane)
     if not prov or not model:
         return {"lane": lane, "ok": None, "executor": None, "cost": None, "note": "no configured model — not probed"}
     key = resource_state.lane_key(lane)
@@ -71,16 +72,17 @@ def verify_system(probe=False):
     ok is True only when every STRUCTURAL check passes (a model id callable-as-written or correctable, every lane's
     fallback id priced + served-or-unchecked, every lane provider key present) — and, when probe=True, every live
     failover reached the metered API. 'unchecked'/'measuring' states are NOT failures (a can't-know is not a no)."""
-    from ... import lane_catalog, lane_economics
+    from ... import lane_economics
+    from ...store.reference_data import reference_data_accessors
     import spendguard.manage.admission.admission_accessors as model_preflight
 
     preflight = model_preflight.resolve_preflight_models(model_preflight.resolve_configured_specs())
-    fallback = lane_catalog.audit_lane_fallback()
+    fallback = reference_data_accessors.resolve_audit_lane_fallback()
 
-    lanes = lane_catalog.lanes()
+    lanes = reference_data_accessors.resolve_lanes()
     keys = []
     for ln in lanes:
-        prov = lane_catalog.lane_provider(ln)
+        prov = reference_data_accessors.resolve_lane_provider(ln)
         present, key_env = _key_present(prov) if prov else (None, None)
         keys.append({"lane": ln, "provider": prov, "key_env": key_env, "present": present,
                      "ok": bool(present), "note": ("key present" if present else f"MISSING {key_env} — fallback would strand")})

@@ -16,6 +16,7 @@ config.update_json (atomic + backups), so the SSOT catalog is never truncated.
 """
 
 from ...capability_cli_parsing import add_registered_cli_argument
+from . import reference_data_accessors as _reference_data_accessors
 import argparse
 import datetime
 import sys
@@ -240,3 +241,8 @@ def cmd(argv=None):
           f" · changed={s['changed']} observed/no-op={s['no_op']}"
           f"{' (nothing written)' if s.get('dry_run') else ' → model_catalog.json'}")
     return 0
+
+
+_reference_data_accessors.set_audit_catalog_completeness_resolver(
+    lambda *args, **kwargs: audit_catalog_completeness(*args, **kwargs)
+)

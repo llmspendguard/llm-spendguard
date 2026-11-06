@@ -7,6 +7,36 @@ _model_facts_resolver = None
 _effort_discovery_resolver = None
 _deliberate_stop_resolver = None
 _reference_data_resolver_lock = threading.Lock()
+_inbound_reference_data_resolver_lock = threading.Lock()
+_inbound_reference_data_resolvers = {}
+
+
+def __getattr__(attribute_name):
+    """Materialize the generic inbound ``set_``/``resolve_`` callable protocol."""
+    if attribute_name.startswith("set_") and attribute_name.endswith("_resolver"):
+        symbol_name = attribute_name[len("set_"):-len("_resolver")]
+
+        def set_inbound_reference_data_resolver(resolver):
+            with _inbound_reference_data_resolver_lock:
+                _inbound_reference_data_resolvers[symbol_name] = resolver
+
+        set_inbound_reference_data_resolver.__name__ = attribute_name
+        globals()[attribute_name] = set_inbound_reference_data_resolver
+        return set_inbound_reference_data_resolver
+    if attribute_name.startswith("resolve_"):
+        symbol_name = attribute_name[len("resolve_"):]
+
+        def resolve_inbound_reference_data_symbol(*args, **kwargs):
+            with _inbound_reference_data_resolver_lock:
+                resolver = _inbound_reference_data_resolvers.get(symbol_name)
+            if resolver is None:
+                raise RuntimeError(f"reference_data_accessors.{symbol_name} resolver not wired")
+            return resolver(*args, **kwargs)
+
+        resolve_inbound_reference_data_symbol.__name__ = attribute_name
+        globals()[attribute_name] = resolve_inbound_reference_data_symbol
+        return resolve_inbound_reference_data_symbol
+    raise AttributeError(attribute_name)
 
 
 def set_model_ceiling_resolver(model_ceiling_resolver):

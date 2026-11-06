@@ -910,8 +910,8 @@ def sync(if_due=False, since=None):
         pass
     catalog_refresh = {}
     try:                                                  # and the live model-catalog (self-limits to once per
-        from .. import catalog as _catalog                 # catalog.refresh_hours) so dispatch can catch a rotated/dead
-        catalog_refresh = _catalog.refresh_catalog_if_stale()   # id at the call site — rides this sync, no scheduler
+        from ..store.reference_data import reference_data_accessors as _reference_data_accessors
+        catalog_refresh = _reference_data_accessors.resolve_refresh_catalog_if_stale()
     except Exception as _ce:
         catalog_refresh = {"error": str(_ce)[:120]}       # SURFACED, never silent — a refresh that didn't happen
     #                                                       must be visible in the sync result (see out["catalog"])

@@ -77,14 +77,14 @@ def stamp_from_ledger(window_days: int = _WINDOW_DAYS) -> dict:
             return out
         since = (receipt._utc_today() - _dt.timedelta(days=window_days)).strftime("%Y-%m-%d")
         by_lane = {}
-        from ... import lane_catalog
+        from ...store.reference_data import reference_data_accessors
         for ex, ts, prov, model, in_tok, out_tok, project in _subscription_rows(since, valued):
             day = (ts or "")[:10]
             try:
                 # price through the CATALOG (base + the lane's provider, reasoning-suffix aware) — not a raw
                 # realtime_cost that leans on the global suffix-strip and can hit the gemini/vertex ambiguity.
                 val = (None if in_tok is None or out_tok is None else
-                       lane_catalog.use_name_cost(model, int(in_tok), int(out_tok), lane=ex))
+                       reference_data_accessors.resolve_use_name_cost(model, int(in_tok), int(out_tok), lane=ex))
             except Exception:
                 val = None
             rec = by_lane.setdefault(ex, {"by_day": {}, "activity_by_day": {}, "unpriced_by_day": {}})
@@ -153,7 +153,8 @@ def day_totals(member_ref, window_days: int = _WINDOW_DAYS):
     lane). Same pricing, shaped for the org dashboard so gemini/zai plan usage is visible THERE, not just locally —
     the client half of the server's EST_VALUE_CHANNELS. [] on no rows/error. day_totals is the est-value-source
     PROTOCOL (chat/claudecode implement it too), dispatched by each source's own sync."""
-    from ... import lane_catalog, receipt
+    from ... import receipt
+    from ...store.reference_data import reference_data_accessors
     valued = ledger_valued_lanes()
     if not valued:
         return []
@@ -166,7 +167,7 @@ def day_totals(member_ref, window_days: int = _WINDOW_DAYS):
             continue
         try:
             val = (None if in_tok is None or out_tok is None else
-                   lane_catalog.use_name_cost(model, int(in_tok), int(out_tok), lane=ex))
+                   reference_data_accessors.resolve_use_name_cost(model, int(in_tok), int(out_tok), lane=ex))
         except Exception:
             val = None
         key = (project or "", day, prov or "?", model or "?", ex)

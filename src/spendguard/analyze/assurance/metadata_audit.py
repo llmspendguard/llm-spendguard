@@ -89,7 +89,7 @@ def _capability_health():
     `sync-capabilities --audit` can never disagree. Read-only, $0. Informational (does NOT fail `ok`): an uncovered
     bleeding-edge model is EXPECTED (LiteLLM hasn't caught up), not a fault."""
     import json
-    from ... import sync_capabilities
+    from ...store.reference_data import reference_data_accessors
     cap_models = 0
     try:
         with open(sync.CACHE) as fh:
@@ -97,7 +97,7 @@ def _capability_health():
     except Exception:
         cap_models = 0
     try:
-        comp = sync_capabilities.audit_catalog_completeness()
+        comp = reference_data_accessors.resolve_audit_catalog_completeness()
     except Exception as e:
         return {"cache_capability_models": cap_models, "age_days": sync.cache_age_days(),
                 "error": "completeness audit failed: %s" % type(e).__name__}

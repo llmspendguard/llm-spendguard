@@ -1229,9 +1229,9 @@ def available_capacity(pool="hooks"):
     """
     try:
         from spendguard.platform import platform_accessors as _platform_accessors
-        from ... import lane_catalog
+        from spendguard.store.reference_data import reference_data_accessors
         capacity = 0
-        for lane in lane_catalog.lanes():
+        for lane in reference_data_accessors.resolve_lanes():
             readiness = _platform_accessors.resolve__last_probe_ok(lane)
             # The cache API returns (ok, timestamp); no timestamp means unknown.
             if isinstance(readiness, tuple):

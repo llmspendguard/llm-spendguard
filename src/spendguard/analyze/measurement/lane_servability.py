@@ -229,14 +229,14 @@ def lane_served_substitute(lane, requested):
     if not lane or not requested:
         return requested, None
     try:
-        from ... import catalog, lane_catalog
-        rejected = set(catalog.lane_unserved_ids(lane) or [])
+        from ...store.reference_data import reference_data_accessors
+        rejected = set(reference_data_accessors.resolve_lane_unserved_ids(lane) or [])
         if requested not in rejected:
             return requested, None                        # not known-dead on this lane → nothing to resolve
-        served = set(catalog.lane_model_ids(lane) or [])
+        served = set(reference_data_accessors.resolve_lane_model_ids(lane) or [])
         candidates = []
         for tier in ("strong", "cheap"):                  # operator intent, strong-first (no capability downgrade)
-            m = lane_catalog.lane_model_for_tier(lane, tier)
+            m = reference_data_accessors.resolve_lane_model_for_tier(lane, tier)
             if m and m in served and m not in rejected and m not in candidates:
                 candidates.append(m)
         for m in sorted(served - rejected):               # last resort: any other measured-served id
@@ -302,8 +302,9 @@ def reprobe_rejected(lane):
     {"recovered", "still", "probed"}. $0 (plan-lane calls); never raises."""
     out = {"recovered": [], "still": [], "probed": 0}
     try:
-        from ... import catalog, reliability
-        rejected = list(catalog.lane_unserved_ids(lane) or [])
+        from ... import reliability
+        from ...store.reference_data import reference_data_accessors
+        rejected = list(reference_data_accessors.resolve_lane_unserved_ids(lane) or [])
         if not rejected:
             return out
         mod = _resolve_servability_lane_module(lane)
@@ -335,8 +336,8 @@ def reprobe_rejected(lane):
             else:
                 still.append(m)                            # deterministic reject OR still-down → stays rejected, re-probed later
         if recovered:
-            served = list(catalog.lane_model_ids(lane) or [])
-            catalog.merge_lane_observation(lane, served + recovered, still)   # asof defaults to now in merge_lane_observation
+            served = list(reference_data_accessors.resolve_lane_model_ids(lane) or [])
+            reference_data_accessors.resolve_merge_lane_observation(lane, served + recovered, still)
         out["recovered"], out["still"] = recovered, still
     except Exception:
         pass
@@ -351,12 +352,14 @@ def refresh_lane_servability(lane=None, announce=True, reprobe=False):
     {lane: {"served", "rejected", "shifted", "shifts", "recovered"}}. Never raises."""
     out = {}
     try:
-        from ... import catalog
+        from ...store.reference_data import reference_data_accessors
         lanes = [lane] if lane else list(_servability_provider_lanes().keys())
         for ln in lanes:
             obs = observed_lane_models(ln)
             if obs["served"] or obs["rejected"]:
-                catalog.merge_lane_observation(ln, obs["served"], obs["rejected"], asof=obs["asof"])
+                reference_data_accessors.resolve_merge_lane_observation(
+                    ln, obs["served"], obs["rejected"], asof=obs["asof"]
+                )
             shifts = detect_served_shift(ln, announce=announce) if obs["shifted"] else []
             recovered = reprobe_rejected(ln)["recovered"] if reprobe else []
             out[ln] = {"served": obs["served"], "rejected": obs["rejected"],

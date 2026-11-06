@@ -15,6 +15,7 @@ Add a lane in `_execution_accessors.resolve__LANES()` + a `lane_models` entry an
 is one edit to REASONING_QUIRK.
 """
 from spendguard.generate.execution import execution_accessors as _execution_accessors
+from . import reference_data_accessors as _reference_data_accessors
 from ... import config, lane_registry
 
 # HOW EACH LANE EXPRESSES REASONING EFFORT is a field on each lane's row in lane_registry (one place per lane):
@@ -222,6 +223,25 @@ def main(argv=None):
           " (use-name is the base). Prices are the BASE rate for the lane's provider — effort changes token count,"
           " not $/token.")
     return 0
+
+
+_reference_data_accessors.set_arms_resolver(lambda *args, **kwargs: arms(*args, **kwargs))
+_reference_data_accessors.set_audit_lane_fallback_resolver(
+    lambda *args, **kwargs: audit_lane_fallback(*args, **kwargs)
+)
+_reference_data_accessors.set_configured_base_resolver(lambda *args, **kwargs: configured_base(*args, **kwargs))
+_reference_data_accessors.set_format_lane_fallback_resolver(
+    lambda *args, **kwargs: format_lane_fallback(*args, **kwargs)
+)
+_reference_data_accessors.set_lane_model_for_tier_resolver(
+    lambda *args, **kwargs: lane_model_for_tier(*args, **kwargs)
+)
+_reference_data_accessors.set_lane_provider_resolver(lambda *args, **kwargs: lane_provider(*args, **kwargs))
+_reference_data_accessors.set_lanes_resolver(lambda *args, **kwargs: lanes(*args, **kwargs))
+_reference_data_accessors.set_main_resolver(lambda *args, **kwargs: main(*args, **kwargs))
+_reference_data_accessors.set_parse_use_name_resolver(lambda *args, **kwargs: parse_use_name(*args, **kwargs))
+_reference_data_accessors.set_quirk_resolver(lambda *args, **kwargs: quirk(*args, **kwargs))
+_reference_data_accessors.set_use_name_cost_resolver(lambda *args, **kwargs: use_name_cost(*args, **kwargs))
 
 
 if __name__ == "__main__":      # python -m spendguard.lane_catalog
