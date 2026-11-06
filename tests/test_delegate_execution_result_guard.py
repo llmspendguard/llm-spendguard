@@ -8,6 +8,7 @@ import tempfile
 from unittest.mock import patch
 
 from spendguard import codex_daemon, codex_exec, delegate_router
+from spendguard.manage.token_operations import token_operations_accessors
 
 DELEGATE_GUARD_TASK = "execution result fixture"
 DELEGATE_GUARD_PLAN = "codex"
@@ -99,7 +100,8 @@ assert "delegate error: None" not in console.stderr, console
 provider_refusal = codex_daemon._codex_pool_error_result(DELEGATE_GUARD_PROVIDER_ERROR, None)
 assert provider_refusal["error"] == str(DELEGATE_GUARD_PROVIDER_ERROR), provider_refusal
 with patch.object(codex_exec, "_daemon_enabled", return_value=True), \
-        patch.object(codex_daemon, "run_warm", return_value=provider_refusal):
+        patch.dict(token_operations_accessors._token_operations_resolvers, {
+            "run_warm": lambda *_args, **_kwargs: provider_refusal}):
     transport_refusal = codex_exec._run_prompt_in_cwd(DELEGATE_GUARD_TASK)
 assert transport_refusal["status_code"] == DELEGATE_GUARD_PROVIDER_HTTP_STATUS, transport_refusal
 assert transport_refusal["error"] == str(DELEGATE_GUARD_PROVIDER_ERROR), transport_refusal

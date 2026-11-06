@@ -11,6 +11,7 @@ from types import SimpleNamespace
 import pytest
 
 from spendguard import codex_daemon_broker, codex_exec, execution_journal
+from spendguard.manage.token_operations import token_operations_accessors
 from spendguard.warm_stdio_daemon import _WarmStdioJsonRpcDaemon
 
 ARCHIVE_REPRO_PARTIAL_OUTPUT = b'partial provider work before transport failure\n'
@@ -83,14 +84,17 @@ def test_remote_codex_broker_keeps_partial_transport_evidence(tmp_path, monkeypa
 
 
 def test_codex_warm_persistence_failure_surfaces(tmp_path, monkeypatch):
-    from spendguard import codex_daemon
     monkeypatch.setenv("SPENDGUARD_EXECUTION_STORE", str(tmp_path))
     monkeypatch.setattr(codex_exec, "_daemon_enabled", lambda: True)
 
     def archive_repro_failed_warm_call(*args, **kwargs):
         raise execution_journal.DurableExecutionPersistenceError("offline disk failure")
 
-    monkeypatch.setattr(codex_daemon, "run_warm", archive_repro_failed_warm_call)
+    monkeypatch.setitem(
+        token_operations_accessors._token_operations_resolvers,
+        "run_warm",
+        archive_repro_failed_warm_call,
+    )
     execution_id = execution_journal.begin_durable_execution()
     try:
         with execution_journal.durable_execution_scope(execution_id):

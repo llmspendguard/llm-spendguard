@@ -13,7 +13,8 @@ os.environ["SPENDGUARD_TEST_ISOLATED"] = "1"
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
 import spendguard  # noqa: E402, F401
-from spendguard import codex_daemon, codex_exec, mcp_server  # noqa: E402
+from spendguard import codex_exec, mcp_server  # noqa: E402
+from spendguard.manage.token_operations import token_operations_accessors  # noqa: E402
 
 fails = []
 
@@ -31,7 +32,7 @@ def fake_ensure_running():
     called.append(True)
 
 
-codex_daemon.ensure_running = fake_ensure_running
+token_operations_accessors.set_ensure_running_resolver(fake_ensure_running)
 
 # ── enabled → start the daemon in the background ──
 codex_exec._daemon_enabled = lambda: True

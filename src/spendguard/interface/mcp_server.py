@@ -1003,14 +1003,14 @@ def _prewarm_codex_daemon():
     try:
         import threading
 
-        from .. import codex_daemon
+        from ..manage.token_operations import token_operations_accessors
 
         if not _execution_accessors.resolve__daemon_enabled():
             return
 
         def _run():
             try:
-                codex_daemon.ensure_running()
+                token_operations_accessors.resolve_ensure_running()
                 print("[spendguard] codex app-server daemon pre-warmed", file=sys.stderr, flush=True)
             except Exception as err:
                 print(f"[spendguard] codex daemon pre-warm failed (non-fatal): {str(err)[:80]}",

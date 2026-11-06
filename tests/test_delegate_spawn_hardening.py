@@ -16,6 +16,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "src"))
 
 from spendguard import config  # noqa: E402
 from spendguard import antigravity_exec, codex_daemon, codex_exec, delegate_router, kimi_exec, subscription_exec  # noqa: E402
+from spendguard.manage.token_operations import token_operations_accessors  # noqa: E402
 
 failed = []
 
@@ -72,7 +73,6 @@ for module, stdout, output_file in cases:
 
 print("-- ambient cwd is poison, explicit workspace is required and preserved --")
 original_getcwd = os.getcwd
-original_warm = codex_daemon.run_warm
 original_enabled = codex_exec._daemon_enabled
 warm_seen = {}
 try:
@@ -83,11 +83,11 @@ try:
         warm_seen.update(kwargs)
         return {"text": "warm answer", "error": None}
 
-    codex_daemon.run_warm = fake_warm
+    token_operations_accessors.set_run_warm_resolver(fake_warm)
     read_only = codex_exec.run_prompt("read")
 finally:
     os.getcwd = original_getcwd
-    codex_daemon.run_warm = original_warm
+    token_operations_accessors.set_run_warm_resolver(codex_daemon.run_warm)
     codex_exec._daemon_enabled = original_enabled
 check("warm read-only run succeeds", read_only.get("text") == "warm answer")
 check("warm run never receives ambient cwd", warm_seen.get("cwd") != poison)

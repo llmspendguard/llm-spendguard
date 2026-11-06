@@ -94,6 +94,7 @@ def _load_public_api_and_install_gate():
     _wire_egress_accessor_resolvers()
     _wire_call_corpus_accessor_resolvers()
     _wire_spend_reporting_accessor_resolvers()
+    _wire_token_operations_accessor_resolvers()
 
 
 def _wire_execution_accessor_resolvers():
@@ -173,6 +174,15 @@ def _wire_spend_reporting_accessor_resolvers():
     try:
         from .analyze.spend_reporting import spend_reporting_resolver_bootstrap
         spend_reporting_resolver_bootstrap.wire_spend_reporting_accessor_resolvers()
+    except Exception:
+        pass
+
+
+def _wire_token_operations_accessor_resolvers():
+    """Register lazy token-operations home loading without triggering import-time daemon side effects."""
+    try:
+        from .manage.token_operations import token_operations_resolver_bootstrap
+        token_operations_resolver_bootstrap.wire_token_operations_accessor_resolvers()
     except Exception:
         pass
 

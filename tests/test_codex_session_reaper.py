@@ -15,7 +15,8 @@ os.environ["SPENDGUARD_HOME"] = REAPER_TEST_HOME
 os.environ.setdefault("SPENDGUARD_TEST_ISOLATED", "1")
 os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-from spendguard import codex_daemon, codex_exec, config, delegate_jobs, delegate_router, warm_stdio_daemon  # noqa: E402
+from spendguard import codex_exec, config, delegate_jobs, delegate_router, warm_stdio_daemon  # noqa: E402
+from spendguard.manage.token_operations import token_operations_accessors  # noqa: E402
 
 config.HOME = Path(REAPER_TEST_HOME)
 REAPER_TEST_NOW = datetime.datetime.now(datetime.timezone.utc)
@@ -257,7 +258,9 @@ def check_session_reaper_transport_capture():
         result = codex_exec._run_agentic_codex_exec("fixture task", cwd=REAPER_TEST_HOME)
     assert result["thread"] == session_id and result["error"]
     with patch.object(codex_exec, "_daemon_enabled", return_value=True), \
-            patch.object(codex_daemon, "run_warm", return_value={"thread": session_id, "error": "fixture failure"}):
+            patch.dict(token_operations_accessors._token_operations_resolvers, {
+                "run_warm": lambda *_args, **_kwargs: {
+                    "thread": session_id, "error": "fixture failure"}}):
         result = codex_exec._run_prompt_in_cwd("fixture task", cwd=REAPER_TEST_HOME)
     assert result["thread"] == session_id and result["error"]
 

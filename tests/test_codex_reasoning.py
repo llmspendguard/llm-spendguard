@@ -13,6 +13,7 @@ os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
 from spendguard import codex_exec, codex_daemon                                         # noqa: E402
+from spendguard.manage.token_operations import token_operations_accessors              # noqa: E402
 
 
 def ck(name, cond):
@@ -41,10 +42,10 @@ def _fake_run(prompt, **kw):
 
 
 print("\n-- run_prompt forwards reasoning through warm admission and reports the applied effort --")
-_obin, _orun = codex_exec._daemon_enabled, codex_daemon.run_warm
+_obin = codex_exec._daemon_enabled
 try:
     codex_exec._daemon_enabled = lambda: True
-    codex_daemon.run_warm = _fake_run
+    token_operations_accessors.set_run_warm_resolver(_fake_run)
     result = codex_exec.run_prompt("hi", reasoning="minimal", model="openai:gpt-5.5")
     fails += ck("reasoning='minimal' is forwarded and reports applied effort none",
                 seen.get("reasoning") == "minimal" and result.get("effort") == "none")
@@ -57,7 +58,8 @@ try:
     fails += ck("no reasoning leaves the warm model default untouched",
                 seen.get("reasoning") is None and result.get("effort") is None)
 finally:
-    codex_exec._daemon_enabled, codex_daemon.run_warm = _obin, _orun
+    codex_exec._daemon_enabled = _obin
+    token_operations_accessors.set_run_warm_resolver(codex_daemon.run_warm)
 
 print(f"\n{'[FAIL]' if fails else 'OK'} test_codex_reasoning: {len(fails)} failure(s)")
 sys.exit(1 if fails else 0)

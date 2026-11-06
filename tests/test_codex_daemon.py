@@ -18,6 +18,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(
 
 from spendguard import codex_daemon as cd        # noqa: E402
 from spendguard import codex_exec as _cx          # noqa: E402
+from spendguard.manage.token_operations import token_operations_accessors  # noqa: E402
 
 
 def ck(name, cond):
@@ -38,8 +39,8 @@ finally:
     _cx._bin, _cx._plugin_disable_flags = _o_bin, _o_flags
 
 print("\n-- daemon is default-on, opt-out works, and warm failure refuses uncounted cold exec --")
-_o_daemon, _o_runwarm, _o_bin2, _o_cold = (
-    _cx._daemon_enabled, cd.run_warm, _cx._bin, _cx._run_cold_codex_with_reaper)
+_o_daemon, _o_bin2, _o_cold = (
+    _cx._daemon_enabled, _cx._bin, _cx._run_cold_codex_with_reaper)
 _old_env = os.environ.pop("SPENDGUARD_CODEX_DAEMON", None)
 try:
     fails += ck("daemon is enabled by default", _cx._daemon_enabled())
@@ -49,7 +50,7 @@ try:
 
     def _boom(*a, **k):
         raise RuntimeError("boom")
-    cd.run_warm = _boom                       # daemon exceptions must surface without starting a cold process
+    token_operations_accessors.set_run_warm_resolver(_boom)
     _cx._bin = lambda: "/fake/codex"
 
     def _cold_ok(cmd, **kwargs):
@@ -63,8 +64,9 @@ try:
     fails += ck("workspace-write daemon exception refuses uncounted cold exec",
                 "boom" in _out.get("error", "") and not _out.get("text"))
 finally:
-    _cx._daemon_enabled, cd.run_warm, _cx._bin, _cx._run_cold_codex_with_reaper = (
-        _o_daemon, _o_runwarm, _o_bin2, _o_cold)
+    _cx._daemon_enabled, _cx._bin, _cx._run_cold_codex_with_reaper = (
+        _o_daemon, _o_bin2, _o_cold)
+    token_operations_accessors.set_run_warm_resolver(cd.run_warm)
     if _old_env is not None:
         os.environ["SPENDGUARD_CODEX_DAEMON"] = _old_env
     else:

@@ -24,7 +24,7 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
 from spendguard import guard, ledger_sync, reconcile, tag, resources, config   # noqa: E402
 from spendguard import lambda_adapter as la, sync                              # noqa: E402
 from spendguard import subscription_exec as se, codex_exec as ce               # noqa: E402
-from spendguard import codex_daemon                                          # noqa: E402
+from spendguard.manage.token_operations import token_operations_accessors    # noqa: E402
 
 fails = 0
 warns = []
@@ -82,8 +82,8 @@ ck("subscription lane strips API_KEY + AUTH_TOKEN + BASE_URL from the child env"
 cap2 = {}
 CODEX_FLAG_PREFIXED_PROMPT = "-weird prompt"
 ce._daemon_enabled = lambda: True
-codex_daemon.run_warm = lambda prompt, **kw: (cap2.__setitem__("prompt", prompt),
-                                             {"text": "accepted", "error": None})[1]
+token_operations_accessors.set_run_warm_resolver(
+    lambda prompt, **kw: (cap2.__setitem__("prompt", prompt), {"text": "accepted", "error": None})[1])
 ce.run_prompt(CODEX_FLAG_PREFIXED_PROMPT)
 ck("codex forwards a flag-prefixed prompt verbatim through warm admission",
    cap2.get("prompt") == CODEX_FLAG_PREFIXED_PROMPT)

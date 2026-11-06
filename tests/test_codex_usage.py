@@ -10,7 +10,7 @@ os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
 from spendguard import codex_exec as codex_lane  # noqa: E402
-from spendguard import codex_daemon  # noqa: E402
+from spendguard.manage.token_operations import token_operations_accessors  # noqa: E402
 
 FIXTURE_USED_PERCENT = 12
 FIXTURE_REMAINING_PERCENT = 88
@@ -35,6 +35,8 @@ FIXTURE_RESPONSE = {
     },
 }
 
+token_operations_accessors.resolve_RATE_LIMITS_READ_TIMEOUT_S()
+
 
 def assert_codex_rate_limits_protocol_parser():
     buckets = codex_lane._parse_rate_limits(FIXTURE_RESPONSE)
@@ -49,22 +51,26 @@ def assert_codex_rate_limits_protocol_parser():
 
 
 def assert_codex_rate_limits_transport_report():
-    with patch.object(codex_daemon, "read_rate_limits",
-                      return_value={"rate_limits": FIXTURE_RESPONSE, "error": None}):
+    with patch.dict(token_operations_accessors._token_operations_resolvers, {
+            "read_rate_limits": lambda **_kwargs: {"rate_limits": FIXTURE_RESPONSE, "error": None}}):
         report = codex_lane._codex_usage_report_uncached()
     assert report["reason"] is None
     assert report["buckets"][0]["remaining_pct"] == FIXTURE_REMAINING_PERCENT
     assert report["uncertainty"] == "provider_reported"
 
-    with patch.object(codex_daemon, "read_rate_limits",
-                      return_value={"rate_limits": None, "error": "daemon down"}):
+    with patch.dict(token_operations_accessors._token_operations_resolvers, {
+            "read_rate_limits": lambda **_kwargs: {"rate_limits": None, "error": "daemon down"}}):
         unavailable = codex_lane._codex_usage_report_uncached()
     assert unavailable["buckets"] is None
     assert unavailable["reason"] == "codex_warm_pool_rate_limits_unavailable"
 
 
 def assert_codex_rate_limits_offline_transport_gap():
-    with patch.object(codex_daemon, "read_rate_limits", side_effect=RuntimeError("request failed")):
+    def raise_transport_failure(**_kwargs):
+        raise RuntimeError("request failed")
+
+    with patch.dict(token_operations_accessors._token_operations_resolvers,
+                    {"read_rate_limits": raise_transport_failure}):
         unavailable = codex_lane._codex_usage_report_uncached()
     assert unavailable["buckets"] is None
     assert unavailable["reason"] == "codex_warm_pool_rate_limits_request_failed"
@@ -73,7 +79,8 @@ def assert_codex_rate_limits_offline_transport_gap():
     for response, reason in (
             ({"rate_limits": "malformed", "error": None}, "codex_warm_pool_rate_limits_response_malformed"),
             ({"rate_limits": {}, "error": None}, "codex_rate_limits_windows_missing")):
-        with patch.object(codex_daemon, "read_rate_limits", return_value=response):
+        with patch.dict(token_operations_accessors._token_operations_resolvers,
+                        {"read_rate_limits": lambda response=response, **_kwargs: response}):
             unavailable = codex_lane._codex_usage_report_uncached()
         assert unavailable["buckets"] is None
         assert unavailable["reason"] == reason

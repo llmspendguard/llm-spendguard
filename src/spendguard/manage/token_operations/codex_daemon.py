@@ -776,3 +776,11 @@ def run_dedicated_codex_broker_owner():
     return owner.broker_owner_serve_forever()
 
 atexit.register(shutdown)
+
+
+from . import token_operations_accessors as _token_operations_accessors
+
+_token_operations_accessors.set_ensure_running_resolver(ensure_running)
+_token_operations_accessors.set_read_rate_limits_resolver(read_rate_limits)
+_token_operations_accessors.set_run_warm_resolver(run_warm)
+_token_operations_accessors.set_RATE_LIMITS_READ_TIMEOUT_S_resolver(lambda: RATE_LIMITS_READ_TIMEOUT_S)

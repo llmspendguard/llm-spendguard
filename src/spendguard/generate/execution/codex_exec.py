@@ -627,8 +627,9 @@ def _codex_usage_report_uncached():
     report = {"buckets": None, "source": CODEX_APP_SERVER_RATE_LIMITS_METHOD, "reason": None,
               "n": CODEX_USAGE_UNKNOWN_SAMPLE_COUNT, "window": None, "uncertainty": "provider_data_unknown"}
     try:
-        from ... import codex_daemon
-        response = codex_daemon.read_rate_limits(timeout=codex_daemon.RATE_LIMITS_READ_TIMEOUT_S)
+        from ...manage.token_operations import token_operations_accessors
+        response = token_operations_accessors.resolve_read_rate_limits(
+            timeout=token_operations_accessors.resolve_RATE_LIMITS_READ_TIMEOUT_S())
         if not isinstance(response, dict) or response.get("error"):
             report["reason"] = "codex_warm_pool_rate_limits_unavailable"
             return report
@@ -797,12 +798,14 @@ def _run_prompt_in_cwd(prompt, system=None, model=None, timeout=TIMEOUT_S, reaso
                                        reasoning=reasoning, cwd=cwd)
     # The broker is the sole admission point for read-only/meta work. Failure must never start an uncounted cold process.
     if _daemon_enabled():
-        from ... import codex_daemon, execution_journal
+        from ... import execution_journal
+        from ...manage.token_operations import token_operations_accessors
         _full = (f"{system.strip()}\n\n{prompt}" if system else prompt)
         _t0 = time.time()
         try:
-            _r = codex_daemon.run_warm(_full, model=model, reasoning=reasoning, sandbox=sandbox, cwd=cwd,
-                                       timeout=timeout, recycle_on_timeout=recycle_on_timeout)
+            _r = token_operations_accessors.resolve_run_warm(
+                _full, model=model, reasoning=reasoning, sandbox=sandbox, cwd=cwd,
+                timeout=timeout, recycle_on_timeout=recycle_on_timeout)
         except execution_journal.DurableExecutionPersistenceError:
             raise
         except Exception as _e:

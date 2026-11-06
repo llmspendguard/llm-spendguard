@@ -474,6 +474,8 @@
         "manage.token_operations.codex_daemon",
         "manage.token_operations.codex_daemon_broker",
         "manage.token_operations.codex_broker_owner",
+        "manage.token_operations.token_operations_accessors",
+        "manage.token_operations.token_operations_resolver_bootstrap",
         "manage.token_operations.kimi_daemon",
         "manage.token_operations.resource_state",
         "manage.token_operations.lane_recovery",

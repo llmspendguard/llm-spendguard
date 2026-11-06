@@ -2,9 +2,10 @@
 import json
 import os
 import tempfile
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
-from spendguard import codex_daemon, codex_exec, config
+from spendguard import codex_exec, config
+from spendguard.manage.token_operations import token_operations_accessors
 
 CODEX_ENTRY_PROMPT = "entrypoint fixture"
 CODEX_ENTRY_SYSTEM = "system fixture"
@@ -23,12 +24,14 @@ CODEX_ENTRY_FAILURES = (
     RuntimeError("warm admission exception"),
 )
 
+warm = Mock(return_value={
+    "text": CODEX_ENTRY_REPLY, "thread": CODEX_ENTRY_THREAD,
+    "turn": CODEX_ENTRY_TURN, "process_pid": CODEX_ENTRY_PID,
+})
 with patch.object(codex_exec.subprocess, "Popen") as spawn, \
         patch.object(codex_exec.subprocess, "run") as cold_run, \
         patch.object(codex_exec, "_daemon_enabled", return_value=True), \
-        patch.object(codex_daemon, "run_warm", return_value={
-            "text": CODEX_ENTRY_REPLY, "thread": CODEX_ENTRY_THREAD,
-            "turn": CODEX_ENTRY_TURN, "process_pid": CODEX_ENTRY_PID}) as warm:
+        patch.dict(token_operations_accessors._token_operations_resolvers, {"run_warm": warm}):
     result = codex_exec.run_prompt(CODEX_ENTRY_PROMPT, system=CODEX_ENTRY_SYSTEM)
     assert result["text"] == CODEX_ENTRY_REPLY and result["error"] is None
     assert warm.call_args.args == (f"{CODEX_ENTRY_SYSTEM}\n\n{CODEX_ENTRY_PROMPT}",)

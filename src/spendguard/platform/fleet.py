@@ -630,15 +630,15 @@ def fleet_control_restarts_enabled():
 
 def kickstart_declared_launchd_consumer(label):
     """Kickstart one declared launchd label through the package's shared launchctl helper."""
-    from ..codex_broker_owner import run_declared_launchd_action
-    result = run_declared_launchd_action(("kickstart", "-k"), label)
+    from ..manage.token_operations import token_operations_accessors
+    result = token_operations_accessors.resolve_run_declared_launchd_action(("kickstart", "-k"), label)
     return {"ok": result.returncode == 0, "detail": result.stderr.strip() or result.stdout.strip()}
 
 
 def bootout_declared_launchd_consumer(label):
     """Boot out one declared launchd label through the package's shared launchctl helper."""
-    from ..codex_broker_owner import run_declared_launchd_action
-    result = run_declared_launchd_action(("bootout",), label)
+    from ..manage.token_operations import token_operations_accessors
+    result = token_operations_accessors.resolve_run_declared_launchd_action(("bootout",), label)
     return {"ok": result.returncode == 0, "detail": result.stderr.strip() or result.stdout.strip()}
 
 
@@ -647,8 +647,8 @@ def launchd_consumer_label_loaded(label):
     if not label:
         return False
     try:
-        from ..codex_broker_owner import run_declared_launchd_action
-        result = run_declared_launchd_action(("print",), label)
+        from ..manage.token_operations import token_operations_accessors
+        result = token_operations_accessors.resolve_run_declared_launchd_action(("print",), label)
     except Exception:
         return None
     return result.returncode == 0
