@@ -236,8 +236,8 @@ def tick(avg_call_tokens=NOMINAL_CALL_TOKENS, pending_by_intent=None):
     pending_note = ""
     if pending_by_intent is None:
         try:
-            from . import lane_queue
-            pending_by_intent = lane_queue.pending_counts()
+            from . import token_operations_accessors
+            pending_by_intent = token_operations_accessors.resolve_pending_counts()
         except Exception as _pe:
             # a FAILED backlog read is not an EMPTY backlog: {} would make offload_plan see nothing and silently
             # recommend NO offload. Surface it in the note so the tick is not read as "backlog empty, nothing to do".

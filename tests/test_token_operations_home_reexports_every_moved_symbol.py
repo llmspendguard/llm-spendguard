@@ -73,6 +73,19 @@ assert all(symbols_by_home.values()), "a token-operations home registered no mov
 assert sum(map(len, symbols_by_home.values())) == len(set().union(*symbols_by_home.values())), (
     "moved token-operations symbol names collide across homes")
 
+registered_symbols = set().union(*symbols_by_home.values())
+consumed_symbols = {
+    node.func.attr.removeprefix("resolve_")
+    for module_path in TOKEN_OPERATIONS_DIRECTORY.glob("*.py")
+    for node in ast.walk(ast.parse(module_path.read_text()))
+    if isinstance(node, ast.Call)
+    and isinstance(node.func, ast.Attribute)
+    and isinstance(node.func.value, ast.Name)
+    and node.func.value.id == ACCESSORS_NAME
+    and node.func.attr.startswith("resolve_")
+}
+assert consumed_symbols <= registered_symbols, "a consumed token-operations resolver has no home registration"
+
 accessors = importlib.import_module(f"spendguard.manage.token_operations.{ACCESSORS_NAME}")
 for home_name, moved_bindings in symbols_by_home.items():
     home = importlib.import_module(f"spendguard.manage.token_operations.{home_name}")

@@ -2197,8 +2197,8 @@
     ],
     "reason": "These actual foundation modules own immutable parser data, pure deadline cadence, and launchd label constants; each currently depends only on the standard library. Prevent application/surface imports into these foundations. Broader core/surface separation is not claimed: config and pricing currently import adapters/calls."
   },
-  "max_cyclic_edge_count": 86,
-  "max_largest_scc_size": 11,
+  "max_cyclic_edge_count": 82,
+  "max_largest_scc_size": 10,
   "max_legacy_shim_count": 219,
   "package": "spendguard",
   "recorded_cross_context_nonsurface_imports": [
@@ -6685,7 +6685,6 @@
       "spendguard.generate.execution.vendor_call",
       "spendguard.manage.routing.lane_balance",
       "spendguard.manage.token_operations.lane_queue",
-      "spendguard.manage.token_operations.queue_planner",
       "spendguard.manage.token_operations.storm_route",
       "spendguard.manage.token_operations.storm_submit"
     ],
@@ -6980,18 +6979,6 @@
       "spendguard.manage.routing.lane_balance"
     ],
     [
-      "spendguard.manage.token_operations.lane_queue",
-      "spendguard.manage.token_operations.queue_planner"
-    ],
-    [
-      "spendguard.manage.token_operations.queue_planner",
-      "spendguard.manage.token_operations.lane_queue"
-    ],
-    [
-      "spendguard.manage.token_operations.storm_route",
-      "spendguard.manage.token_operations.queue_planner"
-    ],
-    [
       "spendguard.manage.token_operations.storm_route",
       "spendguard.manage.token_operations.storm_submit"
     ],
@@ -7002,10 +6989,6 @@
     [
       "spendguard.manage.token_operations.storm_submit",
       "spendguard.manage.token_operations.lane_queue"
-    ],
-    [
-      "spendguard.manage.token_operations.storm_submit",
-      "spendguard.manage.token_operations.queue_planner"
     ],
     [
       "spendguard.platform.distribution",

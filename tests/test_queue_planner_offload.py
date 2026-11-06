@@ -91,14 +91,18 @@ def main():
 
     print("\n== tick() composes the LIVE forecast + per-intent backlog into one $0 plan ==")
     from spendguard import lane_queue
+    from spendguard.manage.token_operations import token_operations_accessors
     real_fc, real_pc, real_rr = queue_planner.forecast, lane_queue.pending_counts, route_economics.route_report
     queue_planner.forecast = lambda *a, **k: _FC
-    lane_queue.pending_counts = lambda *a, **k: {"review": 2000, "chat": 100}
+    token_operations_accessors.set_pending_counts_resolver(
+        lambda *a, **k: {"review": 2000, "chat": 100}
+    )
     route_economics.route_report = _fake_route_report
     try:
         t = queue_planner.tick()
     finally:
-        queue_planner.forecast, lane_queue.pending_counts, route_economics.route_report = real_fc, real_pc, real_rr
+        queue_planner.forecast, route_economics.route_report = real_fc, real_rr
+        token_operations_accessors.set_pending_counts_resolver(real_pc)
     c.ck("tick offloads the saturated intent from the LIVE backlog", any(o["intent"] == "review" for o in t["offload"]),
          str([o["intent"] for o in t["offload"]]))
     c.ck("tick keeps the healthy intent realtime", not any(o["intent"] == "chat" for o in t["offload"]))

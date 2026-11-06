@@ -1803,3 +1803,4 @@ def _drain_locked(worker, batch, lease_s, idle_rounds, idle_sleep, load_ceiling,
 from . import token_operations_accessors
 
 token_operations_accessors.set_queue_depth_resolver(queue_depth)
+token_operations_accessors.set_pending_counts_resolver(pending_counts)
