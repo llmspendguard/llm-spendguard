@@ -58,10 +58,12 @@ assert before >= 1
 assert [row["id"] for row in queue.batched_rows(OVERSIZED_HANDLE)] == [queued]
 
 from spendguard import adapters, callio
+from spendguard.store.call_corpus import call_corpus_accessors
 
 adapters.provider_for = lambda model: "openai"
 callio.collect_chat_tasks = lambda handle, intent, model: {
     "results": {str(queued): OVERSIZED_TEXT}, "failed": {}, "not_ready": []}
+call_corpus_accessors.set_collect_chat_tasks_resolver(callio.collect_chat_tasks)
 collected = queue.collect_batched()
 assert collected["collected"] == 1
 assert collected["orphaned"] == 0

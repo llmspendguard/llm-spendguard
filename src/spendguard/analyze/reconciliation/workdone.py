@@ -59,9 +59,10 @@ def _batch_intents(since):
     """{(day, project): {intent: count}} from the local call corpus — what LLM work actually ran each day."""
     out = defaultdict(lambda: defaultdict(int))
     try:
-        from ... import callio, conv
+        from ... import conv
+        from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
         bmap = conv.batch_project_map()       # AGENTIC: batch → its subconversation's classified project (no regex)
-        with callio.config.ledger_op('callio', callio._ensure_callio_schema) as ledger_read_handle:
+        with config.ledger_op('callio', _call_corpus_accessors.resolve__ensure_callio_schema) as ledger_read_handle:
             for day, intent, batch, n in ledger_read_handle.execute(
                 "SELECT substr(ts,1,10) d, COALESCE(NULLIF(intent,''),'(unlabeled)'), COALESCE(batch,''), COUNT(*) "
                 "FROM call_io WHERE ts >= ? GROUP BY d, intent, batch", (since,)):

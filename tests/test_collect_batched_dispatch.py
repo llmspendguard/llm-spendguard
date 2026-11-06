@@ -22,6 +22,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(
 from _script_checks import record_script_check  # noqa: E402
 
 from spendguard import lane_queue, callio   # noqa: E402
+from spendguard.store.call_corpus import call_corpus_accessors  # noqa: E402
 
 ANTHRO = "claude-haiku-4-5"
 OPENAI = "gpt-5.5"
@@ -43,6 +44,8 @@ def main():
     _orig = (callio.collect_message_batch, callio.collect_chat_tasks)
     callio.collect_message_batch = _fake_msg
     callio.collect_chat_tasks = _fake_chat
+    call_corpus_accessors.set_collect_message_batch_resolver(_fake_msg)
+    call_corpus_accessors.set_collect_chat_tasks_resolver(_fake_chat)
     try:
         # An Anthropic-model batch and an OpenAI-model batch, both in queued_batch state (real enqueue + real mark_batched)
         rid_a = lane_queue.enqueue("test:dispatch", "task A")
@@ -61,6 +64,8 @@ def main():
         record_script_check(fails, "OpenAI batch NOT sent to the Anthropic twin", all(b != "batch_openai" for b, _ in seen["msg"]))
     finally:
         callio.collect_message_batch, callio.collect_chat_tasks = _orig
+        call_corpus_accessors.set_collect_message_batch_resolver(_orig[0])
+        call_corpus_accessors.set_collect_chat_tasks_resolver(_orig[1])
 
     print(f"\n{'[FAIL]' if fails else 'OK'} test_collect_batched_dispatch: {len(fails)} failure(s)")
     return 1 if fails else 0

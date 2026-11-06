@@ -1630,7 +1630,6 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
         # capture per call), never a probe, only a SERVED (no-error) call. capture_live is opt-in, workload-only,
         # bounded, LOUD where it stops, and NEVER raises into the call.
         if not _no_guard and not _probe and not r.get("error"):
-            from ... import callio
             from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
             # INTENT resolution MUST match the cost-attribution intent that advise / bakeoff / effort-titrate key
             # on: the _call_corpus_accessors.resolve_calls_context intent FIRST, `sig` only as a fallback — identical to `_eff_intent` in
@@ -1639,7 +1638,7 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
             # sig, so its captured prompts were invisible to a bakeoff/titration on the real intent. That is the
             # "realtime intent never becomes seedable" bug: capture landed under a name nothing queries.
             _cap_intent = (_call_corpus_accessors.resolve_calls_current() or {}).get("intent") or sig
-            callio.capture_live(_cap_intent, r.get("provider") or "",
+            _call_corpus_accessors.resolve_capture_live(_cap_intent, r.get("provider") or "",
                                 r.get("model") or model, prompt, r.get("text"),
                                 in_tok=r.get("in_tok"), out_tok=r.get("out_tok"),
                                 system=system, req_schema=schema, req_max_tokens=max_tokens,

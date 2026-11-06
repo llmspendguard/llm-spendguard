@@ -18,7 +18,7 @@ from spendguard.generate.execution import execution_accessors as _execution_acce
 from ...capability_cli_parsing import add_registered_cli_argument
 import json
 
-from ... import config, pricing, callio
+from ... import config, pricing
 from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
 
 _BAKEOFF_OUT_EST = 500     # per-call OUTPUT tokens for the PRE-FLIGHT estimate only — a budget guard, not a cap;
@@ -74,7 +74,7 @@ def _sample_prompts(intent, n, include_shape=False):
     reason); the table is auto-created, so an empty corpus is a clean [] while a broken db surfaces."""
     # include_shape keeps system/schema/ceiling/effort together for replay consumers.
     # The default text view remains compatible with display and prompt-only callers.
-    with callio.config.ledger_op('callio', callio._ensure_callio_schema) as con:
+    with config.ledger_op('callio', _call_corpus_accessors.resolve__ensure_callio_schema) as con:
         # EXCLUDE truncated rows: a prompt CUT at the capture cap is a different task, so replaying it measures
         # something other than the work it claims to (the 800-char silent-truncation failure). Only full-fidelity
         # bodies feed a bakeoff/titration; an intent whose corpus is entirely truncated returns [] → the caller

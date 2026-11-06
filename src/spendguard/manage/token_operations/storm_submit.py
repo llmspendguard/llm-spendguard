@@ -85,10 +85,12 @@ def default_batch_executor(model, intent, system=None, reasoning="minimal", poll
     BATCH-worker thread until the batch ends (bounded by max_poll_s); submit_storm's collect_timeout_s bounds the CALLER
     independently, so a slow batch never blocks the caller. A whole-submit failure returns a per-item error (never a
     silent drop); a per-request failure is surfaced by id."""
-    from ... import callio as _callio   # lazy — avoid import-time cycles
+    from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
     provider = _execution_accessors.resolve_provider_for(model)
-    _pairs = {"openai": (_execution_accessors.resolve_submit_chat_tasks, _callio.collect_chat_tasks),
-              "anthropic": (_execution_accessors.resolve_submit_message_batch, _callio.collect_message_batch)}
+    _pairs = {"openai": (_execution_accessors.resolve_submit_chat_tasks,
+                         _call_corpus_accessors.resolve_collect_chat_tasks),
+              "anthropic": (_execution_accessors.resolve_submit_message_batch,
+                            _call_corpus_accessors.resolve_collect_message_batch)}
     pair = _pairs.get(provider)
     if pair is None:
         raise ValueError("no Batch API wired for provider %r (model %r) — supported: %s; route realtime/lane instead"

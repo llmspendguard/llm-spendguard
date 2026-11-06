@@ -141,12 +141,13 @@ def _existing_offload_batch(offload_key, provider):
     retries) — never swallowed into a blind submit, which is the duplicate hazard this removes."""
     if provider != "openai":
         return None
-    from ... import callio
+    from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
     # No age boundary: lane_queue row ids are AUTOINCREMENT (never reused), so the offload key is globally unique to this
     # row-set — a batch carrying it is THIS offload's batch at any age, and adopting it (rather than capping by time and
     # re-submitting a completed-but-stale batch after a long outage) is what keeps it exactly-once. The scan is
     # recent-first (a crash-orphan is found early) and ceiling-bounded (raises rather than a truncated 'none').
-    return callio.find_live_batch_by_metadata(_OFFLOAD_KEY_FIELD, offload_key, dead_statuses=_DEAD_FOR_ADOPT)
+    return _call_corpus_accessors.resolve_find_live_batch_by_metadata(
+        _OFFLOAD_KEY_FIELD, offload_key, dead_statuses=_DEAD_FOR_ADOPT)
 
 
 # A hard ceiling on the Anthropic orphan-recovery scan (the mirror of callio._RECONCILE_SCAN_CEILING): reaching it means
@@ -275,8 +276,8 @@ def _recover_orphan_message_batch(row_ids, created_floor, client=None):
     Ceiling-bounded: a scan that cannot reach the window end RAISES (a truncated 'none' would DUPLICATE). $0 (a control-
     plane list + at most one finished-result line per candidate). A deliberate spend/deadline stop propagates."""
     import time
-    from ... import callio
-    client = client or callio._anthropic_client()
+    from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
+    client = client or _call_corpus_accessors.resolve__anthropic_client()
     want = set(str(r) for r in (row_ids or []))
     if not want:
         return None
@@ -336,9 +337,9 @@ def _existing_offload_message_batch(offload_key, row_ids):
     rec = _pending_lookup(offload_key)
     if not rec:
         return None                                        # no prior attempt → submit fresh
-    from ... import callio
+    from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
     import spendguard.manage.admission.admission_accessors as gate
-    client = callio._anthropic_client()
+    client = _call_corpus_accessors.resolve__anthropic_client()
     if rec.get("batch_id"):
         try:
             b = client.messages.batches.retrieve(rec["batch_id"])
@@ -549,7 +550,8 @@ def poll(limit=200, now=None):
          _fail_over (rows → realtime, LOUD) → 'failed'; still running → left open; a row-read hiccup → left open + named.
     Returns {settled_rows, jobs_open, jobs_settled, jobs_failed, jobs_resumed, errors}. $0 (status + the already-billed
     collect). A deliberate spend/deadline stop propagates."""
-    from ... import lane_queue, callio
+    from ... import lane_queue
+    from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
     import spendguard.manage.admission.admission_accessors as gate
     now = now or time.time()
     out = {"settled_rows": 0, "jobs_open": 0, "jobs_settled": 0, "jobs_failed": 0, "jobs_resumed": 0, "errors": []}
@@ -584,7 +586,7 @@ def poll(limit=200, now=None):
             out["jobs_settled"] += 1
             continue
         try:
-            st = (callio.batch_status([bid]).get(bid) or {})
+            st = (_call_corpus_accessors.resolve_batch_status([bid]).get(bid) or {})
         except Exception as e:
             if gate.resolve_is_deliberate_stop(e):
                 raise

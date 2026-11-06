@@ -324,10 +324,10 @@ def calibrate(store=True, model=None):
     if enc is None:
         return {"ok": False, "note": "tiktoken unavailable — cannot compute an o200k base to calibrate against; "
                                      "estimates use the measured char ratio only."}
-    from ... import callio
+    from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
     rows = []
     try:
-        with callio.config.ledger_op('callio', callio._ensure_callio_schema) as ledger_read_handle:
+        with config.ledger_op('callio', _call_corpus_accessors.resolve__ensure_callio_schema) as ledger_read_handle:
             rows = ledger_read_handle.execute(
                 "SELECT provider, COALESCE(system,''), COALESCE(prompt,''), in_tok "
                 "FROM call_io WHERE COALESCE(truncated,0)=0 AND in_tok>0 "

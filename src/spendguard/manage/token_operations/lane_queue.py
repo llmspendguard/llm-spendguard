@@ -835,7 +835,7 @@ def collect_batched(limit=2000, model=None):
             group_model[(handle, intent)] = _bmodel     # the batch's OWN model → its provider (picks the collect twin)
         else:
             orphaned.append(rid)                       # a queued_batch row with no usable batch handle — uncollectable
-    from ... import callio
+    from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
     import spendguard.manage.admission.admission_accessors as _gate
     out = {"rows": len(rows), "batches": len(groups), "done": 0, "failed": 0, "not_ready": 0, "collected": 0,
            "orphaned": len(orphaned), "not_settled": 0, "result_gaps": len(result_gaps),
@@ -856,9 +856,9 @@ def collect_batched(limit=2000, model=None):
             _prov = "openai"
         try:
             if _prov == "anthropic":
-                res = callio.collect_message_batch(batch_id, intent, _bm)
+                res = _call_corpus_accessors.resolve_collect_message_batch(batch_id, intent, _bm)
             else:
-                res = callio.collect_chat_tasks(batch_id, intent, _bm)
+                res = _call_corpus_accessors.resolve_collect_chat_tasks(batch_id, intent, _bm)
         except Exception as e:
             if _gate.resolve_is_deliberate_stop(e):
                 raise                                  # a spend/deadline refusal HALTS collection, never continues past it

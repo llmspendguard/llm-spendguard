@@ -284,6 +284,7 @@
       "layer": "L1",
       "backing_modules": [
         "store.call_corpus.call_corpus_accessors",
+        "store.call_corpus.call_corpus_resolver_bootstrap",
         "store.call_corpus.callio",
         "store.call_corpus.calls",
         "store.call_corpus.content_compression",

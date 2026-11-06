@@ -53,9 +53,9 @@ def _model_from_script(path):
 
 
 def _system_and_users_from_intent(intent, n):
-    from ... import callio
+    from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
     from .cacheaudit import _common_prefix
-    with callio.config.ledger_op('callio', callio._ensure_callio_schema) as ledger_read_handle:
+    with config.ledger_op('callio', _call_corpus_accessors.resolve__ensure_callio_schema) as ledger_read_handle:
         prompts = [r[0] for r in ledger_read_handle.execute(
             "SELECT prompt FROM call_io WHERE COALESCE(intent,'(none)')=? AND prompt!='' LIMIT ?",
             (intent, max(n, 8))).fetchall()]

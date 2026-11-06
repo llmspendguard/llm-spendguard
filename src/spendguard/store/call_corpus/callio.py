@@ -21,6 +21,7 @@ from ... import config
 from ...ledger_fork_locks import new_fork_reset_ledger_state
 from spendguard.store.money_ledger.ledger_write_decorators import best_effort_ledger_function, serialize_ledger_function
 from .content_compression import compress_retained_text
+from . import call_corpus_accessors as _call_corpus_accessors
 
 _lock = new_fork_reset_ledger_state(globals(), "_lock", threading.RLock)
 _callio_logger = logging.getLogger(__name__)
@@ -896,3 +897,15 @@ def main(argv=None):
         print(f"{intent[:23]:<24}{model[:21]:<22}{n:>8}{judged or 0:>8}")
     print("Next: `spendguard reconstruct --run` to judge these (caged Haiku) → real $/good-result.")
     return 0
+
+
+_call_corpus_accessors.set__anthropic_client_resolver(_anthropic_client)
+_call_corpus_accessors.set__ensure_callio_schema_resolver(_ensure_callio_schema)
+_call_corpus_accessors.set_batch_status_resolver(batch_status)
+_call_corpus_accessors.set_capture_live_resolver(capture_live)
+_call_corpus_accessors.set_collect_chat_tasks_resolver(collect_chat_tasks)
+_call_corpus_accessors.set_collect_message_batch_resolver(collect_message_batch)
+_call_corpus_accessors.set_find_live_batch_by_metadata_resolver(find_live_batch_by_metadata)
+_call_corpus_accessors.set_good_rates_resolver(good_rates)
+_call_corpus_accessors.set_set_quality_resolver(set_quality)
+_call_corpus_accessors.set_unjudged_resolver(unjudged)

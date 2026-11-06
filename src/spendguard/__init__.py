@@ -92,6 +92,7 @@ def _load_public_api_and_install_gate():
     _wire_platform_accessor_resolvers()
     _wire_reference_data_accessor_resolvers()
     _wire_egress_accessor_resolvers()
+    _wire_call_corpus_accessor_resolvers()
 
 
 def _wire_execution_accessor_resolvers():
@@ -153,6 +154,15 @@ def _wire_egress_accessor_resolvers():
     try:
         from .egress import egress_resolver_bootstrap
         egress_resolver_bootstrap.wire_egress_accessor_resolvers()
+    except Exception:
+        pass
+
+
+def _wire_call_corpus_accessor_resolvers():
+    """Trigger lazy callio resolver registration through its out-of-SCC bootstrap."""
+    try:
+        from .store.call_corpus import call_corpus_resolver_bootstrap
+        call_corpus_resolver_bootstrap.wire_call_corpus_accessor_resolvers()
     except Exception:
         pass
 

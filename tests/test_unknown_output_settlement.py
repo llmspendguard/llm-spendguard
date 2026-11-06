@@ -84,12 +84,16 @@ def test_cost_integrity_unknown_tokens_have_no_manufactured_ceiling():
 
 def test_measurement_producers_preserve_unknown_output_tokens():
     from spendguard import adapters, callio, effort_titration, bakeoff, vendor_call
+    from spendguard.store.call_corpus import call_corpus_accessors
     from types import SimpleNamespace
     response = {"provider": "openai", "model": UNKNOWN_SETTLEMENT_MODEL, "text": UNKNOWN_SETTLEMENT_INTENT,
                 "in_tok": UNKNOWN_SETTLEMENT_INPUT, "out_tok": None, "cost": 0.0}
+    original_capture = callio.capture_live
     with patch.object(adapters, "_call_guarded", return_value=response.copy()), patch.object(callio, "capture_live") as capture:
+        call_corpus_accessors.set_capture_live_resolver(capture)
         adapters.call(UNKNOWN_SETTLEMENT_MODEL, UNKNOWN_SETTLEMENT_INTENT)
         assert capture.call_args.kwargs["out_tok"] is None
+    call_corpus_accessors.set_capture_live_resolver(original_capture)
     with patch.object(adapters, "call", return_value=response.copy()), patch.object(effort_titration, "_score_output", return_value=None), patch.object(calls, "insert") as insertion:
         effort_titration._measure_one(UNKNOWN_SETTLEMENT_MODEL, None, UNKNOWN_SETTLEMENT_INTENT, 0,
                                      UNKNOWN_SETTLEMENT_INTENT, UNKNOWN_SETTLEMENT_MODEL, effort_titration._new_acc())

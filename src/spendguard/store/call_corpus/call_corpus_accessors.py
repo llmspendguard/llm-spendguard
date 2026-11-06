@@ -7,6 +7,36 @@ _local = threading.local()
 _calls_module_contract = None
 _calls_module_contract_lock = threading.Lock()
 _calls_module_contract_consumers = []
+_inbound_callio_resolvers = {}
+_inbound_callio_resolver_lock = threading.Lock()
+
+
+def __getattr__(attribute_name):
+    """Materialize the generic inbound callio ``set_``/``resolve_`` protocol."""
+    if attribute_name.startswith("set_") and attribute_name.endswith("_resolver"):
+        symbol_name = attribute_name[len("set_"):-len("_resolver")]
+
+        def set_inbound_callio_resolver(resolver):
+            with _inbound_callio_resolver_lock:
+                _inbound_callio_resolvers[symbol_name] = resolver
+
+        set_inbound_callio_resolver.__name__ = attribute_name
+        globals()[attribute_name] = set_inbound_callio_resolver
+        return set_inbound_callio_resolver
+    if attribute_name.startswith("resolve_"):
+        symbol_name = attribute_name[len("resolve_"):]
+
+        def resolve_inbound_callio_symbol(*args, **kwargs):
+            with _inbound_callio_resolver_lock:
+                resolver = _inbound_callio_resolvers.get(symbol_name)
+            if resolver is None:
+                raise RuntimeError(f"call_corpus_accessors.{symbol_name} resolver not wired")
+            return resolver(*args, **kwargs)
+
+        resolve_inbound_callio_symbol.__name__ = attribute_name
+        globals()[attribute_name] = resolve_inbound_callio_symbol
+        return resolve_inbound_callio_symbol
+    raise AttributeError(attribute_name)
 
 
 _calls_insert_resolver = None

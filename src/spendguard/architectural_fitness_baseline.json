@@ -2236,14 +2236,11 @@
     ],
     [
       "spendguard.analyze.cost_estimation.calibrate",
-      "spendguard.analyze.cost_estimation.content_tokens",
-      "spendguard.analyze.cost_estimation.provider_tokens",
       "spendguard.analyze.learning.advise",
       "spendguard.analyze.learning.advisor",
       "spendguard.analyze.learning.conv",
       "spendguard.analyze.learning.intent_model_prior",
       "spendguard.analyze.learning.lane_bandit",
-      "spendguard.analyze.measurement.cacheaudit",
       "spendguard.analyze.measurement.review",
       "spendguard.analyze.reconciliation.attribution",
       "spendguard.analyze.reconciliation.ledger_sync",
@@ -2273,8 +2270,7 @@
       "spendguard.manage.token_operations.lane_queue",
       "spendguard.manage.token_operations.queue_planner",
       "spendguard.manage.token_operations.storm_route",
-      "spendguard.manage.token_operations.storm_submit",
-      "spendguard.store.call_corpus.callio"
+      "spendguard.manage.token_operations.storm_submit"
     ],
     [
       "spendguard.analyze.measurement.bakeoff",
@@ -2328,14 +2324,6 @@
       "spendguard.analyze.spend_reporting.receipt"
     ],
     [
-      "spendguard.analyze.cost_estimation.content_tokens",
-      "spendguard.analyze.cost_estimation.provider_tokens"
-    ],
-    [
-      "spendguard.analyze.cost_estimation.provider_tokens",
-      "spendguard.store.call_corpus.callio"
-    ],
-    [
       "spendguard.analyze.learning.advise",
       "spendguard.analyze.cost_estimation.calibrate"
     ],
@@ -2350,10 +2338,6 @@
     [
       "spendguard.analyze.learning.advisor",
       "spendguard.analyze.learning.intent_model_prior"
-    ],
-    [
-      "spendguard.analyze.learning.advisor",
-      "spendguard.store.call_corpus.callio"
     ],
     [
       "spendguard.analyze.learning.conv",
@@ -2388,20 +2372,12 @@
       "spendguard.analyze.measurement.measurement"
     ],
     [
-      "spendguard.analyze.measurement.cacheaudit",
-      "spendguard.store.call_corpus.callio"
-    ],
-    [
       "spendguard.analyze.measurement.measurement",
       "spendguard.analyze.measurement.bakeoff"
     ],
     [
       "spendguard.analyze.measurement.review",
       "spendguard.analyze.learning.advisor"
-    ],
-    [
-      "spendguard.analyze.measurement.review",
-      "spendguard.store.call_corpus.callio"
     ],
     [
       "spendguard.analyze.reconciliation.attribution",
@@ -2438,10 +2414,6 @@
     [
       "spendguard.analyze.reconciliation.workdone",
       "spendguard.analyze.learning.conv"
-    ],
-    [
-      "spendguard.analyze.reconciliation.workdone",
-      "spendguard.store.call_corpus.callio"
     ],
     [
       "spendguard.analyze.spend_reporting.receipt",
@@ -2513,14 +2485,6 @@
     ],
     [
       "spendguard.generate.execution.adapters",
-      "spendguard.analyze.cost_estimation.content_tokens"
-    ],
-    [
-      "spendguard.generate.execution.adapters",
-      "spendguard.analyze.measurement.cacheaudit"
-    ],
-    [
-      "spendguard.generate.execution.adapters",
       "spendguard.analyze.treasury.lane_quota_cost"
     ],
     [
@@ -2552,14 +2516,6 @@
       "spendguard.manage.token_operations.storm_route"
     ],
     [
-      "spendguard.generate.execution.adapters",
-      "spendguard.store.call_corpus.callio"
-    ],
-    [
-      "spendguard.generate.execution.batch_tracker",
-      "spendguard.analyze.cost_estimation.provider_tokens"
-    ],
-    [
       "spendguard.generate.execution.batch_tracker",
       "spendguard.generate.execution.adapters"
     ],
@@ -2572,10 +2528,6 @@
       "spendguard.manage.token_operations.lane_queue"
     ],
     [
-      "spendguard.generate.execution.batch_tracker",
-      "spendguard.store.call_corpus.callio"
-    ],
-    [
       "spendguard.generate.execution.codex_exec",
       "spendguard.manage.token_operations.codex_daemon"
     ],
@@ -2586,14 +2538,6 @@
     [
       "spendguard.generate.execution.price_identity_judge",
       "spendguard.generate.execution.adapters"
-    ],
-    [
-      "spendguard.generate.execution.submit",
-      "spendguard.analyze.cost_estimation.content_tokens"
-    ],
-    [
-      "spendguard.generate.execution.submit",
-      "spendguard.analyze.cost_estimation.provider_tokens"
     ],
     [
       "spendguard.generate.execution.submit",
@@ -2741,10 +2685,6 @@
     ],
     [
       "spendguard.manage.routing.lane_balance",
-      "spendguard.analyze.cost_estimation.provider_tokens"
-    ],
-    [
-      "spendguard.manage.routing.lane_balance",
       "spendguard.analyze.learning.advisor"
     ],
     [
@@ -2837,10 +2777,6 @@
     ],
     [
       "spendguard.manage.token_operations.lane_queue",
-      "spendguard.analyze.cost_estimation.provider_tokens"
-    ],
-    [
-      "spendguard.manage.token_operations.lane_queue",
       "spendguard.generate.execution.vendor_call"
     ],
     [
@@ -2854,10 +2790,6 @@
     [
       "spendguard.manage.token_operations.lane_queue",
       "spendguard.manage.token_operations.queue_planner"
-    ],
-    [
-      "spendguard.manage.token_operations.lane_queue",
-      "spendguard.store.call_corpus.callio"
     ],
     [
       "spendguard.manage.token_operations.queue_planner",
@@ -2898,10 +2830,6 @@
     [
       "spendguard.manage.token_operations.storm_submit",
       "spendguard.manage.token_operations.queue_planner"
-    ],
-    [
-      "spendguard.manage.token_operations.storm_submit",
-      "spendguard.store.call_corpus.callio"
     ],
     [
       "spendguard.platform.distribution",
@@ -2992,10 +2920,6 @@
       "spendguard.platform.fleet"
     ],
     [
-      "spendguard.store.call_corpus.callio",
-      "spendguard.analyze.learning.conv"
-    ],
-    [
       "spendguard.store.spend_search.ledger_read",
       "spendguard.store.spend_search.ledger_request_cursor"
     ],
@@ -3007,7 +2931,7 @@
   "recorded_dynamic_spendguard_imports": [
     "src/spendguard/analyze/learning/lane_bandit.py:295",
     "src/spendguard/analyze/measurement/lane_servability.py:289",
-    "src/spendguard/generate/execution/adapters.py:2717",
+    "src/spendguard/generate/execution/adapters.py:2716",
     "src/spendguard/generate/execution/adapters.py:426",
     "src/spendguard/generate/spend_capture/gpu_port.py:278",
     "src/spendguard/generate/spend_capture/sources.py:78",
@@ -3018,8 +2942,8 @@
     "src/spendguard/manage/token_operations/delegate_router.py:483",
     "src/spendguard/platform/lanes.py:65"
   ],
-  "max_largest_scc_size": 40,
-  "max_cyclic_edge_count": 178,
+  "max_largest_scc_size": 36,
+  "max_cyclic_edge_count": 160,
   "max_legacy_shim_count": 219,
   "recorded_cross_context_nonsurface_imports": [
     [

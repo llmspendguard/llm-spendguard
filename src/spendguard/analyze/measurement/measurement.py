@@ -290,11 +290,11 @@ def _recover_sample(intent, sample_ids):
     """Recover the ACTUAL prompts for a reading's sample (stored as item_id content-hashes) from the corpus, so a
     rerun replays the SAME items. Returns (prompts_in_order, missing_ids). A missing id = that item is no longer
     recorded → the sample cannot be fully reproduced, and the caller must re-baseline rather than pretend."""
-    from ... import callio
+    from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
     # callio's OWN connection (the call_io table lives in config.db_path(), where record_io_sample writes) — never a
     # hand-rolled path, so a rerun reads exactly what the corpus stored. A real DB failure PROPAGATES; it is not
     # masked as 'nothing recovered' (which would mis-report a broken corpus as 'sample_unreproducible').
-    with callio.config.ledger_op('callio', callio._ensure_callio_schema) as con:
+    with config.ledger_op('callio', _call_corpus_accessors.resolve__ensure_callio_schema) as con:
         by_id = {}
         for (p,) in con.execute("SELECT DISTINCT prompt FROM call_io WHERE intent IS ? AND prompt IS NOT NULL "
                                 "AND length(prompt) > 0", (intent,)):

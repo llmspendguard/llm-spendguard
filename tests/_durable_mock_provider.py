@@ -14,6 +14,7 @@ import re
 import threading
 
 from spendguard import batch_tracker as BT, callio as C, submit as S
+from spendguard.store.call_corpus import call_corpus_accessors
 
 _OFFLOAD_FIELD = "sg_offload_key"
 _lk = threading.Lock()
@@ -73,6 +74,7 @@ def install():
 
     S.submit_chat_tasks = _submit_chat
     C.collect_chat_tasks = _collect_chat
+    call_corpus_accessors.set_collect_chat_tasks_resolver(_collect_chat)
     BT._existing_offload_batch = _existing
 
 

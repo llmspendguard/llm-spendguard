@@ -26,6 +26,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(
 from _fake_anthropic import FakeAnthropic, FakeBatches, batch_obj, succeeded_text   # noqa: E402
 from _script_checks import record_script_check
 from spendguard import batch_tracker, submit, lane_queue, callio                    # noqa: E402
+from spendguard.store.call_corpus import call_corpus_accessors  # noqa: E402
 
 ANTHRO = "claude-haiku-4-5"
 OPENAI = "gpt-5.5"
@@ -55,9 +56,11 @@ def _install(monkey):
     monkey(submit, "submit_chat_tasks", submit_transient_redirect_chat)
     monkey(lane_queue, "mark_batched", _fake_mark)
     monkey(callio, "_anthropic_client", lambda: FakeAnthropic(_state["fb"]))
+    call_corpus_accessors.set__anthropic_client_resolver(callio._anthropic_client)
     # The OpenAI reconcile path is UNCHANGED and not under test here; stub it to 'no existing batch' so the OpenAI
     # sanity check exercises provider routing (→ submit_chat_tasks) without a real OpenAI API call.
     monkey(callio, "find_live_batch_by_metadata", lambda *a, **k: None)
+    call_corpus_accessors.set_find_live_batch_by_metadata_resolver(callio.find_live_batch_by_metadata)
     return calls
 
 

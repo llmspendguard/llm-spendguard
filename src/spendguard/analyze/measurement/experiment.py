@@ -18,7 +18,8 @@ CLI: `spendguard experiment --intent X [--model M]... [--instruction "..."]... [
 
 from ...capability_cli_parsing import add_registered_cli_argument
 import json
-from ... import callio, calls, config, pricing
+from ... import calls, config, pricing
+from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
 from ...submit import _count_tokens
 
 META = "spendguard"
@@ -30,7 +31,7 @@ _TERSE = ("\n\nOutput ONLY the minimal result (e.g. the JSON / the codes) with N
 
 def _base_model(intent):
     """The reference model with the most usable (prompt+output) samples — the baseline to compare against."""
-    with callio.config.ledger_op('callio', callio._ensure_callio_schema) as ledger_read_handle:
+    with config.ledger_op('callio', _call_corpus_accessors.resolve__ensure_callio_schema) as ledger_read_handle:
         r = ledger_read_handle.execute(
             "SELECT model, COUNT(*) FROM call_io WHERE COALESCE(intent,'(none)')=? AND prompt!='' "
             "AND output!='' GROUP BY model ORDER BY 2 DESC LIMIT 1", (intent,)).fetchone()
@@ -38,7 +39,7 @@ def _base_model(intent):
 
 
 def _samples(intent, base_model, k):
-    with callio.config.ledger_op('callio', callio._ensure_callio_schema) as ledger_read_handle:
+    with config.ledger_op('callio', _call_corpus_accessors.resolve__ensure_callio_schema) as ledger_read_handle:
         rows = ledger_read_handle.execute(
             "SELECT prompt, output, model FROM call_io WHERE COALESCE(intent,'(none)')=? AND model=? "
             "AND prompt!='' AND output!='' LIMIT ?", (intent, base_model, k)).fetchall()

@@ -63,14 +63,13 @@ def _judge_sample(per, limit=None, rows=None):
     """Unjudged call_io samples, bounded to `per` per (intent, model) — enough to estimate good%
     with a confidence interval, not label everything (keeps the judge spend small). `rows` lets the caller pass an
     already-fetched callio.unjudged() so it isn't queried twice."""
-    from ... import callio
     from collections import defaultdict
     if limit is not None and limit <= 0:
         return []                                         # limit=0 asks for ZERO samples. `if limit and …` below is falsy
         #                                                   for 0 (→ judged everything); and the check is post-append, so
         #                                                   even `is not None` would yield 1. Guard the 0/negative case here.
     if rows is None:
-        rows = callio.unjudged()
+        rows = _call_corpus_accessors.resolve_unjudged()
     seen, out = defaultdict(int), []
     for io_id, intent, model, p, o in rows:
         if seen[(intent, model)] >= per:
@@ -117,9 +116,8 @@ def _est_line(mode, model, n, in_tok, out_tok, cost):
 def reconstruct_advisor_history(run=False, per=15, limit=None):
     """Judge a bounded sample of the recovered call_io corpus for quality → makes good% / $/good real.
     Estimate-only unless run=True. Realtime judge (synchronous, small, caged by intent spendguard:*)."""
-    from ... import callio
     judge = config.advisor_judge_model()
-    unjudged = list(callio.unjudged())                    # fetch ONCE — reused for the sample AND the count (was
+    unjudged = list(_call_corpus_accessors.resolve_unjudged())  # fetch ONCE — reused for the sample AND the count (was
     samples = _judge_sample(per, limit, rows=unjudged)    # two separate callio.unjudged() DB queries, risking drift)
     total_unjudged = len(unjudged)
     print(f"reconstruct — quality judge = {judge} (realtime), caged by intent {META}:*")
@@ -151,7 +149,7 @@ def reconstruct_advisor_history(run=False, per=15, limit=None):
                     err += 1
                     continue
                 ok = (r["text"] or "").strip().upper().startswith("GOOD")
-                callio.set_quality(io_id, ok, src="judge", conf=0.95)
+                _call_corpus_accessors.resolve_set_quality(io_id, ok, src="judge", conf=0.95)
                 good += int(ok)
                 bad += int(not ok)
             except Exception as e:
@@ -162,7 +160,7 @@ def reconstruct_advisor_history(run=False, per=15, limit=None):
                 _sys.stderr.write(f"[advisor:reconstruct] sample {io_id} skipped ({type(e).__name__}: {str(e)[:60]})\n")
     print(f"  judged {good + bad} ({err} errors): {good} good / {bad} bad.")
     print("  empirical quality per (intent, model):")
-    for (intent, model), d in sorted(callio.good_rates().items(), key=lambda kv: -(kv[1]['judged'])):
+    for (intent, model), d in sorted(_call_corpus_accessors.resolve_good_rates().items(), key=lambda kv: -(kv[1]['judged'])):
         if d["judged"]:
             print(f"    {(intent or '(none)')[:22]:<24}{model[:20]:<22}"
                   f"good={('%.0f%%' % (100*d['good_rate'])) if d['good_rate'] is not None else '—':>5}"

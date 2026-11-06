@@ -11,7 +11,7 @@ so each learning is reusable and (when scrubbed) shareable. Caged (spendguard:re
 from spendguard.generate.execution import execution_accessors as _execution_accessors
 
 from ...capability_cli_parsing import add_registered_cli_argument
-from ... import callio, learn, config, pricing
+from ... import learn, config, pricing
 from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
 
 META = "spendguard"
@@ -31,7 +31,7 @@ _SYS = (
 
 
 def _token_ratio(intent, model, n=8):
-    with callio.config.ledger_op('callio', callio._ensure_callio_schema) as ledger_read_handle:
+    with config.ledger_op('callio', _call_corpus_accessors.resolve__ensure_callio_schema) as ledger_read_handle:
         rows = ledger_read_handle.execute(
             "SELECT prompt, output, out_tok FROM call_io WHERE intent IS ? AND model=? LIMIT ?",
             (intent, model, n)).fetchall()
@@ -71,7 +71,7 @@ def _conf(v, default=0.5):
 
 def _bundles(top=10):
     """Top (intent, model) combos by cost, each with cost + quality + token-ratio + a sample + chat notes."""
-    rates = callio.good_rates()
+    rates = _call_corpus_accessors.resolve_good_rates()
     out = []
     for intent, model, jobs, cost, good, bad in sorted(_call_corpus_accessors.resolve_calls_cost_summary(), key=lambda r: -(r[3] or 0)):
         tr = _token_ratio(None if intent == "(none)" else intent, model)

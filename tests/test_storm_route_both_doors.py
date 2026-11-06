@@ -25,6 +25,7 @@ import spendguard  # noqa: E402
 spendguard.require = lambda: None
 import storm_harness as H  # noqa: E402
 from spendguard import adapters, storm_route, submit as S, callio as C  # noqa: E402
+from spendguard.store.call_corpus import call_corpus_accessors  # noqa: E402
 
 MODEL = "anthropic:claude-haiku-4-5"
 N = 100
@@ -51,6 +52,7 @@ def _fake_collect_msg(bid, intent, model, require_ready=True, record_io=False):
     return {"results": {cid: "ok %s" % can for cid, can in m.items()}, "failed": {}, "not_ready": []}
 S.submit_message_batch = _fake_submit_msg
 C.collect_message_batch = _fake_collect_msg
+call_corpus_accessors.set_collect_message_batch_resolver(_fake_collect_msg)
 
 fp = H.FakeProvider(cap=100000, window_s=1.0).install()
 col = H.CallerCollector()

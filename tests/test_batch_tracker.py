@@ -14,6 +14,7 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
     os.execv(sys.executable, [sys.executable] + sys.argv)
 
 from spendguard import lane_queue as lq, batch_tracker as bt, callio   # noqa: E402
+from spendguard.store.call_corpus import call_corpus_accessors  # noqa: E402
 
 
 class Checks:
@@ -44,6 +45,8 @@ def main():
         print("\n== in_progress → job stays OPEN (nothing settled, not failed) ==")
         callio.batch_status = lambda ids, **k: {i: {"status": "in_progress", "output_ready": False} for i in ids}
         callio.collect_chat_tasks = lambda bid, intent, model, **k: {"results": {}, "failed": {}, "not_ready": [bid]}
+        call_corpus_accessors.set_batch_status_resolver(callio.batch_status)
+        call_corpus_accessors.set_collect_chat_tasks_resolver(callio.collect_chat_tasks)
         r1 = bt.poll()
         c.ck("in_progress → open, 0 settled/failed", r1["jobs_open"] == 1 and r1["jobs_settled"] == 0
              and r1["jobs_failed"] == 0 and bt.status().get("open") == 1, str(r1))
@@ -52,6 +55,8 @@ def main():
         callio.batch_status = lambda ids, **k: {i: {"status": "completed", "output_ready": True} for i in ids}
         callio.collect_chat_tasks = lambda bid, intent, model, **k: {
             "results": {s_ids[2]: "C", s_ids[0]: "A", s_ids[1]: "B"}, "failed": {}, "not_ready": []}  # OUT OF ORDER
+        call_corpus_accessors.set_batch_status_resolver(callio.batch_status)
+        call_corpus_accessors.set_collect_chat_tasks_resolver(callio.collect_chat_tasks)
         r2 = bt.poll()
         c.ck("completed → 3 rows settled, job settled", r2["settled_rows"] == 3 and bt.status().get("settled") == 1
              and lq.queue_depth().get("done") == 3, str({"r2": r2, "depth": lq.queue_depth()}))
@@ -63,6 +68,8 @@ def main():
         bt.register_batch("batch-2", "openai", "openai:gpt-5-nano", "chat", 2, expires_at=1.0)   # already long past
         callio.batch_status = lambda ids, **k: {i: {"status": "expired", "output_ready": False} for i in ids}
         callio.collect_chat_tasks = lambda bid, intent, model, **k: {"results": {}, "failed": {}, "not_ready": []}
+        call_corpus_accessors.set_batch_status_resolver(callio.batch_status)
+        call_corpus_accessors.set_collect_chat_tasks_resolver(callio.collect_chat_tasks)
         r3 = bt.poll()
         c.ck("expired → job failed", r3["jobs_failed"] == 1 and bt.status().get("failed") == 1, str(r3))
         d3 = lq.queue_depth()
@@ -76,11 +83,14 @@ def main():
         bt.register_batch("batch-3", "openai", "openai:gpt-5-nano", "resume-intent", 1)
         bt._set_status("batch-3", "failing", "crash mid-fail")     # simulate a crash BETWEEN requeue and mark-failed
         callio.batch_status = lambda ids, **k: {i: {"status": "expired"} for i in ids}
+        call_corpus_accessors.set_batch_status_resolver(callio.batch_status)
         r4 = bt.poll()
         c.ck("'failing' job resumed → failed, its row re-queued realtime", r4["jobs_resumed"] >= 1
              and r4["jobs_failed"] >= 1 and lq.queue_depth().get("queued_batch", 0) == 0, str(r4))
     finally:
         callio.batch_status, callio.collect_chat_tasks = real_status, real_collect
+        call_corpus_accessors.set_batch_status_resolver(real_status)
+        call_corpus_accessors.set_collect_chat_tasks_resolver(real_collect)
 
     print(f"\n{'[FAIL]' if c.fails else 'OK'} test_batch_tracker: {c.fails} failure(s)")
     return 1 if c.fails else 0

@@ -381,7 +381,10 @@
         "spendguard.store.reference_data.sync_capabilities",
         "spendguard.egress.egress_resolver_bootstrap",
         "spendguard.egress.saas",
-        "spendguard.egress.saas_accessors"
+        "spendguard.egress.saas_accessors",
+        "spendguard.store.call_corpus.call_corpus_resolver_bootstrap",
+        "spendguard.store.call_corpus.callio",
+        "spendguard.store.call_corpus.content_compression"
       ],
       "gate_installed": true,
       "gate_unarmed_details": [],
@@ -517,6 +520,9 @@
         "spendguard.egress.egress_resolver_bootstrap",
         "spendguard.egress.saas",
         "spendguard.egress.saas_accessors",
+        "spendguard.store.call_corpus.call_corpus_resolver_bootstrap",
+        "spendguard.store.call_corpus.callio",
+        "spendguard.store.call_corpus.content_compression",
         "spendguard.interface.cli",
         "spendguard.interface.capability_cli_dispatch_generation",
         "spendguard.interface.capability_cli_callable_generation"
@@ -654,7 +660,10 @@
         "spendguard.store.reference_data.sync_capabilities",
         "spendguard.egress.egress_resolver_bootstrap",
         "spendguard.egress.saas",
-        "spendguard.egress.saas_accessors"
+        "spendguard.egress.saas_accessors",
+        "spendguard.store.call_corpus.call_corpus_resolver_bootstrap",
+        "spendguard.store.call_corpus.callio",
+        "spendguard.store.call_corpus.content_compression"
       ],
       "gate_installed": true,
       "gate_unarmed_details": [],
@@ -789,7 +798,10 @@
         "spendguard.store.reference_data.sync_capabilities",
         "spendguard.egress.egress_resolver_bootstrap",
         "spendguard.egress.saas",
-        "spendguard.egress.saas_accessors"
+        "spendguard.egress.saas_accessors",
+        "spendguard.store.call_corpus.call_corpus_resolver_bootstrap",
+        "spendguard.store.call_corpus.callio",
+        "spendguard.store.call_corpus.content_compression"
       ],
       "gate_installed": true,
       "gate_unarmed_details": [],
@@ -924,7 +936,10 @@
         "spendguard.store.reference_data.sync_capabilities",
         "spendguard.egress.egress_resolver_bootstrap",
         "spendguard.egress.saas",
-        "spendguard.egress.saas_accessors"
+        "spendguard.egress.saas_accessors",
+        "spendguard.store.call_corpus.call_corpus_resolver_bootstrap",
+        "spendguard.store.call_corpus.callio",
+        "spendguard.store.call_corpus.content_compression"
       ],
       "gate_installed": true,
       "gate_unarmed_details": [],
@@ -1059,7 +1074,10 @@
         "spendguard.store.reference_data.sync_capabilities",
         "spendguard.egress.egress_resolver_bootstrap",
         "spendguard.egress.saas",
-        "spendguard.egress.saas_accessors"
+        "spendguard.egress.saas_accessors",
+        "spendguard.store.call_corpus.call_corpus_resolver_bootstrap",
+        "spendguard.store.call_corpus.callio",
+        "spendguard.store.call_corpus.content_compression"
       ],
       "gate_installed": true,
       "gate_unarmed_details": [],
@@ -1194,7 +1212,10 @@
         "spendguard.store.reference_data.sync_capabilities",
         "spendguard.egress.egress_resolver_bootstrap",
         "spendguard.egress.saas",
-        "spendguard.egress.saas_accessors"
+        "spendguard.egress.saas_accessors",
+        "spendguard.store.call_corpus.call_corpus_resolver_bootstrap",
+        "spendguard.store.call_corpus.callio",
+        "spendguard.store.call_corpus.content_compression"
       ],
       "gate_installed": true,
       "gate_unarmed_details": [],

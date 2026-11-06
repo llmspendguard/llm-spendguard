@@ -16,6 +16,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(
 import spendguard  # noqa: E402
 spendguard.require = lambda: None
 from spendguard import storm_submit, submit as S, callio as C  # noqa: E402
+from spendguard.store.call_corpus import call_corpus_accessors  # noqa: E402
 
 fails = []
 
@@ -40,6 +41,7 @@ def _fake_collect_chat(bid, intent, model, require_ready=True, record_io=False):
     return {"results": {"7": "ok seven", "9": "ok nine"}, "failed": {"11": "bad req"}, "not_ready": []}
 S.submit_chat_tasks = _fake_submit_chat
 C.collect_chat_tasks = _fake_collect_chat
+call_corpus_accessors.set_collect_chat_tasks_resolver(_fake_collect_chat)
 ex = storm_submit.default_batch_executor("openai:gpt-5.5", "t", poll_interval_s=0.01)
 res = ex([("7", "do CANARY-7"), ("9", "do CANARY-9"), ("11", "do CANARY-11")])
 verify_condition("openai: custom_ids carried into the batch submit verbatim", rec.get("ids") == ["7", "9", "11"],
@@ -56,6 +58,7 @@ verify_condition("openai: it POLLED (not-ready → ready), reasoning forwarded o
 S.submit_chat_tasks = lambda tasks, model, **kw: {"batch_id": "b-stuck", "error": None}
 C.collect_chat_tasks = lambda bid, intent, model, require_ready=True, record_io=False: {
     "results": {}, "failed": {}, "not_ready": [bid]}                      # never completes
+call_corpus_accessors.set_collect_chat_tasks_resolver(C.collect_chat_tasks)
 res_stuck = storm_submit.default_batch_executor("openai:gpt-5.5", "t", poll_interval_s=0.01, max_poll_s=0.05)(
     [("20", "x"), ("21", "y")])
 verify_condition("poll ceiling: unresolved items returned as TYPED backpressure by id (never a silent drop)",
@@ -78,6 +81,7 @@ def _fake_submit_msg(tasks, model, **kw):
 S.submit_message_batch = _fake_submit_msg
 C.collect_message_batch = lambda bid, intent, model, require_ready=True, record_io=False: {
     "results": {"5": "ok five"}, "failed": {}, "not_ready": []}
+call_corpus_accessors.set_collect_message_batch_resolver(C.collect_message_batch)
 res3 = storm_submit.default_batch_executor("anthropic:claude-haiku-4-5", "t")([("5", "do CANARY-5")])
 verify_condition("anthropic dispatches to submit_message_batch/collect_message_batch (NO reasoning kw)",
                  arec.get("called") and res3.get("5", {}).get("text") == "ok five" and "reasoning" not in arec.get("kw", {}),

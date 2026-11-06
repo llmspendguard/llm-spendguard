@@ -16,7 +16,8 @@ script-defined system prompts to cache, and per-provider setup. CLI: `spendguard
 
 from ...capability_cli_parsing import add_registered_cli_argument
 import ast, os, re, glob
-from ... import callio, pricing
+from ... import config, pricing
+from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
 from spendguard.generate.execution import execution_accessors as _execution_accessors
 
 # OpenAI auto-caches only prefixes at/above this; Anthropic explicit cache_control has lower minimums.
@@ -40,7 +41,7 @@ def _common_prefix(strs):
 
 def _intent_prefixes():
     out = []
-    with callio.config.ledger_op('callio', callio._ensure_callio_schema) as ledger_read_handle:
+    with config.ledger_op('callio', _call_corpus_accessors.resolve__ensure_callio_schema) as ledger_read_handle:
         combos = ledger_read_handle.execute(
             # GROUPED BY PROVIDER TOO. call_io HAS a provider column and this ignored it, so two vendors
             # serving the same model id had their prompts pooled into one prefix analysis — and a "shared
@@ -49,7 +50,7 @@ def _intent_prefixes():
             "SELECT COALESCE(intent,'(none)'), COALESCE(provider,''), model, COUNT(*) FROM call_io "
             "WHERE prompt!='' GROUP BY intent, provider, model HAVING COUNT(*) >= 3").fetchall()
     for intent, provider, model, n in combos:
-        with callio.config.ledger_op('callio', callio._ensure_callio_schema) as ledger_read_handle:
+        with config.ledger_op('callio', _call_corpus_accessors.resolve__ensure_callio_schema) as ledger_read_handle:
             prompts = [r[0] for r in ledger_read_handle.execute(
                 "SELECT prompt FROM call_io WHERE COALESCE(intent,'(none)')=? AND COALESCE(provider,'')=? "
                 "AND model=? AND prompt!='' LIMIT 30", (intent, provider, model)).fetchall()]

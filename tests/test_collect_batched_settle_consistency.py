@@ -11,6 +11,7 @@ import os, sys, tempfile
 os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="spendguard-collect-consistency-")
 
 from spendguard import lane_queue as lq, callio   # noqa: E402
+from spendguard.store.call_corpus import call_corpus_accessors  # noqa: E402
 
 
 def main():
@@ -30,6 +31,7 @@ def main():
         lq.mark_batched(ids, "batch-ci", "openai:gpt-5-nano")
         callio.collect_chat_tasks = lambda bid, intent, model, **k: {
             "results": {i: "the answer" for i in ids}, "failed": {}, "not_ready": []}
+        call_corpus_accessors.set_collect_chat_tasks_resolver(callio.collect_chat_tasks)
 
         # 1. settle SILENTLY FAILS (the best-effort transient path returns False) → row NOT counted, and NAMED
         lq.settle = lambda rid, res: False
@@ -51,11 +53,13 @@ def main():
         lq.mark_batched(pids, "batch-partial", "openai:gpt-5-nano")
         callio.collect_chat_tasks = lambda bid, intent, model, **k: {
             "results": {pids[0]: "A done"}, "failed": {}, "not_ready": []}   # pids[1] OMITTED from both
+        call_corpus_accessors.set_collect_chat_tasks_resolver(callio.collect_chat_tasks)
         out3 = lq.collect_batched()
         ck("a partial pull COUNTS the omitted row in not_settled (never silently skipped)",
            out3.get("not_settled", 0) >= 1 and out3.get("done") >= 1, out3)
     finally:
         callio.collect_chat_tasks, lq.settle = _real_collect, _real_settle
+        call_corpus_accessors.set_collect_chat_tasks_resolver(_real_collect)
 
     print(f"\n{'[FAIL]' if fails else '[OK]'} test_collect_batched_settle_consistency: {fails} failure(s)")
     return 1 if fails else 0
