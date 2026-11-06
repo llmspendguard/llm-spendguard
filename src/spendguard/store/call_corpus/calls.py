@@ -1130,3 +1130,8 @@ def cmd_summary(argv=None):
     print("\ngood% = share of LABELED calls (feedback / judge).  $/good = cost-per-good-result.")
     print("Label calls with spendguard.feedback(call_id, ok=...) or an agentic judge; reuse stays unjudged.")
     return 0
+
+
+from . import call_corpus_accessors as _call_corpus_accessors
+
+_call_corpus_accessors.set_calls_insert_resolver(lambda *a, **k: insert(*a, **k))

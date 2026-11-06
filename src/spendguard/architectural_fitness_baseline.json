@@ -2437,10 +2437,6 @@
     ],
     [
       "spendguard.analyze.learning.conv",
-      "spendguard.generate.spend_capture.backfill"
-    ],
-    [
-      "spendguard.analyze.learning.conv",
       "spendguard.generate.spend_capture.resources"
     ],
     [
@@ -2766,10 +2762,6 @@
     [
       "spendguard.analyze.reconciliation.ledger_sync",
       "spendguard.egress.saas"
-    ],
-    [
-      "spendguard.analyze.reconciliation.ledger_sync",
-      "spendguard.generate.spend_capture.backfill"
     ],
     [
       "spendguard.analyze.reconciliation.ledger_sync",
@@ -3161,10 +3153,6 @@
     ],
     [
       "spendguard.egress.signal",
-      "spendguard.generate.spend_capture.backfill"
-    ],
-    [
-      "spendguard.egress.signal",
       "spendguard.store.call_corpus.callio"
     ],
     [
@@ -3378,10 +3366,6 @@
     [
       "spendguard.generate.execution.vendor_call",
       "spendguard.store.reference_data.catalog"
-    ],
-    [
-      "spendguard.generate.spend_capture.backfill",
-      "spendguard.store.call_corpus.calls"
     ],
     [
       "spendguard.generate.spend_capture.chat",
@@ -4830,8 +4814,8 @@
     "src/spendguard/manage/token_operations/delegate_router.py:481",
     "src/spendguard/platform/lanes.py:64"
   ],
-  "max_largest_scc_size": 115,
-  "max_cyclic_edge_count": 646,
+  "max_largest_scc_size": 114,
+  "max_cyclic_edge_count": 642,
   "max_legacy_shim_count": 219,
   "recorded_cross_context_nonsurface_imports": [
     [

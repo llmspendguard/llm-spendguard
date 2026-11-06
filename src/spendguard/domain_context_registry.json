@@ -281,11 +281,12 @@
       "surface_module": "spendguard.store.call_corpus",
       "layer": "L1",
       "backing_modules": [
-        "store.call_corpus.calls",
+        "store.call_corpus.call_corpus_accessors",
         "store.call_corpus.callio",
-        "store.call_corpus.content_retention",
+        "store.call_corpus.calls",
         "store.call_corpus.content_compression",
         "store.call_corpus.content_compression_backfill",
+        "store.call_corpus.content_retention",
         "store.call_corpus.routing_audit"
       ],
       "published_names": []
