@@ -118,14 +118,15 @@ def ranked(intent=None, as_of=None, by_effort=False):
     # bandit STOP ranking a plan lane as free (measured live: claude-code ≈ $15/Mtok, not $0). Read ONCE; a metered arm
     # (no lane for its provider) is unchanged, and the map is empty when no lane has converged economics — fail-open to
     # the prior $0-lane behaviour, never a crash. The WASTE reclaim stays a per-job route_economics call, not here.
-    from ... import route_economics as _re, budget
+    from ... import route_economics as _re
+    import spendguard.manage.admission.admission_accessors as budget
     _lane_eff = _re.lane_eff_by_provider()
     # COST BASIS = the LEDGER (money of record), NOT the calls corpus. The corpus books a per-call cost that for a
     # lane-routed call is a metered-EQUIVALENT estimate — measured ~57x the ledger (one model: ~$1,019 corpus vs ~$18
     # billed/month) — so ranking on it ranks a fiction. Read the real billed $ per provider:model from the ledger; a
     # lane call reads ~$0 billed and is then FLOORED to its amortized plan-draw (out_tok x lane_eff) below, so a
     # $0-lane arm is priced at its true marginal cost. (A3 — the corpus stays the QUALITY + out_tok source only.)
-    _billed = budget.billed_by_model(intent, as_of)
+    _billed = budget.resolve_billed_by_model(intent, as_of)
     _model_outtok = {}                                 # per provider:model total out_tok — to apportion a model's ledger
     for _a in agg.values():                            # $ across its effort arms (spend_events has no effort column)
         _mid = f"{_a['provider']}:{_a['model']}"

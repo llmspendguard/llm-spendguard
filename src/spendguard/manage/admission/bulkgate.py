@@ -75,7 +75,7 @@ def _backfill_gate_estimate_nano_columns(connection, missing_columns):
         logging.getLogger(__name__).info("gate_ledger_nano_float_sum_delta column=%s delta_usd=%s", raw_column, delta)
 
 
-from .gate import SpendGateRefused   # the common base for DELIBERATE gate refusals (see GateBlocked below).
+from .spend_refusal_error import GateBlocked, SpendGateRefused  # noqa: F401  (public compatibility re-export)
 # Import direction: gate depends on bulkgate but only LAZILY (inside functions), and bulkgate imports nothing
 # else from gate — so this top-level import is acyclic (gate always finishes loading before bulkgate here).
 
@@ -86,18 +86,6 @@ BULK_MIN_USD_DEFAULT = 0.25       # $-primary trigger DEFAULT (tunable: gate.bul
 FRESHNESS_HOURS_DEFAULT = 24      # flags expire — a stale test can't authorize a much-later run on changed data
 
 _lock = new_fork_reset_ledger_state(globals(), "_lock", threading.RLock)
-
-
-class GateBlocked(SpendGateRefused):
-    """Raised when a BULK paid run is attempted without a FRESH estimate+test for its call-class signature.
-
-    Subclasses SpendGateRefused ON PURPOSE: it is a DELIBERATE refusal, not a gate malfunction. Every fail-open
-    handler in the gate (`_guard` and the pre/post-call wrappers) catches the CONCEPT — `except SpendGateRefused`
-    — and re-raises it, swallowing only genuine malfunctions (`database is locked`, a buggy register()'d fn). If
-    GateBlocked did NOT share that base (it used to be `Exception`), those handlers would treat this block as a
-    malfunction and let the un-estimated batch through — which is exactly the bug this inheritance closes. Any new
-    deliberate-refusal type must likewise subclass SpendGateRefused so it blocks by CONSTRUCTION, never by an
-    enumerated `except (A, B, …)` list that someone has to remember to extend."""
 
 
 def _ensure_gate_schema(c):
@@ -751,7 +739,7 @@ def _reasoning_out_estimate():
 # outputs are large. RUNAWAY_MIN_SAMPLES guards against a p99 built from too few calls (an unstable norm must not
 # accuse). Both are overridable (env → config → default), consistent with every other bulkgate knob.
 RUNAWAY_FACTOR_DEFAULT = 3.0     # out_tok > 3x the class p99 ⇒ a runaway (well beyond normal variance, below noise)
-RUNAWAY_MIN_SAMPLES = 20         # need at least this many measured outputs before a p99 is trustworthy enough to accuse
+from .admission_accessors import RUNAWAY_MIN_SAMPLES
 
 
 def maxtokens(sig, current_max=None, model=None):
@@ -1197,3 +1185,33 @@ _cost_estimation_accessors.set_bulk_sig_resolver(lambda *a, **k: sig(*a, **k))
 _cost_estimation_accessors.set_bulk_reasoning_out_estimate_resolver(
     lambda *a, **k: _reasoning_out_estimate(*a, **k)
 )
+
+from . import admission_accessors as _admission_accessors
+
+_admission_accessors.set__log_block_resolver(lambda *a, **k: _log_block(*a, **k))
+_admission_accessors.set__reasoning_out_estimate_resolver(lambda *a, **k: _reasoning_out_estimate(*a, **k))
+_admission_accessors.set__runaway_factor_resolver(lambda *a, **k: _runaway_factor(*a, **k))
+_admission_accessors.set_check_bulk_resolver(lambda *a, **k: check_bulk(*a, **k))
+_admission_accessors.set_check_compute_resolver(lambda *a, **k: check_compute(*a, **k))
+_admission_accessors.set_check_realtime_resolver(lambda *a, **k: check_realtime(*a, **k))
+_admission_accessors.set_check_runaway_resolver(lambda *a, **k: check_runaway(*a, **k))
+_admission_accessors.set_deadline_cancels_resolver(lambda *a, **k: deadline_cancels(*a, **k))
+_admission_accessors.set_estimate_job_resolver(lambda *a, **k: estimate_job(*a, **k))
+_admission_accessors.set_gate_status_resolver(lambda *a, **k: gate_status(*a, **k))
+_admission_accessors.set_gated_batch_resolver(lambda *a, **k: gated_batch(*a, **k))
+_admission_accessors.set_is_truncated_resolver(lambda *a, **k: is_truncated(*a, **k))
+_admission_accessors.set_latency_resolver(lambda *a, **k: latency(*a, **k))
+_admission_accessors.set_maxtokens_resolver(lambda *a, **k: maxtokens(*a, **k))
+_admission_accessors.set_mode_resolver(lambda *a, **k: mode(*a, **k))
+_admission_accessors.set_note_deadline_cancel_resolver(lambda *a, **k: note_deadline_cancel(*a, **k))
+_admission_accessors.set_note_latency_resolver(lambda *a, **k: note_latency(*a, **k))
+_admission_accessors.set_note_response_resolver(lambda *a, **k: note_response(*a, **k))
+_admission_accessors.set_note_runaway_resolver(lambda *a, **k: note_runaway(*a, **k))
+_admission_accessors.set_note_unhonored_effort_resolver(lambda *a, **k: note_unhonored_effort(*a, **k))
+_admission_accessors.set_preview_max_resolver(lambda *a, **k: preview_max(*a, **k))
+_admission_accessors.set_record_estimate_resolver(lambda *a, **k: record_estimate(*a, **k))
+_admission_accessors.set_record_tested_resolver(lambda *a, **k: record_tested(*a, **k))
+_admission_accessors.set_runaways_resolver(lambda *a, **k: runaways(*a, **k))
+_admission_accessors.set_sig_resolver(lambda *a, **k: sig(*a, **k))
+_admission_accessors.set_test_job_resolver(lambda *a, **k: test_job(*a, **k))
+_admission_accessors.set_unhonored_efforts_resolver(lambda *a, **k: unhonored_efforts(*a, **k))

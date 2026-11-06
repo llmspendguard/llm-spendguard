@@ -182,7 +182,7 @@ def probe(timeout_s=None):
     reachability ping must NOT wait a lane's full work-timeout (agy's is 300s), so a dead lane fails FAST (in
     timeout_s) instead of wedging the whole sweep. None → each lane's own default. Returns per-lane live results;
     a fresh probe each call (a point-in-time reachability, not a resumable job — nothing to checkpoint)."""
-    from .. import gate as _gate
+    import spendguard.manage.admission.admission_accessors as _gate
     mods = _lane_mods()
     res = []
     for ln in lanes_status()["lanes"]:
@@ -198,7 +198,7 @@ def probe(timeout_s=None):
             kw["timeout"] = timeout_s              # bound the CLI subprocess itself — a dead lane fails in timeout_s
         try:
             r = mod.run_prompt(_PROBE_PROMPT, **kw)
-        except _gate.deliberate_stop_types():
+        except _gate.resolve_deliberate_stop_types():
             raise                                  # a spend refusal / deadline HALTS the sweep — never a 'lane down' row
         except Exception as e:
             # a lane's CLI can be missing (FileNotFoundError) or hang (TimeoutExpired); one lane's probe raising

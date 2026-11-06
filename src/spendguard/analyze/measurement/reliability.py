@@ -57,9 +57,10 @@ def _metered_target(provider):
     # the check verifies the ids you DEPEND on (e.g. kimi-k3) rather than merely the cheapest one served. Explicit
     # `reliability.probe_models` still wins above.
     try:
-        from ... import model_preflight, gate as _g
-        for spec in model_preflight.configured_specs():
-            if _g._provider_of(spec) == provider:
+        import spendguard.manage.admission.admission_accessors as model_preflight
+        import spendguard.manage.admission.admission_accessors as _g
+        for spec in model_preflight.resolve_configured_specs():
+            if _g.resolve__provider_of(spec) == provider:
                 return spec.split(":", 1)[-1]
     except Exception:
         pass
@@ -220,12 +221,12 @@ _REMEDIATE_SCHEMA = {"type": "object", "properties": {
 
 
 def _remediation_db():
-    from ... import budget
+    import spendguard.manage.admission.admission_accessors as budget
     if current_ledger_writer_connection() is None:
         run_ledger_write(_remediation_db)
-        return budget._ledger_db()
-    db = budget._ledger_db()
-    with budget._lock:
+        return budget.resolve__ledger_db()
+    db = budget.resolve__ledger_db()
+    with budget.resolve__lock():
         db.execute("CREATE TABLE IF NOT EXISTS lane_remediation "
                    "(signature TEXT PRIMARY KEY, kind TEXT, resource TEXT, issue TEXT, fix TEXT, command TEXT, ts TEXT)")
         db.commit()
@@ -246,12 +247,14 @@ def _classify_remediation(kind, resource, reason, model=None):
     AGENTICALLY (what an error means + how to fix it is a judgement). The WHOLE error is sent (never truncated).
     Fail-open: on any non-deliberate failure, a generic remediation (never breaks the health check); a DELIBERATE
     stop propagates."""
-    from ... import budget, config, gate
+    from ... import config
+    import spendguard.manage.admission.admission_accessors as budget
+    import spendguard.manage.admission.admission_accessors as gate
     from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
     sig = _remediation_signature(kind, resource, reason)
     _remediation_db()
     with config.ledger_op(budget.BUDGET_AUXILIARY_POOL_KEY,
-                          budget._ensure_budget_auxiliary_read_schema) as db, budget._lock:
+                          budget.resolve__ensure_budget_auxiliary_read_schema) as db, budget.resolve__lock():
         row = db.execute("SELECT issue,fix,command FROM lane_remediation WHERE signature=?", (sig,)).fetchone()
     if row:
         return {"issue": row[0], "fix": row[1], "command": row[2] or "", "cached": True}
@@ -264,7 +267,7 @@ def _classify_remediation(kind, resource, reason, model=None):
             r = _execution_accessors.resolve_call(model, prompt, system=_REMEDIATE_SYS,
                               schema=_REMEDIATE_SCHEMA, sig="spendguard:lane-remediation")
     except Exception as e:
-        if gate.is_deliberate_stop(e):
+        if gate.resolve_is_deliberate_stop(e):
             raise
         logging.getLogger(__name__).exception("Resource remediation failed")
         return {"issue": str(reason), "fix": "inspect the lane's auth/quota/model config", "command": "", "cached": False,
@@ -280,9 +283,9 @@ def _classify_remediation(kind, resource, reason, model=None):
 @best_effort_ledger_function
 def _persist_lane_remediation_verdict(sig, kind, resource, out):
     import datetime
-    from ... import budget
+    import spendguard.manage.admission.admission_accessors as budget
     db = _remediation_db()
-    with budget._lock:                                    # cache a REAL verdict so the next routine check is $0 for it
+    with budget.resolve__lock():                                    # cache a REAL verdict so the next routine check is $0 for it
         db.execute("INSERT OR REPLACE INTO lane_remediation VALUES (?,?,?,?,?,?,?)",
                    (sig, kind, resource, out["issue"], out["fix"], out["command"],
                     datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")))
@@ -338,12 +341,12 @@ _EVENT_NOTIFY_THROTTLE_S = 1800          # per-lane: notify on a mid-use failure
 
 
 def _health_db():
-    from ... import budget
+    import spendguard.manage.admission.admission_accessors as budget
     if current_ledger_writer_connection() is None:
         run_ledger_write(_health_db)
-        return budget._ledger_db()
-    db = budget._ledger_db()
-    with budget._lock:
+        return budget.resolve__ledger_db()
+    db = budget.resolve__ledger_db()
+    with budget.resolve__lock():
         db.execute("CREATE TABLE IF NOT EXISTS lane_health "
                    "(resource TEXT PRIMARY KEY, kind TEXT, reachable INTEGER, reason TEXT, fix TEXT, command TEXT, "
                    "ts TEXT, source TEXT, notified_ts TEXT)")
@@ -367,10 +370,10 @@ def note_lane_down(lane, reason):
     Throttled. $0, no LLM. NEVER raises — on the call path."""
     try:
         import datetime
-        from ... import budget
+        import spendguard.manage.admission.admission_accessors as budget
         now = datetime.datetime.now(datetime.timezone.utc)
         db = _health_db()
-        with budget._lock:
+        with budget.resolve__lock():
             prev = db.execute("SELECT reachable, source, notified_ts, fix, command FROM lane_health WHERE resource=?",
                               (lane,)).fetchone()
         if prev and prev[0] == 0 and (prev[1] or "") == "event-auth":
@@ -381,14 +384,14 @@ def note_lane_down(lane, reason):
         sustained = bool(prev and prev[0] == 0 and (prev[1] or "").startswith("event"))
         fix, cmd = (prev[3], prev[4]) if prev else (None, None)
         try:                                             # refresh a cached remediation for THIS exact failure ($0); never
-            with budget._lock:                           # clobber a known fix/command with an empty lookup — preserve it
+            with budget.resolve__lock():                           # clobber a known fix/command with an empty lookup — preserve it
                 rr = db.execute("SELECT fix,command FROM lane_remediation WHERE signature=?",
                                 (_remediation_signature("lane", lane, reason),)).fetchone()
             if rr and rr[0] is not None:
                 fix, cmd = rr[0], rr[1]
         except Exception:
             pass
-        with budget._lock:                               # record the down: the receipt surfaces it; note_lane_ok/sweep clears it
+        with budget.resolve__lock():                               # record the down: the receipt surfaces it; note_lane_ok/sweep clears it
             db.execute("INSERT OR REPLACE INTO lane_health "
                        "(resource,kind,reachable,reason,fix,command,ts,source,notified_ts) VALUES (?,?,?,?,?,?,?,?,?)",
                        (lane, "lane", 0, reason, fix, cmd, now.isoformat(timespec="seconds"), "event",
@@ -405,7 +408,7 @@ def note_lane_down(lane, reason):
         if last is None or (now - last).total_seconds() >= _EVENT_NOTIFY_THROTTLE_S:
             _notify_macos("spendguard: lane %s down" % lane,
                           (fix or "run: spendguard reliability --run --remediate"))
-            with budget._lock:
+            with budget.resolve__lock():
                 db.execute("UPDATE lane_health SET notified_ts=? WHERE resource=?",
                            (now.isoformat(timespec="seconds"), lane))
                 db.commit()
@@ -421,9 +424,9 @@ def note_lane_ok(lane):
     for a healthy lane (the WHERE matches nothing). Never touches a sweep's authoritative row. NEVER raises."""
     try:
         import datetime
-        from ... import budget
+        import spendguard.manage.admission.admission_accessors as budget
         db = _health_db()
-        with budget._lock:
+        with budget.resolve__lock():
             db.execute("UPDATE lane_health SET reachable=1, reason=NULL, source='event-recovered', ts=? "
                        "WHERE resource=? AND reachable=0 AND source LIKE 'event%'",
                        (datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"), lane))
@@ -452,19 +455,20 @@ def note_lane_auth_down(lane, cmd="", sustained_only=True):
     LLM. NEVER raises — this rides the call path."""
     try:
         import datetime
-        from ... import budget, lane_registry
+        from ... import lane_registry
+        import spendguard.manage.admission.admission_accessors as budget
         now = datetime.datetime.now(datetime.timezone.utc)
         cmd = cmd or str((lane_registry.lane_spec(lane) or {}).get("relogin_cmd") or "")
         fix = "re-login to restore the $0 plan lane (its calls bill the metered API until you do)" + (f": {cmd}" if cmd else "")
         db = _health_db()
-        with budget._lock:
+        with budget.resolve__lock():
             prev = db.execute("SELECT reachable, source, notified_ts FROM lane_health WHERE resource=?",
                               (lane,)).fetchone()
         # SUSTAINED = the row is ALREADY an unresolved auth-down (a real success via note_lane_ok, or a sweep, would
         # have cleared it) -> the lane reported logged-out AGAIN without recovering = a real logout, not a refresh-race
         # blip. A pure STATE read of the shared row, not a time/magnitude cutoff - identical to note_lane_down.
         sustained = bool(prev and prev[0] == 0 and (prev[1] or "") == "event-auth")
-        with budget._lock:                               # RECORD always - the operator receipt surfaces even a lone auth-down
+        with budget.resolve__lock():                               # RECORD always - the operator receipt surfaces even a lone auth-down
             db.execute("INSERT OR REPLACE INTO lane_health "
                        "(resource,kind,reachable,reason,fix,command,ts,source,notified_ts) VALUES (?,?,?,?,?,?,?,?,?)",
                        (lane, "lane", 0, "logged out (auth/token expired)", fix, cmd,
@@ -480,7 +484,7 @@ def note_lane_auth_down(lane, cmd="", sustained_only=True):
                 last = None
         if last is None or (now - last).total_seconds() >= _EVENT_NOTIFY_THROTTLE_S:
             _notify_macos("spendguard: %s lane LOGGED OUT" % lane, fix)
-            with budget._lock:
+            with budget.resolve__lock():
                 db.execute("UPDATE lane_health SET notified_ts=? WHERE resource=?",
                            (now.isoformat(timespec="seconds"), lane))
                 db.commit()
@@ -501,11 +505,11 @@ def note_lane_model_shift(lane, model, diagnosis):
     notified_ts. $0, no LLM. NEVER raises."""
     try:
         import datetime
-        from ... import budget
+        import spendguard.manage.admission.admission_accessors as budget
         now = datetime.datetime.now(datetime.timezone.utc)
         resource = f"{lane}:{model}"
         db = _health_db()
-        with budget._lock:
+        with budget.resolve__lock():
             prev = db.execute("SELECT notified_ts FROM lane_health WHERE resource=?", (resource,)).fetchone()
             db.execute("INSERT OR REPLACE INTO lane_health "
                        "(resource,kind,reachable,reason,fix,command,ts,source,notified_ts) VALUES (?,?,?,?,?,?,?,?,?)",
@@ -520,7 +524,7 @@ def note_lane_model_shift(lane, model, diagnosis):
                 last = None
         if last is None or (now - last).total_seconds() >= _EVENT_NOTIFY_THROTTLE_S:
             _notify_macos("spendguard: %s stopped serving %s" % (lane, model), diagnosis)
-            with budget._lock:
+            with budget.resolve__lock():
                 db.execute("UPDATE lane_health SET notified_ts=? WHERE resource=?",
                            (now.isoformat(timespec="seconds"), resource))
                 db.commit()
@@ -537,9 +541,9 @@ def note_lane_model_ok(lane, model):
     once it answers again. NEVER raises."""
     try:
         import datetime
-        from ... import budget
+        import spendguard.manage.admission.admission_accessors as budget
         db = _health_db()
-        with budget._lock:
+        with budget.resolve__lock():
             db.execute("UPDATE lane_health SET reachable=1, reason=NULL, source='event-shift-recovered', ts=? "
                        "WHERE resource=? AND reachable=0 AND source='event-shift'",
                        (datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"), f"{lane}:{model}"))
@@ -563,11 +567,11 @@ def _persist_health(sweep_result, acts=None):
     no acts: a resource that is STILL unreachable keeps its known fix until a fresh remediation replaces it; a
     resource that RECOVERED clears its fix (a healthy lane has no fix). So fix loss is impossible from a bare sweep."""
     import datetime
-    from ... import budget
+    import spendguard.manage.admission.admission_accessors as budget
     fixes = {(a["kind"], a["resource"]): a for a in (acts or [])}
     ts = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
     db = _health_db()
-    with budget._lock:
+    with budget.resolve__lock():
         prior = {r[0]: (r[1], r[2]) for r in db.execute("SELECT resource, fix, command FROM lane_health").fetchall()}
 
     def _health_row(res, kind, d):
@@ -584,7 +588,7 @@ def _persist_health(sweep_result, acts=None):
 
     rows = [_health_row(lane, "lane", d) for lane, d in (sweep_result.get("lanes") or {}).items()]
     rows += [_health_row(prov, "metered", d) for prov, d in (sweep_result.get("metered") or {}).items()]
-    with budget._lock:
+    with budget.resolve__lock():
         db.executemany("INSERT OR REPLACE INTO lane_health "
                        "(resource,kind,reachable,reason,fix,command,ts,source,notified_ts,failure_kind) "
                        "VALUES (?,?,?,?,?,?,?,?,?,?)", rows)
@@ -597,12 +601,12 @@ def health_reds(since_hours=48):
     so a caller can tell a STALE KEY apart from a transient outage. $0 — a cached read, safe to call from the receipt
     on every turn. [] when all healthy or no recent check."""
     import datetime
-    from ... import budget
+    import spendguard.manage.admission.admission_accessors as budget
     cutoff = (datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=since_hours)).isoformat(timespec="seconds")
     try:
         _health_db()
         with config.ledger_op(budget.BUDGET_AUXILIARY_POOL_KEY,
-                              budget._ensure_budget_auxiliary_read_schema) as db, budget._lock:
+                              budget.resolve__ensure_budget_auxiliary_read_schema) as db, budget.resolve__lock():
             rows = db.execute("SELECT resource,kind,reason,fix,command,source,ts,failure_kind FROM lane_health "
                               "WHERE reachable=0 AND ts>=?",
                               (cutoff,)).fetchall()
@@ -656,20 +660,20 @@ def health_reds(since_hours=48):
 
 @best_effort_ledger_function
 def _prune_superseded_lane_health(recovered, stale, stale_lanes):
-        from ... import budget
+        import spendguard.manage.admission.admission_accessors as budget
         db = _health_db()
         if recovered:                                    # SELF-HEAL, traced (a DB write, not a silent skip): a recovered
-            with budget._lock:                            # event-lane is marked reachable so it clears everywhere at once
+            with budget.resolve__lock():                            # event-lane is marked reachable so it clears everywhere at once
                 db.executemany("UPDATE lane_health SET reachable=1 WHERE resource=? AND source='event'",
                                [(r,) for r in recovered])
                 db.commit()
         if stale:                                        # DELETE the residue (traced) — a provider no longer probed has
-            with budget._lock:                            # no sweep verdict at all, so its stale 'unreachable' row goes
+            with budget.resolve__lock():                            # no sweep verdict at all, so its stale 'unreachable' row goes
                 db.executemany("DELETE FROM lane_health WHERE resource=? AND kind='metered' AND source='sweep'",
                                [(r,) for r in stale])
                 db.commit()
         if stale_lanes:                                  # A newer $0 live probe is the authoritative lane verdict;
-            with budget._lock:                            # remove only the older sweep row, never an event-derived red.
+            with budget.resolve__lock():                            # remove only the older sweep row, never an event-derived red.
                 db.executemany("DELETE FROM lane_health WHERE resource=? AND kind='lane' AND source='sweep'",
                                [(r,) for r in stale_lanes])
                 db.commit()
@@ -684,12 +688,12 @@ def metered_key_ok(provider, since_hours=48):
     validators, which must ride the raw metered API for a concurrency-invariant verdict) preflights THIS before
     spending on validators that would otherwise all 401 at runtime."""
     import datetime
-    from ... import budget
+    import spendguard.manage.admission.admission_accessors as budget
     cutoff = (datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=since_hours)).isoformat(timespec="seconds")
     try:
         _health_db()
         with config.ledger_op(budget.BUDGET_AUXILIARY_POOL_KEY,
-                              budget._ensure_budget_auxiliary_read_schema) as db, budget._lock:
+                              budget.resolve__ensure_budget_auxiliary_read_schema) as db, budget.resolve__lock():
             row = db.execute("SELECT reachable FROM lane_health WHERE resource=? AND kind='metered' AND ts>=? "
                              "ORDER BY ts DESC LIMIT 1", (provider, cutoff)).fetchone()
         return bool(row[0]) if row else None

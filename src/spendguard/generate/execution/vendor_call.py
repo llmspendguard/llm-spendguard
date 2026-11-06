@@ -19,6 +19,7 @@ WHAT THIS DOES NOT DO: it does not construct vendor clients. `adapters` already 
 resolution, subscription lanes, and per-call metering. This is the typed, bounded, recorded shell around it —
 extending what exists rather than growing a second client layer to drift from the first.
 """
+import spendguard.manage.admission.spend_refusal_error as _admission_refusal_errors
 import hashlib
 import json
 import os
@@ -139,7 +140,7 @@ def _retry_after_s(v):
 def _classify(r, want_text=True):
     """(kind, stop_reason) from an adapters result. Parsing declared fields, not inferring intent."""
     # A DELIBERATE SPEND-GATE REFUSAL is not a vendor outcome at all — _attempt marked it (deliberate_stop, decided by
-    # the canonical gate.is_deliberate_stop authority). Classify it GATE_REFUSED (non-retryable, .text raises) FIRST, so
+    # the canonical gate.resolve_is_deliberate_stop authority). Classify it GATE_REFUSED (non-retryable, .text raises) FIRST, so
     # a budget/meta/RT cap is never talked into transport_error and retried against the very cap that refused it.
     if r.get("deliberate_stop"):
         return GATE_REFUSED, "spend_gate_refused"
@@ -240,8 +241,8 @@ def call(vendor, model, prompt, *, deadline_s, purpose="", system=None, max_toke
     # A deadline below what the class demonstrably needs is the same defect as a cap below what it produces:
     # deterministic, self-inflicted, and paid for (the input bills whether or not you wait for the answer).
     try:
-        from ... import bulkgate
-        _lat = bulkgate.latency(sig=class_sig(model, purpose), model=model)
+        import spendguard.manage.admission.admission_accessors as bulkgate
+        _lat = bulkgate.resolve_latency(sig=class_sig(model, purpose), model=model)
         _need = (float(_lat.get("p95") or 0)
                  if _lat and (_lat.get("n") or 0) >= MIN_BOUND_OBS else 0.0)
         # THE GUARD MAY NOT DEMAND MORE THAN THE ADVISOR IS ALLOWED TO PROPOSE. `time_budget` clamps every
@@ -276,7 +277,7 @@ def call(vendor, model, prompt, *, deadline_s, purpose="", system=None, max_toke
         window = pricing.max_input_tokens(model)
         text = (system or "") + "\n" + (prompt or "")
         try:
-            from ...gate import _content_tokens
+            from spendguard.manage.admission.admission_accessors import resolve__content_tokens as _content_tokens
             approx_in = _content_tokens(text, provider=vendor, model=model)
         except Exception:
             approx_in = len(text) // 4      # rail fallback if the tokenizer is unavailable — never leaves the window unchecked
@@ -397,8 +398,8 @@ def call(vendor, model, prompt, *, deadline_s, purpose="", system=None, max_toke
     # reliability rate and contributes nothing to the timing distribution.
     if last is not None and (last.ok or last.kind == DEADLINE_EXCEEDED):
         try:
-            from ... import bulkgate
-            bulkgate.note_latency(class_sig(model, purpose), model, last.latency, in_chars=len(prompt or ""),
+            import spendguard.manage.admission.admission_accessors as bulkgate
+            bulkgate.resolve_note_latency(class_sig(model, purpose), model, last.latency, in_chars=len(prompt or ""),
                                   hit_deadline=(last.kind == DEADLINE_EXCEEDED))
         except Exception:
             pass
@@ -462,12 +463,12 @@ def _attempt(vendor, model, prompt, system, max_tokens, budget_s, schema=None, r
                                      #                         never swap it (a panel/adjudication would collapse)
         except Exception as e:                      # adapters says it never raises; believe it, verify anyway
             # A SpendGateRefused (budget/meta/RT/batch-1 cap) is a DELIBERATE spend stop, not a vendor fault. Ask the
-            # ONE canonical authority (gate.is_deliberate_stop — the SSOT that owns which exceptions are refusals, so a
+            # ONE canonical authority (gate.resolve_is_deliberate_stop — the SSOT that owns which exceptions are refusals, so a
             # new refusal subclass is covered without editing anything here) and MARK the result, so _classify →
             # GATE_REFUSED (non-retryable, .text raises) instead of transport_error re-run against the same cap.
-            from ... import gate as _g
+            import spendguard.manage.admission.admission_accessors as _g
             box["r"] = {"error": f"{type(e).__name__}: {e}", "text": None,
-                        "error_type": type(e).__name__, "deliberate_stop": _g.is_deliberate_stop(e)}
+                        "error_type": type(e).__name__, "deliberate_stop": _g.resolve_is_deliberate_stop(e)}
 
     t = threading.Thread(target=_run, daemon=True)   # daemon: an abandoned call must never hold the process
     t.start()
@@ -514,8 +515,8 @@ class JobLock:
     reclaimed; a live one is refused rather than silently shared."""
 
     def __init__(self, job, repo=None):
-        from ... import budget
-        self.name = f"{(repo or budget._project() or 'repo')}:{job}"
+        import spendguard.manage.admission.admission_accessors as budget
+        self.name = f"{(repo or budget.resolve__project() or 'repo')}:{job}"
         self.path = config.HOME / ("lock-" + hashlib.sha256(self.name.encode()).hexdigest()[:12] + ".json")
 
     def __enter__(self):
@@ -663,8 +664,8 @@ def closest_served(vendor, stale_model):
         # deadline — must PROPAGATE, never be downgraded to 'uncorrectable' (which would let a caller keep spending
         # past the very cap that fired). The CONCEPT is named in one place; any other failure (transient/lookup) →
         # correction unknown, and the $0 served fast-path already passed so the caller still has the live list.
-        from ... import gate
-        if isinstance(e, gate.deliberate_stop_types()):
+        import spendguard.manage.admission.admission_accessors as gate
+        if isinstance(e, gate.resolve_deliberate_stop_types()):
             raise
         return None, live
 
@@ -704,7 +705,9 @@ def served_substitute(vendor, requested):
     cands = sorted(set(catalog.live_model_ids(vendor) or []) | set(catalog.lane_model_ids(vendor) or []))
     if not cands:
         return requested, None                        # no served id to choose from → dispatch errors honestly
-    from ... import adapters, config, gate, plan_admission, pricing
+    from ... import adapters, config, pricing
+    import spendguard.manage.admission.admission_accessors as gate
+    import spendguard.manage.admission.admission_accessors as plan_admission
     from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
 
     # ECONOMIC BOUND for the substitute: the requested model's RATE is the cost the caller implicitly ACCEPTED by
@@ -744,7 +747,7 @@ def served_substitute(vendor, requested):
               f"PRICED id (never an UNPRICED one if a priced id delivers). Served ids (with nominal price):\n"
               + "\n".join(_price_tag(c) for c in cands)
               + '\n\nReply JSON only: {"id": "<the cheapest served id that delivers, or null>", "reason": "<one short line>"}')
-    _meta = plan_admission.ready_meta_model(config.advisor_model())   # the resolver itself must ride a READY provider —
+    _meta = plan_admission.resolve_ready_meta_model(config.advisor_model())   # the resolver itself must ride a READY provider —
     #                                                                    not be refused (or billed on an expensive model) on a
     #                                                                    capped plan. ready_meta_model makes no LLM call, so
     #                                                                    it never recurses back through this resolver.
@@ -756,7 +759,7 @@ def served_substitute(vendor, requested):
             r = adapters.call(_meta, prompt, sig="resolve-servable-model",
                               system=_SYS_SERVED_SUBSTITUTE, no_substitution=True)
     except Exception as e:
-        if isinstance(e, gate.deliberate_stop_types()):
+        if isinstance(e, gate.resolve_deliberate_stop_types()):
             raise                                     # over budget / refused / deadline → halt, never a silent guess
         return requested, None
     finally:
@@ -1000,13 +1003,13 @@ def class_sig(model, purpose):
     """The ONE way a call-class is identified here, so lookups cannot miss what recording wrote.
 
     They did. `call()` passed the raw purpose string ("panel:review") to output_cap, which forwards it to
-    bulkgate.maxtokens(sig) — but note_response STORES observations under bulkgate.sig(model, template_id=...),
+    bulkgate.maxtokens(sig) — but note_response STORES observations under bulkgate.resolve_sig(model, template_id=...),
     a hash. The two never matched, so output_cap's middle rung, "this class's own observed need", never fired
     once: every call silently fell through to the published ceiling or to `unknown`. A measured system whose
     measurement is looked up under the wrong key is indistinguishable from one that never measured anything,
     and it fails quietly in the direction of guessing."""
-    from ... import bulkgate
-    return bulkgate.sig(model, template_id=purpose or None)
+    import spendguard.manage.admission.admission_accessors as bulkgate
+    return bulkgate.resolve_sig(model, template_id=purpose or None)
 
 
 # output_cap() was REMOVED — the send budget is decided in ONE home now (adapters.output_budget; docs/CANONICAL_CONCERNS.json).
@@ -1052,7 +1055,7 @@ def time_budget(vendor, model, sig=None, default_s=None, in_chars=None):
         and sets a floor instead.
     Precedence, measured first: this class on this model -> this model anywhere -> the caller's own number ->
     (None, "unknown"), which the caller must answer for rather than have a guess invented for them."""
-    from ... import bulkgate
+    import spendguard.manage.admission.admission_accessors as bulkgate
     # A SUBSCRIPTION LANE IS SLOWER THAN THE METERED PATH the latency was measured on — a CLI cold-start +
     # context injection runs 60-120s where the metered call is ~10s — so a metered-derived budget ABANDONS a
     # live lane call. MEASURED on a real panel: opus/gpt on the Claude Code / Codex lanes hit deadline_exceeded
@@ -1074,7 +1077,7 @@ def time_budget(vendor, model, sig=None, default_s=None, in_chars=None):
         # and a budget from that mixture killed a 37,453-char file that genuinely needed 547s — losing its
         # review entirely while three other vendors reported on it. bulkgate narrows to comparable payloads
         # when it has enough of them and says which population it used.
-        d = bulkgate.latency(near_chars=in_chars, **kwargs)
+        d = bulkgate.resolve_latency(near_chars=in_chars, **kwargs)
         if d and d.get("n", 0) >= 5 and d.get("p99"):
             want = float(d["p99"]) * DEADLINE_SLACK
             if d.get("floor"):
@@ -1223,16 +1226,16 @@ def first_ok(vendors, prompt, *, deadline_s, need=1, purpose="", system=None, sc
         # Waiting drains paid work; it never cancels a request.
         pool.shutdown(wait=wait_for_inflight)
         if wait_for_inflight:
-            from ... import gate
+            import spendguard.manage.admission.admission_accessors as gate
             for future in futs:
                 try:
                     outcome = future.result()
-                except gate.deliberate_stop_types():
+                except gate.resolve_deliberate_stop_types():
                     raise
                 except Exception:
                     continue
                 if outcome.kind == GATE_REFUSED:
-                    raise gate.SpendGateRefused(outcome.error)
+                    raise _admission_refusal_errors.SpendGateRefused(outcome.error)
     return {"results": results, "ok": got, "failed": [r for r in results if not r.ok],
             "n": len(vendors), "n_ok": len(got), "need": int(need),
             "complete": len(got) >= max(1, int(need)),

@@ -5,6 +5,7 @@ Most providers expose an OpenAI-compatible API, so adding one is a single regist
 with register_provider(...). Calls go through the openai/anthropic SDKs, so the spend gate
 already meters + budgets them.
 """
+import spendguard.manage.admission.spend_refusal_error as _admission_refusal_errors
 import time
 import os
 import json
@@ -950,8 +951,8 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
     side applies to never reading a truncated reply as a short answer.
 
     THE TOKEN CONTROLS LIVE HERE, IN THE ONE FUNCTION EVERY CALL ALREADY GOES THROUGH. They were built
-    twice over and wired nowhere: bulkgate.is_truncated ("a fact, not a guess") had no caller outside its
-    module, bulkgate.maxtokens learned the p99 output length per call-class and no judging script used it,
+    twice over and wired nowhere: bulkgate.resolve_is_truncated ("a fact, not a guess") had no caller outside its
+    module, bulkgate.resolve_maxtokens learned the p99 output length per call-class and no judging script used it,
     and vendor_call.input_limit had exactly one caller — a probe script. So every caller hand-picked a
     number and then read the reply as if the number had been right.
 
@@ -1104,7 +1105,7 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
     _model_contract_error = _model_selection_contract_error(
         model, reasoning, intent, sig, metered_only, no_substitution, measurement, _probe)
     if _model_contract_error:
-        from ...gate import ModelSelectionContractRefused
+        from spendguard.manage.admission.spend_refusal_error import ModelSelectionContractRefused
         raise ModelSelectionContractRefused(_model_contract_error)
 
     # Unnamed measurement → refused above; labelled best-value → router picks; every other unnamed call → cheap chat.
@@ -1200,8 +1201,8 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
             if _rid and _rid != _rraw:                 # a served substitute was chosen → use it, record the swap
                 _resolved_from, _resolution, model = f"{_rprov}:{_rraw}", _rreason, f"{_rprov}:{_rid}"
         except Exception as _rex:
-            from ... import gate as _rgate
-            if isinstance(_rex, _rgate.deliberate_stop_types()):
+            import spendguard.manage.admission.admission_accessors as _rgate
+            if isinstance(_rex, _rgate.resolve_deliberate_stop_types()):
                 raise                                  # a spend/budget refusal or deadline HALTS — never a silent guess
             # unknown provider / resolver hiccup → leave the id UNCHANGED and proceed (the honest unresolved path)
     # LANE-DROP PREFLIGHT (lane_servability) — a model a $0 LANE is MEASURED to no longer serve (a plan dropped it:
@@ -1252,7 +1253,7 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
     if isinstance(reasoning, str) and reasoning.strip().lower() == "best-value":
         reasoning = None                               # consume the sentinel regardless of the outcome below
         if not _probe and not getattr(_resolve_guard, "on", False):
-            from ... import gate as _bvg                 # imported OUTSIDE the try so the deliberate-stop except below
+            import spendguard.manage.admission.admission_accessors as _bvg                 # imported OUTSIDE the try so the deliberate-stop except below
             #                                            can ALWAYS be evaluated (never a NameError on an import hiccup)
             try:
                 from ... import best_value as _bv
@@ -1267,7 +1268,7 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
                 # "no pick -> no answer". (An explicit, UNPINNED best-value still infers an intent from the prompt.)
                 _pick = _bv.select_model_effort(_bv_intent, model, pin_model=(no_substitution or not _bv_explicit),
                                                 prompt=prompt)
-            except _bvg.deliberate_stop_types():
+            except _bvg.resolve_deliberate_stop_types():
                 raise                                  # a spend refusal / deadline from the advisor PROPAGATES as a
                 #                                        TYPED stop (a consumer can distinguish it) — NEVER swallowed to
                 #                                        _pick=None and an empty result the gate intended to stop
@@ -1306,8 +1307,8 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
     # none is READY, refuse — never fail open onto the exhausted lane. Caller pins remain the hard contract above.
     _plan_redirect = None
     if (intent or sig) and not _caller_model_pin and not _probe and not images:
-        from ... import plan_admission as _pa
-        _plan_redirect = _pa.decide(model, intent or sig, auth_over_quota=auth_over_quota)
+        import spendguard.manage.admission.admission_accessors as _pa
+        _plan_redirect = _pa.resolve_decide(model, intent or sig, auth_over_quota=auth_over_quota)
         if _plan_redirect.get("action") == "refuse":
             from ... import config as _refused_config, routing_audit as _refused_audit
             from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
@@ -1671,8 +1672,7 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
                 r.get("call_id"), prompt, system, dict(r))
     if (not _no_guard and intent and isinstance(r, dict) and r.get("lane_recovery")
             and (r.get("error") or not (r.get("text") or "").strip())):
-        from ... import gate as _exhausted_recovery_gate
-        raise _exhausted_recovery_gate.SpendGateRefused(
+        raise _admission_refusal_errors.SpendGateRefused(
             f"free recovery and same-provider metered recovery exhausted for {model}")
     return r
 
@@ -1819,7 +1819,7 @@ def _chat_default_model():
         if capabilities.get("mode") == "chat" and model_id not in embedding_ids and price_in is not None:
             rows.append((price_in, model_id))
     if not rows:
-        from ...gate import ModelSelectionContractRefused
+        from spendguard.manage.admission.spend_refusal_error import ModelSelectionContractRefused
         raise ModelSelectionContractRefused(
             "no priced chat model in the model catalog and no advisor.default_model configured — cannot choose a "
             "default for an unnamed call. Set advisor.default_model or repair the model catalog (the pricing SSOT).")
@@ -1900,9 +1900,9 @@ def embed(texts, model=None, *, dimensions=None, max_batch=None, timeout_s=None,
     {i, reason}; it is never a SILENTLY short list — a None + a failed[] entry, or an explicit error. Re-run to
     retry only the failed items (the checkpoint already holds the rest)."""
     import json as _json, hashlib as _hl
-    from ... import gate as _gp
+    import spendguard.manage.admission.admission_accessors as _gp
     model = model or _embed_default_model()
-    prov = _gp._provider_of(model)               # provider_for (prefix) → priced catalog; the canonical resolver
+    prov = _gp.resolve__provider_of(model)               # provider_for (prefix) → priced catalog; the canonical resolver
     raw = model.split(":", 1)[1] if ":" in model else model
     items = list(texts or [])
     timeout_s = timeout_s or _EMBED_TIMEOUT_S
@@ -1940,8 +1940,8 @@ def embed(texts, model=None, *, dimensions=None, max_batch=None, timeout_s=None,
         except FileNotFoundError:
             pass
     _extra = {"dimensions": dimensions} if dimensions else {}
-    from ... import gate as _g
-    _stop = _g.deliberate_stop_types()
+    import spendguard.manage.admission.admission_accessors as _g
+    _stop = _g.resolve_deliberate_stop_types()
     try:
         c = _oai_compat_client(prov, timeout_s)
     except Exception as e:
@@ -2117,9 +2117,9 @@ def embed_batch(texts, model=None, *, dimensions=None, jsonl_path=None, cap_doll
     /batches — its async batch is a separate native API) returns a clear error pointing to embed() (chunked
     realtime) until its native batch path is wired — a LOUD boundary, never a silent metered fallback."""
     import json as _json, hashlib as _hl
-    from ... import gate as _gp
+    import spendguard.manage.admission.admission_accessors as _gp
     model = model or _embed_default_model()
-    prov = _gp._provider_of(model)               # provider_for (prefix) → priced catalog; the canonical resolver
+    prov = _gp.resolve__provider_of(model)               # provider_for (prefix) → priced catalog; the canonical resolver
     raw = model.split(":", 1)[1] if ":" in model else model
     items = list(texts or [])
     base = {"batch_id": None, "jsonl": None, "requests": len(items), "error": None}
@@ -2144,8 +2144,8 @@ def embed_batch(texts, model=None, *, dimensions=None, jsonl_path=None, cap_doll
                                      submit=submit, endpoint="/v1/embeddings", preflight=preflight)
         return {**base, "batch_id": bid, "jsonl": jsonl_path}
     except Exception as e:
-        from ... import gate as _g2
-        if isinstance(e, _g2.deliberate_stop_types()):
+        import spendguard.manage.admission.admission_accessors as _g2
+        if isinstance(e, _g2.resolve_deliberate_stop_types()):
             raise                                                     # a cap refusal HALTS — never a silent partial
         return {**base, "jsonl": jsonl_path, "error": str(e)[:200]}
 
@@ -2385,8 +2385,8 @@ def _learn_success_limits(provider, resp):
             from ... import dispatch as _d
             _d.learn_rate_limit(provider, tpm=_tpm, rpm=_rpm, source="success-header")
     except Exception as _e:
-        from ... import gate as _g
-        if _g.is_deliberate_stop(_e):
+        import spendguard.manage.admission.admission_accessors as _g
+        if _g.resolve_is_deliberate_stop(_e):
             raise
         # else: a successful, PAID response is never discarded for a best-effort side-effect
 
@@ -2787,8 +2787,8 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
                                              reasoning=reasoning, max_tokens=max_tokens)   # hand the lane the guarded budget
                     #                                                                        so the escalation ladder can RAISE its cap
                 except Exception as _le:                   # a lane MUST return an {error} dict, never raise — but a lane
-                    from ... import gate as _glane
-                    if _glane.is_deliberate_stop(_le):     # a DELIBERATE stop (deadline / refusal / containment) HALTS —
+                    import spendguard.manage.admission.admission_accessors as _glane
+                    if _glane.resolve_is_deliberate_stop(_le):     # a DELIBERATE stop (deadline / refusal / containment) HALTS —
                         raise                              # never swallowed into an error dict and then retried below
                     _s = {"error": f"{lane_name} lane raised {type(_le).__name__}: {str(_le)[:120]}",
                           "transport_error": isinstance(_le, (TimeoutError, ConnectionError))}
@@ -2804,11 +2804,11 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
                         _s = {**_s, "error": "lane output did not satisfy requested shape", "shape_miss": True}
                 return _s
         try:                                          # count once per logical lane call, never on the transient retry
-            from ... import bulkgate
+            import spendguard.manage.admission.admission_accessors as bulkgate
             from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
             intent = (_call_corpus_accessors.resolve_calls_current().get("intent") or "")
             if not intent.startswith("spendguard:"):
-                bulkgate.check_realtime(bulkgate.sig(raw or "", template_id=intent or None), raw or "", never_block=True)
+                bulkgate.resolve_check_realtime(bulkgate.resolve_sig(raw or "", template_id=intent or None), raw or "", never_block=True)
         except Exception:
             pass                                      # fail-open — a burst nudge must never break a legit lane call
         from ... import lane_recovery
@@ -2907,27 +2907,28 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
             if _no_sub or getattr(_sub_guard, "on", False):
                 return None
             try:
-                from ... import lane_balance, plan_admission as _recovery_admission
+                from ... import lane_balance
+                import spendguard.manage.admission.admission_accessors as _recovery_admission
                 from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
                 _intent = (_call_corpus_accessors.resolve_calls_current() or {}).get("intent")
                 _free_subs = lane_balance.quality_equivalent_free_substitutes(_intent, model,
                                                                               excluded=[lane_name])
                 _free_subs = [candidate for candidate in _free_subs
-                              if _recovery_admission._ready(_LANES.get(provider_for(candidate), (None,))[0])]
+                              if _recovery_admission.resolve__ready(_LANES.get(provider_for(candidate), (None,))[0])]
                 if not _free_subs and _intent:
-                    _ready_alt = _recovery_admission._best_ready_alt_lane(lane_name)
+                    _ready_alt = _recovery_admission.resolve__best_ready_alt_lane(lane_name)
                     if _ready_alt:
                         _free_subs = [_ready_alt[1]]
             except Exception as _quality_error:
-                from ... import gate as _quality_gate
-                if _quality_gate.is_deliberate_stop(_quality_error):
+                import spendguard.manage.admission.admission_accessors as _quality_gate
+                if _quality_gate.resolve_is_deliberate_stop(_quality_error):
                     raise
                 _recovery.recovery_event("bug", decision="shed evidence unavailable", error=str(_quality_error))
                 raise lane_recovery.LaneRecoveryViolation("cannot establish free substitute availability") from _quality_error
             for _rsub in _free_subs:
                 _rsub_lane = _LANES.get(provider_for(_rsub), (None,))[0]
-                from ... import plan_admission as _recovery_admission
-                if not _rsub_lane or not _recovery_admission._ready(_rsub_lane):
+                import spendguard.manage.admission.admission_accessors as _recovery_admission
+                if not _rsub_lane or not _recovery_admission.resolve__ready(_rsub_lane):
                     continue
                 _rwhy = "measured quality holds; $0 lane before metered fallback"
                 _lane_chatter(f"[spendguard] lane-balance REACTIVE: {lane_name} lane failed → {_rsub} ({_rwhy})")
@@ -3000,10 +3001,10 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
         _last_ready = _shed_free_recovery()
         if _last_ready is not None:
             return _last_ready
-        from ... import reliability as _recovery_health, gate as _recovery_gate
+        from ... import reliability as _recovery_health
         if any(r.get("kind") == "metered" and r.get("resource") == prov
                for r in _recovery_health.health_reds()):
-            raise _recovery_gate.SpendGateRefused(
+            raise _admission_refusal_errors.SpendGateRefused(
                 f"free recovery exhausted and same-provider metered resource {prov} is unreachable")
         _gate_model = _fb_model.split(":", 1)[-1]
         _recovery.authorize_metered_recovery(prov, _gate_model, prompt, system, max_tokens)
@@ -3197,8 +3198,8 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
                         except Exception:
                             pass
                         try:
-                            from ... import bulkgate as _bg_dc   # #3: cut mid-generation → invisible waste (see OpenAI path)
-                            _bg_dc.note_deadline_cancel(model, timeout_s)
+                            import spendguard.manage.admission.admission_accessors as _bg_dc   # #3: cut mid-generation → invisible waste (see OpenAI path)
+                            _bg_dc.resolve_note_deadline_cancel(model, timeout_s)
                         except (ImportError, AttributeError):
                             pass                             # note_deadline_cancel itself never raises; guard only the import
                         raise _CallDeadline("deadline_exceeded: no completion within %.0fs (wall-clock)" % float(timeout_s))
@@ -3326,11 +3327,12 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
                     # surfaces facts models.py already holds (the floor + reasons_by_default) plus the caller's pin.
                     _eff_requested = reasoning     # what the caller asked for — surfaced per-call so spendrails/warden can read it
                     try:
-                        from ... import models as _mA, bulkgate as _bgeff
+                        from ... import models as _mA
+                        import spendguard.manage.admission.admission_accessors as _bgeff
                         if str(reasoning).strip().lower() == "minimal" and _eff != "minimal" \
                                 and _mA.reasons_by_default(raw):
                             _eff_unhonored = True    # the pin could not be honored (per-call flag → a caller can abort on it)
-                            _bgeff.note_unhonored_effort(raw, "minimal", _eff)   # records first, then best-effort warns;
+                            _bgeff.resolve_note_unhonored_effort(raw, "minimal", _eff)   # records first, then best-effort warns;
                             #                                                      never raises, so the trace is reliable
                     except Exception as _eA:
                         # Advisory-only — the call proceeds (guardrail D's cap + the ledger's real-spend record for
@@ -3428,8 +3430,8 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
                     except Exception:
                         pass
                     try:
-                        from ... import bulkgate as _bg_dc     # #3: cut MID-generation → provider bills what it generated
-                        _bg_dc.note_deadline_cancel(model, timeout_s)   # (reasoning tokens → nothing), invisible to the
+                        import spendguard.manage.admission.admission_accessors as _bg_dc     # #3: cut MID-generation → provider bills what it generated
+                        _bg_dc.resolve_note_deadline_cancel(model, timeout_s)   # (reasoning tokens → nothing), invisible to the
                     except (ImportError, AttributeError):     # local ledger. Surface it; note_deadline_cancel never raises.
                         pass
                     raise _CallDeadline("deadline_exceeded: no completion within %.0fs (wall-clock)" % float(timeout_s))
@@ -3449,10 +3451,11 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
                 # MENTIONED a parameter (a validation error listing the whole request, a message quoting the
                 # body back) took the retry path and silently dropped a parameter the caller asked for —
                 # and the schema being dropped is precisely how "required" fields come back as zeros.
-                from ... import models as _mp, gate as _og
+                from ... import models as _mp
+                import spendguard.manage.admission.admission_accessors as _og
                 if isinstance(e, _CallDeadline):
                     raise                                   # a WALL-CLOCK deadline HALTS — it is a timeout, not a param to drop
-                if isinstance(e, _og.deliberate_stop_types()):
+                if isinstance(e, _og.resolve_deliberate_stop_types()):
                     raise                                   # a spend refusal / deadline must NOT enter the retry ladder
                 _bad = _mp._rejected_param(e)
                 # THE LADDER. Each rung removes ONE optional thing and retries. Which rung to take comes
@@ -3509,7 +3512,8 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
                         # a batch builder reads) sends the right value with no 400. Only if healing finds nothing do
                         # we fall through to the drop below (degrade to the model's default effort). Skipped while
                         # discover_efforts is probing (_heal_guard) — a probe must be DROPPED so it reads as rejected.
-                        from ... import models as _mh, gate as _hg
+                        from ... import models as _mh
+                        import spendguard.manage.admission.admission_accessors as _hg
                         _pre = okw.get("reasoning_effort")
                         if _mh.heal_reasoning(raw, okw, e):
                             try:
@@ -3520,7 +3524,7 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
                                       f"{okw.get('reasoning_effort')!r} (learned; kept the requested tier).", file=_sh.stderr)
                                 break
                             except Exception as e2:
-                                if isinstance(e2, _CallDeadline) or isinstance(e2, _hg.deliberate_stop_types()):
+                                if isinstance(e2, _CallDeadline) or isinstance(e2, _hg.resolve_deliberate_stop_types()):
                                     raise                    # a wall-clock deadline / spend refusal HALTS — never a drop
                                 okw["reasoning_effort"] = _pre   # heal's value also failed → restore, fall to the drop
                                 _last = e2
@@ -3581,8 +3585,8 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
         # must PROPAGATE out of the metered path — never be swallowed into the {error, error_type} dict below, which a
         # caller can fail-open on (the deliberate-refusal doctrine). This is the metered twin of the lane path's re-raise
         # (_call_lane @ L2018) and the 429-learn re-raise just below; the catch-all was the one remaining hole.
-        from ... import gate as _gds
-        if _gds.is_deliberate_stop(e):
+        import spendguard.manage.admission.admission_accessors as _gds
+        if _gds.resolve_is_deliberate_stop(e):
             raise
         # error_type is the exception CLASS name — a structured signal (like an HTTP status or sqlite_errorname),
         # NOT the message prose. vendor_call uses it to tell a deadline (the vendor didn't answer in the budget:
@@ -3600,8 +3604,8 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
                 _dispatch.learn_rate_limit(prov, tpm=_tpm_seen, rpm=_rpm_seen, retry_after_s=_ra_s,
                                            source=f"{_status}-header")
             except Exception as _le:
-                from ... import gate as _lg
-                if _lg.is_deliberate_stop(_le):         # a propagated spend refusal / deadline is NEVER swallowed
+                import spendguard.manage.admission.admission_accessors as _lg
+                if _lg.resolve_is_deliberate_stop(_le):         # a propagated spend refusal / deadline is NEVER swallowed
                     raise
                 # else best-effort: a transient learn failure never turns the 429 result into a crash
         # TRANSPARENT TO THE CONSUMER: this is the metered API path (a lane miss/error is returned earlier with
@@ -3692,8 +3696,8 @@ def output_budget(model, requested=None, internal_tiny=False, vendor=None, bound
         from ... import models
         if models.reasons_by_default(model) or models.profile(model.split(":")[-1]).get("reasoning_effort_ok"):
             floor = int(config._cfg_get("bulkgate", "bounded_reasoning_output_floor", BOUNDED_REASONING_OUTPUT_FLOOR))
-            from ... import bulkgate
-            required = max(floor, bulkgate._reasoning_out_estimate() + REASONING_VISIBLE_RESERVE)
+            import spendguard.manage.admission.admission_accessors as bulkgate
+            required = max(floor, bulkgate.resolve__reasoning_out_estimate() + REASONING_VISIBLE_RESERVE)
             if ceiling < required:
                 raise ValueError(f"{model}: output ceiling {ceiling} cannot reserve bounded reasoning budget {required}; "
                                  "use a model with more output headroom or lower reasoning effort")
@@ -3779,7 +3783,7 @@ def _input_fits(model, prompt, system, images=None):
         win = pricing.max_input_tokens(raw)
         if win and (len(text) > int(win) or img_tok):
             try:
-                from ...gate import _content_tokens      # the exact tokenizer the gate already counts input with — one source
+                from spendguard.manage.admission.admission_accessors import resolve__content_tokens as _content_tokens      # the exact tokenizer the gate already counts input with — one source
                 tok = _content_tokens(text, provider=vendor, model=raw) + img_tok
             except Exception:
                 tok = len(text) // 4 + img_tok         # rail fallback if the tokenizer is unavailable — the window still gets checked
@@ -3826,7 +3830,7 @@ def _call_guarded(model, prompt, max_tokens=None, sig=None, retries=2, **kw):
     _no_sub = kw.pop("_no_sub", False)
     _probe = kw.pop("_probe", False)                       # a reachability/connectivity probe: keep it tiny + fast,
     #                                                        never floored to reasoning headroom or grown on an empty
-    from ... import bulkgate
+    import spendguard.manage.admission.admission_accessors as bulkgate
     # AUTO-APPLY the learned reasoning EFFORT for this (intent, model) — the effort twin of the reasoning-budget floor
     # below. ONLY when the caller set no explicit effort (an explicit reasoning always wins) and this is not a probe or
     # an internal resolver/heal call. A None fact leaves reasoning unset → the model's FAMILY FLOOR stands downstream
@@ -3874,8 +3878,8 @@ def _call_guarded(model, prompt, max_tokens=None, sig=None, retries=2, **kw):
                     r = _call_guarded(_sub, prompt, max_tokens=max_tokens, sig=sig, retries=retries,
                                       _no_sub=True, **_subkw)
             except Exception as _se:               # a substitute that RAISES (transport/etc.) must not sink the call —
-                from ... import gate as _gsub
-                if _gsub.is_deliberate_stop(_se):  # …but a SpendGateRefused / deadline / containment HALTS: it is NEVER
+                import spendguard.manage.admission.admission_accessors as _gsub
+                if _gsub.resolve_is_deliberate_stop(_se):  # …but a SpendGateRefused / deadline / containment HALTS: it is NEVER
                     raise                          # swallowed into a substitute error and continued on the original.
                 r = {"error": f"substitute {_sub} raised: {type(_se).__name__}: {str(_se)[:130]}",
                      "error_type": type(_se).__name__}
@@ -3926,11 +3930,11 @@ def _call_guarded(model, prompt, max_tokens=None, sig=None, retries=2, **kw):
     _internal_tiny = bool(_probe or getattr(_resolve_guard, "on", False) or getattr(_heal_guard, "on", False))
     # sig NAMES the call-class for TELEMETRY + the ESTIMATE (keyed PER MODEL so Haiku never sizes Opus) + the guardrail-E
     # runaway norm — NOT for the budget, which is the model ceiling regardless. A caller may pass a raw INTENT (keyed
-    # per-model here) OR an already-built 16-hex bulkgate.sig (used AS-IS, never double-keyed into a namespace no
+    # per-model here) OR an already-built 16-hex bulkgate.resolve_sig (used AS-IS, never double-keyed into a namespace no
     # registered estimate reads). No budget depends on sig any more, so a call without one is fine (it just isn't keyed).
     _is_sig = isinstance(sig, str) and len(sig) == 16 and all(c in "0123456789abcdef" for c in sig)
-    _sig_key = (sig if _is_sig else bulkgate.sig(model, template_id=sig)) if sig else None
-    _mx0 = (bulkgate.maxtokens(_sig_key, model=model) or {}) if _sig_key else {}   # guardrail-E pre-call runaway norm
+    _sig_key = (sig if _is_sig else bulkgate.resolve_sig(model, template_id=sig)) if sig else None
+    _mx0 = (bulkgate.resolve_maxtokens(_sig_key, model=model) or {}) if _sig_key else {}   # guardrail-E pre-call runaway norm
     #        (before this call lands); pass `model` so a COLD class carries its reasoning-inclusive seed as the norm
     # THE OUTPUT BUDGET — the ONE home (output_budget; docs/CANONICAL_CONCERNS.json). The caller's max_tokens is IGNORED
     # for a normal call: spendguard owns the budget, which is the model's CEILING. max_output is billed on ACTUAL tokens,
@@ -3958,7 +3962,7 @@ def _call_guarded(model, prompt, max_tokens=None, sig=None, retries=2, **kw):
                 from ... import dispatch as _dsp       # this vendor's dynamic connection window (universal — NOT subtyped);
                 _dsp.shrink_connection_window(_win_vendor)   # the single window-LOSS point (its own handler propagates a stop)
             return {**r, "truncated": None}                   # an errored call was not truncated, it failed
-        trunc = bulkgate.is_truncated(r.get("finish_reason"), r.get("out_tok"), budget)
+        trunc = bulkgate.resolve_is_truncated(r.get("finish_reason"), r.get("out_tok"), budget)
         # REASONING MODELS SPEND THE BUDGET WHERE YOU CANNOT SEE IT. On gpt-5/o-series the hidden reasoning
         # tokens are billed against max_tokens, so a cap that looks generous — 4000 — can be consumed
         # entirely by reasoning, and what comes back is a well-formed response whose visible text is "".
@@ -3979,17 +3983,17 @@ def _call_guarded(model, prompt, max_tokens=None, sig=None, retries=2, **kw):
         if _sig_key and not _probe:
             try:
                 # An EMPTY reasoning reply (out_tok>0, no visible text) is NOT a real short output — record it as
-                # TRUNCATED so bulkgate.maxtokens CENSORS it (it measured a too-small cap, not the work). Recorded as a
+                # TRUNCATED so bulkgate.resolve_maxtokens CENSORS it (it measured a too-small cap, not the work). Recorded as a
                 # genuine tiny output it would drag the learned recommend DOWN and the class would re-fire low forever;
                 # censoring it lets the successful heal's large out_tok become the recommend the next call starts from.
                 _fr = "length" if r.get("empty_answer") else r.get("finish_reason")
-                bulkgate.note_response(_sig_key, model, r.get("out_tok"), max_tokens=budget,
+                bulkgate.resolve_note_response(_sig_key, model, r.get("out_tok"), max_tokens=budget,
                                        finish_reason=_fr)   # per-model key (see _sig_key above)
                 # GUARDRAIL E — PER-CALL RUNAWAY BREAKER. out_tok many times the class's MEASURED p99 (norm read
                 # PRE-call as _mx0, so the runaway can't inflate its own baseline) is a runaway the loose reasoning
                 # ceiling never truncates — record it so it is VISIBLE (never aborted: a cut reasoning call still bills
                 # for nothing; guardrail D's budget_usd cap bounds the $). No-op without a trustworthy norm.
-                bulkgate.check_runaway(_sig_key, model, r.get("out_tok"), norm=_mx0)
+                bulkgate.resolve_check_runaway(_sig_key, model, r.get("out_tok"), norm=_mx0)
             except Exception:
                 pass                                          # telemetry must not break the call
         if not trunc:
@@ -4004,7 +4008,7 @@ def _call_guarded(model, prompt, max_tokens=None, sig=None, retries=2, **kw):
         # MORE room. So an empty JUMPS to the reasoning floor and is NOT abandoned when `retries` (which bounds
         # long-answer doublings) is spent — only the model's own output ceiling stops it. Ordinary truncation keeps
         # the `retries` bound. A probe never grows (it is one deliberate tiny shot). Crucially, the heal that finally
-        # succeeds records a NON-truncated out_tok via note_response above, so bulkgate.maxtokens LEARNS the real need
+        # succeeds records a NON-truncated out_tok via note_response above, so bulkgate.resolve_maxtokens LEARNS the real need
         # → the next call of this class STARTS high enough and never empties again (this is what ends the every-run re-fire).
         _can_grow = budget < int(_cap) and not _probe and (_empty or attempt <= retries)
         if not _can_grow:

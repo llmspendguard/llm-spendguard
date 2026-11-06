@@ -158,8 +158,8 @@ def record_io_sample(intent, provider, model, batch, custom_id, prompt, output, 
     # different task and must be excluded — but a full prompt with a cut OUTPUT stays perfectly replayable (the output
     # is regenerated). Conflating the two would wrongly exclude a usable prompt. The warning still fires on either cut.
     _trunc = 0
-    from ... import bulkgate
-    _reply_truncated = bulkgate.is_truncated(finish_reason)
+    import spendguard.manage.admission.admission_accessors as bulkgate
+    _reply_truncated = bulkgate.resolve_is_truncated(finish_reason)
     try:
         with _lock:
             cur = _callio_db().execute(
@@ -467,9 +467,9 @@ def fetch_anthropic(client, batch_id, intent, model, cap, sample_n, jsonl_inputs
         txt = "".join(blk.text for blk in r.message.content if getattr(blk, "type", None) == "text")
         out_tok = getattr(getattr(r.message, "usage", None), "output_tokens", None)
         try:                                              # batch-LINE truncation: anthropic stop_reason states the fact
-            from ... import bulkgate
+            import spendguard.manage.admission.admission_accessors as bulkgate
             if not (intent or "").startswith("spendguard:"):
-                bulkgate.note_response(bulkgate.sig(model or "", template_id=intent or None), model or "",
+                bulkgate.resolve_note_response(bulkgate.resolve_sig(model or "", template_id=intent or None), model or "",
                                        out_tok, finish_reason=getattr(r.message, "stop_reason", None))
         except Exception:
             pass
@@ -484,12 +484,12 @@ def fetch_history(cap=DEFAULT_CAP, sample_n=None, limit_batches=None):
     """Fill call_io from provider batch I/O, bounded to `cap` per (intent, model). Zero token cost.
     Skips a batch entirely once its (intent, model) quota is met — so total downloads stay bounded.
 
-    Runs inside budget.reading_history(): downloading a batch INPUT file hands the gate bytes that look
+    Runs inside budget.resolve_reading_history(): downloading a batch INPUT file hands the gate bytes that look
     exactly like a batch about to be submitted, and it duly estimated them as new spend — one read-only pass
     wrote $359.63 of charges for work that had already been billed months earlier, and the daily cap then
     blocked every real call. "Zero token cost" in this docstring was true and still produced a bill."""
-    from ... import budget
-    with budget.reading_history("callio.fetch_history"):
+    import spendguard.manage.admission.admission_accessors as budget
+    with budget.resolve_reading_history("callio.fetch_history"):
         # `is None`: sample_n=0 asks for NO samples and used to become `cap`, i.e. the maximum. The caller
         # most likely to pass 0 is one that has decided not to sample this batch at all.
         sample_n = cap if sample_n is None else sample_n
@@ -720,7 +720,8 @@ def collect_chat_tasks(batch_ids, intent, model, require_ready=True, record_io=F
         measured["token_usage_complete"] = measured["in_tok"] is not None and measured["out_tok"] is not None
         out["usage"] = measured
     if len(ready) == 1:                              # one aggregate maps unambiguously to one provisional booking
-        from ... import budget, pricing
+        from ... import pricing
+        import spendguard.manage.admission.admission_accessors as budget
         from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
         try:
             actual = (None if not measured["token_usage_complete"] else
@@ -728,7 +729,7 @@ def collect_chat_tasks(batch_ids, intent, model, require_ready=True, record_io=F
         except (KeyError, TypeError, ValueError):
             actual = None                       # unpriced actual: keep the estimate; never invent a dollar value
         if actual is not None:
-            budget.reconcile_money_batch_estimate("openai", pricing.normalize(model), intent,
+            budget.resolve_reconcile_money_batch_estimate("openai", pricing.normalize(model), intent,
                                                   measured["in_tok"], measured["out_tok"], actual)
             _call_corpus_accessors.resolve_calls_reconcile_calls_batch_estimate("openai", pricing.normalize(model), intent,
                                                  measured["in_tok"], measured["out_tok"], actual)
@@ -812,14 +813,15 @@ def collect_message_batch(batch_ids, intent, model, require_ready=True, record_i
                 record_io_sample(intent, "anthropic", model, bid, cid, "", text, in_tok=in_tok, out_tok=out_tok)
             out["results"][cid] = text
             out["collected"] += 1
-        from ... import budget, pricing
+        from ... import pricing
+        import spendguard.manage.admission.admission_accessors as budget
         from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
         if batch_in_tok is None or batch_out_tok is None:
             config.warn_once("[spendguard] batch usage/value unknown: missing token telemetry; monetary estimate retained")
             continue
         actual = pricing.batch_cost(model, batch_in_tok, batch_out_tok, batch_cache_read, provider="anthropic")
         normalized_model = pricing.normalize(model)
-        budget.reconcile_money_batch_estimate("anthropic", normalized_model, intent,
+        budget.resolve_reconcile_money_batch_estimate("anthropic", normalized_model, intent,
                                               batch_in_tok, batch_out_tok, actual)
         _call_corpus_accessors.resolve_calls_reconcile_calls_batch_estimate("anthropic", normalized_model, intent,
                                              batch_in_tok, batch_out_tok, actual)

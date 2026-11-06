@@ -12,6 +12,7 @@ paid capacity. Ash's conversation-mining idea (limit-signals in Claude Code tran
 Numbers come from the receipt's OWN per-source est-value cache, re-windowed the same way — so they MATCH the receipt
 rather than being a parallel computation that could disagree.
 """
+import spendguard.manage.admission.spend_refusal_error as _admission_refusal_errors
 from spendguard.generate.execution import execution_accessors as _execution_accessors
 from ... import config, bulk_resilience
 
@@ -362,8 +363,8 @@ def quality_equivalent_free_substitutes(intent, primary_model, excluded=None):
         provider = _execution_accessors.resolve_provider_for(spec)
         lane = _execution_accessors.resolve__LANES().get(provider, (None,))[0]
         use_name = spec.split(":", 1)[1] if ":" in spec else spec
-        from ... import plan_admission
-        if (not lane or lane == primary_lane or lane in blocked or not plan_admission._ready(lane)
+        import spendguard.manage.admission.admission_accessors as plan_admission
+        if (not lane or lane == primary_lane or lane in blocked or not plan_admission.resolve__ready(lane)
                 or (spec not in approved and use_name not in approved)):
             continue
         candidates.append((lane, use_name))
@@ -541,7 +542,7 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None,
     task errors, re-runnable). Hedging/bandit are lane-only — a pinned task must not race onto another vendor.
 
     `gate_sig` carries the bulk gate onto the LANE path (a lane runs a CLI subprocess, so the SDK-patch gate never
-    fires — lane bulk was otherwise ungoverned). A genuinely-bulk fan (>= bulkgate.preview_max) is subject to the
+    fires — lane bulk was otherwise ungoverned). A genuinely-bulk fan (>= bulkgate.resolve_preview_max) is subject to the
     SAME SPENDGUARD_ENFORCE discipline the SDK path gets: run bulkgate.gated_batch(...) (estimate→test→eval) and pass
     the sig you gated as `gate_sig`; an ungated fan is refused under `block`, logged 'would-block' under `warn`
     (the default), allowed under `off`. force=True overrides. ($0 lanes have no spend to cap — this gate is the
@@ -621,8 +622,8 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None,
     if strategy is not None and strategy != "auto":
         raise ValueError("bulk_delegate(strategy=…): expected 'auto' or None, got %r" % (strategy,))
     if strategy == "auto" and images_for is None and not callable(model_for):
-        from ... import gate as _g0
-        _auto_stops = tuple(_g0.deliberate_stop_types())
+        import spendguard.manage.admission.admission_accessors as _g0
+        _auto_stops = tuple(_g0.resolve_deliberate_stop_types())
         if lanes is None and not tier:
             try:
                 from ... import lane_economics as _le
@@ -695,16 +696,16 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None,
     # bulkgate is imported DIRECTLY (not guarded into 'off'): if the safety gate itself cannot load, that is a real
     # failure and must FAIL CLOSED — silently substituting 'off' would let an un-proven fan of thousands run.
     if not force:
-        from ... import bulkgate as _bg
-        _bmode = _bg.mode()
-        if _bmode != "off" and len(tasks) >= _bg.preview_max():
-            _st = (_bg.gate_status(gate_sig) if gate_sig else
+        import spendguard.manage.admission.admission_accessors as _bg
+        _bmode = _bg.resolve_mode()
+        if _bmode != "off" and len(tasks) >= _bg.resolve_preview_max():
+            _st = (_bg.resolve_gate_status(gate_sig) if gate_sig else
                    {"fresh": False, "reason": "no gate_sig — this fan was never estimated/tested/evaluated"})
             if not _st.get("fresh"):
-                _bg._log_block(gate_sig or "lane-bulk", "lanes", len(tasks), 0.0,
+                _bg.resolve__log_block(gate_sig or "lane-bulk", "lanes", len(tasks), 0.0,
                                "blocked" if _bmode == "block" else "would-block")   # (fail-safe internally)
                 if _bmode == "block":
-                    raise _bg.GateBlocked(
+                    raise _admission_refusal_errors.GateBlocked(
                         f"REFUSED: {len(tasks)} tasks fanned onto lanes for {intent!r} without a fresh gate "
                         f"({_st.get('reason')}). A lane run is $0 but NOT proven — run bulkgate.gated_batch(...) "
                         f"(estimate→test→eval) and pass gate_sig=<the sig you gated>, or force=True to own the risk.")
@@ -900,8 +901,8 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None,
     _hedge_ms = int(hedge_ms if hedge_ms is not None else dispatch._limit("lane_hedge_ms", 0))
 
     _MAX_IMAGE_BYTES = 32 * 1024 * 1024               # bound raw image bytes so a giant file is a LOUD row, not an OOM
-    from ... import gate as _gate
-    _STOP_TYPES = tuple(_gate.deliberate_stop_types())  # includes DispatchTimeout — fail CLOSED (no degrading fallback)
+    import spendguard.manage.admission.admission_accessors as _gate
+    _STOP_TYPES = tuple(_gate.resolve_deliberate_stop_types())  # includes DispatchTimeout — fail CLOSED (no degrading fallback)
 
     def _image_too_big(imgs):
         # size BEFORE load: a data: URL by its string length, a path by its file size. Returns (reason_code, message)
@@ -1239,7 +1240,7 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None,
             _stopped_at = c0
             break
         chunk = todo[c0:c0 + max(1, int(chunk_size))]
-        with _gate.governed_bulk():                            # fan already governed (D)
+        with _gate.resolve_governed_bulk()():                              # fan already governed (D)
             _fan_worker_count = max(1, n)
             _fan_ceiling_s = _bulk_fan_coordinator_bound_s(deadline_s, len(chunk), _fan_worker_count)
             ex = _cf.ThreadPoolExecutor(max_workers=_fan_worker_count)
@@ -1361,11 +1362,12 @@ def estimate_fan(tasks, intent, system=None, lanes=None, tier=None, out_est=None
       · est_metered_usd_worst — the CEILING: every DISTINCT task falls off its lane to that model's METERED API
         (the refuse_billed=False worst case). On plan-served lanes the real spend is $0; this is the number to
         approve a fan against, never the expected cost. Priced from `pricing` (never a literal); INPUT tokens are
-        exact from the task+system text, OUTPUT from the intent's MEASURED p99 (bulkgate.maxtokens) when known,
+        exact from the task+system text, OUTPUT from the intent's MEASURED p99 (bulkgate.resolve_maxtokens) when known,
         else `out_est`, else a config nominal — `out_basis` says which so the estimate is auditable.
     Mirrors crossllm's "budget_usd is None → estimate only, never spends" pattern for the lane fan."""
     import hashlib as _hl
-    from ... import lane_catalog, lane_economics, bulkgate, pricing, config, provider_tokens
+    from ... import lane_catalog, lane_economics, pricing, config, provider_tokens
+    import spendguard.manage.admission.admission_accessors as bulkgate
 
     tasks = list(tasks)
     n_tasks = len(tasks)
@@ -1403,7 +1405,7 @@ def estimate_fan(tasks, intent, system=None, lanes=None, tier=None, out_est=None
 
     # OUTPUT tokens — the intent's MEASURED p99 (never a literal nobody picked); fall back to a caller value, then a
     # config nominal, recording which basis was used so the ceiling is auditable.
-    mt = bulkgate.maxtokens(intent)
+    mt = bulkgate.resolve_maxtokens(intent)
     if mt.get("p99"):
         out_tok, out_basis = int(mt["p99"]), f"measured p99 (n={mt.get('n')})"
     elif out_est:

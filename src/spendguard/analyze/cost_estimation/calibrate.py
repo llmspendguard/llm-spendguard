@@ -206,7 +206,8 @@ def _chain_from_obs(named_obs):
 def _fill_obs(label, model, as_of=None):
     """FILL = out_tok / max_tokens from gate_calls. Levels: exact (sig of label+model) → model → global.
     gate_calls keys by sig (hash of model+template), so the exact cell is recomputed, not stored."""
-    from ... import bulkgate, config
+    from ... import config
+    import spendguard.manage.admission.admission_accessors as bulkgate
     epoch_cut = None
     if as_of:
         dt = datetime.datetime.fromisoformat(as_of.replace("Z", "+00:00"))
@@ -225,8 +226,8 @@ def _fill_obs(label, model, as_of=None):
                 return [r[0] for r in con.execute(q, args).fetchall()]
             except sqlite3.OperationalError:
                 return []                       # no gate_calls table yet
-        exact = grab("AND sig = ?", [bulkgate.sig(pricing.normalize(model), template_id=label)]) + \
-            grab("AND sig = ?", [bulkgate.sig(model, template_id=label)])
+        exact = grab("AND sig = ?", [bulkgate.resolve_sig(pricing.normalize(model), template_id=label)]) + \
+            grab("AND sig = ?", [bulkgate.resolve_sig(model, template_id=label)])
         return [("exact", exact),
                 ("model", grab("AND model = ?", [model])),
                 ("global", grab("", []))]

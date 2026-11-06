@@ -24,11 +24,12 @@ def _model_is_priced(model):
     NEVER swallowed into 'unpriced' — it propagates, so a governance signal can't be downgraded to 'keep going'."""
     if not model:
         return False
-    from ... import pricing, gate
+    from ... import pricing
+    import spendguard.manage.admission.admission_accessors as gate
     try:
         pricing.price(model)
         return True
-    except gate.deliberate_stop_types():
+    except gate.resolve_deliberate_stop_types():
         raise                                            # a refusal/deadline is not an 'unpriced' verdict — it HALTS
     except Exception:
         return False                                     # KeyError (no canonical price) and the like → not priced
@@ -99,7 +100,8 @@ def reachability_probe(save=True):
     CONSTRUCTION: a lane miss is an error, never a metered call. served = the lane answered (text, no error).
     Persists a snapshot (save) so doctor/tiers render it without re-probing. Returns
     {asof, rows:[{lane, model, tiers, served, error}]}."""
-    from ... import gate, lanes
+    from ... import lanes
+    import spendguard.manage.admission.admission_accessors as gate
     groups = route_utility.tiers()
     enabled = {ln["lane"] for ln in lanes.lanes_status()["lanes"] if ln["enabled"]}
     targets = {}                                         # (lane, model) -> the tiers that declare it (probe each once)
@@ -118,7 +120,7 @@ def reachability_probe(save=True):
             r = _execution_accessors.resolve_call(pinned, _REACH_PROMPT, no_substitution=True, no_metered_fallback=True,
                               sig="spendguard:reachability-probe", timeout_s=_REACH_TIMEOUT_S)
         except Exception as e:
-            if gate.is_deliberate_stop(e):               # a deadline/refusal (DispatchTimeout, SpendGateRefused) HALTS
+            if gate.resolve_is_deliberate_stop(e):               # a deadline/refusal (DispatchTimeout, SpendGateRefused) HALTS
                 raise                                    # the probe — never downgraded to a 'not served' row
             r = {"error": f"{type(e).__name__}: {str(e)[:80]}"}
         rows.append({"lane": ln, "model": model, "tiers": sorted(tiers),

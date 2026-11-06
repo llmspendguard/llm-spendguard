@@ -835,7 +835,8 @@ def collect_batched(limit=2000, model=None):
             group_model[(handle, intent)] = _bmodel     # the batch's OWN model → its provider (picks the collect twin)
         else:
             orphaned.append(rid)                       # a queued_batch row with no usable batch handle — uncollectable
-    from ... import callio, gate as _gate
+    from ... import callio
+    import spendguard.manage.admission.admission_accessors as _gate
     out = {"rows": len(rows), "batches": len(groups), "done": 0, "failed": 0, "not_ready": 0, "collected": 0,
            "orphaned": len(orphaned), "not_settled": 0, "result_gaps": len(result_gaps),
            "collect_errors": result_gaps}
@@ -859,7 +860,7 @@ def collect_batched(limit=2000, model=None):
             else:
                 res = callio.collect_chat_tasks(batch_id, intent, _bm)
         except Exception as e:
-            if _gate.is_deliberate_stop(e):
+            if _gate.resolve_is_deliberate_stop(e):
                 raise                                  # a spend/deadline refusal HALTS collection, never continues past it
             # NAMED gap (never a silent skip — each batch is a unit of work): its rows stay queued_batch and are
             # RE-COLLECTED next round; the miss is surfaced by batch_id + row count so it is visible while it retries.
@@ -1095,8 +1096,8 @@ def record_close(rid, result):
     try:
         settle(rid, result if isinstance(result, dict) else {"error": "no result"})
     except Exception as e:
-        from ... import gate
-        if gate.is_deliberate_stop(e):
+        import spendguard.manage.admission.admission_accessors as gate
+        if gate.resolve_is_deliberate_stop(e):
             raise                                         # spend refusal / ledger lock → propagate (queue contract)
         import sys as _sys
         print(f"[spendguard] record_close: settle({rid}) hiccup swallowed ({type(e).__name__}: {str(e)[:60]}) — the "
@@ -1682,8 +1683,8 @@ def _drain_locked(worker, batch, lease_s, idle_rounds, idle_sleep, load_ceiling,
                           "(no re-buy)" % (_dd.get("fingerprinted", 0), _dd.get("settled", 0)),
                           file=_sysdd.stderr, flush=True)
             except Exception as _dde:
-                from ... import gate as _gdd
-                if _gdd.is_deliberate_stop(_dde):
+                import spendguard.manage.admission.admission_accessors as _gdd
+                if _gdd.resolve_is_deliberate_stop(_dde):
                     raise
         rows = lease(batch, worker=worker, lease_s=lease_s)
         if not rows:
@@ -1708,8 +1709,8 @@ def _drain_locked(worker, batch, lease_s, idle_rounds, idle_sleep, load_ceiling,
                     print("[spendguard] queue planner: %d vendor(s) at 429-risk (%s) — see `spendguard plan-queue`"
                           % (len(_fc["at_risk"]), ", ".join(_fc["at_risk"][:5])), file=_sysqp.stderr, flush=True)
             except Exception as _ce:
-                from ... import gate as _gce
-                if _gce.is_deliberate_stop(_ce):
+                import spendguard.manage.admission.admission_accessors as _gce
+                if _gce.resolve_is_deliberate_stop(_ce):
                     raise                                               # a refusal/deadline/containment HALTS, not pass
         # BATCH-TRACKER POLL (C3b) — settle ready batch offloads (out-of-order) + fail over expired ones. THROTTLED
         # (queue.planner_poll_s, default 30s) because batches take minutes→24h, so a per-round status poll would over-hit
@@ -1719,8 +1720,8 @@ def _drain_locked(worker, batch, lease_s, idle_rounds, idle_sleep, load_ceiling,
             try:
                 _execution_accessors.resolve_poll()
             except Exception as _pe:
-                from ... import gate as _gpe
-                if _gpe.is_deliberate_stop(_pe):
+                import spendguard.manage.admission.admission_accessors as _gpe
+                if _gpe.resolve_is_deliberate_stop(_pe):
                     raise
         intent = rows[0]["intent"]
         # PREDICTIVE BATCH OFFLOAD (C3b, DEFAULT OFF: queue.planner_autobatch) — when this leased intent is saturated or
@@ -1761,8 +1762,8 @@ def _drain_locked(worker, batch, lease_s, idle_rounds, idle_sleep, load_ceiling,
                         print("[spendguard] drain: batch offload of intent %r skipped (%s) — running realtime instead"
                               % (intent, _off["error"]), file=_sysob.stderr, flush=True)
             except Exception as _oe:
-                from ... import gate as _goe
-                if _goe.is_deliberate_stop(_oe):
+                import spendguard.manage.admission.admission_accessors as _goe
+                if _goe.resolve_is_deliberate_stop(_oe):
                     raise                                               # a spend refusal / deadline HALTS — never swallowed
                 # any other hiccup → fall through to realtime (the leased work is never lost) — but NAMED + COUNTED, never
                 # silent: a caller must be able to tell an offload that FAILED from one that never ran (F1). Mirrors the

@@ -30,7 +30,8 @@ import datetime
 import hashlib
 import json
 
-from ... import advisor, config, gate, models
+from ... import advisor, config, models
+import spendguard.manage.admission.admission_accessors as gate
 from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
 from spendguard.store.money_ledger.ledger_write_decorators import best_effort_ledger_function
 
@@ -80,7 +81,7 @@ def _recall_bestvalue_verdict(intent, quality_target, evidence_fp):
                     and "model" in verdict and "why_base" in verdict):
                 return verdict
     except Exception as e:
-        if gate.is_deliberate_stop(e):
+        if gate.resolve_is_deliberate_stop(e):
             raise
         config.warn_once("[spendguard] best-value: durable verdict cache read failed (%s) — re-deriving" %
                          type(e).__name__)
@@ -107,7 +108,7 @@ def _store_bestvalue_verdict(intent, quality_target, evidence_fp, verdict):
         c.commit()
     except Exception as e:
         config.rollback_ledger_conn(_VERDICT_CACHE_POOL_KEY)
-        if gate.is_deliberate_stop(e):
+        if gate.resolve_is_deliberate_stop(e):
             raise
         config.warn_once("[spendguard] best-value: durable verdict cache write failed (%s) — continuing uncached" %
                          type(e).__name__)
@@ -130,7 +131,7 @@ def _evidence_fingerprint(intent):
                       for (_it, m, j, c, g, b) in rows)
         return hashlib.sha256(repr(norm).encode("utf-8", "replace")).hexdigest()[:16]
     except Exception as e:
-        if gate.is_deliberate_stop(e):
+        if gate.resolve_is_deliberate_stop(e):
             raise                                     # a refusal reading the evidence propagates, never masked
         # NOT silent: a persistent fingerprint-read failure means the pick cache is bypassed every call (re-derived
         # fresh) — correct, but worth surfacing once so a broken cost_summary is visible, not a mystery slowdown.
@@ -199,7 +200,7 @@ def select_model_effort(intent, requested_model, pin_model=False, quality_target
     try:
         rec = advisor.recommend_models(intent, k=1, quality_bar=quality_target, run=True)
     except Exception as e:
-        if isinstance(e, gate.deliberate_stop_types()):
+        if isinstance(e, gate.resolve_deliberate_stop_types()):
             raise                                             # a refusal is NOT cached and NOT downgraded
         return _none("best-value: advisor unavailable (%s) — keep the named model" % type(e).__name__)
     top = (rec or {}).get("top") or []
@@ -245,8 +246,8 @@ def _infer_intent(prompt):
         _schema = {"type": "object", "additionalProperties": False, "required": ["intent"],
                    "properties": {"intent": {"type": ["string", "null"]}}}
         try:
-            from ... import plan_admission
-            _judge = plan_admission.ready_meta_model(config.advisor_judge_model())  # off a capped plan to a READY provider
+            import spendguard.manage.admission.admission_accessors as plan_admission
+            _judge = plan_admission.resolve_ready_meta_model(config.advisor_judge_model())  # off a capped plan to a READY provider
             with _call_corpus_accessors.resolve_calls_context(intent="spendguard:infer-intent"):
                 r = _execution_accessors.resolve_call(_judge,
                                   "Known intents:\n%s\n\nTASK PROMPT:\n%s" % ("\n".join("- " + k for k in known), prompt),
@@ -256,7 +257,7 @@ def _infer_intent(prompt):
             if cand in known:                                  # accept ONLY a label from the list — never a hallucinated one
                 result = cand
         except Exception as e:
-            if isinstance(e, gate.deliberate_stop_types()):
+            if isinstance(e, gate.resolve_deliberate_stop_types()):
                 raise
             result = None
     if result:                                                 # cache only a SUCCESSFUL match — a miss/failure is NOT cached,

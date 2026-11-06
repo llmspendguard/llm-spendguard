@@ -66,12 +66,12 @@ def _compute(since=None):
     The batch window opens at the first batch row in the ledger (cutoff = ledger_start('batch')), NOT the global
     ledger_start: realtime started recording weeks before batch, so the global start would drag in pre-batch-recording
     history and mislabel it as a leak. Provider batch before the batch cutoff is pre-ledger (expected)."""
-    from ... import budget
+    import spendguard.manage.admission.admission_accessors as budget
     since = since or config.month_start_utc()
     prov, pending = _provider_batch_by_day(since)
-    accounted = budget.by_day(kind="batch", since=since, exclude_reconciled=False)    # gate-recorded + backfill = what the ledger accounts for
-    gate_only = budget.by_day(kind="batch", since=since, exclude_reconciled=True)     # what the gate captured LIVE (capture-rate signal)
-    cutoff = budget.ledger_start("batch") or budget.ledger_start() or since
+    accounted = budget.resolve_by_day(kind="batch", since=since, exclude_reconciled=False)    # gate-recorded + backfill = what the ledger accounts for
+    gate_only = budget.resolve_by_day(kind="batch", since=since, exclude_reconciled=True)     # what the gate captured LIVE (capture-rate signal)
+    cutoff = budget.resolve_ledger_start("batch") or budget.resolve_ledger_start() or since
     post_p = sum(v for d, v in prov.items() if d >= cutoff)
     post_a = sum(v for d, v in accounted.items() if d >= cutoff)
     post_g = sum(v for d, v in gate_only.items() if d >= cutoff)
@@ -88,7 +88,7 @@ def _compute(since=None):
     # that were never real. We report the size and name the action; what survives a reconcile is cause (b).
     overhang = max(0.0, round(post_a - post_p, 2))
     return dict(since=since, cutoff=cutoff, prov=prov, local_batch=accounted, gate_batch=gate_only, pre_ledger=pre_ledger,
-                local_rt=budget.by_day(kind="realtime", since=since), meta=budget.by_day(kind="meta", since=since),
+                local_rt=budget.resolve_by_day(kind="realtime", since=since), meta=budget.resolve_by_day(kind="meta", since=since),
                 pending=pending, post_p=post_p, post_l=post_a, post_g=post_g, leak=leak, overhang=overhang,
                 coverage=(post_a / post_p * 100) if post_p else 100.0,
                 capture_rate=(post_g / post_p * 100) if post_p else 100.0)
@@ -157,7 +157,7 @@ def true_down(since=None, billed_rows=None):
 
     `billed_rows` = {"openai": [(prov, model, cost, in, out, day, batch_id), ...] | None, "anthropic": ...};
     None/absent = fetch that provider here (None after a failed fetch = skip). Returns the correction summary."""
-    from ... import budget
+    import spendguard.manage.admission.admission_accessors as budget
     since = since or config.month_start_utc()
     if billed_rows is None:
         billed_rows = {}
@@ -237,16 +237,16 @@ def true_down(since=None, billed_rows=None):
         from .reconcile_maintenance_owner import owned_reconcile_maintenance_connection
         true_down_posting = ledger_posting_metadata()
         # Snapshot before SQLite's writer transaction; backup must never wait on our own uncommitted writes.
-        budget.snapshot_once("clear-true-down")
-        with owned_reconcile_maintenance_connection() as correction_connection, budget._lock:
+        budget.resolve_snapshot_once("clear-true-down")
+        with owned_reconcile_maintenance_connection() as correction_connection, budget.resolve__lock():
             correction_ledger = SpendLedger(owned_connection=correction_connection)
             with correction_ledger.bulk(commit_callback=correction_connection.commit_reconcile_maintenance_corrections):
                 correction_connection.execute("BEGIN IMMEDIATE")
-                budget.clear_readable_true_down(
+                budget.resolve_clear_readable_true_down(
                     since, providers=[p for p in billed_rows if p not in read_gaps],
                     maintenance_ledger=correction_ledger)
                 for proj, prov_name, model, day, share in staged.execute("SELECT * FROM corrections"):
-                    budget.record_true_down(day, prov_name, model, share, project=proj,
+                    budget.resolve_record_true_down(day, prov_name, model, share, project=proj,
                                             maintenance_ledger=correction_ledger,
                                             posting_metadata=true_down_posting)
     return dict(since=since, trued_down=round(trued, 2), by_model=by_model, skipped=skipped_providers,
@@ -263,7 +263,7 @@ def reconcile_into_ledger(since=None):
     spend stays attributed (project/user). Zero model spend (provider GETs are free). Returns a summary. This is
     what makes the ledger correct + the dashboard show the real total, and it rides the existing daily reconcile
     cadence — no separate scheduler."""
-    from ... import budget
+    import spendguard.manage.admission.admission_accessors as budget
     since = since or config.month_start_utc()
     # Only the account-OWNER connection reconciles the SHARED provider-account gap. A connected non-owner
     # (owns_account=false — e.g. one of several repos sharing one OpenAI/Anthropic account) must NOT claim it, or it
@@ -333,7 +333,7 @@ def reconcile_into_ledger(since=None):
         _c = saas.saas_connection()
         _ps = _c.get("projects")
         fallback = "unattributed" if (isinstance(_ps, list) and len(_ps) > 1) else \
-            (_c.get("project") or budget._project() or "unattributed").strip().lower()
+            (_c.get("project") or budget.resolve__project() or "unattributed").strip().lower()
     except Exception:
         fallback = "unattributed"
     # Attribute the gap BY PROJECT, AGENTICALLY: each batch → the SUBCONVERSATION that ran it → that segment's
@@ -367,7 +367,7 @@ def reconcile_into_ledger(since=None):
             since, providers=readable_providers, include_provider=True):
         key = (provider, proj)
         gate_proj_total[key] = gate_proj_total.get(key, 0.0) + gv
-    budget.clear_reconciled(since, providers=readable_providers if partial_provider_truth else None)
+    budget.resolve_clear_reconciled(since, providers=readable_providers if partial_provider_truth else None)
     provider_total = round(sum(prov_proj_total.values()), 2)   # evidence-based total — same source as the gaps
     local_total = round(sum(gate_proj_total.values()), 2)
     # Cap total reconciled at the ACCOUNT net gap (provider − gate). The per-project positive gaps (provider_proj −
@@ -396,7 +396,7 @@ def reconcile_into_ledger(since=None):
         for day, v in sorted(days.items()):                  # spread the (capped) gap across actual usage days
             share = gap * (v / tot)
             if share > RECONCILE_GAP_MIN_DAY_USD:
-                budget.record_reconciled(day, provider, round(share, RECONCILE_GAP_MONEY_PRECISION), project=proj)
+                budget.resolve_record_reconciled(day, provider, round(share, RECONCILE_GAP_MONEY_PRECISION), project=proj)
         gap_usd += gap
         by_project[proj] = round(by_project.get(proj, 0.0) + gap, RECONCILE_GAP_REPORT_PRECISION)
     gap_rows = len(by_project)  # Historical summary counts projects, not physical provider/day rows.
@@ -472,7 +472,7 @@ def record_realtime_reconstruction(since=None):
     only). Each row records at its OWN day (the reconstruction now carries per-run `day` from conv.resolve), so a
     multi-month window folds into the right months instead of one lump day; caches without `day` fall back to the
     window start. Project identity comes from each evidence row; missing identity stays explicitly unattributed."""
-    from ... import budget
+    import spendguard.manage.admission.admission_accessors as budget
     import os, json
     cache = str(config.HOME / "realtime_reconstruction.json")   # config.HOME (respects SPENDGUARD_HOME), not a ~ literal
     if not os.path.exists(cache):
@@ -483,7 +483,7 @@ def record_realtime_reconstruction(since=None):
     except Exception:
         return dict(recorded=0.0, rows=0, note="cache unreadable")
     fallback_day = since or data.get("since") or config.month_start_utc()
-    budget.clear_reconciled(model=_RT_RECON_MARKER)              # idempotent rebuild
+    budget.resolve_clear_reconciled(model=_RT_RECON_MARKER)              # idempotent rebuild
     agg = {}
     for r in data.get("rows", []):
         proj = (r.get("project") or "").strip() or _RT_RECON_UNATTRIBUTED_PROJECT
@@ -495,7 +495,7 @@ def record_realtime_reconstruction(since=None):
         if usd <= 0:
             skipped += 1                                        # reconstruction rows are spend (usd>0); count any non-positive, never drop silently
             continue
-        budget.record_reconciled(day=rday, provider=prov, cost=round(usd, 2), project=proj,
+        budget.resolve_record_reconciled(day=rday, provider=prov, cost=round(usd, 2), project=proj,
                                  kind="realtime", model=_RT_RECON_MARKER)
         rec += usd; n += 1
     return dict(recorded=round(rec, 2), rows=n, skipped=skipped, since=fallback_day)
@@ -514,7 +514,7 @@ def reconcile_realtime(since=None):
     DEFAULT (no admin key): import the gate's own realtime_log as the $-floor (max(0, log − gate-recorded) per
     provider/day). The FORWARD fix for full coverage with no admin key is the gate's inline true-up (records actual
     tokens at call time). Idempotent (clears + rebuilds the marker rows each run)."""
-    from ... import budget
+    import spendguard.manage.admission.admission_accessors as budget
     from ...config import RT_LOG
     import os, json
     since = since or config.month_start_utc()
@@ -536,7 +536,7 @@ def reconcile_realtime(since=None):
     # RT_LOG gap recorded below is ~0 once the oracle has run (log ≈ gate-live), so the two coexist without double.
     if not os.path.exists(RT_LOG):
         return dict(since=since, imported=0.0, rows=0)
-    budget.clear_reconciled(since=since, model=_RT_MARKER)        # rebuild ONLY our own log-floor markers (idempotent)
+    budget.resolve_clear_reconciled(since=since, model=_RT_MARKER)        # rebuild ONLY our own log-floor markers (idempotent)
     log_pd = {}                                                  # (provider, day) -> $ in the gate's realtime log
     try:
         _fh = open(RT_LOG)
@@ -566,20 +566,20 @@ def reconcile_realtime(since=None):
         from ...config import warn_once
         warn_once(f"[ledger_sync] {skipped} unparseable RT_LOG line(s) SKIPPED in reconcile_realtime — the realtime "
                   f"floor is a lower bound by their unknown cost.")
-    gate_pd = budget.by_provider_day(kind="realtime", since=since)   # REAL gate realtime (markers just cleared)
+    gate_pd = budget.resolve_by_provider_day(kind="realtime", since=since)   # REAL gate realtime (markers just cleared)
     try:
         from ... import saas
         _c = saas.saas_connection()
         _ps = _c.get("projects")
         fallback = "unattributed" if (isinstance(_ps, list) and len(_ps) > 1) else \
-            (_c.get("project") or budget._project() or "unattributed").strip().lower()
+            (_c.get("project") or budget.resolve__project() or "unattributed").strip().lower()
     except Exception:
         fallback = "unattributed"
     imported, rows = 0.0, 0
     for (prov, day), log_cost in log_pd.items():
         gap = log_cost - gate_pd.get((prov, day), 0.0)           # log has more than the ledger saw → the stranded gap
         if gap > 0.005:
-            budget.record_reconciled(day, prov, gap, project=fallback, kind="realtime", model=_RT_MARKER)
+            budget.resolve_record_reconciled(day, prov, gap, project=fallback, kind="realtime", model=_RT_MARKER)
             imported += gap
             rows += 1
     return dict(since=since, imported=round(imported, 4), rows=rows, excluded_log_rows=excluded_log_rows)
@@ -722,14 +722,14 @@ def leak_line(since=None):
 
 
 def sync(since=None):
-    from ... import budget
+    import spendguard.manage.admission.admission_accessors as budget
     since = since or config.month_start_utc()
     prov, pending = _provider_batch_by_day(since)
-    accounted = budget.by_day(kind="batch", since=since, exclude_reconciled=False)    # gate-recorded + reconciled backfill = ACCOUNTED
-    gate_only = budget.by_day(kind="batch", since=since, exclude_reconciled=True)     # what the gate captured LIVE (capture-rate)
-    local_rt = budget.by_day(kind="realtime", since=since)
-    meta = budget.by_day(kind="meta", since=since)
-    cutoff = budget.ledger_start("batch") or budget.ledger_start() or since          # the batch axis started recording here
+    accounted = budget.resolve_by_day(kind="batch", since=since, exclude_reconciled=False)    # gate-recorded + reconciled backfill = ACCOUNTED
+    gate_only = budget.resolve_by_day(kind="batch", since=since, exclude_reconciled=True)     # what the gate captured LIVE (capture-rate)
+    local_rt = budget.resolve_by_day(kind="realtime", since=since)
+    meta = budget.resolve_by_day(kind="meta", since=since)
+    cutoff = budget.resolve_ledger_start("batch") or budget.resolve_ledger_start() or since          # the batch axis started recording here
 
     print(f"reconcile-ledger — provider billing vs the local ledger (batch), since {since}")
     print("  accounted = gate-recorded LIVE + reconciled-from-provider backfill.  leak = NET provider truth unaccounted.")
@@ -811,7 +811,8 @@ def _provider_total(since):
     masquerade as 'fully reconciled'. (An unpriced model prices to $0 in openai_by_day, so its real $ is missing from the
     sum; a $0-understated total presented as truth would generate a wrong reconcile residual.) A DELIBERATE spend refusal
     / deadline from a fetch PROPAGATES — it is never downgraded to a plain 'fetch failed'."""
-    from ... import pricing, gate as _g
+    from ... import pricing
+    import spendguard.manage.admission.admission_accessors as _g
     total, err = 0.0, False
     try:
         from ...report import openai_by_day
@@ -821,7 +822,7 @@ def _provider_total(since):
             err = True                                     # openai_by_day priced a model at $0 (unknown) → total INCOMPLETE
         total += sum(v for d, v in oai.items() if d >= since)
     except Exception as e:
-        if _g.is_deliberate_stop(e):
+        if _g.resolve_is_deliberate_stop(e):
             raise                                          # a spend refusal / deadline HALTS the reconcile, never err=True
         err = True
     try:
@@ -829,7 +830,7 @@ def _provider_total(since):
         an, _ = anth.cost_by_day(since=since)
         total += sum(v for d, v in an.items() if d >= since)
     except Exception as e:
-        if _g.is_deliberate_stop(e):
+        if _g.resolve_is_deliberate_stop(e):
             raise
         err = True
     return None if err else round(total, 2)
@@ -837,9 +838,9 @@ def _provider_total(since):
 
 def _gate_captured_rows(since):
     """Gate-recorded (attributed) batch LLM spend by project — the CAPTURED side, as reconcile.Source rows."""
-    from ... import budget
+    import spendguard.manage.admission.admission_accessors as budget
     by = {}
-    for (proj, _day), gv in budget.gate_by_project_day(kind="batch", since=since).items():
+    for (proj, _day), gv in budget.resolve_gate_by_project_day(kind="batch", since=since).items():
         by[proj] = by.get(proj, 0.0) + gv
     return [{"cost": round(v, 2), "project": p} for p, v in by.items()]
 
@@ -870,9 +871,9 @@ class LLMSource:
     def attribute_gap(self, gap, since=None):
         # the gap that reconcile_into_ledger already attributed by conversation/intent evidence (batch→conv→project),
         # stored as reconciled rows. If reconcile hasn't run, this is empty → the residual warns to run it.
-        from ... import budget
+        import spendguard.manage.admission.admission_accessors as budget
         return [{"cost": round(v, 2), "project": p}
-                for p, v in budget.reconciled_by_project(since or self._since).items()]
+                for p, v in budget.resolve_reconciled_by_project(since or self._since).items()]
 
 
 class RealtimeSource:
@@ -923,9 +924,9 @@ class RealtimeSource:
         return None
 
     def captured(self, since=None):
-        from ... import budget
+        import spendguard.manage.admission.admission_accessors as budget
         by = {}
-        for (proj, _day), v in budget.gate_by_project_day(kind="realtime", since=since or self._since).items():
+        for (proj, _day), v in budget.resolve_gate_by_project_day(kind="realtime", since=since or self._since).items():
             by[proj] = by.get(proj, 0.0) + v
         return [{"cost": round(v, 2), "project": p} for p, v in by.items()]
 

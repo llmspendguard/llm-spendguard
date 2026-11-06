@@ -349,8 +349,8 @@ def contract_tally():
 # ── flow aggregation (powers the per-flow receipt; degrades gracefully when call-logging is off) ──
 def _flow_start_usd() -> float:
     try:
-        from ... import budget
-        return budget.spent_all_time()                     # running billed-$ to date, O(1) (memoized) — not a full re-scan
+        import spendguard.manage.admission.admission_accessors as budget
+        return budget.resolve_spent_all_time()                     # running billed-$ to date, O(1) (memoized) — not a full re-scan
     except Exception:
         return 0.0
 
@@ -573,15 +573,15 @@ def _resolve_attribution(model, cost, intent, chain, project, call_class=None, o
     chain = chain or ctx.get("chain")
     if project is None:                                  # attribute to the repo the same way the money ledger does
         try:
-            from ... import budget
-            project = budget._project()
+            import spendguard.manage.admission.admission_accessors as budget
+            project = budget.resolve__project()
         except Exception:
             project = None
     resolved_class = call_class or ctx.get("call_class") or "workload"
     if resolved_class not in _CALL_CLASSES:
         raise ValueError(f"call_class must be one of {sorted(_CALL_CLASSES)}; got {resolved_class!r}")
     resolved_session = origin_session or ctx.get("origin_session") or _ORIGIN_SESSION
-    from ...budget import normalize_ledger_project_id
+    from spendguard.manage.admission.admission_accessors import resolve_normalize_ledger_project_id as normalize_ledger_project_id
     return (intent, chain, (normalize_ledger_project_id(project) or None), resolved_class,
             resolved_session)   # lowercased project_primary for clean joins
 
@@ -784,15 +784,15 @@ def record_call(provider, model, kind, cost, in_tok=0, out_tok=0, latency=None,
                 config.warn_once(f"[spendguard] calls: suspect per-call out_tok {int(out_tok or 0)} for {model} "
                                  f"({_basis} {int(_ceil)}) — flagged, not trusted as a per-call fact")
         except Exception as _sce:
-            from ... import gate as _scg
-            if _scg.is_deliberate_stop(_sce):    # a spend/deadline/containment stop HALTS — never swallowed into a flag
+            import spendguard.manage.admission.admission_accessors as _scg
+            if _scg.resolve_is_deliberate_stop(_sce):    # a spend/deadline/containment stop HALTS — never swallowed into a flag
                 raise
             suspect = None                       # a pure catalog-read hiccup never blocks recording the call
         with _lock:
             # A provider-declared cutoff is authoritative per-call quality evidence. Assign it only while the new
             # row is written (never migrate/backfill old rows), with a distinct source protected from later feedback.
-            from ... import bulkgate
-            _truncation_quality = bulkgate.is_truncated(finish)
+            import spendguard.manage.admission.admission_accessors as bulkgate
+            _truncation_quality = bulkgate.resolve_is_truncated(finish)
             from . import routing_audit
             audit_connection = _calls_db()
             audit_connection.execute(
@@ -952,7 +952,7 @@ def _link_used(chain, current_prompt):
     return None
 
 
-from ...budget import budget_projection_snapshot
+from spendguard.manage.admission.admission_accessors import resolve_budget_projection_snapshot as budget_projection_snapshot
 
 
 @budget_projection_snapshot
@@ -969,8 +969,8 @@ def intent_spend(intent, window_s=86400):
            - datetime.timedelta(seconds=max(1, int(window_s)))).isoformat(timespec="seconds")
     try:
         from ... import ledger_read
-        from ... import budget
-        connection = budget._ledger()._conn
+        import spendguard.manage.admission.admission_accessors as budget
+        connection = budget.resolve__ledger()._conn
         available_columns = {column[1] for column in connection.execute("PRAGMA table_info(calls)")}
         incomplete = ledger_read._read_incomplete_settlement_totals(
             connection, since=cut, intent=intent)

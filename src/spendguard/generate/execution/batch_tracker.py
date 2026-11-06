@@ -107,8 +107,8 @@ def register_batch(batch_id, provider, model, intent, n_rows, *, expires_at=None
             _jobs_db().commit()
         return batch_id
     except Exception as e:
-        from ... import gate
-        if gate.is_deliberate_stop(e):
+        import spendguard.manage.admission.admission_accessors as gate
+        if gate.resolve_is_deliberate_stop(e):
             raise
         config.rollback_ledger_conn("batch_jobs")
         import sys
@@ -336,13 +336,14 @@ def _existing_offload_message_batch(offload_key, row_ids):
     rec = _pending_lookup(offload_key)
     if not rec:
         return None                                        # no prior attempt → submit fresh
-    from ... import callio, gate
+    from ... import callio
+    import spendguard.manage.admission.admission_accessors as gate
     client = callio._anthropic_client()
     if rec.get("batch_id"):
         try:
             b = client.messages.batches.retrieve(rec["batch_id"])
         except Exception as e:
-            if gate.is_deliberate_stop(e):
+            if gate.resolve_is_deliberate_stop(e):
                 raise
             return rec["batch_id"]                         # can't verify now → adopt the known id (collect retries); never a fresh dup
         status = getattr(b, "processing_status", None)
@@ -382,7 +383,8 @@ def submit_offload(intent, rows, batch_model, *, cap_dollars=None, expires_at=No
     record). Anthropic batches carry NO metadata, so the key lives in a LOCAL pending record written BEFORE the paid
     create, and the create-then-crash window is recovered by scanning the provider for a batch carrying these rows'
     (globally-unique) custom_ids — an in-flight one that can't yet be confirmed is HELD, never resubmitted."""
-    from ... import submit as _submit, lane_queue, gate, adapters, bulk_resilience
+    from ... import submit as _submit, lane_queue, adapters, bulk_resilience
+    import spendguard.manage.admission.admission_accessors as gate
     rows = list(rows or [])
     if not rows:
         return {"batch_id": None, "marked": 0, "error": "no rows"}
@@ -426,7 +428,7 @@ def submit_offload(intent, rows, batch_model, *, cap_dollars=None, expires_at=No
         # never resubmit past it. The drain retries; it adopts once the batch ends and its custom_ids become readable.
         return {"batch_id": None, "marked": 0, "error": "inflight-hold: %s" % (str(e)[:120])}
     except Exception as e:
-        if gate.is_deliberate_stop(e):
+        if gate.resolve_is_deliberate_stop(e):
             raise
         # a FAILED reconcile must NOT fall through to submit (that risks the duplicate) — name it and let the drain retry
         # this offload later (the leased rows stay put, work never lost). Loud, never a silent blind submit.
@@ -447,7 +449,7 @@ def submit_offload(intent, rows, batch_model, *, cap_dollars=None, expires_at=No
             try:
                 _pending_note(key, provider, batch_model, intent, len(row_ids))   # durable BEFORE create — fail-closed
             except Exception as e:
-                if gate.is_deliberate_stop(e):
+                if gate.resolve_is_deliberate_stop(e):
                     raise
                 return {"batch_id": None, "marked": 0, "error": "pending-note: %s" % (type(e).__name__)}
             res = _submit.submit_message_batch(tasks, batch_model, intent=intent, cap_dollars=cap_dollars,
@@ -456,7 +458,7 @@ def submit_offload(intent, rows, batch_model, *, cap_dollars=None, expires_at=No
             res = _submit.submit_chat_tasks(tasks, batch_model, intent=intent, cap_dollars=cap_dollars,
                                             metadata={_OFFLOAD_KEY_FIELD: key}, force=force)
     except Exception as e:
-        if gate.is_deliberate_stop(e):
+        if gate.resolve_is_deliberate_stop(e):
             raise                                      # a cap refusal / deadline HALTS — never a silent partial offload
         return {"batch_id": None, "marked": 0, "error": "submit: %s" % (str(e)[:80])}
     bid = res.get("batch_id") if isinstance(res, dict) else None
@@ -482,8 +484,8 @@ def _open_jobs(limit):
         return [{"batch_id": r[0], "intent": r[1], "attempts": r[2], "expires_at": r[3], "status": r[4]}
                 for r in rows]
     except Exception as e:
-        from ... import gate
-        if gate.is_deliberate_stop(e):
+        import spendguard.manage.admission.admission_accessors as gate
+        if gate.resolve_is_deliberate_stop(e):
             raise
         config.rollback_ledger_conn("batch_jobs")
         return []
@@ -497,8 +499,8 @@ def _set_status(batch_id, status, last_error=None):
                                (status, last_error, time.time(), batch_id))
             _jobs_db().commit()
     except Exception as e:
-        from ... import gate
-        if gate.is_deliberate_stop(e):
+        import spendguard.manage.admission.admission_accessors as gate
+        if gate.resolve_is_deliberate_stop(e):
             raise
         config.rollback_ledger_conn("batch_jobs")
 
@@ -547,14 +549,15 @@ def poll(limit=200, now=None):
          _fail_over (rows → realtime, LOUD) → 'failed'; still running → left open; a row-read hiccup → left open + named.
     Returns {settled_rows, jobs_open, jobs_settled, jobs_failed, jobs_resumed, errors}. $0 (status + the already-billed
     collect). A deliberate spend/deadline stop propagates."""
-    from ... import lane_queue, callio, gate
+    from ... import lane_queue, callio
+    import spendguard.manage.admission.admission_accessors as gate
     now = now or time.time()
     out = {"settled_rows": 0, "jobs_open": 0, "jobs_settled": 0, "jobs_failed": 0, "jobs_resumed": 0, "errors": []}
     try:
         col = lane_queue.collect_batched()
         out["settled_rows"] = int(col.get("done", 0)) + int(col.get("failed", 0))
     except Exception as e:
-        if gate.is_deliberate_stop(e):
+        if gate.resolve_is_deliberate_stop(e):
             raise
         out["errors"].append({"stage": "collect", "error": "%s: %s" % (type(e).__name__, str(e)[:60])})
     for job in _open_jobs(limit):
@@ -583,7 +586,7 @@ def poll(limit=200, now=None):
         try:
             st = (callio.batch_status([bid]).get(bid) or {})
         except Exception as e:
-            if gate.is_deliberate_stop(e):
+            if gate.resolve_is_deliberate_stop(e):
                 raise
             out["jobs_open"] += 1                      # status read failed → leave OPEN + named, retry next tick
             out["errors"].append({"batch_id": bid, "error": "status: %s" % (type(e).__name__)})
@@ -639,8 +642,8 @@ def status():
         out["total"] = sum(v for k, v in out.items() if k != "total")
         return out
     except Exception as e:
-        from ... import gate
-        if gate.is_deliberate_stop(e):
+        import spendguard.manage.admission.admission_accessors as gate
+        if gate.resolve_is_deliberate_stop(e):
             raise
         config.rollback_ledger_conn("batch_jobs")
         return {}

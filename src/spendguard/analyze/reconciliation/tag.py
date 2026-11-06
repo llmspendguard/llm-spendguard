@@ -20,7 +20,8 @@ VENV_BACKFILL_UNATTRIBUTED_REASON = "prior resolved to unattributed-project sent
 
 def backfill_project_from_venv(led):
     """Fill unresolved project tags from distinct virtual-environment priors without classification spend."""
-    from ... import budget, conv
+    from ... import conv
+    import spendguard.manage.admission.admission_accessors as budget
     unresolved_venvs = set(led.distinct(
         "venv", filt=f"{_EMPTY_PROJECT} AND venv IS NOT NULL AND venv != ''"))
     unresolved_venvs.update(led.distinct(
@@ -49,16 +50,16 @@ def retag_deterministic():
     Each pass only touches rows that remain unresolved, so meta precedence is preserved. Returns the number of
     rows changed. Reads/writes spend_events (the money-of-record).
     """
-    from ... import budget
-    led = budget._ledger()
-    with budget._lock:
+    import spendguard.manage.admission.admission_accessors as budget
+    led = budget.resolve__ledger()
+    with budget.resolve__lock():
         a = led.bulk_retag_project(
             "llm-spendguard", filt=f"{_UNRESOLVED_PROJECT} AND COALESCE(is_meta,0)=1",
             args=(budget.UNATTRIBUTED_PROJECT,), actor="tag",
             reason="deterministic: meta → llm-spendguard")
         venv_retagged = backfill_project_from_venv(led)
         b = led.bulk_retag_project(
-            budget._project(), filt=_UNRESOLVED_PROJECT,
+            budget.resolve__project(), filt=_UNRESOLVED_PROJECT,
             args=(budget.UNATTRIBUTED_PROJECT,), actor="tag",
             reason="deterministic: unresolved → repo project")
     return venv_retagged + int(a or 0) + int(b or 0)
@@ -68,10 +69,10 @@ def retag_deterministic():
 def move_project(old, new):
     """Re-assign a project tag across the ledger — fixes cwd-fallback mistags (e.g. video-captioning that ran
     from ~/Documents got tagged 'documents' instead of 'vision-pipeline'). Returns rows changed."""
-    from ... import budget
+    import spendguard.manage.admission.admission_accessors as budget
     old, new = (old or "").strip().lower(), (new or "").strip().lower()
-    with budget._lock:
-        n = budget._ledger().bulk_retag_project(new, filt="lower(COALESCE(project_primary,''))=?", args=(old,),
+    with budget.resolve__lock():
+        n = budget.resolve__ledger().bulk_retag_project(new, filt="lower(COALESCE(project_primary,''))=?", args=(old,),
                                                 actor="tag", reason=f"move: {old} → {new}")
     return int(n or 0)
 
@@ -91,7 +92,8 @@ def cmd(argv=None):
 def ambiguous_count():
     """Rows a human/LLM might still need to disambiguate — untagged after the free pass (should be ~0 once
     deterministic runs, but non-repo or mixed-context charges can remain). Zero-spend."""
-    from ... import budget, ledger_read
+    from ... import ledger_read
+    import spendguard.manage.admission.admission_accessors as budget
     return ledger_read.read_ledger_count(ledger_read.LedgerReadRequest(
         where_sql=_UNRESOLVED_PROJECT, parameters=(budget.UNATTRIBUTED_PROJECT,)))
 

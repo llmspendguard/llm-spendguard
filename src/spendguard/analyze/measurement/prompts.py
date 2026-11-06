@@ -29,9 +29,11 @@ def _batchable_verdict(intent, model, n, med_in):
     reasonable people can disagree — a bulk classify vs a chat turn), so a meta-caged LLM decides it, never a rule.
     Returns {batchable: bool, why: str}, or None when the judge is unavailable (→ the candidate is not emitted).
     A deliberate spend refusal (caps.meta) PROPAGATES — it halts the analysis, never degrades to a silent skip."""
-    from ... import config, gate, plan_admission
+    from ... import config
+    import spendguard.manage.admission.admission_accessors as gate
+    import spendguard.manage.admission.admission_accessors as plan_admission
     from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
-    judge_model = plan_admission.ready_meta_model(config.advisor_judge_model())  # route this meta call off a CAPPED plan to a READY provider
+    judge_model = plan_admission.resolve_ready_meta_model(config.advisor_judge_model())  # route this meta call off a CAPPED plan to a READY provider
     q = (f"A job-type '{intent}' made {n} separate REALTIME LLM calls on {model}, each with a small (~{med_in}-token) "
          f"prompt. Are these INDEPENDENT items of one job that could be PACKED many-per-call or sent via the async "
          f"Batch API — or LATENCY-SENSITIVE interactive turns (a user waiting) that must stay realtime? "
@@ -44,7 +46,7 @@ def _batchable_verdict(intent, model, n, med_in):
                                       "properties": {"batchable": {"type": "boolean"}, "why": {"type": "string"}}})
         j = _execution_accessors.resolve_structured_reply(r)
         return j if isinstance(j, dict) and isinstance(j.get("batchable"), bool) else None
-    except gate.deliberate_stop_types():                                   # a spend refusal must HALT, not skip silently
+    except gate.resolve_deliberate_stop_types():                                   # a spend refusal must HALT, not skip silently
         raise
     except Exception:
         return None
@@ -200,7 +202,8 @@ def lint(intent=None, since=None, min_calls=MIN_CALLS, judge_batchable=False):
     # candidate is emitted only when the model rules it PACKABLE; a latency-sensitive interactive workload is skipped.
     # EVERY candidate's outcome is COUNTED (emitted / not-packable / judge-unavailable) and the tally surfaced — a
     # dropped candidate is never silent.
-    from ... import pricing, gate, config as _cfg
+    from ... import pricing, config as _cfg
+    import spendguard.manage.admission.admission_accessors as gate
     _considered, _emitted, _notpack, _unjudged = len(_batch_cands), 0, 0, 0
     for it, dominant, rt, med_in, metered in _batch_cands:
         v = _batchable_verdict(it, dominant, len(rt), med_in)
@@ -218,7 +221,7 @@ def lint(intent=None, since=None, min_calls=MIN_CALLS, judge_batchable=False):
                     continue
                 try:
                     save += max(0.0, r[3] - pricing.batch_cost(r[0] or dominant, r[1], r[2]))
-                except gate.deliberate_stop_types():                # a bad-bound / refusal must HALT, never be swallowed
+                except gate.resolve_deliberate_stop_types():                # a bad-bound / refusal must HALT, never be swallowed
                     raise
                 except Exception:
                     n_unpriced += 1                                 # a genuinely unpriced model is COUNTED, not silent

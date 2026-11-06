@@ -54,14 +54,19 @@ def _load_public_api_and_install_gate():
 
     if "install" in globals():
         return
+    # These admission homes are intentionally eager: importing them preserves the root's historical public
+    # bootstrap order and registers their dependency-inverted accessor forwarders before consumers import.
+    from .manage.admission import budget as _admission_budget  # noqa: F401
+    from .manage.admission import bulkgate as _admission_bulkgate  # noqa: F401
+    from .manage.admission import gate as _admission_gate  # noqa: F401
     from .pricing import (batch_cost, realtime_cost, estimate as estimate_cost, price, normalize,
                           PRICING, PRICING_VERIFIED, PRICING_SOURCE)
-    from .gate import (install, require, register, SpendGateRefused, gate_external, refuse_metered,
-                       MeteredCallRefused, _record_rt)
+    from spendguard.manage.admission.admission_accessors import resolve_install as install, resolve_require as require, resolve_register as register, resolve_gate_external as gate_external, resolve_refuse_metered as refuse_metered, resolve__record_rt as _record_rt
+    from spendguard.manage.admission.spend_refusal_error import SpendGateRefused, MeteredCallRefused
     from .emit import on_event
     from .calls import context, set_context, feedback
-    from .bulkgate import (estimate_job, test_job, gated_batch, check_bulk, check_realtime, check_compute,
-                           record_estimate, record_tested, note_response, maxtokens, is_truncated, GateBlocked)
+    from spendguard.manage.admission.admission_accessors import resolve_estimate_job as estimate_job, resolve_test_job as test_job, resolve_gated_batch as gated_batch, resolve_check_bulk as check_bulk, resolve_check_realtime as check_realtime, resolve_check_compute as check_compute, resolve_record_estimate as record_estimate, resolve_record_tested as record_tested, resolve_note_response as note_response, resolve_maxtokens as maxtokens, resolve_is_truncated as is_truncated
+    from spendguard.manage.admission.spend_refusal_error import GateBlocked
     from .crossllm import ask, AskResult, BudgetRefused
     from .item_ledger import ItemLedger
     from .escalation_ladder import cancel_on_zero_billable, relative_escalation_gate
@@ -80,6 +85,7 @@ def _load_public_api_and_install_gate():
     from .capability_surface_generation import document_existing_capability_exports
     document_existing_capability_exports(globals())
     _wire_execution_accessor_resolvers()
+    _wire_admission_accessor_resolvers()
 
 
 def _wire_execution_accessor_resolvers():
@@ -106,6 +112,15 @@ def _wire_execution_accessor_resolvers():
         # Fail-open: a problem wiring the execution accessors must not stop the guard importing. The
         # resolvers then raise their own clear "resolver not wired" error at the point of use, which is a
         # louder, more localized signal than a failed `import spendguard`.
+        pass
+
+
+def _wire_admission_accessor_resolvers():
+    """Trigger lazy admission-home resolver registration through its bootstrap."""
+    try:
+        from .manage.admission import admission_resolver_bootstrap
+        admission_resolver_bootstrap.wire_admission_accessor_resolvers()
+    except Exception:
         pass
 
 
@@ -209,7 +224,7 @@ def _auto_install():
         return
     if not strict:
         return
-    from .gate import _enforcement_armed, _disabled    # share require()'s fail-closed probe
+    from spendguard.manage.admission.admission_accessors import resolve__enforcement_armed as _enforcement_armed, resolve__disabled as _disabled    # share require()'s fail-closed probe
     if _disabled():
         raise SpendGateRefused("SPENDGUARD_REQUIRE=1 but spendguard is DISABLED — `spendguard on` or unset "
                                "GATE_DISABLE. Refusing to import-and-spend ungated.")

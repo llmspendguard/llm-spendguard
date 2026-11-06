@@ -7,7 +7,7 @@ at the flow boundary (see `_call_corpus_accessors.resolve_calls_context`).
 
 TWO AXES, NEVER SUMMED (the invariant the whole system enforces):
   • ACTUAL-$   — billed workload (batch + realtime + GPU). Reconciles to provider truth. Source: the gate ledger
-                 (`budget.spent_since`) — always-on, no admin key, zero LLM.
+                 (`budget.resolve_spent_since`) — always-on, no admin key, zero LLM.
   • EST-VALUE  — Claude Code / claude.ai usage value: what it WOULD cost at API rates, NOT money billed. Source:
                  the ledger's est_chat_usd axis; cached transcript miners cover sources without ledger rows,
                  with an "as-of" date so their freshness stays visible.
@@ -338,8 +338,8 @@ def _basis_line():
     ceiling is not wrong, but reading it as money already spent IS — and nothing on the receipt used to say
     which was which. Unlabelled legacy rows are shown as unlabelled, never quietly counted as billed."""
     try:
-        from ... import budget
-        b = budget.by_basis(_windows()[2])
+        import spendguard.manage.admission.admission_accessors as budget
+        b = budget.resolve_by_basis(_windows()[2])
     except Exception:
         return []
     tot = sum(v["cost"] for v in b.values())
@@ -360,8 +360,9 @@ def _unpriced_lines():
     real usage whose price is unknown. Both stay out of the total; both must be visible, because a silent $0
     is a claim that the work was free — and that is the one thing we know it wasn't."""
     try:
-        from ... import budget, model_catalog, pricing
-        rows = [row for row in budget.unpriced_since(_windows()[2])
+        from ... import model_catalog, pricing
+        import spendguard.manage.admission.admission_accessors as budget
+        rows = [row for row in budget.resolve_unpriced_since(_windows()[2])
                 if not model_catalog.billing_exempt(row["model"])]
     except Exception:
         return []
@@ -524,8 +525,8 @@ def _quarantine_lines():
     """Impossible estimates the gate caught, shown BELOW the total they are excluded from. Silence here would
     be its own dishonesty: the row exists, it was almost counted as money, and the reader should know both."""
     try:
-        from ... import budget
-        rows = budget.quarantined_since(_windows()[2])
+        import spendguard.manage.admission.admission_accessors as budget
+        rows = budget.resolve_quarantined_since(_windows()[2])
     except Exception:
         return []
     if not rows:
@@ -639,11 +640,11 @@ def _external_tally():
     (stamped async by resources.sync into the cache), external cost is recorded straight to the ledger, so this reads
     it live. None on any error (never break the receipt over a bookkeeping read)."""
     try:
-        from ... import budget
+        import spendguard.manage.admission.admission_accessors as budget
         today, week, month = _windows()
         w = {}
         for k, since in (("today", today), ("week", week), ("month", month)):
-            w[k] = round(sum(budget.by_day(kind="external", since=since).values()), 6)
+            w[k] = round(sum(budget.resolve_by_day(kind="external", since=since).values()), 6)
         return w if any(w.values()) else None          # None when there's no external spend → receipt stays clean
     except Exception:
         return None
@@ -667,14 +668,14 @@ def tally(project=None, conv=None) -> dict:
     api = {"today": None, "week": None, "month": None}
     gaps = []
     try:
-        from ... import budget
+        import spendguard.manage.admission.admission_accessors as budget
         # THE SCOPE IS PASSED THROUGH. tally() took `project` and `conv` and used NEITHER, while
-        # budget.spent_since has supported both all along — so `tally(project=repo)`, which is how the
+        # budget.resolve_spent_since has supported both all along — so `tally(project=repo)`, which is how the
         # per-repo receipt is built, returned the GLOBAL total under a per-repo heading. The number the
         # receipt exists to make honest was the one number in it that was not.
-        api = {"today": budget.spent_since(today, project=project, conv=conv, read_only=True),
-               "week": budget.spent_since(week, project=project, conv=conv, read_only=True),
-               "month": budget.spent_since(month, project=project, conv=conv, read_only=True)}
+        api = {"today": budget.resolve_spent_since(today, project=project, conv=conv, read_only=True),
+               "week": budget.resolve_spent_since(week, project=project, conv=conv, read_only=True),
+               "month": budget.resolve_spent_since(month, project=project, conv=conv, read_only=True)}
     except Exception as error:
         gaps.append(f"CAPTURE GAP: ledger read unavailable: {error!r}")
     try:
@@ -719,8 +720,8 @@ def tally(project=None, conv=None) -> dict:
            "subscription_assumed": sub_assumed,
            "est_value": est_value}
     try:
-        from ... import budget as _budget
-        pending = [str(path) for path in _budget.spend_event_retry_paths()
+        import spendguard.manage.admission.admission_accessors as _budget
+        pending = [str(path) for path in _budget.resolve_spend_event_retry_paths()
                    if path.exists() and path.stat().st_size]
         if pending:
             gaps.append("CAPTURE GAP: unposted spend queued for retry: " + ", ".join(pending))
@@ -728,7 +729,7 @@ def tally(project=None, conv=None) -> dict:
         gaps.append(f"CAPTURE GAP: retry-marker inspection unavailable: {error!r}")
     out["gaps"] = gaps
     try:
-        out["input_cache"] = budget.input_cache_split(month, project=project, conv=conv)
+        out["input_cache"] = budget.resolve_input_cache_split(month, project=project, conv=conv)
     except Exception:
         out["input_cache"] = None
     out["real_month"] = ((api.get("month") or 0) + (sub or 0) + ((remote or {}).get("month") or 0)
@@ -870,8 +871,8 @@ def _tally_lines(t: dict) -> list:
     if seg:                                        # WHICH plan served spendguard's own work — the inline lane visibility
         lines.append(f":: lanes serving your work (mo): {seg}  ($0 billed — a plan served these, not the metered API)")
     try:
-        from ... import plan_admission
-        risky = [r for r in plan_admission.risks() if r.get("at_risk")]
+        import spendguard.manage.admission.admission_accessors as plan_admission
+        risky = [r for r in plan_admission.resolve_risks() if r.get("at_risk")]
         for r in risky:
             why = "PAID OVERAGE" if r.get("paid_overage") else f"{r.get('remaining_pct')}% remaining"
             lines.append(f":: PLAN RISK 🔴 {r['lane']} {why} — discretionary calls reroute or refuse")
@@ -972,9 +973,9 @@ def _conv_repos(conv=None, cwd=None):
     """The repo(s) THIS conversation is relevant to (collapsed view): the cwd repo + any the conversation touched."""
     repos = set()
     try:
-        from ... import budget
-        repos |= set(budget.projects_for_conv(conv or budget._conv()))
-        cp = _project_for_cwd(cwd) if cwd else (budget._project() or None)
+        import spendguard.manage.admission.admission_accessors as budget
+        repos |= set(budget.resolve_projects_for_conv(conv or budget.resolve__conv()))
+        cp = _project_for_cwd(cwd) if cwd else (budget.resolve__project() or None)
         if cp:
             repos.add(cp)
     except Exception:
@@ -986,8 +987,8 @@ def _all_repos():
     """Every repo with billed charges OR plan-value (expanded view)."""
     repos = set()
     try:
-        from ... import budget
-        repos |= set(budget.all_projects())
+        import spendguard.manage.admission.admission_accessors as budget
+        repos |= set(budget.resolve_all_projects())
     except Exception:
         pass
     try:
@@ -1325,8 +1326,8 @@ def emit_flow(intent, chain, start, contract=None) -> None:
             pass
         actual = None
         try:
-            from ... import budget
-            actual = max(0.0, budget.spent_all_time() - (start_usd or 0.0))   # memoized baseline (matches the flow-enter snapshot)
+            import spendguard.manage.admission.admission_accessors as budget
+            actual = max(0.0, budget.resolve_spent_all_time() - (start_usd or 0.0))   # memoized baseline (matches the flow-enter snapshot)
         except Exception:
             pass
         n = (agg or {}).get("n") or 0
@@ -1347,8 +1348,8 @@ def emit_flow(intent, chain, start, contract=None) -> None:
                 "caller": (agg or {}).get("caller")}
         proj = None                                  # scope the tally to THIS flow's repo (the relevant scope)
         try:
-            from ... import budget
-            proj = budget._project() or None
+            import spendguard.manage.admission.admission_accessors as budget
+            proj = budget.resolve__project() or None
         except Exception:
             pass
         _out(render_flow(flow, lvl, tally(project=proj)))
@@ -1627,7 +1628,7 @@ def render_intent_spend_receipt(*, today_only: bool = False, week_only: bool = F
                                 all_time: bool = False, since_override: str | None = None,
                                 as_json: bool = False) -> int:
     """Render the existing intent totals using the exact countable receipt filter."""
-    from ... import budget
+    import spendguard.manage.admission.admission_accessors as budget
     today, week, month = _windows()
     since, wlabel = month, "month-to-date"
     if today_only:
@@ -1639,7 +1640,7 @@ def render_intent_spend_receipt(*, today_only: bool = False, week_only: bool = F
     if since_override is not None:
         since = since_override
         wlabel = "since " + since
-    rows = budget.by_intent(since=since)
+    rows = budget.resolve_by_intent(since=since)
     items = sorted(rows.items(), key=lambda kv: -kv[1]["cost"])
     total = sum(v["cost"] for _, v in items)
     calls = sum(v["calls"] for _, v in items)
@@ -1675,8 +1676,8 @@ def cli(args) -> int:
 
     def _cur_project():
         try:
-            from ... import budget
-            return budget._project() or None
+            import spendguard.manage.admission.admission_accessors as budget
+            return budget.resolve__project() or None
         except Exception:
             return None
 
@@ -1895,7 +1896,7 @@ def _install_claude_code(remove=False):
     config.update_json(p, lambda _d: cfg)
     # The residency nudge is another Claude Code receipt/context surface. Install it through this same host
     # integration entrypoint so one reversible command owns all of spendguard's Claude Code hooks.
-    from ...residency_gate import install_residency_gate
+    from spendguard.manage.admission.admission_accessors import resolve_install_residency_gate as install_residency_gate
     install_residency_gate(settings_path=p, uninstall=remove, executable=sg)
     print(f"{action} spendguard receipts for Claude Code → {p}")
     print("  restart Claude Code to apply" + ("" if remove else "  (status-line footer + per-turn notice)")

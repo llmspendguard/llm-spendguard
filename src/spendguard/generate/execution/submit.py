@@ -468,8 +468,8 @@ def guarded_submit(jsonl_path, model, cap_dollars, batch=True, avg_out_tokens=No
         _extra = {"metadata": metadata} if metadata else {}
         b = client.batches.create(input_file_id=f.id, endpoint=endpoint, completion_window="24h", **_extra,
                                   **_batch_admission_options(deadline_at, "create"))
-        from ... import gate as _gate
-        _gate.record_accepted_batch_estimate({**est, "provider": "openai", "model": est["model"]})
+        import spendguard.manage.admission.admission_accessors as _gate
+        _gate.resolve_record_accepted_batch_estimate({**est, "provider": "openai", "model": est["model"]})
     except BatchAdmissionDeadlineRefused:
         raise
     except Exception as exc:
@@ -579,8 +579,8 @@ def submit_chat_tasks(tasks, model, *, system=None, schema=None, reasoning="mini
                              preflight=preflight, force=force, avg_out_tokens=avg_out_tokens)   # a caller's MEASURED per-request output
         return {**base, "batch_id": bid, "jsonl": req_path, "requests": n}
     except Exception as e:
-        from ... import gate as _g
-        if isinstance(e, _g.deliberate_stop_types()):
+        import spendguard.manage.admission.admission_accessors as _g
+        if isinstance(e, _g.resolve_deliberate_stop_types()):
             raise                                    # a cap refusal HALTS — never a silent partial submission
         return {**base, "error": str(e)[:200]}
     finally:
@@ -656,7 +656,7 @@ def submit_message_batch(tasks, model, *, system=None, schema=None, max_out=None
     Anthropic twin of submit_chat_tasks, and the Messages-API half of spendguard's batch surface. Each task is a prompt
     STRING (custom_id auto = 'task-<i>') OR a {custom_id, content[, system, schema, schema_name]} dict. Builds the
     INLINE requests through the ONE models.apply_call_params authority (build_message_batch_requests), ESTIMATES $0 via
-    gate.estimate_message_batch (the SAME estimator the gate re-runs at create — no drift), REFUSES over the cap, then
+    gate.resolve_estimate_message_batch (the SAME estimator the gate re-runs at create — no drift), REFUSES over the cap, then
     submits via client.messages.batches.create — which the gate intercepts (_gate_anthropic) for the global/daily/monthly
     + per-batch caps AND the provisional batch-cost row (attributed to `intent` via the recording context set here).
     Returns {batch_id, requests, estimate, error}; submit=False estimates only ($0). Collect with its SETTLE twin
@@ -701,15 +701,15 @@ def submit_message_batch(tasks, model, *, system=None, schema=None, max_out=None
     # Set intent + the DECLARED output on the recording CONTEXT for the whole submit, so the gate's provisional row (fired
     # inside the gated create) attributes to intent AND the gate's at-create estimate uses the same declared basis.
     # Restored in the finally so neither leaks into a later call on this thread.
-    from ... import gate
+    import spendguard.manage.admission.admission_accessors as gate
     from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
     _prev_ctx = dict(_call_corpus_accessors.resolve_calls_current())
     _call_corpus_accessors.resolve_calls_set_context(intent=intent, batch_expected_out=expected_out_tokens, defer_batch_booking=True)
     try:
         requests, n = build_message_batch_requests(items, model, system=system, max_out=max_out, schema=schema)
-        est = gate.estimate_message_batch(requests, intent=intent, declared_out=expected_out_tokens)
+        est = gate.resolve_estimate_message_batch(requests, intent=intent, declared_out=expected_out_tokens)
         out = {**base, "requests": n, "estimate": est}
-        global_cap = gate._cap()                      # the global GATE_CAP — named alongside the caller cap so neither surprises
+        global_cap = gate.resolve__cap()                      # the global GATE_CAP — named alongside the caller cap so neither surprises
         print(f"[submit_gate] {n:,} req · batch · anthropic · in={est['in_tok']:,} out={est['out_tok']:,} "
               f"({est.get('out_basis', '?')}) -> ${est['cost']:,.2f}  "
               f"(caps: caller {('$%.2f' % cap_dollars) if cap_dollars is not None else '—'} · global ${global_cap:.0f})")
@@ -747,13 +747,13 @@ def submit_message_batch(tasks, model, *, system=None, schema=None, max_out=None
         # per-batch caps + the SEPARATE worst-case ceiling guard (raising SpendGateRefused — which propagates below), and
         # records the provisional batch-cost row at the realistic estimate.
         b = client.messages.batches.create(requests=requests)
-        gate.record_accepted_batch_estimate(est)
+        gate.resolve_record_accepted_batch_estimate(est)
         print(f"[submit_gate] SUBMITTED message batch {b.id} (projected ${est['cost']:,.2f}, {est.get('out_basis', '?')}). "
               f"Collect with callio.collect_message_batch({b.id!r}, intent, {model!r}).")
         return {**out, "batch_id": b.id}
     except Exception as e:
-        from ... import gate as _g
-        if isinstance(e, _g.deliberate_stop_types()):
+        import spendguard.manage.admission.admission_accessors as _g
+        if isinstance(e, _g.resolve_deliberate_stop_types()):
             raise                                    # a cap refusal / deadline HALTS — never a silent realtime fallback
         return {**base, "error": str(e)[:200]}
     finally:

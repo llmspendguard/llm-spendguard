@@ -21,7 +21,7 @@ the SAME response object and the caller still receives it unchanged.
 
 FAIL-OPEN, WITH ONE EXCEPTION: a genuine malfunction is swallowed (capture must never break the caller's
 already-completed call), but a DELIBERATE stop — a spend refusal / dispatch deadline
-(gate.deliberate_stop_types) — is RE-RAISED, never downgraded to 'keep going' (the [deliberate-refusal
+(gate.resolve_deliberate_stop_types) — is RE-RAISED, never downgraded to 'keep going' (the [deliberate-refusal
 never fail-open] doctrine).
 
 Knob: gate.http_capture = on|off (env SPENDGUARD_HTTP_CAPTURE, default on).
@@ -59,14 +59,14 @@ def _enabled():
 
 
 def _is_deliberate_stop(e):
-    """True iff `e` is a DELIBERATE stop — a spend refusal or dispatch deadline (gate.deliberate_stop_types). Such
+    """True iff `e` is a DELIBERATE stop — a spend refusal or dispatch deadline (gate.resolve_deliberate_stop_types). Such
     an exception must PROPAGATE out of a fail-open capture handler, never be swallowed as if it were a malfunction
     (the [deliberate-refusal never fail-open] doctrine — the CONCEPT, so a new refusal subclass is covered without
     editing an enumerated tuple). A genuine malfunction returns False → the caller swallows it so a bookkeeping
     hiccup never breaks the user's already-completed call."""
     try:
-        from ... import gate
-        return isinstance(e, gate.deliberate_stop_types())
+        import spendguard.manage.admission.admission_accessors as gate
+        return isinstance(e, gate.resolve_deliberate_stop_types())
     except Exception:
         return False
 
@@ -114,10 +114,10 @@ def _capture(host, path, status, body_bytes):
             got = _usage_from_json(json.loads(body_bytes))
         except Exception:
             got = None
-        from ... import gate
+        import spendguard.manage.admission.admission_accessors as gate
         if got and (got[1] or got[2]):
             model, i, o = got
-            gate._record_rt(model, {"model": model, "raw_http": True}, i, o, provider=provider)
+            gate.resolve__record_rt(model, {"model": model, "raw_http": True}, i, o, provider=provider)
             return
         key = (host, path.split("?")[0])
         intent = None
@@ -130,10 +130,10 @@ def _capture(host, path, status, body_bytes):
             # A batch/file CONTROL-PLANE call (submission or status poll) carries no token usage BY NATURE — the
             # generation it sets up bills later and reconciles by batch_id. Recording it as "unmetered SPEND" is a
             # false leak signal, so log it as a benign control event (attributed), not the loud spend-invisible warning.
-            gate._log({"kind": "batch_control_http", "provider": provider, "host": host, "path": key[1],
+            gate.resolve__log({"kind": "batch_control_http", "provider": provider, "host": host, "path": key[1],
                        "intent": intent, "decision": "control_plane_no_usage"})
             return
-        gate._log({"kind": "raw_http_unmetered", "provider": provider, "host": host,
+        gate.resolve__log({"kind": "raw_http_unmetered", "provider": provider, "host": host,
                    "path": key[1], "intent": intent, "decision": "recorded_unmetered"})
         if key not in _warned_paths:
             _warned_paths.add(key)
@@ -231,8 +231,8 @@ def _capture_urllib(fullurl, data, resp):
     if host not in PROVIDER_HOSTS or not is_post:        # only billable POSTs to a known provider host
         return
     try:
-        from ... import budget
-        if budget.is_reading_history():                  # a history read is not spend (reconcile/oracle downloads)
+        import spendguard.manage.admission.admission_accessors as budget
+        if budget.resolve_is_reading_history():                  # a history read is not spend (reconcile/oracle downloads)
             return
     except Exception:
         pass
@@ -249,7 +249,7 @@ def _capture_urllib(fullurl, data, resp):
             clen = int(cl) if cl not in (None, "") else None
     except Exception:
         pass
-    from ... import gate
+    import spendguard.manage.admission.admission_accessors as gate
     # Whether a response is safe to read for usage is decided MECHANICALLY by its declared size — never by
     # classifying the content-type. A body is buffered only when it has a Content-Length within the cap; anything
     # else (a stream, which carries no Content-Length whether it is SSE or ndjson; an oversized body; or an
@@ -262,7 +262,7 @@ def _capture_urllib(fullurl, data, resp):
     else:
         reason = None
     if reason is not None:
-        gate._log({"kind": "raw_http_unmetered", "provider": PROVIDER_HOSTS[host], "host": host,
+        gate.resolve__log({"kind": "raw_http_unmetered", "provider": PROVIDER_HOSTS[host], "host": host,
                    "path": path, "content_type": ctype or None, "decision": reason})
         return
     try:
@@ -271,7 +271,7 @@ def _capture_urllib(fullurl, data, resp):
         if _is_deliberate_stop(e):
             raise
         # a failed read must not silently drop a billable call — keep it VISIBLE (never counted as free).
-        gate._log({"kind": "raw_http_unmetered", "provider": PROVIDER_HOSTS[host], "host": host,
+        gate.resolve__log({"kind": "raw_http_unmetered", "provider": PROVIDER_HOSTS[host], "host": host,
                    "path": path, "decision": "recorded_unmetered_read_failed", "error": type(e).__name__})
         return
     import io
@@ -334,7 +334,7 @@ def install() -> bool:
     Client wrappers remain idempotent and fail-open; urllib remains eager and needs no optional dependency.
     Returns True iff at least one client is now wrapped.
     """
-    from ...gate import _register_gate_package_postimport
+    from spendguard.manage.admission.admission_accessors import resolve__register_gate_package_postimport as _register_gate_package_postimport
 
     _register_gate_package_postimport("httpx", _install_imported_httpx_capture)
     _register_gate_package_postimport("requests", _install_imported_requests_capture)

@@ -188,7 +188,8 @@ def offload_plan(pending_by_intent, *, avg_call_tokens=NOMINAL_CALL_TOKENS, fc=N
             saturated.add(key.split(":", 1)[0])        # the vendor half of the governor key (vendor[:model])
     plan, skipped = [], []
     if eligible:
-        from ... import route_economics, gate as _gate
+        from ... import route_economics
+        import spendguard.manage.admission.admission_accessors as _gate
         bprov = _execution_accessors.resolve_provider_for(batch_model)     # the offload RUNS on batch_model (an OpenAI id) → chunk vs ITS caps
         for intent, n in (pending_by_intent or {}).items():
             n = int(n or 0)
@@ -197,7 +198,7 @@ def offload_plan(pending_by_intent, *, avg_call_tokens=NOMINAL_CALL_TOKENS, fc=N
             try:
                 rep = route_economics.route_report(intent, n) or {}
             except Exception as e:
-                if _gate.is_deliberate_stop(e):
+                if _gate.resolve_is_deliberate_stop(e):
                     raise                              # a spend/deadline refusal PROPAGATES — never downgraded to a skip
                 # NAMED gap (never a silent drop — each intent is a unit of work): it stays REALTIME this tick and the
                 # miss is surfaced in `skipped`, so an intent is never invisibly removed from consideration.
@@ -279,7 +280,7 @@ def plan_loop(interval_s=None, iterations=None, on_tick=None, avg_call_tokens=NO
     defaults to config queue.planner_interval_s. Returns {ticks, stopped_by} — how many ticks ran AND why it ended
     ('iterations' completed | 'stop_event' | 'interrupt' | 'error') — so the termination is never a silent stop."""
     import time as _t
-    from ... import gate as _g
+    import spendguard.manage.admission.admission_accessors as _g
     if interval_s is None:
         try:
             from ... import config
@@ -293,7 +294,7 @@ def plan_loop(interval_s=None, iterations=None, on_tick=None, avg_call_tokens=NO
             try:
                 t = tick(avg_call_tokens=avg_call_tokens)
             except Exception as e:
-                if _g.is_deliberate_stop(e):
+                if _g.resolve_is_deliberate_stop(e):
                     raise                                  # a deliberate stop propagates — never swallowed in a poll loop
                 # a FAILED tick is COUNTED + logged + surfaced in the return (tick_failures), so a caller can tell a run
                 # where every tick raised from a clean run — it is NOT reported as a completed tick with no trace (F1).
@@ -306,7 +307,7 @@ def plan_loop(interval_s=None, iterations=None, on_tick=None, avg_call_tokens=NO
                 try:
                     on_tick(t)
                 except Exception as e:
-                    if _g.is_deliberate_stop(e):
+                    if _g.resolve_is_deliberate_stop(e):
                         raise                              # a deliberate stop from the OBSERVER halts — never downgraded
                     # a non-deliberate observer hiccup must not KILL the planner loop — but it is COUNTED, logged, and
                     # surfaced in the return (tick_observer_errors), never SILENTLY swallowed: the loop must not report

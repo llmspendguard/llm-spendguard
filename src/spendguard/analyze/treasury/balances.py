@@ -93,9 +93,9 @@ def _spend_since(vendor, as_of):
     spend reconcile mirrors against provider truth. None (NOT 0.0) when the ledger can't be read: a can't-read must
     NOT read as 'no spend', or declared_balance would report the FULL declared amount as available (overstating money
     in the unsafe direction) — the module's invariant is that a gap stays 'unknown', never a fabricated number."""
-    from ... import budget
+    import spendguard.manage.admission.admission_accessors as budget
     try:
-        rows = budget.by_provider_day(since=str(as_of)[:10])
+        rows = budget.resolve_by_provider_day(since=str(as_of)[:10])
     except Exception:
         return None
     return float(sum(v for (p, _d), v in rows.items() if p == vendor))
@@ -178,8 +178,8 @@ def extract_available(vendor, raw, run=True):
     try:
         if not run:
             return {"available": None, "currency": None, "expiring": None, "note": "estimate-only"}
-        from ... import plan_admission
-        _meta = plan_admission.ready_meta_model(config.advisor_model())   # off a capped plan to a READY provider
+        import spendguard.manage.admission.admission_accessors as plan_admission
+        _meta = plan_admission.resolve_ready_meta_model(config.advisor_model())   # off a capped plan to a READY provider
         with _call_corpus_accessors.resolve_calls_context(intent="spendguard:balance-read"):
             # NO hardcoded cap: the reply IS content (the balance number), so a literal max_tokens would be a cap on
             # a content call — the exact truncate-to-wrong-number defect. The sig lets _call_guarded floor + measure

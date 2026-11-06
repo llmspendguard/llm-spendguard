@@ -774,7 +774,7 @@ def _read_incomplete_settlement_totals(connection, since=None, project=None, int
         incomplete_sql += " AND ts>=?"
         incomplete_parameters.append(since)
     if project is not None:
-        from ...budget import normalize_ledger_project_id
+        from spendguard.manage.admission.admission_accessors import resolve_normalize_ledger_project_id as normalize_ledger_project_id
         incomplete_sql += " AND project=?"
         incomplete_parameters.append(normalize_ledger_project_id(project))
     if intent is not None:
@@ -968,12 +968,12 @@ def read_recorded_call_total(path=None, *, time_budget=DEFAULT_LEDGER_READ_TIME_
 def read_spend_since(since, project=None, conv=None, *, deadline_s=config.LEDGER_QUERY_DEADLINE_S):
     """Return complete countable workload spend from a bounded read-only snapshot.
 
-    Optional project and conversation scopes retain budget.spent_since semantics;
+    Optional project and conversation scopes retain budget.resolve_spent_since semantics;
     no write-ledger initialization or migration is performed.
     """
-    from ... import budget
+    import spendguard.manage.admission.admission_accessors as budget
     try:
-        return budget.spent_since(since, project=project, conv=conv,
+        return budget.resolve_spent_since(since, project=project, conv=conv,
                                   deadline_s=deadline_s, read_only=True)
     except config.LedgerConnectionLimitError as exc:
         raise LedgerReadOpenError(f"Spend snapshot connection admission refused: {exc}") from exc
@@ -981,9 +981,9 @@ def read_spend_since(since, project=None, conv=None, *, deadline_s=config.LEDGER
 
 def read_conversation_spend_since(since, conv, *, deadline_s=config.LEDGER_QUERY_DEADLINE_S):
     """Thin in-process name for the existing countable conversation aggregate."""
-    from ... import budget
+    import spendguard.manage.admission.admission_accessors as budget
     try:
-        return budget.spent_since(since, conv=conv, deadline_s=deadline_s)
+        return budget.resolve_spent_since(since, conv=conv, deadline_s=deadline_s)
     except config.LedgerConnectionLimitError as exc:
         raise LedgerReadOpenError(f"Conversation spend connection admission refused: {exc}") from exc
 

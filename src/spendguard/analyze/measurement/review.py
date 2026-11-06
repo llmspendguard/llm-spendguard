@@ -122,8 +122,8 @@ def review(run=False, top=10):
     cost = pricing.realtime_cost(model, in_tok, _OUT)
     print(f"  {len(bundles)} usage bundles (cost+quality+token-ratio+sample+chat).  ESTIMATE (zero paid calls):")
     print(f"    realtime {model} 1 call · in~{in_tok:,} out≤{_OUT:,} -> ~${cost:.4f}")
-    from ... import budget
-    print(f"  meta budget: ${config.meta_cap():.2f}/day · spent today ${budget.meta_spent_today():.4f}")
+    import spendguard.manage.admission.admission_accessors as budget
+    print(f"  meta budget: ${config.meta_cap():.2f}/day · spent today ${budget.resolve_meta_spent_today():.4f}")
     if not run:
         from ... import ui; ui.estimate_only(action="run the practice audit", cost=cost)
         return dict(requests=1, in_tok=in_tok, out_tok=_OUT, cost=cost, model=model)

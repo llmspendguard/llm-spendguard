@@ -48,8 +48,8 @@ def _fetch_server_catalog():
     try:
         m = saas.fetch_models()
     except Exception as e:
-        from ... import gate as _g
-        if _g.is_deliberate_stop(e):
+        import spendguard.manage.admission.admission_accessors as _g
+        if _g.resolve_is_deliberate_stop(e):
             raise
         m = None
     if not m:                                          # CONFIGURED but unreachable/empty → LOUD, then local carries it

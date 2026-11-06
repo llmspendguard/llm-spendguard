@@ -166,7 +166,7 @@ if not any(getattr(finder, "_spendguard_gate_failclosed", False) for finder in s
 
 def _resolved_gated_sdk_modules(gated_modules):
     if gated_modules is None:
-        from ..gate import gated_sdk_modules
+        from spendguard.manage.admission.admission_accessors import resolve_gated_sdk_modules as gated_sdk_modules
         return tuple(gated_sdk_modules())
     return tuple(gated_modules)
 
@@ -1074,9 +1074,9 @@ def _chat_caps():
     """Conversational cap setup. Uses YOUR own key for ONE small realtime call, caged under caps.meta (intent
     spendguard:init — separate budget, excluded from the corpus), estimate-first. NEVER the server. Returns
     {llm,compute,total} monthly USD, or None to fall back to the deterministic prompts."""
-    from .. import gate
+    import spendguard.manage.admission.admission_accessors as gate
     from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
-    gate.install()   # ensure the gate is enforcing IN THIS PROCESS so the call is metered under caps.meta
+    gate.resolve_install()   # ensure the gate is enforcing IN THIS PROCESS so the call is metered under caps.meta
     model = config.advisor_model()
     try:
         ans = input('  Describe your monthly budgets (+ anything about projects), e.g.\n'
@@ -1142,13 +1142,14 @@ def _scaffold_keys_env():
 
 
 def _reraise_if_governance_stop(e):
-    """Re-raise a GOVERNANCE stop — a spend refusal / dispatch deadline (`gate.is_deliberate_stop`) or a ledger lock
+    """Re-raise a GOVERNANCE stop — a spend refusal / dispatch deadline (`gate.resolve_is_deliberate_stop`) or a ledger lock
     (`ledger.LockedError`) — so a best-effort setup step never downgrades it to 'skipped'. The same 'stop or locked'
     concept `provider_tokens._stop_or_locked` uses, delegated to the canonical predicates rather than re-listed. Any
     other exception is left for the caller's broad handler to report."""
     try:
-        from .. import gate, ledger
-        stop = gate.is_deliberate_stop(e) or isinstance(e, ledger.LockedError)
+        from .. import ledger
+        import spendguard.manage.admission.admission_accessors as gate
+        stop = gate.resolve_is_deliberate_stop(e) or isinstance(e, ledger.LockedError)
     except Exception:
         stop = False
     if stop:
@@ -1336,13 +1337,13 @@ def _preflight_keys():
 
 def _setup_summary_card(keys_counts, lanes_st, wired):
     """The closing 'you're set up' card: the few facts that answer 'is spendguard actually working HERE', assembled
-    from state cmd_init ALREADY computed (no re-probe) — the gate's own enforcing check (gate._any_patched), the key
+    from state cmd_init ALREADY computed (no re-probe) — the gate's own enforcing check (gate.resolve__any_patched), the key
     pre-flight counts, the ready $0 lanes from lanes_status, and what the installer flow wired — then the ONE command
     that proves the path end-to-end. The proof is OFFERED, never auto-run: a probe bills plan tokens, and setup must
     not spend on the user's behalf."""
-    from .. import gate as _gate
+    import spendguard.manage.admission.admission_accessors as _gate
     try:
-        enforcing = _gate._any_patched()
+        enforcing = _gate.resolve__any_patched()
     except Exception:
         enforcing = None
     resolved, missing = keys_counts if keys_counts else (0, 0)

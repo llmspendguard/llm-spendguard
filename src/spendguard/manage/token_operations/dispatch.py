@@ -204,8 +204,8 @@ class _LearnedLimits:
                 if isinstance(out, dict):
                     self._d = out                        # adopt the merged on-disk state (incl. other processes' vendors)
             except Exception as e:
-                from ... import gate as _gate
-                if _gate.is_deliberate_stop(e):
+                import spendguard.manage.admission.admission_accessors as _gate
+                if _gate.resolve_is_deliberate_stop(e):
                     raise                                # a spend refusal / ledger LOCK is a DELIBERATE stop — PROPAGATE,
                 _warn_learned_io("write", e)             # never downgrade. A transient IO/lock: memory holds the lesson.
 
@@ -234,8 +234,8 @@ class _LearnedLimits:
                 # doctrine: ok — deliberate-refusal containment via the gate's STRUCTURAL isinstance check
                 # (gate.deliberate_stop_types()), the sanctioned primitive used across this module (see learn());
                 # a spend refusal / ledger lock PROPAGATES, a transient file error is non-fatal (memory cleared above).
-                from ... import gate as _g
-                if _g.is_deliberate_stop(e):
+                import spendguard.manage.admission.admission_accessors as _g
+                if _g.resolve_is_deliberate_stop(e):
                     raise
 
 
@@ -327,8 +327,8 @@ def shrink_connection_window(vendor):
             if new < int(cur):
                 _LEARNED.learn(v, conn=new, source="429-congestion")
     except Exception as e:
-        from ... import gate as _g
-        if _g.is_deliberate_stop(e):           # a spend refusal / ledger lock PROPAGATES (never fail-open)
+        import spendguard.manage.admission.admission_accessors as _g
+        if _g.resolve_is_deliberate_stop(e):           # a spend refusal / ledger lock PROPAGATES (never fail-open)
             raise
         # else: a transient bookkeeping error must never turn a 429 into a crash
 
@@ -357,8 +357,8 @@ def grow_connection_window(vendor):
         _LEARNED.learn(v, conn=cur + 1, source="aimd-grow")
         _GOV._conn_wake(v)                      # a slot opened — wake a waiter to use it
     except Exception as e:
-        from ... import gate as _g
-        if _g.is_deliberate_stop(e):            # a spend refusal / ledger lock PROPAGATES (never fail-open)
+        import spendguard.manage.admission.admission_accessors as _g
+        if _g.resolve_is_deliberate_stop(e):            # a spend refusal / ledger lock PROPAGATES (never fail-open)
             raise
         # else: a transient ACK-grow bookkeeping error must never turn a success into a failure
 
@@ -391,8 +391,8 @@ def reset_connection_window(vendor=None):
                 _GOV._buckets.clear()
         _LEARNED.forget(v or None)
     except Exception as e:
-        from ... import gate as _g
-        if _g.is_deliberate_stop(e):            # a spend refusal / ledger lock PROPAGATES (never fail-open)
+        import spendguard.manage.admission.admission_accessors as _g
+        if _g.resolve_is_deliberate_stop(e):            # a spend refusal / ledger lock PROPAGATES (never fail-open)
             raise
         # else: a transient reset bookkeeping error is non-fatal
 
@@ -1126,24 +1126,24 @@ def admission_state():
     except Exception as e:
         out["queue"] = {"error": "%s: %s" % (type(e).__name__, str(e)[:80])}
     try:
-        from ... import bulkgate
-        out["deadline_cancels"] = bulkgate.deadline_cancels()
-        out["unhonored_efforts"] = bulkgate.unhonored_efforts()   # guardrail A: explicit effort pins NOT honored
-        out["runaways"] = bulkgate.runaways()                     # guardrail E: out_tok >> the measured p99 norm
+        import spendguard.manage.admission.admission_accessors as bulkgate
+        out["deadline_cancels"] = bulkgate.resolve_deadline_cancels()
+        out["unhonored_efforts"] = bulkgate.resolve_unhonored_efforts()   # guardrail A: explicit effort pins NOT honored
+        out["runaways"] = bulkgate.resolve_runaways()                     # guardrail E: out_tok >> the measured p99 norm
     except Exception as e:
-        from ... import gate as _g
-        if _g.is_deliberate_stop(e):
+        import spendguard.manage.admission.admission_accessors as _g
+        if _g.resolve_is_deliberate_stop(e):
             raise                                                 # never downgrade a deliberate stop to an error note
         out["deadline_cancels"] = {"error": "%s: %s" % (type(e).__name__, str(e)[:80])}
         out["unhonored_efforts"] = {"error": "%s: %s" % (type(e).__name__, str(e)[:80])}
         out["runaways"] = {"error": "%s: %s" % (type(e).__name__, str(e)[:80])}
     try:
-        from ... import gate as _g
-        out["intent_cap_refusals"] = _g.intent_cap_refusals()     # guardrail D at the door: per-intent running-cap refusals
-        out["ungated_fans"] = _g.ungated_fans()                   # raw same-intent fans NOT via bulk_delegate
+        import spendguard.manage.admission.admission_accessors as _g
+        out["intent_cap_refusals"] = _g.resolve_intent_cap_refusals()     # guardrail D at the door: per-intent running-cap refusals
+        out["ungated_fans"] = _g.resolve_ungated_fans()                   # raw same-intent fans NOT via bulk_delegate
     except Exception as e:
-        from ... import gate as _g
-        if _g.is_deliberate_stop(e):
+        import spendguard.manage.admission.admission_accessors as _g
+        if _g.resolve_is_deliberate_stop(e):
             raise                                                 # never downgrade a deliberate stop to an error note
         out["intent_cap_refusals"] = {"error": "%s: %s" % (type(e).__name__, str(e)[:80])}
         out["ungated_fans"] = {"error": "%s: %s" % (type(e).__name__, str(e)[:80])}

@@ -52,7 +52,7 @@ def service_mcp_spend_deadletters():
                 _mcp_deadletter_worker is not None and _mcp_deadletter_worker.is_alive()):
             return
         _mcp_next_deadletter_drain_at = now + interval
-        from ..budget import spend_event_retry_paths
+        from spendguard.manage.admission.admission_accessors import resolve_spend_event_retry_paths as spend_event_retry_paths
         paths = tuple(path for path in spend_event_retry_paths() if path.exists() and path.stat().st_size)
         if not paths:
             return

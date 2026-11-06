@@ -407,6 +407,8 @@
       "surface_module": "spendguard.manage.admission",
       "layer": "L1",
       "backing_modules": [
+        "manage.admission.admission_accessors",
+        "manage.admission.admission_resolver_bootstrap",
         "manage.admission.bulkgate",
         "manage.admission.escalation_ladder",
         "manage.admission.plan_admission",

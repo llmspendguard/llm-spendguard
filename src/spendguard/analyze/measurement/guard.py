@@ -12,7 +12,8 @@ import datetime
 import math
 from pathlib import Path
 
-from ... import budget, config
+from ... import config
+import spendguard.manage.admission.admission_accessors as budget
 from decimal import Decimal, localcontext
 import logging
 from spendguard.store.money_ledger.ledger_write_decorators import best_effort_ledger_function
@@ -150,10 +151,10 @@ def record_saving(source, amount, confidence=None, project=None):
             return
         conf = CONFIDENCE.get(source, 0.6) if confidence is None else float(confidence)
         cv = max(0.05, min(0.9, 1.0 - conf))
-        proj = project if project is not None else budget._project()
+        proj = project if project is not None else budget.resolve__project()
         now = datetime.datetime.now(datetime.timezone.utc)
         db = _savings_db()
-        with budget._lock:
+        with budget.resolve__lock():
             db.execute("INSERT INTO savings (ts,day,project,source,amount,cv,amount_nano) VALUES (?,?,?,?,?,?,?)",
                        (now.isoformat(timespec="seconds"), now.strftime("%Y-%m-%d"), proj, source, amount, cv,
                         *_savings_nano_amounts(amount)))
@@ -283,10 +284,10 @@ def record_decision(intent, requested_model, chosen_model, counterfactual_usd, a
     so a cheap-intent-ran-on-an-expensive-model event is queryable and we can improve routing. Never raises — booking
     must not break the call path — but never SILENT: a failed write warns once rather than losing the row."""
     try:
-        proj = project if project is not None else budget._project()
+        proj = project if project is not None else budget.resolve__project()
         now = datetime.datetime.now(datetime.timezone.utc)
         db = _decisions_db()
-        with budget._lock:
+        with budget.resolve__lock():
             cls = reason_class if reason_class in _DECISION_REASON_CLASSES else None
             from ... import routing_audit
             db.execute("INSERT INTO decisions (ts,day,project,intent,basis,requested_model,requested_effort,"

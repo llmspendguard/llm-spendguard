@@ -13,7 +13,11 @@ align_test_startup_home(prefix=__name__)
 
 import spendguard  # noqa: E402,F401
 from spendguard.generate.spend_capture import bedrock_adapter  # noqa: E402
-from spendguard.manage.admission import budget, budget_unpriced_sink, gate  # noqa: E402
+from spendguard.manage.admission import (  # noqa: E402
+    admission_accessors,
+    budget,
+    budget_unpriced_sink,
+)
 
 LEAF_SOURCE_PATH = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
@@ -43,7 +47,7 @@ def main():
     assert budget_unpriced_sink._unpriced_recorder is budget.record_unpriced
     assert bedrock_adapter.record_unpriced_event is budget_unpriced_sink.record_unpriced_event
     assert not hasattr(bedrock_adapter, "budget")
-    assert bedrock_adapter._bedrock_realtime_recorder is gate._record_rt
+    assert bedrock_adapter._bedrock_realtime_recorder is admission_accessors.resolve__record_rt
     assert not hasattr(bedrock_adapter, "gate")
 
     original_unpriced_recorder = budget_unpriced_sink._unpriced_recorder
@@ -91,7 +95,7 @@ def main():
             (("bedrock", "model", "realtime"), {"in_tok": 0, "out_tok": 0, "project": None}),
         ]
     finally:
-        bedrock_adapter.set_bedrock_realtime_recorder(gate._record_rt)
+        bedrock_adapter.set_bedrock_realtime_recorder(admission_accessors.resolve__record_rt)
         budget_unpriced_sink.set_unpriced_recorder(budget.record_unpriced)
 
 

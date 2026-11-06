@@ -218,3 +218,9 @@ def ready_meta_model(default_model):
 
 def risks():
     return [lane_risk(spec["lane"]) for spec in lane_registry.LANES]
+from . import admission_accessors as _admission_accessors
+_admission_accessors.set__best_ready_alt_lane_resolver(lambda *a, **k: _best_ready_alt_lane(*a, **k))
+_admission_accessors.set__ready_resolver(lambda *a, **k: _ready(*a, **k))
+_admission_accessors.set_decide_resolver(lambda *a, **k: decide(*a, **k))
+_admission_accessors.set_ready_meta_model_resolver(lambda *a, **k: ready_meta_model(*a, **k))
+_admission_accessors.set_risks_resolver(lambda *a, **k: risks(*a, **k))

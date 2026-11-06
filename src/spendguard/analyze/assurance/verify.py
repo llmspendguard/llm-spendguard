@@ -21,7 +21,8 @@ from ...capability_cli_parsing import add_registered_cli_argument
 
 import time
 
-from ... import config, gate
+from ... import config
+import spendguard.manage.admission.admission_accessors as gate
 
 
 def _key_present(provider):
@@ -70,9 +71,10 @@ def verify_system(probe=False):
     ok is True only when every STRUCTURAL check passes (a model id callable-as-written or correctable, every lane's
     fallback id priced + served-or-unchecked, every lane provider key present) — and, when probe=True, every live
     failover reached the metered API. 'unchecked'/'measuring' states are NOT failures (a can't-know is not a no)."""
-    from ... import lane_catalog, model_preflight, lane_economics
+    from ... import lane_catalog, lane_economics
+    import spendguard.manage.admission.admission_accessors as model_preflight
 
-    preflight = model_preflight.preflight_models(model_preflight.configured_specs())
+    preflight = model_preflight.resolve_preflight_models(model_preflight.resolve_configured_specs())
     fallback = lane_catalog.audit_lane_fallback()
 
     lanes = lane_catalog.lanes()
@@ -98,7 +100,7 @@ def verify_system(probe=False):
             try:                                           # lost verdict; a DELIBERATE stop still halts the whole run
                 probe_rows.append(_probe_failover(ln))
             except Exception as e:
-                if isinstance(e, gate.deliberate_stop_types()):
+                if isinstance(e, gate.resolve_deliberate_stop_types()):
                     raise
                 probe_rows.append({"lane": ln, "ok": False, "executor": None, "cost": None,
                                    "note": f"probe error (this lane only): {str(e)[:60]}"})

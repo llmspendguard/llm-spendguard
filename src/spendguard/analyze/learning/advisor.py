@@ -366,9 +366,9 @@ def _meta_spent():
     told "spent today $0.0000" by a machine that could not read the ledger, and then decides whether to
     approve a run on the strength of it. A figure nobody could read is UNKNOWN, and saying so costs one
     line."""
-    from ... import budget
+    import spendguard.manage.admission.admission_accessors as budget
     try:
-        return budget.meta_spent_today()
+        return budget.resolve_meta_spent_today()
     except Exception as e:
         from ... import config
         config.warn_once(f"[spendguard] meta spend for today could not be read ({type(e).__name__}) — "

@@ -22,7 +22,8 @@ import datetime
 import hashlib
 import json
 
-from ... import config, gate, model_catalog, pricing
+from ... import config, model_catalog, pricing
+import spendguard.manage.admission.admission_accessors as gate
 from spendguard.store.money_ledger.ledger_write_decorators import best_effort_ledger_function
 
 _PRIOR_OUT = 800         # the whole top-k JSON ({task_type, top:[{id, why}]}) — sized for the FULL output, not a magic cut
@@ -95,7 +96,7 @@ def _recall_intent_prior(intent, fp):
             val = json.loads(row[0])
             return val if isinstance(val, list) else None
     except Exception as e:
-        if gate.is_deliberate_stop(e):
+        if gate.resolve_is_deliberate_stop(e):
             raise
     return None
 
@@ -114,7 +115,7 @@ def _store_intent_prior(intent, fp, ranking):
                       (intent, fp, json.dumps(ranking), ts))
             c.commit()
     except Exception as e:
-        if gate.is_deliberate_stop(e):
+        if gate.resolve_is_deliberate_stop(e):
             raise
 
         config.warn_once("[spendguard] intent prior cache write failed (%s) — continuing uncached" % type(e).__name__)
@@ -174,7 +175,7 @@ def rank_models_for_intent(intent, prompt=None, k=5, run=False):
             r = _execution_accessors.resolve_call(model, body, system=_PRIOR_SYS, schema=_PRIOR_SCHEMA, max_tokens=_PRIOR_OUT,
                               no_substitution=True, sig="spendguard:cold-prior", timeout_s=90)
     except Exception as e:
-        if isinstance(e, gate.deliberate_stop_types()):
+        if isinstance(e, gate.resolve_deliberate_stop_types()):
             raise                                                 # a spend refusal is NOT swallowed — propagate
         return dict(intent=intent, model=model, source="cold-start-prior", prior=True, top=[],
                     note="cold-start prior: ranker unavailable (%s) — keep the named model." % type(e).__name__)

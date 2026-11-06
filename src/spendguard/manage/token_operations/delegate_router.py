@@ -268,8 +268,8 @@ def _whole_file_evidence(paths):
 
 def classify_task(task, files=None, provider="auto", exclude_plans=None):
     """Agentically classify the WHOLE task and WHOLE attached files on an existing $0 lane."""
-    from ... import gate
-    gate.require()                         # fail closed: even this plan-routed LLM call runs only in an enforcing process
+    import spendguard.manage.admission.admission_accessors as gate
+    gate.resolve_require()                         # fail closed: even this plan-routed LLM call runs only in an enforcing process
     fingerprint = delegate_route_fingerprint(task, files=files, provider=provider, exclude_plans=exclude_plans)
     cached = config.read_json_cache_entry(_delegate_classifier_cache_path(), fingerprint)
     if cached is not None:
@@ -317,10 +317,10 @@ def classify_task(task, files=None, provider="auto", exclude_plans=None):
 
 
 def _estimated_tokens(task, files, provider, model, intent):
-    from ... import bulkgate
+    import spendguard.manage.admission.admission_accessors as bulkgate
     full = task + _whole_file_evidence(files)
     input_tokens = provider_tokens.count_text(full, provider=provider, model=model)
-    measured = bulkgate.maxtokens(intent)
+    measured = bulkgate.resolve_maxtokens(intent)
     output_tokens = measured.get("p99") or config._cfg_get("advisor", "route_est_out", None)
     if output_tokens is None:
         output_tokens = lane_balance.ROUTE_EST_OUT_DEFAULT

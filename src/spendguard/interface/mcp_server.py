@@ -29,6 +29,7 @@ portable, self-contained surfaces (see serve.py). `handle(request)` is a pure fu
 dict|None) so the protocol is unit-tested without a live pipe. Read-only tools do NOT spend, so this server does
 not require the gate; a spending tool (bakeoff) will `require()` before it runs.
 """
+import spendguard.manage.admission.spend_refusal_error as _admission_refusal_errors
 from spendguard.generate.execution import execution_accessors as _execution_accessors
 
 from .capability_cli_parsing import add_registered_cli_argument
@@ -589,11 +590,12 @@ def capability_version_operation(args: dict):
     from importlib import metadata
     from pathlib import Path
     import spendguard
-    from .. import config, gate, release
+    from .. import config, release
+    import spendguard.manage.admission.admission_accessors as gate
     return {**release.release_status(), "pid": os.getpid(),
             "imported_version": spendguard.__version__,
             "metadata_version": metadata.version("llm-spendguard"),
-            "gate_enforcing": bool(not config.disabled() and gate._enforcement_armed()),
+            "gate_enforcing": bool(not config.disabled() and gate.resolve__enforcement_armed()),
             "ledger_path": str(Path(config.db_path()).resolve())}
 
 
@@ -882,16 +884,16 @@ def _auto_respawn_enabled():
 def _arm_and_verify_mcp_daemon_gate():
     """Deliberately import and gate core SDKs, independent of import-time auto-install policy."""
     import importlib
-    from .. import gate
+    import spendguard.manage.admission.admission_accessors as gate
 
-    gate.install()
-    for sdk_package in gate.core_gated_sdk_packages():
+    gate.resolve_install()
+    for sdk_package in gate.resolve_core_gated_sdk_packages():
         try:
             importlib.import_module(sdk_package)
         except ImportError:
             continue
-    if not gate._enforcement_armed():
-        raise gate.SpendGateRefused(
+    if not gate.resolve__enforcement_armed():
+        raise _admission_refusal_errors.SpendGateRefused(
             "spendguard MCP daemon startup refused: the spend gate is NOT enforcing in this interpreter. "
             f"Interpreter: {sys.executable}. Launch the daemon from a venv with llm-spendguard and the required "
             "LLM SDK extras installed, unset GATE_DISABLE, and run `spendguard doctor` until it reports "

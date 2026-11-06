@@ -257,14 +257,14 @@ def bakeoff_judge(task, out_a, out_b, arm_a, arm_b, cost_a=None, cost_b=None):
         return None, "identical outputs (no judge spend)"
     prompt = _value_judge_prompt(task, a, b, cost_a, cost_b)
     try:
-        from ... import gate
+        import spendguard.manage.admission.admission_accessors as gate
         from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
         from .advisor import META                                   # ONE source of the meta-intent prefix
         with _call_corpus_accessors.resolve_calls_context(intent=f"{META}:bandit-judge"):          # caged: attributed, never bandit-routed
             r = _execution_accessors.resolve_call(_bandit_judge_model(), prompt)
         txt = (r.get("text") or "").strip()
     except Exception as e:
-        if gate.is_deliberate_stop(e):                 # a spend refusal / deadline is NOT a tie — propagate, never fail-open
+        if gate.resolve_is_deliberate_stop(e):                 # a spend refusal / deadline is NOT a tie — propagate, never fail-open
             raise
         return None, None                              # a genuine judge FAILURE → NO verdict (reason None): the caller must
     if not txt:                                        # NOT record a false tie about the arms. Empty/truncated = same.
@@ -356,12 +356,13 @@ def _exploit_overshoot_reward(intent, arm, out_tok, pre_norm):
     times the arm's norm costs that multiple whether it is good or bad, and the bandit should re-explore cheaper arms.
     `pre_norm` is mean_out_by_executor_model(intent) captured BEFORE this call was recorded, so the call cannot inflate
     its own baseline. Cold / too-few-samples ⇒ 1.0 (never accuse on an untrustworthy norm; guardrail D bounds the $).
-    Also SURFACES the trip via bulkgate.note_runaway so a lane runaway is visible + counted like a metered one. Never
+    Also SURFACES the trip via bulkgate.resolve_note_runaway so a lane runaway is visible + counted like a metered one. Never
     raises (a reward read must not break routing)."""
     try:
         if not out_tok or int(out_tok) <= 0:
             return 1.0
-        from ... import lane_catalog, bulkgate
+        from ... import lane_catalog
+        import spendguard.manage.admission.admission_accessors as bulkgate
         lane, use_name = arm
         base, _lv = lane_catalog.parse_use_name(use_name, lane)
         # the (executor, model) the lane path RECORDS under — suffix-style lanes (gemini) log the whole use-name
@@ -370,9 +371,9 @@ def _exploit_overshoot_reward(intent, arm, out_tok, pre_norm):
         mean_out, n = float(rec.get("mean_out") or 0.0), int(rec.get("n") or 0)
         if mean_out <= 0 or n < bulkgate.RUNAWAY_MIN_SAMPLES:
             return 1.0                                       # cold / unstable norm ⇒ cannot accuse (guardrail D bounds the $)
-        if int(out_tok) > bulkgate._runaway_factor() * mean_out:
+        if int(out_tok) > bulkgate.resolve__runaway_factor() * mean_out:
             try:                                             # SURFACE + count — closes "note_runaway never fires on lanes"
-                bulkgate.note_runaway(bulkgate.sig(model, template_id=intent), model, int(out_tok), int(mean_out),
+                bulkgate.resolve_note_runaway(bulkgate.resolve_sig(model, template_id=intent), model, int(out_tok), int(mean_out),
                                       "lane-exploit-mean")
             except Exception:
                 pass

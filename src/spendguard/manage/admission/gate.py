@@ -39,7 +39,8 @@ _call_corpus_accessors.register_calls_module_contract_consumer(
 from ...config import LOG, FLAG, cap as _cap, disabled as _disabled, allow as _allow
 from ...emit import emit as _emit
 from .gate_event_sink import set_gate_event_sink
-from .spend_refusal_error import SpendGateRefused  # re-export: the refusal ROOT moved to a dependency-free leaf to
+from .spend_refusal_error import (EffortNotHonored, MeteredCallRefused,  # noqa: F401  (public compatibility re-exports)
+                                  ModelSelectionContractRefused, SpendGateRefused)
 #                                                    break the job_fingerprint→gate import cycle; identity preserved
 
 
@@ -114,34 +115,6 @@ def budget_basis_estimate():
 def budget_basis_billed():
     from . import budget
     return budget.BASIS_BILLED
-
-
-class MeteredCallRefused(SpendGateRefused):
-    """A metered (paid-API) call was refused because refuse-metered is active — a hard, fail-closed 'no metered spend
-    here' switch for tests, CI, and any run that must be provably $0. As a SpendGateRefused subclass it PROPAGATES like
-    every deliberate stop and is caught by the same refusal machinery. $0 SUBSCRIPTION LANES are unaffected — they
-    bypass the gate's SDK path (subprocess/urllib), so a lane-served call still runs; refuse_metered blocks the metered
-    provider API, not the plan lanes. Turn on with env SPENDGUARD_REFUSE_METERED=1 (whole process) or refuse_metered()."""
-
-
-class EffortNotHonored(SpendGateRefused):
-    """A caller pinned a low reasoning effort (e.g. 'minimal') AND pinned the model (no_substitution), but the model's
-    verified floor still reasons (gpt-5.x floor='none'), so the pin buys NO saving — the model burns full reasoning
-    tokens exactly as if unpinned (the $45 warden overspend). Guardrail A is literally 'honor OR refuse': there is no
-    honoring substitute to route to when the model is pinned, so refuse rather than overspend silently. A SpendGateRefused
-    subclass, so it PROPAGATES through the deliberate-stop machinery. The fix for the caller: unpin the model (drop
-    no_substitution / use reasoning='best-value') so spendguard routes to an effort-honoring model, or accept the floor
-    explicitly (pin the floor value instead of 'minimal'). A SUBSTITUTABLE call never raises this — it routes away."""
-
-
-class ModelSelectionContractRefused(SpendGateRefused):
-    """A ``measurement=True`` call omitted ``model``: an unnamed (model, effort) cannot be measured.
-
-    This is the sole model-contract refusal. Every other unnamed call defaults — a labelled best-value call lets
-    the router choose, and any other unnamed call resolves to the cheapest priced chat model (``_chat_default_model``).
-    This is a caller-contract refusal, not a provider-resolution failure, and therefore deliberately propagates
-    through every fail-open handler as a SpendGateRefused subtype.
-    """
 
 
 import threading as _threading
@@ -1371,7 +1344,7 @@ def _cache_creation(result):
     return int(getattr(u, "cache_creation_input_tokens", 0) or 0) if u else 0
 
 
-UNKNOWN_PROVIDER = "unknown"
+from .admission_accessors import UNKNOWN_PROVIDER
 
 # THE ENFORCEMENT ANSWER, AS A FORMAT — emitted here by `doctor`, read back by `remote.verify` over SSH to
 # decide whether a box may spend. Named once and shared so the printer and the parser cannot drift: they were
@@ -3348,3 +3321,31 @@ if __name__ == "__main__":
 from ...store.reference_data import reference_data_accessors as _reference_data_accessors
 
 _reference_data_accessors.set_deliberate_stop_resolver(lambda *a, **k: is_deliberate_stop(*a, **k))
+
+from . import admission_accessors as _admission_accessors
+
+_admission_accessors.set_governed_bulk_resolver(lambda: governed_bulk)
+_admission_accessors.set__any_patched_resolver(lambda *a, **k: _any_patched(*a, **k))
+_admission_accessors.set__cap_resolver(lambda *a, **k: _cap(*a, **k))
+_admission_accessors.set__content_tokens_resolver(lambda *a, **k: _content_tokens(*a, **k))
+_admission_accessors.set__disabled_resolver(lambda *a, **k: _disabled(*a, **k))
+_admission_accessors.set__enforcement_armed_resolver(lambda *a, **k: _enforcement_armed(*a, **k))
+_admission_accessors.set__log_resolver(lambda *a, **k: _log(*a, **k))
+_admission_accessors.set__provider_of_resolver(lambda *a, **k: _provider_of(*a, **k))
+_admission_accessors.set__record_rt_resolver(lambda *a, **k: _record_rt(*a, **k))
+_admission_accessors.set__register_gate_package_postimport_resolver(lambda *a, **k: _register_gate_package_postimport(*a, **k))
+_admission_accessors.set__rt_precheck_resolver(lambda *a, **k: _rt_precheck(*a, **k))
+_admission_accessors.set_core_gated_sdk_packages_resolver(lambda *a, **k: core_gated_sdk_packages(*a, **k))
+_admission_accessors.set_deliberate_stop_types_resolver(lambda *a, **k: deliberate_stop_types(*a, **k))
+_admission_accessors.set_estimate_message_batch_resolver(lambda *a, **k: estimate_message_batch(*a, **k))
+_admission_accessors.set_gate_external_resolver(lambda *a, **k: gate_external(*a, **k))
+_admission_accessors.set_gated_sdk_modules_resolver(lambda *a, **k: gated_sdk_modules(*a, **k))
+_admission_accessors.set_install_resolver(lambda *a, **k: install(*a, **k))
+_admission_accessors.set_intent_cap_refusals_resolver(lambda *a, **k: intent_cap_refusals(*a, **k))
+_admission_accessors.set_is_deliberate_stop_resolver(lambda *a, **k: is_deliberate_stop(*a, **k))
+_admission_accessors.set_realtime_by_day_resolver(lambda *a, **k: realtime_by_day(*a, **k))
+_admission_accessors.set_record_accepted_batch_estimate_resolver(lambda *a, **k: record_accepted_batch_estimate(*a, **k))
+_admission_accessors.set_refuse_metered_resolver(lambda *a, **k: refuse_metered(*a, **k))
+_admission_accessors.set_register_resolver(lambda *a, **k: register(*a, **k))
+_admission_accessors.set_require_resolver(lambda *a, **k: require(*a, **k))
+_admission_accessors.set_ungated_fans_resolver(lambda *a, **k: ungated_fans(*a, **k))

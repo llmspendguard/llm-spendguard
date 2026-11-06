@@ -301,8 +301,8 @@ def generate_report(a):
     # The THREE provider pulls (OpenAI batches, Anthropic batches, vast.ai GPU) are independent I/O — run them
     # concurrently so the wall-clock is the SLOWEST single pull, not their sum (~22+6+15s back-to-back → ~max).
     oai, pending, an, an_models, gpu, gpu_err = _fetch_sources_concurrently(month_start)
-    from ... import gate
-    rt, _rt_models = gate.realtime_by_day(since=month_start)  # real-time spend the gate logged (local file — fast, kept inline)
+    import spendguard.manage.admission.admission_accessors as gate
+    rt, _rt_models = gate.resolve_realtime_by_day(since=month_start)  # real-time spend the gate logged (local file — fast, kept inline)
 
     # transform (pure) → the report rows + grand total; the alert threshold tracks the last row (grand total).
     rows = build_rows(oai, an, rt, gpu, tstr, week_start, month_start)
@@ -324,8 +324,8 @@ def generate_report(a):
     if pending:
         print(f"  ({pending:,} OpenAI requests in flight — not yet metered)")
     print("  NOTE: real-time = only calls made through the gate (this venv); other-host real-time still needs an Admin key.")
-    from ... import budget
-    mt, mw, mm = (budget.meta_spent_since(tstr), budget.meta_spent_since(week_start), budget.meta_spent_since(month_start))
+    import spendguard.manage.admission.admission_accessors as budget
+    mt, mw, mm = (budget.resolve_meta_spent_since(tstr), budget.resolve_meta_spent_since(week_start), budget.resolve_meta_spent_since(month_start))
     if mt or mw or mm:
         print(f"{'spendguard meta (advisor)':<30}{'$%.2f' % mt:>11}{'$%.2f' % mw:>12}{'$%.2f' % mm:>12}   (own cap; not in TOTAL)")
     _v, _days, _stale = pricing.freshness()

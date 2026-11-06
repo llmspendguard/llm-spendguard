@@ -28,10 +28,11 @@ Concurrency/rate limiting is automatic: every call routes through the dispatch g
     for text in r.answers:                          # only OK results; failures are never in here
         ...
 """
+import spendguard.manage.admission.spend_refusal_error as _admission_refusal_errors
 from spendguard.generate.execution import execution_accessors as _execution_accessors
 
 from .capability_cli_parsing import add_registered_cli_argument
-from .. import pricing, gate, config
+from .. import pricing, config
 from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
 
 # Named defaults (a value with a name, overridable per call) — never a literal at a call site.
@@ -42,12 +43,12 @@ _BUDGET_EST_OUTPUT_TOKENS = 4000   # OUTPUT tokens, PRE-FLIGHT COST ESTIMATE ONL
 _CHARS_PER_TOKEN = 4               # rough INPUT-token proxy for that same estimate; the real input count is metered downstream
 
 
-class BudgetRefused(gate.SpendGateRefused):
+class BudgetRefused(_admission_refusal_errors.SpendGateRefused):
     """The estimated metered cost of this fan-out exceeds the caller's `budget_usd`. Raised BEFORE any spend —
     the estimate-first rail, applied to a cross-LLM query. Carries the estimate and the breakdown.
 
     Subclasses SpendGateRefused ON PURPOSE: a budget refusal IS a deliberate spend refusal, so it must propagate
-    through every fail-open / degrade handler by CONSTRUCTION (the doctrine in gate.SpendGateRefused), not by being
+    through every fail-open / degrade handler by CONSTRUCTION (the doctrine in _admission_refusal_errors.SpendGateRefused), not by being
     remembered in an enumerated `except (…)` tuple that drifts. gate.deliberate_stop_types() therefore covers it
     automatically, and a handler catching SpendGateRefused now catches an over-budget refusal too."""
 
@@ -64,7 +65,7 @@ class BudgetRefused(gate.SpendGateRefused):
             f"Raise budget_usd, drop the vendor, sync-prices for it, or route it to a $0 lane.")
 
 
-class ModelPreflightRefused(gate.SpendGateRefused):
+class ModelPreflightRefused(_admission_refusal_errors.SpendGateRefused):
     """A named model id is NOT callable as written — STALE (renamed), UNPRICED, or an UNKNOWN provider — refused
     BEFORE any spend, the model-validity twin of BudgetRefused. A batch that would otherwise pay for a whole run of
     failures (the gemini-3-flash → gemini-3-flash-preview case) stops HERE with each bad id and its fix. Subclasses
@@ -83,8 +84,8 @@ def _preflight_partition(vlist):
     unmet one in the result (PREFLIGHT_UNMET) — one bad id no longer refuses the WHOLE cross-LLM batch; the batch
     is refused only when NOTHING is callable. Re-checked on EVERY call, never memoized, so a mid-process change is
     caught on the next call. Cheap: served_check is cache-first ($0) and a clean served id makes no agentic call."""
-    from .. import model_preflight
-    rows = {r.get("spec"): r for r in model_preflight.preflight_models([f"{v}:{m}" for v, m in vlist])}
+    import spendguard.manage.admission.admission_accessors as model_preflight
+    rows = {r.get("spec"): r for r in model_preflight.resolve_preflight_models([f"{v}:{m}" for v, m in vlist])}
     usable, unmet = [], []
     for v, m in vlist:
         r = rows.get(f"{v}:{m}")
@@ -334,7 +335,7 @@ def ask(prompt, *, vendors=None, n=None, schema=None, system=None, purpose="ask"
         if budget_usd is not None:
             for result in fan.get("results", []):
                 if result.kind == _execution_accessors.GATE_REFUSED:
-                    raise gate.SpendGateRefused(result.error)
+                    raise _admission_refusal_errors.SpendGateRefused(result.error)
         return AskResult(_inject_unmet(fan, unmet), mode, estimate=estimate)
 
 

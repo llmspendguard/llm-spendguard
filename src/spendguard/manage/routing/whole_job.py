@@ -122,8 +122,8 @@ def _method_for(intent, n, goal, in_tok, out_tok, items=None):
         est = float(est) if est is not None else None
         rec_path = rec.get("path") or "lane_only"
     except Exception as e:
-        from ... import gate
-        if gate.is_deliberate_stop(e):
+        import spendguard.manage.admission.admission_accessors as gate
+        if gate.resolve_is_deliberate_stop(e):
             raise                                 # a DELIBERATE refusal to estimate (spend stop / EstimateNotGrounded /
             #                                       containment) HALTS — never downgraded to "unknown cost, proceed"
             #                                       (the refusal-containment doctrine); the caller sees the stop.
@@ -209,8 +209,8 @@ def _horizon_plan(groups, goal):
             out[a["intent"]]["est"] = estimate
         return out or None
     except Exception as e:
-        from ... import gate
-        if gate.is_deliberate_stop(e):
+        import spendguard.manage.admission.admission_accessors as gate
+        if gate.resolve_is_deliberate_stop(e):
             raise                                     # a spend/estimate stop HALTS — never downgraded to "fall back"
         return None
 
@@ -446,7 +446,8 @@ def collect_jobs(pending):
     anomalies under '<batch_id>-anomalies', and a handle with no batch_id under 'handle-<i>' — so NOTHING is dropped
     (each row is a unit of work). $ is booked by callio.collect_chat_tasks under each handle's intent (attribution
     preserved). A DELIBERATE stop (spend refusal / deadline) propagates — never downgraded to 'keep going'."""
-    from ... import callio, gate
+    from ... import callio
+    import spendguard.manage.admission.admission_accessors as gate
     out = {}
     for idx, h in enumerate(pending or []):
         bid = h.get("batch_id")
@@ -458,7 +459,7 @@ def collect_jobs(pending):
         try:
             res = callio.collect_chat_tasks(bid, intent, h.get("model"))
         except Exception as e:
-            if gate.is_deliberate_stop(e):
+            if gate.resolve_is_deliberate_stop(e):
                 raise                                 # a spend refusal / deadline HALTS collection, never continues past it
             out[bid] = {"error": "collect failed: %s" % (str(e)[:80]), "intent": intent}
             continue

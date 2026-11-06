@@ -166,8 +166,8 @@ def fetch_models(model=None, provider=None, timeout=8):
     try:
         r = _request("GET", "/v1/models" + ("?" + q if q else ""), timeout=timeout)
     except Exception as e:
-        from .. import gate as _g
-        if _g.is_deliberate_stop(e):
+        import spendguard.manage.admission.admission_accessors as _g
+        if _g.resolve_is_deliberate_stop(e):
             raise                                    # a refusal/deadline is never downgraded to a silent fallback
         return None                                  # unconfigured / unreachable → the caller uses its local sync
     models = r.get("models") if isinstance(r, dict) else None
@@ -184,12 +184,12 @@ def sync_catalog_overlay(timeout=8):
     untouched (never wipes a good overlay with nothing); a deliberate spend/deadline stop propagates. Returns the
     number of curated models written. Each record's embedded, source-owned as_of is preserved verbatim and never
     restamped by this client. $0 (a read)."""
-    from .. import gate as _g
+    import spendguard.manage.admission.admission_accessors as _g
     from ..catalog_price_authoring import merge_synced_catalog_layer
     try:
         r = _request("GET", "/v1/models?curated=1", timeout=timeout)
     except Exception as e:
-        if _g.is_deliberate_stop(e):
+        if _g.resolve_is_deliberate_stop(e):
             raise                                    # a refusal/deadline is never downgraded to a silent skip
         return 0                                     # unconfigured / unreachable → keep the existing overlay
     models = r.get("models") if isinstance(r, dict) else None
@@ -487,9 +487,9 @@ def _rollup_rows(since=None):
     row as server_only, because the local read hiccuped. The ledger auto-creates, so by_dims returns [] on a fresh
     install; only a genuine locked/corrupt-DB failure reaches the except, and that must fail loud, not push nothing."""
     import sys as _sys
-    from .. import budget
+    import spendguard.manage.admission.admission_accessors as budget
     try:
-        raw = budget.by_dims(since=since)
+        raw = budget.resolve_by_dims(since=since)
     except Exception as e:
         print(f"[spendguard] _rollup_rows: FAILED to read the local ledger ({e!r}) — refusing to build a roll-up from "
               "an empty read (an empty read is not an empty ledger). Fix the ledger read first.", file=_sys.stderr)
@@ -983,8 +983,8 @@ def sync(if_due=False, since=None):
         #                                                   the separate `spendguard signal push`; now it rides the sync
         #                                                   so intent-level cost+quality flows on the normal cadence.
     except Exception as e:
-        from .. import gate as _g
-        if _g.is_deliberate_stop(e):
+        import spendguard.manage.admission.admission_accessors as _g
+        if _g.resolve_is_deliberate_stop(e):
             raise                                         # a spend refusal / deadline HALTS the sync — never downgraded
         out["signal"] = {"skipped": f"signal push: {str(e)[:80]}"}
     try:                                                  # AUTO-FRESH living insights vs the CURRENT corpus every
@@ -1145,14 +1145,14 @@ def cmd(argv=None):
         print("reconcile:", ledger_sync.reconcile_into_ledger())
         return 0
     if sub == "reattribute":                          # correct charges whose provider disagrees with the registry
-        # budget.reattribute_providers had NO CALLER ANYWHERE. It is the corrective for the gate's old
+        # budget.resolve_reattribute_providers had NO CALLER ANYWHERE. It is the corrective for the gate's old
         # `"anthropic" if model.startswith("claude") else "openai"` inference, which put 695 rows and $30.26
         # of Moonshot and z.ai spend on the OpenAI line — and `saas reconcile` compares the ledger to
         # provider billing PER PROVIDER, so that mis-attribution makes one provider look over-billed and
         # another under-billed forever. The fix existed, was tested, was documented, and could not be run.
         # Dry by default, like every other mutation here: `--apply` to write.
-        from .. import budget
-        r = budget.reattribute_providers(apply=registered_cli_option_token('saas/--apply') in argv)
+        import spendguard.manage.admission.admission_accessors as budget
+        r = budget.resolve_reattribute_providers(apply=registered_cli_option_token('saas/--apply') in argv)
         print(f"reattribute: {r}")
         if not (registered_cli_option_token('saas/--apply') in argv):
             print("  (dry run — nothing written. Re-run with --apply to correct the rows.)")

@@ -293,8 +293,8 @@ def classify_user_asks(items, run=True):
                     res[item["id"]] = verdicts[i]
             _persist_user_ask_verdicts(b, hashes, verdicts, model)
         except Exception as ask_error:
-            from ... import gate
-            if gate.is_deliberate_stop(ask_error):
+            import spendguard.manage.admission.admission_accessors as gate
+            if gate.resolve_is_deliberate_stop(ask_error):
                 raise
             continue                                      # stays True
     return res
@@ -1185,8 +1185,8 @@ def synth(tdir=None, run=False, limit=40):
     cost = pricing.realtime_cost(model, in_tok, out_tok)
     print(f"  {len(events)} snippets fed.  ESTIMATE (zero paid calls):")
     print(f"    realtime {model} 1 call · in~{in_tok:,} out≤{out_tok:,} -> ~${cost:.4f}")
-    from ... import budget
-    print(f"  meta budget: ${config.meta_cap():.2f}/day · spent today ${budget.meta_spent_today():.4f}")
+    import spendguard.manage.admission.admission_accessors as budget
+    print(f"  meta budget: ${config.meta_cap():.2f}/day · spent today ${budget.resolve_meta_spent_today():.4f}")
     if not run:
         from ... import ui; ui.estimate_only(action="synthesize from the conversations", cost=cost)
         return dict(requests=1, in_tok=in_tok, out_tok=out_tok, cost=cost, model=model)

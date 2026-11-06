@@ -158,12 +158,11 @@ def budget_projection_snapshot(read_projection):
 from ...store.spend_search.ledger_read import bind_ledger_query_deadline
 
 _conn = None
-BUDGET_AUXILIARY_POOL_KEY = "budget_auxiliary_reads"
+from .admission_accessors import BUDGET_AUXILIARY_POOL_KEY, UNATTRIBUTED_PROJECT
 _lock = new_fork_reset_ledger_state(globals(), "_lock", threading.RLock)
 _SPEND_EVENT_DEADLETTER_FILENAME = "spend_events_deadletter.jsonl"
 _SPEND_EVENT_EMERGENCY_SPOOL_PREFIX = "spendguard-capture-gap-"
 # Visible attribution fallback for events with no explicit project or captured venv.
-UNATTRIBUTED_PROJECT = "unattributed"
 LIVE_GATE_SOURCE = "gate"
 def spend_event_retry_paths():
     """Ordered durable retry spools; the OS temp fallback survives an unwritable spendguard home."""
@@ -808,7 +807,8 @@ def ingest_remote(label, project, rows):
     return n, total
 
 
-_RECONCILED = "(provider-batch)"   # marker model for reconciliation rows (the provider-truth gap), any project
+from .admission_accessors import (_RECONCILED, _TRUE_DOWN_CONV, BASIS_ASSUMED,
+                                  BASIS_BILLED, BASIS_ESTIMATE, BASIS_RECONSTRUCTED)
 # Realtime reconcile marker models (ledger_sync's _RT_MARKER/_RT_ORACLE_MARKER/_RT_RECON_MARKER — a drift guard in
 # tests/test_true_down.py asserts the two stay identical). These rows MIRROR truth from another source (gate log /
 # admin oracle / conversational reconstruction), so exclude_reconciled must drop them along with _RECONCILED — the
@@ -819,7 +819,6 @@ _MARKER_MODELS = (_RECONCILED,) + _RT_MARKERS
 # True-down correction rows carry the REAL model (so by_dims NETS them against the estimate rows per
 # (day,provider,model,kind,project) — the server ingest clamps negative cost, so a standalone negative marker-model
 # row would be dropped there) and mark themselves via conv_id instead.
-_TRUE_DOWN_CONV = "(true-down)"
 # An estimate we KNOW is impossible (input > the model's context window — see gate._implausible_estimate).
 # It is recorded, never deleted: a forensic record of what the estimator claimed. But it is quarantined out
 # of every spend total, because a number that cannot describe a real request must not read as money spent.
@@ -832,10 +831,6 @@ UNPRICED_CONV = "(unpriced)"
 # BASIS — what KIND of number a row is. Every displayed figure needs this, or the reader has to infer it from
 # the row's shape and gets it wrong: "the receipt reads as $12,000" was exactly that. Not a confidence score
 # and not a judgement — it is a fact about where the number came from, known at write time by the writer.
-BASIS_ESTIMATE = "estimate"          # pre-spend projection (batch ceilings live here until true-down)
-BASIS_BILLED = "billed"              # the provider's own number, or usage the provider returned
-BASIS_ASSUMED = "assumed"            # a default nobody confirmed (e.g. the subscription fee)
-BASIS_RECONSTRUCTED = "reconstructed"  # derived after the fact from transcripts/logs, not from a bill
 BASIS_UNPRICED = "unpriced"          # the call happened and the TOKENS are real; the $ is unknown, NOT zero
 BASES = (BASIS_ESTIMATE, BASIS_BILLED, BASIS_ASSUMED, BASIS_RECONSTRUCTED, BASIS_UNPRICED)
 
@@ -1633,3 +1628,45 @@ from spendguard.manage.admission import budget_accessors
 budget_accessors.set_budget_accessors(lambda: _conv(), lambda: _project())
 from spendguard.manage.admission import budget_unpriced_sink
 budget_unpriced_sink.set_unpriced_recorder(record_unpriced)
+
+from . import admission_accessors as _admission_accessors
+
+_admission_accessors.set__lock_resolver(lambda: _lock)
+_admission_accessors.set__attribute_resolver(lambda *a, **k: _attribute(*a, **k))
+_admission_accessors.set__conv_resolver(lambda *a, **k: _conv(*a, **k))
+_admission_accessors.set__ensure_budget_auxiliary_read_schema_resolver(lambda *a, **k: _ensure_budget_auxiliary_read_schema(*a, **k))
+_admission_accessors.set__ledger_resolver(lambda *a, **k: _ledger(*a, **k))
+_admission_accessors.set__ledger_db_resolver(lambda *a, **k: _ledger_db(*a, **k))
+_admission_accessors.set__project_resolver(lambda *a, **k: _project(*a, **k))
+_admission_accessors.set__record_spend_event_resolver(lambda *a, **k: _record_spend_event(*a, **k))
+_admission_accessors.set_all_projects_resolver(lambda *a, **k: all_projects(*a, **k))
+_admission_accessors.set_billed_by_model_resolver(lambda *a, **k: billed_by_model(*a, **k))
+_admission_accessors.set_budget_projection_snapshot_resolver(lambda *a, **k: budget_projection_snapshot(*a, **k))
+_admission_accessors.set_by_basis_resolver(lambda *a, **k: by_basis(*a, **k))
+_admission_accessors.set_by_day_resolver(lambda *a, **k: by_day(*a, **k))
+_admission_accessors.set_by_dims_resolver(lambda *a, **k: by_dims(*a, **k))
+_admission_accessors.set_by_intent_resolver(lambda *a, **k: by_intent(*a, **k))
+_admission_accessors.set_by_provider_day_resolver(lambda *a, **k: by_provider_day(*a, **k))
+_admission_accessors.set_charge_to_event_resolver(lambda *a, **k: charge_to_event(*a, **k))
+_admission_accessors.set_clear_readable_true_down_resolver(lambda *a, **k: clear_readable_true_down(*a, **k))
+_admission_accessors.set_clear_reconciled_resolver(lambda *a, **k: clear_reconciled(*a, **k))
+_admission_accessors.set_gate_by_project_day_resolver(lambda *a, **k: gate_by_project_day(*a, **k))
+_admission_accessors.set_input_cache_split_resolver(lambda *a, **k: input_cache_split(*a, **k))
+_admission_accessors.set_is_reading_history_resolver(lambda *a, **k: is_reading_history(*a, **k))
+_admission_accessors.set_ledger_start_resolver(lambda *a, **k: ledger_start(*a, **k))
+_admission_accessors.set_meta_spent_since_resolver(lambda *a, **k: meta_spent_since(*a, **k))
+_admission_accessors.set_meta_spent_today_resolver(lambda *a, **k: meta_spent_today(*a, **k))
+_admission_accessors.set_normalize_ledger_project_id_resolver(lambda *a, **k: normalize_ledger_project_id(*a, **k))
+_admission_accessors.set_projects_for_conv_resolver(lambda *a, **k: projects_for_conv(*a, **k))
+_admission_accessors.set_quarantined_since_resolver(lambda *a, **k: quarantined_since(*a, **k))
+_admission_accessors.set_reading_history_resolver(lambda *a, **k: reading_history(*a, **k))
+_admission_accessors.set_reattribute_providers_resolver(lambda *a, **k: reattribute_providers(*a, **k))
+_admission_accessors.set_reconcile_money_batch_estimate_resolver(lambda *a, **k: reconcile_money_batch_estimate(*a, **k))
+_admission_accessors.set_reconciled_by_project_resolver(lambda *a, **k: reconciled_by_project(*a, **k))
+_admission_accessors.set_record_reconciled_resolver(lambda *a, **k: record_reconciled(*a, **k))
+_admission_accessors.set_record_true_down_resolver(lambda *a, **k: record_true_down(*a, **k))
+_admission_accessors.set_snapshot_once_resolver(lambda *a, **k: snapshot_once(*a, **k))
+_admission_accessors.set_spend_event_retry_paths_resolver(lambda *a, **k: spend_event_retry_paths(*a, **k))
+_admission_accessors.set_spent_all_time_resolver(lambda *a, **k: spent_all_time(*a, **k))
+_admission_accessors.set_spent_since_resolver(lambda *a, **k: spent_since(*a, **k))
+_admission_accessors.set_unpriced_since_resolver(lambda *a, **k: unpriced_since(*a, **k))

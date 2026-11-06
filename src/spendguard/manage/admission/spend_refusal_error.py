@@ -22,3 +22,19 @@ class SpendGateRefused(RuntimeError):
     a new refusal type must subclass this rather than be added to an enumerated `except (…)` list — the
     enumeration is the latent hole that once let un-estimated batches through, live 2026-08-28 (guarded by
     tests/test_deliberate_refusal_is_never_failopen.py)."""
+
+
+class MeteredCallRefused(SpendGateRefused):
+    """A metered provider API call was deliberately refused."""
+
+
+class EffortNotHonored(SpendGateRefused):
+    """A pinned reasoning effort could not be honored without substitution."""
+
+
+class ModelSelectionContractRefused(SpendGateRefused):
+    """A measurement call omitted the model identity required by its contract."""
+
+
+class GateBlocked(SpendGateRefused):
+    """A bulk paid run was attempted without its required estimate and test."""

@@ -111,13 +111,14 @@ def _ensure_provider_factor_schema(db):
 
 
 def _stop_or_locked(e):
-    """A canonical deliberate stop (gate.is_deliberate_stop — spend refusal / dispatch deadline) OR a locked-period
+    """A canonical deliberate stop (gate.resolve_is_deliberate_stop — spend refusal / dispatch deadline) OR a locked-period
     write (ledger.LockedError) — the stops a fail-open reader here must PROPAGATE, never downgrade to 'keep going'.
     A superset of the canonical predicate because this module also touches the ledger, whose locked-period refusal
     is a deliberate stop too. Lazy imports keep the module low in the import graph; any hiccup → not a stop."""
     try:
-        from ... import gate, ledger
-        return gate.is_deliberate_stop(e) or isinstance(e, ledger.LockedError)
+        from ... import ledger
+        import spendguard.manage.admission.admission_accessors as gate
+        return gate.resolve_is_deliberate_stop(e) or isinstance(e, ledger.LockedError)
     except Exception:
         return False
 
@@ -130,9 +131,9 @@ def _load_factors():
     global _factor_cache
     loaded = {}
     try:
-        from ... import budget
+        import spendguard.manage.admission.admission_accessors as budget
         with config.ledger_op('_factors_db', _ensure_provider_factor_schema) as db:
-            with budget._lock:
+            with budget.resolve__lock():
                 rows = db.execute("SELECT provider,factor,confidence,why,char_ratio,n,stats,ts FROM token_factors").fetchall()
         for prov, fac, conf, why, cr, n, stats, ts in rows:
             loaded[prov] = {"factor": float(fac or 1.0), "confidence": (float(conf) if conf is not None else None),
@@ -397,9 +398,9 @@ def calibrate(store=True, model=None):
 
 @serialize_ledger_function
 def _persist_provider_factor_choice(provider, choice, statistics_row, timestamp):
-    from ... import budget
+    import spendguard.manage.admission.admission_accessors as budget
     db = _factors_db()
-    with budget._lock:
+    with budget.resolve__lock():
         db.execute("INSERT INTO token_factors (provider,factor,confidence,why,char_ratio,n,stats,ts) "
                    "VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(provider) DO UPDATE SET factor=excluded.factor, "
                    "confidence=excluded.confidence, why=excluded.why, char_ratio=excluded.char_ratio, "

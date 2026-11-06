@@ -523,8 +523,8 @@ def _wire_decorator_warn_once(message):
 
 
 def _wire_decorator_is_deliberate_stop(error):
-    from ... import gate
-    return gate.is_deliberate_stop(error)
+    import spendguard.manage.admission.admission_accessors as gate
+    return gate.resolve_is_deliberate_stop(error)
 
 
 ledger_write_decorators.set_run_ledger_write_provider(_wire_run_ledger_write)

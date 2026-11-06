@@ -179,3 +179,8 @@ def cmd(argv=None):
     rows = preflight_models(specs, correct=not a.no_correct)
     print(format_preflight(rows))
     return 0 if all(r["usable"] for r in rows) else 1
+
+
+from . import admission_accessors as _admission_accessors
+_admission_accessors.set_configured_specs_resolver(lambda *a, **k: configured_specs(*a, **k))
+_admission_accessors.set_preflight_models_resolver(lambda *a, **k: preflight_models(*a, **k))

@@ -193,12 +193,12 @@ def ingest_events(days=None, limit=None, reset=False, dry=False):
     limit — only the `limit` most-recently-modified transcripts (bounds the SCAN, not just the write).
     reset — delete prior source="claude-code" rows + clear the watermark first (dev re-ingest).
     dry   — count the turns + est-value that WOULD be written, write nothing (measure before a large backfill)."""
-    from ... import budget
+    import spendguard.manage.admission.admission_accessors as budget
     st = config.load_state("claudecode", {"sessions": {}, "ledger": {}})
     wm = st.setdefault("ledger_sessions", {})          # OWN watermark {path:{lines,mtime}} — distinct from update()'s
     if reset and not dry:
         try:
-            budget._ledger().delete(where={"source": "claude-code"}, actor="claude-code:ingest", reason="reset re-ingest")
+            budget.resolve__ledger().delete(where={"source": "claude-code"}, actor="claude-code:ingest", reason="reset re-ingest")
             print("claude-code ingest: cleared prior claude-code rows + watermark")
         except Exception as e:
             print(f"claude-code ingest: reset delete failed ({type(e).__name__}: {str(e)[:80]}) — continuing")
@@ -256,7 +256,7 @@ def ingest_events(days=None, limit=None, reset=False, dry=False):
                 rows += 1; val += cost; booked += 1
                 if dry:
                     continue
-                budget._record_spend_event(
+                budget.resolve__record_spend_event(
                     "anthropic", model, "est_chat", float(cost),
                     conv_id=conv_id, project=proj or "claude-code", occurred_at=ts or None,
                     in_tok=intok, out_tok=outtok, cache_read_tok=cr, cache_write_tok=cc,
@@ -477,7 +477,7 @@ def reconcile_billing_state(dry=False):
     Idempotent (delete+rebook). Pure parse + arithmetic, $0."""
     import datetime as _dt
     from collections import Counter
-    from ... import budget
+    import spendguard.manage.admission.admission_accessors as budget
     ev = _overage_events()
     windows, anchor = _overage_windows(ev)
     con = config.open_ledger_connection(config.db_path(), tune=False)
@@ -507,13 +507,13 @@ def reconcile_billing_state(dry=False):
     plan_covered = gross_est - total_over
     if not dry:                                             # reconciliation = delete + rebook (idempotent by construction)
         try:
-            budget._ledger().delete(where={"source": "claude-code-overflow"},
+            budget.resolve__ledger().delete(where={"source": "claude-code-overflow"},
                                     actor="claude-code:billing-state", reason="observable window reclassify")
         except Exception as e:
             print(f"claude-code billing_state: clearing prior rows failed ({type(e).__name__}: {str(e)[:60]}) — continuing")
         for (conv_id, model, biso), over in booked.items():
             if over > 0:
-                budget._record_spend_event("anthropic", model, "realtime", float(round(over, 6)),
+                budget.resolve__record_spend_event("anthropic", model, "realtime", float(round(over, 6)),
                                            conv_id=conv_id, project="claude-code", occurred_at=biso,
                                            source="claude-code-overflow", basis="reconstructed",
                                            intent="claude-code:overage", actor="claudecode.reconcile_billing_state",
@@ -584,8 +584,8 @@ def _supersede_overflow_for_invoiced_months():
     Idempotent (only billed=1 rows are touched) and reversible (a billed flag, never a delete): reconcile_billing_
     state's delete+rebook restores billed=1, then re-supersedes only the still-invoiced (provider, month)s.
     Returns the count superseded."""
-    from ... import budget
-    led = budget._ledger()
+    import spendguard.manage.admission.admission_accessors as budget
+    led = budget.resolve__ledger()
     invoiced = {(p, m) for (p, m, it) in led.source_rows("%-invoice", cols=("provider", "month", "intent"),
                                                          source_is_like=True)
                 if _is_authoritative_overage_intent(it)}
@@ -610,8 +610,8 @@ def overage_tally():
     invoiced month's overflow is billed=0 by _supersede_overflow_for_invoiced_months). GENERAL across lanes —
     anthropic (claude-code), openai (codex), zai, … — by the same provider match the reconciliation uses.
     Read-only, $0. Returns {provider: {invoiced_usd, estimate_usd, total_usd, months_invoiced, months_estimate}}."""
-    from ... import budget
-    led = budget._ledger()
+    import spendguard.manage.admission.admission_accessors as budget
+    led = budget.resolve__ledger()
     out = {}
 
     def _acc(pattern, field, month_field, intent_pred=None, **kw):
@@ -676,7 +676,7 @@ def ingest_invoices(csv_path=None, dry=False):
     import csv as _csv
     import glob as _glob
     from collections import defaultdict
-    from ... import budget
+    import spendguard.manage.admission.admission_accessors as budget
     path = csv_path or config._cfg_get("subscription", "anthropic_invoice_csv", None)
     if not path:                                            # discover the newest by-card export (pattern, not a hardcode)
         cands = sorted(_glob.glob(os.path.expanduser("~/Documents/Anthropic*charges*.csv")),
@@ -723,12 +723,12 @@ def ingest_invoices(csv_path=None, dry=False):
     if not dry:
         for s in ("anthropic-invoice", "anthropic-invoice-api"):
             try:
-                budget._ledger().delete(where={"source": s}, actor="claude-code:invoices", reason="re-ingest invoices")
+                budget.resolve__ledger().delete(where={"source": s}, actor="claude-code:invoices", reason="re-ingest invoices")
             except Exception as e:
                 print(f"claude-code invoices: clear {s} failed ({type(e).__name__}: {str(e)[:50]})")
         for p in parsed:
             proj = "claude-code" if p["stream"] in ("subscription", "cc-overage") else "spendguard-api"
-            budget._record_spend_event(
+            budget.resolve__record_spend_event(
                 "anthropic", "claude.ai" if p["src"] == "claude.ai" else "console-api", p["kind"], float(p["amt"]),
                 project=proj, occurred_at=p["date"] + "T12:00:00+00:00", source=p["source"], basis="billed",
                 intent=f"anthropic-invoice:{p['stream']}:card{p['card']}:reimb-{p['reimb'][:3].lower()}",

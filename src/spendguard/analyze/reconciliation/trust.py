@@ -58,8 +58,8 @@ def provider_truth(since=None):
     except Exception:
         ok = False
     try:
-        from ... import gate
-        rt, _ = gate.realtime_by_day(since=since)
+        import spendguard.manage.admission.admission_accessors as gate
+        rt, _ = gate.resolve_realtime_by_day(since=since)
         total += sum(v for d, v in rt.items() if str(d) >= since)
     except Exception:
         pass   # realtime is best-effort; the batch billing is the anchor
@@ -77,9 +77,9 @@ def _ledger_llm_total(since):
         that are NOT in provider_truth, so counting them here inflates only the recorded side (the old +$13
         phantom drift).
     Meta is excluded on both sides (it's spendguard's own spend, tracked separately)."""
-    from ... import budget
-    by = budget.by_day(kind="batch", since=since, exclude_reconciled=True)
-    rt = budget.by_day(kind="realtime", since=since, exclude_reconciled=True)
+    import spendguard.manage.admission.admission_accessors as budget
+    by = budget.resolve_by_day(kind="batch", since=since, exclude_reconciled=True)
+    rt = budget.resolve_by_day(kind="realtime", since=since, exclude_reconciled=True)
     return round(sum(by.values()) + sum(rt.values()), 2)
 
 

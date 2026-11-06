@@ -29,7 +29,8 @@ import datetime
 import json
 import sys
 
-from ... import adapters, advisor, bakeoff, budget, calls, config, gate, models, pricing
+from ... import adapters, advisor, bakeoff, calls, config, gate, models, pricing
+import spendguard.manage.admission.admission_accessors as budget
 from decimal import Decimal, localcontext
 import logging
 from spendguard.store.money_ledger.ledger_write_decorators import serialize_ledger_function
@@ -163,7 +164,7 @@ def _load_progress(intent, model, efforts):
     checkpoint, so a re-run continues EXACTLY rather than re-paying. A fresh (intent, model, effort) loads zero."""
     with config.ledger_op('_ckpt_db', _ensure_effort_progress_schema) as db:
         acc = {}
-        with budget._lock:
+        with budget.resolve__lock():
             for e in efforts:
                 r = db.execute("SELECT n,sum_score,usable,failed,cost,consumed FROM effort_titration "
                                "WHERE intent=? AND model=? AND effort=?", (intent, model, e)).fetchone()
@@ -187,7 +188,7 @@ def _save_one(intent, model, effort, a):
         raise TypeError("effort progress nano amounts are derived from preserved REAL cost")
     db = _ckpt_db()
     ts = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
-    with budget._lock:
+    with budget.resolve__lock():
         db.execute("INSERT OR REPLACE INTO effort_titration "
                    "(intent,model,effort,n,sum_score,usable,failed,cost,consumed,updated,cost_nano) "
                    "VALUES (?,?,?,?,?,?,?,?,?,?,?)",

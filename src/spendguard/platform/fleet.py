@@ -486,11 +486,12 @@ def register_consumer(label=None, role=None, supervision_mode=None, supervision_
             return
         resolved_role = CONSUMER_ROLE_UNSPECIFIED if role is None else role
         try:
-            from .. import release, _version, gate
+            from .. import release, _version
+            import spendguard.manage.admission.admission_accessors as gate
             # Observe THIS process without require()/install(): those would repair
             # the state being attested. Legacy registrations have no proof.
             try:
-                consumer_gate_enforcing = not gate._disabled() and gate._enforcement_armed()
+                consumer_gate_enforcing = not gate.resolve__disabled() and gate.resolve__enforcement_armed()
             except Exception:
                 consumer_gate_enforcing = False
             s = release.served_sha() or {}

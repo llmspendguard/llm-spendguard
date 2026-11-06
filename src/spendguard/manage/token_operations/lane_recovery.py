@@ -3,16 +3,18 @@
 Scheduling, free substitute selection and the spend door remain owned by their existing modules.
 This module only carries per-call evidence and parses mechanical transport envelopes.
 """
+import spendguard.manage.admission.spend_refusal_error as _admission_refusal_errors
 import os
 import re
 import time
 import math
 from dataclasses import dataclass, field
 
-from ... import config, gate
+from ... import config
+import spendguard.manage.admission.admission_accessors as gate
 
 
-class LaneRecoveryViolation(gate.SpendGateRefused):
+class LaneRecoveryViolation(_admission_refusal_errors.SpendGateRefused):
     """A paid transition lacked evidence that the free recovery ladder was exhausted."""
 
 
@@ -57,7 +59,7 @@ class LaneRecoveryProof:
     def recovery_event(self, rung, **facts):
         event = {"kind": "lane_recovery", "lane": self.lane, "rung": rung, **facts}
         self.events.append(event)
-        gate._log(event)
+        gate.resolve__log(event)
 
     def assert_free_exhausted(self):
         if self.retry_limit < 1 or self.attempts < self.retry_limit or not self.shed_checked or not self.queue_checked:
@@ -66,10 +68,10 @@ class LaneRecoveryProof:
 
     def authorize_metered_recovery(self, provider, model, prompt, system, max_tokens):
         self.assert_free_exhausted()
-        gate.require()
+        gate.resolve_require()
         # Explicit normal door decision, outside SDK fail-open wrappers. SDK still gates the actual send.
         try:
-            gate._rt_precheck(provider, model, max(1, len((system or "") + prompt)), max_tokens)
+            gate.resolve__rt_precheck(provider, model, max(1, len((system or "") + prompt)), max_tokens)
         except Exception as error:
             self.recovery_event("metered_refused", decision="refused", error=str(error))
             raise

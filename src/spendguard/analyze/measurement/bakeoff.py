@@ -143,8 +143,8 @@ def _plan(intent, candidates, prompts, judge_model, efforts, requirement_aware=F
     IMAGE input tokens — via _execution_accessors.resolve__image_input_tokens, the provider-aware corrected estimator, never a hardcoded
     per-image number — to EVERY call that sees the image: the candidate run, the screen/generic judge, and the
     adjudicator (extraction reads the prompt TEXT only). A text-only slate is priced exactly as before."""
-    from ... import gate
-    _stop = gate.deliberate_stop_types()               # SpendGateRefused / DispatchTimeout must PROPAGATE — never be
+    import spendguard.manage.admission.admission_accessors as gate
+    _stop = gate.resolve_deliberate_stop_types()               # SpendGateRefused / DispatchTimeout must PROPAGATE — never be
     n_eff = max(1, len(efforts))                        # swallowed into a false-low estimate by the broad guards below
     tasks = [_task_parts(p) for p in prompts]           # (prompt_text, images_or_None) — a string yields (string, None)
     loaded = [([_execution_accessors.resolve__load_image(i) for i in imgs] if imgs else None) for _txt, imgs in tasks]  # dims for the token est ($0 read)
@@ -313,8 +313,8 @@ def bakeoff(intent, candidates=None, prompts=None, sample_n=5, run=False, budget
                             verdict = _judge_one(judge_task, r.get("text"), judge_model,
                                                  **({"images": imgs} if imgs else {}))  # generic LLM judge — the quality signal
                     except Exception as _je:
-                        from ... import gate
-                        if gate.is_deliberate_stop(_je):
+                        import spendguard.manage.admission.admission_accessors as gate
+                        if gate.resolve_is_deliberate_stop(_je):
                             raise
                         verdict = None                                  # UNLABELED, not a crash — the arm's output still counts as a run
                         last_error = f"judge error: {type(_je).__name__}: {str(_je)[:100]}"

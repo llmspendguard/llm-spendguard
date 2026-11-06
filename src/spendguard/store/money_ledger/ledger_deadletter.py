@@ -61,7 +61,7 @@ def drain_spend_deadletter_events(paths=None):
 
 def stage_and_commit_spend_deadletters(paths, spool_locks):
     """Keep every spool locked until the one authoritative replay commit."""
-    from ...budget import spend_event_retry_paths, charge_to_event, _attribute
+    from spendguard.manage.admission.admission_accessors import resolve_spend_event_retry_paths as spend_event_retry_paths, resolve_charge_to_event as charge_to_event, resolve__attribute as _attribute
     from .ledger import SpendLedger
     from ...ledger_read import LedgerQueryDeadline
     writer_connection = current_ledger_writer_connection()
