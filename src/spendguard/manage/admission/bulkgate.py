@@ -1185,3 +1185,13 @@ def gated_batch(sig, model):
                        contract=getattr(self, "_contract", None), data_sig=ds)
             return submit_fn()
     yield _Job()
+
+
+from ...analyze.cost_estimation import cost_estimation_accessors as _cost_estimation_accessors
+
+_cost_estimation_accessors.set_bulk_maxtokens_resolver(lambda *a, **k: maxtokens(*a, **k))
+_cost_estimation_accessors.set_bulk_model_outputs_resolver(lambda *a, **k: model_outputs(*a, **k))
+_cost_estimation_accessors.set_bulk_sig_resolver(lambda *a, **k: sig(*a, **k))
+_cost_estimation_accessors.set_bulk_reasoning_out_estimate_resolver(
+    lambda *a, **k: _reasoning_out_estimate(*a, **k)
+)

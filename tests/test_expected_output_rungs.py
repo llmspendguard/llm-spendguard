@@ -32,7 +32,7 @@ def test_the_class_measurement_still_wins_over_the_model_measurement():
     """A distribution for THIS class is strictly better evidence than the model's average across all classes.
     Adding the broader rung must not demote the narrower one."""
     src = __import__("inspect").getsource(expected_output.expect)
-    assert src.index("bulkgate.maxtokens(sig)") < src.index("bulkgate.model_outputs(model)"), \
+    assert src.index("resolve_bulk_maxtokens(sig)") < src.index("resolve_bulk_model_outputs(model)"), \
         "the sig-level measurement must be consulted before the model-level one"
 
 

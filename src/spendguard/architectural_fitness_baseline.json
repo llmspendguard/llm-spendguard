@@ -2356,10 +2356,6 @@
       "spendguard.store.call_corpus.calls"
     ],
     [
-      "spendguard.analyze.cost_estimation.expected_output",
-      "spendguard.manage.admission.bulkgate"
-    ],
-    [
       "spendguard.analyze.cost_estimation.provider_tokens",
       "spendguard.generate.execution.adapters"
     ],
@@ -3185,10 +3181,6 @@
     ],
     [
       "spendguard.generate.execution.adapters",
-      "spendguard.analyze.cost_estimation.expected_output"
-    ],
-    [
-      "spendguard.generate.execution.adapters",
       "spendguard.analyze.measurement.cacheaudit"
     ],
     [
@@ -3338,10 +3330,6 @@
     [
       "spendguard.generate.execution.submit",
       "spendguard.analyze.cost_estimation.content_tokens"
-    ],
-    [
-      "spendguard.generate.execution.submit",
-      "spendguard.analyze.cost_estimation.expected_output"
     ],
     [
       "spendguard.generate.execution.submit",
@@ -3518,10 +3506,6 @@
     [
       "spendguard.generate.spend_capture.http_capture",
       "spendguard.store.call_corpus.calls"
-    ],
-    [
-      "spendguard.generate.spend_capture.resources",
-      "spendguard.analyze.cost_estimation.expected_output"
     ],
     [
       "spendguard.generate.spend_capture.resources",
@@ -3813,10 +3797,6 @@
     ],
     [
       "spendguard.manage.admission.gate",
-      "spendguard.analyze.cost_estimation.expected_output"
-    ],
-    [
-      "spendguard.manage.admission.gate",
       "spendguard.analyze.measurement.guard"
     ],
     [
@@ -4085,15 +4065,7 @@
     ],
     [
       "spendguard.manage.routing.route_economics",
-      "spendguard.analyze.cost_estimation.expected_output"
-    ],
-    [
-      "spendguard.manage.routing.route_economics",
       "spendguard.analyze.treasury.lane_economics"
-    ],
-    [
-      "spendguard.manage.routing.route_horizon",
-      "spendguard.analyze.cost_estimation.expected_output"
     ],
     [
       "spendguard.manage.routing.route_horizon",
@@ -4878,8 +4850,8 @@
     "src/spendguard/manage/token_operations/delegate_router.py:481",
     "src/spendguard/platform/lanes.py:64"
   ],
-  "max_largest_scc_size": 117,
-  "max_cyclic_edge_count": 658,
+  "max_largest_scc_size": 116,
+  "max_cyclic_edge_count": 651,
   "max_legacy_shim_count": 219,
   "recorded_cross_context_nonsurface_imports": [
     [

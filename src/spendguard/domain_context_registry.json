@@ -481,12 +481,13 @@
       "surface_module": "spendguard.analyze.cost_estimation",
       "layer": "L1",
       "backing_modules": [
-        "analyze.cost_estimation.estimate",
         "analyze.cost_estimation.calibrate",
-        "analyze.cost_estimation.expected_output",
         "analyze.cost_estimation.content_tokens",
-        "analyze.cost_estimation.provider_tokens",
-        "analyze.cost_estimation.estimate_divergence"
+        "analyze.cost_estimation.cost_estimation_accessors",
+        "analyze.cost_estimation.estimate",
+        "analyze.cost_estimation.estimate_divergence",
+        "analyze.cost_estimation.expected_output",
+        "analyze.cost_estimation.provider_tokens"
       ],
       "published_names": []
     },

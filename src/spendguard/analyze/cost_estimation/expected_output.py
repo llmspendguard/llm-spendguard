@@ -92,8 +92,8 @@ def expect(model, sig=None, max_tokens=None, declared=None):
     half of the batch estimate basis (the measured half is the learned/model-history rungs); see batch_output_estimate."""
     if sig:
         try:
-            from ... import bulkgate
-            b = bulkgate.maxtokens(sig)
+            from . import cost_estimation_accessors as _cost_estimation_accessors
+            b = _cost_estimation_accessors.resolve_bulk_maxtokens(sig)
             if b and (b.get("n") or 0) >= MIN_OBS and b.get("p90"):
                 # p90, NOT the cap-sizing recommendation. `recommend` (p99×1.5) is a WORST case whose job is to
                 # size a termination bound; using it as the EXPECTED cost over-states ~4× against a measured
@@ -119,8 +119,8 @@ def expect(model, sig=None, max_tokens=None, declared=None):
     # output tokens, while their real answers here ran 400-2,100. That gap is what made estimate-first unusable
     # for any class without history.
     try:
-        from ... import bulkgate
-        mo = bulkgate.model_outputs(model)
+        from . import cost_estimation_accessors as _cost_estimation_accessors
+        mo = _cost_estimation_accessors.resolve_bulk_model_outputs(model)
         if mo and (mo.get("n") or 0) >= MIN_OBS and mo.get("p90"):
             broad = _discard_if_contaminated(int(mo["p90"]), model, "model:" + str(model))
             if broad is not None:
@@ -140,9 +140,10 @@ def expect(model, sig=None, max_tokens=None, declared=None):
     # uses — so a cold reasoning class is estimated reasoning-AWARE, not naive-low (the incident: gpt-5.5 estimated at
     # per_out=160, ~9x under) nor ceiling-high. The measured p90 (RUNG 1/2) replaces it the moment real calls land.
     try:
-        from ... import models as _mr, bulkgate as _br
+        from ... import models as _mr
+        from . import cost_estimation_accessors as _cost_estimation_accessors
         if _mr.reasons_by_default(model):
-            return int(_br._reasoning_out_estimate()), "reasoning-floor"
+            return int(_cost_estimation_accessors.resolve_bulk_reasoning_out_estimate()), "reasoning-floor"
     except Exception:
         pass
     try:
@@ -189,8 +190,8 @@ def batch_output_estimate(model, intent=None, declared_out=None, ceiling=None):
     sig = None
     if intent:
         try:
-            from ... import bulkgate
-            sig = bulkgate.sig(model, template_id=intent)
+            from . import cost_estimation_accessors as _cost_estimation_accessors
+            sig = _cost_estimation_accessors.resolve_bulk_sig(model, template_id=intent)
         except Exception:
             sig = None
     tok, basis = expect(model, sig=sig, max_tokens=None, declared=declared_out)
