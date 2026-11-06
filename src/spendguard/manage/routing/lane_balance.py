@@ -1782,3 +1782,8 @@ def adapt_system(intent, target_model, system, model=None):
     config.update_json(_registry_path(), _store_adaptation, reason="lane-substitute-adapt",
                        quarantine_unparseable=True)   # rebuildable registry: recover a corrupt file, never a silent decline
     return result
+
+
+from . import routing_accessors
+
+routing_accessors.set__lane_fee_resolver(_lane_fee)

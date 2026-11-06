@@ -357,7 +357,10 @@
         "spendguard.analyze.reconciliation.reconcile_openai",
         "spendguard.analyze.reconciliation.reconcile_anthropic",
         "spendguard.manage.token_operations.token_operations_resolver_bootstrap",
-        "spendguard.manage.token_operations.token_operations_accessors"
+        "spendguard.manage.token_operations.token_operations_accessors",
+        "spendguard.manage.routing",
+        "spendguard.manage.routing.routing_resolver_bootstrap",
+        "spendguard.manage.routing.routing_accessors"
       ],
       "gate_installed": true,
       "gate_unarmed_details": [],
@@ -507,6 +510,9 @@
         "spendguard.analyze.reconciliation.reconcile_anthropic",
         "spendguard.manage.token_operations.token_operations_resolver_bootstrap",
         "spendguard.manage.token_operations.token_operations_accessors",
+        "spendguard.manage.routing",
+        "spendguard.manage.routing.routing_resolver_bootstrap",
+        "spendguard.manage.routing.routing_accessors",
         "spendguard.interface.cli",
         "spendguard.interface.capability_cli_dispatch_generation",
         "spendguard.interface.capability_cli_callable_generation"
@@ -658,7 +664,10 @@
         "spendguard.analyze.reconciliation.reconcile_openai",
         "spendguard.analyze.reconciliation.reconcile_anthropic",
         "spendguard.manage.token_operations.token_operations_resolver_bootstrap",
-        "spendguard.manage.token_operations.token_operations_accessors"
+        "spendguard.manage.token_operations.token_operations_accessors",
+        "spendguard.manage.routing",
+        "spendguard.manage.routing.routing_resolver_bootstrap",
+        "spendguard.manage.routing.routing_accessors"
       ],
       "gate_installed": true,
       "gate_unarmed_details": [],
@@ -807,7 +816,10 @@
         "spendguard.analyze.reconciliation.reconcile_openai",
         "spendguard.analyze.reconciliation.reconcile_anthropic",
         "spendguard.manage.token_operations.token_operations_resolver_bootstrap",
-        "spendguard.manage.token_operations.token_operations_accessors"
+        "spendguard.manage.token_operations.token_operations_accessors",
+        "spendguard.manage.routing",
+        "spendguard.manage.routing.routing_resolver_bootstrap",
+        "spendguard.manage.routing.routing_accessors"
       ],
       "gate_installed": true,
       "gate_unarmed_details": [],
@@ -956,7 +968,10 @@
         "spendguard.analyze.reconciliation.reconcile_openai",
         "spendguard.analyze.reconciliation.reconcile_anthropic",
         "spendguard.manage.token_operations.token_operations_resolver_bootstrap",
-        "spendguard.manage.token_operations.token_operations_accessors"
+        "spendguard.manage.token_operations.token_operations_accessors",
+        "spendguard.manage.routing",
+        "spendguard.manage.routing.routing_resolver_bootstrap",
+        "spendguard.manage.routing.routing_accessors"
       ],
       "gate_installed": true,
       "gate_unarmed_details": [],
@@ -1105,7 +1120,10 @@
         "spendguard.analyze.reconciliation.reconcile_openai",
         "spendguard.analyze.reconciliation.reconcile_anthropic",
         "spendguard.manage.token_operations.token_operations_resolver_bootstrap",
-        "spendguard.manage.token_operations.token_operations_accessors"
+        "spendguard.manage.token_operations.token_operations_accessors",
+        "spendguard.manage.routing",
+        "spendguard.manage.routing.routing_resolver_bootstrap",
+        "spendguard.manage.routing.routing_accessors"
       ],
       "gate_installed": true,
       "gate_unarmed_details": [],
@@ -1254,7 +1272,10 @@
         "spendguard.analyze.reconciliation.reconcile_openai",
         "spendguard.analyze.reconciliation.reconcile_anthropic",
         "spendguard.manage.token_operations.token_operations_resolver_bootstrap",
-        "spendguard.manage.token_operations.token_operations_accessors"
+        "spendguard.manage.token_operations.token_operations_accessors",
+        "spendguard.manage.routing",
+        "spendguard.manage.routing.routing_resolver_bootstrap",
+        "spendguard.manage.routing.routing_accessors"
       ],
       "gate_installed": true,
       "gate_unarmed_details": [],

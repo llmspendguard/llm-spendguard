@@ -188,7 +188,7 @@ def economics(headroom_rows=None, fee_by_lane=None):
     bucket dict with the FEWEST absolute tokens left (what throttles first); it carries the lane-headline remaining_abs.
     fee_by_lane overrides the config fee (test seam)."""
     from spendguard.platform import platform_accessors as _platform_accessors
-    from ... import lane_balance
+    from spendguard.manage.routing import routing_accessors
     rows = list(headroom_rows if headroom_rows is not None else _platform_accessors.resolve_lane_headroom(do_fetch=False))
     total_fee, _fee_default = _plan_total_fee()
     n_lanes = len([r for r in rows]) or 1
@@ -200,7 +200,7 @@ def economics(headroom_rows=None, fee_by_lane=None):
         if fee_by_lane is not None:
             fee, fee_exact = float(fee_by_lane.get(lane, 0.0)), (lane in fee_by_lane)
         else:
-            fee, fee_exact = lane_balance._lane_fee(lane, n_lanes, total_fee)
+            fee, fee_exact = routing_accessors.resolve__lane_fee(lane, n_lanes, total_fee)
         bkts = []
         for b in (r.get("buckets") or []):
             name = b.get("bucket") or ""
@@ -236,7 +236,7 @@ def economics(headroom_rows=None, fee_by_lane=None):
         if fee_by_lane is not None:
             fee = float(fee_by_lane.get(lane, 0.0))
         else:
-            fee, _ = lane_balance._lane_fee(lane, n_lanes, total_fee)
+            fee, _ = routing_accessors.resolve__lane_fee(lane, n_lanes, total_fee)
         pe = prompt_economics(lane, fee)
         if pe:
             pe["provider"] = prov_of.get(lane)

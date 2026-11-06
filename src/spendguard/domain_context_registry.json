@@ -444,6 +444,8 @@
         "manage.routing.cascade",
         "manage.routing.best_value",
         "manage.routing.lane_balance",
+        "manage.routing.routing_accessors",
+        "manage.routing.routing_resolver_bootstrap",
         "manage.routing.tier_config",
         "manage.routing.whole_job"
       ],

@@ -95,6 +95,7 @@ def _load_public_api_and_install_gate():
     _wire_call_corpus_accessor_resolvers()
     _wire_spend_reporting_accessor_resolvers()
     _wire_token_operations_accessor_resolvers()
+    _wire_routing_accessor_resolvers()
 
 
 def _wire_execution_accessor_resolvers():
@@ -183,6 +184,15 @@ def _wire_token_operations_accessor_resolvers():
     try:
         from .manage.token_operations import token_operations_resolver_bootstrap
         token_operations_resolver_bootstrap.wire_token_operations_accessor_resolvers()
+    except Exception:
+        pass
+
+
+def _wire_routing_accessor_resolvers():
+    """Register lazy routing home loading without importing the routing hub at startup."""
+    try:
+        from .manage.routing import routing_resolver_bootstrap
+        routing_resolver_bootstrap.wire_routing_accessor_resolvers()
     except Exception:
         pass
 
