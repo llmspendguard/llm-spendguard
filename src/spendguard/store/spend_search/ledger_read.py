@@ -1617,3 +1617,5 @@ READ_DELEGATE_OVERAGE_EVIDENCE_COLUMNS = tuple(
 set_ledger_read_accessors(ledger_read_table_exists, read_routing_history_report, LEDGER_CALLS_TABLE,
                           read_cost_integrity_buckets, LedgerReadSchemaError,
                           effective_ledger_admission_deadline, LedgerReadError)
+
+from . import ledger_request_cursor as _ledger_request_cursor  # noqa: F401,E402

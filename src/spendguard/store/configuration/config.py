@@ -22,6 +22,11 @@ from spendguard.ledger_fork_locks import new_fork_reset_ledger_state
 from spendguard.store.configuration.config_accessors import set_config_accessors
 from spendguard.store.configuration.ledger_connection_accessors import set_ledger_connection_accessors
 from spendguard.store.spend_search.ledger_read_accessors import resolve_ledger_admission_deadline
+from spendguard.store.configuration.provider_key_env_registry import (
+    all_provider_key_envs,
+    resolve_provider_key_env,
+)
+from spendguard.store.spend_search.ledger_request_cursor_accessors import make_managed_request_cursor_state
 from spendguard.store.money_ledger.ledger_writer_accessors import (
     resolve_active_ledger_writer_connection,
     run_wired_ledger_write,
@@ -405,29 +410,9 @@ def resolve_cli(name, env_var=None):
     return str(max(hits, key=_mtime)) if hits else None
 
 
-# Provider → key env var, for the ledger's key fingerprint. Local-only, no hardcoded keys.
-#
-# THE PROVIDER TABLE ALREADY CARRIES THIS. adapters.PROVIDERS holds a key_env for every vendor including the
-# ones missing here — moonshot, zai, deepseek, dashscope — so their charges were stamped with an EMPTY
-# fingerprint while the table that knew the answer sat one import away. Same shape as four other things
-# found today: the fact exists, and the consumer has its own shorter copy.
-#
-# The literals below remain as the FLOOR, so a fingerprint still works if adapters cannot be imported.
-_PROVIDER_KEY_ENV_FALLBACK = {"openai": "OPENAI_API_KEY", "anthropic": "ANTHROPIC_API_KEY",
-                              "gemini": "GEMINI_API_KEY"}
-
-
 def _provider_key_env(provider):
-    """The env var holding this provider's key, from the provider registry, falling back to the floor above."""
-    p = (provider or "").lower()
-    try:
-        from ... import adapters
-        spec = adapters.PROVIDERS.get(p) or {}
-        if spec.get("key_env"):
-            return spec["key_env"]
-    except Exception:
-        pass
-    return _PROVIDER_KEY_ENV_FALLBACK.get(p)
+    """Return the environment variable holding this provider's API key."""
+    return resolve_provider_key_env(provider)
 
 
 def key_fingerprint(provider):
@@ -1391,10 +1376,9 @@ class _HomeAlignedLedgerCursor(sqlite3.Cursor):
                                      opened_path_identity=self.connection._ledger_opened_path_identity)
         if getattr(self.connection, "_ledger_owned_read_deadline", False):
             return operation(self, *args, **kwargs)
-        from spendguard.ledger_request_cursor import ManagedRequestCursorState
         state = getattr(self, "_ledger_request_cursor_state", None)
         if state is None:
-            state = self._ledger_request_cursor_state = ManagedRequestCursorState(self)
+            state = self._ledger_request_cursor_state = make_managed_request_cursor_state(self)
         return state.dispatch_managed_request_cursor_step(operation, *args, **kwargs)
 
     def _release_request_cursor_if_idle(self):
@@ -2097,11 +2081,7 @@ def lane_plan_env(keep=()):
     metered = {"ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL",
                "OPENAI_API_KEY", "OPENAI_BASE_URL", "GEMINI_API_KEY", "GOOGLE_API_KEY",
                "ZAI_API_KEY", "ZAI_CODING_API_KEY"}
-    try:
-        from ... import adapters                          # the registry is the source of truth for per-provider key envs
-        metered |= {spec.get("key_env") for spec in adapters.PROVIDERS.values() if spec.get("key_env")}
-    except Exception:
-        pass
+    metered |= all_provider_key_envs()
     metered = {m for m in metered if m} - keep
     return {k: v for k, v in os.environ.items() if k not in metered}
 

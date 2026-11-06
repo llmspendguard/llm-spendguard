@@ -13,34 +13,35 @@ import functools
 import contextlib
 import sys
 from ... import config, pricing
+from spendguard.store.configuration import provider_key_env_registry as _pkenv
 
 SPENDGUARD_IMPORT_NAME = "spendguard"
 
 # name -> {base_url, key_env, prefixes, kind, optional sdk_import}
 PROVIDERS = {
-    "openai":    {"base_url": None, "key_env": "OPENAI_API_KEY",
+    "openai":    {"base_url": None, "key_env": _pkenv.BUILTIN_PROVIDER_KEY_ENV["openai"],
                   "prefixes": ("gpt-", "o1", "o3", "chatgpt"), "kind": "openai", "batch": True},
-    "anthropic": {"base_url": None, "key_env": "ANTHROPIC_API_KEY",
+    "anthropic": {"base_url": None, "key_env": _pkenv.BUILTIN_PROVIDER_KEY_ENV["anthropic"],
                   "prefixes": ("claude-",), "kind": "anthropic"},
     "gemini":    {"base_url": "https://generativelanguage.googleapis.com/v1beta/openai/",
-                  "key_env": "GEMINI_API_KEY", "prefixes": ("gemini-",), "kind": "openai",
+                  "key_env": _pkenv.BUILTIN_PROVIDER_KEY_ENV["gemini"], "prefixes": ("gemini-",), "kind": "openai",
                   "sdk_import": "google"},  # Native Google SDK is separate from spendguard's compat path.
     "deepseek":  {"base_url": "https://api.deepseek.com",
-                  "key_env": "DEEPSEEK_API_KEY", "prefixes": ("deepseek",), "kind": "openai"},
+                  "key_env": _pkenv.BUILTIN_PROVIDER_KEY_ENV["deepseek"], "prefixes": ("deepseek",), "kind": "openai"},
     "qwen":      {"base_url": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
-                  "key_env": "DASHSCOPE_API_KEY", "prefixes": ("qwen", "qwq"), "kind": "openai"},
+                  "key_env": _pkenv.BUILTIN_PROVIDER_KEY_ENV["qwen"], "prefixes": ("qwen", "qwq"), "kind": "openai"},
     "zai":       {"base_url": "https://api.z.ai/api/paas/v4",   # z.ai / Zhipu GLM — OpenAI-compatible (verify base_url with your key)
-                  "key_env": "ZAI_API_KEY", "prefixes": ("glm-",), "kind": "openai",
+                  "key_env": _pkenv.BUILTIN_PROVIDER_KEY_ENV["zai"], "prefixes": ("glm-",), "kind": "openai",
                   "sdk_import": "zhipuai"},  # Native Zhipu SDK is separate from spendguard's compat path.
     "voyage":    {"base_url": "https://api.voyageai.com/v1",     # Voyage AI — OpenAI-compatible /EMBEDDINGS only (no
                   #                                                chat, no async Batch API). Anthropic's recommended
                   #                                                embeddings; reached via adapters.embed(model="voyage-…").
-                  "key_env": "VOYAGE_API_KEY", "prefixes": ("voyage-",), "kind": "openai", "batch": False},
+                  "key_env": _pkenv.BUILTIN_PROVIDER_KEY_ENV["voyage"], "prefixes": ("voyage-",), "kind": "openai", "batch": False},
     "moonshot":  {"base_url": "https://api.moonshot.ai/v1",     # Moonshot AI (Kimi) — OpenAI-compatible.
                   # Prefixes cover the WHOLE family (kimi-k2/k2.5/k2.6/kimi-latest and any future kimi-*), so a
                   # newer Kimi routes + prices itself the day the synced table carries it — no code change, no
                   # hardcoded rate. Mainland-China accounts use api.moonshot.cn: register_provider() to override.
-                  "key_env": "MOONSHOT_API_KEY", "prefixes": ("kimi", "moonshot-"), "kind": "openai"},
+                  "key_env": _pkenv.BUILTIN_PROVIDER_KEY_ENV["moonshot"], "prefixes": ("kimi", "moonshot-"), "kind": "openai"},
 }
 
 
@@ -62,6 +63,7 @@ def register_provider(name, base_url, key_env, prefixes, kind="openai", sdk_impo
     if sdk_import:
         entry["sdk_import"] = sdk_import
     PROVIDERS[name] = entry
+    _pkenv.register_runtime_provider_key_env(name, key_env)
 
 
 def provider_for(model):

@@ -373,3 +373,8 @@ class ManagedRequestCursorState:
                 if preparing:
                     self.statement_parser_facts.finish_managed_statement_facts(
                         self, statement_sql, statement_succeeded, previous_parser_context)
+
+
+from . import ledger_request_cursor_accessors
+
+ledger_request_cursor_accessors.set_managed_request_cursor_factory(ManagedRequestCursorState)
