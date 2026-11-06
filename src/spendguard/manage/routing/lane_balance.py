@@ -1787,3 +1787,4 @@ def adapt_system(intent, target_model, system, model=None):
 from . import routing_accessors
 
 routing_accessors.set__lane_fee_resolver(_lane_fee)
+routing_accessors.set_lane_utilization_resolver(lane_utilization)

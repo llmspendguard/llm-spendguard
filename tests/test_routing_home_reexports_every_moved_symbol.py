@@ -6,6 +6,7 @@ from pathlib import Path
 
 
 ROUTING_DIRECTORY = Path(__file__).resolve().parents[1] / "src/spendguard/manage/routing"
+SPENDGUARD_SOURCE_DIRECTORY = ROUTING_DIRECTORY.parents[1]
 ACCESSORS_NAME = "routing_accessors"
 BOOTSTRAP_NAME = "routing_resolver_bootstrap"
 
@@ -66,6 +67,20 @@ symbols_by_home = {
     for home_name in loaded_home_names
 }
 assert all(symbols_by_home.values()), "a routing home registered no moved symbols"
+
+registered_symbols = set().union(*symbols_by_home.values())
+consumed_symbols = {
+    node.func.attr.removeprefix("resolve_")
+    for module_path in SPENDGUARD_SOURCE_DIRECTORY.rglob("*.py")
+    for node in ast.walk(ast.parse(module_path.read_text()))
+    if isinstance(node, ast.Call)
+    and isinstance(node.func, ast.Attribute)
+    and isinstance(node.func.value, ast.Name)
+    and node.func.value.id == ACCESSORS_NAME
+    and node.func.attr.startswith("resolve_")
+}
+assert consumed_symbols <= registered_symbols, "a consumed routing resolver has no home registration"
+
 for home_name, moved_bindings in symbols_by_home.items():
     home = importlib.import_module(f"spendguard.manage.routing.{home_name}")
     moved_symbols = set(moved_bindings)

@@ -102,8 +102,8 @@ def _idle_bonus(lane):
     """A gentle tilt toward IDLE plans (fill spare paid capacity), from lane_utilization. 1.0 when unknown/neutral;
     bounded [0.5, 1.5] so it only breaks near-ties, never overrides a real quality gap."""
     try:
-        from ... import lane_balance
-        u = {l["lane"]: l for l in lane_balance.lane_utilization()["lanes"]}.get(lane) or {}
+        from spendguard.manage.routing import routing_accessors
+        u = {l["lane"]: l for l in routing_accessors.resolve_lane_utilization()["lanes"]}.get(lane) or {}
         util = u.get("utilization")
         if util is None:
             return 1.0
