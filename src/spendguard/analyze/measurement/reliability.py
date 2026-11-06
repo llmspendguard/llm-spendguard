@@ -245,7 +245,8 @@ def _classify_remediation(kind, resource, reason, model=None):
     AGENTICALLY (what an error means + how to fix it is a judgement). The WHOLE error is sent (never truncated).
     Fail-open: on any non-deliberate failure, a generic remediation (never breaks the health check); a DELIBERATE
     stop propagates."""
-    from ... import budget, adapters, calls, config, gate
+    from ... import budget, adapters, config, gate
+    from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
     sig = _remediation_signature(kind, resource, reason)
     _remediation_db()
     with config.ledger_op(budget.BUDGET_AUXILIARY_POOL_KEY,
@@ -256,7 +257,7 @@ def _classify_remediation(kind, resource, reason, model=None):
     model = model or config.advisor_model()
     prompt = f"resource: {kind} {resource}\nerror: {reason}\n\nGive the user the fix."   # WHOLE error, never cut
     try:
-        with calls.context(intent="spendguard:lane-remediation"):
+        with _call_corpus_accessors.resolve_calls_context(intent="spendguard:lane-remediation"):
             # No max_tokens literal — the sig sizes the OUTPUT budget from this call-class's MEASURED p99 (the small
             # issue/fix/command JSON sits well under the floor), so there is no hand-picked cap to justify.
             r = adapters.call(model, prompt, system=_REMEDIATE_SYS,

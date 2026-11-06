@@ -503,14 +503,14 @@ def record_charge(provider, model, kind, cost, project=None, conv_id=None, basis
         fp = ""
     if intent is None or actor is None:
         try:
-            from ... import calls as _c
-            intent = intent if intent is not None else (_c.current().get("intent") or "")
-            actor = actor if actor is not None else (_c.caller() or "")
+            from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
+            intent = intent if intent is not None else (_call_corpus_accessors.resolve_calls_current().get("intent") or "")
+            actor = actor if actor is not None else (_call_corpus_accessors.resolve_calls_caller() or "")
         except Exception:
             intent, actor = intent or "", actor or ""
     try:                                               # the JOB/RUN tag from the live context (spendguard.context(chain=…)):
-        from ... import calls as _cc                     # carried onto the money row so "my spend" slices by JOB, not just
-        chain = _cc.current().get("chain") or ""       # intent (which two concurrent runs of one intent would collide on)
+        from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors  # carried onto the money row so "my spend" slices by JOB, not just
+        chain = _call_corpus_accessors.resolve_calls_current().get("chain") or ""       # intent (which two concurrent runs of one intent would collide on)
     except Exception:
         chain = ""
     now = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")

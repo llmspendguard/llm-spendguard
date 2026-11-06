@@ -168,7 +168,8 @@ def agentic_advise(transcript_path, run=False, model=None):
     preserve. The judgement is the LLM's (not a threshold). Runs UNDER spendguard's own gate, caged (intent
     spendguard:compact-advise), estimate-first. Returns the verdict dict on run; prints the estimate + returns None
     otherwise. Never raises out to a hook."""
-    from ... import config, adapters, calls, pricing, ui, claudecode
+    from ... import config, adapters, pricing, ui, claudecode
+    from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
     convo = _recent_convo(transcript_path)
     if not convo:
         print("compact --tailor: no readable recent conversation at that transcript.")
@@ -195,7 +196,7 @@ def agentic_advise(transcript_path, run=False, model=None):
             print("  " + econ)
         ui.estimate_only(action="agentically decide whether/how to compact THIS conversation", cost=est)
         return None
-    with calls.context(intent="spendguard:compact-advise"):     # caged → meta budget, gated like every LLM call
+    with _call_corpus_accessors.resolve_calls_context(intent="spendguard:compact-advise"):     # caged → meta budget, gated like every LLM call
         r = adapters.call(model, convo, max_tokens=OUT, system=_ADVISE_SYS)
     if r.get("error"):
         print("compact --tailor error:", r["error"])

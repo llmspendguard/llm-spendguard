@@ -452,9 +452,9 @@ def guarded_submit(jsonl_path, model, cap_dollars, batch=True, avg_out_tokens=No
     # passed the gate — submit via OpenAI, with the intent on the recording context so the gate's provisional batch
     # row (recorded synchronously inside the gated files.create) attributes to it, not '(none)'. Save + restore the
     # caller's exact context so the intent set here never leaks into a later call on this thread.
-    from ... import calls as _calls
-    _prev_ctx = dict(_calls.current())
-    _calls.set_context(intent=intent, defer_batch_booking=True)
+    from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
+    _prev_ctx = dict(_call_corpus_accessors.resolve_calls_current())
+    _call_corpus_accessors.resolve_calls_set_context(intent=intent, defer_batch_booking=True)
     try:
         from openai import OpenAI
         client = OpenAI(api_key=_api_key("OPENAI_API_KEY"))
@@ -479,7 +479,7 @@ def guarded_submit(jsonl_path, model, cap_dollars, batch=True, avg_out_tokens=No
                 f"REFUSED: batch admission dispatch failed: {exc!r}\n{traceback.format_exc()}") from exc
         raise
     finally:
-        _calls._local.ctx = _prev_ctx             # restore the caller's exact context (never leak the submit intent)
+        _call_corpus_accessors._local.ctx = _prev_ctx             # restore the caller's exact context (never leak the submit intent)
     print(f"[submit_gate] SUBMITTED batch {b.id} (projected ${est['cost']:,.2f}). "
           f"Verify after: reconcile_openai_spend.py --estimate {est['cost']:.2f}")
     return b.id
@@ -556,10 +556,10 @@ def submit_chat_tasks(tasks, model, *, system=None, schema=None, reasoning="mini
     # record of this submit attributes to the caller's intent, not '(none)': the build-time models.resolve_effort
     # discovery probes, the gate's provisional batch row, and the http_capture control-plane events. Restored in the
     # finally so the intent never leaks into a later call on this thread.
-    from ... import calls as _calls
-    _prev_ctx = dict(_calls.current())
+    from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
+    _prev_ctx = dict(_call_corpus_accessors.resolve_calls_current())
     if intent:
-        _calls.set_context(intent=intent)
+        _call_corpus_accessors.resolve_calls_set_context(intent=intent)
     fd, tasks_path = _tf.mkstemp(prefix="spendguard-batch-tasks-", suffix=".jsonl")   # FRESH temp — never a caller path
     try:
         with _os.fdopen(fd, "w") as fh:
@@ -584,7 +584,7 @@ def submit_chat_tasks(tasks, model, *, system=None, schema=None, reasoning="mini
             raise                                    # a cap refusal HALTS — never a silent partial submission
         return {**base, "error": str(e)[:200]}
     finally:
-        _calls._local.ctx = _prev_ctx                # restore the caller's exact context (never leak the submit intent)
+        _call_corpus_accessors._local.ctx = _prev_ctx                # restore the caller's exact context (never leak the submit intent)
         try:
             _os.unlink(tasks_path)                   # the request envelope (req_path) is the durable artefact, not this
         except OSError:
@@ -701,9 +701,10 @@ def submit_message_batch(tasks, model, *, system=None, schema=None, max_out=None
     # Set intent + the DECLARED output on the recording CONTEXT for the whole submit, so the gate's provisional row (fired
     # inside the gated create) attributes to intent AND the gate's at-create estimate uses the same declared basis.
     # Restored in the finally so neither leaks into a later call on this thread.
-    from ... import calls as _calls, gate
-    _prev_ctx = dict(_calls.current())
-    _calls.set_context(intent=intent, batch_expected_out=expected_out_tokens, defer_batch_booking=True)
+    from ... import gate
+    from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
+    _prev_ctx = dict(_call_corpus_accessors.resolve_calls_current())
+    _call_corpus_accessors.resolve_calls_set_context(intent=intent, batch_expected_out=expected_out_tokens, defer_batch_booking=True)
     try:
         requests, n = build_message_batch_requests(items, model, system=system, max_out=max_out, schema=schema)
         est = gate.estimate_message_batch(requests, intent=intent, declared_out=expected_out_tokens)
@@ -756,7 +757,7 @@ def submit_message_batch(tasks, model, *, system=None, schema=None, max_out=None
             raise                                    # a cap refusal / deadline HALTS — never a silent realtime fallback
         return {**base, "error": str(e)[:200]}
     finally:
-        _calls._local.ctx = _prev_ctx                # restore the caller's exact context (never leak the submit intent)
+        _call_corpus_accessors._local.ctx = _prev_ctx                # restore the caller's exact context (never leak the submit intent)
 
 
 def main():

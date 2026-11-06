@@ -288,7 +288,7 @@ def set_quality(io_id, ok, src="judge", conf=None):
     """
     if not io_id:
         return
-    from .calls import _CONF                      # one confidence scale for both stores, defined once
+    from .call_corpus_accessors import _CONF                      # one confidence scale for both stores, defined once
     c = conf if conf is not None else _CONF.get(src, 0.7)
     try:
         with _lock:
@@ -720,7 +720,8 @@ def collect_chat_tasks(batch_ids, intent, model, require_ready=True, record_io=F
         measured["token_usage_complete"] = measured["in_tok"] is not None and measured["out_tok"] is not None
         out["usage"] = measured
     if len(ready) == 1:                              # one aggregate maps unambiguously to one provisional booking
-        from ... import budget, calls, pricing
+        from ... import budget, pricing
+        from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
         try:
             actual = (None if not measured["token_usage_complete"] else
                       pricing.batch_cost(model, measured["in_tok"], measured["out_tok"], measured["cache_read"]))
@@ -729,7 +730,7 @@ def collect_chat_tasks(batch_ids, intent, model, require_ready=True, record_io=F
         if actual is not None:
             budget.reconcile_money_batch_estimate("openai", pricing.normalize(model), intent,
                                                   measured["in_tok"], measured["out_tok"], actual)
-            calls.reconcile_calls_batch_estimate("openai", pricing.normalize(model), intent,
+            _call_corpus_accessors.resolve_calls_reconcile_calls_batch_estimate("openai", pricing.normalize(model), intent,
                                                  measured["in_tok"], measured["out_tok"], actual)
     return out
 
@@ -811,7 +812,8 @@ def collect_message_batch(batch_ids, intent, model, require_ready=True, record_i
                 record_io_sample(intent, "anthropic", model, bid, cid, "", text, in_tok=in_tok, out_tok=out_tok)
             out["results"][cid] = text
             out["collected"] += 1
-        from ... import budget, calls, pricing
+        from ... import budget, pricing
+        from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
         if batch_in_tok is None or batch_out_tok is None:
             config.warn_once("[spendguard] batch usage/value unknown: missing token telemetry; monetary estimate retained")
             continue
@@ -819,7 +821,7 @@ def collect_message_batch(batch_ids, intent, model, require_ready=True, record_i
         normalized_model = pricing.normalize(model)
         budget.reconcile_money_batch_estimate("anthropic", normalized_model, intent,
                                               batch_in_tok, batch_out_tok, actual)
-        calls.reconcile_calls_batch_estimate("anthropic", normalized_model, intent,
+        _call_corpus_accessors.resolve_calls_reconcile_calls_batch_estimate("anthropic", normalized_model, intent,
                                              batch_in_tok, batch_out_tok, actual)
     out["usage"]["token_usage_complete"] = out["usage"]["in_tok"] is not None and out["usage"]["out_tok"] is not None
     return out

@@ -172,7 +172,8 @@ def extract_available(vendor, raw, run=True):
     map). run=False estimates only (no spend). On any failure returns available=None (source stays 'unknown' —
     never a fabricated number). The WHOLE response is shown to the model (a balance body is tiny; never truncate
     what an LLM must read, or the balance/expiry field could be the part cut off)."""
-    from ... import adapters, calls
+    from ... import adapters
+    from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
     prompt = (f"Vendor: {vendor}\nIts account-balance API returned this JSON:\n{json.dumps(raw)}\n\n"
               "Report the spendable available balance now.")
     try:
@@ -180,7 +181,7 @@ def extract_available(vendor, raw, run=True):
             return {"available": None, "currency": None, "expiring": None, "note": "estimate-only"}
         from ... import plan_admission
         _meta = plan_admission.ready_meta_model(config.advisor_model())   # off a capped plan to a READY provider
-        with calls.context(intent="spendguard:balance-read"):
+        with _call_corpus_accessors.resolve_calls_context(intent="spendguard:balance-read"):
             # NO hardcoded cap: the reply IS content (the balance number), so a literal max_tokens would be a cap on
             # a content call — the exact truncate-to-wrong-number defect. The sig lets _call_guarded floor + measure
             # the budget and clamp it to the model ceiling, so a tiny JSON reply is never cut off.

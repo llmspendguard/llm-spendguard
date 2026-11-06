@@ -79,10 +79,11 @@ def _pairs():
 
 def adjudicate_grounding(pair, model=None):
     """Was THIS estimate grounded? Agentic — the answer depends on how the number was produced."""
-    from ... import adapters, calls, config, output_contract
+    from ... import adapters, config, output_contract
+    from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
     model = model or config.advisor_model()
     body = json.dumps({k: v for k, v in dict(pair).items() if k not in ("prompt", "output")}, default=str)
-    with calls.context(intent="spendguard:estimate-divergence"):
+    with _call_corpus_accessors.resolve_calls_context(intent="spendguard:estimate-divergence"):
         r = adapters.call(model,
                           f"An estimate and the actual bill for the same job:\n\n{body}\n\n"   # WHOLE body — a grounding
                           # judge truncated at 2000 chars can lose the fields the verdict turns on; over-window is

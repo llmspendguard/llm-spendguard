@@ -1609,7 +1609,8 @@ _STORY_SYS = (
 def story(by="week", days=7, run=False):
     """Caged synth over the period's work rows → a narrative STORY + private WORK INSIGHTS (findings/decisions/
     gotchas/next — distinct from cost/LLM-usage learnings). Estimate-first; the LLM call is caged under caps.meta."""
-    from ... import config, adapters, calls, pricing, ui
+    from ... import config, adapters, pricing, ui
+    from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
     digs = _read_session_digests(days)                     # ONE home for the guard + glob (see _read_session_digests)
     if digs is None:                                       # projects dir missing/unreadable (named there)
         return 0
@@ -1628,7 +1629,7 @@ def story(by="week", days=7, run=False):
     if not run:
         ui.estimate_only(action="synthesize the work story + private insights", cost=est)
         return 0
-    with calls.context(intent="spendguard:worklog"):     # caged → meta budget, excluded from the workload corpus
+    with _call_corpus_accessors.resolve_calls_context(intent="spendguard:worklog"):     # caged → meta budget, excluded from the workload corpus
         r = adapters.call(model, prompt, max_tokens=OUT, system=_STORY_SYS)
     if r.get("error"):
         print("  error:", r["error"]); return 1

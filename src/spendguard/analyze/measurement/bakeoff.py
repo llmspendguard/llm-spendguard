@@ -17,7 +17,8 @@ otherwise, and the quality JUDGE is an LLM (never a keyword rule) — the same j
 from ...capability_cli_parsing import add_registered_cli_argument
 import json
 
-from ... import calls, config, pricing, callio
+from ... import config, pricing, callio
+from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
 from ...submit import _count_tokens
 
 _BAKEOFF_OUT_EST = 500     # per-call OUTPUT tokens for the PRE-FLIGHT estimate only — a budget guard, not a cap;
@@ -31,6 +32,13 @@ _JUDGE_SYS = ("You evaluate whether an LLM OUTPUT is a usable, CORRECT result fo
               '{"good": true} when the output is a usable, correct result; {"good": false} otherwise. No prose.')
 _JUDGE_SCHEMA = {"type": "object", "additionalProperties": False, "required": ["good"],
                  "properties": {"good": {"type": "boolean"}}}
+
+
+def __getattr__(attribute_name):
+    """Preserve the legacy test monkeypatch surface without an import edge to calls."""
+    if attribute_name == "calls":
+        return _call_corpus_accessors.resolve_calls_module_contract()
+    raise AttributeError(attribute_name)
 
 
 def _task_parts(task):
@@ -100,16 +108,17 @@ def _judge_one(prompt, output, judge_model, images=None):
     the image (images=…): a caption's faithfulness CANNOT be judged from text alone, so a judge that scored it
     without seeing the image would be measuring nothing. images is passed ONLY when present — a text task is
     byte-for-byte the prior call."""
-    from ... import adapters, advisor, calls
+    from ... import adapters, advisor
+    from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
     # WHOLE evidence: the judge scores the candidate's FULL output — a [:4000] slice would rate only its head,
     # evidence-truncating the very thing being judged. no_substitution PINS the judge so every candidate is rated
     # by the SAME ruler, never a lane-swapped one (a judge that varies per candidate is not a comparable number).
     # META CONTEXT: this is spendguard's OWN ruler call, so it must be attributed to spendguard:* and meta-capped —
     # NOT the caller's workload intent. Passing sig="spendguard:…" is not enough: inside a caller's ambient
-    # `with calls.context(intent=…)` (a bakeoff runs under one), adapters.call does NOT override the ambient intent, so
+    # `with _call_corpus_accessors.resolve_calls_context(intent=…)` (a bakeoff runs under one), adapters.call does NOT override the ambient intent, so
     # the judge's $ would land under the caller's intent (the warden 2026-09-25 attribution split). An explicit nested
     # context forces it, exactly as requirement_judge._meta_call already does.
-    with calls.context(intent="spendguard:bakeoff-judge"):
+    with _call_corpus_accessors.resolve_calls_context(intent="spendguard:bakeoff-judge"):
         r = adapters.call(judge_model, advisor._judge_prompt(prompt, output or ""),
                           max_tokens=_JUDGE_OUT, system=_JUDGE_SYS, schema=_JUDGE_SCHEMA,
                           sig="spendguard:bakeoff-judge", no_substitution=True,
@@ -265,8 +274,8 @@ def bakeoff(intent, candidates=None, prompts=None, sample_n=5, run=False, budget
                     _det = {k: v for k, v in (("temperature", temperature), ("top_p", top_p), ("seed", seed)) if v is not None}
                     import uuid as _uuid
                     _measurement_call_id = _uuid.uuid4().hex
-                    _prior_call_context = dict(calls.current() or {})
-                    calls.set_context(intent=intent, who="bakeoff", root_call=_measurement_call_id, attempt=1,
+                    _prior_call_context = dict(_call_corpus_accessors.resolve_calls_current() or {})
+                    _call_corpus_accessors.resolve_calls_set_context(intent=intent, who="bakeoff", root_call=_measurement_call_id, attempt=1,
                                       requested_model=c, measurement=True)
                     try:
                         r = adapters.call(c, txt, sig=intent, timeout_s=120, reasoning=replay_effort, no_substitution=True,
@@ -274,7 +283,7 @@ def bakeoff(intent, candidates=None, prompts=None, sample_n=5, run=False, budget
                                           **({"measurement": True} if _det else {}), **_det,
                                           **({"images": imgs} if imgs else {}))
                     finally:
-                        calls._local.ctx = _prior_call_context
+                        _call_corpus_accessors._local.ctx = _prior_call_context
                     if r.get("error"):
                         n_err += 1                                      # a dropped run is COUNTED + surfaced, never silent —
                         last_error = (r.get("error") or "")[:140]      # a candidate/effort that fails every prompt is visible,
@@ -316,7 +325,7 @@ def bakeoff(intent, candidates=None, prompts=None, sample_n=5, run=False, budget
                         n_good += 1 if verdict else 0
                     # RECORD per (intent, model, EFFORT) into the corpus advise/best_value read — this is the learning.
                     _served_model = r.get("model") or c.split(":", 1)[-1]
-                    calls.finalize_bakeoff_measurement(
+                    _call_corpus_accessors.resolve_calls_finalize_bakeoff_measurement(
                         _measurement_call_id, r.get("provider") or adapters.provider_for(_served_model),
                         c, _served_model, cost, r.get("in_tok"), r.get("out_tok"),
                         intent, q, r.get("chosen_effort", replay_effort),

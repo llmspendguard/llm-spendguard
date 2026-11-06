@@ -78,7 +78,8 @@ def _item_attribution_prompt(taxo, batch):
 def classify_items(items, taxo, run, batch_size=25):
     """items: [{"id", "text"}] → {id: {"org","team","project","confidence"}}. Caged + estimate-first. Returns {}
     on estimate-only (run=False). Items that fail to classify are simply absent from the result."""
-    from ... import adapters, calls, ui
+    from ... import adapters, ui
+    from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
     items = [it for it in items if (it.get("text") or "").strip()]
     if not items:
         return {}
@@ -91,7 +92,7 @@ def classify_items(items, taxo, run, batch_size=25):
     out = {}
     import re
     for b in batches:
-        with calls.context(intent="spendguard:categorize"):
+        with _call_corpus_accessors.resolve_calls_context(intent="spendguard:categorize"):
             r = adapters.call(model, _item_attribution_prompt(taxo, b), max_tokens=45 * len(b) + 250, system=_SYS)
         if r.get("error"):
             continue

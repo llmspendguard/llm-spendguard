@@ -10,7 +10,8 @@ so each learning is reusable and (when scrubbed) shareable. Caged (spendguard:re
 """
 
 from ...capability_cli_parsing import add_registered_cli_argument
-from ... import calls, callio, learn, config, pricing
+from ... import callio, learn, config, pricing
+from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
 from ...submit import _count_tokens
 
 META = "spendguard"
@@ -72,7 +73,7 @@ def _bundles(top=10):
     """Top (intent, model) combos by cost, each with cost + quality + token-ratio + a sample + chat notes."""
     rates = callio.good_rates()
     out = []
-    for intent, model, jobs, cost, good, bad in sorted(calls.cost_summary(), key=lambda r: -(r[3] or 0)):
+    for intent, model, jobs, cost, good, bad in sorted(_call_corpus_accessors.resolve_calls_cost_summary(), key=lambda r: -(r[3] or 0)):
         tr = _token_ratio(None if intent == "(none)" else intent, model)
         if not tr or not (tr["prompt"] or "").strip():   # need the prompt to assess approach (skips empty/anthropic)
             continue
@@ -128,7 +129,7 @@ def review(run=False, top=10):
         return dict(requests=1, in_tok=in_tok, out_tok=_OUT, cost=cost, model=model)
 
     from ... import adapters
-    with calls.context(intent=f"{META}:review"):
+    with _call_corpus_accessors.resolve_calls_context(intent=f"{META}:review"):
         r = adapters.call(model, prompt, max_tokens=_OUT, system=_SYS)
     if r["error"]:
         print(f"  ERROR: {r['error']}")

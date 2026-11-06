@@ -3,7 +3,7 @@
 After every gated FLOW (a `with spendguard.context(...)` block, a batch submit, or a CLI command) we emit one
 compact summary: what ran, input/output tokens, estimate → actual cost, and the running daily/weekly/monthly tally.
 Per-FLOW, never per-call — a chat loop fires hundreds of tiny calls and a receipt each would be noise; we aggregate
-at the flow boundary (see `calls.context`).
+at the flow boundary (see `_call_corpus_accessors.resolve_calls_context`).
 
 TWO AXES, NEVER SUMMED (the invariant the whole system enforces):
   • ACTUAL-$   — billed workload (batch + realtime + GPU). Reconciles to provider truth. Source: the gate ledger
@@ -1297,11 +1297,11 @@ def _emit_contract_line(intent, t):
 
 
 def emit_flow(intent, chain, start, contract=None) -> None:
-    """Emit a per-flow receipt at a flow boundary (calls.context exit). `start` is the (rowid, usd) snapshot taken
+    """Emit a per-flow receipt at a flow boundary (_call_corpus_accessors.resolve_calls_context exit). `start` is the (rowid, usd) snapshot taken
     at flow enter. Guarded + level-gated; only acts at 'flow'/'verbose'. Silent if the flow neither called nor spent.
     NEVER raises into the caller's code path.
 
-    `contract` is the flow's realtime output tally (see calls.context). A flow whose outputs stopped matching
+    `contract` is the flow's realtime output tally (see _call_corpus_accessors.resolve_calls_context). A flow whose outputs stopped matching
     their declared shape is reported UNCONDITIONALLY — a spend receipt that stays quiet while every response is
     unparseable is the same DONE-not-CORRECT failure the batch gate was fixed for."""
     try:
@@ -1318,8 +1318,8 @@ def emit_flow(intent, chain, start, contract=None) -> None:
         start_rid, start_usd = (start or (0, 0.0))
         agg = None
         try:
-            from ... import calls
-            agg = calls.flow_agg(start_rid, chain)
+            from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
+            agg = _call_corpus_accessors.resolve_calls_flow_agg(start_rid, chain)
         except Exception:
             pass
         actual = None

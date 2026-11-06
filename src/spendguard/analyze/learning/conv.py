@@ -19,7 +19,8 @@ CLI: `spendguard mine-conv {index,synth} [--transcripts PATH] [--limit N] [--run
 
 from ...capability_cli_parsing import add_registered_cli_argument, registered_cli_option_token
 import os, re, json, glob, hashlib, functools, datetime
-from ... import config, calls, learn
+from ... import config, learn
+from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
 from spendguard.store.money_ledger.ledger_write_decorators import best_effort_ledger_function, serialize_ledger_function
 
 _DEFAULT_TDIR = os.path.expanduser("~/.claude/projects")
@@ -254,7 +255,8 @@ def classify_user_asks(items, run=True):
     Same shape as classify_evidence: batched, cached by content hash so re-runs and the second consumer read
     free, caged under spendguard:user-ask, cheap model. FAILS OPEN — an unjudged or failed item comes back
     True, because the damaging error here is deleting a real ask, not keeping a spurious one."""
-    from ... import adapters, calls
+    from ... import adapters
+    from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
     items = [c for c in items if (c.get("text") or "").strip()]
     res = {c["id"]: True for c in items}                  # fail-open default, applied before anything can fail
     if not items or not run:
@@ -277,7 +279,7 @@ def classify_user_asks(items, run=True):
         prompt = (body + '\n\nFor each numbered item reply one line: `<i> <true|false>` — true if a human '
                   'typed it as a request.')
         try:
-            with calls.context(intent="spendguard:user-ask"):
+            with _call_corpus_accessors.resolve_calls_context(intent="spendguard:user-ask"):
                 r = adapters.call(model, prompt, max_tokens=8 * len(b) + 120, system=_ASK_SYS)
             if r.get("error"):
                 continue                                  # stays True — fail open, never a silent drop
@@ -812,7 +814,8 @@ def classify_evidence(chunks, run=False, batch_size=20):
     replacing their separate keyword pre-filters. chunks: [{"id","text"}] → {id: {spend_evidence,kind,cost_lesson}}.
     A BROAD deterministic cost-SHAPE cut runs first (never a topic keyword → no silent drops); only candidates reach
     the LLM. Cached by content hash (re-runs + BOTH consumers read free). Estimate-first: run=False → no spend."""
-    from ... import adapters, calls, pricing, ui, attribution
+    from ... import adapters, pricing, ui, attribution
+    from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
     chunks = [c for c in chunks if (c.get("text") or "").strip()]
     res = {c["id"]: dict(_NONE_EV) for c in chunks}
     cands = [c for c in chunks if _EVIDENCE_CANDIDATE.search(c["text"])]   # broad mechanical cut (deterministic)
@@ -841,7 +844,7 @@ def classify_evidence(chunks, run=False, batch_size=20):
 
     def _run_batch(arg):                                  # one nano call per batch; PARALLEL (corpus = 100s of batches)
         b, body = arg
-        with calls.context(intent="spendguard:classify_evidence"):
+        with _call_corpus_accessors.resolve_calls_context(intent="spendguard:classify_evidence"):
             r = adapters.call(model, body, max_tokens=25 * len(b) + 200, system=_EVIDENCE_SYS)
         return b, r
     with _cf.ThreadPoolExecutor(max_workers=8) as ex:
@@ -1190,7 +1193,7 @@ def synth(tdir=None, run=False, limit=40):
         return dict(requests=1, in_tok=in_tok, out_tok=out_tok, cost=cost, model=model)
 
     from ... import adapters
-    with calls.context(intent="spendguard:conv-synth"):
+    with _call_corpus_accessors.resolve_calls_context(intent="spendguard:conv-synth"):
         r = adapters.call(model, prompt, max_tokens=out_tok, system=sys)
     if r["error"]:
         print(f"  ERROR: {r['error']}")

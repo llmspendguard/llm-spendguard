@@ -1073,7 +1073,8 @@ def _chat_caps():
     """Conversational cap setup. Uses YOUR own key for ONE small realtime call, caged under caps.meta (intent
     spendguard:init — separate budget, excluded from the corpus), estimate-first. NEVER the server. Returns
     {llm,compute,total} monthly USD, or None to fall back to the deterministic prompts."""
-    from .. import gate, adapters, calls
+    from .. import gate, adapters
+    from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
     gate.install()   # ensure the gate is enforcing IN THIS PROCESS so the call is metered under caps.meta
     model = config.advisor_model()
     try:
@@ -1089,7 +1090,7 @@ def _chat_caps():
            'Example: {"llm":2000,"compute":800,"total":2800}')
     print(f'\n  (this uses YOUR {model} key for one small call, caged under caps.meta ${config.meta_cap():.2f}/day, est ~$0.001 — never the server)')
     try:
-        with calls.context(intent="spendguard:init"):
+        with _call_corpus_accessors.resolve_calls_context(intent="spendguard:init"):
             r = adapters.call(model, ans, sig="spendguard:init", system=sys)
     except Exception as e:
         print(f"  (conversational setup unavailable: {e} — falling back to prompts)")

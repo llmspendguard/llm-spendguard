@@ -30,7 +30,8 @@ Concurrency/rate limiting is automatic: every call routes through the dispatch g
 """
 
 from .capability_cli_parsing import add_registered_cli_argument
-from .. import vendor_call, pricing, gate, config, calls
+from .. import vendor_call, pricing, gate, config
+from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
 
 # Named defaults (a value with a name, overridable per call) — never a literal at a call site.
 _DEFAULT_DEADLINE_S = 200.0        # per-vendor default when the caller names none; time_budget refines it per model
@@ -317,7 +318,7 @@ def ask(prompt, *, vendors=None, n=None, schema=None, system=None, purpose="ask"
         # Refuse on EITHER an over-budget estimate OR an unpriceable metered vendor: a vendor whose price we
         # cannot look up estimates to $0, and a $0 estimate would sail past any budget and then spend unbounded.
         raise BudgetRefused(estimate, float(budget_usd), detail)
-    with config.scoped_intent_cap(purpose or calls.current().get("intent"), budget_usd):
+    with config.scoped_intent_cap(purpose or _call_corpus_accessors.resolve_calls_current().get("intent"), budget_usd):
         dl = float(deadline_s or _DEFAULT_DEADLINE_S)
         if mode == "first":
             fan = vendor_call.first_ok(vlist, prompt, deadline_s=dl, need=int(require or 1), purpose=purpose,

@@ -220,9 +220,11 @@ def _reconstruction_item(value, *, available=True, reason=None):
 
 def reconstruct(call_id):
     """Return the seven audit items for one physical call, with explicit availability."""
-    from . import calls, content_retention
+    from . import content_retention
+    from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
+    from ... import config
 
-    with calls.config.ledger_op('calls', calls._ensure_call_observation_schema) as connection:
+    with config.ledger_op('calls', _call_corpus_accessors.resolve_calls__ensure_call_observation_schema) as connection:
         call_columns = (
             "id", "ts", "intent", "caller", "provider", "model", "kind", "cost", "latency",
             "effort", "executor", "project", "outcome", "disposition", "provider_error",

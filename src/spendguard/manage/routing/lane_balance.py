@@ -232,7 +232,8 @@ def delegate(task, system=None, lanes=None, reasoning="low", max_tokens=None, in
     lane's prompt, validates the reply locally (output_contract), and falls back to that model's metered API (strict
     on OpenAI/Anthropic) if a lane's output is off-shape. The JSON answer stays in `text`. (A schema request skips
     the text-only lane bandit and uses this cheapest-idle path, which still gets adapters-level lane arbitrage.)"""
-    from ... import adapters, calls
+    from ... import adapters
+    from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
     intent = intent or "spendguard:delegate"
     if enqueue:                                   # durable fire-and-forget: park it for the drainer, don't run now
         from ... import lane_queue
@@ -288,7 +289,7 @@ def delegate(task, system=None, lanes=None, reasoning="low", max_tokens=None, in
         tried.append(model)
         # Omitted budgets stay omitted; explicit caller values still reach adapters for its warning.
         budget_kwargs = {} if max_tokens is None else {"max_tokens": max_tokens}
-        with calls.context(intent=intent):
+        with _call_corpus_accessors.resolve_calls_context(intent=intent):
             r = adapters.call(model, task, system=system, reasoning=reasoning, sig=intent,
                               schema=schema, no_metered_fallback=refuse_billed, **budget_kwargs)
         txt = (r.get("text") or "").strip()
@@ -595,9 +596,10 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None,
     import threading as _th
     import time as _time
     import concurrent.futures as _cf
-    from ... import adapters, calls, dispatch, lane_catalog
+    from ... import adapters, dispatch, lane_catalog
+    from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
 
-    _bulk_who = (calls.current() or {}).get("who") or calls.caller()   # ORIGINATING caller, captured on THIS submitting
+    _bulk_who = (_call_corpus_accessors.resolve_calls_current() or {}).get("who") or _call_corpus_accessors.resolve_calls_caller()   # ORIGINATING caller, captured on THIS submitting
     #   thread (the app frame is on the stack here). The lane/API worker threads below have no app frame, so carry who
     #   into their set_context exactly like intent — else a worker's metered-fallback wall-clock daemon attributes the
     #   row to None / a thread trampoline instead of the code that caused the fan.
@@ -972,7 +974,7 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None,
                 return i, {**_b, "reason": "dispatch_saturated", "error": f"queue full: no slot within {_remaining:.0f}s"}
             _raised = None
             try:
-                calls.set_context(intent=intent, who=_bulk_who)   # tag this worker's calls: intent + ORIGINATING caller
+                _call_corpus_accessors.resolve_calls_set_context(intent=intent, who=_bulk_who)   # tag this worker's calls: intent + ORIGINATING caller
                 r = adapters.call(_vm, _p, system=system, reasoning=reasoning, sig=intent,
                                   timeout_s=deadline_s, no_metered_fallback=refuse_billed, schema=schema,
                                   images=(_imgs or None), no_substitution=True,   # NAMED model — never swap it (pinned)
@@ -1055,7 +1057,7 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None,
             return i, {"text": None, "lane": lane, "use_name": use_name, "model": model, "billed": False,
                        "reason": "dispatch_saturated", "error": f"queue full: no lane slot within {deadline_s:.0f}s"}
         try:
-            calls.set_context(intent=intent, who=_bulk_who)   # tag this worker thread's calls: intent + ORIGINATING caller
+            _call_corpus_accessors.resolve_calls_set_context(intent=intent, who=_bulk_who)   # tag this worker thread's calls: intent + ORIGINATING caller
             # COST-AWARE: an EXPENSIVE arm's lane miss does not bill its pricey metered model unless the caller opted
             # into paid — the item then errors $0 and retries on a cheaper lane (see _allow_paid_expensive above).
             _eff_no_fallback = no_fallback or (not _allow_paid_expensive and _arm_fallback_pricey(lane, use_name))
@@ -1698,12 +1700,12 @@ def propose_substitutes(intent, primary_model, candidates=None):
     if not cands:
         return {"acceptable": [], "rationale": "no idle-lane candidate models configured (set advisor.lane_models)",
                 "pending": pending_for(intent)}
-    from ... import calls
+    from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
     judge = config._cfg_get("advisor", "judge_model", None) or config.advisor_judge_model()
     prompt = (f"INTENT: {intent}\nPRIMARY model (currently used): {primary_model}\n"
               f"CANDIDATE substitute models on idle plans: {cands}\n\n"
               f"Which of the candidates are acceptable substitutes for this intent? Return {{acceptable, rationale}}.")
-    with calls.context(intent="spendguard:substitute"):
+    with _call_corpus_accessors.resolve_calls_context(intent="spendguard:substitute"):
         # no_substitution: the proposal is RECORDED as proposed_by=judge below — the bandit must not serve a different
         # model than the judge we attribute the decision to (measurement-identity integrity)
         r = adapters.call(judge, prompt, system=_PROPOSE_SYS, schema=_PROPOSE_SCHEMA, max_tokens=_PROPOSE_OUT,
@@ -1748,12 +1750,13 @@ def adapt_system(intent, target_model, system, model=None):
     if not system.strip():
         result = {"adapted_system": "", "changed": False, "note": "no system prompt to adapt"}
     else:
-        from ... import calls, output_contract
+        from ... import output_contract
+        from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
         prompt = (f"TARGET model: {target_model}\nINTENT: {intent}\n\nSYSTEM PROMPT TO ADAPT:\n{system}\n\n"   # WHOLE
                   # prompt — adapting a version truncated at 8000 chars drops the tail of the instructions; an
                   # over-window prompt is refused loudly by adapters.call, never clipped.
                   f"Adapt it for the target model WITHOUT changing the task. Return {{adapted_system, changed, note}}.")
-        with calls.context(intent="spendguard:adapt"):
+        with _call_corpus_accessors.resolve_calls_context(intent="spendguard:adapt"):
             r = adapters.call(judge, prompt, system=_ADAPT_SYS, schema=_ADAPT_SCHEMA, max_tokens=_ADAPT_OUT)
         obj, _ = output_contract.as_obj_lenient((r or {}).get("text") or "")   # lenient: malformed reply → (None,False), never raises
         result = (obj if isinstance(obj, dict) and obj.get("adapted_system")

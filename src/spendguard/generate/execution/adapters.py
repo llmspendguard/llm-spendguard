@@ -671,22 +671,22 @@ def generation(temperature=None, top_p=None, seed=None):
         with adapters.generation(temperature=0, seed=20261008):
             bakeoff("vocab-ab", candidates=[...], run=True)   # every arm's call is deterministic + metered
     """
-    from ... import calls as _c
-    prev = (_c.current() or {}).get("gen_params")
+    from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
+    prev = (_call_corpus_accessors.resolve_calls_current() or {}).get("gen_params")
     merged = dict(prev or {})
     for k, v in (("temperature", temperature), ("top_p", top_p), ("seed", seed)):
         if v is not None:
             merged[k] = v
-    _c.set_context(gen_params=merged)
+    _call_corpus_accessors.resolve_calls_set_context(gen_params=merged)
     try:
         yield
     finally:
-        c = dict(_c.current() or {})
+        c = dict(_call_corpus_accessors.resolve_calls_current() or {})
         if prev is None:
             c.pop("gen_params", None)
         else:
             c["gen_params"] = prev
-        _c._local.ctx = c
+        _call_corpus_accessors._local.ctx = c
 
 
 def _provider_schema(schema):
@@ -750,7 +750,8 @@ def _book_substitution(r):
         cost = r.get("cost")
         if cost is None:                                 # errored/refused → nothing ran, nothing to book
             return
-        from ... import pricing, guard, calls as _cbk
+        from ... import pricing, guard
+        from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
         actual = float(cost or 0.0)
         try:
             base = (None if r.get("in_tok") is None or r.get("out_tok") is None
@@ -764,7 +765,7 @@ def _book_substitution(r):
                  (base - actual) if actual > 0 and base > actual else 0.0)
         _basis = "best-value" if r.get("best_value") else "advisor"
         chosen = f"{r.get('provider')}:{r.get('model')}" if r.get("provider") else r.get("model")
-        guard.record_decision(intent=(_cbk.current() or {}).get("intent"),
+        guard.record_decision(intent=(_call_corpus_accessors.resolve_calls_current() or {}).get("intent"),
                               requested_model=requested, requested_effort=r.get("requested_effort"),
                               chosen_model=chosen, chosen_effort=r.get("chosen_effort"),
                               counterfactual_usd=base, actual_usd=actual, saved_usd=saved, basis=_basis,
@@ -1150,8 +1151,8 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
     # because a silently-varying governed result is a wrong-result risk; a knob coming from measurement=True OR a
     # deliberate scoped/config default is an EXPLICIT, auditable opt-in and is allowed. Runs ONCE at the top (skipped on
     # the _no_guard re-entry _call_guarded makes); the RESOLVED values then ride **kw down to _call_once on both entries.
-    from ... import calls as _gen_ctx
-    _ctx_now = _gen_ctx.current() or {}
+    from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
+    _ctx_now = _call_corpus_accessors.resolve_calls_current() or {}
     _ctx_gen = {k: v for k, v in (_ctx_now.get("gen_params") or {}).items() if v is not None}
     _cfg_gen = _generation_config_defaults()
     _explicit_gen = {k: v for k, v in (("temperature", temperature), ("top_p", top_p), ("seed", seed)) if v is not None}
@@ -1279,8 +1280,9 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
             from ... import gate as _bvg                 # imported OUTSIDE the try so the deliberate-stop except below
             #                                            can ALWAYS be evaluated (never a NameError on an import hiccup)
             try:
-                from ... import best_value as _bv, calls as _bvc
-                _bv_intent = intent or (_bvc.current() or {}).get("intent") or sig
+                from ... import best_value as _bv
+                from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
+                _bv_intent = intent or (_call_corpus_accessors.resolve_calls_current() or {}).get("intent") or sig
                 # FLOOR-PRESERVING PIN — best-value must be floor-IMPROVING, never floor-LOWERING. The global DEFAULT
                 # (advisor.default_reasoning=best-value, INHERITED by a call that pinned model= and never asked for a
                 # swap) titrates EFFORT for the pinned model ONLY (pin_model=True) — it NEVER re-picks the model, and
@@ -1332,11 +1334,12 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
         from ... import plan_admission as _pa
         _plan_redirect = _pa.decide(model, intent or sig, auth_over_quota=auth_over_quota)
         if _plan_redirect.get("action") == "refuse":
-            from ... import calls as _refused_calls, config as _refused_config, routing_audit as _refused_audit
+            from ... import config as _refused_config, routing_audit as _refused_audit
+            from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
             _refused_call_id = _refused_config.uid()
             _refused_snapshot = _refused_audit.build_routing_snapshot(
                 intent=intent or sig, plan_decision=_plan_redirect, best_value_pick=_pick)
-            _refused_calls.record_call(
+            _call_corpus_accessors.resolve_calls_record_call(
                 provider_for(model), model, "realtime", 0.0, latency=0.0, intent=intent or sig,
                 effort=reasoning, outcome="refused", disposition="failed",
                 disposition_reason=_plan_redirect["reason"], call_id=_refused_call_id,
@@ -1351,21 +1354,21 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
             model = _plan_redirect["model"]
             no_substitution = True
             _internal_pin = True
-    # ATTRIBUTION: a caller that passed a sig/intent but is NOT inside a `with calls.context(...)` must still have
+    # ATTRIBUTION: a caller that passed a sig/intent but is NOT inside a `with _call_corpus_accessors.resolve_calls_context(...)` must still have
     # THIS call's ledger row tagged. gate._record_rt reads the THREAD-LOCAL intent, and sig= alone never set it — so a
     # metered call passing only sig= landed in '(none)' despite the tag, the exact gap the sig/intent alias claims to
     # close (a PAID call with no intent is invisible to advise/denylists/rollups). Set it for the dispatch and restore
     # the prior context EXACTLY afterwards, so it never leaks past this call. An ambient context intent WINS — the
-    # caller's explicit `with calls.context(...)` is never overridden — and a $0/lane call is tagged the same way.
-    from ... import calls as _sig_ctx
-    _ctx_before = dict(_sig_ctx.current() or {})
+    # caller's explicit `with _call_corpus_accessors.resolve_calls_context(...)` is never overridden — and a $0/lane call is tagged the same way.
+    from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
+    _ctx_before = dict(_call_corpus_accessors.resolve_calls_current() or {})
     _retained_call_id = _ctx_before.get("root_call")
     if not _retained_call_id and not _no_guard and not _probe:
         from ... import config as _retention_config
         _retained_call_id = _retention_config.uid()
-        _sig_ctx.set_context(root_call=_retained_call_id, attempt=1)
+        _call_corpus_accessors.resolve_calls_set_context(root_call=_retained_call_id, attempt=1)
     from ... import routing_audit as _routing_audit
-    _sig_ctx.set_context(
+    _call_corpus_accessors.resolve_calls_set_context(
         routing_snapshot=_routing_audit.build_routing_snapshot(
             intent=intent or sig or _ctx_before.get("intent"),
             plan_decision=_plan_redirect,
@@ -1376,35 +1379,35 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
         request_decomposition=decomposition,
     )
     if sig and not _ctx_before.get("intent"):
-        _sig_ctx.set_context(intent=sig)
+        _call_corpus_accessors.resolve_calls_set_context(intent=sig)
     if measurement and not _ctx_before.get("measurement"):
         # mark the call-class as a MEASUREMENT so gate._record_rt records an explicit effort sentinel (never an
         # ambiguous NULL) when the model sent no reasoning_effort — restored with the rest of the context after.
-        _sig_ctx.set_context(measurement=True)
+        _call_corpus_accessors.resolve_calls_set_context(measurement=True)
     if not _ctx_before.get("who"):
         # Capture the REAL caller ON THIS ENTRY THREAD so it propagates (with intent) into every dispatch/daemon
-        # worker below. A worker's own calls.caller() cannot see the app frame across the thread boundary — it lands
+        # worker below. A worker's own _call_corpus_accessors.resolve_calls_caller() cannot see the app frame across the thread boundary — it lands
         # None (post-trampoline-hardening) or the old threading.py:run — so the daemon boundaries' `ctx['who'] or
         # caller()` had no real frame to carry. Resolved here, where the app frame IS on the stack; a nested worker
         # re-entry resolves None and leaves the inherited who intact. Restored with the rest of the context after.
-        _who_entry = _sig_ctx.caller()
+        _who_entry = _call_corpus_accessors.resolve_calls_caller()
         if _who_entry:
-            _sig_ctx.set_context(who=_who_entry)
+            _call_corpus_accessors.resolve_calls_set_context(who=_who_entry)
     if not _ctx_before.get("call_class"):
         if _probe:
-            _sig_ctx.set_context(call_class="probe")
+            _call_corpus_accessors.resolve_calls_set_context(call_class="probe")
         elif str(sig or "").startswith("spendguard:"):
             # `spendguard:` is the explicit internal-intent protocol, not a semantic guess. Keep an enclosing workload
             # intent intact while stamping this nested meta dispatch on its independent attribution dimension.
-            _sig_ctx.set_context(call_class="gate_internal")
+            _call_corpus_accessors.resolve_calls_set_context(call_class="gate_internal")
     if _plan_redirect and _plan_redirect.get("action") == "redirect":
-        _sig_ctx.set_context(requested_model=_plan_redirect["requested_model"],
+        _call_corpus_accessors.resolve_calls_set_context(requested_model=_plan_redirect["requested_model"],
                              redirect_reason=_plan_redirect["reason"], resolved_lane=_plan_redirect["lane"])
     elif _bv_from and model != _bv_from:
-        _sig_ctx.set_context(requested_model=_bv_from, redirect_reason="best-value: " + str(_bv_why or "measured pick"),
+        _call_corpus_accessors.resolve_calls_set_context(requested_model=_bv_from, redirect_reason="best-value: " + str(_bv_why or "measured pick"),
                              resolved_lane=(_LANES.get(provider_for(model), (None,))[0]))
     elif _resolved_from and model != _resolved_from:
-        _sig_ctx.set_context(requested_model=_resolved_from, redirect_reason="tier mapping: " + str(_resolution or "served id"),
+        _call_corpus_accessors.resolve_calls_set_context(requested_model=_resolved_from, redirect_reason="tier mapping: " + str(_resolution or "served id"),
                              resolved_lane=(_LANES.get(provider_for(model), (None,))[0]))
     # GOVERNED (opt-in `governed=True`, for a CONCURRENT fan) — enter the dispatch governor with the SAME
     # shed-to-metered + deadline-split policy vendor_call uses, via the shared dispatch.admit brain, so the two
@@ -1453,7 +1456,7 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
         _routed_result = _sr.route(model, prompt, intent or sig, system=system, reasoning=reasoning,
                                    schema=schema, timeout_s=timeout_s)
         if _routed_result is not None:
-            _sig_ctx._local.ctx = _ctx_before            # returning early — restore the caller's context exactly
+            _call_corpus_accessors._local.ctx = _ctx_before            # returning early — restore the caller's context exactly
             _routed_result["call_id"] = _routed_result.get("call_id") or _retained_call_id
             from ... import content_retention as _routed_content_retention
             _routed_content_retention.record_governed_call_content(
@@ -1467,9 +1470,10 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
                 return _routed_result                    # genuine success → home
             if not _no_guard and not _probe and _routed_result.get("error"):
                 try:
-                    from ... import vendor_call as _vcr, calls as _rcr
+                    from ... import vendor_call as _vcr
+                    from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
                     _oc_r, _ = _vcr._classify(_routed_result)
-                    _rcr.record_call(_routed_result.get("provider") or provider_for(model),
+                    _call_corpus_accessors.resolve_calls_record_call(_routed_result.get("provider") or provider_for(model),
                                      _routed_result.get("model") or model, "realtime",
                                      float(_routed_result.get("cost") or 0.0), in_tok=_routed_result.get("in_tok") or 0,
                                      out_tok=_routed_result.get("out_tok"), latency=_routed_result.get("latency"),
@@ -1494,7 +1498,7 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
                               shed=False,                     # busy free lanes wait; only recovery may authorize paid
                               skip_lane=bool(metered_only))   # per-intent output, so OTPM isn't under-counted. metered_only → pace on the vendor RPM/TPM
         if not _adm.ok:
-            _sig_ctx._local.ctx = _ctx_before
+            _call_corpus_accessors._local.ctx = _ctx_before
             return {"provider": _gprov, "model": model, "text": None, "parsed": None, "in_tok": 0, "out_tok": 0,
                     "cost": None, "latency": 0.0, "finish_reason": None, "truncated": None, "executor": None,
                     "max_tokens_used": None, "substituted_from": None,
@@ -1542,7 +1546,7 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
                                temperature=temperature, top_p=top_p, seed=seed, intent=intent,
                                auth_over_quota=auth_over_quota)   # metered_only=True → skip the lane
         finally:
-            _sig_ctx._local.ctx = _ctx_before   # restore the caller's context exactly (nested calls keep their own tag)
+            _call_corpus_accessors._local.ctx = _ctx_before   # restore the caller's context exactly (nested calls keep their own tag)
             if _adm is not None:
                 _adm.release()                  # free the governor slot (idempotent; no-op when ungoverned)
     finally:
@@ -1591,7 +1595,7 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
         _base = provider_base_model(_bprov)
         if _base and _base != model and f"{_bprov}:{_base}" != model:
             _base_target = f"{_bprov}:{_base}"
-            with _sig_ctx.redirect_context(model, f"tier-3 base fallback: {model} unavailable",
+            with _call_corpus_accessors.resolve_calls_redirect_context(model, f"tier-3 base fallback: {model} unavailable",
                                            _LANES.get(_bprov, ("api",))[0]):
                 _rb = call(_base_target, prompt, max_tokens=max_tokens, system=system, reasoning=reasoning,
                            schema=schema, timeout_s=timeout_s, sig=sig, no_substitution=True, base_fallback=False,
@@ -1650,14 +1654,15 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
         # capture per call), never a probe, only a SERVED (no-error) call. capture_live is opt-in, workload-only,
         # bounded, LOUD where it stops, and NEVER raises into the call.
         if not _no_guard and not _probe and not r.get("error"):
-            from ... import callio, calls as _cap_ctx
+            from ... import callio
+            from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
             # INTENT resolution MUST match the cost-attribution intent that advise / bakeoff / effort-titrate key
-            # on: the calls.context intent FIRST, `sig` only as a fallback — identical to `_eff_intent` in
+            # on: the _call_corpus_accessors.resolve_calls_context intent FIRST, `sig` only as a fallback — identical to `_eff_intent` in
             # _call_guarded. The reverse (sig-first) recorded a caller that sets BOTH — e.g. honestreview's judge
-            # (sig='probe:mutation-router' inside calls.context(intent='honestreview:mutation-router')) — under the
+            # (sig='probe:mutation-router' inside _call_corpus_accessors.resolve_calls_context(intent='honestreview:mutation-router')) — under the
             # sig, so its captured prompts were invisible to a bakeoff/titration on the real intent. That is the
             # "realtime intent never becomes seedable" bug: capture landed under a name nothing queries.
-            _cap_intent = (_cap_ctx.current() or {}).get("intent") or sig
+            _cap_intent = (_call_corpus_accessors.resolve_calls_current() or {}).get("intent") or sig
             callio.capture_live(_cap_intent, r.get("provider") or "",
                                 r.get("model") or model, prompt, r.get("text"),
                                 in_tok=r.get("in_tok"), out_tok=r.get("out_tok"),
@@ -1672,9 +1677,10 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
         # capture_live above), metadata only (no prompt/output body), and it NEVER raises into the call.
         if not _no_guard and not _probe and r.get("error"):
             try:
-                from ... import vendor_call as _vc, calls as _rc
+                from ... import vendor_call as _vc
+                from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
                 _oc, _ = _vc._classify(r)
-                _rc.record_call(r.get("provider") or provider_for(model), r.get("model") or model, "realtime",
+                _call_corpus_accessors.resolve_calls_record_call(r.get("provider") or provider_for(model), r.get("model") or model, "realtime",
                                 float(r.get("cost") or 0.0), in_tok=r.get("in_tok") or 0,
                                 out_tok=r.get("out_tok"), latency=r.get("latency"),
                                 finish=r.get("finish_reason"), executor=r.get("executor"),
@@ -2751,8 +2757,9 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
     if _lane and schema is not None and schema_capability(prov) == SCHEMA_STRICT:
         from ... import output_contract as _oc_cap
         if _oc_cap.needs_enforcement(schema):
-            from ... import guard, calls as _schema_calls
-            guard.record_decision(intent=(_schema_calls.current() or {}).get("intent"),
+            from ... import guard
+            from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
+            guard.record_decision(intent=(_call_corpus_accessors.resolve_calls_current() or {}).get("intent"),
                                   requested_model=model, chosen_model=model,
                                   counterfactual_usd=None, actual_usd=None, saved_usd=0,
                                   basis="capability",
@@ -2829,8 +2836,9 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
                         _s = {**_s, "error": "lane output did not satisfy requested shape", "shape_miss": True}
                 return _s
         try:                                          # count once per logical lane call, never on the transient retry
-            from ... import bulkgate, calls
-            intent = (calls.current().get("intent") or "")
+            from ... import bulkgate
+            from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
+            intent = (_call_corpus_accessors.resolve_calls_current().get("intent") or "")
             if not intent.startswith("spendguard:"):
                 bulkgate.check_realtime(bulkgate.sig(raw or "", template_id=intent or None), raw or "", never_block=True)
         except Exception:
@@ -2862,8 +2870,9 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
             # actually applied (`s['effort']`); fall back to the requested tier only for a lane that reports none.
             _applied_eff = s.get("effort") if s.get("effort") is not None else reasoning
             try:
-                from ... import calls, vendor_call as _vc
-                calls.record_call(prov, raw, "subscription", 0.0,
+                from ... import vendor_call as _vc
+                from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
+                _call_corpus_accessors.resolve_calls_record_call(prov, raw, "subscription", 0.0,
                              in_tok=s.get("in_tok", 0), out_tok=s.get("out_tok"), latency=s.get("latency"),
                              finish=s.get("finish_reason"),
                              executor=lane_name, effort=_applied_eff,   # the plan that served it + the effort it APPLIED
@@ -2930,8 +2939,9 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
             if _no_sub or getattr(_sub_guard, "on", False):
                 return None
             try:
-                from ... import lane_balance, calls as _calls, plan_admission as _recovery_admission
-                _intent = (_calls.current() or {}).get("intent")
+                from ... import lane_balance, plan_admission as _recovery_admission
+                from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
+                _intent = (_call_corpus_accessors.resolve_calls_current() or {}).get("intent")
                 _free_subs = lane_balance.quality_equivalent_free_substitutes(_intent, model,
                                                                               excluded=[lane_name])
                 _free_subs = [candidate for candidate in _free_subs
@@ -2955,8 +2965,8 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
                 _lane_chatter(f"[spendguard] lane-balance REACTIVE: {lane_name} lane failed → {_rsub} ({_rwhy})")
                 _sub_guard.on = True
                 try:
-                    from ... import calls as _redirect_calls
-                    with _redirect_calls.redirect_context(model, "fallback ladder: " + _rwhy, _rsub_lane):
+                    from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
+                    with _call_corpus_accessors.resolve_calls_redirect_context(model, "fallback ladder: " + _rwhy, _rsub_lane):
                         _rr = call(_rsub, prompt, max_tokens=max_tokens, system=system, reasoning=reasoning,
                                    schema=schema, timeout_s=timeout_s, no_metered_fallback=True)
                 finally:
@@ -2979,10 +2989,11 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
             return _shed_free_recovery() or _primary_result
         # Reuse the durable synchronous queue. Re-probe the primary directly so its cooldown cannot
         # turn a recoverable transport failure into a paid skip. No running invocation is cancelled.
-        from ... import lane_queue, calls as _recovery_calls
+        from ... import lane_queue
+        from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
         _recovery.recovery_event("queue")
         _held = lane_queue.hold_free_recovery(
-            (_recovery_calls.current() or {}).get("intent") or "lane-recovery", prompt, _poll_free_recovery,
+            (_call_corpus_accessors.resolve_calls_current() or {}).get("intent") or "lane-recovery", prompt, _poll_free_recovery,
             deadline_s=lane_recovery.recovery_setting("queue_deadline_s", 15.0),
             poll_s=lane_recovery.recovery_setting("queue_poll_s", 1.0))
         _recovery.queue_checked = bool(_held.get("_free_hold", {}).get("deadline_exhausted"))
@@ -2993,7 +3004,7 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
             # Record locally; never mutate the executor shared by concurrent callers.
             _lane_note_ok(lane_name, prompt)
             _recovery.recovery_event("served", executor=lane_name)
-            _recovery_calls.record_call(prov, raw, "subscription", 0.0,
+            _call_corpus_accessors.resolve_calls_record_call(prov, raw, "subscription", 0.0,
                                         in_tok=_held.get("in_tok", 0), out_tok=_held.get("out_tok"),
                                         executor=lane_name, outcome="ok", disposition="served")
             return {**base, **_held, "cost": 0.0, "executor": lane_name, "lane_recovery": _recovery.events}
@@ -3034,8 +3045,8 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
         # down. The SUCCESS row is written by gate._record_rt DURING this dispatch (on this thread), so scope it via the
         # thread-local context; ALSO stamp the returned dict so a FAILED fallback (recorded later in the outer call) and
         # any consumer reading the result carry the same fact. A plain fact (the lane name), never a judgement about why.
-        from ... import calls as _calls_ff
-        with _calls_ff.fell_from_context(lane_name, reason=_lane_reason), _calls_ff.redirect_context(
+        from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
+        with _call_corpus_accessors.resolve_calls_fell_from_context(lane_name, reason=_lane_reason), _call_corpus_accessors.resolve_calls_redirect_context(
                 model, "lane-unavailable: metered fallback", "api"):
             out = _call_once(_fb_model, prompt, max_tokens=max_tokens, system=system, reasoning=_fb_reasoning,
                              schema=schema, timeout_s=timeout_s, _skip_lane=True, _no_sub=_no_sub, _internal_pin=_internal_pin,
@@ -3186,15 +3197,15 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
             def _anth_msg(_kw):                               # one final message; timeout_s bounds it at wall-clock
                 if timeout_s:
                     _abox = {}
-                    from ... import calls as _actx
-                    _apctx = dict(_actx.current() or {})      # CARRY the thread-local intent/chain + caller across the
-                    _acaller = _actx.caller()                 #   daemon boundary: the gated SDK records this call FROM
+                    from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
+                    _apctx = dict(_call_corpus_accessors.resolve_calls_current() or {})      # CARRY the thread-local intent/chain + caller across the
+                    _acaller = _call_corpus_accessors.resolve_calls_caller()                 #   daemon boundary: the gated SDK records this call FROM
                     #   the daemon below, whose context is EMPTY and whose stack is threading.py:run — so without this
                     #   the metered row lands intent=None + caller=threading.py:run (the failure vendor_call._attempt
                     #   documents). caller() is resolved HERE, on the worker's real stack, then set inside the daemon.
                     def _astream():
                         try:
-                            _actx.set_context(intent=_apctx.get("intent"), chain=_apctx.get("chain"),
+                            _call_corpus_accessors.resolve_calls_set_context(intent=_apctx.get("intent"), chain=_apctx.get("chain"),
                                               who=_apctx.get("who") or _acaller,
                                               call_class=_apctx.get("call_class"),
                                               origin_session=_apctx.get("origin_session"),
@@ -3419,14 +3430,14 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
                 if not timeout_s:
                     return _finish_create(_raw_create(**cw))
                 _box = {}
-                from ... import calls as _octx
-                _opctx = dict(_octx.current() or {})          # CARRY intent/chain + caller across the daemon boundary
-                _ocaller = _octx.caller()                     #   (see the anthropic branch): the gated SDK / http_capture
+                from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
+                _opctx = dict(_call_corpus_accessors.resolve_calls_current() or {})          # CARRY intent/chain + caller across the daemon boundary
+                _ocaller = _call_corpus_accessors.resolve_calls_caller()                     #   (see the anthropic branch): the gated SDK / http_capture
                 #   records this call FROM the daemon, whose context is EMPTY and whose stack is threading.py:run —
                 #   without this the metered row lands intent=None + caller=threading.py:run. caller() resolved HERE.
                 def _worker():
                     try:
-                        _octx.set_context(intent=_opctx.get("intent"), chain=_opctx.get("chain"),
+                        _call_corpus_accessors.resolve_calls_set_context(intent=_opctx.get("intent"), chain=_opctx.get("chain"),
                                           who=_opctx.get("who") or _ocaller,
                                           call_class=_opctx.get("call_class"),
                                           origin_session=_opctx.get("origin_session"),
@@ -3709,8 +3720,8 @@ def output_budget(model, requested=None, internal_tiny=False, vendor=None, bound
     # conservative, no-truncation-below-floor default that is also safe for a no-heal lane (which can't recover a 400 on
     # an over-large budget). Publishing the real max (the price data) is how an unknown model earns a higher ceiling.
     ceiling = int(pricing.output_ceiling(vendor, model, TOKEN_FLOOR))
-    from ... import calls as _budget_context
-    bounded_structured = bounded_structured or bool(_budget_context.current().get("bounded_structured"))
+    from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
+    bounded_structured = bounded_structured or bool(_call_corpus_accessors.resolve_calls_current().get("bounded_structured"))
     if bounded_structured and not internal_tiny:
         from ... import models
         if models.reasons_by_default(model) or models.profile(model.split(":")[-1]).get("reasoning_effort_ok"):
@@ -3857,8 +3868,9 @@ def _call_guarded(model, prompt, max_tokens=None, sig=None, retries=2, **kw):
     if kw.get("reasoning") is None and not _probe and not getattr(_resolve_guard, "on", False) \
             and not getattr(_heal_guard, "on", False):
         try:
-            from ... import models as _mte, calls as _cte
-            _eff_intent = (_cte.current() or {}).get("intent") or sig
+            from ... import models as _mte
+            from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
+            _eff_intent = (_call_corpus_accessors.resolve_calls_current() or {}).get("intent") or sig
             _learned_eff = _mte.effort_for(model, _eff_intent) if _eff_intent else None
             if _learned_eff:
                 kw["reasoning"] = _learned_eff
@@ -3871,8 +3883,9 @@ def _call_guarded(model, prompt, max_tokens=None, sig=None, retries=2, **kw):
     # Default OFF: no confirmed substitute for the intent → route_decision returns None → nothing changes.
     if not _no_sub and not getattr(_sub_guard, "on", False):
         try:
-            from ... import lane_balance, calls
-            _sub, _why = lane_balance.route_decision((calls.current() or {}).get("intent"), model)
+            from ... import lane_balance
+            from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
+            _sub, _why = lane_balance.route_decision((_call_corpus_accessors.resolve_calls_current() or {}).get("intent"), model)
         except Exception:
             _sub, _why = None, ""
         if _sub and _sub != model:
@@ -3880,7 +3893,7 @@ def _call_guarded(model, prompt, max_tokens=None, sig=None, retries=2, **kw):
             _subkw = dict(kw)
             _adapt = None
             try:                                   # Stage 3: apply the RECORDED prompt adaptation for the target (mechanical)
-                _adapt = lane_balance.adapted_system_for((calls.current() or {}).get("intent"), _sub)
+                _adapt = lane_balance.adapted_system_for((_call_corpus_accessors.resolve_calls_current() or {}).get("intent"), _sub)
             except Exception:
                 _adapt = None
             if _adapt is not None:
@@ -3889,9 +3902,9 @@ def _call_guarded(model, prompt, max_tokens=None, sig=None, retries=2, **kw):
                   f"(recorded as {_sub}{'; prompt adapted' if _adapt is not None else ''})", file=_sys.stderr)
             _sub_guard.on = True                   # one hop: the substitute must not itself substitute (proactive OR reactive)
             try:
-                from ... import calls as _redirect_calls
+                from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
                 _sub_lane = _LANES.get(provider_for(_sub), (None,))[0]
-                with _redirect_calls.redirect_context(model, "load-balance: " + str(_why), _sub_lane):
+                with _call_corpus_accessors.resolve_calls_redirect_context(model, "load-balance: " + str(_why), _sub_lane):
                     r = _call_guarded(_sub, prompt, max_tokens=max_tokens, sig=sig, retries=retries,
                                       _no_sub=True, **_subkw)
             except Exception as _se:               # a substitute that RAISES (transport/etc.) must not sink the call —
@@ -3960,8 +3973,8 @@ def _call_guarded(model, prompt, max_tokens=None, sig=None, retries=2, **kw):
     # reasoning-floor / clamp branches all collapse into this one call. An internal tiny probe keeps its deliberate value.
     if _explicit and not _internal_tiny:
         _warn_once_caller_maxtokens(sig or model, int(max_tokens))    # caller cap IGNORED — spendguard sets the ceiling
-    from ... import calls as _bounded_context
-    if (kw.get("schema") or _bounded_context.current().get("bounded_structured")) and kw.get("reasoning") is None and not _internal_tiny:
+    from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
+    if (kw.get("schema") or _call_corpus_accessors.resolve_calls_current().get("bounded_structured")) and kw.get("reasoning") is None and not _internal_tiny:
         kw["reasoning"] = "minimal"  # bounded structured work uses the provider-normalized lowest effort
     max_tokens = output_budget(model, requested=max_tokens, internal_tiny=_internal_tiny,
                                bounded_structured=bool(kw.get("schema") or kw.get("contract")))

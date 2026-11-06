@@ -52,8 +52,8 @@ def governed_realtime_executor(model, system, reasoning, intent, timeout_s):
     so adapters.call derives the real per-prompt deadline from deadline_for (the urgency horizon sizes realtime CAPACITY,
     NOT a per-call reply deadline — using it as the timeout choked large replies → NO REPLY). `timeout_s` is the one
     parameter that differs between the two doors."""
-    from ... import calls as _cre
-    _who = (_cre.current() or {}).get("who")          # the ORIGINATING caller, captured HERE on the submitting thread
+    from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
+    _who = (_call_corpus_accessors.resolve_calls_current() or {}).get("who")          # the ORIGINATING caller, captured HERE on the submitting thread
     #   (the executor is built during the caller's own adapters.call, where the app frame is on the stack). The
     #   storm-rt worker that runs the re-entry has NO app frame, so its calls.caller() lands None/thread-trampoline —
     #   carry who across the boundary exactly like intent, or the re-entrant call + its wall-clock daemon mis-attribute.
@@ -67,7 +67,7 @@ def governed_realtime_executor(model, system, reasoning, intent, timeout_s):
                 return {"text": None, "error": "storm caller deadline exhausted before dispatch",
                         "error_type": "StormDeadlineExceeded", "status_code": None}
         if _who:
-            _cre.set_context(who=_who)                # re-apply on the storm-rt worker so the re-entry inherits it
+            _call_corpus_accessors.resolve_calls_set_context(who=_who)                # re-apply on the storm-rt worker so the re-entry inherits it
         return adapters.call(model, contract.prompt, system=system, reasoning=reasoning, sig=intent,
                              metered_only=True, governed=True, no_substitution=True,
                              _route=False, _coalesce_eligible=False, timeout_s=remaining,

@@ -468,7 +468,8 @@ def discover_agentic(run=False, record=False, max_sessions=None, now=None):
     map labels→projects. Caged + estimate-first (run=False → cost only). record=True → record_recovered the
     confidently-real, not-already-known instances so the account reconcile auto-fills. Same agentic pattern as
     attribution.classify_items / conv.attribute_usage — the shared 'LLM reads conversations to attribute spend'."""
-    from ... import adapters, calls, ui, pricing, conv
+    from ... import adapters, ui, pricing, conv
+    from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
     sessions = _gpu_session_excerpts(max_sessions)
     hints = _gpu_project_hints()                           # the USER'S projects/label_map — never hardcoded
     # CHEAP find model: relevance is now the LLM's decision over the WHOLE transcript (no regex pre-gate), so it reads
@@ -486,7 +487,7 @@ def discover_agentic(run=False, record=False, max_sessions=None, now=None):
         return {"sessions": len(sessions), "est_cost": round(est, 4), "instances": []}
     merged = {}
     for sid, ex in sessions:
-        with calls.context(intent="spendguard:gpu_discover"):
+        with _call_corpus_accessors.resolve_calls_context(intent="spendguard:gpu_discover"):
             r = adapters.call(model, _GPU_DISCOVER_PROMPT % (hints, ex), sig="spendguard:gpu_discover", system=_GPU_DISCOVER_SYS)
         if r.get("error"):
             continue
@@ -591,7 +592,8 @@ def reconstruct_remote_llm(run=False, max_sessions=None, model_org_hints=None, f
     saas.identity_for_org). Magnitude from the numbers the boxes PRINTED (ground truth in the transcript); attribution
     from the shared classifier. DEDUP across sessions by run signature so a run discussed in N sessions isn't counted
     N× (the over-count guard). Estimate-first (run=False → cost only). The same Source pattern as batch/GPU."""
-    from ... import adapters, calls, ui, pricing, conv, saas
+    from ... import adapters, ui, pricing, conv, saas
+    from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
     # full=True → the AGENTIC source: full-conversation chunks (the LLM finds the realtime runs across ALL models,
     # incl Opus/GPT-5.5, in the lmm classification/co-occurrence/stats sessions). full=False → the legacy regex
     # excerpts (box USAGE prints only — too naive; misses the conversation bulk).
@@ -606,7 +608,7 @@ def reconstruct_remote_llm(run=False, max_sessions=None, model_org_hints=None, f
     rows = []   # NO dedup — each call/run is UNIQUE (per the user); a loop's N same-size calls are N real calls
     for sid, ex in sessions:
         _u = (("models-by-org prior (corroborate the org, do NOT override): %s\n" % model_org_hints) if model_org_hints else "") + ex
-        with calls.context(intent="spendguard:remote_llm_reconstruct"):
+        with _call_corpus_accessors.resolve_calls_context(intent="spendguard:remote_llm_reconstruct"):
             r = adapters.call(model, _u, sig="spendguard:remote_llm_reconstruct", system=_REMOTE_LLM_SYS)
         if r.get("error"):
             continue
@@ -705,7 +707,8 @@ def reconstruct_realtime_llm_sync(run=False, sids=None, max_sessions=None, max_c
     with NO realtime tell) BEFORE the LLM sees them — that spend is already EXACT from the regular batch API, so we
     neither re-pay to analyze it nor risk double-counting it as realtime. Chunks with BOTH a batch ref and a realtime
     tell are KEPT (they may carry realtime); the consolidate then subtracts any run matching a known batch."""
-    from ... import adapters, calls, conv, pricing
+    from ... import adapters, conv, pricing
+    from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
     fm = find_model or config.advisor_judge_model()        # cheap per-chunk scan
     cm = consolidate_model or config.advisor_model()       # opus consolidation/estimate
     raw = list(conv.session_chunks(max_sessions=max_sessions, sids=sids, max_chars=max_chars, since=since))
@@ -729,7 +732,7 @@ def reconstruct_realtime_llm_sync(run=False, sids=None, max_sessions=None, max_c
                 "find_model": fm, "consolidate_model": cm, "find_input_tokens": find_in, "est_find_usd": round(est, 2)}
     frags = []                                             # STAGE 1 — FIND (read every chunk)
     for sid, ex in chunks:
-        with calls.context(intent="spendguard:realtime_find"):
+        with _call_corpus_accessors.resolve_calls_context(intent="spendguard:realtime_find"):
             r = adapters.call(fm, ex, sig="spendguard:realtime_find", system=_RT_FIND_SYS)
         m = re.search(r"\{.*\}", r.get("text", "") or "", re.S)
         try:
@@ -748,7 +751,7 @@ def reconstruct_realtime_llm_sync(run=False, sids=None, max_sessions=None, max_c
     # runs → UNDER-counted realtime spend (the evidence-truncation rule). Send it WHOLE — adapters.call bounds the input
     # via the canonical _input_fits (the ONE input-window home): it fits and is sent whole, or it is REFUSED loudly, never
     # clipped. If a huge estate overflows the window, narrow it with the existing since= / max_sessions= / max_chunks=.
-    with calls.context(intent="spendguard:realtime_consolidate"):    # STAGE 2 — CONSOLIDATE (run-identity + estimate)
+    with _call_corpus_accessors.resolve_calls_context(intent="spendguard:realtime_consolidate"):    # STAGE 2 — CONSOLIDATE (run-identity + estimate)
         r = adapters.call(cm, json.dumps(frags), sig="spendguard:realtime_consolidate", system=_RT_CONSOLIDATE_SYS)
     m = re.search(r"\{.*\}", r.get("text", "") or "", re.S)
     try:

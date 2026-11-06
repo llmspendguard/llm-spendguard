@@ -18,7 +18,7 @@ import functools
 import inspect
 
 from ... import config
-from ...calls import CALL_OBSERVATION_NANO_COLUMNS
+from spendguard.store.call_corpus.call_corpus_accessors import CALL_OBSERVATION_NANO_COLUMNS
 from .ledger_deadline_polling import LedgerDeadlinePolling
 from .ledger_read_accessors import set_ledger_read_accessors
 from ...money_scale import NANO_USD_PER_USD

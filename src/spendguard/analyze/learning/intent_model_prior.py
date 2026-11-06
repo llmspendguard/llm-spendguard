@@ -168,10 +168,11 @@ def rank_models_for_intent(intent, prompt=None, k=5, run=False):
                     note="estimate only (~$%.4f); call with run=True to produce the cold-start prior (meta-caged, "
                          "persisted so it is never re-paid)." % (est or 0.0))
 
-    from ... import adapters, calls
+    from ... import adapters
+    from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
     from .advisor import META                                      # ONE source of the meta-intent prefix (caged, never recurses)
     try:
-        with calls.context(intent="%s:cold-prior" % META):
+        with _call_corpus_accessors.resolve_calls_context(intent="%s:cold-prior" % META):
             r = adapters.call(model, body, system=_PRIOR_SYS, schema=_PRIOR_SCHEMA, max_tokens=_PRIOR_OUT,
                               no_substitution=True, sig="spendguard:cold-prior", timeout_s=90)
     except Exception as e:

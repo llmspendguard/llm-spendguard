@@ -135,7 +135,8 @@ def _judge_residency_delegability(tool_name, tool_input, result_text):
         return cached
     try:
         import spendguard
-        from ... import adapters, plan_admission, calls
+        from ... import adapters, plan_admission
+        from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
         spendguard.require()
         model = plan_admission.ready_meta_model(config.advisor_judge_model())
         rationale_max_chars = max(1, _residency_configured_integer("judge_rationale_max_chars"))
@@ -152,7 +153,7 @@ def _judge_residency_delegability(tool_name, tool_input, result_text):
                   f"Tool result (whole): {result_text}\n"
                   f'Reply JSON only: {{"delegable": true|false, "why": "<one short line, at most '
                   f'{rationale_max_chars} characters>"}}.')
-        with calls.context(intent="spendguard:residency-nudge"):
+        with _call_corpus_accessors.resolve_calls_context(intent="spendguard:residency-nudge"):
             r = adapters.call(model, prompt, sig="spendguard:residency-nudge", reasoning="minimal",
                               max_tokens=judge_output_tokens,
                               no_metered_fallback=True,

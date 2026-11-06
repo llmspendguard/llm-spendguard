@@ -23,7 +23,18 @@ import io
 import os, sys, json, functools, datetime, time
 
 from ... import pricing
-from ... import calls as _calls
+from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
+_calls = None
+
+
+def _set_gate_calls_module_contract(calls_module_contract):
+    global _calls
+    _calls = calls_module_contract
+
+
+_call_corpus_accessors.register_calls_module_contract_consumer(
+    _set_gate_calls_module_contract
+)
 from ...config import LOG, FLAG, cap as _cap, disabled as _disabled, allow as _allow
 from ...emit import emit as _emit
 from .gate_event_sink import set_gate_event_sink
@@ -471,12 +482,13 @@ def _calibrate_est(est):
     quantiles per (label, model, transport) — this reads them so the DISPLAYED number is grounded, while the
     ceiling stays the thing the cap compares. Zero spend, fully guarded: no calibration → no claim."""
     try:
-        from ... import calibrate, calls as _calls
+        from ... import calibrate
+        from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
         n = int(est.get("requests") or 0)
         if n <= 0 or not est.get("model") or not est.get("out_tok"):
             return None
         try:
-            label = (_calls.current().get("intent") or "").strip()
+            label = (_call_corpus_accessors.resolve_calls_current().get("intent") or "").strip()
         except Exception:
             label = ""
         r = calibrate.predict_cost(label or "batch", n=n, model=est["model"], transport="batch",
@@ -669,7 +681,7 @@ def _budget_record(cost, model, provider, kind, quarantine=False, basis=None, in
 def _meta_intent():
     """True if the current context intent is spendguard's own (spendguard:*) — segregated budget+tracking."""
     try:
-        return (_calls.current().get("intent") or "").startswith("spendguard:")
+        return (_call_corpus_accessors.resolve_calls_current().get("intent") or "").startswith("spendguard:")
     except Exception:
         return False
 
@@ -725,10 +737,10 @@ def _batch1_check(est):
     Knobs: GATE_BATCH1_MIN (req count that counts as 'large', default 50) · GATE_BATCH1_USD (or ≥ this $, default 5)
     · GATE_BATCH1_DAYS (look-back, default 14) · GATE_REQUIRE_BATCH1 (refuse non-interactive) · GATE_NO_BATCH1 (off).
     GATE_ALLOW=1 bypasses (like the cost cap). Needs the calls corpus + an intent to reason about 'shape'."""
-    if _on("GATE_NO_BATCH1") or _allow() or not _calls.call_recording_consent_enabled():
+    if _on("GATE_NO_BATCH1") or _allow() or not _call_corpus_accessors.resolve_calls_call_recording_consent_enabled():
         return
     try:
-        intent = (_calls.current().get("intent") or "").strip()
+        intent = (_call_corpus_accessors.resolve_calls_current().get("intent") or "").strip()
     except Exception:
         intent = ""
     if not intent or intent.startswith("spendguard:"):
@@ -738,7 +750,7 @@ def _batch1_check(est):
     if n < int(os.getenv("GATE_BATCH1_MIN", "50") or 50) and cost < float(os.getenv("GATE_BATCH1_USD", "5") or 5):
         return                                                        # not a 'large' batch → nothing to gate
     days = int(os.getenv("GATE_BATCH1_DAYS", "14") or 14)
-    if _calls.tested_recently(intent, None, days):                    # any realtime test of this intent counts
+    if _call_corpus_accessors.resolve_calls_tested_recently(intent, None, days):                    # any realtime test of this intent counts
         return                                                        # (a prompt/tool bug shows on any model)
     prov, mdl = est.get("provider"), est.get("model")
     est.setdefault("_cal", _calibrate_est(est))
@@ -778,7 +790,7 @@ def _bulkgate_check(est):
             return
         intent = ""
         try:
-            intent = (_calls.current().get("intent") or "").strip()
+            intent = (_call_corpus_accessors.resolve_calls_current().get("intent") or "").strip()
         except Exception:
             pass
         if intent.startswith("spendguard:"):
@@ -800,7 +812,7 @@ def _decide_and_account(est):
     _budget_check(est["cost"], est.get("model"), est.get("provider"), "batch")   # daily/monthly (sqlite)
     _decide(est)                                                                  # per-batch cap on the REALISTIC estimate (may raise)
     _worst_case_check(est)                                                        # SEPARATE ceiling guard: runaway worst-case (may raise)
-    if _calls.current().get("defer_batch_booking"):
+    if _call_corpus_accessors.resolve_calls_current().get("defer_batch_booking"):
         return                                                        # submitter books only after provider acceptance
     record_accepted_batch_estimate(est)
 
@@ -809,8 +821,8 @@ def record_accepted_batch_estimate(est):
     """Book a provisional batch estimate only after the provider accepted the submission."""
     _budget_record(est["cost"], est.get("model"), est.get("provider"), "batch",   # ledger (sqlite)
                    quarantine=bool(est.get("implausible")), basis=budget_basis_estimate())
-    if _calls.call_recording_consent_enabled():                                                          # job-level call-context row
-        _calls.record_call(est.get("provider"), est.get("model"), "batch", est["cost"],
+    if _call_corpus_accessors.resolve_calls_call_recording_consent_enabled():                                                          # job-level call-context row
+        _call_corpus_accessors.resolve_calls_record_call(est.get("provider"), est.get("model"), "batch", est["cost"],
                       in_tok=est.get("in_tok", 0), out_tok=est.get("out_tok", 0), executor="api")
 
 
@@ -820,8 +832,8 @@ def _gate_openai_files(kw, args=()):
     # intent + a caller's declared output ride the recording CONTEXT (the submitter stamps them) → the at-create estimate
     # uses the realistic basis (measured/declared), not the ceiling, so the cap + provisional row see the plausible cost.
     try:
-        from ... import calls as _c
-        _ctx = _c.current()
+        from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
+        _ctx = _call_corpus_accessors.resolve_calls_current()
         _intent, _declared = _ctx.get("intent"), _ctx.get("batch_expected_out")
     except Exception:
         _intent, _declared = None, None
@@ -848,8 +860,8 @@ def _gate_anthropic(kw, args=()):
     # estimate uses the SAME realistic basis (measured/declared, not the ceiling) the per-call estimate did — the
     # provisional cost row + the global cap then see what the job will PLAUSIBLY emit, not a ~100x ceiling.
     try:
-        from ... import calls as _c
-        _ctx = _c.current()
+        from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
+        _ctx = _call_corpus_accessors.resolve_calls_current()
         _intent, _declared = _ctx.get("intent"), _ctx.get("batch_expected_out")
     except Exception:
         _intent, _declared = None, None
@@ -978,8 +990,8 @@ def _intent_door_gate(intent, est, provider, model):
     from ...ledger_read import LedgerSettlementIncomplete
     from .budget import require_finite_budget_value
     try:
-        from ... import calls
-        spent = calls.intent_spend(intent, config.intent_cap_window_s())
+        from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
+        spent = _call_corpus_accessors.resolve_calls_intent_spend(intent, config.intent_cap_window_s())
         require_finite_budget_value((spent, est, cap, spent + est))
     except LedgerSettlementIncomplete as partial_settlement:
         raise SpendGateRefused(str(partial_settlement)) from partial_settlement
@@ -989,7 +1001,7 @@ def _intent_door_gate(intent, est, provider, model):
     exceeded = spent + est > float(cap)
     for effective, authorized, phase_intents in config.scoped_intent_authorizations(intent):
         try:
-            cumulative = sum(calls.intent_spend(label, config.intent_cap_window_s()) for label in phase_intents)
+            cumulative = sum(_call_corpus_accessors.resolve_calls_intent_spend(label, config.intent_cap_window_s()) for label in phase_intents)
             require_finite_budget_value((cumulative, authorized, cumulative + est))
         except Exception as cumulative_read_error:
             raise SpendGateRefused(
@@ -1077,7 +1089,7 @@ def _rt_record(provider, model, cost, in_tok=0, out_tok=0, cached=0, basis=None,
     _ev = {"kind": "realtime", "provider": provider, "model": _m, "cost": cost, "decision": "recorded",
            "in_tok": in_tok, "out_tok": out_tok, "cached_in_tok": cached}
     try:                       # the call's PURPOSE rides on the event (intent/chain)
-        _cur = _calls.current()
+        _cur = _call_corpus_accessors.resolve_calls_current()
         if (_cur.get("intent") or "").strip():
             _ev["intent"] = _cur["intent"].strip()
         if (_cur.get("chain") or "").strip():
@@ -1129,8 +1141,9 @@ def _rt_precheck_usd(provider, model, est):
     if _refuse_metered_active():                       # 'prove $0' switch → NO metered call proceeds (lanes bypass this)
         raise MeteredCallRefused("metered call refused (refuse_metered active): %s %s" % (provider, model))
     if _meta_intent():
-        from ... import calls as _scoped_calls, config as _scoped_config
-        _scoped_label = _scoped_calls.current().get("intent")
+        from ... import config as _scoped_config
+        from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
+        _scoped_label = _call_corpus_accessors.resolve_calls_current().get("intent")
         if _scoped_config.scoped_intent_authorizations(_scoped_label):
             _intent_door_gate(_scoped_label, est, provider, model)
     if _meta_intent():                                # spendguard's own use → separate meta cap, skip workload
@@ -1144,7 +1157,7 @@ def _rt_precheck_usd(provider, model, est):
         return
     intent = ""
     try:
-        intent = (_calls.current().get("intent") or "").strip()
+        intent = (_call_corpus_accessors.resolve_calls_current().get("intent") or "").strip()
     except Exception:
         pass
     if intent and not intent.startswith("spendguard:"):
@@ -1154,7 +1167,7 @@ def _rt_precheck_usd(provider, model, est):
         from . import bulkgate                        # discouraged alternative to Batch; same estimate+test-first rule.
         if not intent.startswith("spendguard:"):
             bulkgate.check_realtime(bulkgate.sig(model or "", template_id=intent or None), model or "", est,
-                                    batch_eligible=bool((_calls.current() or {}).get("batch_eligible")))
+                                    batch_eligible=bool((_call_corpus_accessors.resolve_calls_current() or {}).get("batch_eligible")))
     except bulkgate.GateBlocked:
         raise                                         # untested burst in block mode → stop the loop
     except Exception:
@@ -1412,7 +1425,7 @@ def _record_rt(model, kw, in_tok, out_tok, cached=0, latency=None, output=None, 
     The nullable cache_*_tok observations are separate from estimator defaults: only measured usage with a
     known write tier can support exact integrity reconstruction. Absent evidence stays a coverage gap."""
     prov = provider or _provider_of(model)
-    _calls.check_output(output)      # output contracts are independent of monetary/token completeness
+    _call_corpus_accessors.resolve_calls_check_output(output)      # output contracts are independent of monetary/token completeness
     # Normalize NEW split observations only; preserve raw legacy semantics on unmeasured rows. Anthropic
     # reports fresh input, OpenAI reports input inclusive of reads; writes are separate for both.
     call_input = (in_tok + cache_read_tok
@@ -1427,7 +1440,7 @@ def _record_rt(model, kw, in_tok, out_tok, cached=0, latency=None, output=None, 
                 cache_write_tok=cache_creation)
         except Exception as exc:
             _gate_warn_once(f"[spend_gate] incomplete output usage for {model}; input floor unavailable: {exc}")
-        _calls.record_call(prov, model, "realtime", None, in_tok=call_input, out_tok=out_tok,
+        _call_corpus_accessors.resolve_calls_record_call(prov, model, "realtime", None, in_tok=call_input, out_tok=out_tok,
                            latency=latency, finish=finish, executor="api",
                            cache_read_tok=cache_read_tok, cache_write_tok=cache_write_tok,
                            input_cost_floor=input_floor)
@@ -1491,22 +1504,22 @@ def _record_rt(model, kw, in_tok, out_tok, cached=0, latency=None, output=None, 
         # ambiguous NULL — a replicate then can't be told from an effort change. Record the EXPLICIT sentinel: the
         # model ran at the provider default. Only for a measurement (the context flag); production NULLs are unchanged.
         try:
-            if (_calls.current() or {}).get("measurement"):
+            if (_call_corpus_accessors.resolve_calls_current() or {}).get("measurement"):
                 _effort = MEASUREMENT_EFFORT_DEFAULT
         except Exception:
             pass
     if _meta_intent():                            # meta call → meta ledger only (not workload realtime)
         from . import budget
         budget.record_meta(prov, model, cost)
-        if _calls.call_recording_consent_enabled():
-            _calls.record_call(prov, model, "realtime", cost, in_tok=call_input, out_tok=out_tok, latency=latency,
+        if _call_corpus_accessors.resolve_calls_call_recording_consent_enabled():
+            _call_corpus_accessors.resolve_calls_record_call(prov, model, "realtime", cost, in_tok=call_input, out_tok=out_tok, latency=latency,
                           prompt=_prompt_text(kw), output=output, finish=finish, effort=_effort, executor="api",
                           cache_read_tok=cache_read_tok, cache_write_tok=cache_write_tok)
         return
     _rt_record(prov, model, cost, in_tok=in_tok, out_tok=out_tok, cached=cached, basis=basis, per_item_max=per_item_max)
     try:                                              # max_tokens TRUNCATION detection (a fact) + per-sig telemetry
         from . import bulkgate
-        _intent = (_calls.current().get("intent") or "").strip()
+        _intent = (_call_corpus_accessors.resolve_calls_current().get("intent") or "").strip()
         if not _intent.startswith("spendguard:"):
             bulkgate.note_response(bulkgate.sig(model or "", template_id=_intent or None),
                                    model or "", out_tok,
@@ -1515,8 +1528,8 @@ def _record_rt(model, kw, in_tok, out_tok, cached=0, latency=None, output=None, 
                                    visible_tokens=max(0, out_tok - reasoning_tokens) if reasoning_tokens is not None else None)
     except Exception:
         pass
-    if _calls.call_recording_consent_enabled():
-        _calls.record_call(prov, model, "realtime", cost, in_tok=call_input, out_tok=out_tok, latency=latency,
+    if _call_corpus_accessors.resolve_calls_call_recording_consent_enabled():
+        _call_corpus_accessors.resolve_calls_record_call(prov, model, "realtime", cost, in_tok=call_input, out_tok=out_tok, latency=latency,
                       prompt=_prompt_text(kw), output=output, finish=finish, effort=_effort,
                       cache_read_tok=cache_read_tok, cache_write_tok=cache_write_tok,
                       # EXPLICIT 'api' (not NULL): this is the metered realtime path. A lane call records via the
@@ -1531,7 +1544,7 @@ def _stream_out_estimate(model, kw, est_fn):
     _, in_tok, out_tok = est_fn(kw)
     try:
         from . import bulkgate
-        _it = (_calls.current().get("intent") or "").strip()
+        _it = (_call_corpus_accessors.resolve_calls_current().get("intent") or "").strip()
         if not _it.startswith("spendguard:"):
             mt = bulkgate.maxtokens(bulkgate.sig(model or "", template_id=_it or None))
             if (mt.get("n") or 0) >= 5 and mt.get("p99"):
@@ -1869,7 +1882,7 @@ def _autotune(kw, model):
     from . import bulkgate
     intent = ""
     try:
-        intent = (_calls.current().get("intent") or "").strip()
+        intent = (_call_corpus_accessors.resolve_calls_current().get("intent") or "").strip()
     except Exception:
         pass
     sig = bulkgate.sig(model, template_id=intent or None)

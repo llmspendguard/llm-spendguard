@@ -26,7 +26,8 @@ guess.
 """
 import hashlib
 
-from ... import adapters, calls, config
+from ... import adapters, config
+from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
 
 _EXTRACT_SYS = ("You are given a TASK PROMPT that was sent to an LLM. Name the concrete SUCCESS REQUIREMENTS a "
                 "correct answer to it must satisfy — the testable criteria you would check an answer against "
@@ -66,7 +67,7 @@ def _meta_call(model, prompt, *, system, schema, out, sig, images=None):
     adapters.call's input guard (it refuses rather than clips). Returns (parsed dict or None, cost); never raises.
     `images` (a vision task's image refs) is passed to adapters.call ONLY when present, so a text judgement is
     byte-for-byte the prior call — a caption's faithfulness cannot be ruled without seeing the image."""
-    with calls.context(intent="spendguard:%s" % sig):
+    with _call_corpus_accessors.resolve_calls_context(intent="spendguard:%s" % sig):
         # PIN the judge/adjudicator: this is a META RULER call where WHICH MODEL ANSWERED is the measurement, so
         # the lane/bandit must never swap it (a ruler that varies per call is not a comparable verdict) — the same
         # discipline as the bakeoff judge. Pinning still uses the model's OWN $0 lane where available.

@@ -14,7 +14,8 @@ exclusions (embeddings by kind, the Batch-API paths, spendguard's own meta calls
 meaning judgement; only the independent-one-shot-vs-interactive call is agentic."""
 import datetime
 
-from ... import config, calls
+from ... import config
+from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
 
 _CACHE_KEY = "lane_eligibility_verdicts"      # SPENDGUARD_HOME state: {intent: {eligible, why, model, asof}}
 _VERDICT_PROMPT_TOK_EST = 90                  # the judge prompt is a fixed shape (~90 input tokens) — for the pre-spend ESTIMATE only
@@ -78,7 +79,7 @@ def lane_eligible_report(since=None, execute=False):
     would cost to classify them). With execute=True it judges the unjudged intents (opt-in spend, cached). The figure
     is intent-folded (summed across models); a representative model + average input size drive the judge prompt."""
     since = since or config.month_start_utc()
-    rows = calls.metered_realtime_by_intent(since)
+    rows = _call_corpus_accessors.resolve_calls_metered_realtime_by_intent(since)
     folded = {}
     for r in rows:
         agg = folded.setdefault(r["intent"], {"usd": 0.0, "calls": 0, "in_tok": 0, "model": r["model"]})

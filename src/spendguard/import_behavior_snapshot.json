@@ -262,8 +262,8 @@
   "entry_points": {
     "package_import": {
       "atexit_registrations": [
-        "spendguard.store.money_ledger.ledger_writer.close_ledger_writers",
-        "spendguard.manage.admission.gate._rt_flush"
+        "spendguard.manage.admission.gate._rt_flush",
+        "spendguard.store.money_ledger.ledger_writer.close_ledger_writers"
       ],
       "executed_modules": [
         "spendguard.domain_legacy_path_shim",
@@ -295,6 +295,13 @@
         "spendguard.manage.admission",
         "spendguard.manage.admission.gate",
         "spendguard.store.call_corpus",
+        "spendguard.store.call_corpus.call_corpus_accessors",
+        "spendguard.egress",
+        "spendguard.egress.emit",
+        "spendguard.manage.admission.budget_accessors",
+        "spendguard.manage.admission.gate_event_sink",
+        "spendguard.manage.admission.spend_refusal_error",
+        "spendguard.store.reference_data.reference_data_accessors",
         "spendguard.store.call_corpus.calls",
         "spendguard.interface.capability_cli_parsing",
         "spendguard.store.money_ledger.schema_indexes",
@@ -308,15 +315,8 @@
         "spendguard.store.money_ledger.ledger",
         "spendguard.store.spend_search.ledger_request_cursor",
         "spendguard.store.reference_data.catalog",
-        "spendguard.store.reference_data.reference_data_accessors",
         "spendguard.store.reference_data.models",
-        "spendguard.manage.admission.budget_accessors",
         "spendguard.manage.admission.budget_unpriced_sink",
-        "spendguard.store.call_corpus.call_corpus_accessors",
-        "spendguard.egress",
-        "spendguard.egress.emit",
-        "spendguard.manage.admission.gate_event_sink",
-        "spendguard.manage.admission.spend_refusal_error",
         "spendguard.manage.admission.bulkgate",
         "spendguard.analyze",
         "spendguard.analyze.cost_estimation",
@@ -351,8 +351,8 @@
     },
     "module_main": {
       "atexit_registrations": [
-        "spendguard.store.money_ledger.ledger_writer.close_ledger_writers",
-        "spendguard.manage.admission.gate._rt_flush"
+        "spendguard.manage.admission.gate._rt_flush",
+        "spendguard.store.money_ledger.ledger_writer.close_ledger_writers"
       ],
       "executed_modules": [
         "spendguard.domain_legacy_path_shim",
@@ -384,6 +384,13 @@
         "spendguard.manage.admission",
         "spendguard.manage.admission.gate",
         "spendguard.store.call_corpus",
+        "spendguard.store.call_corpus.call_corpus_accessors",
+        "spendguard.egress",
+        "spendguard.egress.emit",
+        "spendguard.manage.admission.budget_accessors",
+        "spendguard.manage.admission.gate_event_sink",
+        "spendguard.manage.admission.spend_refusal_error",
+        "spendguard.store.reference_data.reference_data_accessors",
         "spendguard.store.call_corpus.calls",
         "spendguard.interface.capability_cli_parsing",
         "spendguard.store.money_ledger.schema_indexes",
@@ -397,15 +404,8 @@
         "spendguard.store.money_ledger.ledger",
         "spendguard.store.spend_search.ledger_request_cursor",
         "spendguard.store.reference_data.catalog",
-        "spendguard.store.reference_data.reference_data_accessors",
         "spendguard.store.reference_data.models",
-        "spendguard.manage.admission.budget_accessors",
         "spendguard.manage.admission.budget_unpriced_sink",
-        "spendguard.store.call_corpus.call_corpus_accessors",
-        "spendguard.egress",
-        "spendguard.egress.emit",
-        "spendguard.manage.admission.gate_event_sink",
-        "spendguard.manage.admission.spend_refusal_error",
         "spendguard.manage.admission.bulkgate",
         "spendguard.analyze",
         "spendguard.analyze.cost_estimation",
@@ -443,8 +443,8 @@
     },
     "sitecustomize_hook": {
       "atexit_registrations": [
-        "spendguard.store.money_ledger.ledger_writer.close_ledger_writers",
-        "spendguard.manage.admission.gate._rt_flush"
+        "spendguard.manage.admission.gate._rt_flush",
+        "spendguard.store.money_ledger.ledger_writer.close_ledger_writers"
       ],
       "executed_modules": [
         "spendguard.domain_legacy_path_shim",
@@ -476,6 +476,13 @@
         "spendguard.manage.admission",
         "spendguard.manage.admission.gate",
         "spendguard.store.call_corpus",
+        "spendguard.store.call_corpus.call_corpus_accessors",
+        "spendguard.egress",
+        "spendguard.egress.emit",
+        "spendguard.manage.admission.budget_accessors",
+        "spendguard.manage.admission.gate_event_sink",
+        "spendguard.manage.admission.spend_refusal_error",
+        "spendguard.store.reference_data.reference_data_accessors",
         "spendguard.store.call_corpus.calls",
         "spendguard.interface.capability_cli_parsing",
         "spendguard.store.money_ledger.schema_indexes",
@@ -489,15 +496,8 @@
         "spendguard.store.money_ledger.ledger",
         "spendguard.store.spend_search.ledger_request_cursor",
         "spendguard.store.reference_data.catalog",
-        "spendguard.store.reference_data.reference_data_accessors",
         "spendguard.store.reference_data.models",
-        "spendguard.manage.admission.budget_accessors",
         "spendguard.manage.admission.budget_unpriced_sink",
-        "spendguard.store.call_corpus.call_corpus_accessors",
-        "spendguard.egress",
-        "spendguard.egress.emit",
-        "spendguard.manage.admission.gate_event_sink",
-        "spendguard.manage.admission.spend_refusal_error",
         "spendguard.manage.admission.bulkgate",
         "spendguard.analyze",
         "spendguard.analyze.cost_estimation",
@@ -532,8 +532,8 @@
     },
     "usercustomize_hook": {
       "atexit_registrations": [
-        "spendguard.store.money_ledger.ledger_writer.close_ledger_writers",
-        "spendguard.manage.admission.gate._rt_flush"
+        "spendguard.manage.admission.gate._rt_flush",
+        "spendguard.store.money_ledger.ledger_writer.close_ledger_writers"
       ],
       "executed_modules": [
         "spendguard.domain_legacy_path_shim",
@@ -565,6 +565,13 @@
         "spendguard.manage.admission",
         "spendguard.manage.admission.gate",
         "spendguard.store.call_corpus",
+        "spendguard.store.call_corpus.call_corpus_accessors",
+        "spendguard.egress",
+        "spendguard.egress.emit",
+        "spendguard.manage.admission.budget_accessors",
+        "spendguard.manage.admission.gate_event_sink",
+        "spendguard.manage.admission.spend_refusal_error",
+        "spendguard.store.reference_data.reference_data_accessors",
         "spendguard.store.call_corpus.calls",
         "spendguard.interface.capability_cli_parsing",
         "spendguard.store.money_ledger.schema_indexes",
@@ -578,15 +585,8 @@
         "spendguard.store.money_ledger.ledger",
         "spendguard.store.spend_search.ledger_request_cursor",
         "spendguard.store.reference_data.catalog",
-        "spendguard.store.reference_data.reference_data_accessors",
         "spendguard.store.reference_data.models",
-        "spendguard.manage.admission.budget_accessors",
         "spendguard.manage.admission.budget_unpriced_sink",
-        "spendguard.store.call_corpus.call_corpus_accessors",
-        "spendguard.egress",
-        "spendguard.egress.emit",
-        "spendguard.manage.admission.gate_event_sink",
-        "spendguard.manage.admission.spend_refusal_error",
         "spendguard.manage.admission.bulkgate",
         "spendguard.analyze",
         "spendguard.analyze.cost_estimation",
@@ -621,8 +621,8 @@
     },
     "sdk_before_package": {
       "atexit_registrations": [
-        "spendguard.store.money_ledger.ledger_writer.close_ledger_writers",
-        "spendguard.manage.admission.gate._rt_flush"
+        "spendguard.manage.admission.gate._rt_flush",
+        "spendguard.store.money_ledger.ledger_writer.close_ledger_writers"
       ],
       "executed_modules": [
         "spendguard.domain_legacy_path_shim",
@@ -654,6 +654,13 @@
         "spendguard.manage.admission",
         "spendguard.manage.admission.gate",
         "spendguard.store.call_corpus",
+        "spendguard.store.call_corpus.call_corpus_accessors",
+        "spendguard.egress",
+        "spendguard.egress.emit",
+        "spendguard.manage.admission.budget_accessors",
+        "spendguard.manage.admission.gate_event_sink",
+        "spendguard.manage.admission.spend_refusal_error",
+        "spendguard.store.reference_data.reference_data_accessors",
         "spendguard.store.call_corpus.calls",
         "spendguard.interface.capability_cli_parsing",
         "spendguard.store.money_ledger.schema_indexes",
@@ -667,15 +674,8 @@
         "spendguard.store.money_ledger.ledger",
         "spendguard.store.spend_search.ledger_request_cursor",
         "spendguard.store.reference_data.catalog",
-        "spendguard.store.reference_data.reference_data_accessors",
         "spendguard.store.reference_data.models",
-        "spendguard.manage.admission.budget_accessors",
         "spendguard.manage.admission.budget_unpriced_sink",
-        "spendguard.store.call_corpus.call_corpus_accessors",
-        "spendguard.egress",
-        "spendguard.egress.emit",
-        "spendguard.manage.admission.gate_event_sink",
-        "spendguard.manage.admission.spend_refusal_error",
         "spendguard.manage.admission.bulkgate",
         "spendguard.analyze",
         "spendguard.analyze.cost_estimation",
@@ -710,8 +710,8 @@
     },
     "sdk_after_package": {
       "atexit_registrations": [
-        "spendguard.store.money_ledger.ledger_writer.close_ledger_writers",
-        "spendguard.manage.admission.gate._rt_flush"
+        "spendguard.manage.admission.gate._rt_flush",
+        "spendguard.store.money_ledger.ledger_writer.close_ledger_writers"
       ],
       "executed_modules": [
         "spendguard.domain_legacy_path_shim",
@@ -743,6 +743,13 @@
         "spendguard.manage.admission",
         "spendguard.manage.admission.gate",
         "spendguard.store.call_corpus",
+        "spendguard.store.call_corpus.call_corpus_accessors",
+        "spendguard.egress",
+        "spendguard.egress.emit",
+        "spendguard.manage.admission.budget_accessors",
+        "spendguard.manage.admission.gate_event_sink",
+        "spendguard.manage.admission.spend_refusal_error",
+        "spendguard.store.reference_data.reference_data_accessors",
         "spendguard.store.call_corpus.calls",
         "spendguard.interface.capability_cli_parsing",
         "spendguard.store.money_ledger.schema_indexes",
@@ -756,15 +763,8 @@
         "spendguard.store.money_ledger.ledger",
         "spendguard.store.spend_search.ledger_request_cursor",
         "spendguard.store.reference_data.catalog",
-        "spendguard.store.reference_data.reference_data_accessors",
         "spendguard.store.reference_data.models",
-        "spendguard.manage.admission.budget_accessors",
         "spendguard.manage.admission.budget_unpriced_sink",
-        "spendguard.store.call_corpus.call_corpus_accessors",
-        "spendguard.egress",
-        "spendguard.egress.emit",
-        "spendguard.manage.admission.gate_event_sink",
-        "spendguard.manage.admission.spend_refusal_error",
         "spendguard.manage.admission.bulkgate",
         "spendguard.analyze",
         "spendguard.analyze.cost_estimation",
@@ -799,8 +799,8 @@
     },
     "gate_submodule_import": {
       "atexit_registrations": [
-        "spendguard.store.money_ledger.ledger_writer.close_ledger_writers",
-        "spendguard.manage.admission.gate._rt_flush"
+        "spendguard.manage.admission.gate._rt_flush",
+        "spendguard.store.money_ledger.ledger_writer.close_ledger_writers"
       ],
       "executed_modules": [
         "spendguard.domain_legacy_path_shim",
@@ -832,6 +832,13 @@
         "spendguard.manage.admission",
         "spendguard.manage.admission.gate",
         "spendguard.store.call_corpus",
+        "spendguard.store.call_corpus.call_corpus_accessors",
+        "spendguard.egress",
+        "spendguard.egress.emit",
+        "spendguard.manage.admission.budget_accessors",
+        "spendguard.manage.admission.gate_event_sink",
+        "spendguard.manage.admission.spend_refusal_error",
+        "spendguard.store.reference_data.reference_data_accessors",
         "spendguard.store.call_corpus.calls",
         "spendguard.interface.capability_cli_parsing",
         "spendguard.store.money_ledger.schema_indexes",
@@ -845,15 +852,8 @@
         "spendguard.store.money_ledger.ledger",
         "spendguard.store.spend_search.ledger_request_cursor",
         "spendguard.store.reference_data.catalog",
-        "spendguard.store.reference_data.reference_data_accessors",
         "spendguard.store.reference_data.models",
-        "spendguard.manage.admission.budget_accessors",
         "spendguard.manage.admission.budget_unpriced_sink",
-        "spendguard.store.call_corpus.call_corpus_accessors",
-        "spendguard.egress",
-        "spendguard.egress.emit",
-        "spendguard.manage.admission.gate_event_sink",
-        "spendguard.manage.admission.spend_refusal_error",
         "spendguard.manage.admission.bulkgate",
         "spendguard.analyze",
         "spendguard.analyze.cost_estimation",

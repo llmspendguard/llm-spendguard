@@ -122,8 +122,8 @@ def _capture(host, path, status, body_bytes):
         key = (host, path.split("?")[0])
         intent = None
         try:
-            from ... import calls as _calls
-            intent = (_calls.current() or {}).get("intent")   # attribute the event to the live job when one is set
+            from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
+            intent = (_call_corpus_accessors.resolve_calls_current() or {}).get("intent")   # attribute the event to the live job when one is set
         except Exception:
             intent = None
         if _is_batch_control_path(key[1]):

@@ -17,7 +17,8 @@ estimate path makes ZERO paid calls — it only counts tokens and prices via pri
 
 from ...capability_cli_parsing import add_registered_cli_argument
 import json
-from ... import calls, learn, config, pricing
+from ... import learn, config, pricing
+from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
 from ...submit import _count_tokens
 
 META = "spendguard"   # intent prefix → routed to the meta budget by the gate
@@ -88,7 +89,7 @@ def _judge_prompt(prompt_snip, output_snip):
 def _evidence_table(intent=None, top=40):
     """Compact per-(intent, model) evidence — the reasoner's input (so it sees reconstructed intents,
     e.g. phase_taxonomy=$1127, not just model totals). Cheap; no PII beyond model/intent labels."""
-    rows = calls.cost_summary(intent)   # (intent, model, jobs, cost, good, bad) — excludes meta
+    rows = _call_corpus_accessors.resolve_calls_cost_summary(intent)   # (intent, model, jobs, cost, good, bad) — excludes meta
     if not rows:
         return None, 0
     rows = sorted(rows, key=lambda r: -(r[3] or 0))[:top]
@@ -140,7 +141,7 @@ def reconstruct_advisor_history(run=False, per=15, limit=None):
 
     from ... import adapters
     good = bad = err = 0
-    with calls.context(intent=f"{META}:reconstruct"):
+    with _call_corpus_accessors.resolve_calls_context(intent=f"{META}:reconstruct"):
         for io_id, _intent, _model, p, o in samples:
             try:
                 # no_substitution: the verdict is recorded via callio.set_quality(src="judge") and reported as model=judge
@@ -189,7 +190,7 @@ def mine(run=False, intent=None):
         return dict(requests=1, in_tok=in_tok, out_tok=_MINE_OUT, cost=cost, model=model)
 
     from ... import adapters
-    with calls.context(intent=f"{META}:mine"):
+    with _call_corpus_accessors.resolve_calls_context(intent=f"{META}:mine"):
         r = adapters.call(model, prompt, max_tokens=_MINE_OUT, system=_MINE_SYS)  # gate → meta cap
     if r["error"]:
         print(f"  ERROR: {r['error']}")
@@ -277,7 +278,7 @@ def optimize(intent=None, plan=None, run=False):
         return dict(requests=1, in_tok=in_tok, out_tok=_OPT_OUT, cost=cost, model=model)
 
     from ... import adapters
-    with calls.context(intent=f"{META}:optimize"):
+    with _call_corpus_accessors.resolve_calls_context(intent=f"{META}:optimize"):
         # no_substitution: this returns model=model as the recommender of record — the bandit must not silently serve
         # another model while we report this one produced the recommendation (measurement-identity integrity)
         r = adapters.call(model, prompt, max_tokens=_OPT_OUT, system=_OPT_SYS, no_substitution=True)
@@ -328,7 +329,7 @@ def recommend_models(intent=None, k=5, quality_bar=None, run=False):
                     unmeasured_for_intent=ev["unmeasured_for_intent"],
                     note=f"estimate only (~${cost:.4f}); call with run=True to produce the ranking (meta-caged).")
     from ... import adapters
-    with calls.context(intent=f"{META}:recommend"):
+    with _call_corpus_accessors.resolve_calls_context(intent=f"{META}:recommend"):
         # no_substitution: the ranking is reported as produced by `model` (returned as model=model) — pin it so the
         # bandit can't silently swap the model of record for this measurement
         r = adapters.call(model, prompt, max_tokens=_REC_OUT, system=_REC_SYS, schema=_REC_SCHEMA, no_substitution=True)

@@ -289,8 +289,8 @@ def classify_task(task, files=None, provider="auto", exclude_plans=None):
               f"CONFIGURED PLAN NAMES: {json.dumps(menu)}\n"
               f"Provider is {'fixed to ' + explicit if explicit else 'for you to choose from that exact list'}. "
               "Return route, provider, self_contained, why.")
-    from ... import calls
-    with calls.gate_internal():
+    from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
+    with _call_corpus_accessors.resolve_calls_gate_internal():
         response = lane_balance.delegate(prompt, system=_CLASSIFY_SYSTEM, intent=CLASSIFY_INTENT,
                                          schema=_CLASSIFY_SCHEMA)
     if response.get("error") or not response.get("text"):

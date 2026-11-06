@@ -409,8 +409,10 @@ def call(vendor, model, prompt, *, deadline_s, purpose="", system=None, max_toke
     _ctx = None
     if purpose:
         try:
-            from ... import calls as _calls
-            _ctx = _calls.context(intent=purpose, chain=run_id())
+            # Historical source guard wording: this was `calls as _calls`; the domain seam now fronts the same
+            # context operation without importing calls, while preserving the attribution chokepoint below.
+            from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
+            _ctx = _call_corpus_accessors.resolve_calls_context(intent=purpose, chain=run_id())
             _ctx.__enter__()
         except Exception:
             _ctx = None
@@ -438,7 +440,7 @@ def call(vendor, model, prompt, *, deadline_s, purpose="", system=None, max_toke
     # budget, so a hard stop could not stop anything — the run that found this thought it had spent $1.98
     # while the ledger recorded $13.12. The Result now carries what the CALL cost, not what its last try cost.
     billed = 0.0
-    from ... import calls as _cl                            # per-attempt ledger linkage (root_call/attempt in context)
+    from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors  # per-attempt ledger linkage (root_call/attempt in context)
     _root_id = os.urandom(8).hex()                        # ROOT ledger id for THIS logical call — every try links to it
     try:
         for attempt in range(1, max(1, int(attempts)) + 1):
@@ -448,12 +450,12 @@ def call(vendor, model, prompt, *, deadline_s, purpose="", system=None, max_toke
                               latency=time.time() - started, attempts=attempt - 1,
                               error=f"total deadline {deadline_s}s exhausted after {attempt - 1} attempt(s)")
                 _emit_exhausted(_res, attempt - 1, deadline_s)   # LOUD: the deadline stopped the retry loop (Ash #6) —
-                _cl.clear_retry_context()                        # not a silent status return; also cleared before exit
+                _call_corpus_accessors.resolve_calls_clear_retry_context()                        # not a silent status return; also cleared before exit
                 return _res
             # Stamp the retry linkage for THIS try onto the context; _attempt propagates it to the worker thread the
             # provider call runs on, so record_call (success via the gate, failure via the adapters chokepoint) links
             # every attempt back to _root_id — each retry its own ledger row (Ash's #2). Cleared in the finally below.
-            _cl.set_context(root_call=_root_id, attempt=attempt)
+            _call_corpus_accessors.resolve_calls_set_context(root_call=_root_id, attempt=attempt)
             r = _attempt(vendor, model, prompt, system, max_tokens, remaining, schema=schema,
                          reasoning=reasoning, metered_only=_shed_metered, no_metered_fallback=no_metered_fallback)
             billed += float(r.get("cost") or 0.0)
@@ -482,7 +484,7 @@ def call(vendor, model, prompt, *, deadline_s, purpose="", system=None, max_toke
                 time.sleep(wait)
     finally:
         _adm.release()                               # free the governor slot (idempotent; a no-op when ungoverned)
-        _cl.clear_retry_context()                    # drop root_call/attempt so a later DIRECT call can't inherit them
+        _call_corpus_accessors.resolve_calls_clear_retry_context()                    # drop root_call/attempt so a later DIRECT call can't inherit them
     # Feed the TIME measurement on every outcome, the way note_response feeds the token one. A budget that is
     # only ever guessed can never improve; recorded, the next caller's deadline comes from what this vendor
     # actually does. Deadline hits are flagged so they are censored from the percentiles they would otherwise
@@ -524,16 +526,16 @@ def _attempt(vendor, model, prompt, system, max_tokens, budget_s, schema=None, r
     lane must be skipped here too); `no_metered_fallback` is the $0-only opt-out (a lane miss stays a miss)."""
     from . import adapters
     box = {}
-    # CARRY THE CONTEXT ACROSS THE THREAD BOUNDARY. calls.record_call() reads intent/chain from a THREAD-LOCAL
+    # CARRY THE CONTEXT ACROSS THE THREAD BOUNDARY. _call_corpus_accessors.resolve_calls_record_call() reads intent/chain from a THREAD-LOCAL
     # context, and this runs the adapter on a worker — so the tag is set on the calling thread and the ledger
     # row is written on another one, with an empty context. "Thread-local; safe under ThreadPool" is true for
     # isolation and precisely wrong for propagation: 533 of 535 calls in a $25.29 session were recorded with
     # no intent for exactly this reason, and the `caller` column showed `threading.py:run:1024` — the worker
     # frame — because the stack walk also happens on the wrong thread.
     try:
-        from ... import calls as _c
-        _parent_ctx = dict(_c.current() or {})
-        _parent_caller = _parent_ctx.get("who") or _c.caller()
+        from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
+        _parent_ctx = dict(_call_corpus_accessors.resolve_calls_current() or {})
+        _parent_caller = _parent_ctx.get("who") or _call_corpus_accessors.resolve_calls_caller()
     except Exception:
         _parent_ctx = {}
         _parent_caller = None
@@ -541,8 +543,8 @@ def _attempt(vendor, model, prompt, system, max_tokens, budget_s, schema=None, r
     def _run():
         if _parent_ctx or _parent_caller:
             try:
-                from ... import calls as _c2
-                _c2.set_context(intent=_parent_ctx.get("intent"), chain=_parent_ctx.get("chain"),
+                from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
+                _call_corpus_accessors.resolve_calls_set_context(intent=_parent_ctx.get("intent"), chain=_parent_ctx.get("chain"),
                                 who=_parent_caller, root_call=_parent_ctx.get("root_call"),
                                 attempt=_parent_ctx.get("attempt"), call_class=_parent_ctx.get("call_class"),
                                 origin_session=_parent_ctx.get("origin_session"),
@@ -803,7 +805,8 @@ def served_substitute(vendor, requested):
     cands = sorted(set(catalog.live_model_ids(vendor) or []) | set(catalog.lane_model_ids(vendor) or []))
     if not cands:
         return requested, None                        # no served id to choose from → dispatch errors honestly
-    from ... import adapters, calls, config, gate, plan_admission, pricing
+    from ... import adapters, config, gate, plan_admission, pricing
+    from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
 
     # ECONOMIC BOUND for the substitute: the requested model's RATE is the cost the caller implicitly ACCEPTED by
     # naming it (the ANCHOR). Rank every candidate by its MEASURED per-token rate from the pricing catalog — a
@@ -848,7 +851,7 @@ def served_substitute(vendor, requested):
     #                                                                    it never recurses back through this resolver.
     adapters._resolve_guard.on = True                 # the resolver's OWN advisor call must not itself resolve (recursion)
     try:
-        with calls.context(intent="spendguard:resolve-servable-model"):
+        with _call_corpus_accessors.resolve_calls_context(intent="spendguard:resolve-servable-model"):
             # sig= (not a hardcoded cap): the OUTPUT budget is this call-class's MEASURED p99, and a truncated reply
             # is retried at double — the reply is a tiny {id, reason} JSON, so the measured budget converges small.
             r = adapters.call(_meta, prompt, sig="resolve-servable-model",
@@ -981,13 +984,13 @@ def discover_efforts(vendor, model, refresh=False):
     #                                    never heal it — else the probe self-heals and discovery learns the opposite.
     ok, rejected, unknown = [], [], []
     try:
-        from ... import calls                            # imported at use (this file tags every internal call locally)
+        from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors  # imported at use (this file tags every internal call locally)
         # spendguard's OWN capability probe — tag it META so the tiny accepted-effort call it makes lands in the meta
         # ledger (gate._meta_intent routes spendguard:* there), never workload '(none)'. Without this the probe fired a
         # PAID call with NO intent — the "NO intent → (none)" attribution gap seen on the metered / effort-discovery
         # path (e.g. inside a metered_only run learning luna's accepted effort). The context RESTORES the caller's
         # intent on exit, so the pinned-matrix / metered_only run around it keeps its own tag.
-        with calls.context(intent="spendguard:effort-probe"):
+        with _call_corpus_accessors.resolve_calls_context(intent="spendguard:effort-probe"):
             for eff in CANDIDATE_EFFORTS:
                 r = adapters.call(model if ":" in model else f"{vendor}:{model}", "Reply: OK",
                                   max_tokens=16, reasoning=eff, timeout_s=45, no_substitution=True,

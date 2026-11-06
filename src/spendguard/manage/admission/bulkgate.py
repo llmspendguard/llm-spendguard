@@ -1086,7 +1086,8 @@ def eval_job(sig, bar, sample, model=None):
     bar = (bar or "").strip()
     if not bar:
         raise ValueError("eval_job needs a STATED bar (what a passing output looks like) — pass bar='...'.")
-    from ... import adapters, calls, config
+    from ... import adapters, config
+    from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
     from ...advisor import META                                    # ONE source of the meta-intent prefix
     judge = model or _gate_setting("eval_model", None, str) or config.advisor_judge_model()
     body = sample if isinstance(sample, str) else "\n---\n".join(str(x) for x in sample)
@@ -1096,7 +1097,7 @@ def eval_job(sig, bar, sample, model=None):
     prompt = ("STATED BAR (a passing sample must meet this):\n" + bar +
               "\n\nSAMPLE OUTPUTS from the small test run:\n" + shown + more +
               "\n\nDoes the SAMPLE meet the BAR? Return {pass, score 0..1, rationale}.")
-    with calls.context(intent=f"{META}:eval"):
+    with _call_corpus_accessors.resolve_calls_context(intent=f"{META}:eval"):
         r = adapters.call(judge, prompt, system=_EVAL_SYS, schema=_EVAL_SCHEMA, max_tokens=_EVAL_OUT_CEILING)
     v = _eval_verdict_from_result(r)
     record_eval(sig, bar, v["pass"], score=v.get("score"), note=v.get("rationale"), model=judge)

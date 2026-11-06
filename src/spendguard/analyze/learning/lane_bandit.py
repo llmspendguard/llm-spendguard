@@ -134,8 +134,9 @@ def _intent_realized_costs(intent, arms):
     Never raises (a routing read must not break routing)."""
     costs = {}
     try:
-        from ... import calls, lane_catalog
-        norms = calls.mean_out_by_executor_model(intent)   # {(executor_or_provider, model): {mean_out, n}}
+        from ... import lane_catalog
+        from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
+        norms = _call_corpus_accessors.resolve_calls_mean_out_by_executor_model(intent)   # {(executor_or_provider, model): {mean_out, n}}
         for arm in (arms or []):
             lane, use_name = arm
             base, _lv = lane_catalog.parse_use_name(use_name, lane)
@@ -255,9 +256,10 @@ def bakeoff_judge(task, out_a, out_b, arm_a, arm_b, cost_a=None, cost_b=None):
         return None, "identical outputs (no judge spend)"
     prompt = _value_judge_prompt(task, a, b, cost_a, cost_b)
     try:
-        from ... import adapters, calls, gate
+        from ... import adapters, gate
+        from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
         from .advisor import META                                   # ONE source of the meta-intent prefix
-        with calls.context(intent=f"{META}:bandit-judge"):          # caged: attributed, never bandit-routed
+        with _call_corpus_accessors.resolve_calls_context(intent=f"{META}:bandit-judge"):          # caged: attributed, never bandit-routed
             r = adapters.call(_bandit_judge_model(), prompt)
         txt = (r.get("text") or "").strip()
     except Exception as e:
@@ -281,7 +283,8 @@ def _run_arm(arm, task, system, reasoning, timeout_s):
     (reasoning INCLUDED, since it bills as output) so the EXPLOIT path can detect a cost-runaway (A2.3)."""
     lane, use_name = arm
     try:
-        from ... import adapters, lane_catalog, calls
+        from ... import adapters, lane_catalog
+        from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
         import importlib
         prov = lane_catalog.lane_provider(lane)
         entry = adapters._LANES.get(prov)
@@ -298,7 +301,7 @@ def _run_arm(arm, task, system, reasoning, timeout_s):
             return "", 0
         out_tok = int(r.get("out_tok") or 0)
         try:
-            calls.record_call(prov, model, "subscription", 0.0, in_tok=r.get("in_tok", 0), out_tok=r.get("out_tok"),
+            _call_corpus_accessors.resolve_calls_record_call(prov, model, "subscription", 0.0, in_tok=r.get("in_tok", 0), out_tok=r.get("out_tok"),
                          latency=r.get("latency"), executor=lane, effort=(level or reasoning))
         except Exception:
             pass
@@ -392,8 +395,8 @@ def bandit_call(intent, task, system=None, reasoning=None, timeout_s=None):
     arm = choose_arm(intent, arms)
     if not arm:
         return None
-    from ... import calls
-    pre_norm = calls.mean_out_by_executor_model(intent)   # PRE-call norm (this call not yet recorded) → no self-inflation
+    from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
+    pre_norm = _call_corpus_accessors.resolve_calls_mean_out_by_executor_model(intent)   # PRE-call norm (this call not yet recorded) → no self-inflation
     out, out_tok = _run_arm(arm, task, system, reasoning, timeout_s)
     if out:
         won = _exploit_overshoot_reward(intent, arm, out_tok, pre_norm)   # 1.0, or a PENALTY on a cost-runaway (A2.3)

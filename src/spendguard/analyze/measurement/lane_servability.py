@@ -4,7 +4,7 @@ ledger's own outcomes, and a SHIFT detector that fires loud when a model a lane 
 Why this exists (measured 2026-10-06): codex-cli 0.160.1 dropped `gpt-5.6-sol` from the ChatGPT plan while the
 METERED OpenAI API kept listing it. A `/models` cross-check alone could NOT catch that — the metered endpoint has no
 view of what a *plan* serves. So the authoritative signal for a lane/plan drop is the lane's OWN measured outcomes
-(calls.lane_model_outcomes): a (lane, model) that was succeeding and flips to a wall of transport_errors with ZERO
+(_call_corpus_accessors.resolve_calls_lane_model_outcomes): a (lane, model) that was succeeding and flips to a wall of transport_errors with ZERO
 successes is a drop, established by the PATTERN, never by parsing an error string (agentic-decisions doctrine: this is
 measurement, not prose). On a detected shift this module ALSO re-pulls the provider's live /models ($0) to tell a
 lane/plan drop (id still metered-listed) from a provider-wide drop (id gone) from a rename (a near-match appeared),
@@ -103,12 +103,12 @@ def observed_lane_models(lane, window_hours=None):
     if not lane:
         return out
     try:
-        from ... import calls
+        from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
         wh = int(window_hours if window_hours is not None else _window_hours())
         min_fail = _int_cfg("min_fail", _MIN_FAIL_DEFAULT, "SPENDGUARD_LANE_SERVABILITY_MIN_FAIL")
         min_prior_ok = _int_cfg("min_prior_ok", _MIN_PRIOR_OK_DEFAULT, "SPENDGUARD_LANE_SERVABILITY_MIN_PRIOR_OK")
-        recent = calls.lane_model_outcomes(lane, since=_since_iso(wh))
-        alltime = calls.lane_model_outcomes(lane, since=None)
+        recent = _call_corpus_accessors.resolve_calls_lane_model_outcomes(lane, since=_since_iso(wh))
+        alltime = _call_corpus_accessors.resolve_calls_lane_model_outcomes(lane, since=None)
         import datetime as _dt
         out["asof"] = _dt.datetime.now(_dt.timezone.utc).isoformat(timespec="seconds")
         for model in sorted(set(recent) | set(alltime)):
@@ -328,8 +328,8 @@ def reprobe_rejected(lane):
                 # only in the health/catalog caches a ledger-based refresh would overwrite. Without this fresh `ok` the
                 # shift re-fires on every refresh until the stale failures age out of the window (the false-banner bug).
                 try:
-                    from ... import calls as _calls_rec
-                    _calls_rec.record_call(provider=provider, model=m, kind="subscription", cost=0.0,
+                    from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
+                    _call_corpus_accessors.resolve_calls_record_call(provider=provider, model=m, kind="subscription", cost=0.0,
                                            in_tok=int(r.get("in_tok") or 0), out_tok=r.get("out_tok"),
                                            latency=r.get("latency"), intent="spendguard:lane-reprobe",
                                            executor=lane, outcome="ok")

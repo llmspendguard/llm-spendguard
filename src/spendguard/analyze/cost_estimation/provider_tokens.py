@@ -261,12 +261,13 @@ def _choose_factors_agentically(stats_by_provider, model):
     confidence + rationale. Returns ({provider: {factor, confidence, why}}, cost). A DELIBERATE stop propagates; any
     other failure returns (None, cost) so the caller can leave those providers on the neutral proxy (never a
     mechanical substitute dressed as the judged choice). The WHOLE panel is sent (never truncated)."""
-    from ... import adapters, calls, config
+    from ... import adapters, config
+    from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
     model = model or config.advisor_model()
     prompt = "Per-provider token-ratio statistics (ratio = provider_in_tok / o200k_count):\n" + json.dumps(
         stats_by_provider, indent=2, sort_keys=True) + "\n\nChoose a factor for each provider listed."
     try:
-        with calls.context(intent="spendguard:token-calibrate"):
+        with _call_corpus_accessors.resolve_calls_context(intent="spendguard:token-calibrate"):
             r = adapters.call(model, prompt, max_tokens=_FACTOR_OUT, system=_FACTOR_SYS,
                               schema=_FACTOR_SCHEMA, sig="spendguard:token-calibrate")
     except Exception as e:

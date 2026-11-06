@@ -187,9 +187,10 @@ def summarize(since=None, run=False, model=None):
         from ... import ui
         ui.estimate_only(action=f"summarize {len(prompts)} projects' work (caged · caps.meta)", cost=est)
         return {"projects": len(prompts), "est_usd": est, "model": model}
-    from ... import calls, adapters
+    from ... import adapters
+    from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
     out = {}
-    with calls.context(intent=f"{_META}:worksummary"):
+    with _call_corpus_accessors.resolve_calls_context(intent=f"{_META}:worksummary"):
         for p, pr in prompts.items():
             r = adapters.call(model, pr, max_tokens=_SUMMARY_OUT, system=_SUMMARY_SYS)   # gate → meta cap
             txt = (r.get("text") or "").strip()

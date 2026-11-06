@@ -12,7 +12,7 @@ hold it and call _calls_db() which re-acquires).
 """
 
 from ...capability_cli_parsing import add_registered_cli_argument
-import os, datetime, threading, hashlib, inspect, contextlib, uuid
+import os, datetime, threading, hashlib, inspect, contextlib, uuid, sys
 import logging
 from decimal import Decimal, localcontext
 from typing import Optional
@@ -24,7 +24,9 @@ from ...ledger_schema_migrations import (own_spend_ledger_schema_reads, nano_sch
                      record_nano_schema_migration_completion, CALL_NANO_SCHEMA_MIGRATION)
 from ...money_scale import NANO_USD_PER_USD, real_usd_to_nano_usd, nano_usd_to_usd, assert_nano_total_matches
 
-CALL_OBSERVATION_NANO_COLUMNS = {column: f"{column}_nano" for column in ("cost", "input_cost_floor")}
+from . import call_corpus_accessors as _call_corpus_accessors
+
+CALL_OBSERVATION_NANO_COLUMNS = _call_corpus_accessors.CALL_OBSERVATION_NANO_COLUMNS
 
 
 def _call_observation_nano_amounts(cost, input_cost_floor):
@@ -99,7 +101,7 @@ def _backfill_call_observation_nano_columns(connection, missing_columns):
         logging.getLogger(__name__).info("calls_nano_float_sum_delta column=%s delta_usd=%s", raw_column, delta)
 
 _lock = new_fork_reset_ledger_state(globals(), "_lock", threading.RLock)
-_local = threading.local()
+_local = _call_corpus_accessors._local
 _PKG = os.path.dirname(os.path.abspath(__file__))
 _ORIGIN_SESSION = uuid.uuid4().hex[:12]
 _CALL_CLASSES = frozenset(("workload", "gate_internal", "probe"))
@@ -851,7 +853,7 @@ def record_call(provider, model, kind, cost, in_tok=0, out_tok=0, latency=None,
 
 
 
-_CONF = {"explicit": 1.0, "truncation": 1.0, "judge": 0.95, "used": 0.6, "mined": 0.5}
+_CONF = _call_corpus_accessors._CONF
 
 
 @serialize_call_observation_mutation
@@ -1132,8 +1134,27 @@ def cmd_summary(argv=None):
     return 0
 
 
-from . import call_corpus_accessors as _call_corpus_accessors
-
 _call_corpus_accessors.set_calls_insert_resolver(lambda *a, **k: insert(*a, **k))
 _call_corpus_accessors.set_calls_cost_summary_resolver(lambda *a, **k: cost_summary(*a, **k))
 _call_corpus_accessors.set_calls_record_call_resolver(lambda *a, **k: record_call(*a, **k))
+_call_corpus_accessors.set_calls__ensure_call_observation_schema_resolver(lambda *a, **k: _ensure_call_observation_schema(*a, **k))
+_call_corpus_accessors.set_calls_call_recording_consent_enabled_resolver(lambda *a, **k: call_recording_consent_enabled(*a, **k))
+_call_corpus_accessors.set_calls_caller_resolver(lambda *a, **k: caller(*a, **k))
+_call_corpus_accessors.set_calls_check_output_resolver(lambda *a, **k: check_output(*a, **k))
+_call_corpus_accessors.set_calls_clear_retry_context_resolver(lambda *a, **k: clear_retry_context(*a, **k))
+_call_corpus_accessors.set_calls_context_resolver(lambda *a, **k: context(*a, **k))
+_call_corpus_accessors.set_calls_current_resolver(lambda *a, **k: current(*a, **k))
+_call_corpus_accessors.set_calls_fell_from_context_resolver(lambda *a, **k: fell_from_context(*a, **k))
+_call_corpus_accessors.set_calls_finalize_bakeoff_measurement_resolver(lambda *a, **k: finalize_bakeoff_measurement(*a, **k))
+_call_corpus_accessors.set_calls_flow_agg_resolver(lambda *a, **k: flow_agg(*a, **k))
+_call_corpus_accessors.set_calls_gate_internal_resolver(lambda *a, **k: gate_internal(*a, **k))
+_call_corpus_accessors.set_calls_intent_spend_resolver(lambda *a, **k: intent_spend(*a, **k))
+_call_corpus_accessors.set_calls_lane_model_outcomes_resolver(lambda *a, **k: lane_model_outcomes(*a, **k))
+_call_corpus_accessors.set_calls_mean_out_by_executor_model_resolver(lambda *a, **k: mean_out_by_executor_model(*a, **k))
+_call_corpus_accessors.set_calls_metered_realtime_by_intent_resolver(lambda *a, **k: metered_realtime_by_intent(*a, **k))
+_call_corpus_accessors.set_calls_reconcile_calls_batch_estimate_resolver(lambda *a, **k: reconcile_calls_batch_estimate(*a, **k))
+_call_corpus_accessors.set_calls_recorded_intents_resolver(lambda *a, **k: recorded_intents(*a, **k))
+_call_corpus_accessors.set_calls_redirect_context_resolver(lambda *a, **k: redirect_context(*a, **k))
+_call_corpus_accessors.set_calls_set_context_resolver(lambda *a, **k: set_context(*a, **k))
+_call_corpus_accessors.set_calls_tested_recently_resolver(lambda *a, **k: tested_recently(*a, **k))
+_call_corpus_accessors.set_calls_module_contract(sys.modules[__name__])
