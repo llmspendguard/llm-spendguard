@@ -215,8 +215,8 @@ def reconstruct_reading(intent):
     candidates, good_rate, N and the date range — but the JUDGE is 'unknown': it was never stamped before receipts
     existed, and an unstamped judge is an absence of evidence, NEVER a guessed model. This is the RECONSTRUCT
     identity applied to a measurement; going forward, record_reading stamps the real judge so inspect shows it."""
-    from ... import ledger_read
-    rows = ledger_read.read_bakeoff_measurements(intent)
+    from spendguard.store.spend_search.ledger_read_accessors import resolve_read_bakeoff_measurements as read_bakeoff_measurements
+    rows = read_bakeoff_measurements(intent)
     if not rows:
         return None
     per, tmin, tmax = {}, None, None

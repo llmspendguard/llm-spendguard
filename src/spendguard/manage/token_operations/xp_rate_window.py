@@ -113,7 +113,8 @@ def reserve(key, limits, est_tokens=0, deadline_s=30.0, clock=time.time, sleep=t
     deadline. A shared-store infrastructure failure raises RateDeadline with the complete reason. `clock`/`sleep` are injectable for tests."""
     if _xp_rate_off() or not limits:
         return 0.0
-    from ...ledger_read import effective_ledger_admission_deadline, LedgerReadError
+    from spendguard.store.spend_search.ledger_read_contracts import LedgerReadError
+    from spendguard.store.spend_search.ledger_read_accessors import resolve_effective_ledger_admission_deadline as effective_ledger_admission_deadline
     try:
         reservation_expiry = effective_ledger_admission_deadline(time.monotonic() + float(deadline_s))
     except LedgerReadError as error:
@@ -133,7 +134,7 @@ def reserve(key, limits, est_tokens=0, deadline_s=30.0, clock=time.time, sleep=t
             raise RateDeadline("'%s' shared rate window saturated — deadline %.0fs exhausted" % (key, float(deadline_s)))
         try:
             from ...ledger_writer import run_ledger_write
-            from ...ledger_read import ledger_request_scope
+            from spendguard.store.spend_search.ledger_read_accessors import resolve_ledger_request_scope as ledger_request_scope
             with ledger_request_scope(deadline_s=remaining):
                 ok, wait = run_ledger_write(
                     lambda: _commit_rate_window_reservation(key, limits, est_tokens, clock), deadline_at=reservation_expiry)

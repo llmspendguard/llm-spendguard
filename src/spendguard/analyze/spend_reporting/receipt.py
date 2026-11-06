@@ -168,7 +168,7 @@ def _receipt_est_records():
     Numeric TEXT is cast per row before aggregation, independently of every real-dollar column.
     """
     import sqlite3
-    from ...ledger_read import _ledger_read_connection, consumer_empty_spend_compatibility
+    from spendguard.store.spend_search.ledger_read_accessors import resolve__ledger_read_connection as _ledger_read_connection, resolve_consumer_empty_spend_compatibility as consumer_empty_spend_compatibility
     from ...sources import receipt_source_family
     from ...ledger import SpendLedger
 
@@ -319,9 +319,9 @@ def _lane_activity(since=None):
     served these prompts ($0 billed), and now the receipt can name it instead of it being invisible. Cheap indexed
     read; {} on any error or on an older db written before the executor column existed (guarded, never raises)."""
     since = since or _windows()[2]
-    from ... import ledger_read
+    from spendguard.store.spend_search.ledger_read_accessors import resolve_read_receipt_lane_activity as read_receipt_lane_activity
     try:
-        rows = ledger_read.read_receipt_lane_activity(since)
+        rows = read_receipt_lane_activity(since)
         return {r[0]: {"calls": r[1], "in_tok": r[2], "out_tok": r[3]} for r in rows if r[0]}
     except Exception:
         return {}
@@ -403,7 +403,7 @@ def _truncated_lines():
     as 'no findings' rather than 'no answer' — so it is worse than a visible failure. It was invisible here
     because it sits inside a legitimate-looking total."""
     try:
-        from ...ledger_read import _ledger_read_connection
+        from spendguard.store.spend_search.ledger_read_accessors import resolve__ledger_read_connection as _ledger_read_connection
         with _ledger_read_connection() as c:
             return _truncation_rows(c)
     except Exception:
@@ -485,12 +485,13 @@ def truncation_remedy(c, model):
 
 
 def _truncation_rows(c):
-    from ... import ledger_read
+    from spendguard.store.spend_search.ledger_read_contracts import LEDGER_CALLS_TABLE, LedgerReadRequest
+    from spendguard.store.spend_search.ledger_read_accessors import resolve_read_ledger_count as read_ledger_count, resolve_read_receipt_truncation_groups as read_receipt_truncation_groups
     try:
         since = _windows()[2]
-        rows = ledger_read.read_receipt_truncation_groups(since)
-        allrows = (ledger_read.read_ledger_count(ledger_read.LedgerReadRequest(
-            table=ledger_read.LEDGER_CALLS_TABLE, columns=("id",), where_sql="ts>=?", parameters=(since,))),)
+        rows = read_receipt_truncation_groups(since)
+        allrows = (read_ledger_count(LedgerReadRequest(
+            table=LEDGER_CALLS_TABLE, columns=("id",), where_sql="ts>=?", parameters=(since,))),)
     except Exception:
         return []
     rows = [r for r in rows if r[1]]
@@ -679,8 +680,8 @@ def tally(project=None, conv=None) -> dict:
     except Exception as error:
         gaps.append(f"CAPTURE GAP: ledger read unavailable: {error!r}")
     try:
-        from ... import ledger_read
-        pending_settlements = ledger_read.read_incomplete_call_settlements(month, project=project)
+        from spendguard.store.spend_search.ledger_read_accessors import resolve_read_incomplete_call_settlements as read_incomplete_call_settlements
+        pending_settlements = read_incomplete_call_settlements(month, project=project)
         if pending_settlements["n"]:
             gaps.append(f"INCOMPLETE SETTLEMENT: {pending_settlements['n']} calls have unreported output usage; "
                         f"known input-cost floor {_money(pending_settlements['input_cost_floor'])}; "

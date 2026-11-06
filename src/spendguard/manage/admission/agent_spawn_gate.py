@@ -10,7 +10,7 @@ import shutil
 import sys
 
 from ... import config, delegate_router, plan_admission
-from ...ledger_read import LedgerReadError
+from spendguard.store.spend_search.ledger_read_contracts import LedgerReadError
 
 _HOOK_SUFFIX = "agent-spawn-gate --pretooluse-hook"
 _OVERRIDE_FLAG = "SPENDGUARD_ALLOW_SUBAGENT"

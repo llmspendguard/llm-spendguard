@@ -11,7 +11,9 @@ import sqlite3
 import time
 import weakref
 
-from spendguard import config, ledger_read
+from spendguard import config
+from spendguard.store.spend_search.ledger_read_contracts import LedgerReadError, LedgerReadTimeout
+from spendguard.store.spend_search.ledger_read_accessors import resolve_current_ledger_request_scope as current_ledger_request_scope, resolve_ledger_request_scope as ledger_request_scope
 
 RECONCILE_MAINTENANCE_BUDGET_ENV = "SPENDGUARD_RECONCILE_MAINTENANCE_TIME_BUDGET_S"
 # Whole correction transactions measured 8.3 seconds under local coverage.
@@ -25,11 +27,11 @@ _RECONCILE_MAINTENANCE_EXECUTION_METHODS = frozenset((
 _RECONCILE_MAINTENANCE_LOCK_REFUSALS = frozenset((sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED))
 
 
-class ReconcileMaintenanceDeadline(ledger_read.LedgerReadTimeout):
+class ReconcileMaintenanceDeadline(LedgerReadTimeout):
     """An offline maintenance operation exhausted its complete lifetime budget."""
 
 
-class ReconcileMaintenanceRequestRefusal(ledger_read.LedgerReadError):
+class ReconcileMaintenanceRequestRefusal(LedgerReadError):
     """Offline ownership cannot escape request cancellation containment."""
 
 
@@ -91,7 +93,7 @@ class ReconcileMaintenanceConnection:
             raise sqlite3.ProgrammingError("Offline reconciliation owner is closed")
         if self._reconcile_complete:
             raise sqlite3.ProgrammingError("Offline reconciliation corrections are already committed")
-        if ledger_read.current_ledger_request_scope() is not None:
+        if current_ledger_request_scope() is not None:
             raise ReconcileMaintenanceRequestRefusal("Offline reconciliation cannot run inside a request scope")
         connection = self._native_reconcile_connection
         config.require_ledger_home_alignment(
@@ -108,7 +110,7 @@ class ReconcileMaintenanceConnection:
         try:
             if self._reconcile_progress_failure is not None:
                 raise self._reconcile_progress_failure
-            if ledger_read.current_ledger_request_scope() is not None:
+            if current_ledger_request_scope() is not None:
                 raise ReconcileMaintenanceRequestRefusal("Offline reconciliation cannot run inside a request scope")
             if time.monotonic() >= self._reconcile_deadline:
                 raise ReconcileMaintenanceDeadline(self._reconcile_budget)
@@ -227,7 +229,7 @@ def owned_reconcile_maintenance_connection(path=None, time_budget=None):
     The caller initializes schema, begins IMMEDIATE, and commits
     only its complete correction transaction; this context never auto-commits.
     """
-    if ledger_read.current_ledger_request_scope() is not None:
+    if current_ledger_request_scope() is not None:
         raise ReconcileMaintenanceRequestRefusal("Offline reconciliation cannot borrow a request scope")
     if isinstance(time_budget, bool):
         raise ValueError("Offline reconciliation budget must be positive and finite")
@@ -240,9 +242,9 @@ def owned_reconcile_maintenance_connection(path=None, time_budget=None):
     from ...ledger_writer import exclusive_ledger_writer_connection
     with ExitStack() as reservation_stack:
         try:
-            with ledger_read.ledger_request_scope(deadline_s=deadline - time.monotonic()):
+            with ledger_request_scope(deadline_s=deadline - time.monotonic()):
                 connection = reservation_stack.enter_context(exclusive_ledger_writer_connection(path))
-        except ledger_read.LedgerReadError as error:
+        except LedgerReadError as error:
             raise ReconcileMaintenanceDeadline(budget) from error
         owner = ReconcileMaintenanceConnection(connection, deadline, budget)
         try:

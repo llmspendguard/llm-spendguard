@@ -1,4 +1,4 @@
-"""Accessor bridge for cyclic consumers of ledger reads.
+"""Dependency-free accessor bridge for cyclic consumers of ledger reads.
 
 This dependency-free leaf lets a cyclic consumer such as ``route_realized`` use
 ledger_read's ``ledger_read_table_exists`` / ``read_routing_history_report`` /
@@ -7,6 +7,38 @@ plus its admission-deadline resolver and ``LedgerReadError`` without importing
 ``ledger_read`` and re-creating the cycle. Ledger_read wires its real functions
 during its eager import.
 """
+
+import threading
+
+_ledger_read_accessor_lock = threading.Lock()
+_ledger_read_resolvers = {}
+
+
+def __getattr__(attribute_name):
+    """Materialize resolver APIs from their fixed ``set_``/``resolve_`` protocol."""
+    if attribute_name.startswith("set_") and attribute_name.endswith("_resolver"):
+        symbol_name = attribute_name[len("set_"):-len("_resolver")]
+
+        def set_ledger_read_symbol_resolver(resolver):
+            with _ledger_read_accessor_lock:
+                _ledger_read_resolvers[symbol_name] = resolver
+
+        set_ledger_read_symbol_resolver.__name__ = attribute_name
+        globals()[attribute_name] = set_ledger_read_symbol_resolver
+        return set_ledger_read_symbol_resolver
+    if attribute_name.startswith("resolve_"):
+        symbol_name = attribute_name[len("resolve_"):]
+
+        def resolve_ledger_read_symbol(*args, **kwargs):
+            resolver = _ledger_read_resolvers.get(symbol_name)
+            if resolver is None:
+                raise RuntimeError(f"ledger_read_accessors.{symbol_name} resolver not wired")
+            return resolver(*args, **kwargs)
+
+        resolve_ledger_read_symbol.__name__ = attribute_name
+        globals()[attribute_name] = resolve_ledger_read_symbol
+        return resolve_ledger_read_symbol
+    raise AttributeError(attribute_name)
 
 _ledger_table_exists = None
 _read_routing_history = None

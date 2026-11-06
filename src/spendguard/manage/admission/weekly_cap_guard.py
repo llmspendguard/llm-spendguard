@@ -10,7 +10,7 @@ import shutil
 import sys
 
 from ... import config
-from ...ledger_read import LedgerReadError
+from spendguard.store.spend_search.ledger_read_contracts import LedgerReadError
 
 
 from .admission_accessors import (WEEKLY_CAP_GUARD_BLOCKED_SPAWN_TOOLS_DEFAULT,

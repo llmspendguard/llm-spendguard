@@ -111,7 +111,7 @@ def ledger_read_cli(argv):
     args = vars(parser.parse_args(argv))
     if args["operation"] == "event" and not args["event_id"]:
         parser.error("event requires --event-id")
-    from ..ledger_read import LedgerReadError
+    from spendguard.store.spend_search.ledger_read_contracts import LedgerReadError
     try:
         payload = _tool_ledger_read(args)
     except (LedgerReadError, ValueError) as error:
@@ -1140,7 +1140,7 @@ def cli_core_check_prices(rest, cmd, argv):
         print("  config : spendguard price <model> --in <rate> --out <rate> --source <URL> --verified YYYY-MM-DD")
         for prov, models in sorted(p.providers().items()):
             print(f"  {prov}: {len(models)} models")
-        from ..ledger_read import LedgerReadError
+        from spendguard.store.spend_search.ledger_read_contracts import LedgerReadError
         try:                                              # capability coverage/completeness pointer (full detail: `metadata`)
             from .. import metadata_audit as _ma
             _cap = _ma._capability_health()

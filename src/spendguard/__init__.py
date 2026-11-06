@@ -54,8 +54,9 @@ def _load_public_api_and_install_gate():
 
     if "install" in globals():
         return
-    # These admission homes are intentionally eager: importing them preserves the root's historical public
+    # These domain homes are intentionally eager: importing them preserves the root's historical public
     # bootstrap order and registers their dependency-inverted accessor forwarders before consumers import.
+    from .store.spend_search import ledger_read as _spend_search_ledger_read  # noqa: F401
     from .manage.admission import budget as _admission_budget  # noqa: F401
     from .manage.admission import bulkgate as _admission_bulkgate  # noqa: F401
     from .manage.admission import gate as _admission_gate  # noqa: F401

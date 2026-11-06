@@ -116,7 +116,8 @@ def ledger_connection_commit_deferred(connection):
 
 def require_ledger_writer_request_live():
     """Reject abandonment and expired ledger work before SQL and commit."""
-    from ...ledger_read import current_ledger_request_scope, LedgerQueryDeadline
+    from spendguard.store.spend_search.ledger_read_contracts import LedgerQueryDeadline
+    from spendguard.store.spend_search.ledger_read_accessors import resolve_current_ledger_request_scope as current_ledger_request_scope
     scope = current_ledger_request_scope()
     if scope is not None:
         scope.require_ledger_request_live()
@@ -127,7 +128,8 @@ def require_ledger_writer_request_live():
 @contextlib.contextmanager
 def deadline_ledger_writer_lock(lock, *, deadline_at=None):
     """Apply the request's absolute budget to every writer-side Python lock."""
-    from ...ledger_read import current_ledger_request_scope, LedgerQueryDeadline, effective_ledger_admission_deadline
+    from spendguard.store.spend_search.ledger_read_contracts import LedgerQueryDeadline
+    from spendguard.store.spend_search.ledger_read_accessors import resolve_current_ledger_request_scope as current_ledger_request_scope, resolve_effective_ledger_admission_deadline as effective_ledger_admission_deadline
     scope = current_ledger_request_scope()
     require_ledger_writer_request_live()
     deadline_at = effective_ledger_admission_deadline(deadline_at)
@@ -207,7 +209,7 @@ class _LedgerWriteOwner:
         _ledger_writer_local.owner = self
         try:
             with self.cross_process_write_lease():
-                from ...ledger_read import current_ledger_request_scope
+                from spendguard.store.spend_search.ledger_read_accessors import resolve_current_ledger_request_scope as current_ledger_request_scope
                 startup_scope = current_ledger_request_scope()
                 self.connection = config.open_ledger_connection(
                     self.path, deadline_at=None if startup_scope is None else startup_scope.deadline_at)
@@ -246,7 +248,7 @@ class _LedgerWriteOwner:
                         with self.cross_process_write_lease():
                             require_ledger_writer_request_live()
                             if self.connection is None:
-                                from ...ledger_read import current_ledger_request_scope
+                                from spendguard.store.spend_search.ledger_read_accessors import resolve_current_ledger_request_scope as current_ledger_request_scope
                                 reopen_scope = current_ledger_request_scope()
                                 self.connection = config.open_ledger_connection(
                                     self.path, deadline_at=None if reopen_scope is None else reopen_scope.deadline_at)
@@ -309,7 +311,7 @@ class _LedgerWriteOwner:
         Only acquisition binds a temporary operation scope: borrowed handles
         may outlive the ambient scope in which maintenance admitted them.
         """
-        from ...ledger_read import ledger_serialized_write_scope
+        from spendguard.store.spend_search.ledger_read_accessors import resolve_ledger_serialized_write_scope as ledger_serialized_write_scope
         with ledger_serialized_write_scope():
             config.require_ledger_home_alignment(self.path)
             if self.write_lock_depth == 0:
@@ -317,7 +319,7 @@ class _LedgerWriteOwner:
                 lock_path.parent.mkdir(parents=True, exist_ok=True)
                 self.write_lock_handle = lock_path.open("a")
                 try:
-                    from ...ledger_read import current_ledger_request_scope
+                    from spendguard.store.spend_search.ledger_read_accessors import resolve_current_ledger_request_scope as current_ledger_request_scope
                     scope = current_ledger_request_scope()
                     while True:
                         require_ledger_writer_request_live()
@@ -373,14 +375,15 @@ def admit_live_ledger_writer(ledger_path):
 
 def run_ledger_write(callback, path=None, *, deadline_at=None):
     """Apply evidence with an operation budget and transport cancellation."""
-    from ...ledger_read import ledger_serialized_write_scope
+    from spendguard.store.spend_search.ledger_read_accessors import resolve_ledger_serialized_write_scope as ledger_serialized_write_scope
     with ledger_serialized_write_scope(deadline_at=deadline_at):
         return _run_admitted_ledger_write(callback, path)
 
 
 def _run_admitted_ledger_write(callback, path=None):
     """Synchronously apply one callback on the sole connection for this ledger."""
-    from ...ledger_read import current_ledger_request_scope, LedgerQueryDeadline
+    from spendguard.store.spend_search.ledger_read_contracts import LedgerQueryDeadline
+    from spendguard.store.spend_search.ledger_read_accessors import resolve_current_ledger_request_scope as current_ledger_request_scope
     request_scope = current_ledger_request_scope()
 
     def remaining_writer_deadline():

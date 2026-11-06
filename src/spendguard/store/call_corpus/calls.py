@@ -271,8 +271,8 @@ def recorded_intents(min_calls=1, limit=200):
     """Distinct job-type intents in the ledger with >= min_calls recorded calls, most-used first — the known label
     set an untagged prompt can be classified against (best_value's intent inference). $0, read-only; [] on any error."""
     try:
-        from ... import ledger_read
-        rows = ledger_read.read_recorded_call_intents(min_calls, limit)
+        from spendguard.store.spend_search.ledger_read_accessors import resolve_read_recorded_call_intents as read_recorded_call_intents
+        rows = read_recorded_call_intents(min_calls, limit)
         return [r[0] for r in rows]
     except Exception:
         return []
@@ -359,12 +359,13 @@ def _max_rowid() -> int:
     if not call_recording_consent_enabled():
         return 0
     try:
-        from ... import ledger_read
+        from spendguard.store.spend_search.ledger_read_contracts import LEDGER_CALLS_TABLE
+        from spendguard.store.spend_search.ledger_read_accessors import resolve_ledger_read_table_exists as ledger_read_table_exists, resolve_read_call_max_rowid as read_call_max_rowid
         # A flow watermark before the first logged call is zero; this observer never creates schema.
         from pathlib import Path
-        if not Path(config.db_path()).exists() or not ledger_read.ledger_read_table_exists(ledger_read.LEDGER_CALLS_TABLE):
+        if not Path(config.db_path()).exists() or not ledger_read_table_exists(LEDGER_CALLS_TABLE):
             return 0
-        return ledger_read.read_call_max_rowid()
+        return read_call_max_rowid()
     except Exception:
         return 0
 
@@ -375,15 +376,16 @@ def flow_agg(since_rowid: int = 0, chain: Optional[str] = None):
     if not call_recording_consent_enabled():
         return None
     try:
-        from ... import ledger_read
-        row = ledger_read.read_call_flow(since_rowid, chain)
+        from spendguard.store.spend_search.ledger_read_contracts import LedgerSettlementIncomplete
+        from spendguard.store.spend_search.ledger_read_accessors import resolve_read_call_flow as read_call_flow
+        row = read_call_flow(since_rowid, chain)
         if not row or not row[0]:
             return None
         return {"n": int(row[0]), "in_tok": None if row[1] is None else int(row[1]),
                 "out_tok": None if row[2] is None else int(row[2]),
                 "token_usage_complete": row[1] is not None and row[2] is not None,
                 "cost": float(row[3] or 0.0), "caller": row[4]}
-    except ledger_read.LedgerSettlementIncomplete as incomplete_flow:
+    except LedgerSettlementIncomplete as incomplete_flow:
         return {"n": None, "in_tok": None, "out_tok": None, "cost": None, "caller": None,
                 "incomplete_count": incomplete_flow.incomplete_count,
                 "input_cost_floor": incomplete_flow.input_cost_floor}
@@ -968,17 +970,18 @@ def intent_spend(intent, window_s=86400):
     cut = (datetime.datetime.now(datetime.timezone.utc)
            - datetime.timedelta(seconds=max(1, int(window_s)))).isoformat(timespec="seconds")
     try:
-        from ... import ledger_read
+        from spendguard.store.spend_search.ledger_read_contracts import LedgerSettlementIncomplete
+        from spendguard.store.spend_search.ledger_read_accessors import resolve__prefer_nano_else_legacy_column as _prefer_nano_else_legacy_column, resolve__read_incomplete_settlement_totals as _read_incomplete_settlement_totals
         import spendguard.manage.admission.admission_accessors as budget
         connection = budget.resolve__ledger()._conn
         available_columns = {column[1] for column in connection.execute("PRAGMA table_info(calls)")}
-        incomplete = ledger_read._read_incomplete_settlement_totals(
+        incomplete = _read_incomplete_settlement_totals(
             connection, since=cut, intent=intent)
         if incomplete["n"]:
-            raise ledger_read.LedgerSettlementIncomplete(
+            raise LedgerSettlementIncomplete(
                 incomplete["n"], incomplete["input_cost_floor"])
         legacy_cost_column, nano_cost_column = next(iter(CALL_OBSERVATION_NANO_COLUMNS.items()))
-        selected_cost_column = ledger_read._prefer_nano_else_legacy_column(
+        selected_cost_column = _prefer_nano_else_legacy_column(
             available_columns, nano_cost_column, legacy_cost_column)
         if selected_cost_column is None:
             raise RuntimeError("Calls ledger has no cost column")
@@ -991,7 +994,7 @@ def intent_spend(intent, window_s=86400):
         total = connection.execute(
             f"SELECT {total_expression} FROM calls WHERE intent=? AND ts>=?", (intent, cut)).fetchone()[0]
         return float(total)
-    except ledger_read.LedgerSettlementIncomplete:
+    except LedgerSettlementIncomplete:
         raise
     except Exception:
         raise  # an unknown settlement must not disable the running monetary cap
@@ -999,8 +1002,8 @@ def intent_spend(intent, window_s=86400):
 
 def cost_summary(intent=None):
     """Per (intent, model): calls, $ total, %good, and cost-per-good-result."""
-    from ... import ledger_read
-    return [row.values for row in ledger_read.read_call_cost_summary(intent)]
+    from spendguard.store.spend_search.ledger_read_accessors import resolve_read_call_cost_summary as read_call_cost_summary
+    return [row.values for row in read_call_cost_summary(intent)]
 
 
 def mean_out_by_executor_model(intent, call_class=None, origin_session=None):
@@ -1017,8 +1020,8 @@ def mean_out_by_executor_model(intent, call_class=None, origin_session=None):
     if not intent:
         return out
     try:
-        from ... import ledger_read
-        rows = ledger_read.read_call_output_means(intent, call_class, origin_session)
+        from spendguard.store.spend_search.ledger_read_accessors import resolve_read_call_output_means as read_call_output_means
+        rows = read_call_output_means(intent, call_class, origin_session)
         for row in rows:
             ex, model, avg_out, n = row.values
             out[(ex or "?", model or "?")] = {"mean_out": None if avg_out is None else float(avg_out), "n": int(n)}
@@ -1038,8 +1041,8 @@ def lane_model_outcomes(executor, since=None, call_class=None):
     if not executor:
         return out
     try:
-        from ... import ledger_read
-        rows = ledger_read.read_call_lane_outcomes(executor, since, call_class)
+        from spendguard.store.spend_search.ledger_read_accessors import resolve_read_call_lane_outcomes as read_call_lane_outcomes
+        rows = read_call_lane_outcomes(executor, since, call_class)
         for row in rows:
             model, outcome, n, last_ts = row.values
             rec = out.setdefault(model or "?", {"ok": 0, "fail": 0, "last_ok": None,
@@ -1073,8 +1076,8 @@ def metered_realtime_by_intent(since):
     if not since:
         return out
     try:
-        from ... import ledger_read
-        rows = ledger_read.read_call_metered_intents(since)
+        from spendguard.store.spend_search.ledger_read_accessors import resolve_read_call_metered_intents as read_call_metered_intents
+        rows = read_call_metered_intents(since)
         for row in rows:
             intent, model, n, usd, in_tok, avg_in = row.values
             out.append({"intent": intent, "model": model, "calls": int(n), "usd": float(usd or 0.0),
@@ -1102,11 +1105,12 @@ def tested_recently(intent, model=None, days=14, kinds=("realtime",)):
         # into the past and stale evidence passes the test-first gate; east of it, real recent tests
         # vanish. Either way the comparison succeeds and returns a confident wrong answer.
         since = (_dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(days=int(days))).isoformat()
-        from ... import ledger_read
+        from spendguard.store.spend_search.ledger_read_contracts import LEDGER_CALLS_TABLE
+        from spendguard.store.spend_search.ledger_read_accessors import resolve_count_recent_call_tests as count_recent_call_tests, resolve_ledger_read_table_exists as ledger_read_table_exists
         from pathlib import Path
-        if not Path(config.db_path()).exists() or not ledger_read.ledger_read_table_exists(ledger_read.LEDGER_CALLS_TABLE):
+        if not Path(config.db_path()).exists() or not ledger_read_table_exists(LEDGER_CALLS_TABLE):
             return False
-        return ledger_read.count_recent_call_tests(intent, since, kinds, model=model) > 0
+        return count_recent_call_tests(intent, since, kinds, model=model) > 0
     except Exception:
         return False
 

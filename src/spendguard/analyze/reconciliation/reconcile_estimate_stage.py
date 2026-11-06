@@ -10,7 +10,8 @@ import traceback
 
 from ... import config
 from ...ledger import _DecSum, SpendLedger
-from ...ledger_read import LedgerReadError, LEDGER_READ_DECIMAL_ARITY, _ledger_read_connection
+from spendguard.store.spend_search.ledger_read_contracts import LedgerReadError, LEDGER_READ_DECIMAL_ARITY
+from spendguard.store.spend_search.ledger_read_accessors import resolve__ledger_read_connection as _ledger_read_connection
 
 RECONCILE_STAGE_PREFIX = "spendguard-reconcile-stage-"
 RECONCILE_STAGE_DATABASE = "estimates.db"

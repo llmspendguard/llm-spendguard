@@ -69,7 +69,7 @@ def service_mcp_spend_deadletters():
 def _run_mcp_deadletter_drain(paths, deadline):
     """Bound writer admission; leave durable evidence for the next scheduled retry."""
     from ..ledger_deadletter import drain_spend_deadletter_events
-    from ..ledger_read import ledger_request_scope
+    from spendguard.store.spend_search.ledger_read_accessors import resolve_ledger_request_scope as ledger_request_scope
     try:
         with ledger_request_scope(deadline_s=deadline):
             report = drain_spend_deadletter_events(paths)

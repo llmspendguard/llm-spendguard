@@ -653,7 +653,7 @@ class _CodexDaemonPool:
                         finally:
                             completion.set()
 
-                    from ...ledger_read import ledger_request_scope
+                    from spendguard.store.spend_search.ledger_read_accessors import resolve_ledger_request_scope as ledger_request_scope
                     # Span the lease's cancellation scope across the lease budget (an agentic turn is minutes), not
                     # the 5s ledger-read default — otherwise an incidental serving-path ledger op after 5s of a
                     # healthy long lease raises LedgerQueryDeadline and fails a completed turn. Never shorter than

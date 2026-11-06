@@ -11,14 +11,16 @@ This is the evidence layer. The reasoning/LLM "learning advisor" (Layer 2) sits 
 from ...capability_cli_parsing import add_registered_cli_argument
 import argparse
 from pathlib import Path
-from ... import config, ledger_read
+from ... import config
+from spendguard.store.spend_search.ledger_read_contracts import LEDGER_CALLS_TABLE
+from spendguard.store.spend_search.ledger_read_accessors import resolve_ledger_read_table_exists as ledger_read_table_exists, resolve_read_advisor_evidence as read_advisor_evidence
 
 
 def _rows(as_of=None, intent=None):
     if (not Path(config.db_path()).exists()
-            or not ledger_read.ledger_read_table_exists(ledger_read.LEDGER_CALLS_TABLE)):
+            or not ledger_read_table_exists(LEDGER_CALLS_TABLE)):
         return []
-    return ledger_read.read_advisor_evidence(as_of=as_of, intent=intent)
+    return read_advisor_evidence(as_of=as_of, intent=intent)
 
 
 # Weight given to a quality label from a row that never recorded a confidence at all (legacy rows, written

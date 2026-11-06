@@ -92,9 +92,10 @@ def cmd(argv=None):
 def ambiguous_count():
     """Rows a human/LLM might still need to disambiguate — untagged after the free pass (should be ~0 once
     deterministic runs, but non-repo or mixed-context charges can remain). Zero-spend."""
-    from ... import ledger_read
+    from spendguard.store.spend_search.ledger_read_contracts import LedgerReadRequest
+    from spendguard.store.spend_search.ledger_read_accessors import resolve_read_ledger_count as read_ledger_count
     import spendguard.manage.admission.admission_accessors as budget
-    return ledger_read.read_ledger_count(ledger_read.LedgerReadRequest(
+    return read_ledger_count(LedgerReadRequest(
         where_sql=_UNRESOLVED_PROJECT, parameters=(budget.UNATTRIBUTED_PROJECT,)))
 
 

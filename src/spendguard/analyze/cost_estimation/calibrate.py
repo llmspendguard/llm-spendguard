@@ -238,14 +238,15 @@ def _fill_obs(label, model, as_of=None):
 def _calls_rows(label, model, transport, as_of=None):
     """calls rows for a cell (workload only, priced, tokenized). model matched post-normalize in python
     because the corpus stores raw ids (e.g. dated snapshots) while callers pass canonical names."""
-    from ... import ledger_read
+    from spendguard.store.spend_search.ledger_read_contracts import LedgerReadOpenError, LedgerReadSchemaError
+    from spendguard.store.spend_search.ledger_read_accessors import resolve_read_calibration_calls as read_calibration_calls
     want = pricing.normalize(model) if model else None
     rows = []
     try:
-        evidence = ledger_read.read_calibration_calls(META_PREFIX + "%", as_of=as_of)
-    except ledger_read.LedgerReadOpenError:
+        evidence = read_calibration_calls(META_PREFIX + "%", as_of=as_of)
+    except LedgerReadOpenError:
         raise
-    except (sqlite3.OperationalError, ledger_read.LedgerReadSchemaError):
+    except (sqlite3.OperationalError, LedgerReadSchemaError):
         return []
     for row in evidence:
         it, m, kind, itok, otok, cost, ts = row.values
@@ -463,20 +464,20 @@ def pair(now=None):
     now = time.time() if now is None else now
     horizon = _pair_horizon_s()
     con = _con()
-    from ... import ledger_read
+    from spendguard.store.spend_search.ledger_read_accessors import resolve_read_calibration_actuals as read_calibration_actuals
     paired = expired = pending = 0
     try:
         preds = con.execute("SELECT job_id, ts, label, model FROM cost_predictions "
                             "WHERE paired_ts IS NULL").fetchall()
         for job_id, ts, label, model in preds:
             t0 = datetime.datetime.fromisoformat(ts.replace("Z", "+00:00")).timestamp()
-            rows = [row.values for row in ledger_read.read_calibration_actuals(chain=job_id)]
+            rows = [row.values for row in read_calibration_actuals(chain=job_id)]
             exact = bool(rows)
             if not exact:
                 want = pricing.normalize(model) if model else None
                 t_end = datetime.datetime.fromtimestamp(t0 + horizon, tz=datetime.timezone.utc) \
                     .isoformat(timespec="seconds")
-                rows = [row.values for row in ledger_read.read_calibration_actuals(
+                rows = [row.values for row in read_calibration_actuals(
                     intent=label, since=ts, until=t_end)
                     if not want or pricing.normalize(row[4] or "") == want]
             if now < t0 + horizon and not exact:
@@ -512,12 +513,13 @@ def backtest(as_json=False, min_cell=MIN_CELL_BACKTEST):
       calibrated = estimate(…, as_of=train end) with the SAME inputs.
     The deck is stacked FOR naive on input; the learned win must come from output-fill, transport
     and residual — exactly the claimed error sources. Ship gate: calibrated beats naive overall."""
-    from ... import ledger_read
+    from spendguard.store.spend_search.ledger_read_contracts import LedgerReadOpenError, LedgerReadSchemaError
+    from spendguard.store.spend_search.ledger_read_accessors import resolve_read_calibration_calls as read_calibration_calls
     try:
-        raw = [row.values for row in ledger_read.read_calibration_calls(META_PREFIX + "%", backtest=True)]
-    except ledger_read.LedgerReadOpenError:
+        raw = [row.values for row in read_calibration_calls(META_PREFIX + "%", backtest=True)]
+    except LedgerReadOpenError:
         raise
-    except (sqlite3.OperationalError, ledger_read.LedgerReadSchemaError):
+    except (sqlite3.OperationalError, LedgerReadSchemaError):
         raw = []
     cells, skipped_unpriced = {}, 0
     for it, m, kind, itok, otok, cost, ts in raw:
@@ -610,12 +612,13 @@ def cell_stats(as_of=None):
                           "transport": transport or "", "quantity": quantity, "n": len(vals),
                           "p50": round(_quantile(vals, P_LO), 6), "p90": round(_quantile(vals, P_HI), 6)})
 
-    from ... import ledger_read
+    from spendguard.store.spend_search.ledger_read_contracts import LedgerReadOpenError, LedgerReadSchemaError
+    from spendguard.store.spend_search.ledger_read_accessors import resolve_read_calibration_calls as read_calibration_calls
     try:
-        pairs = [row.values for row in ledger_read.read_calibration_calls(META_PREFIX + "%", distinct_cells=True)]
-    except ledger_read.LedgerReadOpenError:
+        pairs = [row.values for row in read_calibration_calls(META_PREFIX + "%", distinct_cells=True)]
+    except LedgerReadOpenError:
         raise
-    except (sqlite3.OperationalError, ledger_read.LedgerReadSchemaError):
+    except (sqlite3.OperationalError, LedgerReadSchemaError):
         pairs = []
     for label, model in sorted({(la, mo) for la, mo, _k in pairs}):
         add_cell(label, model, "", "opi",
@@ -682,12 +685,13 @@ def calibration_summary_lines(max_lines=4):
 def show(label=None):
     """Print the calibration state — what has been learned, at what confidence."""
     from ... import config
-    from ... import ledger_read
+    from spendguard.store.spend_search.ledger_read_contracts import LedgerReadOpenError, LedgerReadSchemaError
+    from spendguard.store.spend_search.ledger_read_accessors import resolve_read_calibration_summary as read_calibration_summary
     try:
-        cells = ledger_read.read_calibration_summary(META_PREFIX + "%", label)
-    except ledger_read.LedgerReadOpenError:
+        cells = read_calibration_summary(META_PREFIX + "%", label)
+    except LedgerReadOpenError:
         raise
-    except (sqlite3.OperationalError, ledger_read.LedgerReadSchemaError):
+    except (sqlite3.OperationalError, LedgerReadSchemaError):
         cells = []
     print("calibration corpus — per-cell history the estimator learns from "
           "(level+n_obs are returned with every prediction)\n")

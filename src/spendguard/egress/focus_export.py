@@ -108,9 +108,9 @@ def focus_row(ev):
 
 def export_rows(since=None, until=None):
     """Every spend_events row in the window, projected to FOCUS. Read-only, through the shared ledger connection."""
-    from .. import ledger_read
+    from spendguard.store.spend_search.ledger_read_accessors import resolve_read_spend_events as read_spend_events
     from ..ledger import SpendLedger
-    return [focus_row(SpendLedger._row(ev)) for ev in ledger_read.read_spend_events(since=since, until=until)]
+    return [focus_row(SpendLedger._row(ev)) for ev in read_spend_events(since=since, until=until)]
 
 
 def reconciliation_summary(rows):

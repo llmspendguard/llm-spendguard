@@ -329,9 +329,9 @@ def lane_fallback_spend(since=None):
     was down lives in each row's outcome/provider_error and in lane_health; this answers only "how much did it cost."
     `since` is an inclusive ISO-timestamp lower bound on ts (e.g. the week's start). Returns
     [{lane, n_calls, metered_usd}]; [] on any error or a ledger not yet carrying the column. $0, read-only."""
-    from ... import ledger_read
+    from spendguard.store.spend_search.ledger_read_accessors import resolve_read_lane_fallback_costs as read_lane_fallback_costs
     try:
-        rows = ledger_read.read_lane_fallback_costs(since)
+        rows = read_lane_fallback_costs(since)
         return [{"lane": r[0], "n_calls": int(r[1]), "metered_usd": round(float(r[2] or 0.0), 4)} for r in rows]
     except Exception:
         return []

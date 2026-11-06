@@ -293,7 +293,7 @@ def _reset_queue_conn():
 def _queue_op():
     """Reserve the queue database owner for one committed, rollback-safe operation."""
     from ...ledger_writer import exclusive_ledger_writer_connection
-    from ...ledger_read import ledger_request_scope
+    from spendguard.store.spend_search.ledger_read_accessors import resolve_ledger_request_scope as ledger_request_scope
     queue_path = config.lane_queue_db_path()
     try:
         with ledger_request_scope(deadline_s=config.LEDGER_WRITE_TIMEOUT_S), exclusive_ledger_writer_connection(queue_path):
@@ -1051,7 +1051,7 @@ def submit(intent, tasks, *, priority=PRIORITY_INTERACTIVE, sla_class="realtime"
                 "status_query": "spendguard dispatch --id <id>"}
     # SYNC FAST-PATH — own the rows from the start (no daemon race), run inline via the bulletproof engine, settle.
     from ... import lane_balance
-    from ...ledger_read import ledger_request_scope
+    from spendguard.store.spend_search.ledger_read_accessors import resolve_ledger_request_scope as ledger_request_scope
     from ...ledger_writer import require_ledger_writer_request_live
     import time
     _run_dl = float(deadline_s if deadline_s is not None else (sla_s if sla_s else LEASE_S_DEFAULT))
@@ -1111,7 +1111,7 @@ def hold_free_recovery(intent, task, invoke, *, deadline_s, poll_s):
     admission of another attempt, never cancels an attempt already running.
     """
     import time
-    from ...ledger_read import ledger_request_scope
+    from spendguard.store.spend_search.ledger_read_accessors import resolve_ledger_request_scope as ledger_request_scope
     from ...ledger_writer import require_ledger_writer_request_live
     if deadline_s <= 0:
         # No attempt is admitted, but its durable terminal bookkeeping still

@@ -446,17 +446,17 @@ def own_spend_ledger_read_scope(method):
     Deferred bulk scopes see their pending writes on the reserved owner. Plain
     writers instead lend no state or progress handler to the disposable reader.
     """
-    from ...ledger_read import bind_ledger_query_deadline
+    from spendguard.store.spend_search.ledger_read_accessors import resolve_bind_ledger_query_deadline as bind_ledger_query_deadline
     deadline_parameter = inspect.signature(method).parameters.get("deadline_s")
 
     @bind_ledger_query_deadline
     @functools.wraps(method)
     def invoke_scoped_spend_ledger_read(self, *args, **kwargs):
-        from ...ledger_read import (_ledger_read_connection, LedgerQueryDeadline,
-                                  LedgerReadError, LedgerReadOpenError, LedgerRequestAbandoned, LedgerSettlementIncomplete,
-                                  DEFAULT_LEDGER_READ_TIME_BUDGET_S)
+        from spendguard.store.spend_search.ledger_read_contracts import LedgerQueryDeadline, LedgerReadError, LedgerReadOpenError, LedgerRequestAbandoned, LedgerSettlementIncomplete
+        from spendguard.store.spend_search.ledger_read_accessors import resolve_default_ledger_read_time_budget_s
+        from spendguard.store.spend_search.ledger_read_accessors import resolve__ledger_read_connection as _ledger_read_connection
         deadline_s = (kwargs.get("deadline_s", deadline_parameter.default)
-                      if deadline_parameter is not None else DEFAULT_LEDGER_READ_TIME_BUDGET_S)
+                      if deadline_parameter is not None else resolve_default_ledger_read_time_budget_s())
         if self._conn is not None and getattr(self._conn, "_ledger_owned_read_deadline", False):
             return method(self, *args, **kwargs)
         from .ledger_writer import (ledger_connection_commit_deferred,
@@ -470,7 +470,7 @@ def own_spend_ledger_read_scope(method):
                 return method(facade, *args, **kwargs)
             finally:
                 self._total_memo = facade._total_memo
-        time_budget = DEFAULT_LEDGER_READ_TIME_BUDGET_S if deadline_s is None else deadline_s
+        time_budget = resolve_default_ledger_read_time_budget_s() if deadline_s is None else deadline_s
         try:
             with _ledger_read_connection(self.db_path, time_budget=time_budget) as connection:
                 facade = copy.copy(self)
@@ -528,7 +528,7 @@ class SpendLedger:
     def __init__(self, db_path=None, *, owned_connection=None):
         self.db_path = db_path or config.db_path()
         from .ledger_daily_rollup import register_rollup_audit_context
-        from ...ledger_read import _ledger_read_connection
+        from spendguard.store.spend_search.ledger_read_accessors import resolve__ledger_read_connection as _ledger_read_connection
         register_rollup_audit_context(self, _ledger_read_connection)
         self._explicit_owned_connection = owned_connection is not None
         self._conn = owned_connection
@@ -1028,7 +1028,7 @@ class SpendLedger:
         ``limit`` is a fail-loud completeness cap, never a truncated head. Reads
         observe committed data; lifecycle/correction reads stay on the writer.
         """
-        from ...ledger_read import read_spend_events
+        from spendguard.store.spend_search.ledger_read_accessors import resolve_read_spend_events as read_spend_events
         return [self._row(row) for row in read_spend_events(
             since=since, until=until, where=where, limit=limit, path=self.db_path)]
 
@@ -1045,7 +1045,7 @@ class SpendLedger:
         """Rows with spend in `kind` — identified by that category's money COLUMN being populated (the schema's
         own definition, via category_col), so there is no derived type field to mis-map. Newest day first."""
         col = self.category_col(kind)
-        from ...ledger_read import read_spend_events
+        from spendguard.store.spend_search.ledger_read_accessors import resolve_read_spend_events as read_spend_events
         return [self._row(row) for row in read_spend_events(
             since=since, until=until, where=where, category_column=col, path=self.db_path)]
 
@@ -1059,7 +1059,8 @@ class SpendLedger:
         if not include_meta:
             w += " AND COALESCE(is_meta,0)=0"
         w += " AND COALESCE(status,'') NOT IN ('void')"       # void excluded; a reversed pair nets to 0 via its negation
-        from ...ledger_read import LedgerReadRequest, read_ledger_rows
+        from spendguard.store.spend_search.ledger_read_contracts import LedgerReadRequest
+        from spendguard.store.spend_search.ledger_read_accessors import resolve_read_ledger_rows as read_ledger_rows
         request = LedgerReadRequest(columns=tuple(cols) + tuple(f"SUM({SPEND_EVENT_NANO_COLUMNS[c]}) AS {c}" for c in USD_COLS)
             + ("COUNT(*) AS n",), where_sql="1=1" + w, parameters=tuple(args), group_by=tuple(cols))
 
@@ -1136,14 +1137,14 @@ class SpendLedger:
         the legacy unbounded read. Plain pending writes use a separate committed
         snapshot; expiry raises LedgerQueryDeadline, never an incomplete aggregate."""
         if self._conn is None:
-            from ...ledger_read import LedgerQueryDeadline
+            from spendguard.store.spend_search.ledger_read_contracts import LedgerQueryDeadline
             try:
                 self._restore_spend_aggregate_connection()
             except Exception as recovery_error:
                 raise LedgerQueryDeadline(deadline_s) from recovery_error
         if deadline_s is None:
             return self._cat_dec(LLM_USD_COLS, self._COUNTABLE, since=since, until=until, where=where, **filters)
-        from ...ledger_read import LedgerQueryDeadline
+        from spendguard.store.spend_search.ledger_read_contracts import LedgerQueryDeadline
         from .ledger_writer import ledger_connection_commit_deferred, require_ledger_writer_request_live
         if ledger_connection_commit_deferred(self._conn):
             # Never interrupt or dispose the reserved transaction to enforce a
@@ -1229,7 +1230,7 @@ class SpendLedger:
         each, far worse walking the WAL under a concurrent writer (one honestreview run paid ~734 such scans).
         The NUMBER is byte-identical to spent_dec(); only the re-summation is removed. Caps/reports keep their own
         live (un-memoized) spent_dec path — this accessor is a display baseline, never a spend gate."""
-        from ...ledger_read import LedgerQueryDeadline
+        from spendguard.store.spend_search.ledger_read_contracts import LedgerQueryDeadline
         from .ledger_writer import ledger_connection_commit_deferred
         expires = None
         if deadline_s is not None:
@@ -1280,7 +1281,8 @@ class SpendLedger:
         """Read committed category totals through the deadline-owning, disposable reader."""
         if getattr(self, "_budget_projection_connection_owned", False):
             return self._cat_dec(cols, filt, since=since, until=until, where=where, **filters)
-        from ...ledger_read import LedgerReadRequest, read_ledger_rows
+        from spendguard.store.spend_search.ledger_read_contracts import LedgerReadRequest
+        from spendguard.store.spend_search.ledger_read_accessors import resolve_read_ledger_rows as read_ledger_rows
         w, args = self._where(since, until, {**(where or {}), **filters})
         if filt:
             w += " AND " + filt
@@ -1326,7 +1328,8 @@ class SpendLedger:
             w += " AND " + self._NOT_VOID
         if filt:
             w += " AND " + filt
-        from ...ledger_read import LedgerReadRequest, read_ledger_rows
+        from spendguard.store.spend_search.ledger_read_contracts import LedgerReadRequest
+        from spendguard.store.spend_search.ledger_read_accessors import resolve_read_ledger_rows as read_ledger_rows
         projections = tuple(gcols) + tuple(f"SUM({SPEND_EVENT_NANO_COLUMNS[c]}) AS {c}" for c in allcols)
         projections += tuple(f"CASE WHEN COUNT({c}) = COUNT(*) THEN SUM({c}) ELSE NULL END AS {c}"
                              for c in icols) + ("COUNT(*) AS n",)
@@ -1350,7 +1353,8 @@ class SpendLedger:
         w, args = self._where(since, None, where)
         if filt:
             w += " AND " + filt
-        from ...ledger_read import LedgerReadRequest, read_ledger_rows
+        from spendguard.store.spend_search.ledger_read_contracts import LedgerReadRequest
+        from spendguard.store.spend_search.ledger_read_accessors import resolve_read_ledger_rows as read_ledger_rows
         rows = read_ledger_rows(LedgerReadRequest(columns=(f"DISTINCT {col}",),
             where_sql="1=1" + w, parameters=tuple(args)), path=self.db_path)
         return sorted(r[0] for r in rows if r[0] not in (None, ""))
@@ -1377,7 +1381,8 @@ class SpendLedger:
             w += " AND intent LIKE ?"; args.append(intent_like)
         if only_billed is not None:
             w += " AND COALESCE(billed,1)=?"; args.append(1 if only_billed else 0)
-        from ...ledger_read import LedgerReadRequest, read_ledger_rows
+        from spendguard.store.spend_search.ledger_read_contracts import LedgerReadRequest
+        from spendguard.store.spend_search.ledger_read_accessors import resolve_read_ledger_rows as read_ledger_rows
         return [row.values for row in read_ledger_rows(LedgerReadRequest(columns=projections,
             where_sql=f"{w} AND {self._NOT_VOID}", parameters=tuple(args)), path=self.db_path)]
 
@@ -1386,7 +1391,8 @@ class SpendLedger:
         w, args = self._where(None, None, where)
         if filt:
             w += " AND " + filt
-        from ...ledger_read import LedgerReadRequest, read_ledger_rows
+        from spendguard.store.spend_search.ledger_read_contracts import LedgerReadRequest
+        from spendguard.store.spend_search.ledger_read_accessors import resolve_read_ledger_rows as read_ledger_rows
         r = read_ledger_rows(LedgerReadRequest(columns=("MIN(day) AS first_day",),
             where_sql="1=1" + w, parameters=tuple(args)), path=self.db_path)[0]
         return r[0] if r and r[0] else None
@@ -1403,7 +1409,8 @@ class SpendLedger:
         w, args = self._where(since, None, where)
         if filt:
             w += " AND " + filt
-        from ...ledger_read import LedgerReadRequest, read_ledger_count
+        from spendguard.store.spend_search.ledger_read_contracts import LedgerReadRequest
+        from spendguard.store.spend_search.ledger_read_accessors import resolve_read_ledger_count as read_ledger_count
         return read_ledger_count(LedgerReadRequest(where_sql="1=1" + w,
             parameters=tuple(args)), path=self.db_path)
 
@@ -1456,7 +1463,8 @@ class SpendLedger:
             w += " AND COALESCE(is_meta,0)=0"
         if not include_void:
             w += " AND COALESCE(status,'') NOT IN ('void')"
-        from ...ledger_read import LedgerReadRequest, read_ledger_rows
+        from spendguard.store.spend_search.ledger_read_contracts import LedgerReadRequest
+        from spendguard.store.spend_search.ledger_read_accessors import resolve_read_ledger_rows as read_ledger_rows
         r = read_ledger_rows(LedgerReadRequest(
             columns=tuple(f"SUM({SPEND_EVENT_NANO_COLUMNS[column]}) AS {column}" for column in USD_COLS),
             where_sql="1=1" + w, parameters=tuple(args)), path=self.db_path)[0]

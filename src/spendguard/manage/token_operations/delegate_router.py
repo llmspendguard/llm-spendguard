@@ -331,7 +331,7 @@ def _estimated_tokens(task, files, provider, model, intent):
 
 def _measured_claude_overage_ratio():
     """Invoice overage $ / Claude plan est-value in the same invoiced months; None means insufficient evidence."""
-    from ...ledger_read import read_delegate_overage_evidence
+    from spendguard.store.spend_search.ledger_read_accessors import resolve_read_delegate_overage_evidence as read_delegate_overage_evidence
     invoice_rows, value = read_delegate_overage_evidence()
     billed = sum(float(row["dollars"] or 0) for row in invoice_rows)
     return billed / float(value) if value and float(value) > 0 else None
@@ -553,7 +553,7 @@ def _assemble_delegate_execution_result(execution, *, result, classification, es
     # LedgerQueryDeadline before the booking is even reached, failing a job whose work already landed. The
     # persistence scope replaces the expired ambient scope with a fresh, uncancellable bounded budget — the
     # exact mandatory-charge-recovery case ledger_evidence_persistence_scope exists for (ledger_read.py).
-    from ...ledger_read import ledger_evidence_persistence_scope
+    from spendguard.store.spend_search.ledger_read_accessors import resolve_ledger_evidence_persistence_scope as ledger_evidence_persistence_scope
     with ledger_evidence_persistence_scope():
         ratio = _measured_claude_overage_ratio()
         avoided = actual_value * ratio if ratio is not None else None

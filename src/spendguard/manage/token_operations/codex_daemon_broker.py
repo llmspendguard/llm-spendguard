@@ -56,7 +56,7 @@ def _broker_request_ledger_lifetime(connection, *, deadline_s=None):
     otherwise-healthy long turn raises LedgerQueryDeadline, which _serve_one re-wraps as "codex broker request
     refused: Ledger read exceeded wall-clock budget 5.0 seconds" — failing a job whose work already completed.
     """
-    from ...ledger_read import ledger_request_scope
+    from spendguard.store.spend_search.ledger_read_accessors import resolve_ledger_request_scope as ledger_request_scope
 
     observer_stopped = threading.Event()
     with ledger_request_scope(deadline_s=deadline_s) as request_reads:

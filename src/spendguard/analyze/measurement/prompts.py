@@ -97,12 +97,13 @@ def lint(intent=None, since=None, min_calls=MIN_CALLS, judge_batchable=False):
     and that is a MEANING judgement, not a threshold. So it is emitted ONLY under `judge_batchable=True`, which asks a
     small meta-caged LLM to rule packability per candidate (never a free $0 threshold-verdict). Default off → $0."""
     import sqlite3
-    from ... import ledger_read
+    from spendguard.store.spend_search.ledger_read_contracts import LedgerReadOpenError, LedgerReadSchemaError
+    from spendguard.store.spend_search.ledger_read_accessors import resolve_read_prompt_lint_evidence as read_prompt_lint_evidence
     try:
-        rows = ledger_read.read_prompt_lint_evidence(intent, since)
-    except ledger_read.LedgerReadOpenError:
+        rows = read_prompt_lint_evidence(intent, since)
+    except LedgerReadOpenError:
         raise
-    except (sqlite3.OperationalError, ledger_read.LedgerReadSchemaError):
+    except (sqlite3.OperationalError, LedgerReadSchemaError):
         rows = []
 
     by_intent = {}

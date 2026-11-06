@@ -185,6 +185,7 @@
       "backing_modules": [
         "store.spend_search.ledger_read",
         "store.spend_search.ledger_read_accessors",
+        "store.spend_search.ledger_read_contracts",
         "store.spend_search.ledger_request_cursor",
         "store.spend_search.ledger_request_cursor_accessors",
         "store.spend_search.ledger_deadline_polling"

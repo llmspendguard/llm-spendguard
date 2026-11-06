@@ -20,8 +20,8 @@ def _slug(task):
 
 
 def _known_intents():
-    from ... import ledger_read
-    return [row[0] for row in ledger_read.read_known_call_intents(include_empty=True)]
+    from spendguard.store.spend_search.ledger_read_accessors import resolve_read_known_call_intents as read_known_call_intents
+    return [row[0] for row in read_known_call_intents(include_empty=True)]
 
 
 def _match_intent(task):

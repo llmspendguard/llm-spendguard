@@ -2,7 +2,9 @@
 import os
 
 from spendguard.platform import platform_accessors as _platform_accessors
-from ... import config, lane_economics, lane_registry, ledger_read
+from ... import config, lane_economics, lane_registry
+from spendguard.store.spend_search.ledger_read_contracts import LEDGER_CALLS_TABLE, LedgerReadOpenError, LedgerReadTableAbsent, LedgerSQLReadRequest
+from spendguard.store.spend_search.ledger_read_accessors import resolve_read_ledger_sql as read_ledger_sql
 
 MIN_SAMPLES_FOR_MEASURED = 5
 MAX_PLAN_FRACTION_DEFAULT = 0.05
@@ -48,14 +50,14 @@ def measured_lane_token_cost(intent=None):
              f"FROM calls WHERE {lane_expr} IS NOT NULL{suffix} GROUP BY {lane_expr}")
     try:
         intent_rows = {str(lane): (int(count), float(avg) if avg is not None else None)
-                       for lane, count, avg in (row.values for row in ledger_read.read_ledger_sql(
-                           ledger_read.LedgerSQLReadRequest(
-                               query, params, required_tables=(ledger_read.LEDGER_CALLS_TABLE,))))}
-        global_rows = ledger_read.read_ledger_sql(ledger_read.LedgerSQLReadRequest(
+                       for lane, count, avg in (row.values for row in read_ledger_sql(
+                           LedgerSQLReadRequest(
+                               query, params, required_tables=(LEDGER_CALLS_TABLE,))))}
+        global_rows = read_ledger_sql(LedgerSQLReadRequest(
             f"SELECT {lane_expr}, COUNT(*), {average_sql} "
             f"FROM calls WHERE {lane_expr} IS NOT NULL GROUP BY {lane_expr}",
-            required_tables=(ledger_read.LEDGER_CALLS_TABLE,)))
-    except (ledger_read.LedgerReadOpenError, ledger_read.LedgerReadTableAbsent):
+            required_tables=(LEDGER_CALLS_TABLE,)))
+    except (LedgerReadOpenError, LedgerReadTableAbsent):
         # A fresh installation has no measurements; quota admission already
         # represents that as unmeasured. Incomplete settlements still raise.
         return {}

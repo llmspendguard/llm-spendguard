@@ -605,7 +605,7 @@ def _budget_check(cost, model, provider, kind):
         # Re-reading an already-billed batch is not spending, so a cap must not fire on it. Without this the
         # gate refused every call for the rest of the day over $359.63 of charges that never happened.
         return
-    from ...ledger_read import LedgerSettlementIncomplete
+    from spendguard.store.spend_search.ledger_read_contracts import LedgerSettlementIncomplete
     try:
         if config.budget_backend() != "sqlite":
             budget.require_complete_metered_settlements()
@@ -961,7 +961,7 @@ def _intent_door_gate(intent, est, provider, model):
     cap = config.intent_cap(intent)
     if cap is None or _allow():
         return
-    from ...ledger_read import LedgerSettlementIncomplete
+    from spendguard.store.spend_search.ledger_read_contracts import LedgerSettlementIncomplete
     from .budget import require_finite_budget_value
     try:
         from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors

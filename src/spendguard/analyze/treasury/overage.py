@@ -7,7 +7,9 @@ from pathlib import Path
 import threading
 import time
 
-from ... import claudecode, config, ledger_read
+from ... import claudecode, config
+from spendguard.store.spend_search.ledger_read_contracts import LEDGER_EVENTS_TABLE
+from spendguard.store.spend_search.ledger_read_accessors import resolve_ledger_read_table_exists as ledger_read_table_exists, resolve_read_invoice_overage_months as read_invoice_overage_months
 
 # In-process TTL memo. The underlying probe (_compute_overage_status → claudecode._overage_events) re-reads EVERY
 # claude-code transcript on each call (~10s on a large history), and it sits on plan_admission's hot path: a
@@ -70,10 +72,10 @@ def _compute_overage_status():
     now = time.time()
     path = config.db_path()
     if (not Path(path).exists()
-            or not ledger_read.ledger_read_table_exists(ledger_read.LEDGER_EVENTS_TABLE, path)):
+            or not ledger_read_table_exists(LEDGER_EVENTS_TABLE, path)):
         month = []
     else:
-        month = ledger_read.read_invoice_overage_months(path)
+        month = read_invoice_overage_months(path)
     return {"on_overage_now": any(begin <= now < reset for (begin, reset) in windows),
             "meaning": "true = the weekly plan cap is hit and this account is paying per-token right now",
             "observed_overage_windows": len(windows),

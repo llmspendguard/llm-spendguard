@@ -24,26 +24,28 @@ def measure(intent=None, min_each=MIN_EACH):
     """[{intent, adopted_ts, before_rate, after_rate, delta_per_call, after_calls, realized_usd}] —
     adoption point = the EARLIEST non-refuted insight recorded for that intent."""
     import sqlite3
-    from ... import config, ledger_read
+    from ... import config
+    from spendguard.store.spend_search.ledger_read_contracts import LEDGER_INSIGHTS_TABLE, LedgerReadOpenError, LedgerReadSchemaError
+    from spendguard.store.spend_search.ledger_read_accessors import resolve_ledger_read_table_exists as ledger_read_table_exists, resolve_read_realized_adoptions as read_realized_adoptions, resolve_read_realized_call_rates as read_realized_call_rates
     # adoption point per intent = the EARLIEST non-refuted insight ts. insights_full() doesn't expose ts,
     # so read it straight from the insights table (same sqlite as the rest of the learning layer).
     if not Path(config.db_path()).exists():
         return []
     try:
-        if not ledger_read.ledger_read_table_exists(ledger_read.LEDGER_INSIGHTS_TABLE):
+        if not ledger_read_table_exists(LEDGER_INSIGHTS_TABLE):
             return []                                # no adoption evidence has been recorded yet
-        adopted = {row[0]: row[1] for row in ledger_read.read_realized_adoptions(intent)
+        adopted = {row[0]: row[1] for row in read_realized_adoptions(intent)
                    if row[0] and row[1]}
-    except ledger_read.LedgerReadOpenError:
+    except LedgerReadOpenError:
         raise
-    except (sqlite3.OperationalError, ledger_read.LedgerReadSchemaError):
+    except (sqlite3.OperationalError, LedgerReadSchemaError):
         return []
 
     if not adopted:
         return []
     rows = []
     for it, ts in sorted(adopted.items()):
-        got = ledger_read.read_realized_call_rates(it, ts)
+        got = read_realized_call_rates(it, ts)
         b_rate, b_n, a_rate, a_n = got[0], got[1] or 0, got[2], got[3] or 0
         if b_n < min_each or a_n < min_each or not b_rate or a_rate is None:
             REALIZED_LOGGER.debug(

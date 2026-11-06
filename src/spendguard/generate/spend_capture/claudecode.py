@@ -657,7 +657,7 @@ def overflow_by_conversation():
     """{conv_id: overage paid $ (UNRECONCILED upper bound)} from the source='claude-code-overflow' rows — the turns
     that fell inside an observed overage window [weekly-cap hit → reset], booked at their full est-value. Read-only;
     empty until `claude-code overflow` has run (and empty when no overage window was observed)."""
-    from ...ledger_read import read_cc_overflow_conversations
+    from spendguard.store.spend_search.ledger_read_accessors import resolve_read_cc_overflow_conversations as read_cc_overflow_conversations
     return {r[0] or "": float(r[1] or 0.0) for r in read_cc_overflow_conversations()}
 
 
@@ -757,7 +757,7 @@ def attribute_overage(top=12):
     observed overage window that month, PROPORTIONAL to their observable overage est-value. The invoice gives the
     TOTAL truth per month; the observable window detector gives the per-conversation SHAPE. Months with real overage
     but no observed window can't be attributed (surfaced, not hidden). Read-only, $0."""
-    from ...ledger_read import read_cc_attribution_evidence
+    from spendguard.store.spend_search.ledger_read_accessors import resolve_read_cc_attribution_evidence as read_cc_attribution_evidence
     windows, _anchor = _overage_windows(_overage_events())
     real, evidence, fallback = read_cc_attribution_evidence(windows)
     real_by_month = {r[0]: float(r[1] or 0.0) for r in real}
@@ -828,7 +828,7 @@ def attribute_overage(top=12):
 def _cc_conv_rows(min_day=None):
     """{conv_id: [(occurred_at, model, in_tok, cache_read, cache_write), …] ordered by ts} from the claude-code
     est-value rows. One focused SELECT; read-only. context per turn = in_tok + cache_read + cache_write."""
-    from ...ledger_read import read_cc_conversation_turns
+    from spendguard.store.spend_search.ledger_read_accessors import resolve_read_cc_conversation_turns as read_cc_conversation_turns
     rows = [r.values for r in read_cc_conversation_turns(min_day)]
     out = {}
     for conv_id, occ, model, i, cr, cw in rows:            # conv_id: don't shadow the module-level `conv` import
@@ -1053,7 +1053,7 @@ def residency_decomposition(conv_id, instruction_tokens=None, instruction_paths=
     per_turn_usd, by_source_usd, by_tool_usd, top_contributors, instruction_tokens, instruction_source, reconciles}.
     $0 — pure parse + pricing, no LLM call."""
     recs = _conv_transcript_records(conv_id)
-    from ...ledger_read import read_cc_residency_totals
+    from spendguard.store.spend_search.ledger_read_accessors import resolve_read_cc_residency_totals as read_cc_residency_totals
     residency_totals = read_cc_residency_totals(conv_id)
     measured = residency_totals["measured_recurring_usd"]
     turn, id2tool, items = 0, {}, []           # items: (source, tool|None, tokens, entry_turn, label)
@@ -1177,7 +1177,7 @@ def _render_residency_decomposition_lines(result):
 
 def refresh_residency_summary_cache(conv_id=None):
     """Explicit slow path: decompose a complete transcript and persist its bounded diagnostic summary."""
-    from ...ledger_read import read_cc_residency_totals
+    from spendguard.store.spend_search.ledger_read_accessors import resolve_read_cc_residency_totals as read_cc_residency_totals
 
     if not conv_id:
         conv_id = read_cc_residency_totals()["conv_id"]
@@ -1310,7 +1310,7 @@ def conversations_cmd(top=15):
     """`claude-code conversations` — the unified per-conversation view: top conversations by est-value, each labeled by
     its human SIDEBAR TITLE, with turns, current max re-read context, and (when reconciled) the REAL $ that overflowed
     the weekly cap. The est-value and the real-overflow axes are shown SEPARATELY, never summed."""
-    from ...ledger_read import read_cc_top_conversations
+    from spendguard.store.spend_search.ledger_read_accessors import resolve_read_cc_top_conversations as read_cc_top_conversations
     rows = [r.values for r in read_cc_top_conversations()]
     titles = _sidebar_titles()
     over = overflow_by_conversation()

@@ -182,7 +182,8 @@ def _lognormal_cumulants(mu, cv):
 
 def by_dims_guarded(since=None):
     """Per (day, project, source): event count + SUMMED cumulants — the additive payload the server rolls up."""
-    from ...ledger_read import LedgerSQLReadRequest, ledger_read_table_exists, read_ledger_sql
+    from spendguard.store.spend_search.ledger_read_contracts import LedgerSQLReadRequest
+    from spendguard.store.spend_search.ledger_read_accessors import resolve_ledger_read_table_exists as ledger_read_table_exists, resolve_read_ledger_sql as read_ledger_sql
     if not Path(config.db_path()).exists() or not ledger_read_table_exists("savings"):
         return []
     cond, args = [], []
@@ -208,7 +209,8 @@ def saved_since(since=None):
     collapsed to per-source means for a local readout). `certain` sums the MEASURED sources (CERTAIN); everything
     else is `counterfactual` — kept SEPARATE so the two are never blurred into one over-confident number. This is a
     THIRD axis (avoided $), never added into real-$ (billed) or est-value (plan)."""
-    from ...ledger_read import LedgerSQLReadRequest, ledger_read_table_exists, read_ledger_sql
+    from spendguard.store.spend_search.ledger_read_contracts import LedgerSQLReadRequest
+    from spendguard.store.spend_search.ledger_read_accessors import resolve_ledger_read_table_exists as ledger_read_table_exists, resolve_read_ledger_sql as read_ledger_sql
     if not Path(config.db_path()).exists() or not ledger_read_table_exists("savings"):
         per = {}
     else:
@@ -307,7 +309,8 @@ def record_decision(intent, requested_model, chosen_model, counterfactual_usd, a
 
 def decisions_since(since=None):
     """Per-decision rows since `since` (day, YYYY-MM-DD), newest first — the forensic detail behind the tally."""
-    from ...ledger_read import LedgerSQLReadRequest, ledger_read_table_exists, read_ledger_sql
+    from spendguard.store.spend_search.ledger_read_contracts import LedgerSQLReadRequest
+    from spendguard.store.spend_search.ledger_read_accessors import resolve_ledger_read_table_exists as ledger_read_table_exists, resolve_read_ledger_sql as read_ledger_sql
     if not Path(config.db_path()).exists() or not ledger_read_table_exists("decisions"):
         return []
     cond, args = [], []
@@ -337,7 +340,8 @@ def decisions_summary(since=None, intent_limit=None):
             b["saved_usd"] = _decision_nullable_round(b["saved_usd"], 4)
         return {"decisions": len(rows), "saved_usd": _decision_nullable_round(total, 4),
                 "by_intent": sorted(by_intent.values(), key=lambda x: (x["saved_usd"] is not None, x["saved_usd"] or 0), reverse=True)}
-    from ...ledger_read import LedgerSQLReadRequest, ledger_read_table_exists, read_ledger_sql
+    from spendguard.store.spend_search.ledger_read_contracts import LedgerSQLReadRequest
+    from spendguard.store.spend_search.ledger_read_accessors import resolve_ledger_read_table_exists as ledger_read_table_exists, resolve_read_ledger_sql as read_ledger_sql
     if not Path(config.db_path()).exists() or not ledger_read_table_exists("decisions"):
         return {"decisions": 0, "saved_usd": 0.0, "by_intent": []}
     total_sql = DECISIONS_SUMMARY_TOTAL_SINCE_SQL if since else DECISIONS_SUMMARY_TOTAL_SQL.format(where="")

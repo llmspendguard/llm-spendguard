@@ -21,6 +21,15 @@ from ... import config
 from spendguard.store.call_corpus.call_corpus_accessors import CALL_OBSERVATION_NANO_COLUMNS
 from .ledger_deadline_polling import LedgerDeadlinePolling
 from .ledger_read_accessors import set_ledger_read_accessors
+from .ledger_read_contracts import (
+    LEDGER_CALLS_TABLE, LEDGER_EVENTS_TABLE, LEDGER_INSIGHTS_TABLE,
+    LEDGER_READ_DECIMAL_ARITY, LEDGER_READ_SQLITE_PRIMARY_CODE_MASK,
+    SPEND_EVENT_READ_COLUMNS, LedgerQueryDeadline, LedgerReadError,
+    LedgerReadOpenError, LedgerReadRequest, LedgerReadSchemaError,
+    LedgerReadTableAbsent, LedgerReadTimeout, LedgerReadTooLarge,
+    LedgerRequestAbandoned, LedgerSQLReadRequest, LedgerSettlementIncomplete,
+    set_ledger_read_request_default_resolvers,
+)
 from ...money_scale import NANO_USD_PER_USD
 
 CC_RESIDENCY_SOURCE = "claude-code"
@@ -34,24 +43,9 @@ _cc_residency_logger = logging.getLogger(__name__)
 # Long enough for local reporting, bounded independently of connection lock waits.
 
 
-LEDGER_EVENTS_TABLE = "spend_events"
-LEDGER_CALLS_TABLE = "calls"
 SETTLEMENT_GUARDED_EVIDENCE_TABLES = (LEDGER_CALLS_TABLE, "decisions")
-LEDGER_INSIGHTS_TABLE = "insights"
 DEFAULT_LEDGER_READ_ROW_CAP = config.LEDGER_READ_ROW_CAP
 LEDGER_READ_OVERFLOW_PROBE_ROW_COUNT = 1
-
-
-def _default_ledger_read_row_cap():
-    """Resolve the read row cap at REQUEST-BUILD time by reading the module global LIVE, instead of freezing it
-    into a dataclass field default or a function arg default at class/def-definition time. The two are identical
-    in production — DEFAULT_LEDGER_READ_ROW_CAP is set once from config and never rebound — but a frozen default
-    captures whatever config happened to resolve at the instant this module was first imported, which makes a
-    test that lowers the cap AFTER import (to exercise the scale-invariant containment boundary at ~50 rows
-    rather than scanning the 10,000-row production default) silently ineffective when an outer harness imported
-    config first. Late-binding here makes DEFAULT_LEDGER_READ_ROW_CAP the single live lever, independent of
-    import order."""
-    return DEFAULT_LEDGER_READ_ROW_CAP
 
 
 DEFAULT_LEDGER_READ_TIME_BUDGET_S = config.LEDGER_READ_TIME_BUDGET_S
@@ -59,10 +53,8 @@ DEFAULT_LEDGER_READ_TIME_BUDGET_S = config.LEDGER_READ_TIME_BUDGET_S
 # (opcodes), NOT N "progress steps" — this is that instruction interval, the wall-clock budget's
 # polling granularity. Smaller = more frequent timeout checks at a small per-instruction cost.
 DEFAULT_LEDGER_READ_PROGRESS_VM_INSTRUCTIONS = config.LEDGER_READ_PROGRESS_VM_INSTRUCTIONS
-LEDGER_READ_DECIMAL_ARITY = 1
 LEDGER_READ_DISABLE_PROGRESS_VM_INSTRUCTIONS = 0
 # SQLite extended result codes retain their primary result in the low byte.
-LEDGER_READ_SQLITE_PRIMARY_CODE_MASK = 0xFF
 LEDGER_READ_COUNT_EXPRESSION = "COUNT(*)"
 LEDGER_EVIDENCE_SNAPSHOT_SAVEPOINT = "ledger_evidence_snapshot"
 _CONSUMER_EMPTY_SPEND_COMPATIBILITY = ContextVar("consumer_empty_spend_compatibility", default=False)
@@ -96,7 +88,6 @@ def _consumer_ledger_read_target(ledger_path):
     return ledger_path.as_uri() + "?mode=ro"
 
 
-SPEND_EVENT_READ_COLUMNS = tuple("""id dedup_key source content_hash schema_version ts_utc occurred_at recorded_at tz local_datetime day period eligibility_window window_start window_end currency batch_usd realtime_usd est_chat_usd remote_compute_usd subscription_usd external_usd cost_type billed is_meta cost_basis amount_confidence rate_in rate_out cache_read_rate cache_write_rate fx_rate base_usd provider model model_kind finish in_tok out_tok cache_read_tok cache_write_tok reasoning_tok num_calls num_items latency org team projects project_primary member_ref key_fp account_id customer_id cost_center engagement billable invoice_id conv_id seg_id call_id cwd batch_id from_message_ids prior_message_ids post_message_ids script repo host prompt_hash prompt_snip output_snip evidence_uri intent actor chain attr_what attr_why attr_how attr_reason attr_confidence attr_source attr_model attr_ts attr_version recorded_by ingest_version status revision locked locked_at lock_reason reverses_id adjusts_id superseded_by reconciled reconciled_vs reconciled_at reconciliation_id gap_flag period_closed recon_marker quality quality_src quality_conf cache_hit savings_cv tags""".split())
 RECENT_CALL_READ_COLUMNS = tuple("id ts chain intent caller provider model kind in_tok out_tok cost latency finish quality executor project effort outcome disposition".split())
 LEDGER_READ_ALLOWED_TABLES = (LEDGER_EVENTS_TABLE, LEDGER_CALLS_TABLE, LEDGER_INSIGHTS_TABLE)
 LEDGER_READ_AGGREGATE_DIMENSIONS = (("provider", "day"), ("intent",), ("model",))
@@ -294,46 +285,6 @@ def read_cc_residency_totals(conv_id=None, path=None):
             f"Residency ledger scan refused: {residency_failure!r}\n{traceback.format_exc()}") from residency_failure
     return {"conv_id": conv_id, "turns": residency_turns, "model": residency_model,
             "measured_recurring_usd": residency_measured, "gaps": residency_gaps}
-
-
-class LedgerReadError(RuntimeError):
-    """A ledger consumer could not obtain a complete answer."""
-
-
-class LedgerSettlementIncomplete(LedgerReadError):
-    """Recorded input spend exists but the complete settlement is unknown."""
-
-    def __init__(self, incomplete_count, input_cost_floor):
-        self.incomplete_count = incomplete_count
-        self.input_cost_floor = input_cost_floor
-        super().__init__(
-            f"Calls ledger has {incomplete_count} incomplete settlements; "
-            f"known input-cost floor {input_cost_floor!r}; total spend and output tokens are unknown")
-
-
-class LedgerReadTooLarge(LedgerReadError):
-    """The complete matching result exceeds its explicitly named bound."""
-
-    def __init__(self, cap, total_at_least):
-        self.cap = cap
-        self.total_at_least = total_at_least
-        super().__init__(f"Ledger read exceeds row cap {cap}: total at least {total_at_least}; narrow filters or count")
-
-
-class LedgerReadTimeout(LedgerReadError):
-    """SQLite exhausted the consumer's wall-clock budget."""
-
-    def __init__(self, budget):
-        self.budget = budget
-        super().__init__(f"Ledger read exceeded wall-clock budget {budget} seconds")
-
-
-class LedgerQueryDeadline(LedgerReadTimeout):
-    """A request-path spend aggregate could not finish within its caller deadline."""
-
-
-class LedgerRequestAbandoned(LedgerReadError):
-    """The serving transport abandoned its request; no complete answer exists."""
 
 
 class LedgerRequestReadScope:
@@ -563,18 +514,6 @@ def bind_ledger_query_deadline(function):
     return invoke_deadline_bound_ledger_query
 
 
-class LedgerReadSchemaError(LedgerReadError):
-    """An existing ledger lacks the requested schema; reads never migrate it."""
-
-
-class LedgerReadOpenError(LedgerReadSchemaError):
-    """The ledger could not be opened before any consumer query ran."""
-
-
-class LedgerReadTableAbsent(LedgerReadSchemaError):
-    """A required table is absent in the same snapshot as the consumer read."""
-
-
 @dataclass(frozen=True)
 class LedgerReadRow(Mapping):
     """Immutable named values; SQLite cursor/Row objects never escape."""
@@ -590,30 +529,6 @@ class LedgerReadRow(Mapping):
 
     def __len__(self):
         return len(self.columns)
-
-
-@dataclass(frozen=True)
-class LedgerReadRequest:
-    table: str = LEDGER_EVENTS_TABLE
-    columns: tuple[str, ...] = SPEND_EVENT_READ_COLUMNS
-    where_sql: str = ""
-    parameters: tuple = ()
-    order_by: tuple[str, ...] = ()
-    group_by: tuple[str, ...] = ()
-    row_cap: int = field(default_factory=_default_ledger_read_row_cap)
-    time_budget: float = DEFAULT_LEDGER_READ_TIME_BUDGET_S
-
-
-@dataclass(frozen=True)
-class LedgerSQLReadRequest:
-    """Internal compatibility request for existing projected reporting queries."""
-
-    sql: str
-    parameters: tuple = ()
-    row_cap: int = field(default_factory=_default_ledger_read_row_cap)
-    time_budget: float = DEFAULT_LEDGER_READ_TIME_BUDGET_S
-    discard_overflow_probe: bool = False
-    required_tables: tuple[str, ...] = ()
 
 
 @contextmanager
@@ -1053,7 +968,7 @@ def read_spend_events(since=None, until=None, where=None, category_column=None, 
         predicates.append(f"{category_column} IS NOT NULL")
     request = LedgerReadRequest(where_sql=" AND ".join(predicates), parameters=tuple(parameters),
                                 order_by=("day", "id"),
-                                row_cap=limit if limit is not None else _default_ledger_read_row_cap())
+                                row_cap=limit if limit is not None else config.LEDGER_READ_ROW_CAP)
     return read_ledger_rows(request, path)
 
 
@@ -1075,7 +990,7 @@ def read_recent_calls(since=None, until=None, where=None, limit=None, path=None)
         parameters.append(value)
     return read_ledger_rows(LedgerReadRequest(LEDGER_CALLS_TABLE, RECENT_CALL_READ_COLUMNS,
         " AND ".join(predicates), tuple(parameters), ("ts DESC", "id"),
-        row_cap=limit if limit is not None else _default_ledger_read_row_cap()), path)
+        row_cap=limit if limit is not None else config.LEDGER_READ_ROW_CAP), path)
 
 
 def read_spend_aggregates(group_by=("provider", "day"), since=None, until=None, path=None):
@@ -1184,7 +1099,7 @@ def read_cc_spend_overview(path=None):
 
 
 def read_cc_top_conversations(limit=None, path=None):
-    row_cap = limit if limit is not None else _default_ledger_read_row_cap()
+    row_cap = limit if limit is not None else config.LEDGER_READ_ROW_CAP
     return read_ledger_sql(LedgerSQLReadRequest(
         CC_TOP_CONVERSATIONS_SQL, row_cap=row_cap, discard_overflow_probe=True), path)
 
@@ -1582,6 +1497,78 @@ def read_cc_conversation_turns(min_day=None, path=None):
     return read_ledger_rows(LedgerReadRequest(LEDGER_EVENTS_TABLE, CC_CONVERSATION_TURN_COLUMNS,
         where, parameters, order_by=("conv_id", "occurred_at")), path)
 
+
+# Expose ledger_read's table probe + routing-history read + calls-table name to modules that must not import ledger_read — breaks the route_realized→ledger_read cycle.
+set_ledger_read_accessors(ledger_read_table_exists, read_routing_history_report, LEDGER_CALLS_TABLE,
+                          read_cost_integrity_buckets, LedgerReadSchemaError,
+                          effective_ledger_admission_deadline, LedgerReadError)
+set_ledger_read_request_default_resolvers(
+    lambda: DEFAULT_LEDGER_READ_ROW_CAP,
+    lambda: DEFAULT_LEDGER_READ_TIME_BUDGET_S,
+)
+
+from . import ledger_read_accessors as _ledger_read_accessors
+
+_ledger_read_accessors.set_default_ledger_read_row_cap_resolver(lambda: DEFAULT_LEDGER_READ_ROW_CAP)
+_ledger_read_accessors.set_default_ledger_read_time_budget_s_resolver(lambda: DEFAULT_LEDGER_READ_TIME_BUDGET_S)
+_ledger_read_accessors.set__consumer_ledger_read_target_resolver(lambda *a, **k: _consumer_ledger_read_target(*a, **k))
+_ledger_read_accessors.set__ledger_read_connection_resolver(lambda *a, **k: _ledger_read_connection(*a, **k))
+_ledger_read_accessors.set__prefer_nano_else_legacy_column_resolver(lambda *a, **k: _prefer_nano_else_legacy_column(*a, **k))
+_ledger_read_accessors.set__read_incomplete_settlement_totals_resolver(lambda *a, **k: _read_incomplete_settlement_totals(*a, **k))
+_ledger_read_accessors.set_bind_ledger_query_deadline_resolver(lambda *a, **k: bind_ledger_query_deadline(*a, **k))
+_ledger_read_accessors.set_consumer_empty_spend_compatibility_resolver(lambda *a, **k: consumer_empty_spend_compatibility(*a, **k))
+_ledger_read_accessors.set_count_lane_prompts_resolver(lambda *a, **k: count_lane_prompts(*a, **k))
+_ledger_read_accessors.set_count_recent_call_tests_resolver(lambda *a, **k: count_recent_call_tests(*a, **k))
+_ledger_read_accessors.set_current_ledger_request_scope_resolver(lambda *a, **k: current_ledger_request_scope(*a, **k))
+_ledger_read_accessors.set_effective_ledger_admission_deadline_resolver(lambda *a, **k: effective_ledger_admission_deadline(*a, **k))
+_ledger_read_accessors.set_ledger_evidence_persistence_scope_resolver(lambda *a, **k: ledger_evidence_persistence_scope(*a, **k))
+_ledger_read_accessors.set_ledger_read_metrics_resolver(lambda *a, **k: ledger_read_metrics(*a, **k))
+_ledger_read_accessors.set_ledger_read_table_exists_resolver(lambda *a, **k: ledger_read_table_exists(*a, **k))
+_ledger_read_accessors.set_ledger_request_scope_resolver(lambda *a, **k: ledger_request_scope(*a, **k))
+_ledger_read_accessors.set_ledger_serialized_write_scope_resolver(lambda *a, **k: ledger_serialized_write_scope(*a, **k))
+_ledger_read_accessors.set_read_advisor_evidence_resolver(lambda *a, **k: read_advisor_evidence(*a, **k))
+_ledger_read_accessors.set_read_bakeoff_measurements_resolver(lambda *a, **k: read_bakeoff_measurements(*a, **k))
+_ledger_read_accessors.set_read_calibration_actuals_resolver(lambda *a, **k: read_calibration_actuals(*a, **k))
+_ledger_read_accessors.set_read_calibration_calls_resolver(lambda *a, **k: read_calibration_calls(*a, **k))
+_ledger_read_accessors.set_read_calibration_summary_resolver(lambda *a, **k: read_calibration_summary(*a, **k))
+_ledger_read_accessors.set_read_call_cost_summary_resolver(lambda *a, **k: read_call_cost_summary(*a, **k))
+_ledger_read_accessors.set_read_call_flow_resolver(lambda *a, **k: read_call_flow(*a, **k))
+_ledger_read_accessors.set_read_call_lane_outcomes_resolver(lambda *a, **k: read_call_lane_outcomes(*a, **k))
+_ledger_read_accessors.set_read_call_max_rowid_resolver(lambda *a, **k: read_call_max_rowid(*a, **k))
+_ledger_read_accessors.set_read_call_metered_intents_resolver(lambda *a, **k: read_call_metered_intents(*a, **k))
+_ledger_read_accessors.set_read_call_output_means_resolver(lambda *a, **k: read_call_output_means(*a, **k))
+_ledger_read_accessors.set_read_cc_attribution_evidence_resolver(lambda *a, **k: read_cc_attribution_evidence(*a, **k))
+_ledger_read_accessors.set_read_cc_conversation_cost_resolver(lambda *a, **k: read_cc_conversation_cost(*a, **k))
+_ledger_read_accessors.set_read_cc_conversation_turns_resolver(lambda *a, **k: read_cc_conversation_turns(*a, **k))
+_ledger_read_accessors.set_read_cc_overflow_conversations_resolver(lambda *a, **k: read_cc_overflow_conversations(*a, **k))
+_ledger_read_accessors.set_read_cc_residency_totals_resolver(lambda *a, **k: read_cc_residency_totals(*a, **k))
+_ledger_read_accessors.set_read_cc_spend_overview_resolver(lambda *a, **k: read_cc_spend_overview(*a, **k))
+_ledger_read_accessors.set_read_cc_top_conversations_resolver(lambda *a, **k: read_cc_top_conversations(*a, **k))
+_ledger_read_accessors.set_read_conversation_spend_since_resolver(lambda *a, **k: read_conversation_spend_since(*a, **k))
+_ledger_read_accessors.set_read_delegate_overage_evidence_resolver(lambda *a, **k: read_delegate_overage_evidence(*a, **k))
+_ledger_read_accessors.set_read_filtered_ledger_count_resolver(lambda *a, **k: read_filtered_ledger_count(*a, **k))
+_ledger_read_accessors.set_read_incomplete_call_settlements_resolver(lambda *a, **k: read_incomplete_call_settlements(*a, **k))
+_ledger_read_accessors.set_read_invoice_overage_months_resolver(lambda *a, **k: read_invoice_overage_months(*a, **k))
+_ledger_read_accessors.set_read_known_call_intents_resolver(lambda *a, **k: read_known_call_intents(*a, **k))
+_ledger_read_accessors.set_read_lane_cumulative_tokens_resolver(lambda *a, **k: read_lane_cumulative_tokens(*a, **k))
+_ledger_read_accessors.set_read_lane_fallback_costs_resolver(lambda *a, **k: read_lane_fallback_costs(*a, **k))
+_ledger_read_accessors.set_read_lane_recent_counts_resolver(lambda *a, **k: read_lane_recent_counts(*a, **k))
+_ledger_read_accessors.set_read_lane_subscription_calls_resolver(lambda *a, **k: read_lane_subscription_calls(*a, **k))
+_ledger_read_accessors.set_read_lane_token_metrics_resolver(lambda *a, **k: read_lane_token_metrics(*a, **k))
+_ledger_read_accessors.set_read_ledger_count_resolver(lambda *a, **k: read_ledger_count(*a, **k))
+_ledger_read_accessors.set_read_ledger_event_resolver(lambda *a, **k: read_ledger_event(*a, **k))
+_ledger_read_accessors.set_read_ledger_rows_resolver(lambda *a, **k: read_ledger_rows(*a, **k))
+_ledger_read_accessors.set_read_ledger_sql_resolver(lambda *a, **k: read_ledger_sql(*a, **k))
+_ledger_read_accessors.set_read_prompt_lint_evidence_resolver(lambda *a, **k: read_prompt_lint_evidence(*a, **k))
+_ledger_read_accessors.set_read_realized_adoptions_resolver(lambda *a, **k: read_realized_adoptions(*a, **k))
+_ledger_read_accessors.set_read_realized_call_rates_resolver(lambda *a, **k: read_realized_call_rates(*a, **k))
+_ledger_read_accessors.set_read_receipt_lane_activity_resolver(lambda *a, **k: read_receipt_lane_activity(*a, **k))
+_ledger_read_accessors.set_read_receipt_truncation_groups_resolver(lambda *a, **k: read_receipt_truncation_groups(*a, **k))
+_ledger_read_accessors.set_read_recent_calls_resolver(lambda *a, **k: read_recent_calls(*a, **k))
+_ledger_read_accessors.set_read_recorded_call_intents_resolver(lambda *a, **k: read_recorded_call_intents(*a, **k))
+_ledger_read_accessors.set_read_recorded_call_total_resolver(lambda *a, **k: read_recorded_call_total(*a, **k))
+_ledger_read_accessors.set_read_spend_aggregates_resolver(lambda *a, **k: read_spend_aggregates(*a, **k))
+_ledger_read_accessors.set_read_spend_events_resolver(lambda *a, **k: read_spend_events(*a, **k))
 
 from ...ledger import SPEND_EVENT_NANO_COLUMNS
 

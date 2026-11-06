@@ -52,10 +52,11 @@ def _subscription_rows(since: str, valued: set):
     lanes since `since`. Read-only, its own short-lived connection (closed on every path). [] on any error."""
     if not valued:
         return []
-    from ... import ledger_read
+    from spendguard.store.spend_search.ledger_read_contracts import LedgerSettlementIncomplete
+    from spendguard.store.spend_search.ledger_read_accessors import resolve_read_lane_subscription_calls as read_lane_subscription_calls
     try:
-        return [row.values for row in ledger_read.read_lane_subscription_calls(since, valued)]
-    except ledger_read.LedgerSettlementIncomplete:
+        return [row.values for row in read_lane_subscription_calls(since, valued)]
+    except LedgerSettlementIncomplete:
         raise
     except Exception:
         return []
@@ -67,7 +68,7 @@ def stamp_from_ledger(window_days: int = _WINDOW_DAYS) -> dict:
     Returns {executor: month_value_usd}, with None when a lane has current-month activity containing an unpriceable
     call. This store is deliberately separate from the miners' transcript-value cache. Best-effort; never raises.
     """
-    from ... import ledger_read
+    from spendguard.store.spend_search.ledger_read_contracts import LedgerSettlementIncomplete
     out = {}
     try:
         from ... import receipt
@@ -104,7 +105,7 @@ def stamp_from_ledger(window_days: int = _WINDOW_DAYS) -> dict:
         p.parent.mkdir(parents=True, exist_ok=True)
         config.update_json(p, lambda d: d.update({"routed_lane_value": by_lane}), reason="lane-value")
         return out                                        # SUCCESS (out may be {} = no valued lanes / no rows)
-    except ledger_read.LedgerSettlementIncomplete:
+    except LedgerSettlementIncomplete:
         raise
     except Exception:
         return None                                       # ERROR — a distinct signal so refresh_lane_value_if_stale

@@ -61,7 +61,7 @@ def _mcp_http_request_ledger_lifetime(connection):
     import socket
     import threading
     from .. import config
-    from ..ledger_read import ledger_request_scope
+    from spendguard.store.spend_search.ledger_read_accessors import resolve_ledger_request_scope as ledger_request_scope
 
     observer_stopped = threading.Event()
     with ledger_request_scope() as request_reads:
@@ -91,38 +91,40 @@ def _mcp_http_request_ledger_lifetime(connection):
 
 def capability_ledger_read_operation(args: dict):
     """Read the local ledger through the bounded library; never open or migrate it."""
-    from .. import ledger_read, receipt
+    from .. import receipt
+    from spendguard.store.spend_search.ledger_read_contracts import LEDGER_EVENTS_TABLE
+    from spendguard.store.spend_search.ledger_read_accessors import resolve_ledger_read_metrics as ledger_read_metrics, resolve_read_conversation_spend_since as read_conversation_spend_since, resolve_read_filtered_ledger_count as read_filtered_ledger_count, resolve_read_ledger_event as read_ledger_event, resolve_read_recent_calls as read_recent_calls, resolve_read_recorded_call_total as read_recorded_call_total, resolve_read_spend_aggregates as read_spend_aggregates, resolve_read_spend_events as read_spend_events
     from ..ledger import USD_COLS
     operation = args.get("operation", LEDGER_READ_OPERATIONS[0])
     path = args.get("path")
     if operation not in LEDGER_READ_OPERATIONS:
         raise ValueError(f"expected operation in {LEDGER_READ_OPERATIONS}")
     if operation == "recorded-call-total":
-        return {"recorded_call_total": ledger_read.read_recorded_call_total(path=path)}
+        return {"recorded_call_total": read_recorded_call_total(path=path)}
     if operation == "conversation-spend-since":
         if path is not None:
             raise ValueError("conversation-spend-since uses configured ledger; set SPENDGUARD_HOME instead of path")
         if not args.get("conv") or not args.get("since"):
             raise ValueError("conversation-spend-since requires conv and since")
         deadline_arguments = {} if args.get("deadline_s") is None else {"deadline_s": args["deadline_s"]}
-        return {"conversation_spend_since": ledger_read.read_conversation_spend_since(
+        return {"conversation_spend_since": read_conversation_spend_since(
             args["since"], conv=args["conv"], **deadline_arguments)}
     if operation == "metrics":
-        return ledger_read.ledger_read_metrics()
+        return ledger_read_metrics()
     if operation == "count":
-        return {"count": ledger_read.read_filtered_ledger_count(
-            table=args.get("table", ledger_read.LEDGER_EVENTS_TABLE),
+        return {"count": read_filtered_ledger_count(
+            table=args.get("table", LEDGER_EVENTS_TABLE),
             since=args.get("since"), until=args.get("until"), path=path)}
     if operation == "event":
-        event = ledger_read.read_ledger_event(args["event_id"], path=path)
+        event = read_ledger_event(args["event_id"], path=path)
         rows = () if event is None else (event,)
     elif operation == "calls":
-        rows = ledger_read.read_recent_calls(since=args.get("since"), until=args.get("until"), path=path)
+        rows = read_recent_calls(since=args.get("since"), until=args.get("until"), path=path)
     elif operation == "aggregate":
-        rows = ledger_read.read_spend_aggregates(group_by=tuple(args.get("group_by") or ("provider", "day")),
+        rows = read_spend_aggregates(group_by=tuple(args.get("group_by") or ("provider", "day")),
             since=args.get("since"), until=args.get("until"), path=path)
     else:
-        rows = ledger_read.read_spend_events(since=args.get("since"), until=args.get("until"), path=path)
+        rows = read_spend_events(since=args.get("since"), until=args.get("until"), path=path)
     money_columns = frozenset(USD_COLS) | {"cost"}
     rendered = [{key: receipt._money(float(value)) if key in money_columns and value is not None else value
                  for key, value in row.items()} for row in rows]
@@ -383,13 +385,15 @@ def _cc_label(conv, titles):
 
 def capability_spend_overview_operation(_args: dict):
     from pathlib import Path
-    from .. import config, ledger_read
+    from .. import config
+    from spendguard.store.spend_search.ledger_read_contracts import LEDGER_EVENTS_TABLE
+    from spendguard.store.spend_search.ledger_read_accessors import resolve_ledger_read_table_exists as ledger_read_table_exists, resolve_read_cc_spend_overview as read_cc_spend_overview
     path = config.db_path()
     if (not Path(path).exists()
-            or not ledger_read.ledger_read_table_exists(ledger_read.LEDGER_EVENTS_TABLE, path)):
+            or not ledger_read_table_exists(LEDGER_EVENTS_TABLE, path)):
         est = over = sub = api = 0
     else:
-        overview = ledger_read.read_cc_spend_overview(path)
+        overview = read_cc_spend_overview(path)
         est, over, sub, api = (overview[key] for key in ("est", "over", "sub", "api"))
     # THIRD AXIS: guarded savings (avoided $) + the per-decision value proof. Kept separate — NEVER summed into
     # real-$ or est-value. `counterfactual` (best-value/advisor/compaction) is held apart from `certain` (measured).
@@ -426,8 +430,8 @@ def capability_top_conversations_operation(args: dict):
         rows = sorted((real or {}).items(), key=lambda x: -x[1])[:limit]
         return {"ranked_by": "real Claude Code overage $ (reconciled to invoices)",
                 "conversations": [{"title": _cc_label(c, titles), "overage_usd": round(v, 2)} for c, v in rows]}
-    from .. import ledger_read
-    rows = ledger_read.read_cc_top_conversations(limit=limit)
+    from spendguard.store.spend_search.ledger_read_accessors import resolve_read_cc_top_conversations as read_cc_top_conversations
+    rows = read_cc_top_conversations(limit=limit)
     return {"ranked_by": "est-value $ (what the usage is worth at API rates)",
             "conversations": [{"title": _cc_label(c, titles), "est_value_usd": v, "turns": n, "max_context_tokens": mx}
                               for c, v, n, mx in (row.values for row in rows)]}
@@ -437,8 +441,8 @@ def capability_conversation_cost_operation(args: dict):
     conv = str(args.get("conversation_id") or "").strip()
     if not conv:
         return {"error": "pass conversation_id (a transcript uuid — from spendguard_top_conversations)"}
-    from .. import ledger_read
-    costs = ledger_read.read_cc_conversation_cost(conv)
+    from spendguard.store.spend_search.ledger_read_accessors import resolve_read_cc_conversation_cost as read_cc_conversation_cost
+    costs = read_cc_conversation_cost(conv)
     return {"conversation_id": conv, "title": _cc_label(conv, _cc_titles()),
             "est_value_usd_plan_covered": round(costs["est"], 2), "turns": costs["n"],
             "observed_overage_usd_upper_bound": round(costs["over"], 2),
@@ -856,7 +860,7 @@ def handle(req):
         if identity is not None and name.startswith("capability_"):
             fn = CAPABILITY_MCP_DISPATCH[identity]
         try:
-            from ..ledger_read import ledger_request_scope
+            from spendguard.store.spend_search.ledger_read_accessors import resolve_ledger_request_scope as ledger_request_scope
             with ledger_request_scope():
                 payload = fn(params.get("arguments") or {})
             return _ok(rid, _tool_result(payload))

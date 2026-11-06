@@ -55,9 +55,9 @@ def _cum_tokens_by_executor():
     """{executor: cumulative in+out tokens over ALL recorded calls}. The cap estimate only ever uses the DIFFERENCE
     between two samples of this within one window, so an all-time baseline is fine (it cancels). Best-effort → {} on
     any error (the caller then simply records no fresh sample; it never breaks the headroom refresh)."""
-    from ... import ledger_read
+    from spendguard.store.spend_search.ledger_read_accessors import resolve_read_lane_cumulative_tokens as read_lane_cumulative_tokens
     try:
-        rows = ledger_read.read_lane_cumulative_tokens()
+        rows = read_lane_cumulative_tokens()
         return {row[0]: int(row[1]) if row[1] is not None else None for row in rows}
     except Exception:
         return {}
@@ -385,9 +385,9 @@ def _prompt_budget(lane):
 def _prompts_consumed(lane, window_days):
     """Count of prompts SPENDGUARD sent to `lane` in the trailing window_days (one call = one prompt). This is a LOWER
     BOUND on true quota use — the user's direct coding on the same plan is invisible here. Best-effort → 0 on error."""
-    from ... import ledger_read
+    from spendguard.store.spend_search.ledger_read_accessors import resolve_count_lane_prompts as count_lane_prompts
     try:
-        return ledger_read.count_lane_prompts(lane, window_days)
+        return count_lane_prompts(lane, window_days)
     except Exception:
         return 0
 
@@ -395,9 +395,9 @@ def _prompts_consumed(lane, window_days):
 def _tokens_per_prompt(lane):
     """Measured mean (in+out) tokens per prompt for this lane's calls, or None if it has run none. Reflects the SIZE of
     the prompts spendguard sent — which is exactly the number that turns a $/prompt into a $/token."""
-    from ... import ledger_read
+    from spendguard.store.spend_search.ledger_read_accessors import resolve_read_lane_token_metrics as read_lane_token_metrics
     try:
-        row = ledger_read.read_lane_token_metrics(lane)
+        row = read_lane_token_metrics(lane)
         n, t = row["n"], row["total"]
         return (int(t) / int(n)) if n and t is not None else None
     except Exception:
@@ -453,9 +453,9 @@ def _used_split(lane):
     """(in_frac, out_frac) — this lane's real input/output token mix from the calls it has run, so the metered
     cross-check prices the SAME shape of traffic it actually served. (0.5, 0.5) when nothing is recorded yet (a
     neutral split, never a fabricated skew)."""
-    from ... import ledger_read
+    from spendguard.store.spend_search.ledger_read_accessors import resolve_read_lane_token_metrics as read_lane_token_metrics
     try:
-        row = ledger_read.read_lane_token_metrics(lane)
+        row = read_lane_token_metrics(lane)
         i, o = row["input"], row["output"]
         if row["n"] and (i is None or o is None):
             return None, None

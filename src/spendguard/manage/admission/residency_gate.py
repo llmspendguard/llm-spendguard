@@ -25,7 +25,7 @@ import shutil
 import sys
 
 from ... import config
-from ...ledger_read import LedgerReadError
+from spendguard.store.spend_search.ledger_read_contracts import LedgerReadError
 
 _HOOK_SUFFIX = "residency-gate --posttooluse-hook"
 from .admission_accessors import (RESIDENCY_HOOK_TIMEOUT_SECONDS_DEFAULT,  # noqa: F401  (public compatibility re-exports)

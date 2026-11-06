@@ -41,7 +41,12 @@ def _ledger_path():
 #     usage (a different kind of spend from these metered API calls). Excluding it means a plan-covered row on the
 #     same (intent,model,day) never masks a real metered gap — and, since the baseline == what the headline counts,
 #     the fill genuinely lifts spent_dec (the honestreview finding this resolves).
-from ... import ledger_read
+from spendguard.store.spend_search.ledger_read_contracts import LEDGER_EVENTS_TABLE
+from spendguard.store.spend_search.ledger_read import (
+    ledger_read_table_exists,
+    read_recording_gap_cells,
+    read_represented_call_cell,
+)
 
 
 def recording_gaps(intent_like=None, min_usd=0.05):
@@ -53,12 +58,12 @@ def recording_gaps(intent_like=None, min_usd=0.05):
     is not provider-usage-derived and must not be booked as basis='billed'."""
     path = _ledger_path()
     # An absent money table explicitly means no recorded spend in this gap audit.
-    _has_se = ledger_read.ledger_read_table_exists(ledger_read.LEDGER_EVENTS_TABLE, path)
+    _has_se = ledger_read_table_exists(LEDGER_EVENTS_TABLE, path)
     out = []
-    for r in ledger_read.read_recording_gap_cells(intent_like, path):
+    for r in read_recording_gap_cells(intent_like, path):
         represented = 0.0
         if _has_se:
-            represented = float(ledger_read.read_represented_call_cell(
+            represented = float(read_represented_call_cell(
                 r["intent"], r["model"], r["day"], path) or 0.0)
         delta = float(r["calls_billed"] or 0.0) - represented
         if delta >= min_usd:

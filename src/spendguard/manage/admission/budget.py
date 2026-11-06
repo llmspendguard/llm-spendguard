@@ -43,10 +43,7 @@ def finite_budget_projection(project):
 
 def _budget_snapshot_generation_observer():
     """Keep SQLite's connection-relative commit counter on a read-only owner."""
-    from ...store.spend_search.ledger_read import (
-        _consumer_ledger_read_target,
-        effective_ledger_admission_deadline,
-    )
+    from spendguard.store.spend_search.ledger_read_accessors import resolve__consumer_ledger_read_target as _consumer_ledger_read_target, resolve_effective_ledger_admission_deadline as effective_ledger_admission_deadline
     path = pathlib.Path(config.db_path()).resolve()
     read_target = _consumer_ledger_read_target(path)
     # Empty-install compatibility owns a transient database until the real ledger
@@ -76,15 +73,10 @@ def _budget_snapshot_generation_observer():
 def budget_projection_reader(*, deadline_s=None, rollup_eligible=True):
     """Use committed WAL snapshots independently of pending writer work."""
     from ...ledger import SpendLedger
-    from ...store.spend_search.ledger_read import (
-        _ledger_read_connection, consumer_empty_spend_compatibility,
-        SPEND_EVENT_READ_COLUMNS, DEFAULT_LEDGER_READ_TIME_BUDGET_S,
-        LedgerReadTimeout, LedgerReadError, LedgerReadOpenError, LedgerRequestAbandoned,
-        LedgerSettlementIncomplete, LedgerQueryDeadline,
-        LEDGER_READ_SQLITE_PRIMARY_CODE_MASK,
-        effective_ledger_admission_deadline,
-    )
-    time_budget = DEFAULT_LEDGER_READ_TIME_BUDGET_S if deadline_s is None else deadline_s
+    from spendguard.store.spend_search.ledger_read_contracts import SPEND_EVENT_READ_COLUMNS, LedgerReadTimeout, LedgerReadError, LedgerReadOpenError, LedgerRequestAbandoned, LedgerSettlementIncomplete, LedgerQueryDeadline, LEDGER_READ_SQLITE_PRIMARY_CODE_MASK
+    from spendguard.store.spend_search.ledger_read_accessors import resolve_default_ledger_read_time_budget_s
+    from spendguard.store.spend_search.ledger_read_accessors import resolve__ledger_read_connection as _ledger_read_connection, resolve_consumer_empty_spend_compatibility as consumer_empty_spend_compatibility, resolve_effective_ledger_admission_deadline as effective_ledger_admission_deadline
+    time_budget = resolve_default_ledger_read_time_budget_s() if deadline_s is None else deadline_s
     if not math.isfinite(time_budget) or time_budget <= 0:
         raise LedgerQueryDeadline(time_budget)
     projection_deadline = time.monotonic() + time_budget
@@ -155,7 +147,7 @@ def budget_projection_snapshot(read_projection):
                 _LEDGER_TL.read_ledger = previous
     return read_budget_projection_snapshot
 
-from ...store.spend_search.ledger_read import bind_ledger_query_deadline
+from spendguard.store.spend_search.ledger_read_accessors import resolve_bind_ledger_query_deadline as bind_ledger_query_deadline
 
 _conn = None
 from .admission_accessors import BUDGET_AUXILIARY_POOL_KEY, UNATTRIBUTED_PROJECT
@@ -238,13 +230,13 @@ def _consumer_aggregate_snapshot(aggregate):
                 or getattr(_LEDGER_TL, "read_ledger", None) is not None):
             return aggregate(*args, **kwargs)
         from ...ledger import SpendLedger
-        from ...ledger_read import (_ledger_read_connection, DEFAULT_LEDGER_READ_TIME_BUDGET_S,
-                                  SPEND_EVENT_READ_COLUMNS, LedgerReadTimeout, LedgerQueryDeadline,
-                                  consumer_empty_spend_compatibility)
+        from spendguard.store.spend_search.ledger_read_contracts import SPEND_EVENT_READ_COLUMNS, LedgerReadTimeout, LedgerQueryDeadline
+        from spendguard.store.spend_search.ledger_read_accessors import resolve_default_ledger_read_time_budget_s
+        from spendguard.store.spend_search.ledger_read_accessors import resolve__ledger_read_connection as _ledger_read_connection, resolve_consumer_empty_spend_compatibility as consumer_empty_spend_compatibility
         aggregate_budget = (kwargs.get("deadline_s", deadline_parameter.default)
-                            if deadline_parameter is not None else DEFAULT_LEDGER_READ_TIME_BUDGET_S)
+                            if deadline_parameter is not None else resolve_default_ledger_read_time_budget_s())
         if aggregate_budget is None:
-            aggregate_budget = DEFAULT_LEDGER_READ_TIME_BUDGET_S
+            aggregate_budget = resolve_default_ledger_read_time_budget_s()
         try:
             with consumer_empty_spend_compatibility(), \
                     _ledger_read_connection(time_budget=aggregate_budget) as aggregate_connection:
@@ -902,8 +894,8 @@ def require_complete_metered_settlements(since=None, project=None, *, time_budge
     """
     if not pathlib.Path(config.db_path()).exists():
         return
-    from ...ledger_read import (read_incomplete_call_settlements, LedgerSettlementIncomplete,
-                              _read_incomplete_settlement_totals)
+    from spendguard.store.spend_search.ledger_read_contracts import LedgerSettlementIncomplete
+    from spendguard.store.spend_search.ledger_read_accessors import resolve_read_incomplete_call_settlements as read_incomplete_call_settlements, resolve__read_incomplete_settlement_totals as _read_incomplete_settlement_totals
     if connection is not None:
         coverage = _read_incomplete_settlement_totals(connection, since, project)
     else:
@@ -914,9 +906,10 @@ def require_complete_metered_settlements(since=None, project=None, *, time_budge
 
 
 def _require_budget_settlement_within_deadline(started, deadline_s, since=None, project=None):
-    from ...ledger_read import LedgerReadTimeout, LedgerQueryDeadline, DEFAULT_LEDGER_READ_TIME_BUDGET_S
+    from spendguard.store.spend_search.ledger_read_contracts import LedgerReadTimeout, LedgerQueryDeadline
+    from spendguard.store.spend_search.ledger_read_accessors import resolve_default_ledger_read_time_budget_s
     remaining = (deadline_s - (time.monotonic() - started) if deadline_s is not None
-                 else DEFAULT_LEDGER_READ_TIME_BUDGET_S)
+                 else resolve_default_ledger_read_time_budget_s())
     if remaining <= 0:
         raise LedgerQueryDeadline(deadline_s)
     try:
@@ -1344,7 +1337,7 @@ def clear_readable_true_down(since=None, providers=None, *, maintenance_ledger=N
     # above); and the only consumers of these rows — gate_batch_cells (the estimate base) and by_dims (the SaaS
     # push) — read spend_events (repointed 5b). So charges holds no true-down rows for this to leave stale.
     from ...ledger import LockedError
-    from ...ledger_read import DEFAULT_LEDGER_READ_ROW_CAP
+    from spendguard.store.spend_search.ledger_read_accessors import resolve_default_ledger_read_row_cap
     import logging as true_down_logging
     import traceback as true_down_traceback
     true_down_ledger = maintenance_ledger if maintenance_ledger is not None else _ledger()
@@ -1373,7 +1366,7 @@ def clear_readable_true_down(since=None, providers=None, *, maintenance_ledger=N
             while True:
                 true_down_rowids = true_down_ledger._conn.execute(
                     f"SELECT rowid FROM spend_events WHERE 1=1{true_down_filter} LIMIT ?",
-                    (*true_down_args, DEFAULT_LEDGER_READ_ROW_CAP)).fetchall()
+                    (*true_down_args, resolve_default_ledger_read_row_cap())).fetchall()
                 if not true_down_rowids:
                     break
                 # rowid is a SQLite integer, not source content; parse before forming the internal SQL predicate.
