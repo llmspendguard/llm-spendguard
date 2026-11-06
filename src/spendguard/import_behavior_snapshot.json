@@ -360,7 +360,9 @@
         "spendguard.manage.token_operations.token_operations_accessors",
         "spendguard.manage.routing",
         "spendguard.manage.routing.routing_resolver_bootstrap",
-        "spendguard.manage.routing.routing_accessors"
+        "spendguard.manage.routing.routing_accessors",
+        "spendguard.generate.spend_capture.spend_capture_resolver_bootstrap",
+        "spendguard.generate.spend_capture.spend_capture_accessors"
       ],
       "gate_installed": true,
       "gate_unarmed_details": [],
@@ -513,6 +515,8 @@
         "spendguard.manage.routing",
         "spendguard.manage.routing.routing_resolver_bootstrap",
         "spendguard.manage.routing.routing_accessors",
+        "spendguard.generate.spend_capture.spend_capture_resolver_bootstrap",
+        "spendguard.generate.spend_capture.spend_capture_accessors",
         "spendguard.interface.cli",
         "spendguard.interface.capability_cli_dispatch_generation",
         "spendguard.interface.capability_cli_callable_generation"
@@ -667,7 +671,9 @@
         "spendguard.manage.token_operations.token_operations_accessors",
         "spendguard.manage.routing",
         "spendguard.manage.routing.routing_resolver_bootstrap",
-        "spendguard.manage.routing.routing_accessors"
+        "spendguard.manage.routing.routing_accessors",
+        "spendguard.generate.spend_capture.spend_capture_resolver_bootstrap",
+        "spendguard.generate.spend_capture.spend_capture_accessors"
       ],
       "gate_installed": true,
       "gate_unarmed_details": [],
@@ -819,7 +825,9 @@
         "spendguard.manage.token_operations.token_operations_accessors",
         "spendguard.manage.routing",
         "spendguard.manage.routing.routing_resolver_bootstrap",
-        "spendguard.manage.routing.routing_accessors"
+        "spendguard.manage.routing.routing_accessors",
+        "spendguard.generate.spend_capture.spend_capture_resolver_bootstrap",
+        "spendguard.generate.spend_capture.spend_capture_accessors"
       ],
       "gate_installed": true,
       "gate_unarmed_details": [],
@@ -971,7 +979,9 @@
         "spendguard.manage.token_operations.token_operations_accessors",
         "spendguard.manage.routing",
         "spendguard.manage.routing.routing_resolver_bootstrap",
-        "spendguard.manage.routing.routing_accessors"
+        "spendguard.manage.routing.routing_accessors",
+        "spendguard.generate.spend_capture.spend_capture_resolver_bootstrap",
+        "spendguard.generate.spend_capture.spend_capture_accessors"
       ],
       "gate_installed": true,
       "gate_unarmed_details": [],
@@ -1123,7 +1133,9 @@
         "spendguard.manage.token_operations.token_operations_accessors",
         "spendguard.manage.routing",
         "spendguard.manage.routing.routing_resolver_bootstrap",
-        "spendguard.manage.routing.routing_accessors"
+        "spendguard.manage.routing.routing_accessors",
+        "spendguard.generate.spend_capture.spend_capture_resolver_bootstrap",
+        "spendguard.generate.spend_capture.spend_capture_accessors"
       ],
       "gate_installed": true,
       "gate_unarmed_details": [],
@@ -1275,7 +1287,9 @@
         "spendguard.manage.token_operations.token_operations_accessors",
         "spendguard.manage.routing",
         "spendguard.manage.routing.routing_resolver_bootstrap",
-        "spendguard.manage.routing.routing_accessors"
+        "spendguard.manage.routing.routing_accessors",
+        "spendguard.generate.spend_capture.spend_capture_resolver_bootstrap",
+        "spendguard.generate.spend_capture.spend_capture_accessors"
       ],
       "gate_installed": true,
       "gate_unarmed_details": [],

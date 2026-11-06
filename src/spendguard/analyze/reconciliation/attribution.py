@@ -3,7 +3,7 @@ remote-compute jobs, …). One taxonomy, one classifier — so spend, value, and
 org→team×project everywhere. Caged (intent spendguard:categorize), estimate-first, batched.
 
 A "work item" is just {"id": <stable id>, "text": <title + summary/prompt signal>}. classify_items returns
-{id: {"org", "team", "project", "confidence"}}. The taxonomy comes from chat._taxonomy() (config chat.taxonomy /
+{id: {"org", "team", "project", "confidence"}}. The taxonomy comes from the spend-capture taxonomy accessor (config chat.taxonomy /
 the pulled org_taxonomy) so chat, code, and the dashboard share one canonical structure.
 """
 from spendguard.generate.execution import execution_accessors as _execution_accessors
@@ -37,8 +37,8 @@ def iso_period(day, by):
 
 
 def taxonomy():
-    from ... import chat
-    return chat._taxonomy()
+    from spendguard.generate.spend_capture import spend_capture_accessors
+    return spend_capture_accessors.resolve__taxonomy()
 
 
 def project_team_map(taxo):

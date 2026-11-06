@@ -96,6 +96,7 @@ def _load_public_api_and_install_gate():
     _wire_spend_reporting_accessor_resolvers()
     _wire_token_operations_accessor_resolvers()
     _wire_routing_accessor_resolvers()
+    _wire_spend_capture_accessor_resolvers()
 
 
 def _wire_execution_accessor_resolvers():
@@ -193,6 +194,15 @@ def _wire_routing_accessor_resolvers():
     try:
         from .manage.routing import routing_resolver_bootstrap
         routing_resolver_bootstrap.wire_routing_accessor_resolvers()
+    except Exception:
+        pass
+
+
+def _wire_spend_capture_accessor_resolvers():
+    """Register lazy spend-capture home loading without importing the spend-capture hub at startup."""
+    try:
+        from .generate.spend_capture import spend_capture_resolver_bootstrap
+        spend_capture_resolver_bootstrap.wire_spend_capture_accessor_resolvers()
     except Exception:
         pass
 

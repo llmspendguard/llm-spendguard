@@ -1144,3 +1144,7 @@ def main(argv=None):
     print("usage: spendguard chat {test|show|discover|classify|loop|work|story|sync|status|accept|push-taxonomy|"
           "enable|disable} [--by day|week|month|quarter] [--days N] [--run] [--reclassify] [--discover] [--sample N]")
     return 1
+
+
+from . import spend_capture_accessors
+spend_capture_accessors.set__taxonomy_resolver(_taxonomy)
