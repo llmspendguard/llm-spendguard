@@ -667,9 +667,9 @@ def push_status(dry=False):
         return {"skipped": cwhy}
     gated, total_g, total = None, 0, 0
     try:
-        from .. import setup
+        from spendguard.platform import platform_accessors as _platform_accessors
         import sys as _sys
-        _ver, has, enf = setup._probe(_sys.executable)     # clean-subprocess: does this interpreter auto-gate?
+        _ver, has, enf = _platform_accessors.resolve__probe(_sys.executable)
         if has:
             gated = bool(enf); total = 1; total_g = 1 if enf else 0
     except Exception:
@@ -697,9 +697,9 @@ def push_status(dry=False):
         pass
     try:
         import datetime as _dt
-        from .. import lanes
+        from spendguard.platform import platform_accessors as _platform_accessors
         by_lane = []
-        for row in lanes.lane_headroom(do_fetch=False)[:16]:
+        for row in _platform_accessors.resolve_lane_headroom(do_fetch=False)[:16]:
             clean = {key: row[key] for key in
                      ("lane", "provider", "known", "remaining_pct", "reset_ts", "remaining_abs")
                      if key in row}
@@ -923,8 +923,8 @@ def sync(if_due=False, since=None):
         balances_refresh = {"error": str(_be)[:120]}      # SURFACED in out["balances"], never silent
     headroom_refresh = {}
     try:                                                  # and the per-lane QUOTA HEADROOM snapshot (self-limits to
-        from .. import lanes as _lanes                     # once per lanes.headroom_refresh_hours) — what idle_lanes
-        headroom_refresh = _lanes.refresh_headroom_if_stale()   # reads to rank overflow by real headroom, no scheduler
+        from spendguard.platform import platform_accessors as _platform_accessors
+        headroom_refresh = _platform_accessors.resolve_refresh_headroom_if_stale()
     except Exception as _he:
         headroom_refresh = {"error": str(_he)[:120]}      # SURFACED in out["headroom"], never silent
     if if_due:

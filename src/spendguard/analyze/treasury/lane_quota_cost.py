@@ -1,7 +1,8 @@
 """Measured lane token cost and fail-closed plan-quota admission."""
 import os
 
-from ... import config, lane_economics, lane_registry, lanes, ledger_read
+from spendguard.platform import platform_accessors as _platform_accessors
+from ... import config, lane_economics, lane_registry, ledger_read
 
 MIN_SAMPLES_FOR_MEASURED = 5
 MAX_PLAN_FRACTION_DEFAULT = 0.05
@@ -91,7 +92,7 @@ def apply_anthropic_avoidance(candidate_lanes, *, auth_over_quota=False):
 
 def estimate_lane_quota(calls_per_lane, *, intent=None, headroom_rows=None, token_costs=None):
     """Return auditable per-lane quota projections without inventing an unknown cap."""
-    headroom_rows = list(headroom_rows if headroom_rows is not None else lanes.lane_headroom(do_fetch=True))
+    headroom_rows = list(headroom_rows if headroom_rows is not None else _platform_accessors.resolve_lane_headroom(do_fetch=True))
     by_lane = {row.get("lane"): row for row in headroom_rows}
     economics = {row.get("lane"): row for row in lane_economics.economics(headroom_rows=headroom_rows)}
     token_costs = token_costs if token_costs is not None else measured_lane_token_cost(intent)
@@ -167,7 +168,7 @@ def enforce_single_call_plan_fraction(lane, projected_tokens, *, auth_over_quota
     # Single-call admission reads the routing snapshot; live multi-lane probes belong
     # to explicit preflights, outside the dispatch hot path.
     if headroom_rows is None:
-        headroom_rows = lanes.lane_headroom(do_fetch=False)
+        headroom_rows = _platform_accessors.resolve_lane_headroom(do_fetch=False)
     row = estimate_lane_quota({lane: 1}, headroom_rows=headroom_rows, token_costs=token_costs)[0]
     if not row["quota_known"]:
         return row

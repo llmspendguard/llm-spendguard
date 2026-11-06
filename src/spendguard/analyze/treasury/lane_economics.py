@@ -187,8 +187,9 @@ def economics(headroom_rows=None, fee_by_lane=None):
     remaining_abs, used_abs, eff_usd_per_tok, waste_at_reset, reset_ts}], binding, converged}. `binding` is the
     bucket dict with the FEWEST absolute tokens left (what throttles first); it carries the lane-headline remaining_abs.
     fee_by_lane overrides the config fee (test seam)."""
-    from ... import lanes, lane_balance
-    rows = list(headroom_rows if headroom_rows is not None else lanes.lane_headroom(do_fetch=False))
+    from spendguard.platform import platform_accessors as _platform_accessors
+    from ... import lane_balance
+    rows = list(headroom_rows if headroom_rows is not None else _platform_accessors.resolve_lane_headroom(do_fetch=False))
     total_fee, _fee_default = _plan_total_fee()
     n_lanes = len([r for r in rows]) or 1
     out = []

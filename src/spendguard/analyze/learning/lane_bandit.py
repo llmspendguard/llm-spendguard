@@ -116,8 +116,9 @@ def _measured_headroom_tiebreak(lane):
     """Provider-measured quota score used ONLY after learned quality ties exactly. Unknown headroom is neutral, and
     the persisted snapshot means choosing an arm never launches a status command on the routing hot path."""
     try:
-        from ... import lanes, route_utility
-        rows = lanes.lane_headroom(do_fetch=False)
+        from spendguard.platform import platform_accessors as _platform_accessors
+        from ... import route_utility
+        rows = _platform_accessors.resolve_lane_headroom(do_fetch=False)
         ranked = {r["lane"]: r for r in route_utility.rank_lanes(rows)}
         row = ranked.get(lane) or {}
         score = row.get("score")

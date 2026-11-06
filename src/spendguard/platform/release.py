@@ -209,3 +209,13 @@ def converge_deployed_release(*, check=False, roots=None, dry_run=False, setting
     """Release completion/scheduler entry: return the full fail-closed fleet attestation."""
     from .distribution import distribute_fleet
     return distribute_fleet(check=check, roots=roots, dry_run=dry_run, settings=settings)
+
+
+from . import platform_accessors as _platform_accessors
+
+_platform_accessors.set__tracked_dirty_resolver(lambda *args, **kwargs: _tracked_dirty(*args, **kwargs))
+_platform_accessors.set_exit_if_stale_resolver(lambda *args, **kwargs: exit_if_stale(*args, **kwargs))
+_platform_accessors.set_green_pointer_resolver(lambda *args, **kwargs: green_pointer(*args, **kwargs))
+_platform_accessors.set_release_status_resolver(lambda *args, **kwargs: release_status(*args, **kwargs))
+_platform_accessors.set_served_sha_resolver(lambda *args, **kwargs: served_sha(*args, **kwargs))
+_platform_accessors.set_should_respawn_resolver(lambda *args, **kwargs: should_respawn(*args, **kwargs))

@@ -100,10 +100,10 @@ def reachability_probe(save=True):
     CONSTRUCTION: a lane miss is an error, never a metered call. served = the lane answered (text, no error).
     Persists a snapshot (save) so doctor/tiers render it without re-probing. Returns
     {asof, rows:[{lane, model, tiers, served, error}]}."""
-    from ... import lanes
+    from spendguard.platform import platform_accessors as _platform_accessors
     import spendguard.manage.admission.admission_accessors as gate
     groups = route_utility.tiers()
-    enabled = {ln["lane"] for ln in lanes.lanes_status()["lanes"] if ln["enabled"]}
+    enabled = {ln["lane"] for ln in _platform_accessors.resolve_lanes_status()["lanes"] if ln["enabled"]}
     targets = {}                                         # (lane, model) -> the tiers that declare it (probe each once)
     for ln in lane_catalog.lanes():
         if ln not in enabled:

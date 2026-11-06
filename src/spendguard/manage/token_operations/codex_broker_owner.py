@@ -75,10 +75,10 @@ def ensure_codex_broker_owner_running():
 
 
 def run_codex_broker_owner_entrypoint():
-    from ... import fleet
+    from spendguard.platform import platform_accessors as _platform_accessors
     from .codex_daemon import run_dedicated_codex_broker_owner
-    fleet.register_consumer(role=fleet.CONSUMER_ROLE_DAEMON,
-                            supervision_mode=fleet.SUPERVISION_LAUNCHD,
+    _platform_accessors.resolve_register_consumer(role=_platform_accessors.CONSUMER_ROLE_DAEMON,
+                            supervision_mode=_platform_accessors.SUPERVISION_LAUNCHD,
                             supervision_ref=CODEX_BROKER_OWNER_LAUNCHD_LABEL)
     return 0 if run_dedicated_codex_broker_owner() else 1
 

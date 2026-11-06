@@ -2706,14 +2706,14 @@ def _register_installing_enforcing_interpreter() -> None:
     registration_exception = None
     with contextlib.redirect_stderr(registration_stderr):
         try:
-            from ... import fleet as enforcing_fleet
-            enforcing_fleet.register_enforcing_interpreter()
+            from spendguard.platform import platform_accessors as enforcing_fleet
+            enforcing_fleet.resolve_register_enforcing_interpreter()
         except Exception as exc:
             registration_exception = exc
         captured_stderr = registration_stderr.getvalue()
         if enforcing_fleet is not None and (registration_exception is not None or captured_stderr.strip()):
             try:
-                enforcing_fleet.record_enforcing_interpreter_registration_failure(
+                enforcing_fleet.resolve_record_enforcing_interpreter_registration_failure(
                     exception=registration_exception, captured_stderr=captured_stderr)
             except Exception:
                 pass
@@ -2988,15 +2988,15 @@ def control_gate_runtime(cmd: str = "status", live: bool = False):
             print(f"  version   : 🟢 {_code_v}")
         if cmd == "doctor":
             try:
-                from ... import fleet as _fleet
-                _consumer_drift = _fleet.consumer_install_drift()
+                from spendguard.platform import platform_accessors as _platform_accessors
+                _consumer_drift = _platform_accessors.resolve_consumer_install_drift()
                 _consumer_install_drift_found = bool(_consumer_drift)
                 for _drift in _consumer_drift:
                     _skew = (f"running source v{_code_v}, install pinned v{_drift.get('metadata_version')}"
                              if _drift.get("metadata_version") else _drift.get("error", "install state unknown"))
                     print(f"  consumer  : 🔴 {_drift.get('venv')} — {_skew}; "
                           f"fix: `{_drift.get('remediation')}`")
-                _registry_audit = _fleet.reconcile_registered_host_installations()
+                _registry_audit = _platform_accessors.resolve_reconcile_registered_host_installations()
                 for _escape in _registry_audit["escapes"]:
                     _consumer_install_drift_found = True
                     print(f"  registry  : 🔴 REGISTRATION ESCAPE {_escape.get('python_executable')} "
@@ -3010,13 +3010,13 @@ def control_gate_runtime(cmd: str = "status", live: bool = False):
         enforcing = _enforcement_armed()
         startup_gate_active = True
         if cmd == "doctor":
-            from ... import setup as _doctor_setup
-            startup_gate_active = _doctor_setup._startup_gate_active(sys.executable)
+            from spendguard.platform import platform_accessors as _platform_accessors
+            startup_gate_active = _platform_accessors.resolve__startup_gate_active(sys.executable)
             _doctor_startup_gate_gap_found = enforcing and not startup_gate_active
         if _doctor_startup_gate_gap_found:
             print(f"  {ENFORCING_MARKER}: 🔴 {ENFORCING_NO} — this process is armed, but startup does NOT "
                   "auto-load the gate — scripts run via bare `python` here are NOT governed")
-            _hidden_gate_pth = _doctor_setup.gate_pth_hidden_diagnosis(sys.executable)
+            _hidden_gate_pth = _platform_accessors.resolve_gate_pth_hidden_diagnosis(sys.executable)
             if _hidden_gate_pth:
                 print(f"    diagnosis: installed {_hidden_gate_pth['path'].name} carries macOS UF_HIDDEN, "
                       "so CPython site.addpackage silently skips it at startup.")
@@ -3035,8 +3035,8 @@ def control_gate_runtime(cmd: str = "status", live: bool = False):
             print("    fix: run under a gated venv, `spendguard install-hook --venv <v>` / `--user`, "
                   "or `import spendguard; spendguard.require()` at the top of the script.")
         try:
-            from ... import fleet as _registration_fleet
-            _registration_status = _registration_fleet.enforcing_interpreter_registration_status()
+            from spendguard.platform import platform_accessors as _platform_accessors
+            _registration_status = _platform_accessors.resolve_enforcing_interpreter_registration_status()
             if _registration_status["registered"]:
                 print("  registry  : 🟢 enforcing interpreter registered for fleet management")
             else:
@@ -3185,8 +3185,8 @@ def control_gate_runtime(cmd: str = "status", live: bool = False):
                 # the check itself erroring must NOT let the status silently VANISH (that reads as clean) — say UNKNOWN
                 print(f"  integrity : ⚪ UNKNOWN — cost×token cross-check could not run ({str(_cie)[:120]})")
             try:                                          # subscription-lane activation: silent-by-design at call
-                from ... import lanes                       # time (degrade to API), so doctor is where a dead lane
-                for _ln in lanes.lane_summary_lines():         # must become VISIBLE with its exact activation step
+                from spendguard.platform import platform_accessors as _platform_accessors
+                for _ln in _platform_accessors.resolve_lane_summary_lines():
                     print("  " + _ln)
             except Exception:
                 pass
@@ -3204,8 +3204,8 @@ def control_gate_runtime(cmd: str = "status", live: bool = False):
             except Exception:
                 print("  model ids : ⚪ UNKNOWN — configured-model preflight could not run")
             try:                                          # OVERAGE NUDGE: when a plan lane is at/below its warn
-                from ... import lanes as _lanes_nudge       # level, steer batchable comprehension onto the OTHER
-                _nudge = _lanes_nudge.overage_nudge_line(do_fetch=False)   # $0 lanes (cached read — no CLI here)
+                from spendguard.platform import platform_accessors as _platform_accessors
+                _nudge = _platform_accessors.resolve_overage_nudge_line(do_fetch=False)
                 if _nudge:
                     print("  " + _nudge)
             except Exception:

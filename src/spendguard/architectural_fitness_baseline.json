@@ -2106,7 +2106,6 @@
   "recorded_cycle_components": [
     [
       "spendguard",
-      "spendguard.analyze.assurance.consumer_audit",
       "spendguard.analyze.assurance.coverage",
       "spendguard.analyze.assurance.metadata_audit",
       "spendguard.analyze.assurance.verify",
@@ -2199,13 +2198,11 @@
       "spendguard.platform.fleet",
       "spendguard.platform.lanes",
       "spendguard.platform.manifest",
+      "spendguard.platform.platform_resolver_bootstrap",
       "spendguard.platform.release",
       "spendguard.platform.setup",
       "spendguard.store.call_corpus.callio",
       "spendguard.store.call_corpus.calls",
-      "spendguard.store.call_corpus.content_retention",
-      "spendguard.store.call_corpus.routing_audit",
-      "spendguard.store.configuration.config_schema",
       "spendguard.store.money_ledger.ledger",
       "spendguard.store.money_ledger.ledger_deadletter",
       "spendguard.store.money_ledger.ledger_writer",
@@ -2244,27 +2241,19 @@
     ],
     [
       "spendguard",
+      "spendguard.platform.fleet"
+    ],
+    [
+      "spendguard",
+      "spendguard.platform.lanes"
+    ],
+    [
+      "spendguard",
+      "spendguard.platform.platform_resolver_bootstrap"
+    ],
+    [
+      "spendguard",
       "spendguard.store.call_corpus.calls"
-    ],
-    [
-      "spendguard.analyze.assurance.consumer_audit",
-      "spendguard.platform.fleet"
-    ],
-    [
-      "spendguard.analyze.assurance.consumer_audit",
-      "spendguard.platform.release"
-    ],
-    [
-      "spendguard.analyze.assurance.consumer_audit",
-      "spendguard.platform.setup"
-    ],
-    [
-      "spendguard.analyze.assurance.coverage",
-      "spendguard.platform.fleet"
-    ],
-    [
-      "spendguard.analyze.assurance.coverage",
-      "spendguard.platform.setup"
     ],
     [
       "spendguard.analyze.assurance.coverage",
@@ -2368,10 +2357,6 @@
     ],
     [
       "spendguard.analyze.learning.lane_bandit",
-      "spendguard.platform.lanes"
-    ],
-    [
-      "spendguard.analyze.learning.lane_bandit",
       "spendguard.store.reference_data.lane_catalog"
     ],
     [
@@ -2393,10 +2378,6 @@
     [
       "spendguard.analyze.measurement.cacheaudit",
       "spendguard.store.call_corpus.callio"
-    ],
-    [
-      "spendguard.analyze.measurement.guard",
-      "spendguard.store.call_corpus.routing_audit"
     ],
     [
       "spendguard.analyze.measurement.guard",
@@ -2441,10 +2422,6 @@
     [
       "spendguard.analyze.measurement.realized",
       "spendguard.store.spend_search.ledger_read"
-    ],
-    [
-      "spendguard.analyze.measurement.reliability",
-      "spendguard.platform.lanes"
     ],
     [
       "spendguard.analyze.measurement.reliability",
@@ -2668,19 +2645,11 @@
     ],
     [
       "spendguard.analyze.treasury.lane_economics",
-      "spendguard.platform.lanes"
-    ],
-    [
-      "spendguard.analyze.treasury.lane_economics",
       "spendguard.store.spend_search.ledger_read"
     ],
     [
       "spendguard.analyze.treasury.lane_quota_cost",
       "spendguard.analyze.treasury.lane_economics"
-    ],
-    [
-      "spendguard.analyze.treasury.lane_quota_cost",
-      "spendguard.platform.lanes"
     ],
     [
       "spendguard.analyze.treasury.lane_quota_cost",
@@ -2772,14 +2741,6 @@
     ],
     [
       "spendguard.egress.saas",
-      "spendguard.platform.lanes"
-    ],
-    [
-      "spendguard.egress.saas",
-      "spendguard.platform.setup"
-    ],
-    [
-      "spendguard.egress.saas",
       "spendguard.store.reference_data.catalog"
     ],
     [
@@ -2848,27 +2809,7 @@
     ],
     [
       "spendguard.generate.execution.adapters",
-      "spendguard.platform.distribution"
-    ],
-    [
-      "spendguard.generate.execution.adapters",
-      "spendguard.platform.fleet"
-    ],
-    [
-      "spendguard.generate.execution.adapters",
-      "spendguard.platform.lanes"
-    ],
-    [
-      "spendguard.generate.execution.adapters",
       "spendguard.store.call_corpus.callio"
-    ],
-    [
-      "spendguard.generate.execution.adapters",
-      "spendguard.store.call_corpus.content_retention"
-    ],
-    [
-      "spendguard.generate.execution.adapters",
-      "spendguard.store.call_corpus.routing_audit"
     ],
     [
       "spendguard.generate.execution.adapters",
@@ -3020,10 +2961,6 @@
     ],
     [
       "spendguard.generate.spend_capture.claudecode",
-      "spendguard.store.configuration.config_schema"
-    ],
-    [
-      "spendguard.generate.spend_capture.claudecode",
       "spendguard.store.spend_search.ledger_read"
     ],
     [
@@ -3085,10 +3022,6 @@
     [
       "spendguard.generate.spend_capture.sources",
       "spendguard.analyze.assurance.coverage"
-    ],
-    [
-      "spendguard.generate.spend_capture.sources",
-      "spendguard.store.configuration.config_schema"
     ],
     [
       "spendguard.interface.crossllm",
@@ -3192,18 +3125,6 @@
     ],
     [
       "spendguard.interface.mcp_server",
-      "spendguard.platform.fleet"
-    ],
-    [
-      "spendguard.interface.mcp_server",
-      "spendguard.platform.release"
-    ],
-    [
-      "spendguard.interface.mcp_server",
-      "spendguard.store.configuration.config_schema"
-    ],
-    [
-      "spendguard.interface.mcp_server",
       "spendguard.store.money_ledger.ledger"
     ],
     [
@@ -3233,10 +3154,6 @@
     [
       "spendguard.manage.admission.budget",
       "spendguard.manage.admission.gate"
-    ],
-    [
-      "spendguard.manage.admission.budget",
-      "spendguard.platform.distribution"
     ],
     [
       "spendguard.manage.admission.budget",
@@ -3352,18 +3269,6 @@
     ],
     [
       "spendguard.manage.admission.gate",
-      "spendguard.platform.fleet"
-    ],
-    [
-      "spendguard.manage.admission.gate",
-      "spendguard.platform.lanes"
-    ],
-    [
-      "spendguard.manage.admission.gate",
-      "spendguard.platform.setup"
-    ],
-    [
-      "spendguard.manage.admission.gate",
       "spendguard.store.spend_search.ledger_read"
     ],
     [
@@ -3388,10 +3293,6 @@
     ],
     [
       "spendguard.manage.admission.plan_admission",
-      "spendguard.platform.lanes"
-    ],
-    [
-      "spendguard.manage.admission.plan_admission",
       "spendguard.store.reference_data.lane_catalog"
     ],
     [
@@ -3412,15 +3313,7 @@
     ],
     [
       "spendguard.manage.admission.residency_gate",
-      "spendguard.store.configuration.config_schema"
-    ],
-    [
-      "spendguard.manage.admission.residency_gate",
       "spendguard.store.spend_search.ledger_read"
-    ],
-    [
-      "spendguard.manage.admission.weekly_cap_guard",
-      "spendguard.platform.lanes"
     ],
     [
       "spendguard.manage.admission.weekly_cap_guard",
@@ -3476,10 +3369,6 @@
     ],
     [
       "spendguard.manage.routing.lane_balance",
-      "spendguard.platform.lanes"
-    ],
-    [
-      "spendguard.manage.routing.lane_balance",
       "spendguard.store.reference_data.lane_catalog"
     ],
     [
@@ -3512,10 +3401,6 @@
     ],
     [
       "spendguard.manage.routing.route_utility",
-      "spendguard.platform.lanes"
-    ],
-    [
-      "spendguard.manage.routing.route_utility",
       "spendguard.store.reference_data.lane_catalog"
     ],
     [
@@ -3525,10 +3410,6 @@
     [
       "spendguard.manage.routing.tier_config",
       "spendguard.manage.routing.route_utility"
-    ],
-    [
-      "spendguard.manage.routing.tier_config",
-      "spendguard.platform.lanes"
     ],
     [
       "spendguard.manage.routing.tier_config",
@@ -3557,10 +3438,6 @@
     [
       "spendguard.manage.token_operations.codex_broker_owner",
       "spendguard.manage.token_operations.codex_daemon"
-    ],
-    [
-      "spendguard.manage.token_operations.codex_broker_owner",
-      "spendguard.platform.fleet"
     ],
     [
       "spendguard.manage.token_operations.codex_daemon",
@@ -3593,10 +3470,6 @@
     [
       "spendguard.manage.token_operations.codex_daemon_broker",
       "spendguard.manage.token_operations.warm_stdio_daemon"
-    ],
-    [
-      "spendguard.manage.token_operations.codex_daemon_broker",
-      "spendguard.platform.release"
     ],
     [
       "spendguard.manage.token_operations.codex_daemon_broker",
@@ -3636,18 +3509,6 @@
     ],
     [
       "spendguard.manage.token_operations.delegate_router",
-      "spendguard.platform.fleet"
-    ],
-    [
-      "spendguard.manage.token_operations.delegate_router",
-      "spendguard.platform.lanes"
-    ],
-    [
-      "spendguard.manage.token_operations.delegate_router",
-      "spendguard.platform.release"
-    ],
-    [
-      "spendguard.manage.token_operations.delegate_router",
       "spendguard.store.spend_search.ledger_read"
     ],
     [
@@ -3657,10 +3518,6 @@
     [
       "spendguard.manage.token_operations.dispatch",
       "spendguard.manage.token_operations.xp_rate_window"
-    ],
-    [
-      "spendguard.manage.token_operations.dispatch",
-      "spendguard.platform.lanes"
     ],
     [
       "spendguard.manage.token_operations.dispatch",
@@ -3689,14 +3546,6 @@
     [
       "spendguard.manage.token_operations.lane_queue",
       "spendguard.manage.token_operations.queue_planner"
-    ],
-    [
-      "spendguard.manage.token_operations.lane_queue",
-      "spendguard.platform.fleet"
-    ],
-    [
-      "spendguard.manage.token_operations.lane_queue",
-      "spendguard.platform.release"
     ],
     [
       "spendguard.manage.token_operations.lane_queue",
@@ -3768,10 +3617,6 @@
     ],
     [
       "spendguard.platform.distribution",
-      "spendguard.analyze.assurance.consumer_audit"
-    ],
-    [
-      "spendguard.platform.distribution",
       "spendguard.platform.distribution_daemon"
     ],
     [
@@ -3789,10 +3634,6 @@
     [
       "spendguard.platform.distribution",
       "spendguard.platform.setup"
-    ],
-    [
-      "spendguard.platform.distribution",
-      "spendguard.store.configuration.config_schema"
     ],
     [
       "spendguard.platform.distribution_daemon",
@@ -3891,6 +3732,18 @@
       "spendguard.platform.setup"
     ],
     [
+      "spendguard.platform.platform_resolver_bootstrap",
+      "spendguard.platform.distribution"
+    ],
+    [
+      "spendguard.platform.platform_resolver_bootstrap",
+      "spendguard.platform.release"
+    ],
+    [
+      "spendguard.platform.platform_resolver_bootstrap",
+      "spendguard.platform.setup"
+    ],
+    [
       "spendguard.platform.release",
       "spendguard"
     ],
@@ -3901,10 +3754,6 @@
     [
       "spendguard.platform.release",
       "spendguard.platform.manifest"
-    ],
-    [
-      "spendguard.platform.setup",
-      "spendguard.analyze.assurance.consumer_audit"
     ],
     [
       "spendguard.platform.setup",
@@ -3932,10 +3781,6 @@
     ],
     [
       "spendguard.platform.setup",
-      "spendguard.store.configuration.config_schema"
-    ],
-    [
-      "spendguard.platform.setup",
       "spendguard.store.money_ledger.ledger"
     ],
     [
@@ -3948,10 +3793,6 @@
     ],
     [
       "spendguard.store.call_corpus.calls",
-      "spendguard.store.call_corpus.routing_audit"
-    ],
-    [
-      "spendguard.store.call_corpus.calls",
       "spendguard.store.money_ledger.ledger"
     ],
     [
@@ -3961,18 +3802,6 @@
     [
       "spendguard.store.call_corpus.calls",
       "spendguard.store.spend_search.ledger_read"
-    ],
-    [
-      "spendguard.store.call_corpus.content_retention",
-      "spendguard.store.configuration.config_schema"
-    ],
-    [
-      "spendguard.store.call_corpus.routing_audit",
-      "spendguard.store.call_corpus.content_retention"
-    ],
-    [
-      "spendguard.store.configuration.config_schema",
-      "spendguard.platform.fleet"
     ],
     [
       "spendguard.store.money_ledger.ledger",
@@ -4048,7 +3877,7 @@
     ]
   ],
   "recorded_dynamic_spendguard_imports": [
-    "src/spendguard/analyze/learning/lane_bandit.py:294",
+    "src/spendguard/analyze/learning/lane_bandit.py:295",
     "src/spendguard/analyze/measurement/lane_servability.py:289",
     "src/spendguard/generate/execution/adapters.py:2719",
     "src/spendguard/generate/execution/adapters.py:426",
@@ -4057,12 +3886,12 @@
     "src/spendguard/manage/admission/gate.py:2687",
     "src/spendguard/manage/admission/gate.py:2698",
     "src/spendguard/manage/admission/gate.py:2740",
-    "src/spendguard/manage/token_operations/delegate_router.py:227",
-    "src/spendguard/manage/token_operations/delegate_router.py:481",
+    "src/spendguard/manage/token_operations/delegate_router.py:229",
+    "src/spendguard/manage/token_operations/delegate_router.py:483",
     "src/spendguard/platform/lanes.py:64"
   ],
-  "max_largest_scc_size": 110,
-  "max_cyclic_edge_count": 457,
+  "max_largest_scc_size": 107,
+  "max_cyclic_edge_count": 415,
   "max_legacy_shim_count": 219,
   "recorded_cross_context_nonsurface_imports": [
     [

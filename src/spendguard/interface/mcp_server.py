@@ -590,9 +590,10 @@ def capability_version_operation(args: dict):
     from importlib import metadata
     from pathlib import Path
     import spendguard
-    from .. import config, release
+    from .. import config
+    from spendguard.platform import platform_accessors as _platform_accessors
     import spendguard.manage.admission.admission_accessors as gate
-    return {**release.release_status(), "pid": os.getpid(),
+    return {**_platform_accessors.resolve_release_status(), "pid": os.getpid(),
             "imported_version": spendguard.__version__,
             "metadata_version": metadata.version("llm-spendguard"),
             "gate_enforcing": bool(not config.disabled() and gate.resolve__enforcement_armed()),
@@ -784,9 +785,9 @@ def handle(req):
     is_notification = "id" not in req
     if method == "initialize":
         import spendguard
-        from .. import release as _rel
+        from spendguard.platform import platform_accessors as _platform_accessors
         client_ver = (req.get("params") or {}).get("protocolVersion")
-        _sv = _rel.served_sha() or {}
+        _sv = _platform_accessors.resolve_served_sha() or {}
         _ver = getattr(spendguard, "__version__", "0") + (f"+{_sv['short']}" if _sv.get("short") else "")
         return _ok(rid, {"protocolVersion": client_ver or PROTOCOL_VERSION,
                          # listChanged: this server may send notifications/tools/list_changed (serve_stdio does,
@@ -912,10 +913,10 @@ def serve_stdio(inp=None, outp=None):
     now running the latest code. Exiting here (never mid-request) means no request is dropped. This is what makes
     'always serve the latest' true for a long-running stdio server; disable with SPENDGUARD_MCP_AUTO_RESPAWN=0."""
     _arm_and_verify_mcp_daemon_gate()
-    from .. import fleet, release
+    from spendguard.platform import platform_accessors as _platform_accessors
     from ..launchd_labels import MCP_STDIO_LAUNCHD_LABEL
-    fleet.register_consumer(role=fleet.CONSUMER_ROLE_DAEMON,
-                            supervision_mode=fleet.SUPERVISION_LAUNCHD,
+    _platform_accessors.resolve_register_consumer(role=_platform_accessors.CONSUMER_ROLE_DAEMON,
+                            supervision_mode=_platform_accessors.SUPERVISION_LAUNCHD,
                             supervision_ref=MCP_STDIO_LAUNCHD_LABEL)
     inp = inp or sys.stdin
     outp = outp or sys.stdout
@@ -933,8 +934,8 @@ def serve_stdio(inp=None, outp=None):
         resp = handle(req)
         if resp is not None:
             outp.write(json.dumps(resp, default=str) + "\n"); outp.flush()
-        if respawn_on_deploy and release.should_respawn():
-            st = release.release_status()
+        if respawn_on_deploy and _platform_accessors.resolve_should_respawn():
+            st = _platform_accessors.resolve_release_status()
             sys.stderr.write("[spendguard] mcp: a newer green commit was deployed (%s vs served %s) — exiting to "
                              "hand off to a fresh process on the latest code.\n"
                              % ((st.get("green") or {}).get("short"), (st.get("served") or {}).get("short")))
@@ -1025,7 +1026,7 @@ def build_mcp_http_handler():
     _arm_and_verify_mcp_daemon_gate()
     import os as _os
     from http.server import BaseHTTPRequestHandler
-    from .. import release
+    from spendguard.platform import platform_accessors as _platform_accessors
 
     class _Handler(BaseHTTPRequestHandler):
         def log_message(self, *a):            # quiet — no stderr access log per request
@@ -1084,7 +1085,8 @@ def build_mcp_http_handler():
                 request_meta = request_params.get("_meta") if isinstance(request_params, dict) else None
                 read_only_attestation = (isinstance(request_meta, dict)
                                          and request_meta.get(MCP_READ_ONLY_ATTESTATION_META_KEY) is True)
-                if not read_only_attestation and _auto_respawn_enabled() and release.should_respawn():
+                if (not read_only_attestation and _auto_respawn_enabled()
+                        and _platform_accessors.resolve_should_respawn()):
                     self.wfile.flush()
                     _os._exit(0)
             except Exception:
@@ -1108,17 +1110,17 @@ def serve_http(host="127.0.0.1", port=4913):
     service_mcp_spend_deadletters()
     handler_class = build_mcp_http_handler()
     from http.server import ThreadingHTTPServer
-    from .. import fleet
+    from spendguard.platform import platform_accessors as _platform_accessors
     from ..launchd_labels import MCP_HTTP_LAUNCHD_LABEL
-    fleet.register_consumer(role=fleet.CONSUMER_ROLE_DAEMON,
-                            supervision_mode=fleet.SUPERVISION_LAUNCHD,
+    _platform_accessors.resolve_register_consumer(role=_platform_accessors.CONSUMER_ROLE_DAEMON,
+                            supervision_mode=_platform_accessors.SUPERVISION_LAUNCHD,
                             supervision_ref=MCP_HTTP_LAUNCHD_LABEL)
     _prewarm_codex_daemon()
     class DescriptorGuardedMCPHTTPServer(ThreadingHTTPServer):
         def service_actions(self):
-            from .. import release
+            from spendguard.platform import platform_accessors as _platform_accessors
             if _auto_respawn_enabled():
-                release.exit_if_stale(logging.getLogger(__name__).warning)
+                _platform_accessors.resolve_exit_if_stale(logging.getLogger(__name__).warning)
             enforce_mcp_descriptor_headroom(fraction)
             service_mcp_spend_deadletters()
 

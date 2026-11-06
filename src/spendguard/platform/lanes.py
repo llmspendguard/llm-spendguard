@@ -804,3 +804,17 @@ def main(argv=None):
         else:
             print(f"queue-db migration: {r.get('note')}")
     return 0
+
+
+from . import platform_accessors as _platform_accessors
+
+_platform_accessors.set__last_probe_ok_resolver(lambda *args, **kwargs: _last_probe_ok(*args, **kwargs))
+_platform_accessors.set_lane_auth_status_resolver(lambda *args, **kwargs: lane_auth_status(*args, **kwargs))
+_platform_accessors.set_lane_headroom_resolver(lambda *args, **kwargs: lane_headroom(*args, **kwargs))
+_platform_accessors.set_lane_summary_lines_resolver(lambda *args, **kwargs: lane_summary_lines(*args, **kwargs))
+_platform_accessors.set_lanes_status_resolver(lambda *args, **kwargs: lanes_status(*args, **kwargs))
+_platform_accessors.set_overage_nudge_line_resolver(lambda *args, **kwargs: overage_nudge_line(*args, **kwargs))
+_platform_accessors.set_probe_resolver(lambda *args, **kwargs: probe(*args, **kwargs))
+_platform_accessors.set_refresh_headroom_if_stale_resolver(
+    lambda *args, **kwargs: refresh_headroom_if_stale(*args, **kwargs)
+)

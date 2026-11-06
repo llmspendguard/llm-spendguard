@@ -181,8 +181,8 @@ def sweep(run=False, timeout_s=20):
     out = {"estimate": sweep_estimate(pl), "lanes": {}, "metered": {}}
     if not run:
         return out
-    from ... import lanes as _lanes
-    for r in _lanes.probe(timeout_s=timeout_s):          # $0 subscription probe — bounded + concurrent inside lanes.probe
+    from spendguard.platform import platform_accessors as _platform_accessors
+    for r in _platform_accessors.resolve_probe(timeout_s=timeout_s):
         if r.get("skipped"):
             continue                                     # a lane the executor did not enable is not a reachability row
         out["lanes"][r["lane"]] = {"reachable": bool(r.get("ok")), "cost": 0.0,
@@ -641,8 +641,8 @@ def health_reds(since_hours=48):
                 # residue below. Full timestamps matter: same-day sweep/probe ordering must remain exact. Fail safe
                 # and keep the red if either timestamp is absent/malformed or the probe cache cannot be read.
                 try:
-                    from ... import lanes
-                    probe_ok, probe_ts = lanes._last_probe_ok(resource)
+                    from spendguard.platform import platform_accessors as _platform_accessors
+                    probe_ok, probe_ts = _platform_accessors.resolve__last_probe_ok(resource)
                     sweep_at = datetime.datetime.fromisoformat(row_ts.replace("Z", "+00:00"))
                     probe_at = datetime.datetime.fromisoformat(probe_ts.replace("Z", "+00:00"))
                     if probe_ok and probe_at > sweep_at:

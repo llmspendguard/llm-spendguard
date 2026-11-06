@@ -12,6 +12,7 @@ os.environ["SPENDGUARD_CALLS"] = "1"
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "src"))
 
 from spendguard import adapters, calls, config, plan_admission, vendor_call  # noqa: E402
+from spendguard.platform import lanes as platform_lanes  # noqa: E402
 
 failed = []
 
@@ -31,19 +32,19 @@ def row(call_id):
 
 
 print("-- a capped $0 plan redirects only to a confirmed READY lane, otherwise refuses --")
-orig_headroom = plan_admission.lanes.lane_headroom
-orig_status = plan_admission.lanes.lanes_status
+orig_headroom = platform_lanes.lane_headroom
+orig_status = platform_lanes.lanes_status
 orig_overage = plan_admission.overage.current_overage_status
 orig_lane_risk = plan_admission.lane_risk
 orig_subs = None
 from spendguard import lane_balance  # noqa: E402
 orig_subs = lane_balance.substitutes_for
 try:
-    plan_admission.lanes.lane_headroom = lambda do_fetch=False: [
+    platform_lanes.lane_headroom = lambda do_fetch=False: [
         {"lane": "claude-code", "provider": "anthropic", "known": False, "remaining_pct": None},
         {"lane": "codex", "provider": "openai", "known": True, "remaining_pct": 80.0},
     ]
-    plan_admission.lanes.lanes_status = lambda: {"lanes": [
+    platform_lanes.lanes_status = lambda: {"lanes": [
         {"lane": "claude-code", "enabled": True, "auth": "ok"},
         {"lane": "codex", "enabled": True, "auth": "ok"},
     ]}
@@ -58,15 +59,15 @@ try:
           decision.get("requested_model") == "anthropic:claude-opus-4-8"
           and decision.get("model") == "openai:gpt-6.1-sol" and decision.get("lane") == "codex"
           and "overage" in decision.get("reason", ""), extra=str(decision))
-    plan_admission.lanes.lanes_status = lambda: {"lanes": [
+    platform_lanes.lanes_status = lambda: {"lanes": [
         {"lane": "claude-code", "enabled": True, "auth": "ok"},
         {"lane": "codex", "enabled": True, "auth": "missing"},
     ]}
     refused = plan_admission.decide("anthropic:claude-opus-4-8", "test:intent")
     check("no READY substitute refuses instead of failing open onto capped plan", refused.get("action") == "refuse")
 finally:
-    plan_admission.lanes.lane_headroom = orig_headroom
-    plan_admission.lanes.lanes_status = orig_status
+    platform_lanes.lane_headroom = orig_headroom
+    platform_lanes.lanes_status = orig_status
     plan_admission.overage.current_overage_status = orig_overage
     plan_admission.lane_risk = orig_lane_risk
     lane_balance.substitutes_for = orig_subs

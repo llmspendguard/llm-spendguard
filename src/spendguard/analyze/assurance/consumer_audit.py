@@ -241,10 +241,10 @@ def _checkout_for_module(module_path):
 
 
 def _live_pids(python_executable):
-    from ... import fleet
+    from spendguard.platform import platform_accessors as _platform_accessors
     resolved = Path(python_executable).resolve()
     return sorted(
-        row["pid"] for row in fleet.running_consumers(prune=False)
+        row["pid"] for row in _platform_accessors.resolve_running_consumers(prune=False)
         if row.get("python_executable") and Path(row["python_executable"]).resolve() == resolved
     )
 
@@ -368,8 +368,8 @@ def _audit_consumer_venv(repository, venv, source_import_facts, repository_llm, 
         if dry_run:
             action = CONSUMER_AUDIT_ACTION_WOULD_ARM
         else:
-            from ...setup import install_hook
-            if install_hook(os.fspath(venv), install_pkg=False) == 0:
+            from spendguard.platform import platform_accessors as _platform_accessors
+            if _platform_accessors.resolve_install_hook(os.fspath(venv), install_pkg=False) == 0:
                 action = CONSUMER_AUDIT_ACTION_ARMED
                 final_probe = probe_consumer_interpreter(python_executable)
                 final_probe.update({key: probe[key] for key in ("checkout", "checkout_head", "origin_main", "sha_relation")})
@@ -419,8 +419,8 @@ def consumer_audit_command(argv=None, deployed_sha=None):
     add_registered_cli_argument(parser, 'consumer-audit/consumer_audit.consumer_audit_command/parser/--no-auto-arm')
     arguments = parser.parse_args(argv)
     if deployed_sha is None:
-        from ...release import green_pointer
-        deployed_sha = (green_pointer() or {}).get("sha")
+        from spendguard.platform import platform_accessors as _platform_accessors
+        deployed_sha = (_platform_accessors.resolve_green_pointer() or {}).get("sha")
     if not deployed_sha:
         parser.error("no deployed sha; run spendguard deploy first")
     result = audit_consumer_workspaces(deployed_sha, roots=arguments.roots,

@@ -146,11 +146,12 @@ def idle_lanes():
     lane doing thousands of calls reads idle on the $ gauge but is spending its plan; volume spreads those). Cooling
     lanes are excluded. NO CLI call in this hot path — the snapshot is read from disk (refreshed out-of-band); with
     no snapshot yet, every lane is 'unknown' and this degrades EXACTLY to the old volume-only order."""
-    from ... import lanes as _lanes, route_utility
+    from spendguard.platform import platform_accessors as _platform_accessors
+    from ... import route_utility
     idle = [l for l in lane_utilization()["lanes"] if l["state"] == "idle"]
     # unknown-headroom lanes keep the volume proxy: pre-sort by it so rank_lanes preserves that order for the Nones
     idle = sorted(idle, key=lambda l: (l.get("calls_recent", 0), l["utilization"] if l["utilization"] is not None else 0.0))
-    snap = {r["lane"]: r for r in _lanes.lane_headroom(do_fetch=False)}       # persisted; no CLI in the routing hot path
+    snap = {r["lane"]: r for r in _platform_accessors.resolve_lane_headroom(do_fetch=False)}
     rows = [snap.get(l["lane"], {"lane": l["lane"], "provider": l["provider"], "known": False,
                                  "remaining_pct": None, "reset_ts": None}) for l in idle]
     from ... import lane_economics
@@ -343,7 +344,8 @@ def quality_equivalent_free_substitutes(intent, primary_model, excluded=None):
     is intersected with the intent's propose→confirm registry, so neither an unapproved model nor a cold prior can
     enter failover. `route_utility.rank_lanes` then orders those agentically-approved arms by provider headroom.
     """
-    from ... import advisor, lane_catalog, lanes as lane_status, route_utility
+    from ... import advisor, lane_catalog, route_utility
+    from spendguard.platform import platform_accessors as _platform_accessors
     blocked = set(excluded or ())
     primary_provider = _execution_accessors.resolve_provider_for(primary_model)
     primary_lane = _execution_accessors.resolve__LANES().get(primary_provider, (None,))[0]
@@ -370,7 +372,7 @@ def quality_equivalent_free_substitutes(intent, primary_model, excluded=None):
         candidates.append((lane, use_name))
     if not candidates:
         return []
-    snapshot = {r["lane"]: r for r in lane_status.lane_headroom(do_fetch=False)}
+    snapshot = {r["lane"]: r for r in _platform_accessors.resolve_lane_headroom(do_fetch=False)}
     rows = [snapshot.get(lane, {"lane": lane, "provider": lane_catalog.lane_provider(lane), "known": False,
                                 "remaining_pct": None, "reset_ts": None}) for lane, _ in candidates]
     rank = {r["lane"]: i for i, r in enumerate(route_utility.rank_lanes(rows)) if r.get("available")}

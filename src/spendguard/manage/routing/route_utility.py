@@ -306,8 +306,9 @@ def breach_decision(policy=None):
     if pol != "downgrade":
         return "refuse", None, "on_breach=refuse (fail-closed)"
     try:
-        from ... import lanes
-        top = next((d for d in rank_lanes(lanes.lane_headroom(do_fetch=False)) if d.get("available")), None)
+        from spendguard.platform import platform_accessors as _platform_accessors
+        top = next((d for d in rank_lanes(_platform_accessors.resolve_lane_headroom(do_fetch=False))
+                    if d.get("available")), None)
         if top:
             return "downgrade", top["lane"], f"route to the {top['lane']} plan ($0) instead — {top['why']}"
     except Exception:
@@ -351,8 +352,9 @@ def rank_for_tier(tier, est_in=0, est_out=0, lane_rows=None, cooling=None, now=N
     metered. Each: {kind 'lane'|'metered', target, provider, available, score, why}. The caller routes to the FIRST
     available=True. This is the single entry point that makes balance AUTOMATIC: no pinned model, no per-caller lane
     logic — name a group you declared, the economics pick the plan. Empty when the group is undeclared (advisor.tiers)."""
-    from ... import lanes as _lanes, lane_catalog
-    rows = list(lane_rows if lane_rows is not None else _lanes.lane_headroom(do_fetch=False))
+    from spendguard.platform import platform_accessors as _platform_accessors
+    from ... import lane_catalog
+    rows = list(lane_rows if lane_rows is not None else _platform_accessors.resolve_lane_headroom(do_fetch=False))
     # each lane's model FOR THIS group (its cheap model for `cheap`, strong for `strong`) — None if it serves none.
     tier_lane_model = {}
     for ln in lane_catalog.lanes():

@@ -932,3 +932,10 @@ def distribute_command(argv=None):
         result = distribute_fleet(check=args.check, roots=args.roots, dry_run=args.dry_run, version=args.version)
     print(json.dumps(result, indent=2, sort_keys=True) if args.json else render_distribution_table(result))
     return result["exit_code"]
+
+
+from . import platform_accessors as _platform_accessors
+
+_platform_accessors.set_mark_distribution_ephemeral_dir_resolver(
+    lambda *args, **kwargs: mark_distribution_ephemeral_dir(*args, **kwargs)
+)

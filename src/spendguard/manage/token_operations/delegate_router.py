@@ -16,7 +16,8 @@ import threading
 import time
 from pathlib import Path
 
-from ... import config, guard, lane_balance, lane_registry, pricing, provider_tokens, release as _release
+from spendguard.platform import platform_accessors as _platform_accessors
+from ... import config, guard, lane_balance, lane_registry, pricing, provider_tokens
 
 CLASSIFY_INTENT = "spendguard:classify"
 DEFAULT_DELEGATE_INTENT = "spendguard:delegate-task"
@@ -79,8 +80,8 @@ LEGACY_DELEGATE_KIND_ROUTES = {
 
 def _delegate_release_state_warning():
     """Describe tracked dirt/staleness in the spendguard checkout serving this delegate command."""
-    status = _release.release_status()
-    tracked_dirty = _release._tracked_dirty()
+    status = _platform_accessors.resolve_release_status()
+    tracked_dirty = _platform_accessors.resolve__tracked_dirty()
     if not tracked_dirty and not status.get("served_dirty") and not status.get("stale"):
         return None
     served = status.get("served") or {}
@@ -211,8 +212,9 @@ def delegation_lanes_ready(route_kind="oneshot"):
     configured = _configured_plan_models()
     ready = []
     if route_kind == "oneshot":
-        from ... import lanes, reliability
-        status_by_lane = {row["lane"]: row for row in lanes.lanes_status()["lanes"]}
+        from spendguard.platform import platform_accessors as _platform_accessors
+        from ... import reliability
+        status_by_lane = {row["lane"]: row for row in _platform_accessors.resolve_lanes_status()["lanes"]}
         health_down = {row["resource"] for row in reliability.health_reds() if row.get("kind") == "lane"}
         for plan in sorted(configured):
             row = status_by_lane.get(plan)
@@ -737,8 +739,8 @@ def delegate_task(task, files=None, intent=None, provider="auto", execute=False,
 
 def delegate_cli(argv=None):
     import argparse
-    from ... import fleet
-    fleet.register_consumer(role=fleet.CONSUMER_ROLE_EPHEMERAL)
+    from spendguard.platform import platform_accessors as _platform_accessors
+    _platform_accessors.resolve_register_consumer(role=_platform_accessors.CONSUMER_ROLE_EPHEMERAL)
     parser = argparse.ArgumentParser(
         prog="spendguard delegate",
         description="Offload one SELF-CONTAINED AGENTIC workspace-write subtask to another configured provider plan. "

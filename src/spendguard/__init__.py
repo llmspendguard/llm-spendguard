@@ -59,6 +59,8 @@ def _load_public_api_and_install_gate():
     from .manage.admission import budget as _admission_budget  # noqa: F401
     from .manage.admission import bulkgate as _admission_bulkgate  # noqa: F401
     from .manage.admission import gate as _admission_gate  # noqa: F401
+    from .platform import fleet as _platform_fleet  # noqa: F401
+    from .platform import lanes as _platform_lanes  # noqa: F401
     from .pricing import (batch_cost, realtime_cost, estimate as estimate_cost, price, normalize,
                           PRICING, PRICING_VERIFIED, PRICING_SOURCE)
     from spendguard.manage.admission.admission_accessors import resolve_install as install, resolve_require as require, resolve_register as register, resolve_gate_external as gate_external, resolve_refuse_metered as refuse_metered, resolve__record_rt as _record_rt
@@ -86,6 +88,7 @@ def _load_public_api_and_install_gate():
     document_existing_capability_exports(globals())
     _wire_execution_accessor_resolvers()
     _wire_admission_accessor_resolvers()
+    _wire_platform_accessor_resolvers()
 
 
 def _wire_execution_accessor_resolvers():
@@ -120,6 +123,15 @@ def _wire_admission_accessor_resolvers():
     try:
         from .manage.admission import admission_resolver_bootstrap
         admission_resolver_bootstrap.wire_admission_accessor_resolvers()
+    except Exception:
+        pass
+
+
+def _wire_platform_accessor_resolvers():
+    """Trigger lazy platform-home resolver registration through its bootstrap."""
+    try:
+        from .platform import platform_resolver_bootstrap
+        platform_resolver_bootstrap.wire_platform_accessor_resolvers()
     except Exception:
         pass
 

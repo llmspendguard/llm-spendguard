@@ -1228,10 +1228,11 @@ def available_capacity(pool="hooks"):
     returns the floor; no probe is spawned or refreshed on this hot path.
     """
     try:
-        from ... import lane_catalog, lanes
+        from spendguard.platform import platform_accessors as _platform_accessors
+        from ... import lane_catalog
         capacity = 0
         for lane in lane_catalog.lanes():
-            readiness = lanes._last_probe_ok(lane)
+            readiness = _platform_accessors.resolve__last_probe_ok(lane)
             # The cache API returns (ok, timestamp); no timestamp means unknown.
             if isinstance(readiness, tuple):
                 probe_ok, probe_timestamp = readiness

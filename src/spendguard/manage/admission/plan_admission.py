@@ -2,7 +2,8 @@
 from spendguard.generate.execution import execution_accessors as _execution_accessors
 import os
 
-from ... import config, lane_catalog, lane_registry, lanes, overage
+from spendguard.platform import platform_accessors as _platform_accessors
+from ... import config, lane_catalog, lane_registry, overage
 
 
 def hosting_plan_lane():
@@ -22,7 +23,7 @@ def hosting_plan_in_near_cap_band(hosting_lane, near_cap_remaining_pct):
     """Shared subagent-route policy using the existing overage and cached headroom sources."""
     if hosting_lane != "codex" and overage.current_overage_status().get("on_overage_now"):
         return True
-    row = next((item for item in lanes.lane_headroom(do_fetch=False)
+    row = next((item for item in _platform_accessors.resolve_lane_headroom(do_fetch=False)
                 if item.get("lane") == hosting_lane), None)
     return bool(row and row.get("known") and row.get("remaining_pct") is not None
                 and float(row["remaining_pct"]) <= near_cap_remaining_pct)
@@ -48,7 +49,7 @@ def lane_risk(lane):
     under SPENDGUARD_TEST_ISOLATED, and that gating env is reported here so the risk verdict is reproducible rather than
     silently host-dependent."""
     test_isolated = bool(os.getenv("SPENDGUARD_TEST_ISOLATED"))   # explicit + recorded (below) — not a hidden env gate
-    lane_rows = lanes.lane_headroom(do_fetch=False)
+    lane_rows = _platform_accessors.resolve_lane_headroom(do_fetch=False)
     row = next((r for r in lane_rows if r.get("lane") == lane), None)
     remaining = row.get("remaining_pct") if row else None
     capped = bool(row and row.get("known") and remaining is not None and float(remaining) <= _threshold())
@@ -80,7 +81,7 @@ def _ready(lane):
         return False
     if _execution_accessors.resolve__lane_cooling(lane):
         return False
-    row = next((r for r in lanes.lanes_status().get("lanes", []) if r.get("lane") == lane), None)
+    row = next((r for r in _platform_accessors.resolve_lanes_status().get("lanes", []) if r.get("lane") == lane), None)
     if not row or not row.get("enabled") or row.get("auth") not in ("ok", "unknown"):
         return False
     return not lane_risk(lane)["at_risk"]
@@ -102,7 +103,7 @@ def _best_ready_alt_lane(primary, tier="cheap"):
             ready.append((lane, m))
     if not ready:
         return None
-    snapshot = {r["lane"]: r for r in lanes.lane_headroom(do_fetch=False)}
+    snapshot = {r["lane"]: r for r in _platform_accessors.resolve_lane_headroom(do_fetch=False)}
     ranked = route_utility.rank_lanes([
         snapshot.get(lane, {"lane": lane, "provider": lane_catalog.lane_provider(lane), "known": False,
                             "remaining_pct": None, "reset_ts": None})
@@ -155,7 +156,7 @@ def decide(model, intent, auth_over_quota=False):
         if lane and lane != primary and _ready(lane):
             candidates.append((lane, candidate))
     if candidates:
-        snapshot = {r["lane"]: r for r in lanes.lane_headroom(do_fetch=False)}
+        snapshot = {r["lane"]: r for r in _platform_accessors.resolve_lane_headroom(do_fetch=False)}
         ranked = route_utility.rank_lanes([
             snapshot.get(lane, {"lane": lane, "provider": lane_catalog.lane_provider(lane), "known": False,
                                 "remaining_pct": None, "reset_ts": None})

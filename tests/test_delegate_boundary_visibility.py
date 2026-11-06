@@ -4,6 +4,7 @@ import io
 from unittest.mock import patch
 
 from spendguard import delegate_router
+from spendguard.platform import release as platform_release
 
 
 BOUNDARY_TEST_TASK = "perform the self-contained fixture task"
@@ -41,8 +42,8 @@ def test_delegate_dirty_stale_serving_tree_emits_release_warning():
     }
     output_stream = io.StringIO()
     with contextlib.redirect_stderr(output_stream), \
-            patch.object(delegate_router._release, "release_status", return_value=release_status), \
-            patch.object(delegate_router._release, "_tracked_dirty", return_value=True), \
+            patch.object(platform_release, "release_status", return_value=release_status), \
+            patch.object(platform_release, "_tracked_dirty", return_value=True), \
             patch.object(delegate_router, "delegate_task", return_value=_boundary_estimate_result()), \
             patch("spendguard.fleet.register_consumer"):
         exit_code = delegate_router.delegate_cli([BOUNDARY_TEST_TASK, "--provider", BOUNDARY_TEST_PROVIDER])
@@ -62,8 +63,8 @@ def test_delegate_clean_on_green_serving_tree_emits_no_release_warning():
     }
     output_stream = io.StringIO()
     with contextlib.redirect_stderr(output_stream), \
-            patch.object(delegate_router._release, "release_status", return_value=release_status), \
-            patch.object(delegate_router._release, "_tracked_dirty", return_value=False), \
+            patch.object(platform_release, "release_status", return_value=release_status), \
+            patch.object(platform_release, "_tracked_dirty", return_value=False), \
             patch.object(delegate_router, "delegate_task", return_value=_boundary_estimate_result()), \
             patch("spendguard.fleet.register_consumer"):
         exit_code = delegate_router.delegate_cli([BOUNDARY_TEST_TASK, "--provider", BOUNDARY_TEST_PROVIDER])

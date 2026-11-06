@@ -11,14 +11,14 @@ import glob
 import subprocess
 
 from spendguard.generate.execution import execution_accessors as _execution_accessors
-from ...setup import _PTH_SENTINEL, _SENTINEL
+from spendguard.platform.platform_accessors import _PTH_SENTINEL, _SENTINEL
 
 
 def _registry_venv_roots():
     """Return resolved, de-duplicated registry venv roots and whether the registry was readable."""
     try:
-        from ... import fleet
-        registered = fleet.registered_interpreters()
+        from spendguard.platform import platform_accessors as _platform_accessors
+        registered = _platform_accessors.resolve_registered_interpreters()
         roots = sorted({os.path.realpath(os.path.expanduser(row["venv_root"]))
                         for row in registered if row.get("venv_root")})
     except Exception:

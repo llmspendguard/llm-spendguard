@@ -50,8 +50,8 @@ def _weekly_cap_guard_setting(key, default):
 
 def anthropic_weekly_headroom():
     """Return (fraction-left, reset timestamp), or (None, None), from lanes.lane_headroom's provider-truth SSOT."""
-    from ... import lanes
-    row = next((item for item in lanes.lane_headroom(do_fetch=False)
+    from spendguard.platform import platform_accessors as _platform_accessors
+    row = next((item for item in _platform_accessors.resolve_lane_headroom(do_fetch=False)
                 if item.get("lane") == WEEKLY_CAP_GUARD_HOST_LANE), None)
     if not row or not row.get("known") or row.get("remaining_pct") is None:
         return None, None

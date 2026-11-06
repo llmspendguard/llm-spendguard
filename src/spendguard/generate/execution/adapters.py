@@ -291,8 +291,8 @@ def _surface_lane_auth(lane, cmd):
 def _authoritative_lane_auth_status(lane):
     """Read current lane auth without the routing cache; logout alerts must never consume stale state."""
     try:
-        from ... import lanes
-        return lanes.lane_auth_status(lane, ttl=0)
+        from spendguard.platform import platform_accessors as _platform_accessors
+        return _platform_accessors.resolve_lane_auth_status(lane, ttl=0)
     except Exception:
         return None
 
@@ -1024,8 +1024,8 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
                     str), cause (the underlying error behind a generic wrapper — 'Connection error.' ←
                     'ConnectTimeout'), retry_after (seconds, if the provider sent one)."""
     try:
-        from ... import fleet as _fleet            # UPDATE PROPAGATION: track this consumer's loaded code so a deploy can
-        _fleet.register_consumer()               #   see + restart it if it is stale. Once-per-process (cheap no-op after); never raises.
+        from spendguard.platform import platform_accessors as _platform_accessors
+        _platform_accessors.resolve_register_consumer()
     except Exception:
         pass
     _model_defaulted = not model
@@ -1750,8 +1750,8 @@ EMBED_CHECKPOINT_INFLIGHT_GRACE_SECONDS = (
 
 
 def _embed_checkpoint_dir():
-    from ...distribution import mark_distribution_ephemeral_dir
-    return mark_distribution_ephemeral_dir(config.HOME / EMBED_CHECKPOINT_DIRNAME)
+    from spendguard.platform import platform_accessors as _platform_accessors
+    return _platform_accessors.resolve_mark_distribution_ephemeral_dir(config.HOME / EMBED_CHECKPOINT_DIRNAME)
 
 
 def _embed_checkpoint_path(basename):

@@ -686,6 +686,8 @@
       "layer": "L4",
       "backing_modules": [
         "platform._version",
+        "platform.platform_accessors",
+        "platform.platform_resolver_bootstrap",
         "platform.release",
         "platform.distribution",
         "platform.distribution_daemon",

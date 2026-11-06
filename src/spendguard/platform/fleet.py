@@ -69,13 +69,15 @@ CONSUMER_TABLE_NAME = "consumers"
 CONSUMER_ROLE_COLUMN = "role"
 CONSUMER_GATE_ENFORCING_COLUMN = "gate_enforcing"
 CONSUMER_ROLE_UNSPECIFIED = "unspecified"
-CONSUMER_ROLE_DAEMON = "daemon"
-CONSUMER_ROLE_EPHEMERAL = "ephemeral"
-SUPERVISION_LAUNCHD = "launchd"
+from .platform_accessors import (
+    CONSUMER_ROLE_DAEMON,
+    CONSUMER_ROLE_EPHEMERAL,
+    FLEET_RESTARTS_ENABLED_DEFAULT,
+    FLEET_RESTARTS_ENABLED_ENV,
+    SUPERVISION_LAUNCHD,
+)
 CONSUMER_SUPERVISION_MODE_COLUMN = "supervision_mode"
 CONSUMER_SUPERVISION_REF_COLUMN = "supervision_ref"
-FLEET_RESTARTS_ENABLED_DEFAULT = True
-FLEET_RESTARTS_ENABLED_ENV = "SPENDGUARD_FLEET_RESTARTS_ENABLED"
 LAUNCHD_SERVICE_NAME_ENV = "XPC_SERVICE_NAME"
 
 
@@ -1019,3 +1021,25 @@ def fleet_summary():
     return {"green": g.get("short") or g.get("sha"), "n": len(procs),
             "stale": sum(1 for p in procs if p.get("stale")),
             "unverifiable": sum(1 for p in procs if not p.get("identity_verified")), "consumers": procs}
+
+
+from . import platform_accessors as _platform_accessors
+
+_platform_accessors.set_consumer_install_drift_resolver(lambda *args, **kwargs: consumer_install_drift(*args, **kwargs))
+_platform_accessors.set_enforcing_interpreter_registration_status_resolver(
+    lambda *args, **kwargs: enforcing_interpreter_registration_status(*args, **kwargs)
+)
+_platform_accessors.set_reconcile_registered_host_installations_resolver(
+    lambda *args, **kwargs: reconcile_registered_host_installations(*args, **kwargs)
+)
+_platform_accessors.set_record_enforcing_interpreter_registration_failure_resolver(
+    lambda *args, **kwargs: record_enforcing_interpreter_registration_failure(*args, **kwargs)
+)
+_platform_accessors.set_register_consumer_resolver(lambda *args, **kwargs: register_consumer(*args, **kwargs))
+_platform_accessors.set_register_enforcing_interpreter_resolver(
+    lambda *args, **kwargs: register_enforcing_interpreter(*args, **kwargs)
+)
+_platform_accessors.set_registered_interpreters_resolver(
+    lambda *args, **kwargs: registered_interpreters(*args, **kwargs)
+)
+_platform_accessors.set_running_consumers_resolver(lambda *args, **kwargs: running_consumers(*args, **kwargs))

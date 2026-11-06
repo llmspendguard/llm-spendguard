@@ -1613,10 +1613,10 @@ def drain(worker=None, batch=None, lease_s=None, idle_rounds=None, idle_sleep=No
 
     Reuses the whole existing execution path — governor admission, bandit routing, $0 plan-served, API fallback —
     so the queue is PURELY the durability + priority + crash-recovery layer on top."""
-    from ... import fleet
+    from spendguard.platform import platform_accessors as _platform_accessors
     from ...launchd_labels import LANE_DRAIN_LAUNCHD_LABEL
-    fleet.register_consumer(role=fleet.CONSUMER_ROLE_DAEMON,
-                            supervision_mode=fleet.SUPERVISION_LAUNCHD,
+    _platform_accessors.resolve_register_consumer(role=_platform_accessors.CONSUMER_ROLE_DAEMON,
+                            supervision_mode=_platform_accessors.SUPERVISION_LAUNCHD,
                             supervision_ref=LANE_DRAIN_LAUNCHD_LABEL)
     _lock_fd = _acquire_drain_lock()
     if _lock_fd is None:                                     # another drain already running → don't start a second one
@@ -1645,8 +1645,8 @@ def _drain_locked(worker, batch, lease_s, idle_rounds, idle_sleep, load_ceiling,
     _last_dedup = 0.0                                                    # throttle for the consumer-side dedup (below)
     while True:
         if forever:
-            from ... import release
-            release.exit_if_stale()
+            from spendguard.platform import platform_accessors as _platform_accessors
+            _platform_accessors.resolve_exit_if_stale()
         iters += 1
         if max_iters is not None and iters > int(max_iters):
             # NAMED, not a silent ceiling (F2): if work REMAINS when the cap ends the drain, say so — the durable rows

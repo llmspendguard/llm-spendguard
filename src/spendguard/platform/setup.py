@@ -3,6 +3,7 @@ so they always match the code. `config` shows resolved values + where each came 
 runs the interview and writes ~/.spendguard/config.json (+ email.json), leaving API keys to env.
 """
 from spendguard.generate.execution import execution_accessors as _execution_accessors
+from .platform_accessors import _PTH_SENTINEL, _SENTINEL
 
 from ..capability_cli_parsing import add_registered_cli_argument, registered_cli_option_token
 import os, json
@@ -14,8 +15,6 @@ from .. import config, config_schema
 # comment about it. --uninstall then deleted a hook we never created, and the install path treated it as
 # ours to overwrite. A distinctive marker we emit ourselves is the only honest test of authorship, and
 # deleting someone else's interpreter hook is not something they can recover from here.
-_SENTINEL = "spendguard-gate-hook/v1"
-_PTH_SENTINEL = "spendguard-gate-hook/v2"
 _PTH_NAME = "spendguard_gate_hook.pth"
 _FILEPROVIDER_XATTR_PREFIX = "com.apple.fileprovider."
 _GATED_SDKS = ("openai", "anthropic", "httpx")
@@ -1507,3 +1506,15 @@ def cmd_init(argv=None):
     # Close on the 'you're set up' card + the one command that proves it (assembled from the state above, no re-probe).
     _setup_summary_card(_keys, _lanes_st, _wired)
     return 0
+
+
+from . import platform_accessors as _platform_accessors
+
+_platform_accessors.set__probe_resolver(lambda *args, **kwargs: _probe(*args, **kwargs))
+_platform_accessors.set__startup_gate_active_resolver(
+    lambda *args, **kwargs: _startup_gate_active(*args, **kwargs)
+)
+_platform_accessors.set_gate_pth_hidden_diagnosis_resolver(
+    lambda *args, **kwargs: gate_pth_hidden_diagnosis(*args, **kwargs)
+)
+_platform_accessors.set_install_hook_resolver(lambda *args, **kwargs: install_hook(*args, **kwargs))
