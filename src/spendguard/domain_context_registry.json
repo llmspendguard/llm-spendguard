@@ -310,6 +310,7 @@
         "generate.spend_capture.claudecode",
         "generate.spend_capture.codex",
         "generate.spend_capture.chat",
+        "generate.spend_capture.realtime_spend_recorder",
         "generate.spend_capture.spend_capture_accessors",
         "generate.spend_capture.spend_capture_resolver_bootstrap",
         "generate.spend_capture.compaction",

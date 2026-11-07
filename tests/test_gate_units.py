@@ -16,6 +16,9 @@ import types
 from _script_checks import record_script_check
 from spendguard import gate as spend_gate
 from spendguard import model_catalog, pricing
+# The realtime recorder + unit recorders moved to the Spend Capture context; patch/drive them at
+# their new home so interception reaches the live path (estimators `_est_*` and `_log` stay in gate).
+from spendguard.generate.spend_capture import realtime_spend_recorder as _rtrec
 
 fails = []
 
@@ -37,35 +40,35 @@ record_script_check(fails, "tts est = chars × per-char (2000 × $0.000015)", ab
 
 # ── actuals recording (via the real _record_rt seam, captured) ──
 recorded = []
-orig_record = spend_gate._record_rt
-spend_gate._record_rt = lambda model, kw, i, o, **k: recorded.append(
+orig_record = _rtrec._record_rt
+_rtrec._record_rt = lambda model, kw, i, o, **k: recorded.append(
     (model, i, o, round(k["cost"], 6) if k.get("cost") is not None else -1))
 
-spend_gate._act_images(dict(model="img-model", size="1024x1024", quality="hd"),
-                       types.SimpleNamespace(data=[1, 2]))
+_rtrec._act_images(dict(model="img-model", size="1024x1024", quality="hd"),
+                   types.SimpleNamespace(data=[1, 2]))
 record_script_check(fails, "images actual = len(data) × per-image ($0.16)", recorded[-1] == ("img-model", 0, 0, 0.16))
 
-spend_gate._act_transcription(dict(model="gpt-4o-transcribe"),
-                              types.SimpleNamespace(usage=types.SimpleNamespace(input_tokens=500, output_tokens=80)))
+_rtrec._act_transcription(dict(model="gpt-4o-transcribe"),
+                          types.SimpleNamespace(usage=types.SimpleNamespace(input_tokens=500, output_tokens=80)))
 record_script_check(fails, "token-billing transcribe records TOKENS (usage path)", recorded[-1] == ("gpt-4o-transcribe", 500, 80, -1))
 
-spend_gate._act_transcription(dict(model="stt-model"), types.SimpleNamespace(duration=120.0, usage=None))
+_rtrec._act_transcription(dict(model="stt-model"), types.SimpleNamespace(duration=120.0, usage=None))
 record_script_check(fails, "whisper-style transcribe records duration × per-second ($0.012)", recorded[-1] == ("stt-model", 0, 0, 0.012))
 
-spend_gate._act_transcription(dict(model="stt-unpriced"), types.SimpleNamespace(usage=None))
+_rtrec._act_transcription(dict(model="stt-unpriced"), types.SimpleNamespace(usage=None))
 record_script_check(fails, "no usage + no duration → recorded at $0, loudly (never invisible)", recorded[-1] == ("stt-unpriced", 0, 0, 0.0))
 
-spend_gate._act_speech(dict(model="tts-model", input="y" * 1000), object())
+_rtrec._act_speech(dict(model="tts-model", input="y" * 1000), object())
 record_script_check(fails, "tts actual = chars × per-char ($0.015)", recorded[-1] == ("tts-model", 0, 0, 0.015))
 
-spend_gate._record_rt = orig_record
+_rtrec._record_rt = orig_record
 
 # ── fine-tune job: unestimated submission is LOGGED, never silent ──
 logged = []
-orig_log = spend_gate._log
-spend_gate._log = lambda rec: logged.append(rec)
-spend_gate._act_finetune(dict(model="gpt-4o-mini"), types.SimpleNamespace(id="ftjob-1"))
-spend_gate._log = orig_log
+orig_log = _rtrec._log
+_rtrec._log = lambda rec: logged.append(rec)
+_rtrec._act_finetune(dict(model="gpt-4o-mini"), types.SimpleNamespace(id="ftjob-1"))
+_rtrec._log = orig_log
 record_script_check(fails, "fine-tune submission logged with job id + decision",
    logged and logged[-1]["kind"] == "finetune_job" and logged[-1]["job"] == "ftjob-1"
    and logged[-1]["decision"] == "unestimated_submission")
@@ -87,10 +90,10 @@ client = openai.OpenAI(api_key="test-key-not-real")
 for k in ("GATE_ALLOW", "GATE_DISABLE"):
     os.environ.pop(k, None)
 os.environ["GATE_RT_BUDGET"] = "1000"
-spend_gate._rt_spent = 0.0
+_rtrec._rt_spent = 0.0
 client.images.generate(model="img-model", n=3, size="1024x1024", quality="hd")
 record_script_check(fails, "a priced image call is ACCOUNTED into the realtime tally ($0.24 actual for 3 images)",
-   abs(spend_gate._rt_spent - 0.24) < 1e-9)
+   abs(_rtrec._rt_spent - 0.24) < 1e-9)
 
 os.environ["GATE_RT_BUDGET"] = "0.10"                 # below what's already spent → next unit call refused
 refused = False

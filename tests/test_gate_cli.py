@@ -13,6 +13,10 @@ from _runner_budget_calibration import measure_isolated_runner_budget_scale
 
 _, runner_budget_scale = measure_isolated_runner_budget_scale()
 from spendguard import gate
+# realtime_by_day + the RT_LOG it reads moved to the Spend Capture context; gate still exposes
+# realtime_by_day through the admission seam (gate.resolve_realtime_by_day). Write the log at the exact
+# path the moved function reads (_rtrec.RT_LOG, the config RT_LOG constant it imports).
+from spendguard.generate.spend_capture import realtime_spend_recorder as _rtrec
 
 fails = []
 DOCTOR_EXPECTED_SECONDS = 2.0
@@ -22,8 +26,8 @@ DOCTOR_PROMPTNESS_SECONDS = DOCTOR_EXPECTED_SECONDS * DOCTOR_SCHEDULER_CUSHION
 # ── realtime_by_day: empty when no log, then aggregates by day + by model, honoring `since` ──
 record_script_check(fails, "realtime_by_day: no log file → ({}, {})", gate.realtime_by_day() == ({}, {}))
 
-os.makedirs(os.path.dirname(gate.RT_LOG), exist_ok=True)
-with open(gate.RT_LOG, "w") as f:
+os.makedirs(os.path.dirname(_rtrec.RT_LOG), exist_ok=True)
+with open(_rtrec.RT_LOG, "w") as f:
     for r in [{"day": "2026-06-01", "cost": 1.50, "model": "gpt-5.5"},
               {"day": "2026-06-01", "cost": 0.50, "model": "claude-opus-4-8"},
               {"day": "2026-06-02", "cost": 2.00, "model": "gpt-5.5"},

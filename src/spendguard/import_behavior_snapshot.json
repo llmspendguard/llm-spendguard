@@ -225,7 +225,7 @@
     "package_import": {
       "atexit_registrations": [
         "spendguard.store.money_ledger.ledger_writer.close_ledger_writers",
-        "spendguard.manage.admission.gate._rt_flush"
+        "spendguard.generate.spend_capture.realtime_spend_recorder._rt_flush"
       ],
       "executed_modules": [
         "spendguard.domain_legacy_path_shim",
@@ -285,6 +285,8 @@
         "spendguard.egress",
         "spendguard.egress.emit",
         "spendguard.manage.admission.gate_event_sink",
+        "spendguard.generate.spend_capture",
+        "spendguard.generate.spend_capture.realtime_spend_recorder",
         "spendguard.platform.fleet",
         "spendguard.platform.platform_accessors",
         "spendguard.platform.lanes",
@@ -296,7 +298,6 @@
         "spendguard.generate.work_integrity.item_ledger",
         "spendguard.manage.admission.escalation_ladder",
         "spendguard.generate.work_integrity.job_fingerprint",
-        "spendguard.generate.spend_capture",
         "spendguard.generate.spend_capture.litellm_adapter",
         "spendguard.generate.spend_capture.bedrock_adapter",
         "spendguard.generate.spend_capture.vertex_adapter",
@@ -333,10 +334,10 @@
         "spendguard.platform.release",
         "spendguard.platform.setup",
         "spendguard.store.configuration.config_schema",
+        "spendguard.platform.offline_python_build",
         "spendguard.platform.distribution_daemon",
         "spendguard.interface.mcp_fd_lifecycle",
         "spendguard.platform.launchd_labels",
-        "spendguard.platform.offline_python_build",
         "spendguard.store.reference_data.reference_data_resolver_bootstrap",
         "spendguard.store.reference_data.catalog",
         "spendguard.store.reference_data.lane_catalog",
@@ -384,7 +385,7 @@
     "module_main": {
       "atexit_registrations": [
         "spendguard.store.money_ledger.ledger_writer.close_ledger_writers",
-        "spendguard.manage.admission.gate._rt_flush"
+        "spendguard.generate.spend_capture.realtime_spend_recorder._rt_flush"
       ],
       "executed_modules": [
         "spendguard.domain_legacy_path_shim",
@@ -444,6 +445,8 @@
         "spendguard.egress",
         "spendguard.egress.emit",
         "spendguard.manage.admission.gate_event_sink",
+        "spendguard.generate.spend_capture",
+        "spendguard.generate.spend_capture.realtime_spend_recorder",
         "spendguard.platform.fleet",
         "spendguard.platform.platform_accessors",
         "spendguard.platform.lanes",
@@ -455,7 +458,6 @@
         "spendguard.generate.work_integrity.item_ledger",
         "spendguard.manage.admission.escalation_ladder",
         "spendguard.generate.work_integrity.job_fingerprint",
-        "spendguard.generate.spend_capture",
         "spendguard.generate.spend_capture.litellm_adapter",
         "spendguard.generate.spend_capture.bedrock_adapter",
         "spendguard.generate.spend_capture.vertex_adapter",
@@ -492,10 +494,10 @@
         "spendguard.platform.release",
         "spendguard.platform.setup",
         "spendguard.store.configuration.config_schema",
+        "spendguard.platform.offline_python_build",
         "spendguard.platform.distribution_daemon",
         "spendguard.interface.mcp_fd_lifecycle",
         "spendguard.platform.launchd_labels",
-        "spendguard.platform.offline_python_build",
         "spendguard.store.reference_data.reference_data_resolver_bootstrap",
         "spendguard.store.reference_data.catalog",
         "spendguard.store.reference_data.lane_catalog",
@@ -546,7 +548,7 @@
     "sitecustomize_hook": {
       "atexit_registrations": [
         "spendguard.store.money_ledger.ledger_writer.close_ledger_writers",
-        "spendguard.manage.admission.gate._rt_flush"
+        "spendguard.generate.spend_capture.realtime_spend_recorder._rt_flush"
       ],
       "executed_modules": [
         "spendguard.domain_legacy_path_shim",
@@ -606,6 +608,8 @@
         "spendguard.egress",
         "spendguard.egress.emit",
         "spendguard.manage.admission.gate_event_sink",
+        "spendguard.generate.spend_capture",
+        "spendguard.generate.spend_capture.realtime_spend_recorder",
         "spendguard.platform.fleet",
         "spendguard.platform.platform_accessors",
         "spendguard.platform.lanes",
@@ -617,7 +621,6 @@
         "spendguard.generate.work_integrity.item_ledger",
         "spendguard.manage.admission.escalation_ladder",
         "spendguard.generate.work_integrity.job_fingerprint",
-        "spendguard.generate.spend_capture",
         "spendguard.generate.spend_capture.litellm_adapter",
         "spendguard.generate.spend_capture.bedrock_adapter",
         "spendguard.generate.spend_capture.vertex_adapter",
@@ -654,10 +657,10 @@
         "spendguard.platform.release",
         "spendguard.platform.setup",
         "spendguard.store.configuration.config_schema",
+        "spendguard.platform.offline_python_build",
         "spendguard.platform.distribution_daemon",
         "spendguard.interface.mcp_fd_lifecycle",
         "spendguard.platform.launchd_labels",
-        "spendguard.platform.offline_python_build",
         "spendguard.store.reference_data.reference_data_resolver_bootstrap",
         "spendguard.store.reference_data.catalog",
         "spendguard.store.reference_data.lane_catalog",
@@ -705,7 +708,7 @@
     "usercustomize_hook": {
       "atexit_registrations": [
         "spendguard.store.money_ledger.ledger_writer.close_ledger_writers",
-        "spendguard.manage.admission.gate._rt_flush"
+        "spendguard.generate.spend_capture.realtime_spend_recorder._rt_flush"
       ],
       "executed_modules": [
         "spendguard.domain_legacy_path_shim",
@@ -765,6 +768,8 @@
         "spendguard.egress",
         "spendguard.egress.emit",
         "spendguard.manage.admission.gate_event_sink",
+        "spendguard.generate.spend_capture",
+        "spendguard.generate.spend_capture.realtime_spend_recorder",
         "spendguard.platform.fleet",
         "spendguard.platform.platform_accessors",
         "spendguard.platform.lanes",
@@ -776,7 +781,6 @@
         "spendguard.generate.work_integrity.item_ledger",
         "spendguard.manage.admission.escalation_ladder",
         "spendguard.generate.work_integrity.job_fingerprint",
-        "spendguard.generate.spend_capture",
         "spendguard.generate.spend_capture.litellm_adapter",
         "spendguard.generate.spend_capture.bedrock_adapter",
         "spendguard.generate.spend_capture.vertex_adapter",
@@ -813,10 +817,10 @@
         "spendguard.platform.release",
         "spendguard.platform.setup",
         "spendguard.store.configuration.config_schema",
+        "spendguard.platform.offline_python_build",
         "spendguard.platform.distribution_daemon",
         "spendguard.interface.mcp_fd_lifecycle",
         "spendguard.platform.launchd_labels",
-        "spendguard.platform.offline_python_build",
         "spendguard.store.reference_data.reference_data_resolver_bootstrap",
         "spendguard.store.reference_data.catalog",
         "spendguard.store.reference_data.lane_catalog",
@@ -864,7 +868,7 @@
     "sdk_before_package": {
       "atexit_registrations": [
         "spendguard.store.money_ledger.ledger_writer.close_ledger_writers",
-        "spendguard.manage.admission.gate._rt_flush"
+        "spendguard.generate.spend_capture.realtime_spend_recorder._rt_flush"
       ],
       "executed_modules": [
         "spendguard.domain_legacy_path_shim",
@@ -924,6 +928,8 @@
         "spendguard.egress",
         "spendguard.egress.emit",
         "spendguard.manage.admission.gate_event_sink",
+        "spendguard.generate.spend_capture",
+        "spendguard.generate.spend_capture.realtime_spend_recorder",
         "spendguard.platform.fleet",
         "spendguard.platform.platform_accessors",
         "spendguard.platform.lanes",
@@ -935,7 +941,6 @@
         "spendguard.generate.work_integrity.item_ledger",
         "spendguard.manage.admission.escalation_ladder",
         "spendguard.generate.work_integrity.job_fingerprint",
-        "spendguard.generate.spend_capture",
         "spendguard.generate.spend_capture.litellm_adapter",
         "spendguard.generate.spend_capture.bedrock_adapter",
         "spendguard.generate.spend_capture.vertex_adapter",
@@ -972,10 +977,10 @@
         "spendguard.platform.release",
         "spendguard.platform.setup",
         "spendguard.store.configuration.config_schema",
+        "spendguard.platform.offline_python_build",
         "spendguard.platform.distribution_daemon",
         "spendguard.interface.mcp_fd_lifecycle",
         "spendguard.platform.launchd_labels",
-        "spendguard.platform.offline_python_build",
         "spendguard.store.reference_data.reference_data_resolver_bootstrap",
         "spendguard.store.reference_data.catalog",
         "spendguard.store.reference_data.lane_catalog",
@@ -1023,7 +1028,7 @@
     "sdk_after_package": {
       "atexit_registrations": [
         "spendguard.store.money_ledger.ledger_writer.close_ledger_writers",
-        "spendguard.manage.admission.gate._rt_flush"
+        "spendguard.generate.spend_capture.realtime_spend_recorder._rt_flush"
       ],
       "executed_modules": [
         "spendguard.domain_legacy_path_shim",
@@ -1083,6 +1088,8 @@
         "spendguard.egress",
         "spendguard.egress.emit",
         "spendguard.manage.admission.gate_event_sink",
+        "spendguard.generate.spend_capture",
+        "spendguard.generate.spend_capture.realtime_spend_recorder",
         "spendguard.platform.fleet",
         "spendguard.platform.platform_accessors",
         "spendguard.platform.lanes",
@@ -1094,7 +1101,6 @@
         "spendguard.generate.work_integrity.item_ledger",
         "spendguard.manage.admission.escalation_ladder",
         "spendguard.generate.work_integrity.job_fingerprint",
-        "spendguard.generate.spend_capture",
         "spendguard.generate.spend_capture.litellm_adapter",
         "spendguard.generate.spend_capture.bedrock_adapter",
         "spendguard.generate.spend_capture.vertex_adapter",
@@ -1131,10 +1137,10 @@
         "spendguard.platform.release",
         "spendguard.platform.setup",
         "spendguard.store.configuration.config_schema",
+        "spendguard.platform.offline_python_build",
         "spendguard.platform.distribution_daemon",
         "spendguard.interface.mcp_fd_lifecycle",
         "spendguard.platform.launchd_labels",
-        "spendguard.platform.offline_python_build",
         "spendguard.store.reference_data.reference_data_resolver_bootstrap",
         "spendguard.store.reference_data.catalog",
         "spendguard.store.reference_data.lane_catalog",
@@ -1182,7 +1188,7 @@
     "gate_submodule_import": {
       "atexit_registrations": [
         "spendguard.store.money_ledger.ledger_writer.close_ledger_writers",
-        "spendguard.manage.admission.gate._rt_flush"
+        "spendguard.generate.spend_capture.realtime_spend_recorder._rt_flush"
       ],
       "executed_modules": [
         "spendguard.domain_legacy_path_shim",
@@ -1242,6 +1248,8 @@
         "spendguard.egress",
         "spendguard.egress.emit",
         "spendguard.manage.admission.gate_event_sink",
+        "spendguard.generate.spend_capture",
+        "spendguard.generate.spend_capture.realtime_spend_recorder",
         "spendguard.platform.fleet",
         "spendguard.platform.platform_accessors",
         "spendguard.platform.lanes",
@@ -1253,7 +1261,6 @@
         "spendguard.generate.work_integrity.item_ledger",
         "spendguard.manage.admission.escalation_ladder",
         "spendguard.generate.work_integrity.job_fingerprint",
-        "spendguard.generate.spend_capture",
         "spendguard.generate.spend_capture.litellm_adapter",
         "spendguard.generate.spend_capture.bedrock_adapter",
         "spendguard.generate.spend_capture.vertex_adapter",
@@ -1290,10 +1297,10 @@
         "spendguard.platform.release",
         "spendguard.platform.setup",
         "spendguard.store.configuration.config_schema",
+        "spendguard.platform.offline_python_build",
         "spendguard.platform.distribution_daemon",
         "spendguard.interface.mcp_fd_lifecycle",
         "spendguard.platform.launchd_labels",
-        "spendguard.platform.offline_python_build",
         "spendguard.store.reference_data.reference_data_resolver_bootstrap",
         "spendguard.store.reference_data.catalog",
         "spendguard.store.reference_data.lane_catalog",
@@ -1503,6 +1510,7 @@
     "spendguard.generate.spend_capture.litellm_adapter",
     "spendguard.generate.spend_capture.modal_adapter",
     "spendguard.generate.spend_capture.otel_ingest",
+    "spendguard.generate.spend_capture.realtime_spend_recorder",
     "spendguard.generate.spend_capture.resources",
     "spendguard.generate.spend_capture.runpod_adapter",
     "spendguard.generate.spend_capture.scan",

@@ -13,6 +13,9 @@ os.environ["SPENDGUARD_TEST_ISOLATED"] = "1"
 os.environ["SPENDGUARD_CALLS"] = "1"
 
 from spendguard import adapters, budget, calls, focus_export, gate, lane_value, litellm_adapter, output_contract, pricing, receipt
+# The realtime recorder (_record_rt/_rt_record) + its aggregate state (_rt_agg) moved to Spend Capture;
+# the money/emit sinks it calls (_budget_record/_emit) stayed in gate and are reached through the seam.
+from spendguard.generate.spend_capture import realtime_spend_recorder as _rtrec
 
 litellm_adapter.set_litellm_realtime_recorder(gate._record_rt)
 
@@ -32,11 +35,11 @@ def test_authoritative_unknown_usage_survives_money_and_realtime_telemetry():
         event = ledger_factory.return_value.record_event.call_args.args[0]
     assert event["out_tok"] is None, event
     assert focus_export.focus_row(event)["PricingQuantity"] is None
-    with patch.object(gate, "_rt_agg", {}), patch.object(gate, "_budget_record") as money_record, patch.object(gate, "_emit"):
-        gate._rt_record("openai", AXES_MODEL, cost, in_tok=AXES_INPUT, out_tok=None)
+    with patch.object(_rtrec, "_rt_agg", {}), patch.object(gate, "_budget_record") as money_record, patch.object(gate, "_emit"):
+        _rtrec._rt_record("openai", AXES_MODEL, cost, in_tok=AXES_INPUT, out_tok=None)
         assert money_record.call_args.kwargs["out_tok"] is None
-        gate._rt_record("openai", AXES_MODEL, cost, in_tok=AXES_INPUT, out_tok=AXES_INPUT)
-        telemetry = next(iter(gate._rt_agg.values()))
+        _rtrec._rt_record("openai", AXES_MODEL, cost, in_tok=AXES_INPUT, out_tok=AXES_INPUT)
+        telemetry = next(iter(_rtrec._rt_agg.values()))
         assert telemetry[3] is None, telemetry
         assert telemetry[1] == cost + cost
     with patch.object(budget, "_ledger") as ledger_factory:

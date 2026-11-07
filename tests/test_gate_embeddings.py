@@ -18,6 +18,10 @@ import json
 import types
 from spendguard import gate as spend_gate
 from spendguard import pricing
+# Realtime recorder state (_rt_spent) + the non-stream accounting entry (_rt_account) moved to the Spend
+# Capture context; the estimator/act/budget helpers it uses stayed in gate (new module captures them by
+# identity, so `spend_gate._est_oai_embeddings is _rtrec._est_oai_embeddings`).
+from spendguard.generate.spend_capture import realtime_spend_recorder as _rtrec
 
 fails = []
 
@@ -59,11 +63,11 @@ client = openai.OpenAI(api_key="test-key-not-real")
 for k in ("GATE_ALLOW", "GATE_DISABLE"):
     os.environ.pop(k, None)
 os.environ["GATE_RT_BUDGET"] = "1000"
-spend_gate._rt_spent = 0.0
+_rtrec._rt_spent = 0.0
 client.embeddings.create(model=EMB, input=["some text to embed"])
 expected = 100_000 * P["in_"] / 1e6                  # actual usage × table price, out=0
 ck(f"a realtime embeddings call is ACCOUNTED (${expected:.4f} at table price)",
-   abs(spend_gate._rt_spent - expected) < 1e-9)
+   abs(_rtrec._rt_spent - expected) < 1e-9)
 
 # ── budget enforcement covers embeddings too ──
 os.environ["GATE_RT_BUDGET"] = f"{expected * 0.5:.6f}"   # budget below what's already spent → next call refused
@@ -117,8 +121,8 @@ def _resp(inp):                                      # a real embeddings respons
         prompt_tokens=spend_gate._est_oai_embeddings(dict(model=EMB, input=inp))[1]))
 def _decide(inp):                                    # drive the real post-call accounting; return its realtime rows
     _cap.clear()
-    spend_gate._rt_account(EMB, dict(model=EMB, input=inp), _resp(inp),
-                           spend_gate._est_oai_embeddings, spend_gate._act_oai_embeddings)
+    _rtrec._rt_account(EMB, dict(model=EMB, input=inp), _resp(inp),
+                       spend_gate._est_oai_embeddings, spend_gate._act_oai_embeddings)
     return [c for c in _cap if c["kind"] == "realtime"]
 
 SENTENCE = "The quick brown fox jumps over the lazy dog and then trots quietly home. "

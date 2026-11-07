@@ -21,6 +21,12 @@ import types
 from _script_checks import record_script_check
 from spendguard import gate as spend_gate
 from spendguard import http_capture, pricing
+# The realtime recorder + per-call tool-fee recorder moved to the Spend Capture context. The HTTP layer
+# records and logs through the admission seam (gate.resolve__record_rt / resolve__log), while a direct
+# _record_tool_fees call uses the recorder's module-global _record_rt. Intercept BOTH surfaces so every
+# path lands in `recorded` / `logged`.
+from spendguard.manage.admission import admission_accessors as _admission_accessors
+from spendguard.generate.spend_capture import realtime_spend_recorder as _rtrec
 
 fails = []
 
@@ -28,9 +34,11 @@ fails = []
 
 
 recorded, logged = [], []
-spend_gate._record_rt = lambda model, kw, i, o, **k: recorded.append((model, i, o, k.get("cost"), k.get("provider")))
-http_orig_log = spend_gate._log
-spend_gate._log = lambda rec: logged.append(rec)
+_rt_probe = lambda model, kw, i, o, **k: recorded.append((model, i, o, k.get("cost"), k.get("provider")))  # noqa: E731
+_rtrec._record_rt = _rt_probe                              # direct _record_tool_fees calls read the module global
+_admission_accessors.set__record_rt_resolver(_rt_probe)    # http_capture records through the seam resolver
+http_orig_log = _rtrec._log
+_admission_accessors.set__log_resolver(lambda rec: logged.append(rec))   # http_capture logs through the seam resolver
 
 # ── tool fees: Responses web_search_call items + Anthropic server_tool_use, priced per call ──
 pricing.UNIT_PRICES["web_search_call"]["gpt-5.5"] = 0.01
@@ -39,16 +47,16 @@ resp = types.SimpleNamespace(
             types.SimpleNamespace(type="web_search_call")],
     usage=types.SimpleNamespace(server_tool_use=None))
 record_script_check(fails, "counts Responses web_search_call items (2)", spend_gate._tool_fee_count(resp) == 2)
-spend_gate._record_tool_fees("gpt-5.5", {}, resp)
+_rtrec._record_tool_fees("gpt-5.5", {}, resp)
 record_script_check(fails, "fee recorded as its own row (2 × $0.01)", recorded[-1] == ("gpt-5.5", 0, 0, 0.02, None))
 
 anth = types.SimpleNamespace(output=None,
                              usage=types.SimpleNamespace(server_tool_use=types.SimpleNamespace(web_search_requests=3)))
 record_script_check(fails, "counts Anthropic server_tool_use.web_search_requests (3)", spend_gate._tool_fee_count(anth) == 3)
-spend_gate._record_tool_fees("claude-sonnet-4-6", {}, anth)
+_rtrec._record_tool_fees("claude-sonnet-4-6", {}, anth)
 record_script_check(fails, "unpriced tool fee → $0 row (never silent, never guessed)", recorded[-1] == ("claude-sonnet-4-6", 0, 0, 0.0, None))
 n0 = len(recorded)
-spend_gate._record_tool_fees("gpt-5.5", {}, types.SimpleNamespace(output=[], usage=None))
+_rtrec._record_tool_fees("gpt-5.5", {}, types.SimpleNamespace(output=[], usage=None))
 record_script_check(fails, "no tool calls → no fee row", len(recorded) == n0)
 
 # ── raw-HTTP capture: known usage shape → ledger; junk → unmetered event; SDK traffic suppressed ──

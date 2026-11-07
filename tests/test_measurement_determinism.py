@@ -139,15 +139,16 @@ ck("anthropic unsupported knobs recorded as dropped",
 # ── 5. the EFFORT SENTINEL: a measurement call that sent no reasoning_effort records an explicit value, not NULL ──
 # (the ledger write is gate._record_rt → _calls.record_call; capture its effort arg, and stub the DB-touching helpers)
 from spendguard import gate as _gate, calls as _calls_mod  # noqa: E402
+from spendguard.generate.spend_capture import realtime_spend_recorder as _rtrec  # noqa: E402  (recorder moved)
 _eff_cap = {}
 _gate._calls.record_call = lambda *a, **k: _eff_cap.__setitem__("effort", k.get("effort"))
 _gate._calls.call_recording_consent_enabled = lambda: True
-_gate._rt_record = lambda *a, **k: None          # isolate the effort logic from the aggregation/ledger DBs
+_rtrec._rt_record = lambda *a, **k: None          # isolate the effort logic from the aggregation/ledger DBs (recorder moved)
 
 _calls_mod._local.ctx = {"intent": "onlyhome-bakeoff", "measurement": True}
 _gate._record_rt("gpt-6-luna", {"model": "gpt-6-luna", "messages": []}, 100, 50, cost=0.001)
 ck("measurement call with no reasoning_effort records the sentinel, not NULL",
-   _eff_cap.get("effort") == _gate.MEASUREMENT_EFFORT_DEFAULT)
+   _eff_cap.get("effort") == _rtrec.MEASUREMENT_EFFORT_DEFAULT)
 
 _eff_cap.clear()
 _calls_mod._local.ctx = {"intent": "bakeoff", "measurement": True}

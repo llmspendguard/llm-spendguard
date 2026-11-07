@@ -61,6 +61,7 @@ def _load_public_api_and_install_gate():
     from .manage.admission import budget as _admission_budget  # noqa: F401
     from .manage.admission import bulkgate as _admission_bulkgate  # noqa: F401
     from .manage.admission import gate as _admission_gate  # noqa: F401
+    from .generate.spend_capture import realtime_spend_recorder as _realtime_spend_recorder  # noqa: F401
     from .platform import fleet as _platform_fleet  # noqa: F401
     from .platform import lanes as _platform_lanes  # noqa: F401
     from .pricing import (batch_cost, realtime_cost, estimate as estimate_cost, price, normalize,

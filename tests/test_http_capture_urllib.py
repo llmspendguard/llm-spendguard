@@ -36,19 +36,22 @@ from urllib.request import urlopen as bound_urlopen        # the `from … impor
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 from _script_checks import record_script_check
-from spendguard import gate as spend_gate
 from spendguard import http_capture, budget
 from spendguard.serve import _AskHTTPHandler
+# The realtime recorder/logger moved to the Spend Capture context; the HTTP layer records + logs through
+# the admission seam (gate.resolve__record_rt / resolve__log), so stub at the seam resolver.
+from spendguard.manage.admission import admission_accessors as _admission_accessors
 
 fails = []
 
 
 
 
-# stub the recorder + logger so nothing hits a real ledger (offline, zero spend)
+# stub the recorder + logger so nothing hits a real ledger (offline, zero spend) — at the seam resolver,
+# which is what http_capture calls (gate.resolve__record_rt / resolve__log)
 recorded, logged = [], []
-spend_gate._record_rt = lambda model, kw, i, o, **k: recorded.append((model, i, o, k.get("provider")))
-spend_gate._log = lambda rec: logged.append(rec)
+_admission_accessors.set__record_rt_resolver(lambda model, kw, i, o, **k: recorded.append((model, i, o, k.get("provider"))))
+_admission_accessors.set__log_resolver(lambda rec: logged.append(rec))
 
 USAGE = {"model": "gpt-4o-mini", "usage": {"prompt_tokens": 100, "completion_tokens": 50}}
 

@@ -24,6 +24,9 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
 
 from _script_checks import record_script_check
 from spendguard import calls, config, gate
+# _rt_account + _rt_record moved to the Spend Capture context (the estimator/act fns it takes stayed in
+# gate; the new module captures them by identity). Drive + stub the recorder at its new home.
+from spendguard.generate.spend_capture import realtime_spend_recorder as _rtrec
 
 
 MODEL = "gpt-5.6-luna"
@@ -38,7 +41,7 @@ recording_errors = []
 call_writer_returns = []
 calls_ledger = sqlite3.connect(":memory:", check_same_thread=False)
 calls._ensure_call_observation_schema(calls_ledger)
-original_rt_record = gate._rt_record
+original_rt_record = _rtrec._rt_record
 original_truthy = calls.__dict__.pop("_truthy")
 original_calls_db = calls._calls_db
 original_record_call = calls.record_call
@@ -46,7 +49,7 @@ original_rollback = config.rollback_ledger_conn
 previous_context = dict(calls.current())
 previous_calls_enabled = os.environ.get("SPENDGUARD_CALLS")
 os.environ["SPENDGUARD_CALLS"] = "1"
-gate._rt_record = lambda provider, model, cost, *args, **kw: money_rows.append(
+_rtrec._rt_record = lambda provider, model, cost, *args, **kw: money_rows.append(
     {"provider": provider, "model": model, "cost": cost, "args": args, **kw}
 )
 calls._calls_db = lambda: calls_ledger
@@ -72,12 +75,12 @@ stderr = io.StringIO()
 
 try:
     with contextlib.redirect_stderr(stderr):
-        gate._rt_account(MODEL, request, result, gate._est_oai_chat, gate._act_oai_chat)
+        _rtrec._rt_account(MODEL, request, result, gate._est_oai_chat, gate._act_oai_chat)
     call_rows = calls_ledger.execute(
         "SELECT intent, in_tok, out_tok, executor FROM calls WHERE kind='realtime'"
     ).fetchall()
 finally:
-    gate._rt_record = original_rt_record
+    _rtrec._rt_record = original_rt_record
     calls.__dict__["_truthy"] = original_truthy
     calls._calls_db = original_calls_db
     calls.record_call = original_record_call
