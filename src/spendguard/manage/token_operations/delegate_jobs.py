@@ -553,3 +553,14 @@ def reap_terminal_codex_sessions(now=None, *, executable=None, owner_identity_st
     if report["errors"]:
         config.warn_once(f"[spendguard] codex session reap gaps: {report['errors']}")
     return report
+
+
+from . import token_operations_accessors as _token_operations_accessors
+
+_token_operations_accessors.set_record_delegate_codex_thread_resolver(record_delegate_codex_thread)
+_token_operations_accessors.set_register_codex_session_lease_resolver(register_codex_session_lease)
+_token_operations_accessors.set_settle_codex_session_lease_resolver(settle_codex_session_lease)
+_token_operations_accessors.set_reap_terminal_codex_sessions_resolver(reap_terminal_codex_sessions)
+_token_operations_accessors.set__delegate_job_row_resolver(_delegate_job_row)
+_token_operations_accessors.set_recover_delegate_job_execution_resolver(recover_delegate_job_execution)
+_token_operations_accessors.set_DELEGATE_JOB_RUNNING_STATE_resolver(lambda: DELEGATE_JOB_RUNNING_STATE)

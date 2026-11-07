@@ -20,26 +20,26 @@ import uuid
 
 def capture_execution_codex_thread(thread_id, execution_id):
     """Attach transport session identity to its durable delegate execution."""
-    from .delegate_jobs import record_delegate_codex_thread
-    record_delegate_codex_thread(thread_id, execution_id)
+    from . import token_operations_accessors
+    token_operations_accessors.resolve_record_delegate_codex_thread(thread_id, execution_id)
 
 
 def hold_execution_codex_session(thread_id, worker_pid):
     """Serialize transport session retention with terminal journal reclamation."""
-    from .delegate_jobs import register_codex_session_lease
-    register_codex_session_lease(thread_id, worker_pid)
+    from . import token_operations_accessors
+    token_operations_accessors.resolve_register_codex_session_lease(thread_id, worker_pid)
 
 
 def settle_execution_codex_session(thread_id, worker_pid, *, release=False):
     """Persist transport completion while retaining an idle warm session."""
-    from .delegate_jobs import settle_codex_session_lease
-    settle_codex_session_lease(thread_id, worker_pid, release=release)
+    from . import token_operations_accessors
+    token_operations_accessors.resolve_settle_codex_session_lease(thread_id, worker_pid, release=release)
 
 
 def reap_execution_codex_sessions(**dependencies):
     """Run journal reclamation using transport-owned process dependencies."""
-    from .delegate_jobs import reap_terminal_codex_sessions
-    return reap_terminal_codex_sessions(**dependencies)
+    from . import token_operations_accessors
+    return token_operations_accessors.resolve_reap_terminal_codex_sessions(**dependencies)
 
 
 def parse_execution_codex_thread(stdout):
@@ -510,12 +510,12 @@ def _observe_durable_execution(execution_id, root, interval):
         if record["state"] != "running":
             if not metadata.get("job_id"):
                 return
-            from . import delegate_jobs
-            job = delegate_jobs._delegate_job_row(metadata["job_id"])
-            if job is not None and job["state"] != delegate_jobs.DELEGATE_JOB_RUNNING_STATE:
+            from . import token_operations_accessors
+            job = token_operations_accessors.resolve__delegate_job_row(metadata["job_id"])
+            if job is not None and job["state"] != token_operations_accessors.resolve_DELEGATE_JOB_RUNNING_STATE():
                 return
             if not _durable_execution_owner_alive(record):
-                delegate_jobs.recover_delegate_job_execution(metadata["job_id"])
+                token_operations_accessors.resolve_recover_delegate_job_execution(metadata["job_id"])
                 return
             time.sleep(interval)
             continue
@@ -523,8 +523,8 @@ def _observe_durable_execution(execution_id, root, interval):
             terminalize_durable_execution(execution_id, "lost", root=root)
             metadata = record.get("metadata", {})
             if metadata.get("job_id"):
-                from . import delegate_jobs
-                delegate_jobs.recover_delegate_job_execution(metadata["job_id"])
+                from . import token_operations_accessors
+                token_operations_accessors.resolve_recover_delegate_job_execution(metadata["job_id"])
             return
         time.sleep(interval)
 
