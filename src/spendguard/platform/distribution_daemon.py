@@ -153,3 +153,13 @@ def attest_distribution_daemons(target, *, check=False, dry_run=False, settings=
                 row["straggler_reason"], "required daemon restart could not be requested")))
         rows.append(row)
     return rows
+
+
+from . import platform_accessors as _platform_accessors
+
+_platform_accessors.set_attest_distribution_daemons_resolver(
+    lambda *args, **kwargs: attest_distribution_daemons(*args, **kwargs)
+)
+_platform_accessors.set_is_distribution_mcp_consumer_resolver(
+    lambda *args, **kwargs: is_distribution_mcp_consumer(*args, **kwargs)
+)

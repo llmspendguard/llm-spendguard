@@ -3,6 +3,7 @@ so they always match the code. `config` shows resolved values + where each came 
 runs the interview and writes ~/.spendguard/config.json (+ email.json), leaving API keys to env.
 """
 from spendguard.generate.execution import execution_accessors as _execution_accessors
+from . import platform_accessors as _platform_accessors
 from .platform_accessors import _PTH_SENTINEL, _SENTINEL
 
 from ..capability_cli_parsing import add_registered_cli_argument, registered_cli_option_token
@@ -431,7 +432,7 @@ def discover_distribution_interpreters(roots=None, settings=None, extra=None):
     """
     import sys
     from pathlib import Path
-    from .. import consumer_audit, fleet
+    from .. import consumer_audit
 
     resolved_settings = config.consumer_audit_settings() if settings is None else settings
     exemptions = tuple(Path(value).expanduser().absolute()
@@ -461,8 +462,9 @@ def discover_distribution_interpreters(roots=None, settings=None, extra=None):
 
     retain_distribution_interpreter(sys.executable,
                                     sys.prefix if sys.prefix != sys.base_prefix else None)
-    for discovery_name, discover in (("registered interpreters", fleet.registered_interpreters),
-                                    ("host installations", fleet.discover_host_spendguard_installations)):
+    for discovery_name, discover in (
+            ("registered interpreters", _platform_accessors.resolve_registered_interpreters),
+            ("host installations", _platform_accessors.resolve_discover_host_spendguard_installations)):
         try:
             for row in discover():
                 retain_distribution_interpreter(row["python_executable"], row.get("venv_root"),
@@ -590,9 +592,8 @@ def cmd_coverage(argv=None):
 
 def cmd_gate_discovered_host(argv=None):
     """Offer or apply user-site gating for every discovered installation missing from the fleet registry."""
-    from . import fleet
     apply = registered_cli_option_token('gate-host/--apply') in (argv or [])
-    audit = fleet.reconcile_registered_host_installations()
+    audit = _platform_accessors.resolve_reconcile_registered_host_installations()
     failures = []
     for escape in audit["escapes"]:
         interpreter = escape["python_executable"]
@@ -1507,8 +1508,6 @@ def cmd_init(argv=None):
     _setup_summary_card(_keys, _lanes_st, _wired)
     return 0
 
-
-from . import platform_accessors as _platform_accessors
 
 _platform_accessors.set__probe_resolver(lambda *args, **kwargs: _probe(*args, **kwargs))
 _platform_accessors.set__startup_gate_active_resolver(

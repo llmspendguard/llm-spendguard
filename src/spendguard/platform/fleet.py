@@ -1044,3 +1044,6 @@ _platform_accessors.set_registered_interpreters_resolver(
     lambda *args, **kwargs: registered_interpreters(*args, **kwargs)
 )
 _platform_accessors.set_running_consumers_resolver(lambda *args, **kwargs: running_consumers(*args, **kwargs))
+_platform_accessors.set_discover_host_spendguard_installations_resolver(
+    lambda *args, **kwargs: discover_host_spendguard_installations(*args, **kwargs)
+)

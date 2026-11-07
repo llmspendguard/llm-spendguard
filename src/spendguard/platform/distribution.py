@@ -22,9 +22,17 @@ import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from .. import config, consumer_audit, fleet, release, setup
+from . import platform_accessors as _platform_accessors
 from ._version import __version__ as SPENDGUARD_WRITER_VERSION
-from .distribution_daemon import attest_distribution_daemons
 from . import offline_python_build
+
+
+# Re-export the daemon helpers through the accessor seam (binding, not a def, so the
+# names do not collide with distribution_daemon's definitions); patch.object on these
+# module attributes is still honored, and this does not import distribution_daemon.
+attest_distribution_daemons = _platform_accessors.resolve_attest_distribution_daemons
+is_distribution_mcp_consumer = _platform_accessors.resolve_is_distribution_mcp_consumer
+
 
 DISTRIBUTION_CONFIG_SECTION = "distribute"
 DISTRIBUTION_PROBE_TIMEOUT_S = consumer_audit.CONSUMER_AUDIT_PROBE_TIMEOUT_SECONDS
@@ -672,12 +680,12 @@ def attest_distribution_host(target, settings):
 
 def attest_distribution_api_consumers(target, *, check=False, dry_run=False, settings=None):
     """Require the process's own governance registration plus fresh installation proof."""
-    from .distribution_daemon import is_distribution_mcp_consumer
     policy = distribution_policy() if settings is None else settings
     before = fleet.running_consumers(prune=False)
     rows = []
     for consumer in before:
-        if is_distribution_mcp_consumer(consumer) or consumer.get("liveness") == fleet._FLEET_PID_GONE:
+        if (is_distribution_mcp_consumer(consumer)
+                or consumer.get("liveness") == fleet._FLEET_PID_GONE):
             continue  # daemon helper owns live MCP proof
         surface = f"api:{consumer['pid']}"
         action = "none"
@@ -933,8 +941,6 @@ def distribute_command(argv=None):
     print(json.dumps(result, indent=2, sort_keys=True) if args.json else render_distribution_table(result))
     return result["exit_code"]
 
-
-from . import platform_accessors as _platform_accessors
 
 _platform_accessors.set_mark_distribution_ephemeral_dir_resolver(
     lambda *args, **kwargs: mark_distribution_ephemeral_dir(*args, **kwargs)

@@ -2,4 +2,4 @@
 
 
 def wire_platform_accessor_resolvers() -> None:
-    from . import distribution, release, setup  # noqa: F401
+    from . import distribution, distribution_daemon, release, setup  # noqa: F401
