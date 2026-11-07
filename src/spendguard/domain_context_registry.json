@@ -345,6 +345,7 @@
         "generate.execution.price_identity_judge",
         "generate.execution.provider_kit",
         "generate.execution.provider_plugins",
+        "generate.execution.schema",
         "generate.execution.submit",
         "generate.execution.subscription_cli_results",
         "generate.execution.subscription_exec",
