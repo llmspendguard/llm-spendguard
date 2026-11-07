@@ -564,6 +564,7 @@
         "analyze.learning.validate",
         "analyze.learning.lane_bandit",
         "analyze.learning.intent_model_prior",
+        "analyze.learning.meta_intent_prefix",
         "analyze.learning.advise",
         "analyze.learning.advisor",
         "analyze.learning.conv",

@@ -19,9 +19,8 @@ from spendguard.generate.execution import execution_accessors as _execution_acce
 from ...capability_cli_parsing import add_registered_cli_argument
 import json
 from ... import learn, config, pricing
+from .meta_intent_prefix import META   # one source of the meta-intent prefix; re-exported for advisor.META users
 from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
-
-META = "spendguard"   # intent prefix → routed to the meta budget by the gate
 
 _JUDGE_SYS = ("You evaluate whether an LLM OUTPUT is a usable, correct result for its PROMPT. "
               "Reply with exactly one word: GOOD or BAD.")
