@@ -384,7 +384,8 @@ def submit_offload(intent, rows, batch_model, *, cap_dollars=None, expires_at=No
     record). Anthropic batches carry NO metadata, so the key lives in a LOCAL pending record written BEFORE the paid
     create, and the create-then-crash window is recovered by scanning the provider for a batch carrying these rows'
     (globally-unique) custom_ids — an in-flight one that can't yet be confirmed is HELD, never resubmitted."""
-    from ... import submit as _submit, lane_queue, adapters, bulk_resilience
+    from ... import submit as _submit, lane_queue, bulk_resilience
+    from . import execution_accessors
     import spendguard.manage.admission.admission_accessors as gate
     rows = list(rows or [])
     if not rows:
@@ -412,7 +413,7 @@ def submit_offload(intent, rows, batch_model, *, cap_dollars=None, expires_at=No
     # and the submit/collect path always match the ACTUAL vendor (a caller cannot force an OpenAI path onto an Anthropic
     # model). An OpenAI model derives 'openai' (the unchanged path); an Anthropic batch_model routes to the Messages Batch.
     try:
-        provider = adapters.provider_for(batch_model)
+        provider = execution_accessors.resolve_provider_for(batch_model)
     except Exception as e:
         return {"batch_id": None, "marked": 0, "error": "unknown provider for batch_model %r: %s" % (batch_model, type(e).__name__)}
     row_ids = [r["id"] for r in rows]

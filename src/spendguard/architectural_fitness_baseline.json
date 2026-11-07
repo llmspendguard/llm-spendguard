@@ -2197,7 +2197,7 @@
     ],
     "reason": "These actual foundation modules own immutable parser data, pure deadline cadence, and launchd label constants; each currently depends only on the standard library. Prevent application/surface imports into these foundations. Broader core/surface separation is not claimed: config and pricing currently import adapters/calls."
   },
-  "max_cyclic_edge_count": 50,
+  "max_cyclic_edge_count": 46,
   "max_largest_scc_size": 6,
   "max_legacy_shim_count": 219,
   "package": "spendguard",
@@ -6679,12 +6679,6 @@
       "spendguard.egress.signal"
     ],
     [
-      "spendguard.generate.execution.adapters",
-      "spendguard.generate.execution.batch_tracker",
-      "spendguard.manage.token_operations.storm_route",
-      "spendguard.manage.token_operations.storm_submit"
-    ],
-    [
       "spendguard.generate.spend_capture.claudecode",
       "spendguard.generate.spend_capture.compaction"
     ],
@@ -6757,14 +6751,6 @@
     [
       "spendguard.egress.signal",
       "spendguard.egress.saas"
-    ],
-    [
-      "spendguard.generate.execution.adapters",
-      "spendguard.manage.token_operations.storm_route"
-    ],
-    [
-      "spendguard.generate.execution.batch_tracker",
-      "spendguard.generate.execution.adapters"
     ],
     [
       "spendguard.generate.spend_capture.claudecode",
@@ -6849,14 +6835,6 @@
     [
       "spendguard.manage.token_operations.lane_queue",
       "spendguard.manage.routing.lane_balance"
-    ],
-    [
-      "spendguard.manage.token_operations.storm_route",
-      "spendguard.manage.token_operations.storm_submit"
-    ],
-    [
-      "spendguard.manage.token_operations.storm_submit",
-      "spendguard.generate.execution.batch_tracker"
     ],
     [
       "spendguard.platform.distribution",
