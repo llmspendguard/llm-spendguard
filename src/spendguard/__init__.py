@@ -98,6 +98,7 @@ def _load_public_api_and_install_gate():
     _wire_token_operations_accessor_resolvers()
     _wire_routing_accessor_resolvers()
     _wire_spend_capture_accessor_resolvers()
+    _wire_measurement_accessor_resolvers()
 
 
 def _wire_execution_accessor_resolvers():
@@ -204,6 +205,15 @@ def _wire_spend_capture_accessor_resolvers():
     try:
         from .generate.spend_capture import spend_capture_resolver_bootstrap
         spend_capture_resolver_bootstrap.wire_spend_capture_accessor_resolvers()
+    except Exception:
+        pass
+
+
+def _wire_measurement_accessor_resolvers():
+    """Register lazy measurement home loading without importing the measurement hub at startup."""
+    try:
+        from .analyze.measurement import measurement_resolver_bootstrap
+        measurement_resolver_bootstrap.wire_measurement_accessor_resolvers()
     except Exception:
         pass
 

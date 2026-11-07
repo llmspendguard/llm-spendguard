@@ -406,3 +406,7 @@ def main(argv=None):
                 temperature=a.temperature, top_p=a.top_p, seed=a.seed)
     print(json.dumps(r, indent=1, default=str))
     return 0 if not r.get("error") else 1
+
+
+from . import measurement_accessors
+measurement_accessors.set_bakeoff_resolver(bakeoff)

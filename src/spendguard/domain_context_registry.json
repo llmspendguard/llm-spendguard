@@ -532,6 +532,8 @@
       "layer": "L2",
       "backing_modules": [
         "analyze.measurement.measurement",
+        "analyze.measurement.measurement_accessors",
+        "analyze.measurement.measurement_resolver_bootstrap",
         "analyze.measurement.bakeoff",
         "analyze.measurement.compare",
         "analyze.measurement.experiment",

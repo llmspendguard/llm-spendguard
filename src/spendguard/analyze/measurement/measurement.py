@@ -327,9 +327,10 @@ def rerun(reading_id, *, budget_usd=None, same_sample=True):
                     "error": "cannot reproduce %d/%d sample items from the corpus (no longer recorded) — the SAME "
                     "sample is unavailable, so a comparable rerun is impossible. Use same_sample=False to re-baseline "
                     "on a fresh sample (same judge, a NEW instrument)." % (len(missing), len(r.get("sample_ids") or []))}
-    from . import bakeoff
-    res = bakeoff.bakeoff(r["intent"], candidates=r.get("candidates"), prompts=prompts, judge_model=judge,
-                          parent_reading=reading_id, run=(budget_usd is not None), budget_usd=budget_usd)
+    from . import measurement_accessors
+    res = measurement_accessors.resolve_bakeoff(
+        r["intent"], candidates=r.get("candidates"), prompts=prompts, judge_model=judge,
+        parent_reading=reading_id, run=(budget_usd is not None), budget_usd=budget_usd)
     if budget_usd is None:
         return {"estimate": res, "baseline": reading_id, "pinned_judge": judge,
                 "note": "estimate only — pass budget_usd to actually rerun this instrument (it re-judges → spends)."}
