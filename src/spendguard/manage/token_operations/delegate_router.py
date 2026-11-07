@@ -843,3 +843,10 @@ def delegate_cli(argv=None):
     elif result["status"] == "running":
         print(json.dumps(result, indent=2, sort_keys=True))
     return 0 if result["status"] in ("estimate", "executed", "running") else 2
+
+
+from . import token_operations_accessors as _token_operations_accessors
+
+_token_operations_accessors.set_codex_agentic_events_path_resolver(codex_agentic_events_path)
+_token_operations_accessors.set_CODEX_AGENTIC_EVENTS_SCHEMA_VERSION_resolver(
+    lambda: CODEX_AGENTIC_EVENTS_SCHEMA_VERSION)

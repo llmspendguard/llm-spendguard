@@ -126,11 +126,12 @@ def create_delegate_job(*, kind, task_fingerprint, cwd, provider, intent, dirty_
     prune_delegate_jobs()
     job_id = uuid.uuid4().hex
     from .execution_journal import begin_durable_execution
-    from .delegate_router import codex_agentic_events_path, CODEX_AGENTIC_EVENTS_SCHEMA_VERSION
+    from . import token_operations_accessors
     metadata = {"job_id": job_id, "jobs_database_path": os.fspath(delegate_jobs_database_path()),
                 "kind": kind, "cwd": os.fspath(cwd), "provider": provider,
-                "plan": provider, "model": model, "ledger_path": os.fspath(codex_agentic_events_path()),
-                "schema_version": CODEX_AGENTIC_EVENTS_SCHEMA_VERSION}
+                "plan": provider, "model": model,
+                "ledger_path": os.fspath(token_operations_accessors.resolve_codex_agentic_events_path()),
+                "schema_version": token_operations_accessors.resolve_CODEX_AGENTIC_EVENTS_SCHEMA_VERSION()}
     if owner_pid is not None:
         metadata["owner_pid"] = owner_pid
     execution_id = begin_durable_execution(metadata=metadata)
