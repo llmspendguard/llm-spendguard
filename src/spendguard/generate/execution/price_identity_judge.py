@@ -17,7 +17,7 @@ _SYS_SAME_MODEL = (
 
 def _same_model_as_ours(ours, their_ids, run=False, advisor=None, fact_key="openrouter_id"):
     """Return our ids mapped to ids that agentically resolve to the same model."""
-    from . import adapters
+    from . import execution_accessors
     from ...interface import ui
     from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
     from ...store.configuration import config
@@ -59,7 +59,7 @@ def _same_model_as_ours(ours, their_ids, run=False, advisor=None, fact_key="open
         )
         return out, stats
     with _call_corpus_accessors.resolve_calls_context(intent="spendguard:resolve-model-identity"):
-        response = adapters.call(
+        response = execution_accessors.resolve_call(
             model,
             prompt,
             max_tokens=30 * len(unresolved) + 400,
@@ -164,7 +164,7 @@ _SYS_PRICE_GAP = (
 
 def _judge_price_gaps(differs, run=False, advisor=None):
     """Return price-gap rows with an agentic recheck verdict."""
-    from . import adapters
+    from . import execution_accessors
     from ...interface import ui
     from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
     from ...store.configuration import config
@@ -191,7 +191,7 @@ def _judge_price_gaps(differs, run=False, advisor=None):
         )
         return [(*row, "unjudged (estimate only)") for row in differs]
     with _call_corpus_accessors.resolve_calls_context(intent="spendguard:judge-price-drift"):
-        response = adapters.call(
+        response = execution_accessors.resolve_call(
             model,
             prompt,
             max_tokens=40 * len(differs) + 400,
