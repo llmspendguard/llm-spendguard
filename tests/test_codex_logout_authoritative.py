@@ -18,6 +18,7 @@ _REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_REPO_ROOT / "src"))
 
 from spendguard import adapters, lanes, reliability  # noqa: E402
+from spendguard.generate.execution import lane_health  # noqa: E402  (owns _surface_lane_auth after the lane-health carve)
 
 failures = []
 
@@ -29,7 +30,7 @@ def check(label, condition):
 
 
 original_lane_status = lanes.lane_auth_status
-original_surface = adapters._surface_lane_auth
+original_surface = lane_health._surface_lane_auth
 original_note_down = reliability.note_lane_auth_down
 try:
     status_calls = []
@@ -43,7 +44,7 @@ try:
     check("authoritative Codex auth bypasses cached state", status_calls == [("codex", 0)])
     emitted = []
     recorded = []
-    adapters._surface_lane_auth = lambda *args: emitted.append(args)
+    lane_health._surface_lane_auth = lambda *args: emitted.append(args)
     reliability.note_lane_auth_down = lambda *args: recorded.append(args)
     check("logged-in auth does not fire the logout banner",
           adapters._surface_confirmed_lane_logout("codex", logged_in) is False and not emitted and not recorded)
@@ -54,7 +55,7 @@ try:
           emitted == [("codex", "login-command")] and recorded == [("codex", "login-command")])
 finally:
     lanes.lane_auth_status = original_lane_status
-    adapters._surface_lane_auth = original_surface
+    lane_health._surface_lane_auth = original_surface
     reliability.note_lane_auth_down = original_note_down
 
 print(f"\n{'OK' if not failures else 'FAIL'} test_codex_logout_authoritative: {len(failures)} failure(s)")
