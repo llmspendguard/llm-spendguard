@@ -2197,7 +2197,7 @@
     ],
     "reason": "These actual foundation modules own immutable parser data, pure deadline cadence, and launchd label constants; each currently depends only on the standard library. Prevent application/surface imports into these foundations. Broader core/surface separation is not claimed: config and pricing currently import adapters/calls."
   },
-  "max_cyclic_edge_count": 46,
+  "max_cyclic_edge_count": 44,
   "max_largest_scc_size": 6,
   "max_legacy_shim_count": 219,
   "package": "spendguard",
@@ -6675,10 +6675,6 @@
       "spendguard.generate.spend_capture.resources"
     ],
     [
-      "spendguard.egress.saas",
-      "spendguard.egress.signal"
-    ],
-    [
       "spendguard.generate.spend_capture.claudecode",
       "spendguard.generate.spend_capture.compaction"
     ],
@@ -6743,14 +6739,6 @@
     [
       "spendguard.analyze.reconciliation.reconcile",
       "spendguard.generate.spend_capture.gpu_port"
-    ],
-    [
-      "spendguard.egress.saas",
-      "spendguard.egress.signal"
-    ],
-    [
-      "spendguard.egress.signal",
-      "spendguard.egress.saas"
     ],
     [
       "spendguard.generate.spend_capture.claudecode",

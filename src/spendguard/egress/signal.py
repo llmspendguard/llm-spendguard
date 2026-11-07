@@ -127,19 +127,19 @@ def push_signal(dry=False):
     """Push THIS repo's project signal (scrubbed) → /v1/signal via the repo key. Same project filter as the
     ledger roll-up: the connection's own project(s), plus 'unattributed'/'llm-spendguard' (own meta) iff it owns_account
     — so the account-owner also carries the shared no-evidence cancellation loss, and other repos don't double-count."""
-    from . import saas
-    c = saas.saas_connection()
-    flt = saas._project_filter(c)
+    from . import saas_accessors
+    c = saas_accessors.resolve_saas_connection()
+    flt = saas_accessors.resolve__project_filter(c)
     rows = [r for r in build_signals() if flt is None or (r.get("project") or "") in flt]
     payload = {"signal": rows}
     if dry:
         return payload
-    ok, reason = saas.ready()
+    ok, reason = saas_accessors.resolve_ready()
     if not ok:
         return {"skipped": f"not connected: {reason}"}
     if c.get("visibility", "private") == "private":
         return {"skipped": "visibility=private"}
-    return saas._request("POST", "/v1/signal", payload)
+    return saas_accessors.resolve__request("POST", "/v1/signal", payload)
 
 
 def cmd(argv=None):
