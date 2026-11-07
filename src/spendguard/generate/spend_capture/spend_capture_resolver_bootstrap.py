@@ -6,6 +6,7 @@ def wire_spend_capture_accessor_resolvers() -> None:
 
     def load_spend_capture_accessor_home():
         from . import chat  # noqa: F401
+        from . import claudecode  # noqa: F401
         from . import resources  # noqa: F401
 
     spend_capture_accessors.register_spend_capture_lazy_loader(load_spend_capture_accessor_home)

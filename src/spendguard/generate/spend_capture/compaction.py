@@ -169,7 +169,8 @@ def agentic_advise(transcript_path, run=False, model=None):
     preserve. The judgement is the LLM's (not a threshold). Runs UNDER spendguard's own gate, caged (intent
     spendguard:compact-advise), estimate-first. Returns the verdict dict on run; prints the estimate + returns None
     otherwise. Never raises out to a hook."""
-    from ... import config, pricing, ui, claudecode
+    from ... import config, pricing, ui
+    from . import spend_capture_accessors
     from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
     convo = _recent_convo(transcript_path)
     if not convo:
@@ -177,7 +178,7 @@ def agentic_advise(transcript_path, run=False, model=None):
         return None
     model = model or config._cfg_get("advisor", "judge_model", "claude-haiku-4-5")
     OUT = 700
-    est = pricing.realtime_cost(model, claudecode._toklen(_ADVISE_SYS + convo), OUT) or 0.0
+    est = pricing.realtime_cost(model, spend_capture_accessors.resolve__toklen(_ADVISE_SYS + convo), OUT) or 0.0
     # the ECONOMICS — computable WITHOUT the call: a bloated session re-reads $/turn, and compacting cuts that ~k×.
     # Spending cents (this advice) to save dollars (the re-read) is always a good trade — so make it explicit, up front.
     econ = ""

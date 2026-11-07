@@ -1715,3 +1715,7 @@ def main(argv=None):
     if sub == "story":                                  # caged narrative + private work-insights (estimate-first)
         return story(by=by, days=days or 7, run=registered_cli_option_token('claude-code/--run') in argv)
     return show_claudecode_report(days=days)
+
+
+from . import spend_capture_accessors
+spend_capture_accessors.set__toklen_resolver(_toklen)
