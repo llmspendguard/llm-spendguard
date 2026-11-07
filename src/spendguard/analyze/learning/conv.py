@@ -985,7 +985,7 @@ def realtime_token_tally(tdir=None):
     pricing.py, and attribute the session to its org via session_classification. Returns {total, by_org, calls}.
     NOTE: only counts usage the transcript actually PRINTED — a lower bound vs the admin oracle when runs logged only
     samples; the durable fix for full coverage is inline capture (gate) going forward."""
-    from ... import pricing, resources
+    from ... import pricing
     tdir = tdir or _DEFAULT_TDIR
     files = sorted(glob.glob(os.path.join(tdir, "**", "*.jsonl"), recursive=True)) if os.path.isdir(tdir) else [tdir]
     by_org, total, calls, skipped_no_model, skipped_ambiguous = {}, 0.0, 0, 0, 0
@@ -1009,7 +1009,8 @@ def realtime_token_tally(tdir=None):
             # as skipped_ambiguous), never linked first-hit-wins. Model attribution here is thus never a heuristic
             # decision — an unambiguous parse or an honest skip. (This tally is a documented $0 LOWER BOUND; the
             # authoritative realtime reconstruction is the AGENTIC conv path.) The family map is owned by resources.
-            _matches = resources._family_matches(win)
+            from spendguard.generate.spend_capture import spend_capture_accessors
+            _matches = spend_capture_accessors.resolve__family_matches(win)
             if not _matches:
                 skipped_no_model += 1     # names no recognizable model — COUNTED + surfaced, not silently dropped
                 continue

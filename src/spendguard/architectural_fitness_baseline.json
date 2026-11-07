@@ -2197,7 +2197,7 @@
     ],
     "reason": "These actual foundation modules own immutable parser data, pure deadline cadence, and launchd label constants; each currently depends only on the standard library. Prevent application/surface imports into these foundations. Broader core/surface separation is not claimed: config and pricing currently import adapters/calls."
   },
-  "max_cyclic_edge_count": 74,
+  "max_cyclic_edge_count": 65,
   "max_largest_scc_size": 9,
   "max_legacy_shim_count": 219,
   "package": "spendguard",
@@ -6665,19 +6665,14 @@
       "spendguard.analyze.learning.intent_model_prior"
     ],
     [
-      "spendguard.analyze.learning.conv",
-      "spendguard.analyze.reconciliation.ledger_sync",
-      "spendguard.analyze.reconciliation.reconcile",
-      "spendguard.analyze.reconciliation.workdone",
-      "spendguard.generate.spend_capture.chat",
-      "spendguard.generate.spend_capture.claudecode",
-      "spendguard.generate.spend_capture.compaction",
-      "spendguard.generate.spend_capture.gpu_port",
-      "spendguard.generate.spend_capture.resources"
-    ],
-    [
       "spendguard.analyze.measurement.bakeoff",
       "spendguard.analyze.measurement.measurement"
+    ],
+    [
+      "spendguard.analyze.reconciliation.ledger_sync",
+      "spendguard.analyze.reconciliation.reconcile",
+      "spendguard.generate.spend_capture.gpu_port",
+      "spendguard.generate.spend_capture.resources"
     ],
     [
       "spendguard.egress.saas",
@@ -6693,6 +6688,10 @@
       "spendguard.manage.token_operations.lane_queue",
       "spendguard.manage.token_operations.storm_route",
       "spendguard.manage.token_operations.storm_submit"
+    ],
+    [
+      "spendguard.generate.spend_capture.claudecode",
+      "spendguard.generate.spend_capture.compaction"
     ],
     [
       "spendguard.manage.admission.budget",
@@ -6729,10 +6728,6 @@
       "spendguard.analyze.learning.intent_model_prior"
     ],
     [
-      "spendguard.analyze.learning.conv",
-      "spendguard.generate.spend_capture.resources"
-    ],
-    [
       "spendguard.analyze.learning.intent_model_prior",
       "spendguard.analyze.learning.advisor"
     ],
@@ -6746,15 +6741,7 @@
     ],
     [
       "spendguard.analyze.reconciliation.ledger_sync",
-      "spendguard.analyze.learning.conv"
-    ],
-    [
-      "spendguard.analyze.reconciliation.ledger_sync",
       "spendguard.analyze.reconciliation.reconcile"
-    ],
-    [
-      "spendguard.analyze.reconciliation.ledger_sync",
-      "spendguard.analyze.reconciliation.workdone"
     ],
     [
       "spendguard.analyze.reconciliation.reconcile",
@@ -6763,10 +6750,6 @@
     [
       "spendguard.analyze.reconciliation.reconcile",
       "spendguard.generate.spend_capture.gpu_port"
-    ],
-    [
-      "spendguard.analyze.reconciliation.workdone",
-      "spendguard.analyze.learning.conv"
     ],
     [
       "spendguard.egress.saas",
@@ -6829,18 +6812,6 @@
       "spendguard.generate.execution.price_identity_judge"
     ],
     [
-      "spendguard.generate.spend_capture.chat",
-      "spendguard.analyze.reconciliation.workdone"
-    ],
-    [
-      "spendguard.generate.spend_capture.claudecode",
-      "spendguard.analyze.learning.conv"
-    ],
-    [
-      "spendguard.generate.spend_capture.claudecode",
-      "spendguard.generate.spend_capture.chat"
-    ],
-    [
       "spendguard.generate.spend_capture.claudecode",
       "spendguard.generate.spend_capture.compaction"
     ],
@@ -6854,15 +6825,7 @@
     ],
     [
       "spendguard.generate.spend_capture.resources",
-      "spendguard.analyze.learning.conv"
-    ],
-    [
-      "spendguard.generate.spend_capture.resources",
       "spendguard.analyze.reconciliation.reconcile"
-    ],
-    [
-      "spendguard.generate.spend_capture.resources",
-      "spendguard.generate.spend_capture.claudecode"
     ],
     [
       "spendguard.generate.spend_capture.resources",

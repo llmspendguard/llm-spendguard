@@ -977,3 +977,7 @@ def cmd(argv=None):
     if w:
         print("  ⚠  " + w + " (GPU: resources.record_recovered / discover --agentic; or schedule record_instance_history()).")
     return 0
+
+
+from . import spend_capture_accessors
+spend_capture_accessors.set__family_matches_resolver(_family_matches)
