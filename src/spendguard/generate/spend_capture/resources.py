@@ -882,6 +882,11 @@ class GPUSource:
         return []                                          # recovery is explicit: discover --agentic / record_recovered
 
 
+def make_gpu_source(*args, **kwargs):
+    """Factory for GPUSource — the spend_capture home's constructor forwarder for the dep-inversion seam."""
+    return GPUSource(*args, **kwargs)
+
+
 def sync(dry=False):
     """Push the connection's GPU spend per-day, via its key → its org. ORG-SCOPED: every box whose (timing-matched)
     project is in this connection's org rides one push, EACH ROW KEEPING ITS OWN project/team (not collapsed onto a
@@ -981,3 +986,4 @@ def cmd(argv=None):
 
 from . import spend_capture_accessors
 spend_capture_accessors.set__family_matches_resolver(_family_matches)
+spend_capture_accessors.set_make_gpu_source_resolver(make_gpu_source)

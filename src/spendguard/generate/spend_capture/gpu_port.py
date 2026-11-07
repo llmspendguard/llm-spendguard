@@ -269,8 +269,8 @@ def _register_gpu_sources():
     _BUILTINS_DONE = True
 
     def _vast():
-        from . import resources                            # lazy: avoids module cycles
-        return resources.GPUSource()
+        from . import spend_capture_accessors              # lazy: avoids module cycles
+        return spend_capture_accessors.resolve_make_gpu_source()
 
     register_source("gpu", _vast)
     for mod_name in ("runpod_adapter", "modal_adapter", "lambda_adapter"):
