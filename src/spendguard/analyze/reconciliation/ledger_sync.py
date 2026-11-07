@@ -942,3 +942,8 @@ def main(argv=None):
     a = ap.parse_args(argv)
     sync(since=a.since)
     return 0
+
+
+from . import reconciliation_accessors
+reconciliation_accessors.set_LLMSource_resolver(LLMSource)
+reconciliation_accessors.set_RealtimeSource_resolver(RealtimeSource)

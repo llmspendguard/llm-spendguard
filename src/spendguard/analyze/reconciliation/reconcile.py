@@ -131,13 +131,13 @@ def all_sources(ptmap=None, since=None):
             ptmap = {}
     out = {}
     try:
-        from .ledger_sync import LLMSource
-        out["llm"] = run(LLMSource(since=since), ptmap, since)   # batch LLM (provider ledger truth)
+        from . import reconciliation_accessors
+        out["llm"] = run(reconciliation_accessors.resolve_LLMSource(since=since), ptmap, since)   # batch LLM (provider ledger truth)
     except Exception as e:
         out["llm"] = {"error": str(e)[:160]}
     try:
-        from .ledger_sync import RealtimeSource
-        out["realtime"] = run(RealtimeSource(since=since), ptmap, since)
+        from . import reconciliation_accessors
+        out["realtime"] = run(reconciliation_accessors.resolve_RealtimeSource(since=since), ptmap, since)
     except Exception as e:
         out["realtime"] = {"error": str(e)[:160]}
     # GPU / remote-compute: EVERY source in the gpu_port registry through the same loop — vast.ai (key "gpu")

@@ -586,6 +586,8 @@
       "backing_modules": [
         "analyze.reconciliation.reconcile",
         "analyze.reconciliation.ledger_sync",
+        "analyze.reconciliation.reconciliation_accessors",
+        "analyze.reconciliation.reconciliation_resolver_bootstrap",
         "analyze.reconciliation.reconcile_openai",
         "analyze.reconciliation.reconcile_anthropic",
         "analyze.reconciliation.reconcile_calls",

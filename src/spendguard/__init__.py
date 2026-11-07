@@ -99,6 +99,7 @@ def _load_public_api_and_install_gate():
     _wire_routing_accessor_resolvers()
     _wire_spend_capture_accessor_resolvers()
     _wire_measurement_accessor_resolvers()
+    _wire_reconciliation_accessor_resolvers()
 
 
 def _wire_execution_accessor_resolvers():
@@ -214,6 +215,15 @@ def _wire_measurement_accessor_resolvers():
     try:
         from .analyze.measurement import measurement_resolver_bootstrap
         measurement_resolver_bootstrap.wire_measurement_accessor_resolvers()
+    except Exception:
+        pass
+
+
+def _wire_reconciliation_accessor_resolvers():
+    """Register lazy reconciliation home loading without importing the reconciliation hub at startup."""
+    try:
+        from .analyze.reconciliation import reconciliation_resolver_bootstrap
+        reconciliation_resolver_bootstrap.wire_reconciliation_accessor_resolvers()
     except Exception:
         pass
 

@@ -365,7 +365,9 @@
         "spendguard.generate.spend_capture.spend_capture_resolver_bootstrap",
         "spendguard.analyze.measurement",
         "spendguard.analyze.measurement.measurement_resolver_bootstrap",
-        "spendguard.analyze.measurement.measurement_accessors"
+        "spendguard.analyze.measurement.measurement_accessors",
+        "spendguard.analyze.reconciliation.reconciliation_resolver_bootstrap",
+        "spendguard.analyze.reconciliation.reconciliation_accessors"
       ],
       "gate_installed": true,
       "gate_unarmed_details": [],
@@ -523,6 +525,8 @@
         "spendguard.analyze.measurement",
         "spendguard.analyze.measurement.measurement_resolver_bootstrap",
         "spendguard.analyze.measurement.measurement_accessors",
+        "spendguard.analyze.reconciliation.reconciliation_resolver_bootstrap",
+        "spendguard.analyze.reconciliation.reconciliation_accessors",
         "spendguard.interface.cli",
         "spendguard.interface.capability_cli_dispatch_generation",
         "spendguard.interface.capability_cli_callable_generation"
@@ -682,7 +686,9 @@
         "spendguard.generate.spend_capture.spend_capture_resolver_bootstrap",
         "spendguard.analyze.measurement",
         "spendguard.analyze.measurement.measurement_resolver_bootstrap",
-        "spendguard.analyze.measurement.measurement_accessors"
+        "spendguard.analyze.measurement.measurement_accessors",
+        "spendguard.analyze.reconciliation.reconciliation_resolver_bootstrap",
+        "spendguard.analyze.reconciliation.reconciliation_accessors"
       ],
       "gate_installed": true,
       "gate_unarmed_details": [],
@@ -839,7 +845,9 @@
         "spendguard.generate.spend_capture.spend_capture_resolver_bootstrap",
         "spendguard.analyze.measurement",
         "spendguard.analyze.measurement.measurement_resolver_bootstrap",
-        "spendguard.analyze.measurement.measurement_accessors"
+        "spendguard.analyze.measurement.measurement_accessors",
+        "spendguard.analyze.reconciliation.reconciliation_resolver_bootstrap",
+        "spendguard.analyze.reconciliation.reconciliation_accessors"
       ],
       "gate_installed": true,
       "gate_unarmed_details": [],
@@ -996,7 +1004,9 @@
         "spendguard.generate.spend_capture.spend_capture_resolver_bootstrap",
         "spendguard.analyze.measurement",
         "spendguard.analyze.measurement.measurement_resolver_bootstrap",
-        "spendguard.analyze.measurement.measurement_accessors"
+        "spendguard.analyze.measurement.measurement_accessors",
+        "spendguard.analyze.reconciliation.reconciliation_resolver_bootstrap",
+        "spendguard.analyze.reconciliation.reconciliation_accessors"
       ],
       "gate_installed": true,
       "gate_unarmed_details": [],
@@ -1153,7 +1163,9 @@
         "spendguard.generate.spend_capture.spend_capture_resolver_bootstrap",
         "spendguard.analyze.measurement",
         "spendguard.analyze.measurement.measurement_resolver_bootstrap",
-        "spendguard.analyze.measurement.measurement_accessors"
+        "spendguard.analyze.measurement.measurement_accessors",
+        "spendguard.analyze.reconciliation.reconciliation_resolver_bootstrap",
+        "spendguard.analyze.reconciliation.reconciliation_accessors"
       ],
       "gate_installed": true,
       "gate_unarmed_details": [],
@@ -1310,7 +1322,9 @@
         "spendguard.generate.spend_capture.spend_capture_resolver_bootstrap",
         "spendguard.analyze.measurement",
         "spendguard.analyze.measurement.measurement_resolver_bootstrap",
-        "spendguard.analyze.measurement.measurement_accessors"
+        "spendguard.analyze.measurement.measurement_accessors",
+        "spendguard.analyze.reconciliation.reconciliation_resolver_bootstrap",
+        "spendguard.analyze.reconciliation.reconciliation_accessors"
       ],
       "gate_installed": true,
       "gate_unarmed_details": [],
