@@ -337,6 +337,7 @@
         "generate.execution.antigravity_exec",
         "generate.execution.batch_tracker",
         "generate.execution.codex_exec",
+        "generate.execution.embeddings",
         "generate.execution.execution_accessors",
         "generate.execution.execution_resolver_bootstrap",
         "generate.execution.kimi_exec",

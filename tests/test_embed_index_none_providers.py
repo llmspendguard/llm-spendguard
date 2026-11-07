@@ -22,6 +22,8 @@ os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
 from spendguard import adapters   # noqa: E402
+# embed + the _oai_compat_client factory it reads moved to generate.execution.embeddings; stub the client there.
+from spendguard.generate.execution import embeddings  # noqa: E402
 
 
 class _Emb:
@@ -62,14 +64,14 @@ def _aligned(vectors):
 
 def main():
     results = []
-    _real = adapters._oai_compat_client
+    _real = embeddings._oai_compat_client
     texts = ["alpha", "bravo", "charlie", "delta"]
     try:
         for mode, model, why in (("none", "gemini:gemini-embedding-001", "gemini/voyage: index=None"),
                                  ("none", "voyage:voyage-3.5", "voyage: index=None"),
                                  ("reversed_indexed", "openai:text-embedding-3-small", "index-stamped but out of order"),
                                  ("indexed", "openai:text-embedding-3-small", "index in order")):
-            adapters._oai_compat_client = (lambda m: (lambda prov, timeout_s: _Client(m)))(mode)
+            embeddings._oai_compat_client = (lambda m: (lambda prov, timeout_s: _Client(m)))(mode)
             r = adapters.embed(list(texts), model=model)
             ck(results, f"{why}: no crash, no error", not r.get("error"), extra=str(r.get("error")))
             ck(results, f"{why}: {len(texts)} vectors returned", len(r.get("vectors") or []) == len(texts),
@@ -77,7 +79,7 @@ def main():
             ck(results, f"{why}: vectors ALIGNED to inputs (no silent mismap)", _aligned(r.get("vectors") or []),
                extra=str(r.get("vectors")))
     finally:
-        adapters._oai_compat_client = _real
+        embeddings._oai_compat_client = _real
 
     n_fail = results.count(False)
     print(f"\n{'[FAIL]' if n_fail else 'OK'} test_embed_index_none_providers: {n_fail} failure(s)")

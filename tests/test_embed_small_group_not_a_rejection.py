@@ -14,6 +14,8 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "src"))
 os.environ.setdefault("OPENAI_API_KEY", "sk-test-offline-embed")  # offline tests carry their own fake key
 
 from spendguard import adapters, config  # noqa: E402
+# embed + the _oai_compat_client factory it reads moved to generate.execution.embeddings; stub the client there.
+from spendguard.generate.execution import embeddings  # noqa: E402
 
 _fails = []
 
@@ -42,12 +44,12 @@ class _FakeClient:
         self.embeddings = _FakeEmbeddings(cap)
 
 
-_orig_client = adapters._oai_compat_client
+_orig_client = embeddings._oai_compat_client
 _orig_warn = config.warn_once
 _warnings = []
 try:
     config.warn_once = lambda msg: _warnings.append(msg)
-    adapters._oai_compat_client = lambda prov, timeout_s: _FakeClient(2)   # cap=2: >2 inputs is a real 400
+    embeddings._oai_compat_client = lambda prov, timeout_s: _FakeClient(2)   # cap=2: >2 inputs is a real 400
 
     model = "text-embedding-3-small"      # resolves to openai; catalog ceiling 2048
 
@@ -79,7 +81,7 @@ try:
     check("a real rejection DOES warn (regression guard)",
           any("were rejected" in w for w in _warnings), "a genuine over-cap batch must still warn + shrink")
 finally:
-    adapters._oai_compat_client = _orig_client
+    embeddings._oai_compat_client = _orig_client
     config.warn_once = _orig_warn
 
 print("\nPASS — 0 failure(s)" if not _fails else f"\nFAIL — {len(_fails)} failure(s): " + "; ".join(_fails))

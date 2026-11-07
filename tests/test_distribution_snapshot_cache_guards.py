@@ -33,6 +33,9 @@ os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from spendguard import adapters, config_schema, distribution, manifest
+# The embed checkpoint dir/path helpers + EMBED_CHECKPOINT_* constants moved to generate.execution.embeddings;
+# only migrate_cold_legacy_embed_checkpoints is re-exported back onto adapters.
+from spendguard.generate.execution import embeddings
 
 
 def seed_distribution_snapshot_guard_home(root):
@@ -362,15 +365,15 @@ def guard_12_embed_checkpoints_follow_ephemeral_dir_provenance(tmp_path):
     with patch.object(adapters.config, "HOME", home), \
          patch.object(distribution, "distribution_probe_cache_paths",
                       return_value=(cache, cache / "base", cache / "fingerprint.json")):
-        checkpoint_dir = adapters._embed_checkpoint_dir()
+        checkpoint_dir = embeddings._embed_checkpoint_dir()
         checkpoint = checkpoint_dir / "embed_model_hash.jsonl"
         checkpoint.write_text("checkpoint")
-        assert checkpoint.parent == home / adapters.EMBED_CHECKPOINT_DIRNAME
+        assert checkpoint.parent == home / embeddings.EMBED_CHECKPOINT_DIRNAME
         assert (checkpoint_dir / distribution.DISTRIBUTION_EPHEMERAL_MARKER).is_file()
-        assert distribution.distribution_snapshot_excluded(home, adapters.EMBED_CHECKPOINT_DIRNAME)
+        assert distribution.distribution_snapshot_excluded(home, embeddings.EMBED_CHECKPOINT_DIRNAME)
         assert distribution.distribution_snapshot_excluded(home, "embed_fixture.jsonl")
         snapshot = distribution.ensure_distribution_probe_base()
-        assert not (snapshot / adapters.EMBED_CHECKPOINT_DIRNAME).exists()
+        assert not (snapshot / embeddings.EMBED_CHECKPOINT_DIRNAME).exists()
         assert not (snapshot / "embed_fixture.jsonl").exists()
 
 
@@ -381,7 +384,7 @@ def guard_13_cold_legacy_embed_checkpoints_move_but_warm_ones_remain(tmp_path):
     warm = home / "embed_warm_hash.jsonl"
     cold.write_text("cold-checkpoint")
     warm.write_text("warm-checkpoint")
-    grace_seconds = adapters.EMBED_CHECKPOINT_INFLIGHT_GRACE_SECONDS
+    grace_seconds = embeddings.EMBED_CHECKPOINT_INFLIGHT_GRACE_SECONDS
     now = time.time()
     cold_mtime = now - grace_seconds - grace_seconds
     os.utime(cold, (cold_mtime, cold_mtime))
@@ -393,13 +396,13 @@ def guard_13_cold_legacy_embed_checkpoints_move_but_warm_ones_remain(tmp_path):
         migration_result = adapters.migrate_cold_legacy_embed_checkpoints()
         assert migration_result["moved"] == 1
         assert migration_result["retained"] >= 1
-        checkpoint_dir = home / adapters.EMBED_CHECKPOINT_DIRNAME
+        checkpoint_dir = home / embeddings.EMBED_CHECKPOINT_DIRNAME
         assert not cold.exists()
         assert (checkpoint_dir / cold.name).read_text() == "cold-checkpoint"
         assert warm.read_text() == "warm-checkpoint"
-        assert adapters._embed_checkpoint_path(warm.name) == warm
+        assert embeddings._embed_checkpoint_path(warm.name) == warm
         snapshot = distribution.ensure_distribution_probe_base()
-        assert not (snapshot / adapters.EMBED_CHECKPOINT_DIRNAME).exists()
+        assert not (snapshot / embeddings.EMBED_CHECKPOINT_DIRNAME).exists()
         assert not (snapshot / cold.name).exists()
         assert not (snapshot / warm.name).exists()
 

@@ -31,6 +31,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(
 
 from _script_checks import record_script_check
 from spendguard import adapters, model_catalog   # noqa: E402
+# embed + the _oai_compat_client factory it reads moved to generate.execution.embeddings; stub the client there.
+from spendguard.generate.execution import embeddings  # noqa: E402
 
 
 class _RecordingEmbeddings:
@@ -74,12 +76,12 @@ def main():
     record_script_check(fails, "an UNCURATED id → None (caller's own default, not a guess)",
        model_catalog.embed_batch_ceiling("no-such-embed-model-xyz") is None)
 
-    _real = adapters._oai_compat_client
+    _real = embeddings._oai_compat_client
     try:
         # ── PART 2: the CLAMP (gemini, the model in the incident) ──
         print("\n-- PART 2: embed() clamps every chunk to the gemini ceiling (100), honoring a smaller max_batch too --")
         sizes = []
-        adapters._oai_compat_client = lambda prov, timeout_s=None: _Client(_RecordingEmbeddings(sizes))
+        embeddings._oai_compat_client = lambda prov, timeout_s=None: _Client(_RecordingEmbeddings(sizes))
         texts = [f"t{i}" for i in range(250)]
         r = adapters.embed(list(texts), model="gemini:gemini-embedding-001", max_batch=500, checkpoint=False)
         record_script_check(fails, "max_batch=500 is CLAMPED to 100 — no chunk exceeds the cap", sizes and max(sizes) <= 100, str(max(sizes) if sizes else None))
@@ -89,14 +91,14 @@ def main():
            str([r["vectors"][i] for i in (0, 99, 100, 249)]))
 
         sizes2 = []
-        adapters._oai_compat_client = lambda prov, timeout_s=None: _Client(_RecordingEmbeddings(sizes2))
+        embeddings._oai_compat_client = lambda prov, timeout_s=None: _Client(_RecordingEmbeddings(sizes2))
         adapters.embed([f"s{i}" for i in range(120)], model="gemini:gemini-embedding-001", max_batch=40, checkpoint=False)
         record_script_check(fails, "a smaller max_batch (40) is honored (clamp is min, not force to 100)", sizes2 and max(sizes2) <= 40, str(max(sizes2) if sizes2 else None))
 
         # ── PART 3: EMPIRICAL RECOVERY (bisection) on an uncurated provider that still rejects the batch ──
         print("\n-- PART 3: an UNCURATED model that rejects the batch → embed() BISECTS, all inputs embed, aligned --")
         sizes3 = []
-        adapters._oai_compat_client = lambda prov, timeout_s=None: _Client(
+        embeddings._oai_compat_client = lambda prov, timeout_s=None: _Client(
             _RecordingEmbeddings(sizes3, ceiling=50, msg="400 - at most 50 requests can be in one batch"))
         # openai:<uncurated> → provider resolves (openai) but the model has NO catalog ceiling → no clamp → default 128
         rr = adapters.embed([f"u{i}" for i in range(130)], model="openai:uncurated-embed-x", max_batch=128, checkpoint=False)
@@ -108,7 +110,7 @@ def main():
            all(rr["vectors"][i] == [float(i)] * 3 for i in range(130)),
            str([rr["vectors"][i] for i in (0, 49, 50, 100, 129)]))
     finally:
-        adapters._oai_compat_client = _real
+        embeddings._oai_compat_client = _real
 
     print(f"\n{'[FAIL]' if fails else 'OK'} test_embed_batch_ceiling: {len(fails)} failure(s)")
     return 1 if fails else 0

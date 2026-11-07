@@ -24,6 +24,10 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(
 
 from _script_checks import record_script_check
 from spendguard import adapters, submit, gate
+# The embeddings surface (embed/embed_batch/embed_compare) + the _oai_compat_client factory it reads moved to
+# generate.execution.embeddings; embed is re-exported on adapters (calls still work), but embed reads embeddings'
+# module globals, so the client/embed STUBS are installed at their new home (embeddings.*), not on adapters.
+from spendguard.generate.execution import embeddings
 
 fails = []
 
@@ -53,45 +57,45 @@ class _FakeClient:
 
 
 # ── single chunk: aligned vectors, no checkpoint file ──
-adapters._oai_compat_client = lambda prov, timeout_s=None: _FakeClient()
+embeddings._oai_compat_client = lambda prov, timeout_s=None: _FakeClient()
 r = adapters.embed(["a", "bb", "ccc"], "text-embedding-3-small")
 record_script_check(fails, "embed() returns one vector per input, in order", len(r["vectors"]) == 3 and r["vectors"][1][0] == 2.0 and r["error"] is None)
 record_script_check(fails, "a small (single-chunk) embed does not force a checkpoint", r["checkpoint"] is None)
 
 # ── cross-provider routing by the model id ──
 _seen = {}
-adapters._oai_compat_client = lambda prov, timeout_s=None: _seen.setdefault("prov", prov) or _FakeClient()
+embeddings._oai_compat_client = lambda prov, timeout_s=None: _seen.setdefault("prov", prov) or _FakeClient()
 adapters.embed(["x"], "gemini-embedding-001")
 record_script_check(fails, "a gemini model id routes to the gemini provider", _seen.get("prov") == "gemini")
 
 # ── multi-chunk: auto-checkpoint (durable) + RESUME (a re-run re-embeds nothing) ──
 fake = _FakeClient()
-adapters._oai_compat_client = lambda prov, timeout_s=None: fake
+embeddings._oai_compat_client = lambda prov, timeout_s=None: fake
 texts = [f"doc-{i}" for i in range(5)]
 r = adapters.embed(texts, "text-embedding-3-small", max_batch=2)          # 5 items / 2 = 3 chunks → multi-chunk
 record_script_check(fails, "multi-chunk embed auto-creates a durable checkpoint", bool(r["checkpoint"]) and os.path.exists(r["checkpoint"]))
 record_script_check(fails, "multi-chunk embed returns all vectors aligned", len(r["vectors"]) == 5 and all(v is not None for v in r["vectors"]))
 fake2 = _FakeClient()
-adapters._oai_compat_client = lambda prov, timeout_s=None: fake2
+embeddings._oai_compat_client = lambda prov, timeout_s=None: fake2
 r2 = adapters.embed(texts, "text-embedding-3-small", max_batch=2, checkpoint=r["checkpoint"])
 record_script_check(fails, "a re-run with the checkpoint RE-EMBEDS NOTHING (all served from the checkpoint)", fake2.calls == [] and all(v is not None for v in r2["vectors"]))
 
 # ── oversized input: marked failed, never sent; the rest still embed ──
-adapters._oai_compat_client = lambda prov, timeout_s=None: _FakeClient()
-big = "z" * (adapters._EMBED_MAX_INPUT_CHARS + 1)
+embeddings._oai_compat_client = lambda prov, timeout_s=None: _FakeClient()
+big = "z" * (embeddings._EMBED_MAX_INPUT_CHARS + 1)
 r = adapters.embed(["ok1", big, "ok2"], "text-embedding-3-small", max_batch=10)
 record_script_check(fails, "an oversized input is marked failed (not sent)", any(f["i"] == 1 for f in r["failed"]) and r["vectors"][1] is None)
 record_script_check(fails, "...and the other inputs still embed", r["vectors"][0] is not None and r["vectors"][2] is not None)
 record_script_check(fails, "...and error names the unembedded count (never a silently-short list)", "unembedded" in (r["error"] or ""))
 
 # ── chunk failure is ISOLATED: the bad chunk is marked, the rest keep going ──
-adapters._oai_compat_client = lambda prov, timeout_s=None: _FakeClient(raise_on="BOOM")
+embeddings._oai_compat_client = lambda prov, timeout_s=None: _FakeClient(raise_on="BOOM")
 r = adapters.embed(["good1", "BOOM", "good2", "good3"], "text-embedding-3-small", max_batch=2)  # chunk0=[good1,BOOM] fails
 record_script_check(fails, "a failing chunk marks its items in failed[] but does NOT abort the run",
    any(f["i"] in (0, 1) for f in r["failed"]) and r["vectors"][2] is not None and r["vectors"][3] is not None)
 
 # ── a deliberate spend stop PROPAGATES (never isolated into failed[]) ──
-adapters._oai_compat_client = lambda prov, timeout_s=None: _FakeClient(stop_on="pay")
+embeddings._oai_compat_client = lambda prov, timeout_s=None: _FakeClient(stop_on="pay")
 raised = False
 try:
     adapters.embed(["pay"], "text-embedding-3-small")
@@ -118,19 +122,19 @@ record_script_check(fails, "estimate prices the embeddings batch by input (out_t
 
 # ── Voyage registered (OpenAI-compatible /embeddings) → a voyage-* id routes to the voyage provider ──
 record_script_check(fails, "voyage-3 routes to the voyage provider (registered)", adapters.provider_for("voyage-3") == "voyage")
-adapters._oai_compat_client = lambda prov, timeout_s=None: _FakeClient()
+embeddings._oai_compat_client = lambda prov, timeout_s=None: _FakeClient()
 rv = adapters.embed(["hi"], "voyage-3")
 record_script_check(fails, "embed(model='voyage-3') builds a client + returns a vector", len(rv["vectors"]) == 1 and rv["error"] is None)
 
 # ── embed_compare: A/B two models on a sample → per-model rows + pairwise STRUCTURE agreement (Pearson of sims) ──
 _vecmap = {"m-a": [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.9, 0.1, 0.0]],
            "m-b": [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.85, 0.15, 0.0]]}
-_real_embed = adapters.embed
-adapters.embed = lambda texts, model=None, **kw: {"vectors": _vecmap[model], "dims": 3, "failed": [], "error": None}
+_real_embed = embeddings.embed
+embeddings.embed = lambda texts, model=None, **kw: {"vectors": _vecmap[model], "dims": 3, "failed": [], "error": None}
 try:
     cmp = adapters.embed_compare(["t0", "t1", "t2"], models=["m-a", "m-b"])
 finally:
-    adapters.embed = _real_embed
+    embeddings.embed = _real_embed
 record_script_check(fails, "embed_compare reports one row per model", len(cmp["models"]) == 2 and cmp["sample_n"] == 3)
 record_script_check(fails, "embed_compare reports pairwise structure agreement over the shared pairs",
    len(cmp["agreement"]) == 1 and cmp["agreement"][0]["pairs"] == 3 and cmp["agreement"][0]["structure_corr"] is not None)
@@ -143,7 +147,7 @@ class _ShortClient:
     def create(self, model=None, input=None, **kw):
         return _Resp([[1.0, 2.0, 3.0] for _s in input[:-1]])          # omit the LAST input's vector
 
-adapters._oai_compat_client = lambda prov, timeout_s=None: _ShortClient()
+embeddings._oai_compat_client = lambda prov, timeout_s=None: _ShortClient()
 rs = adapters.embed(["a", "b", "c"], "text-embedding-3-small", max_batch=10)
 record_script_check(fails, "a provider omitting a vector → that item is in failed[] and None in vectors (never silently short)",
    rs["vectors"][2] is None and any(f["i"] == 2 for f in rs["failed"]) and "unembedded" in (rs["error"] or ""))

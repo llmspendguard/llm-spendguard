@@ -371,6 +371,19 @@ def resolve_provider_for(*args, **kwargs):
         raise RuntimeError("execution_accessors.provider_for resolver not wired")
     return resolver(*args, **kwargs)
 
+_oai_compat_client_resolver = None
+
+def set__oai_compat_client_resolver(resolver):
+    global _oai_compat_client_resolver
+    with _execution_accessor_lock:
+        _oai_compat_client_resolver = resolver
+
+def resolve__oai_compat_client():
+    resolver = _oai_compat_client_resolver
+    if resolver is None:
+        raise RuntimeError("execution_accessors._oai_compat_client resolver not wired")
+    return resolver()
+
 _schema_capability_resolver = None
 
 def set_schema_capability_resolver(resolver):
