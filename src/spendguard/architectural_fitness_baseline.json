@@ -2197,8 +2197,8 @@
     ],
     "reason": "These actual foundation modules own immutable parser data, pure deadline cadence, and launchd label constants; each currently depends only on the standard library. Prevent application/surface imports into these foundations. Broader core/surface separation is not claimed: config and pricing currently import adapters/calls."
   },
-  "max_cyclic_edge_count": 58,
-  "max_largest_scc_size": 7,
+  "max_cyclic_edge_count": 50,
+  "max_largest_scc_size": 6,
   "max_legacy_shim_count": 219,
   "package": "spendguard",
   "recorded_cross_context_nonsurface_imports": [
@@ -6681,10 +6681,6 @@
     [
       "spendguard.generate.execution.adapters",
       "spendguard.generate.execution.batch_tracker",
-      "spendguard.generate.execution.submit",
-      "spendguard.generate.execution.vendor_call",
-      "spendguard.manage.routing.lane_balance",
-      "spendguard.manage.token_operations.lane_queue",
       "spendguard.manage.token_operations.storm_route",
       "spendguard.manage.token_operations.storm_submit"
     ],
@@ -6697,6 +6693,10 @@
       "spendguard.manage.admission.bulkgate",
       "spendguard.manage.admission.gate",
       "spendguard.manage.admission.model_preflight"
+    ],
+    [
+      "spendguard.manage.routing.lane_balance",
+      "spendguard.manage.token_operations.lane_queue"
     ],
     [
       "spendguard.manage.token_operations.codex_broker_owner",
@@ -6760,34 +6760,10 @@
     ],
     [
       "spendguard.generate.execution.adapters",
-      "spendguard.generate.execution.submit"
-    ],
-    [
-      "spendguard.generate.execution.adapters",
-      "spendguard.manage.routing.lane_balance"
-    ],
-    [
-      "spendguard.generate.execution.adapters",
-      "spendguard.manage.token_operations.lane_queue"
-    ],
-    [
-      "spendguard.generate.execution.adapters",
       "spendguard.manage.token_operations.storm_route"
     ],
     [
       "spendguard.generate.execution.batch_tracker",
-      "spendguard.generate.execution.adapters"
-    ],
-    [
-      "spendguard.generate.execution.batch_tracker",
-      "spendguard.generate.execution.submit"
-    ],
-    [
-      "spendguard.generate.execution.batch_tracker",
-      "spendguard.manage.token_operations.lane_queue"
-    ],
-    [
-      "spendguard.generate.execution.submit",
       "spendguard.generate.execution.adapters"
     ],
     [
@@ -6836,10 +6812,6 @@
     ],
     [
       "spendguard.manage.routing.lane_balance",
-      "spendguard.generate.execution.submit"
-    ],
-    [
-      "spendguard.manage.routing.lane_balance",
       "spendguard.manage.token_operations.lane_queue"
     ],
     [
@@ -6885,10 +6857,6 @@
     [
       "spendguard.manage.token_operations.storm_submit",
       "spendguard.generate.execution.batch_tracker"
-    ],
-    [
-      "spendguard.manage.token_operations.storm_submit",
-      "spendguard.manage.token_operations.lane_queue"
     ],
     [
       "spendguard.platform.distribution",

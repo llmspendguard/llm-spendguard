@@ -4041,6 +4041,8 @@ _execution_accessors.set__image_input_tokens_resolver(lambda *a, **k: _image_inp
 _execution_accessors.set__lane_cooling_resolver(lambda *a, **k: _lane_cooling(*a, **k))
 _execution_accessors.set__lane_for_resolver(lambda *a, **k: _lane_for(*a, **k))
 _execution_accessors.set_output_budget_resolver(lambda *a, **k: output_budget(*a, **k))
+_execution_accessors.set_json_schema_request_resolver(lambda *a, **k: json_schema_request(*a, **k))
+_execution_accessors.set__warn_once_caller_maxtokens_resolver(lambda *a, **k: _warn_once_caller_maxtokens(*a, **k))
 _execution_accessors.set__heal_guard_resolver(lambda: _heal_guard)
 _execution_accessors.set__resolve_guard_resolver(lambda: _resolve_guard)
 _execution_accessors.set__lane_model_cooling_resolver(lambda *a, **k: _lane_model_cooling(*a, **k))

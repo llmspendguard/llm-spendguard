@@ -56,10 +56,11 @@ def _count_tokens(text, model):
     MEASURED per-provider o200k→native factor (provider_tokens). This is what makes an anthropic/gemini/glm
     estimate honest instead of an OpenAI-tokenizer proxy. Signature is unchanged (text, model) so every caller —
     bakeoff, effort_titration, experiment — improves at once. Fail-open all the way down (never raises)."""
-    from ... import provider_tokens, adapters
+    from ... import provider_tokens
+    from . import execution_accessors
     _warn_if_no_tiktoken()                            # the input count authorizes spend — a char/4 proxy must be loud
     try:
-        prov = adapters.provider_for(model)
+        prov = execution_accessors.resolve_provider_for(model)
     except Exception:
         prov = None                                   # unknown id → provider_tokens uses the o200k proxy (still real BPE)
     return provider_tokens.count_text(text, provider=prov, model=model)
@@ -200,8 +201,9 @@ def build_chat_batch_jsonl(tasks_path, model, system=None, max_out=None, reasoni
     non-OpenAI model (the OpenAI Batch API serves only OpenAI ids) and a task line missing custom_id/content —
     fail-closed, never a silent drop; a partial temp is unlinked on any error."""
     import json, os, tempfile
-    from ... import models, adapters
-    prov = adapters.provider_for(model)
+    from ... import models
+    from . import execution_accessors
+    prov = execution_accessors.resolve_provider_for(model)
     if prov != "openai":
         raise ValueError(f"build_chat_batch_jsonl: the OpenAI /v1/chat/completions Batch API serves only OpenAI "
                          f"models; got {model!r} (provider {prov!r}). Use the lane fan / a provider batch instead.")
@@ -210,8 +212,8 @@ def build_chat_batch_jsonl(tasks_path, model, system=None, max_out=None, reasoni
     # right: max_output is billed on ACTUAL tokens, so the max is free and no reasoning reply or structured JSON can
     # silently truncate. Batch and realtime share the ONE home, so they cannot drift on the send budget.
     if max_out:
-        adapters._warn_once_caller_maxtokens("batch:" + str(model), int(max_out))   # caller max_out ignored — warned once
-    out_cap = adapters.output_budget(model)
+        execution_accessors.resolve__warn_once_caller_maxtokens("batch:" + str(model), int(max_out))   # caller max_out ignored — warned once
+    out_cap = execution_accessors.resolve_output_budget(model)
     _eff = models.resolve_effort(model, reasoning)   # the VERIFIABLY-ACCEPTED reasoning_effort — a batch can't heal
     #   per row, so this resolves up front (discovers + records the accepted set); a family default the endpoint
     #   rejects (gpt-5.6-luna: 'minimal') never reaches a batch. None → OMIT the param (model default).
@@ -250,7 +252,7 @@ def build_chat_batch_jsonl(tasks_path, model, system=None, max_out=None, reasoni
                 if t_schema is not None:
                     # raises SchemaNotStrictExpressible for a schema strict mode cannot serve — caught by the
                     # enclosing handler, which unlinks the partial temp: nothing unservable ever reaches an upload
-                    body.update(adapters.json_schema_request("openai", t_schema, name=t_name))
+                    body.update(execution_accessors.resolve_json_schema_request("openai", t_schema, name=t_name))
                 fout.write(json.dumps({"custom_id": cid, "method": "POST", "url": "/v1/chat/completions",
                                        "body": body}) + "\n")
                 n += 1
@@ -534,7 +536,7 @@ def submit_chat_tasks(tasks, model, *, system=None, schema=None, reasoning="mini
     import json as _json
     import os as _os
     import tempfile as _tf
-    from . import adapters
+    from . import execution_accessors
     items = _assign_batch_ordinals(tasks)
     if submit and items:
         bulk_resilience.require_resilient(len(items), chunked=shard_size is not None and 0 < shard_size < len(items),
@@ -548,7 +550,7 @@ def submit_chat_tasks(tasks, model, *, system=None, schema=None, reasoning="mini
     base = {"batch_id": None, "jsonl": None, "requests": len(items), "error": None}
     if not items:
         return base
-    prov = adapters.provider_for(model)
+    prov = execution_accessors.resolve_provider_for(model)
     if prov != "openai":
         return {**base, "error": "chat batch is OpenAI-only (the /v1/chat/completions Batch API serves only OpenAI "
                 "ids); got %r (provider %r) — run it on the lane fan / realtime instead." % (model, prov)}
@@ -614,14 +616,15 @@ def build_message_batch_requests(tasks, model, *, system=None, max_out=None, sch
     Anthropic REQUIRES max_tokens, so it is always present), the caller's `max_out` is warned+ignored (billed on ACTUAL
     tokens, so the ceiling is free and no reasoning/JSON reply can silently truncate). Refuses a non-Anthropic model
     and a task with no content — fail-closed, never a silent drop."""
-    from ... import models, adapters
-    prov = adapters.provider_for(model)
+    from ... import models
+    from . import execution_accessors
+    prov = execution_accessors.resolve_provider_for(model)
     if prov != "anthropic":
         raise ValueError(f"build_message_batch_requests: the Anthropic Message Batches API serves only Anthropic "
                          f"models; got {model!r} (provider {prov!r}). Use build_chat_batch_jsonl / the lane fan instead.")
     if max_out:
-        adapters._warn_once_caller_maxtokens("msgbatch:" + str(model), int(max_out))   # caller max_out ignored — warned once
-    out_cap = adapters.output_budget(model)
+        execution_accessors.resolve__warn_once_caller_maxtokens("msgbatch:" + str(model), int(max_out))   # caller max_out ignored — warned once
+    out_cap = execution_accessors.resolve_output_budget(model)
     requests = []
     for i, t in enumerate(tasks or []):
         if isinstance(t, dict):
@@ -642,7 +645,7 @@ def build_message_batch_requests(tasks, model, *, system=None, max_out=None, sch
             params["system"] = t_system        # Anthropic: system is a TOP-LEVEL param, not a system-role message
         models.apply_call_params(model, params, dialect="anthropic")
         if t_schema is not None:
-            params.update(adapters.json_schema_request("anthropic", t_schema, name=t_name))   # forced tool (enforces shape)
+            params.update(execution_accessors.resolve_json_schema_request("anthropic", t_schema, name=t_name))   # forced tool (enforces shape)
         requests.append({"custom_id": cid, "params": params})
     if not requests:
         raise ValueError("no tasks to submit (each task = a prompt string or a {custom_id, content} object)")
@@ -676,7 +679,7 @@ def submit_message_batch(tasks, model, *, system=None, schema=None, max_out=None
 
     Unlike OpenAI there is NO `metadata` parameter: Anthropic batches carry no server-side metadata, so the
     exactly-once offload key (batch_tracker) rides each request's custom_id instead — see batch_tracker.submit_offload."""
-    from . import adapters
+    from . import execution_accessors
     items = _assign_batch_ordinals(tasks)
     if submit and items:
         bulk_resilience.require_resilient(len(items), chunked=shard_size is not None and 0 < shard_size < len(items),
@@ -690,7 +693,7 @@ def submit_message_batch(tasks, model, *, system=None, schema=None, max_out=None
     base = {"batch_id": None, "requests": len(items), "estimate": None, "error": None}
     if not items:
         return base
-    prov = adapters.provider_for(model)
+    prov = execution_accessors.resolve_provider_for(model)
     if prov != "anthropic":
         return {**base, "error": "message batch is Anthropic-only (the Message Batches API serves only Anthropic ids); "
                 "got %r (provider %r) — run it on submit_chat_tasks (OpenAI) / the lane fan instead." % (model, prov)}

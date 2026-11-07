@@ -228,6 +228,32 @@ def resolve_output_budget(*args, **kwargs):
         raise RuntimeError("execution_accessors.output_budget resolver not wired")
     return resolver(*args, **kwargs)
 
+_json_schema_request_resolver = None
+
+def set_json_schema_request_resolver(resolver):
+    global _json_schema_request_resolver
+    with _execution_accessor_lock:
+        _json_schema_request_resolver = resolver
+
+def resolve_json_schema_request(*args, **kwargs):
+    resolver = _json_schema_request_resolver
+    if resolver is None:
+        raise RuntimeError("execution_accessors.json_schema_request resolver not wired")
+    return resolver(*args, **kwargs)
+
+__warn_once_caller_maxtokens_resolver = None
+
+def set__warn_once_caller_maxtokens_resolver(resolver):
+    global __warn_once_caller_maxtokens_resolver
+    with _execution_accessor_lock:
+        __warn_once_caller_maxtokens_resolver = resolver
+
+def resolve__warn_once_caller_maxtokens(*args, **kwargs):
+    resolver = __warn_once_caller_maxtokens_resolver
+    if resolver is None:
+        raise RuntimeError("execution_accessors._warn_once_caller_maxtokens resolver not wired")
+    return resolver(*args, **kwargs)
+
 __heal_guard_resolver = None
 
 def set__heal_guard_resolver(resolver):
