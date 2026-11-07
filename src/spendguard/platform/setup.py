@@ -664,7 +664,7 @@ def _startup_gate_active(target, timeout=10):
     code = ("import sys;"
             "m=sys.modules.get('spendguard');"
             "print(int(m is not None and callable(getattr(m,'install',None)) "
-            "and 'spendguard.gate' in sys.modules))")
+            "and ('spendguard.gate' in sys.modules or 'spendguard.manage.admission.gate' in sys.modules)))")
     try:
         with tempfile.TemporaryDirectory(prefix=_STARTUP_GATE_PROBE_HOME_PREFIX) as probe_home:
             probe_environment = os.environ.copy()

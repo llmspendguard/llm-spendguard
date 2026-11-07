@@ -549,7 +549,7 @@ def snapshot(reason="", keep=None, force=False, *, compact_source=None, compact_
     daily B2 push, so the default is small and configurable (safety.snapshot_keep, default 2 ≈ a day or two of
     recovery points). None → read that config; an explicit keep still wins."""
     from .disk_guard import require_disk_space
-    from .gate import SpendGateRefused
+    from .spend_refusal_error import SpendGateRefused
 
     # Offline reclaim extends this copy boundary, but MUST NOT reuse/prune a
     # snapshot or swallow an error. The caller owns locking and verification.
@@ -628,17 +628,16 @@ def reattribute_providers(apply=False, actor="reattribute_providers"):
     DRY BY DEFAULT. Returns what it WOULD change; `apply=True` writes. Every correction is journalled to
     spend_audit with the old and new value, because a silent restatement is indistinguishable from the
     error it corrects — and in a forensic tool the correction has to be as visible as the mistake."""
-    from . import gate
     from ...ledger import to_dec, USD_COLS
     led = _ledger()
     rows = [r for r in led.query() if r.get("model")]     # every spend_events row carrying a model
     fixes = []
     for r in rows:
         prov, model = r.get("provider"), r.get("model")
-        true = gate._provider_of(model)
+        true = _admission_accessors.resolve__provider_of(model)
         # UNKNOWN IS NOT A CORRECTION. Overwriting a recorded vendor with "unknown" destroys information;
         # only a POSITIVE identification that disagrees is a fix.
-        if true and true != gate.UNKNOWN_PROVIDER and prov and true != prov:
+        if true and true != _admission_accessors.UNKNOWN_PROVIDER and prov and true != prov:
             fixes.append({"id": r["id"], "model": model, "was": prov, "now": true,
                           "cost": float(sum((to_dec(r.get(c)) for c in USD_COLS), to_dec(0)))})
     # A KEY FINGERPRINT THAT BELONGS TO THE WRONG VENDOR IS WORSE THAN NONE. These rows were stamped with

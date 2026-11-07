@@ -172,7 +172,7 @@ def _spendguard_owned_name(value):
     return owner if owner.startswith("spendguard.") else None
 
 def _emit_import_behavior_result():
-    gate = sys.modules.get("spendguard.gate")
+    gate = sys.modules.get("spendguard.manage.admission.gate") or sys.modules.get("spendguard.gate")
     import_hooks = sorted(filter(None, (_spendguard_owned_name(finder) for finder in sys.meta_path)))
     logging_handlers = []
     loggers = [logging.getLogger()]

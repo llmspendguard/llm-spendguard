@@ -20,7 +20,7 @@ from spendguard.generate.execution import execution_accessors as _execution_acce
 
 from ...capability_cli_parsing import add_registered_cli_argument
 
-from ... import config, gate, pricing
+from ... import config, pricing
 
 
 def _split_spec(spec):
@@ -45,7 +45,7 @@ def _closest_or_halt(prov, metered_id):
         same, _live = _execution_accessors.resolve_closest_served(prov, metered_id)
         return same
     except Exception as e:
-        if isinstance(e, gate.deliberate_stop_types()):
+        if isinstance(e, _admission_accessors.resolve_deliberate_stop_types()):
             raise                                         # deliberate stop → propagate, do not swallow
         return None                                       # a transient/lookup failure → correction unknown, proceed
 
@@ -105,7 +105,7 @@ def preflight_models(specs, correct=True):
         try:
             out.append(_preflight_one(str(spec).strip(), correct))
         except Exception as e:
-            if isinstance(e, gate.deliberate_stop_types()):
+            if isinstance(e, _admission_accessors.resolve_deliberate_stop_types()):
                 raise                                     # over budget / refused / deadline → halt, don't paper over it
             out.append({"spec": str(spec), "provider": None, "model": str(spec), "metered_id": str(spec),
                         "served": "error", "corrected": None, "priced": False, "usable": False,

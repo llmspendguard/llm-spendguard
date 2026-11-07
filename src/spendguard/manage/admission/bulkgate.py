@@ -549,9 +549,8 @@ def note_response(sig, model, out_tok, max_tokens=None, finish_reason=None, n_it
     except Exception:
         raise
     if starved:
-        from .gate import _gate_warn_once
         evidence = "provider did not report reasoning tokens; weaker truncation signal" if reasoning_tokens is None else "reported"
-        _gate_warn_once(f"[spendguard] REASONING_STARVED {model}: visible={visible}, reasoning={reasoning_tokens}, "
+        _admission_accessors.resolve__gate_warn_once(f"[spendguard] REASONING_STARVED {model}: visible={visible}, reasoning={reasoning_tokens}, "
                    f"output budget={max_tokens}, finish={finish_reason} ({evidence}). INCOMPLETE answer: "
                    "raise the output budget / lower reasoning effort for this intent.")
     if trunc:
