@@ -295,8 +295,8 @@ def call(vendor, model, prompt, *, deadline_s, purpose="", system=None, max_toke
     # caller's max_tokens is IGNORED: max_output is a CEILING billed on ACTUAL tokens, so the budget is the model's
     # ceiling (the real published max, or the 32K floor) — a caller value can only ever set it too low and truncate. This
     # is the SAME home _call_guarded uses, so the vendor_call and adapters paths can never drift on the send budget.
-    from . import adapters as _ad
-    max_tokens = _ad.output_budget(model, vendor=vendor)
+    from . import execution_accessors
+    max_tokens = execution_accessors.resolve_output_budget(model, vendor=vendor)
     # ATTRIBUTION AT THE CHOKEPOINT. `purpose` was recorded on every vendor_call result (400/400) and reached
     # the LEDGER on none of them: 533 of 535 calls in a $25.29 session had no intent, so the money could be
     # totalled and not explained. The information existed the whole time and never got to the consumer.
@@ -424,7 +424,7 @@ def _attempt(vendor, model, prompt, system, max_tokens, budget_s, schema=None, r
 
     `metered_only` forces the metered API (a lane→metered shed already took the metered governor slot, so the
     lane must be skipped here too); `no_metered_fallback` is the $0-only opt-out (a lane miss stays a miss)."""
-    from . import adapters
+    from . import execution_accessors
     box = {}
     # CARRY THE CONTEXT ACROSS THE THREAD BOUNDARY. _call_corpus_accessors.resolve_calls_record_call() reads intent/chain from a THREAD-LOCAL
     # context, and this runs the adapter on a worker — so the tag is set on the calling thread and the ledger
@@ -454,7 +454,7 @@ def _attempt(vendor, model, prompt, system, max_tokens, budget_s, schema=None, r
             except Exception:
                 pass
         try:
-            box["r"] = adapters.call(model if ":" in model else f"{vendor}:{model}", prompt,
+            box["r"] = execution_accessors.resolve_call(model if ":" in model else f"{vendor}:{model}", prompt,
                                      max_tokens=int(max_tokens), system=system,
                                      schema=schema if isinstance(schema, dict) else None,
                                      timeout_s=budget_s, reasoning=reasoning,
@@ -569,8 +569,8 @@ def list_models(vendor, timeout_s=20):
     caller stops hardcoding an id it has not confirmed exists (a guessed one 404'd).
     Free: a GET against /models. No tokens, no generation, no spend."""
     import urllib.request
-    from . import adapters
-    spec = adapters.PROVIDERS.get(str(vendor).strip().lower())
+    from . import execution_accessors
+    spec = execution_accessors.PROVIDERS.get(str(vendor).strip().lower())
     if not spec:
         return {"vendor": vendor, "models": [], "error": f"unknown vendor {vendor!r}"}
     key = config.api_key(spec["key_env"])
@@ -709,7 +709,8 @@ def served_substitute(vendor, requested):
     )
     if not cands:
         return requested, None                        # no served id to choose from → dispatch errors honestly
-    from ... import adapters, config, pricing
+    from ... import config, pricing
+    from . import execution_accessors
     import spendguard.manage.admission.admission_accessors as gate
     import spendguard.manage.admission.admission_accessors as plan_admission
     from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
@@ -755,19 +756,19 @@ def served_substitute(vendor, requested):
     #                                                                    not be refused (or billed on an expensive model) on a
     #                                                                    capped plan. ready_meta_model makes no LLM call, so
     #                                                                    it never recurses back through this resolver.
-    adapters._resolve_guard.on = True                 # the resolver's OWN advisor call must not itself resolve (recursion)
+    execution_accessors.resolve__resolve_guard().on = True  # the resolver's OWN advisor call must not itself resolve (recursion)
     try:
         with _call_corpus_accessors.resolve_calls_context(intent="spendguard:resolve-servable-model"):
             # sig= (not a hardcoded cap): the OUTPUT budget is this call-class's MEASURED p99, and a truncated reply
             # is retried at double — the reply is a tiny {id, reason} JSON, so the measured budget converges small.
-            r = adapters.call(_meta, prompt, sig="resolve-servable-model",
+            r = execution_accessors.resolve_call(_meta, prompt, sig="resolve-servable-model",
                               system=_SYS_SERVED_SUBSTITUTE, no_substitution=True)
     except Exception as e:
         if isinstance(e, gate.resolve_deliberate_stop_types()):
             raise                                     # over budget / refused / deadline → halt, never a silent guess
         return requested, None
     finally:
-        adapters._resolve_guard.on = False
+        execution_accessors.resolve__resolve_guard().on = False
     if r.get("error"):
         return requested, None                        # the resolver call failed → honest unserved path (nothing cached)
     try:
@@ -862,13 +863,13 @@ def discover_efforts(vendor, model, refresh=False):
     Nearly free: a rejected parameter is refused before inference, so it bills nothing, and an accepted one
     is a two-token prompt. The result is cached in the caps registry with its provenance, so the probe runs
     once per (vendor, model) rather than once per call."""
-    from . import adapters
+    from . import execution_accessors
     # THE STRUCTURAL FACT COMES FIRST, BEFORE ANY CACHE. A provider whose request shape never carries this
     # parameter cannot support it, and that is knowable without probing — so it must also OVERRIDE a stale
     # cached answer. The first version checked the cache first and kept serving anthropic's incorrect
     # "supports everything", recorded by the buggy probe, long after the probe was fixed. A wrong cached
     # capability that outlives its fix is worse than no cache.
-    kind = (adapters.PROVIDERS.get(vendor) or {}).get("kind")
+    kind = (execution_accessors.PROVIDERS.get(vendor) or {}).get("kind")
     if kind != "openai":
         out = {"accepted": [], "rejected": [], "not_applicable": True, "method": "request-shape",
                "note": f"{vendor} uses the {kind} request shape, which has no reasoning_effort parameter",
@@ -886,7 +887,7 @@ def discover_efforts(vendor, model, refresh=False):
     # below passes metered_only=True (skip the lane, hit the metered API) INSTEAD of mutating the process-global
     # SPENDGUARD_ADVISOR_EXECUTOR env var: that global forced the API path for the WHOLE process, and two concurrent
     # probes raced on it (one's finally-restore clobbering the other's set). metered_only scopes it to this leaf call.
-    adapters._heal_guard.on = True     # while probing, the rung must DROP a rejected effort (so we SEE the rejection),
+    execution_accessors.resolve__heal_guard().on = True  # while probing, the rung must DROP a rejected effort (so we SEE the rejection),
     #                                    never heal it — else the probe self-heals and discovery learns the opposite.
     ok, rejected, unknown = [], [], []
     try:
@@ -898,7 +899,7 @@ def discover_efforts(vendor, model, refresh=False):
         # intent on exit, so the pinned-matrix / metered_only run around it keeps its own tag.
         with _call_corpus_accessors.resolve_calls_context(intent="spendguard:effort-probe"):
             for eff in CANDIDATE_EFFORTS:
-                r = adapters.call(model if ":" in model else f"{vendor}:{model}", "Reply: OK",
+                r = execution_accessors.resolve_call(model if ":" in model else f"{vendor}:{model}", "Reply: OK",
                                   max_tokens=16, reasoning=eff, timeout_s=45, no_substitution=True,
                                   metered_only=True)   # SKIP THE LANE → probe the metered API's real capability (see above)
                 err = str(r.get("error") or "")
@@ -920,7 +921,7 @@ def discover_efforts(vendor, model, refresh=False):
                     # Everything else is genuinely unknown, and unknown is the honest answer.
                     unknown.append(eff)                # transport/other/unattributable: evidence of nothing
     finally:
-        adapters._heal_guard.on = False
+        execution_accessors.resolve__heal_guard().on = False
     if not ok and not rejected:
         return {}                                  # discovery itself failed: we know nothing, and say so
     out = {"accepted": ok, "rejected": rejected, "unknown": unknown, "method": "probe",
@@ -1068,9 +1069,9 @@ def time_budget(vendor, model, sig=None, default_s=None, in_chars=None):
     # lane is $0, so the extra wait costs latency, not money, and a hung lane is still bounded by its TIMEOUT_S.
     lane_floor = 0.0
     try:
-        from . import adapters
-        if adapters._lane_for(vendor):
-            lane_floor = float(adapters.LANE_MIN_TIMEOUT_S)
+        from . import execution_accessors
+        if execution_accessors.resolve__lane_for(vendor):
+            lane_floor = float(execution_accessors.LANE_MIN_TIMEOUT_S)
     except Exception:
         pass
     for scope, kwargs in (("class", {"sig": sig, "model": model}), ("model", {"model": model})):

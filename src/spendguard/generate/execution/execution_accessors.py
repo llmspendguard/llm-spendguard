@@ -215,6 +215,45 @@ def resolve__lane_for(*args, **kwargs):
         raise RuntimeError("execution_accessors._lane_for resolver not wired")
     return resolver(*args, **kwargs)
 
+__output_budget_resolver = None
+
+def set_output_budget_resolver(resolver):
+    global __output_budget_resolver
+    with _execution_accessor_lock:
+        __output_budget_resolver = resolver
+
+def resolve_output_budget(*args, **kwargs):
+    resolver = __output_budget_resolver
+    if resolver is None:
+        raise RuntimeError("execution_accessors.output_budget resolver not wired")
+    return resolver(*args, **kwargs)
+
+__heal_guard_resolver = None
+
+def set__heal_guard_resolver(resolver):
+    global __heal_guard_resolver
+    with _execution_accessor_lock:
+        __heal_guard_resolver = resolver
+
+def resolve__heal_guard():
+    resolver = __heal_guard_resolver
+    if resolver is None:
+        raise RuntimeError("execution_accessors._heal_guard resolver not wired")
+    return resolver()
+
+__resolve_guard_resolver = None
+
+def set__resolve_guard_resolver(resolver):
+    global __resolve_guard_resolver
+    with _execution_accessor_lock:
+        __resolve_guard_resolver = resolver
+
+def resolve__resolve_guard():
+    resolver = __resolve_guard_resolver
+    if resolver is None:
+        raise RuntimeError("execution_accessors._resolve_guard resolver not wired")
+    return resolver()
+
 __lane_model_cooling_resolver = None
 
 def set__lane_model_cooling_resolver(resolver):
@@ -708,4 +747,3 @@ def resolve_served_check(*args, **kwargs):
     if resolver is None:
         raise RuntimeError("execution_accessors.served_check resolver not wired")
     return resolver(*args, **kwargs)
-
