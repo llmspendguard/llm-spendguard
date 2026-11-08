@@ -22,6 +22,7 @@ from spendguard import lane_queue as q                                          
 q.RETRY_BACKOFF_S_DEFAULT = 0.0   # this end-to-end test drives the retry→drain→purge FLOW via immediate re-lease; the
 #                                   F4 retry backoff (defer before re-lease) is guarded in test_queue_review_fixes.py
 from spendguard import lane_balance                                                    # noqa: E402
+from spendguard.manage.routing import routing_accessors                                 # noqa: E402
 
 
 def ck(name, cond):
@@ -110,10 +111,10 @@ fails += ck("reclaimed task then completes (nothing stuck leased from it)", q.qu
 
 print("\n-- drain: leases → bulk_delegate → settle, empties the queue; spreads across lanes; a bad task fails --")
 _orig_bulk = lane_balance.bulk_delegate
-lane_balance.bulk_delegate = lambda tasks, intent, system=None, reasoning=None, **kw: [
+routing_accessors.set_bulk_delegate_resolver(lambda tasks, intent, system=None, reasoning=None, **kw: [
     {"text": None, "lane": None, "billed": False, "error": "boom"} if t == "BOOM"
     else {"text": f"ans::{t}", "lane": ["gemini", "codex"][k % 2], "use_name": "x", "billed": False, "error": None}
-    for k, t in enumerate(tasks)]
+    for k, t in enumerate(tasks)])
 try:
     for n in range(6):
         q.enqueue("drainI", f"d{n}", priority=2)
@@ -125,11 +126,11 @@ try:
     fails += ck("queue fully drained (nothing pending or leased) and the BOOM task is failed",
                 dd.get("pending", 0) == 0 and dd.get("leased", 0) == 0 and dd.get("failed", 0) >= 1)
 finally:
-    lane_balance.bulk_delegate = _orig_bulk
+    routing_accessors.set_bulk_delegate_resolver(_orig_bulk)
 
 print("\n-- CRASH-RESUME: tasks leased by a dead worker are picked up by a fresh drain --")
-lane_balance.bulk_delegate = lambda tasks, intent, system=None, reasoning=None, **kw: [
-    {"text": f"r::{t}", "lane": "gemini", "billed": False, "error": None} for t in tasks]
+routing_accessors.set_bulk_delegate_resolver(lambda tasks, intent, system=None, reasoning=None, **kw: [
+    {"text": f"r::{t}", "lane": "gemini", "billed": False, "error": None} for t in tasks])
 try:
     q.enqueue("resumeI", "surv-1")
     q.enqueue("resumeI", "surv-2")
@@ -139,7 +140,7 @@ try:
     fails += ck("fresh drain recovered the crashed work (both done, none stuck)",
                 s2["done"] == 2 and q.queue_depth().get("leased") == 0)
 finally:
-    lane_balance.bulk_delegate = _orig_bulk
+    routing_accessors.set_bulk_delegate_resolver(_orig_bulk)
 
 print("\n-- local-load ceiling: _overloaded honours the threshold; drain pauses when over it --")
 fails += ck("ceiling off (0) → never overloaded", q._overloaded(0) is False)
@@ -150,13 +151,13 @@ try:
     fails += ck("load 9.9 under ceiling 100 → not overloaded", q._overloaded(100.0) is False)
     q.enqueue("loadI", "should-not-run-while-overloaded")
     calls = {"n": 0}
-    lane_balance.bulk_delegate = lambda *a, **k: (calls.__setitem__("n", calls["n"] + 1), [])[1]
+    routing_accessors.set_bulk_delegate_resolver(lambda *a, **k: (calls.__setitem__("n", calls["n"] + 1), [])[1])
     s3 = q.drain(batch=5, load_ceiling=1.0, idle_sleep=0.0, max_iters=1)    # overloaded → should NOT lease/run
     fails += ck("drain ran no work while the machine was over the load ceiling",
                 calls["n"] == 0 and q.queue_depth().get("pending") == 1)
 finally:
     os.getloadavg = _orig_load
-    lane_balance.bulk_delegate = _orig_bulk
+    routing_accessors.set_bulk_delegate_resolver(_orig_bulk)
 
 print("\n-- delegate(enqueue=True): parks at INTERACTIVE priority, does NOT run (Phase 3 wiring) --")
 before = q.queue_depth().get("pending", 0)

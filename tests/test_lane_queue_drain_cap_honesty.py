@@ -11,7 +11,8 @@ os.environ.setdefault("SPENDGUARD_TEST_ISOLATED", "1")
 os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from spendguard import lane_balance, lane_queue
+from spendguard import lane_queue
+from spendguard.manage.routing import routing_accessors
 
 CAP_TEST_BATCH_SIZE = 1
 CAP_TEST_MAX_ITERS = 1
@@ -31,7 +32,7 @@ def test_drain_cap_reports_actual_leased_rows():
     row_id = lane_queue.enqueue(CAP_TEST_INTENT, "leave this work leased")
     assert row_id is not None
     with patch.object(lane_queue, "_qcfg", side_effect=lambda name, default: 0), \
-            patch.object(lane_balance, "bulk_delegate", return_value=[]):
+            patch.object(routing_accessors, "resolve_bulk_delegate", return_value=[]):
         summary = _run_honesty_guard_drain(CAP_TEST_MAX_ITERS)
     assert summary.get("capped") is True, summary
     assert summary["remaining_at_cap"]["leased"] > 0, summary
@@ -43,7 +44,7 @@ def test_drain_cap_reports_actual_leased_rows():
 def test_drain_cap_clean_completion_and_uncapped_idle():
     assert lane_queue.enqueue(CAP_TEST_INTENT, "finish this work") is not None
     with patch.object(lane_queue, "_qcfg", side_effect=lambda name, default: 0), \
-            patch.object(lane_balance, "bulk_delegate", return_value=[{"text": "done", "billed": False}]):
+            patch.object(routing_accessors, "resolve_bulk_delegate", return_value=[{"text": "done", "billed": False}]):
         summary = _run_honesty_guard_drain(CAP_TEST_MAX_ITERS)
         uncapped = _run_honesty_guard_drain(None)
     assert summary["done"] == CAP_TEST_BATCH_SIZE, summary

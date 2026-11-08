@@ -27,6 +27,7 @@ Queue write guard, deliberate-stop, lock, and programming errors propagate rathe
 sqlite operational failures degrade loudly where the caller can retry. Knobs are named constants + advisor.* config.
 """
 from spendguard.generate.execution import execution_accessors as _execution_accessors
+from spendguard.manage.routing import routing_accessors
 import datetime
 import contextlib
 import json
@@ -1050,7 +1051,6 @@ def submit(intent, tasks, *, priority=PRIORITY_INTERACTIVE, sla_class="realtime"
                 "durable": durable, "will_process": bool(ids), "status_handles": ids,
                 "status_query": "spendguard dispatch --id <id>"}
     # SYNC FAST-PATH — own the rows from the start (no daemon race), run inline via the bulletproof engine, settle.
-    from ... import lane_balance
     from spendguard.store.spend_search.ledger_read_accessors import resolve_ledger_request_scope as ledger_request_scope
     from ...ledger_writer import require_ledger_writer_request_live
     import time
@@ -1061,8 +1061,8 @@ def submit(intent, tasks, *, priority=PRIORITY_INTERACTIVE, sla_class="realtime"
         require_ledger_writer_request_live()
         _run_dl = submit_admission_scope.deadline_at - time.monotonic()
     bulk_kwargs.pop("record_route", None)               # these rows ARE the queue — force record_route=False so each
-    results = lane_balance.bulk_delegate(tasks, intent, system=system, reasoning=reasoning,  # per-task _execution_accessors.resolve_call
-                                         deadline_s=_run_dl, record_route=False, **bulk_kwargs)  # doesn't open a 2nd row
+    results = routing_accessors.resolve_bulk_delegate(tasks, intent, system=system, reasoning=reasoning,  # per-task _execution_accessors.resolve_call
+                                                      deadline_s=_run_dl, record_route=False, **bulk_kwargs)  # doesn't open a 2nd row
     for rid, res in zip(ids, results):                 # settle every row we DID durably record
         settle(rid, res if isinstance(res, dict) else {"error": "no result"})
     _durable = len(ids) == len(tasks)
@@ -1632,7 +1632,7 @@ def _drain_locked(worker, batch, lease_s, idle_rounds, idle_sleep, load_ceiling,
     """The drain loop, run by drain() while it holds the single-instance lock. Separated so drain() can release that
     lock in a `finally` no matter how this exits — a normal return OR a propagated deliberate-stop raise (without this,
     an exception leaked the lock FD and, in a long-lived daemon, permanently wedged the queue — F6)."""
-    from ... import dispatch, lane_balance
+    from ... import dispatch
     batch = int(batch or _qcfg("queue_batch", 0) or dispatch._limit("global_concurrency", 24))
     lease_s = float(lease_s if lease_s is not None else _qcfg("queue_lease_s", LEASE_S_DEFAULT))
     idle_rounds = int(idle_rounds if idle_rounds is not None else _qcfg("queue_idle_rounds", IDLE_ROUNDS_DEFAULT))
@@ -1779,8 +1779,8 @@ def _drain_locked(worker, batch, lease_s, idle_rounds, idle_sleep, load_ceiling,
         for r in rows:
             groups.setdefault((r.get("system"), r.get("reasoning"), r.get("sla_class")), []).append(r)
         for (sys_, rea, sla_), grp in groups.items():
-            results = lane_balance.bulk_delegate([g["task"] for g in grp], intent, system=sys_, reasoning=rea,
-                                                 deadline_s=lease_s, sla_class=sla_, record_route=False)  # these ARE
+            results = routing_accessors.resolve_bulk_delegate([g["task"] for g in grp], intent, system=sys_, reasoning=rea,
+                                                              deadline_s=lease_s, sla_class=sla_, record_route=False)  # these ARE
             #                                       the queue rows — don't let each per-task _execution_accessors.resolve_call open a 2nd row
             for g, res in zip(grp, results):
                 res = res if isinstance(res, dict) else {"error": "no result"}

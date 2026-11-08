@@ -22,6 +22,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(
 
 from _script_checks import record_script_check
 from spendguard import lane_queue, lane_balance, config   # noqa: E402
+from spendguard.manage.routing import routing_accessors   # noqa: E402
 
 fails = []
 
@@ -37,7 +38,7 @@ def _fake_bulk(tasks, intent, **kw):
 
 
 _saved = lane_balance.bulk_delegate
-lane_balance.bulk_delegate = _fake_bulk
+routing_accessors.set_bulk_delegate_resolver(_fake_bulk)
 
 try:
     # ── (a)+(b): wait=True sync fast-path — runs inline, returns results in order, durably recorded + settled done ──
@@ -68,7 +69,7 @@ try:
     d2 = lane_queue.queue_depth()
     record_script_check(fails, "wait=False rows are 'pending' (the daemon drains them on spare capacity)", d2.get("pending", 0) == 2)
 finally:
-    lane_balance.bulk_delegate = _saved
+    routing_accessors.set_bulk_delegate_resolver(_saved)
 
 print(f"\n{'[FAIL]' if fails else 'OK'} test_lane_queue_submit: {len(fails)} failure(s)")
 sys.exit(1 if fails else 0)

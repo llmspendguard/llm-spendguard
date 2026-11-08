@@ -1788,3 +1788,4 @@ from . import routing_accessors
 
 routing_accessors.set__lane_fee_resolver(_lane_fee)
 routing_accessors.set_lane_utilization_resolver(lane_utilization)
+routing_accessors.set_bulk_delegate_resolver(bulk_delegate)
