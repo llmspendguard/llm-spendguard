@@ -103,6 +103,7 @@ def _backfill_call_observation_nano_columns(connection, missing_columns):
 _lock = new_fork_reset_ledger_state(globals(), "_lock", threading.RLock)
 _local = _call_corpus_accessors._local
 _PKG = os.path.dirname(os.path.abspath(__file__))
+_CALLER_INTERNAL_MODULE_NAMESPACE = __package__.partition(".")[0]
 _ORIGIN_SESSION = uuid.uuid4().hex[:12]
 _CALL_CLASSES = frozenset(("workload", "gate_internal", "probe"))
 
@@ -402,9 +403,12 @@ def caller():
         while fr is not None:
             fn = fr.f_code.co_filename
             base = os.path.basename(fn)
+            frame_module_name = fr.f_globals.get("__name__", "")
+            internal_module = (frame_module_name == _CALLER_INTERNAL_MODULE_NAMESPACE or
+                               frame_module_name.startswith(_CALLER_INTERNAL_MODULE_NAMESPACE + "."))
             trampoline = (base in ("thread.py", "threading.py") or
                           "concurrent/futures" in fn.replace("\\", "/"))
-            if (not trampoline and not fn.startswith(_PKG) and "site-packages" not in fn
+            if (not internal_module and not trampoline and not fn.startswith(_PKG) and "site-packages" not in fn
                     and fn not in ("<string>", "<stdin>")):
                 return f"{os.path.basename(fn)}:{fr.f_code.co_name}:{fr.f_lineno}"
             fr = fr.f_back
