@@ -18,6 +18,8 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
 import spendguard
 from spendguard import _version, measurement
 
+expected_version_attr = f"{_version.__name__}.__version__"
+
 _fails = []
 def check(label, cond):
     if not cond:
@@ -62,14 +64,14 @@ if tomllib is not None:
           "version" in proj.get("dynamic", []) and "version" not in proj)
     attr = (pp.get("tool", {}).get("setuptools", {}).get("dynamic", {}).get("version", {}) or {}).get("attr")
     check(f"pyproject derives the version from the SSOT attr (got {attr!r})",
-          attr == "spendguard._version.__version__")
+          attr == expected_version_attr)
 else:                                            # no TOML parser AT ALL — a CORRECTED mechanical check: a static literal
                                                  # is `version = "<str>"` (opening quote), which does NOT match the
                                                  # dynamic `version = {attr=...}` brace form the old check tripped on.
     check("pyproject declares dynamic version (no static literal)",
           'dynamic = ["version"]' in raw and '\nversion = "' not in raw)
     check("pyproject derives the version from the SSOT attr",
-          'attr = "spendguard._version.__version__"' in raw)
+          f'attr = "{expected_version_attr}"' in raw)
 
 print(f"\n{'[FAIL]' if _fails else 'OK'} test_version_dunder: {len(_fails)} failure(s)")
 sys.exit(1 if _fails else 0)
