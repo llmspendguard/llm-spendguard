@@ -14,19 +14,25 @@ PROJECTION_GUARD_READ_ROOTS = {
     "calls": {"intent_spend"},
     "gate": set(),
     "receipt": set(),
+    "receipt_emit": set(),
 }
 PROJECTION_GUARD_SOURCE_RELATIVE_PATHS = {
     "budget": Path("manage/admission/budget.py"),
     "calls": Path("store/call_corpus/calls.py"),
     "gate": Path("manage/admission/gate.py"),
     "receipt": Path("analyze/spend_reporting/receipt.py"),
+    "receipt_emit": Path("analyze/spend_reporting/receipt_emit.py"),
 }
 PROJECTION_GUARD_CONSUMERS = {
     "budget": {"exceeded", "meta_exceeded", "external_exceeded"},
     "gate": {"_budget_check", "_meta_gate", "gate_external", "_intent_door_gate",
              "_rt_precheck_usd", "_decide_and_account"},
     "calls": {"_flow_start_usd"},
-    "receipt": {"emit_flow"},
+    # The flow-receipt consumer emit_flow moved from the receipt facade into the
+    # receipt_emit leaf (spend_reporting split); the facade now holds no
+    # budget-projection consumer.
+    "receipt": set(),
+    "receipt_emit": {"emit_flow"},
 }
 PROJECTION_GUARD_FINITE_ROOTS = {"exceeded", "meta_exceeded", "external_exceeded"}
 PROJECTION_GUARD_SNAPSHOT_DECORATOR = "budget_projection_snapshot"

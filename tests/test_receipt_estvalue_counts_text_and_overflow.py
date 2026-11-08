@@ -9,6 +9,7 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
     os.execv(sys.executable, [sys.executable] + sys.argv)
 
 from spendguard import budget, config, receipt  # noqa: E402
+from spendguard.analyze.spend_reporting import receipt_render  # noqa: E402
 from spendguard.sources import (  # noqa: E402
     CLAUDE_CODE_SOURCE, OVERFLOW_SOURCE_SUFFIX, UNATTRIBUTED_EST_SOURCE,
 )
@@ -83,7 +84,10 @@ def run_receipt_estvalue_checks(failures):
             "SELECT SUM(CAST(realtime_usd AS REAL)) FROM spend_events").fetchone()[0]
     check_receipt_estvalue_fixture(
         "invalid est text preserves the real-dollar column", preserved_real == 3.0, failures)
-    receipt._routed_lane_value = lambda: {CLAUDE_CODE_SOURCE: 0.5}
+    # _two_axis_table moved to receipt_render; it consumes _routed_lane_value by bare name
+    # in receipt_render's globals, so the stale-cache override must patch it THERE (a facade
+    # receipt._routed_lane_value assignment would be a silent no-op for the leaf consumer).
+    receipt_render._routed_lane_value = lambda: {CLAUDE_CODE_SOURCE: 0.5}
     rendered_estvalue_table = "\n".join(receipt._two_axis_table({"est_value": receipt._est_tally()}))
     check_receipt_estvalue_fixture(
         "displayed lane uses full ledger instead of routed calls subset",

@@ -13,6 +13,7 @@ os.environ["SPENDGUARD_TEST_ISOLATED"] = "1"
 os.environ["SPENDGUARD_CALLS"] = "1"
 
 from spendguard import adapters, budget, calls, focus_export, gate, lane_value, litellm_adapter, output_contract, pricing, receipt
+from spendguard.analyze.spend_reporting import receipt_emit
 # The realtime recorder (_record_rt/_rt_record) + its aggregate state (_rt_agg) moved to Spend Capture;
 # the money/emit sinks it calls (_budget_record/_emit) stayed in gate and are reached through the seam.
 from spendguard.generate.spend_capture import realtime_spend_recorder as _rtrec
@@ -82,9 +83,9 @@ def test_authoritative_cost_unknown_usage_reaches_every_receipt_axis():
     assert "out unknown" in line, line
     assert "out 0" not in line, line
     assert f"actual {receipt._money(cost)}" in line, line
-    with patch.object(receipt, "level", return_value="flow"), patch.object(
-        receipt, "tally", return_value={}
-    ), patch.object(receipt, "_out") as emitted:
+    with patch.object(receipt_emit, "level", return_value="flow"), patch.object(
+        receipt_emit, "tally", return_value={}
+    ), patch.object(receipt_emit, "_out") as emitted:
         receipt.emit_flow(AXES_INTENT, None, (start, None))
     assert "out unknown" in emitted.call_args.args[0]
 

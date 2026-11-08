@@ -9,6 +9,7 @@ from _pytest_fixture_bridge import align_test_startup_home, run_pytest_style
 align_test_startup_home(prefix=__name__)
 
 from spendguard import ledger, ledger_writer, ledger_sync, receipt
+from spendguard.analyze.spend_reporting import receipt_emit
 from spendguard.ledger_read import ledger_request_scope
 
 PENDING_TOTALS_WATCHDOG_S = 10
@@ -54,9 +55,9 @@ def test_pending_coverage_and_tally_never_persist_after_rollback(tmp_path):
             patch.object(ledger_sync, "_leak_cache_path", return_value=coverage_cache), \
             patch.object(ledger_sync, "_compute", return_value={}), \
             patch.object(ledger_sync, "_render_leak_line", return_value=PENDING_REPORT_MARKER), \
-            patch.object(receipt, "_statusline_cache_path", return_value=tally_cache), \
-            patch.object(receipt, "tally", return_value={}), \
-            patch.object(receipt, "render_line", return_value=""), \
+            patch.object(receipt_emit, "_statusline_cache_path", return_value=tally_cache), \
+            patch.object(receipt_emit, "tally", return_value={}), \
+            patch.object(receipt_emit, "render_line", return_value=""), \
             patch("spendguard.compaction.measured_explicit_compaction_ratio", return_value=(None, 0)), \
             patch("spendguard.claudecode.measured_compaction_ratio", return_value=(PENDING_TOTALS_AMOUNT, 1)), \
             patch.object(receipt.config, "update_json") as publish_report, \
