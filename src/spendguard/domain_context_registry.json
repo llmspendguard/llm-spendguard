@@ -627,6 +627,7 @@
         "analyze.spend_reporting.close",
         "analyze.spend_reporting.receipt",
         "analyze.spend_reporting.receipt_tally",
+        "analyze.spend_reporting.receipt_render",
         "analyze.spend_reporting.spend_reporting_accessors",
         "analyze.spend_reporting.spend_reporting_resolver_bootstrap"
       ],
