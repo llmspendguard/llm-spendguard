@@ -12,6 +12,7 @@ BASIS_ESTIMATE = "estimate"
 BASIS_BILLED = "billed"
 BASIS_ASSUMED = "assumed"
 BASIS_RECONSTRUCTED = "reconstructed"
+BASIS_UNPRICED = "unpriced"  # the call happened and the TOKENS are real; the $ is unknown, NOT zero
 RUNAWAY_MIN_SAMPLES = 20
 
 RESIDENCY_NUDGE_ENABLED_DEFAULT = True

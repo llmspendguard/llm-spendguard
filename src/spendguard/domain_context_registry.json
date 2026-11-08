@@ -431,6 +431,7 @@
         "manage.admission.gate",
         "manage.admission.budget",
         "manage.admission.budget_accessors",
+        "manage.admission.budget_unpriced",
         "manage.admission.budget_unpriced_sink",
         "manage.admission.spend_refusal_error",
         "manage.admission.gate_event_sink"
