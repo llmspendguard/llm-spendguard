@@ -43,6 +43,7 @@
         "store.configuration.ledger_connection",
         "store.configuration.provider_keys",
         "store.configuration.cli_resolution",
+        "store.configuration.lane_subprocess_env",
         "store.configuration.config_accessors",
         "store.configuration.ledger_connection_accessors",
         "store.configuration.provider_key_env_registry"
