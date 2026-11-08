@@ -8,6 +8,7 @@ BUDGET_AUXILIARY_POOL_KEY = "budget_auxiliary_reads"
 UNATTRIBUTED_PROJECT = "unattributed"
 _RECONCILED = "(provider-batch)"
 _TRUE_DOWN_CONV = "(true-down)"
+QUARANTINE_CONV = "(impossible-estimate)"  # impossible estimates stay auditable but out of spend totals
 BASIS_ESTIMATE = "estimate"
 BASIS_BILLED = "billed"
 BASIS_ASSUMED = "assumed"

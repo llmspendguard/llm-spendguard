@@ -798,7 +798,7 @@ def ingest_remote(label, project, rows):
     return n, total
 
 
-from .admission_accessors import (_RECONCILED, _TRUE_DOWN_CONV, BASIS_ASSUMED,
+from .admission_accessors import (_RECONCILED, _TRUE_DOWN_CONV, QUARANTINE_CONV, BASIS_ASSUMED,
                                   BASIS_BILLED, BASIS_ESTIMATE, BASIS_RECONSTRUCTED,
                                   BASIS_UNPRICED)
 # Realtime reconcile marker models (ledger_sync's _RT_MARKER/_RT_ORACLE_MARKER/_RT_RECON_MARKER — a drift guard in
@@ -811,10 +811,6 @@ _MARKER_MODELS = (_RECONCILED,) + _RT_MARKERS
 # True-down correction rows carry the REAL model (so by_dims NETS them against the estimate rows per
 # (day,provider,model,kind,project) — the server ingest clamps negative cost, so a standalone negative marker-model
 # row would be dropped there) and mark themselves via conv_id instead.
-# An estimate we KNOW is impossible (input > the model's context window — see gate._implausible_estimate).
-# It is recorded, never deleted: a forensic record of what the estimator claimed. But it is quarantined out
-# of every spend total, because a number that cannot describe a real request must not read as money spent.
-QUARANTINE_CONV = "(impossible-estimate)"
 # UNPRICED — a call we could not price. It is the MIRROR of quarantine: quarantine holds money that cannot be
 # real, this holds real usage whose price is unknown. Both must stay out of the total, and both must be SHOWN,
 # because $0 and "we don't know" are different claims and only one of them is true here.
@@ -1017,74 +1013,7 @@ def suspect_batches(since):
     return sorted(out, key=lambda x: -x["cost"])
 
 
-@serialize_ledger_function
-def quarantine_charge(ts=None, reason="", row=None):
-    """Void ONE spend_events row as an impossible estimate — status='void', so it drops out of every total
-    while staying fully auditable (the amount is untouched; the change is logged through the hash chain by
-    update()).
-
-    Target by `row` (the spend_events id — exact) or by `ts` (ts_utc). Up to six rows can share one second, so
-    a ts matching more than one RAISES rather than voiding all of them: silently voiding five innocent rows to
-    quarantine one bad one would be a worse version of the bug this repairs. Returns the number voided."""
-    from ...ledger import to_dec, USD_COLS
-    led = _ledger()
-    with _lock:
-        if row is not None:
-            hit = led.get(row)
-            ids = [row] if hit and hit.get("status") != "void" else []
-        else:
-            hits = [r for r in led.query(where={"ts_utc": ts}) if r.get("status") != "void"]
-            if len(hits) > 1:
-                raise ValueError(
-                    "%d spend_events rows share the timestamp %s (%s) — refusing to void all of them. Re-run "
-                    "with --row <id> for the one you mean; `spendguard quarantine --list` shows the ids."
-                    % (len(hits), ts, ", ".join("id %s: %s $%s" % (
-                        r["id"], r["model"], sum((to_dec(r.get(c)) for c in USD_COLS), to_dec(0))) for r in hits)))
-            ids = [hits[0]["id"]] if hits else []
-        n = 0
-        for eid in ids:
-            # update() sets status AND writes the audit row through the hash chain, under the ledger's own
-            # connection — the mutation and its tamper record are one operation. It refuses a locked period.
-            led.update(eid, {"status": "void"}, actor="quarantine_charge",
-                       reason=reason or "impossible estimate", pass_="quarantine")
-            n += 1
-    return n
-
-
-@serialize_ledger_function
-def unquarantine_charge(row=None, ts=None, reason=""):
-    """Reverse quarantine_charge for ONE spend_events row: status 'void'→'posted' so it counts again, and clear
-    the '(impossible-estimate)' conv_id label it was tagged with. The change is logged through the hash chain by
-    update() (so the void→recovered history is auditable), and a locked period is refused.
-
-    Use ONLY for a row that was wrongly voided. The sound test is `basis == billed` with a real cost: a cost that
-    came from the provider's OWN usage means the provider ACCEPTED the request, so it cannot have been an
-    impossible estimate — the batched-embedding bug quarantined exactly these (input > window computed as sum/1,
-    when the window bounds each item). A cost_basis='estimate' void is a pre-submission projection the provider
-    never accepted; those stay quarantined. Target by `row` (exact id) or `ts` (a ts matching >1 RAISES, as in
-    quarantine_charge). Returns the number recovered."""
-    led = _ledger()
-    with _lock:
-        if row is not None:
-            hit = led.get(row)
-            ids = [row] if hit and hit.get("status") == "void" else []
-        else:
-            hits = [r for r in led.query(where={"ts_utc": ts}) if r.get("status") == "void"]
-            if len(hits) > 1:
-                raise ValueError(
-                    "%d spend_events rows share the timestamp %s — refusing to recover all of them. Re-run with "
-                    "--row <id>; `spendguard quarantine --list` shows the ids." % (len(hits), ts))
-            ids = [hits[0]["id"]] if hits else []
-        n = 0
-        for eid in ids:
-            cur = led.get(eid) or {}
-            changes = {"status": "posted"}
-            if cur.get("conv_id") == QUARANTINE_CONV:      # drop the now-false label; keep it if it was something else
-                changes["conv_id"] = ""
-            led.update(eid, changes, actor="unquarantine_charge",
-                       reason=reason or "recovered: provider-billed, wrongly quarantined", pass_="unquarantine")
-            n += 1
-    return n
+from .budget_quarantine import quarantine_charge, unquarantine_charge  # noqa: F401  (compat re-exports: cli + recover callers resolve budget.quarantine_charge / budget.unquarantine_charge)
 
 
 @_consumer_aggregate_snapshot
