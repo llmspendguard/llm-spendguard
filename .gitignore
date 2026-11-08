@@ -72,3 +72,13 @@ scripts/reliability/*.json
 # information that must never reach a PUBLIC repo. Keep the sweep local; the repo-scoped rows belong
 # in a repo-scoped register instead. See docs/DEFERRAL_REGISTER.md.
 /DEFERRAL_AUDIT_*.md
+
+# Local-only working artifacts — regenerable or quarantined, never history:
+#   .tiktoken-cache/ = downloaded tiktoken BPE encoder blobs (token counting); re-downloaded on demand.
+#   .quarantine_*/   = dated local quarantines of superseded trees (e.g. the 0.16.30 flat-layout migration's
+#                      old src/). Kept on disk as a safety copy per the quarantine-not-delete rule; must NEVER
+#                      be committed (it duplicates src under a second path and would shadow imports).
+#   scratchpad_corpus/ = scratch inputs/outputs from the domain-taxonomy discovery work (evidence, prompts, maps).
+.tiktoken-cache/
+.quarantine_*/
+scratchpad_corpus/
