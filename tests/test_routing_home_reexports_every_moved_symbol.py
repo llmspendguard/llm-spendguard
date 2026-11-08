@@ -2,6 +2,7 @@
 
 import ast
 import importlib
+import inspect
 from pathlib import Path
 
 
@@ -89,7 +90,11 @@ for home_name, moved_bindings in symbols_by_home.items():
     assert not [
         name for name, producer_name in sorted(moved_bindings.items())
         if name not in accessors._routing_resolvers
-        or (producer_name is not None and accessors._routing_resolvers[name] is not getattr(home, producer_name))
+        or (
+            producer_name is not None
+            and inspect.unwrap(accessors._routing_resolvers[name])
+            is not getattr(home, producer_name)
+        )
     ], f"routing resolver does not reach its registered producer in {home_name}"
 
     proof_symbol = next(iter(moved_symbols))

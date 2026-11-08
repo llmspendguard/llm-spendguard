@@ -1,11 +1,40 @@
 """Dependency-free resolver bridge for cross-domain token-operations consumers."""
 
+import functools
+import sys
 import threading
+import types
 
 _token_operations_accessor_lock = threading.Lock()
 _token_operations_resolvers = {}
 _token_operations_loader_lock = threading.Lock()
 _pending_loaders = []
+
+
+def _late_bind_token_operations_module_function(resolver):
+    """Preserve module-attribute dispatch while retaining safe callable fallback."""
+    resolver_module_name = getattr(resolver, "__module__", None)
+    resolver_function_name = getattr(resolver, "__name__", None)
+    resolver_qualified_name = getattr(resolver, "__qualname__", None)
+    is_top_level_function = (
+        isinstance(resolver, types.FunctionType)
+        and isinstance(resolver_module_name, str)
+        and isinstance(resolver_function_name, str)
+        and resolver_function_name != "<lambda>"
+        and resolver_qualified_name == resolver_function_name
+    )
+    if not is_top_level_function:
+        return resolver
+
+    @functools.wraps(resolver)
+    def call_current_token_operations_module_function(*args, **kwargs):
+        resolver_module = sys.modules.get(resolver_module_name)
+        current_resolver = getattr(resolver_module, resolver_function_name, None)
+        if not callable(current_resolver):
+            current_resolver = resolver
+        return current_resolver(*args, **kwargs)
+
+    return call_current_token_operations_module_function
 
 
 def register_lazy_loader(loader):
@@ -29,7 +58,9 @@ def __getattr__(attribute_name):
 
         def set_token_operations_symbol_resolver(resolver):
             with _token_operations_accessor_lock:
-                _token_operations_resolvers[symbol_name] = resolver
+                _token_operations_resolvers[symbol_name] = (
+                    _late_bind_token_operations_module_function(resolver)
+                )
 
         set_token_operations_symbol_resolver.__name__ = attribute_name
         globals()[attribute_name] = set_token_operations_symbol_resolver

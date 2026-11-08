@@ -2,6 +2,7 @@
 
 import ast
 import importlib
+import inspect
 from pathlib import Path
 
 
@@ -95,8 +96,11 @@ for home_name, moved_bindings in symbols_by_home.items():
     assert not [
         name for name, producer_name in sorted(moved_bindings.items())
         if name not in accessors._token_operations_resolvers
-        or (producer_name is not None
-            and accessors._token_operations_resolvers[name] is not getattr(home, producer_name))
+        or (
+            producer_name is not None
+            and inspect.unwrap(accessors._token_operations_resolvers[name])
+            is not getattr(home, producer_name)
+        )
     ], f"token-operations resolver does not reach its registered producer in {home_name}"
 
     proof_symbol = next(iter(moved_symbols))
