@@ -67,7 +67,7 @@ spendguard = ["store/reference_data/model_catalog.json", "subscription_headroom_
 
 [tool.setuptools.dynamic]
 # The version comes from ONE place — the src literal — read at build time so wheel metadata matches the code.
-version = { attr = "spendguard._version.__version__" }
+version = { attr = "spendguard.platform._version.__version__" }
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

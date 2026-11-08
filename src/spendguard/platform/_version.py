@@ -2,7 +2,7 @@
 
 `spendguard.__init__` imports `__version__` from here, so the attribute is always the version of the CODE that is
 actually running. `pyproject.toml` reads this SAME attribute at build time via
-`[tool.setuptools.dynamic] version = {attr = "spendguard._version.__version__"}`. Bump the version by editing the
+`[tool.setuptools.dynamic] version = {attr = "spendguard.platform._version.__version__"}`. Bump the version by editing the
 one line below and nothing else.
 
 Do NOT reintroduce a literal in pyproject, nor a metadata read (`importlib.metadata.version`) in __init__: metadata
