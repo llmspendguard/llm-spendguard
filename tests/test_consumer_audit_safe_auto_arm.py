@@ -13,6 +13,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(
 from _script_checks import record_script_check  # noqa: E402
 
 from spendguard import config, consumer_audit  # noqa: E402
+from spendguard.store.configuration import config_store  # noqa: E402  — _cfg moved here; consumer_audit_settings reads it bare
 
 # The fixture's target interpreters must expose only their installed packages.
 # A suite-level source checkout on PYTHONPATH would make the deliberately empty
@@ -329,15 +330,15 @@ with tempfile.TemporaryDirectory(prefix="consumer-audit-proof-") as temporary:
             and pruned_clean["exit_code"] == 0,
         )
 
-        original_cfg = config._cfg
-        config._cfg = lambda: {
+        original_cfg = config_store._cfg
+        config_store._cfg = lambda: {
             "workspace_roots": (os.fspath(guard_root),),
             "workspace_extra_venv_dirs": (),
             "workspace_scan_depth": FIXTURE_REPOSITORY_DISCOVERY_DEPTH,
             "consumer_audit_exempt": (os.fspath(exempt_repository),),
         }
         resolved_guard_settings = config.consumer_audit_settings(checkout_path=guard_root)
-        config._cfg = original_cfg
+        config_store._cfg = original_cfg
         record_script_check(failure_count, 
             "consumer_audit_settings resolves the declared consumer_audit_exempt paths",
             resolved_guard_settings["consumer_audit_exempt"] == (exempt_repository.resolve(),),

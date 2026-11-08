@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from spendguard import codex_daemon, config, config_schema, dispatch
+from spendguard.store.configuration import config_store  # _cfg moved here; pool/concurrency settings read it bare
 
 # Track the one SSOT (config.CODEX_POOL_SIZE_DEFAULT), not a frozen literal: this guard checks that the
 # resolution path returns the DECLARED default when nothing overrides — it does not re-pin the number, so an
@@ -19,14 +20,14 @@ SCHEDULER_CODEX_LANE = "codex"
 
 class SchedulerPhaseTwoCeilingsGuard(unittest.TestCase):
     def test_scheduler_canonical_warm_default_and_overrides(self):
-        with patch.dict(os.environ, {}, clear=True), patch.object(config, "_cfg", return_value={}):
+        with patch.dict(os.environ, {}, clear=True), patch.object(config_store, "_cfg", return_value={}):
             self.assertEqual(config.codex_daemon_pool_settings()["size"], SCHEDULER_EXPECTED_WARM_DEFAULT)
             schema = next(setting for setting in config_schema.SETTINGS
                           if setting["key"] == "codex_daemon_pool_size")
             self.assertEqual(schema["default"], config.CODEX_POOL_SIZE_DEFAULT)
             with patch.dict(os.environ, {"SPENDGUARD_CODEX_DAEMON_POOL_SIZE": str(SCHEDULER_OVERRIDE_WARM_SIZE)}):
                 self.assertEqual(config.codex_daemon_pool_settings()["size"], SCHEDULER_OVERRIDE_WARM_SIZE)
-            with patch.object(config, "_cfg", return_value={"advisor": {
+            with patch.object(config_store, "_cfg", return_value={"advisor": {
                     "codex_daemon_pool_size": SCHEDULER_OVERRIDE_WARM_SIZE}}):
                 self.assertEqual(config.codex_daemon_pool_settings()["size"], SCHEDULER_OVERRIDE_WARM_SIZE)
 
@@ -37,7 +38,7 @@ class SchedulerPhaseTwoCeilingsGuard(unittest.TestCase):
             settings = {"advisor": {"codex_daemon_pool_size": warm_size}, "dispatch": {
                 "global_concurrency": global_cap, "lane_concurrency_codex": lane_cap}}
             with self.subTest(settings=settings), patch.dict(os.environ, {}, clear=True), \
-                    patch.object(config, "_cfg", return_value=settings), \
+                    patch.object(config_store, "_cfg", return_value=settings), \
                     patch.object(adapters, "_lane_for", return_value=(SCHEDULER_CODEX_LANE, None)):
                 self.assertEqual(dispatch.effective_codex_concurrency(), expected)
                 governor = type(dispatch._GOV)()

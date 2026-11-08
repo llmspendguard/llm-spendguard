@@ -25,7 +25,8 @@ os.environ.setdefault("SPENDGUARD_TEST_ISOLATED", "1")
 os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
-from spendguard import lane_bandit as lb, config  # noqa: E402
+from spendguard import lane_bandit as lb  # noqa: E402
+from spendguard.store.configuration import config_store  # noqa: E402  — the quality-weight read lands on _cfg_get here, not the facade
 
 
 from functools import partial
@@ -69,14 +70,14 @@ ck("cold prompt carries no quality/cost split", "%" not in pq, extra=pq)
 ck("cold prompt still asks which answer is better (pure quality)", "better" in pq.lower())
 
 # ── D. the 70/30 is CONFIG — dialling bandit_quality_weight changes the prompt's stated split (not a hand-picked const) ─
-_o_cfg = config._cfg_get
+_o_cfg = config_store._cfg_get
 try:
-    config._cfg_get = lambda s, k, d=None: ("0.6" if (s == "advisor" and k == "bandit_quality_weight") else
+    config_store._cfg_get = lambda s, k, d=None: ("0.6" if (s == "advisor" and k == "bandit_quality_weight") else
                                             ("0.4" if (s == "advisor" and k == "bandit_cost_weight") else _o_cfg(s, k, d)))
     p60 = lb._value_judge_prompt("t", "a", "b", cost_a=0.001, cost_b=0.007)
     ck("dialling bandit_quality_weight to 0.6 → the prompt states 60% / 40%", "60%" in p60 and "40%" in p60, extra=p60)
 finally:
-    config._cfg_get = _o_cfg
+    config_store._cfg_get = _o_cfg
 
 # ── E. _intent_realized_costs prices a higher-output (reasoning) arm above a lean one (the reasoning tax is SEEN) ──────
 import spendguard.calls as _calls  # noqa: E402

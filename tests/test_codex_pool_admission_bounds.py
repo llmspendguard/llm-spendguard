@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from spendguard import codex_daemon, codex_daemon_broker, config
+from spendguard.store.configuration import config_store  # _cfg moved here; admission settings read it bare
 from spendguard.dispatch import DispatchTimeout, _Bucket
 
 ADMISSION_TEST_WAIT_S = 5.0
@@ -22,12 +23,12 @@ ADMISSION_TEST_REPLY = {"text": "admitted", "error": None}
 
 class CodexAdmissionBoundsGuards(unittest.TestCase):
     def test_admission_config_defaults_overrides_and_validation(self):
-        with patch.dict(os.environ, {}, clear=True), patch.object(config, "_cfg", return_value={}):
+        with patch.dict(os.environ, {}, clear=True), patch.object(config_store, "_cfg", return_value={}):
             settings = config.codex_daemon_admission_settings()
             self.assertEqual(settings["max_waiters"], config.CODEX_DAEMON_MAX_WAITERS_DEFAULT)
             self.assertEqual(settings["request_read_timeout_s"], config.CODEX_DAEMON_REQUEST_READ_TIMEOUT_DEFAULT_S)
             self.assertIs(settings["recycle_on_timeout"], True)
-            with patch.object(config, "_cfg", return_value={"advisor": {
+            with patch.object(config_store, "_cfg", return_value={"advisor": {
                     "codex_daemon_max_waiters": ADMISSION_TEST_WAITER_COUNT,
                     "codex_daemon_request_read_timeout_s": ADMISSION_TEST_READ_S,
                     "codex_daemon_recycle_on_timeout": False}}):
@@ -206,7 +207,7 @@ class CodexAdmissionBoundsGuards(unittest.TestCase):
             workers.append(worker)
             return worker
 
-        with patch.dict(os.environ, {}, clear=True), patch.object(config, "_cfg", return_value={}):
+        with patch.dict(os.environ, {}, clear=True), patch.object(config_store, "_cfg", return_value={}):
             pool = codex_daemon._CodexDaemonPool(admission_watchdog_factory, size=ADMISSION_TEST_POOL_SIZE)
             try:
                 result = pool.run_warm(ADMISSION_TEST_PROMPT, timeout=ADMISSION_TEST_TURN_S)

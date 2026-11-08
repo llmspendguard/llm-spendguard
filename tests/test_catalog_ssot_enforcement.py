@@ -17,6 +17,7 @@ from _pytest_fixture_bridge import align_test_startup_home, run_pytest_style
 align_test_startup_home(prefix=__name__)
 
 from spendguard import config, distribution, model_catalog, pricing  # noqa: E402
+from spendguard.store.configuration import config_store  # noqa: E402  — CONFIG_JSON moved here; _cfg reads it bare
 
 CATALOG_GUARD_ROOT = Path(__file__).resolve().parents[1]
 CATALOG_OBSERVATIONS_PATH = Path(__file__).with_name("fixtures") / "catalog_observed_models.json"
@@ -198,7 +199,7 @@ def test_catalog_ssot_seeded_observations_and_price_mutation(tmp_path, monkeypat
     lane_models = observations["lane_models"]
     isolated_config = tmp_path / config.CONFIG_JSON.name
     isolated_config.write_text(json.dumps({GUARD_ADVISOR_SECTION: {GUARD_LANE_MODELS_KEY: lane_models}}))
-    monkeypatch.setattr(config, "CONFIG_JSON", isolated_config)
+    monkeypatch.setattr(config_store, "CONFIG_JSON", isolated_config)
     config.cfg_invalidate()
     ledger = tmp_path / GUARD_LEDGER_FILENAME
     with sqlite3.connect(ledger) as connection:

@@ -30,6 +30,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from spendguard import distribution  # noqa: E402
 from spendguard import _version  # noqa: E402
 from spendguard import fleet  # noqa: E402
+from spendguard.store.configuration import config_store  # noqa: E402  — HOME/CONFIG_JSON moved here; A-funcs read them bare
 
 PROBE_READONLY_BOOTSTRAP_NAME = "sitecustomize.py"
 PROBE_READONLY_BOOTSTRAP = "import spendguard; spendguard.install()\n"
@@ -165,7 +166,9 @@ def test_distribution_probe_absolute_ledgers_are_disposable():
         policy_path.write_text(json.dumps({"budget": {"db_path": str(ledger)}}))
         original = {path: path.read_bytes() for path in root.rglob("*") if path.is_file()}
         with patch.object(distribution.config, "HOME", state), \
-             patch.object(distribution.config, "CONFIG_JSON", policy_path):
+             patch.object(config_store, "HOME", state), \
+             patch.object(distribution.config, "CONFIG_JSON", policy_path), \
+             patch.object(config_store, "CONFIG_JSON", policy_path):
             distribution.config.cfg_invalidate()
             with distribution.distribution_probe_environment() as environment:
                 snapshot = Path(environment["SPENDGUARD_HOME"])

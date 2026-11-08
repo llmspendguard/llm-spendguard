@@ -10,8 +10,9 @@ os.environ['OPENAI_API_KEY'] = 'sk-offline-scoped-budget'
 os.environ['ANTHROPIC_API_KEY'] = 'sk-ant-offline-scoped-budget'
 os.environ.pop('GATE_ALLOW', None)
 from spendguard import config, calls, gate, bakeoff, adapters, whole_job, crossllm, vendor_call
+from spendguard.store.configuration import config_store  # _cfg_get moved here; patch it where intent_cap reads it
 
-with patch.object(config, '_cfg_get', return_value={}):
+with patch.object(config_store, '_cfg_get', return_value={}):
     assert config.intent_cap('scope-unit') is None
     with patch.dict(os.environ, {'GATE_INTENT_CAP_SCOPE_UNIT': '8'}):
         assert config.intent_cap('scope-unit') == 8
@@ -34,7 +35,7 @@ with patch.object(config, '_cfg_get', return_value={}):
         with config.scoped_intent_cap('scope-unit', None):
             assert config.intent_cap('scope-unit') == 8
     assert config.intent_cap('scope-unit') is None
-with patch.object(config, '_cfg_get', return_value={'scope-unit': 4}):
+with patch.object(config_store, '_cfg_get', return_value={'scope-unit': 4}):
     with config.scoped_intent_cap('scope-unit', 9):
         assert config.intent_cap('scope-unit') == 4
     with config.scoped_intent_cap('scope-unit', 2):

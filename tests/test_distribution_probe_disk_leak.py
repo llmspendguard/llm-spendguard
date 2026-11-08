@@ -14,6 +14,7 @@ align_test_startup_home(prefix=__name__)
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from spendguard import distribution
 from spendguard import budget
+from spendguard.store.configuration import config_store  # HOME/CONFIG_JSON moved here; A-funcs read them bare
 
 PROBE_DISK_LEAK_SIDECARS = ("-wal", "-shm", "-journal")
 PROBE_DISK_LEAK_INITIAL_CONTENT = b"initial ledger"
@@ -31,7 +32,9 @@ def isolated_distribution_disk_leak_home():
         policy = home / distribution.config.CONFIG_JSON.name
         policy.write_text(json.dumps({"budget": {"backend": "sqlite"}}))
         with patch.object(distribution.config, "HOME", home), \
+             patch.object(config_store, "HOME", home), \
              patch.object(distribution.config, "CONFIG_JSON", policy), \
+             patch.object(config_store, "CONFIG_JSON", policy), \
              patch.dict(os.environ, {"SPENDGUARD_HOME": str(home), "SPENDGUARD_TEST_ISOLATED": "1"}):
             distribution.config.cfg_invalidate()
             try:

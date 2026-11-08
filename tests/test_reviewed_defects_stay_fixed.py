@@ -289,6 +289,7 @@ check("...and are not confused with the metered ones", not (_ba._OPS & _ba._STRE
 
 print("\n-- a settings cache with no invalidation (config._cfg) --")
 from spendguard import config as _cfg3                                       # noqa: E402
+from spendguard.store.configuration import config_store as _cfg3_store        # noqa: E402  — _cfg reads CONFIG_JSON here
 check("cfg_invalidate() exists for in-process writes", callable(_cfg3.cfg_invalidate))
 # BEHAVIOUR, NOT AN ATTRIBUTE. The first version asserted hasattr(_cfg, "_mtime") — an implementation
 # detail that is unset when no config file exists yet, so it failed in an isolated HOME while the caching
@@ -305,6 +306,7 @@ import json as _json3, tempfile as _tf3, time as _time3, pathlib as _pl3     # n
 _real_cfg_path = _cfg3.CONFIG_JSON
 _tmp_cfg = _pl3.Path(_tf3.mkdtemp(prefix="spendguard-cfgtest-")) / "config.json"
 _cfg3.CONFIG_JSON = _tmp_cfg
+_cfg3_store.CONFIG_JSON = _tmp_cfg            # the _cfg reader resolves CONFIG_JSON in config_store's globals
 try:
     _tmp_cfg.write_text(_json3.dumps({"probe": {"k": "first"}}))
     _cfg3.cfg_invalidate()
@@ -318,6 +320,7 @@ try:
           f"whatever time it was first needed")
 finally:
     _cfg3.CONFIG_JSON = _real_cfg_path
+    _cfg3_store.CONFIG_JSON = _real_cfg_path
     _cfg3.cfg_invalidate()
 check("...and the REAL config path was never written to",
       _cfg3.CONFIG_JSON == _real_cfg_path and _tmp_cfg.exists())

@@ -3,7 +3,8 @@ import contextlib
 import io
 from unittest.mock import patch
 
-from spendguard import config, gate
+from spendguard import gate
+from spendguard.store.configuration import config_store  # _cfg_get moved here; budget_backend reads it bare
 
 
 BUDGET_MODE_EXPECTATIONS = (
@@ -14,7 +15,7 @@ BUDGET_MODE_EXPECTATIONS = (
 with patch.object(gate, "install"), patch.object(gate, "_stale_editable_install", return_value=(False, None, None)):
     for doctor_backend, doctor_description, doctor_remediation in BUDGET_MODE_EXPECTATIONS:
         # Exercise the real accessor, including the configured memory mode, with isolated configuration.
-        with patch.object(config, "_cfg_get", side_effect=lambda section, key, default=None, backend=doctor_backend: (
+        with patch.object(config_store, "_cfg_get", side_effect=lambda section, key, default=None, backend=doctor_backend: (
             backend if (section, key) == ("budget", "backend") else default
         )):
             doctor_capture = io.StringIO()

@@ -15,6 +15,7 @@ from _pytest_fixture_bridge import align_test_startup_home
 align_test_startup_home(prefix=__name__)
 
 from spendguard import budget, config, disk_guard
+from spendguard.store.configuration import config_store  # CONFIG_JSON moved here; _cfg reads it bare
 from spendguard.gate import SpendGateRefused
 
 TEST_FLOOR_BYTES = 4096
@@ -41,7 +42,7 @@ with tempfile.TemporaryDirectory() as home:
     cfg_path = root / TEST_CONFIG_FILENAME
     environment = dict(os.environ)
     environment.pop(config.DISK_GUARD_FLOOR_ENV, None)
-    with patch.dict(os.environ, environment, clear=True), patch.object(config, "CONFIG_JSON", cfg_path):
+    with patch.dict(os.environ, environment, clear=True), patch.object(config_store, "CONFIG_JSON", cfg_path):
         cfg_path.write_text(json.dumps({"disk_guard": {"floor_bytes": TEST_FLOOR_BYTES}}))
         config.cfg_invalidate()
         free_bytes = TEST_FLOOR_BYTES - TEST_SHORTFALL_BYTES

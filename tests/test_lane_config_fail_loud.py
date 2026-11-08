@@ -84,10 +84,12 @@ if __name__ == "__main__":
         os.environ["SPENDGUARD_HOME"] = isolated_home
         os.environ["SPENDGUARD_TEST_ISOLATED"] = "1"
         from spendguard import adapters, config
+        from spendguard.store.configuration import config_store  # _cfg reads CONFIG_JSON here, not on the facade
 
+        isolated_config_json = Path(isolated_home) / config.CONFIG_JSON.name
         with patch.dict(os.environ), patch.object(
-            config, "CONFIG_JSON", Path(isolated_home) / config.CONFIG_JSON.name
-        ):
+            config, "CONFIG_JSON", isolated_config_json
+        ), patch.object(config_store, "CONFIG_JSON", isolated_config_json):
             os.environ.pop("SPENDGUARD_ADVISOR_EXECUTOR", None)
             lane_config_result = unittest.main(exit=False).result
             config.cfg_invalidate()

@@ -21,9 +21,10 @@ os.environ["SPENDGUARD_AVOID_CLAUDE_LANE"] = "off"
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
 from spendguard import route_utility as ru, pricing, balances                           # noqa: E402
+from spendguard.store.configuration import config_store  # noqa: E402  — shed_lanes reads _cfg_get here, not on the facade
 
-_base_cfg_get = ru.config._cfg_get
-ru.config._cfg_get = lambda section, key, default=None: (
+_base_cfg_get = config_store._cfg_get
+config_store._cfg_get = lambda section, key, default=None: (
     "" if (section, key) == ("advisor", "shed_lanes") else _base_cfg_get(section, key, default)
 )
 fails = []
@@ -93,14 +94,15 @@ finally:
     _cfg.shed_lanes = _o_shed
 
 # the SSOT PARSER itself (shared by plan_admission + the bandit): comma split, whitespace-trimmed, empties dropped.
-_o_cfgget = _cfg._cfg_get
+# shed_lanes() reads _cfg_get bare in config_store, so the override must land there, not on the facade binding.
+_o_cfgget = config_store._cfg_get
 try:
-    _cfg._cfg_get = lambda sec, key, default=None: " claude-code , codex ,, " if (sec, key) == ("advisor", "shed_lanes") else default
+    config_store._cfg_get = lambda sec, key, default=None: " claude-code , codex ,, " if (sec, key) == ("advisor", "shed_lanes") else default
     ck("config.shed_lanes parses a comma list, trims whitespace, drops empties", _cfg.shed_lanes() == {"claude-code", "codex"})
-    _cfg._cfg_get = lambda sec, key, default=None: default
+    config_store._cfg_get = lambda sec, key, default=None: default
     ck("config.shed_lanes unset → empty set (shed only when actually capped)", _cfg.shed_lanes() == set())
 finally:
-    _cfg._cfg_get = _o_cfgget
+    config_store._cfg_get = _o_cfgget
 
 print("\n-- (d) rank_metered: cheaper → higher (<1); sunk-pool-can't-pay excluded; on_demand never gated --")
 _costs = {"deepseek:deepseek-v4": 0.002, "moonshot:kimi-k2": 0.010, "openai:gpt-5-nano": 0.001, "gemini:g-flash": 0.05}
