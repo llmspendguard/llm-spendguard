@@ -29,6 +29,7 @@ for _v in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY"):
 import hashlib
 from _script_checks import record_script_check
 from spendguard import config, budget
+from spendguard.store.configuration import provider_keys
 
 fails = []
 
@@ -37,7 +38,7 @@ def reset_keys(profile=None, real_env=None):
     """Re-run the import-time loader under a chosen profile / pre-set real env."""
     for var in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY", "SPENDGUARD_KEY_PROFILE"):
         os.environ.pop(var, None)
-    config._KEYS_SET_BY_SPENDGUARD.clear()
+    provider_keys._KEYS_SET_BY_SPENDGUARD.clear()
     if profile:
         os.environ["SPENDGUARD_KEY_PROFILE"] = profile
     for k, v in (real_env or {}).items():

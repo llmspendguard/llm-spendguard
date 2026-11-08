@@ -1,6 +1,6 @@
 """`spendguard keys-audit [path...]` — STATIC scan for a repo .env that would shadow the keys.env SSOT.
 
-The gap this closes (see `config.dotenv_key_shadow_report`): `spendguard doctor` resolves keys from the CURRENT
+The gap this closes (see `provider_keys.dotenv_key_shadow_report`): `spendguard doctor` resolves keys from the CURRENT
 interpreter's os.environ, so a bare CLI never runs the app's `load_dotenv()` and cannot see a repo `.env` holding an
 uncommented provider key that WOULD shadow the (possibly rotated) keys.env key at runtime — the warden 401. This reads
 the FILES directly and flags the latent shadow before it bites. Read-only, $0, last-4 only.
@@ -9,15 +9,15 @@ the FILES directly and flags the latent shadow before it bites. Read-only, $0, l
 from ...capability_cli_parsing import registered_cli_option_token
 import json
 
-from ... import config
+from ...store.configuration import provider_keys
 
 
 def _render_dotenv_audit_lines(findings, ssot_path, scanned_n, paths):
     """The human report for a dotenv shadow scan, as strings — PURE, so it is testable without the CLI. `findings` =
-    config.dotenv_key_shadow_report(...); `scanned_n` = how many .env files were read; `paths` = what the user asked
+    provider_keys.dotenv_key_shadow_report(...); `scanned_n` = how many .env files were read; `paths` = what the user asked
     to scan. Groups by severity: 🔴 differ (a rotated-key 401 waiting to happen) · 🟡 dup."""
     where = ", ".join(paths)
-    ssot_empty = next(config._iter_env_file(ssot_path), None) is None
+    ssot_empty = next(provider_keys._iter_env_file(ssot_path), None) is None
     if not findings:
         msg = [f"🟢 no key in any scanned .env shadows the keys.env SSOT ({scanned_n} .env file(s) scanned under {where})"]
         if ssot_empty:
@@ -61,13 +61,13 @@ def cmd(rest):
 def audit_provider_key_shadows(paths: list[str] | None = None, *, strict: bool = False, as_json: bool = False) -> int:
     """Run the existing key-shadow report and preserve strict failure semantics."""
     paths = paths or ["."]
-    scanned = config._dotenv_scan_files(paths)            # the ONE walk; the report re-walks the same set internally
-    findings = config.dotenv_key_shadow_report(paths)
+    scanned = provider_keys._dotenv_scan_files(paths)            # the ONE walk; the report re-walks the same set internally
+    findings = provider_keys.dotenv_key_shadow_report(paths)
     if as_json:
-        print(json.dumps({"ssot": str(config.KEYS_ENV), "scanned": [str(f) for f in scanned],
+        print(json.dumps({"ssot": str(provider_keys.KEYS_ENV), "scanned": [str(f) for f in scanned],
                           "findings": findings}, indent=2))
     else:
-        for line in _render_dotenv_audit_lines(findings, config.KEYS_ENV, len(scanned), paths):
+        for line in _render_dotenv_audit_lines(findings, provider_keys.KEYS_ENV, len(scanned), paths):
             print(line)
     has_differ = any(f["state"] == "differ" for f in findings)
     return 1 if (has_differ or (strict and findings)) else 0

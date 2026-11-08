@@ -17,6 +17,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(
 
 from _script_checks import record_script_check
 from spendguard import config   # noqa: E402
+from spendguard.store.configuration import provider_keys   # noqa: E402
 
 fails = []
 
@@ -36,13 +37,13 @@ def _write_keys(text):
 print("-- no shadow: os.environ matches keys.env --")
 _write_keys("OPENAI_API_KEY=%s\n" % _NEW)
 os.environ["OPENAI_API_KEY"] = _NEW
-config._KEYS_SET_BY_SPENDGUARD.discard("OPENAI_API_KEY")
+provider_keys._KEYS_SET_BY_SPENDGUARD.discard("OPENAI_API_KEY")
 record_script_check(fails, "matching value → no shadow", config.key_shadow_report() == [])
 record_script_check(fails, "key_source is keys.env", config.key_source("OPENAI_API_KEY") == "keys.env")
 
 print("-- SHADOW: an external env value differs from keys.env (the warden bug) --")
 os.environ["OPENAI_API_KEY"] = _OLD              # a repo .env / shell export put the OLD key here
-config._KEYS_SET_BY_SPENDGUARD.discard("OPENAI_API_KEY")   # not set by spendguard → external
+provider_keys._KEYS_SET_BY_SPENDGUARD.discard("OPENAI_API_KEY")   # not set by spendguard → external
 rep = {s["name"]: s for s in config.key_shadow_report()}
 record_script_check(fails, "the external override is flagged as a shadow", "OPENAI_API_KEY" in rep)
 record_script_check(fails, "active4 = the OLD (wrong) key, declared4 = keys.env's NEW key",
@@ -55,7 +56,7 @@ print("-- a DECLARED profile override is NOT a shadow (the sanctioned per-repo k
 _write_keys("OPENAI_API_KEY=%s\nOPENAI_API_KEY__warden=%s\n" % (_NEW, _PROF))
 os.environ["SPENDGUARD_KEY_PROFILE"] = "warden"
 os.environ["OPENAI_API_KEY"] = _PROF             # the profile value is active
-config._KEYS_SET_BY_SPENDGUARD.discard("OPENAI_API_KEY")
+provider_keys._KEYS_SET_BY_SPENDGUARD.discard("OPENAI_API_KEY")
 record_script_check(fails, "a declared profile override is NOT flagged as a shadow", config.key_shadow_report() == [])
 record_script_check(fails, "key_source names the profile", config.key_source("OPENAI_API_KEY") == "profile:warden")
 os.environ.pop("SPENDGUARD_KEY_PROFILE", None)

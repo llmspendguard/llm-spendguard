@@ -155,6 +155,7 @@ run_ledger_write(lambda: current_ledger_writer_connection().execute(
     "UPDATE spend_events SET key_fp=? WHERE id=?", (_openai_fp, _eid)))
 
 import spendguard.config as _c2                                             # noqa: E402
+from spendguard.store.configuration import provider_keys as _provider_keys  # noqa: E402
 _real_fp = _c2.key_fingerprint
 _c2.key_fingerprint = lambda p: (_openai_fp if p == "openai" else "")
 try:
@@ -170,8 +171,8 @@ check("...and cleared to UNKNOWN, not rewritten with today's key",
 # The env var for each vendor's key comes from the provider registry, which already knew moonshot and z.ai
 # while this module's own three-entry map did not — so their charges were stamped with an empty fingerprint.
 check("the key env is resolved from the provider registry, not a short local copy",
-      _c2._provider_key_env("moonshot") == "MOONSHOT_API_KEY"
-      and _c2._provider_key_env("zai") == "ZAI_API_KEY",
-      f"{_c2._provider_key_env('moonshot')} / {_c2._provider_key_env('zai')}")
+      _provider_keys._provider_key_env("moonshot") == "MOONSHOT_API_KEY"
+      and _provider_keys._provider_key_env("zai") == "ZAI_API_KEY",
+      f"{_provider_keys._provider_key_env('moonshot')} / {_provider_keys._provider_key_env('zai')}")
 print(f"\n{'[FAIL]' if failures else 'OK'} test_every_charge_names_who_and_what: {failures} failure(s)")
 sys.exit(1 if failures else 0)
