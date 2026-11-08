@@ -257,6 +257,17 @@ def _consumer_aggregate_snapshot(aggregate):
     return invoke_consumer_budget_aggregate
 
 
+# Expose the read-connection aggregate decorator through the admission seam so a carved reader sibling can apply it
+# at def-time (@_admission_accessors.resolve__consumer_aggregate_snapshot) WITHOUT importing budget. The decorator
+# STAYS here, coupled to budget's _LEDGER_TL read state and _budget_writer_is_initialized; only the ability to apply
+# it crosses the seam. Wired EARLY — before any reader-cluster re-import later in this module — so the resolver is
+# already live when a sibling is imported and decorates one of its readers with it (the resolve_(fn) protocol doubles
+# as a decorator because applying @D to `def f` is just `f = D(f)`, and functools.wraps is preserved through it).
+from . import admission_accessors as _admission_accessors
+_admission_accessors.set__consumer_aggregate_snapshot_resolver(
+    lambda aggregate: _consumer_aggregate_snapshot(aggregate))
+
+
 def _reset_ledger():
     """Drop THIS thread's cached ledger connection so the next read reconnects clean — call after a destructive
     schema change. Replaces the old `budget._LEDGER = None`, which a thread-local cache cannot honor."""
