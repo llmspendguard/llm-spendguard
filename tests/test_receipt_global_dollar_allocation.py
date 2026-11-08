@@ -13,6 +13,7 @@ os.environ.setdefault("SPENDGUARD_HOME", tempfile.mkdtemp(prefix="sg-receipt-all
 os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
 
 from spendguard import budget, receipt  # noqa: E402
+from spendguard.analyze.spend_reporting import receipt_tally  # noqa: E402
 
 ALLOCATION_REPO_PRIMARY = "allocation-primary"
 ALLOCATION_REPO_SECONDARY = "allocation-secondary"
@@ -35,9 +36,9 @@ receipt.stamp_est_value([
 allocation_remote = dict.fromkeys(ALLOCATION_WINDOWS, ALLOCATION_REMOTE_COST)
 allocation_external = dict.fromkeys(ALLOCATION_WINDOWS, ALLOCATION_EXTERNAL_COST)
 with patch.object(budget, "spent_since", return_value=ALLOCATION_API_COST), \
-     patch.object(receipt, "_plan_usd", return_value=(ALLOCATION_PLAN_FEE, False)), \
-     patch.object(receipt, "_remote_tally", return_value=allocation_remote), \
-     patch.object(receipt, "_external_tally", return_value=allocation_external):
+     patch.object(receipt_tally, "_plan_usd", return_value=(ALLOCATION_PLAN_FEE, False)), \
+     patch.object(receipt_tally, "_remote_tally", return_value=allocation_remote), \
+     patch.object(receipt_tally, "_external_tally", return_value=allocation_external):
     allocation_global = receipt.tally()
     for allocation_repo, allocation_usage in (
             (ALLOCATION_REPO_PRIMARY, ALLOCATION_USAGE_PRIMARY),
@@ -82,7 +83,7 @@ with patch.object(budget, "spent_since", return_value=ALLOCATION_API_COST), \
         with contextlib.redirect_stdout(allocation_cli_output):
             assert receipt.cli(["--all"]) == 0
         assert receipt._money(ALLOCATION_PLAN_FEE) in allocation_cli_output.getvalue()
-    with patch.object(receipt, "_est_tally", return_value=None):
+    with patch.object(receipt_tally, "_est_tally", return_value=None):
         try:
             receipt.tally(project=ALLOCATION_REPO_PRIMARY)
         except ValueError as allocation_failure:
@@ -91,10 +92,10 @@ with patch.object(budget, "spent_since", return_value=ALLOCATION_API_COST), \
         else:
             raise AssertionError("Missing plan-usage basis silently allocated global money")
 with patch.object(budget, "spent_since", return_value=ALLOCATION_API_COST), \
-     patch.object(receipt, "_plan_usd", return_value=(ALLOCATION_PLAN_FEE, True)), \
-     patch.object(receipt, "_remote_tally", return_value=None), \
-     patch.object(receipt, "_external_tally", return_value=None), \
-     patch.object(receipt, "_est_tally", return_value=None):
+     patch.object(receipt_tally, "_plan_usd", return_value=(ALLOCATION_PLAN_FEE, True)), \
+     patch.object(receipt_tally, "_remote_tally", return_value=None), \
+     patch.object(receipt_tally, "_external_tally", return_value=None), \
+     patch.object(receipt_tally, "_est_tally", return_value=None):
     # Fault: an installation without a usage cache still has directly attributed API truth.
     # Assumed defaults are not evidence of an actual global charge requiring allocation.
     allocation_scoped = receipt.tally(project=ALLOCATION_REPO_PRIMARY)
@@ -104,7 +105,7 @@ with patch.object(budget, "spent_since", return_value=ALLOCATION_API_COST), \
     assert allocation_scoped["est_value"] is None
     assert allocation_scoped["real_month"] == ALLOCATION_API_COST
     for allocation_component in ("_remote_tally", "_external_tally"):
-        with patch.object(receipt, allocation_component, return_value=allocation_remote):
+        with patch.object(receipt_tally, allocation_component, return_value=allocation_remote):
             try:
                 receipt.tally(project=ALLOCATION_REPO_PRIMARY)
             except receipt.ReceiptPlanAllocationRefused as allocation_failure:

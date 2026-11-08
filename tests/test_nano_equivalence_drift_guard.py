@@ -16,6 +16,7 @@ spendguard.require()
 import pytest
 
 from spendguard import ledger, ledger_read, calls, guard, receipt, reliability, calibrate, effort_titration, measurement
+from spendguard.analyze.spend_reporting import receipt_tally
 from spendguard.money_scale import (
     assert_nano_total_matches, nano_usd_to_usd, real_usd_to_nano_usd, usd_to_nano_usd, NANO_USD_PER_USD,
 )
@@ -354,9 +355,9 @@ def assert_stage7c_reader_text_equivalence(database, database_path):
         f'day>=? AND est_chat_usd IS NOT NULL AND billed=0 AND {ledger.SpendLedger._LIVE_FILTER}',
         (DRIFT_PROOF_OTHER_DAY,))
     with patch.object(receipt.config, 'db_path', return_value=database_path), patch.object(
-            receipt, '_receipt_aggregate_cache_path', return_value=database_path.with_suffix('.missing')), patch.object(
-            receipt, '_windows', return_value=(DRIFT_PROOF_DAY, DRIFT_PROOF_OTHER_DAY, DRIFT_PROOF_OTHER_DAY)):
-        est_records = receipt._receipt_est_records()
+            receipt_tally, '_receipt_aggregate_cache_path', return_value=database_path.with_suffix('.missing')), patch.object(
+            receipt_tally, '_windows', return_value=(DRIFT_PROOF_DAY, DRIFT_PROOF_OTHER_DAY, DRIFT_PROOF_OTHER_DAY)):
+        est_records = receipt_tally._receipt_est_records()
         assert all(isinstance(value, float) for record in est_records.values()
                    for value in record['by_day'].values())
         actual_est_total = sum((Decimal(str(value)) for record in est_records.values()

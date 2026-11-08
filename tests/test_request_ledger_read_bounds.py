@@ -6,7 +6,7 @@ import unittest
 
 REQUEST_LEDGER_SOURCE_ROOT = pathlib.Path(__file__).resolve().parents[1] / "src" / "spendguard"
 REQUEST_LEDGER_READER_MODULES = (
-    "mcp_server", "receipt", "budget", "ledger", "guard", "lane_quota_cost",
+    "mcp_server", "receipt", "receipt_tally", "budget", "ledger", "guard", "lane_quota_cost",
     "lane_bandit", "intent_model_prior", "provider_tokens", "reliability", "bulkgate",
     "callio", "learn", "models", "best_value", "calibrate", "semcache", "batch_tracker",
 )
@@ -32,6 +32,7 @@ REQUEST_LEDGER_MOVED_MODULE_PATHS = {
     "models": ("store", "reference_data", "models.py"),
     "provider_tokens": ("analyze", "cost_estimation", "provider_tokens.py"),
     "receipt": ("analyze", "spend_reporting", "receipt.py"),
+    "receipt_tally": ("analyze", "spend_reporting", "receipt_tally.py"),
     "semcache": ("manage", "admission", "semcache.py"),
     "guard": ("analyze", "measurement", "guard.py"),
     "reliability": ("analyze", "measurement", "reliability.py"),
@@ -145,9 +146,11 @@ class RequestLedgerReadBoundsGraphGuards(unittest.TestCase):
                 with self.assertRaises(AssertionError):
                     _assert_request_ledger_connection_graph(altered_trees)
         # Reintroduce the exact historical bypass as an AST mutation in a served
-        # reader; the same production-graph assertion must reject it.
+        # reader; the same production-graph assertion must reject it. The ledger
+        # read now lives in receipt_tally (receipt is a pure re-export facade with
+        # no sqlite3 import), so the bypass is injected where it would actually land.
         mutation = ast.parse("sqlite3.connect(ledger_path)").body[0]
-        trees["receipt"].body.append(mutation)
+        trees["receipt_tally"].body.append(mutation)
         with self.assertRaises(AssertionError):
             _assert_request_ledger_connection_graph(trees)
 
