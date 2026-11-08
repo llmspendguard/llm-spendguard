@@ -14,6 +14,7 @@ _, runner_budget_scale = measure_isolated_runner_budget_scale()
 align_test_startup_home(prefix=__name__)
 
 from spendguard import config, ledger_read, ledger_wal_maintenance
+from spendguard.store.configuration import ledger_connection
 
 AMBIENT_WAIT_SCOPE_S = 0.02
 AMBIENT_WAIT_HOLD_FACTOR = 4500
@@ -54,7 +55,7 @@ def test_ambient_generation_admission_wait_is_bounded():
         with pytest.raises(ledger_read.LedgerQueryDeadline):
             config.open_ledger_connection(AMBIENT_WAIT_MEMORY_TARGET, tune=False)
 
-    assert_ambient_admission_owner_retained(lambda: config._LEDGER_ADMISSION.lock,
+    assert_ambient_admission_owner_retained(lambda: ledger_connection._LEDGER_ADMISSION.lock,
                                           refuse_ambient_generation_admission)
 
 
@@ -66,7 +67,7 @@ def test_ambient_legacy_pool_capacity_wait_is_bounded():
     def retain_ambient_managed_pool_capacity():
         return config.managed_ledger_read_connection(AMBIENT_WAIT_MEMORY_TARGET)
 
-    with patch.object(config, "ledger_read_pool_settings", return_value=(
+    with patch.object(ledger_connection, "ledger_read_pool_settings", return_value=(
             AMBIENT_WAIT_POOL_CAPACITY, AMBIENT_WAIT_SCOPE_S * AMBIENT_WAIT_HOLD_FACTOR)):
         assert_ambient_admission_owner_retained(retain_ambient_managed_pool_capacity,
                                               refuse_ambient_legacy_pool_admission)
@@ -78,7 +79,7 @@ def test_ambient_schema_lock_wait_is_bounded():
             with pytest.raises(ledger_read.LedgerQueryDeadline):
                 config.ensure_ledger_schema(connection, lambda schema_connection: None)
 
-        assert_ambient_admission_owner_retained(lambda: config._LEDGER_SCHEMA_LOCK,
+        assert_ambient_admission_owner_retained(lambda: ledger_connection._LEDGER_SCHEMA_LOCK,
                                               refuse_ambient_schema_admission)
 
 
@@ -102,7 +103,7 @@ def test_ambient_wal_generation_wait_uses_earlier_expiry():
             ledger_wal_maintenance.truncate_ledger_wal_bounded(
                 deadline_s=AMBIENT_WAIT_SCOPE_S * AMBIENT_WAIT_HOLD_FACTOR)
 
-    assert_ambient_admission_owner_retained(lambda: config._LEDGER_ADMISSION.lock,
+    assert_ambient_admission_owner_retained(lambda: ledger_connection._LEDGER_ADMISSION.lock,
                                           refuse_ambient_wal_generation)
 
 
@@ -114,7 +115,7 @@ def test_ambient_generation_shorter_explicit_expiry_wins():
             config.open_ledger_connection(AMBIENT_WAIT_MEMORY_TARGET, tune=False,
                                          deadline_at=time.monotonic() + shorter_budget)
 
-    assert_ambient_admission_owner_retained(lambda: config._LEDGER_ADMISSION.lock,
+    assert_ambient_admission_owner_retained(lambda: ledger_connection._LEDGER_ADMISSION.lock,
                                           refuse_shorter_generation_admission,
                                           explicit_budget=shorter_budget)
 
@@ -126,7 +127,7 @@ def test_ambient_wal_shorter_explicit_expiry_wins():
         with pytest.raises(ledger_read.LedgerQueryDeadline):
             ledger_wal_maintenance.truncate_ledger_wal_bounded(deadline_s=shorter_wal_budget)
 
-    assert_ambient_admission_owner_retained(lambda: config._LEDGER_ADMISSION.lock,
+    assert_ambient_admission_owner_retained(lambda: ledger_connection._LEDGER_ADMISSION.lock,
                                           refuse_shorter_wal_admission,
                                           explicit_budget=shorter_wal_budget)
 

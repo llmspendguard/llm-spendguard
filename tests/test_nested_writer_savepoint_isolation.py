@@ -9,6 +9,7 @@ from _pytest_fixture_bridge import align_test_startup_home, run_pytest_style
 align_test_startup_home(prefix=__name__)
 
 from spendguard import config, ledger_deadletter, ledger_writer
+from spendguard.store.configuration import ledger_connection
 from spendguard.ledger import SpendLedger
 from spendguard.ledger_read import ledger_request_scope
 
@@ -82,7 +83,7 @@ def test_nested_cleanup_failure_aborts_owner_once(cleanup_statement):
     current = SpendLedger()
     event = {"dedup_key": cleanup_statement, "realtime_usd": NESTED_ISOLATION_COST}
     execute = ledger_writer.execute_ledger_savepoint_cleanup
-    rollback = config._CountedLedgerConnection.rollback
+    rollback = ledger_connection._CountedLedgerConnection.rollback
     rollbacks = []
 
     def fail_nested_cleanup_sql(connection, statement, *args, **kwargs):
@@ -96,7 +97,7 @@ def test_nested_cleanup_failure_aborts_owner_once(cleanup_statement):
 
     def catch_cleanup_failure_inside_outer_writer():
         with patch.object(ledger_writer, "execute_ledger_savepoint_cleanup", fail_nested_cleanup_sql), \
-                patch.object(config._CountedLedgerConnection, "rollback", observe_nested_cleanup_abort):
+                patch.object(ledger_connection._CountedLedgerConnection, "rollback", observe_nested_cleanup_abort):
             with pytest.raises(OSError):
                 if cleanup_statement == "ROLLBACK TO SAVEPOINT":
                     with patch.object(SpendLedger, "_audit", side_effect=OSError(__name__)):
@@ -140,7 +141,7 @@ def test_cross_spool_commit_failure_preserves_successes_and_attempted_retries(tm
 
     with ledger_request_scope(deadline_s=NESTED_ISOLATION_DEADLINE_S), \
             patch.object(SpendLedger, "_audit", reject_cross_spool_audit), \
-            patch.object(config._CountedLedgerConnection, "commit", side_effect=OSError(__name__)):
+            patch.object(ledger_connection._CountedLedgerConnection, "commit", side_effect=OSError(__name__)):
         with pytest.raises(OSError):
             ledger_deadletter.drain_spend_deadletter_events(retry_paths)
     assert retry_paths[0].read_text() == originals[0]

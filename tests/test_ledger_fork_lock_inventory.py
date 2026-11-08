@@ -18,6 +18,11 @@ LEDGER_FORK_INVENTORY_MODULES = (
     # ("config") no longer re-exports it (a re-import would go stale at fork), so inventory it
     # at its owning module where new_fork_reset_ledger_state actually rebinds it in the child.
     "store.configuration.config_store",
+    # ledger_connection owns the pool locks + read-pool Condition after carve 2; the facade does
+    # NOT re-export them (the at-fork callback rebinds the LEAF's globals, so a facade re-import
+    # would go stale), so inventory them here where _abandon_inherited_ledger_generation_in_fork_child
+    # actually replaces them in the child.
+    "store.configuration.ledger_connection",
 )
 LEDGER_FORK_INVENTORY_WATCHDOG_S = 10
 LEDGER_FORK_LOCK_TYPES = (type(threading.Lock()), type(threading.RLock()), threading.Condition)

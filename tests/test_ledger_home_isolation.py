@@ -16,6 +16,8 @@ from _pytest_fixture_bridge import align_test_startup_home, run_pytest_style
 
 align_test_startup_home(prefix=__name__)
 
+from spendguard.store.configuration import ledger_connection
+
 LEDGER_ISOLATION_CHILD_TIMEOUT_S = 60
 LEDGER_ALIGNMENT_OPERATION_REPETITIONS = 32
 LEDGER_SHORTCUT_NATIVE_STEP_ALIGNMENT_CHECKS = 1
@@ -34,14 +36,15 @@ import os
 import pathlib
 import sys
 from spendguard import calls, config
+from spendguard.store.configuration import ledger_connection
 from spendguard.ledger import SpendLedger
 
 original = pathlib.Path(os.environ["SPENDGUARD_HOME"])
 isolated = pathlib.Path(sys.argv[1])
 writer = sys.argv[2]
-assert config.HOME == original, "startup must cache the original disposable home"
+assert ledger_connection.HOME == original, "startup must cache the original disposable home"
 # Substitute only the protected default's identity; all actual paths stay temporary.
-config.DEFAULT_SPENDGUARD_HOME = original
+ledger_connection.DEFAULT_SPENDGUARD_HOME = original
 cached_path = config.db_path()
 pool_key = __name__
 zero_cost = 0
@@ -135,8 +138,8 @@ def test_stable_home_operations_do_not_resolve_paths(tmp_path, monkeypatch):
     """Fault: filesystem resolution is unavailable after a protected home warms."""
     from spendguard import config
 
-    monkeypatch.setattr(config, "HOME", tmp_path)
-    monkeypatch.setattr(config, "DEFAULT_SPENDGUARD_HOME", tmp_path)
+    monkeypatch.setattr(ledger_connection, "HOME", tmp_path)
+    monkeypatch.setattr(ledger_connection, "DEFAULT_SPENDGUARD_HOME", tmp_path)
     monkeypatch.setenv(config.LEDGER_HOME_ENVIRONMENT_KEY, str(tmp_path))
     connection = config.open_ledger_connection(tmp_path / pathlib.Path(__file__).stem)
     try:
@@ -168,8 +171,8 @@ def test_redirected_home_cursor_uses_bound_open_identity(tmp_path, monkeypatch):
     from spendguard import config
 
     protected_home = tmp_path / test_redirected_home_cursor_uses_bound_open_identity.__name__
-    monkeypatch.setattr(config, "HOME", protected_home)
-    monkeypatch.setattr(config, "DEFAULT_SPENDGUARD_HOME", protected_home)
+    monkeypatch.setattr(ledger_connection, "HOME", protected_home)
+    monkeypatch.setattr(ledger_connection, "DEFAULT_SPENDGUARD_HOME", protected_home)
     monkeypatch.setenv(config.LEDGER_HOME_ENVIRONMENT_KEY, str(tmp_path))
     connection = config.open_ledger_connection(tmp_path / pathlib.Path(__file__).stem)
     try:
@@ -205,8 +208,8 @@ def test_relative_home_chdir_rechecks_retained_cursor(tmp_path, monkeypatch):
 
     protected_home = tmp_path / test_relative_home_chdir_rechecks_retained_cursor.__name__
     protected_home.mkdir()
-    monkeypatch.setattr(config, "HOME", protected_home)
-    monkeypatch.setattr(config, "DEFAULT_SPENDGUARD_HOME", protected_home)
+    monkeypatch.setattr(ledger_connection, "HOME", protected_home)
+    monkeypatch.setattr(ledger_connection, "DEFAULT_SPENDGUARD_HOME", protected_home)
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv(config.LEDGER_HOME_ENVIRONMENT_KEY, protected_home.name)
     connection = config.open_ledger_connection(protected_home / pathlib.Path(__file__).stem)
@@ -227,14 +230,14 @@ def test_connection_shortcut_checks_alignment_once_before_native_step(tmp_path, 
 
     connection = config.open_ledger_connection(tmp_path / pathlib.Path(__file__).stem)
     alignment_checks = []
-    original_alignment_guard = config.require_ledger_home_alignment
+    original_alignment_guard = ledger_connection.require_ledger_home_alignment
 
     def observe_shortcut_native_alignment_check(*args, **kwargs):
         alignment_checks.append(args)
         return original_alignment_guard(*args, **kwargs)
 
     try:
-        monkeypatch.setattr(config, "require_ledger_home_alignment", observe_shortcut_native_alignment_check)
+        monkeypatch.setattr(ledger_connection, "require_ledger_home_alignment", observe_shortcut_native_alignment_check)
         connection.execute(LEDGER_ALIGNMENT_PROBE_SCHEMA)
         assert len(alignment_checks) == LEDGER_SHORTCUT_NATIVE_STEP_ALIGNMENT_CHECKS
     finally:
@@ -243,10 +246,8 @@ def test_connection_shortcut_checks_alignment_once_before_native_step(tmp_path, 
 
 def test_alignment_cache_bypass_mutation_is_rejected(tmp_path, monkeypatch):
     """Reintroduce per-operation resolution; the filesystem fault must catch it."""
-    from spendguard import config
-
-    monkeypatch.setattr(config, "_resolved_ledger_home_redirect",
-                        config._resolved_ledger_home_redirect.__wrapped__)
+    monkeypatch.setattr(ledger_connection, "_resolved_ledger_home_redirect",
+                        ledger_connection._resolved_ledger_home_redirect.__wrapped__)
     with pytest.raises(AssertionError, match="stable ledger operation repeated filesystem resolution"):
         test_stable_home_operations_do_not_resolve_paths(tmp_path, monkeypatch)
 

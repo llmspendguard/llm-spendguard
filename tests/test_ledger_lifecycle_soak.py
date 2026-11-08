@@ -18,6 +18,7 @@ os.environ.setdefault("SPENDGUARD_TEST_ISOLATED", "1")
 os.environ.setdefault("SPENDGUARD_HOME", tempfile.mkdtemp())
 
 from spendguard import config
+from spendguard.store.configuration import ledger_connection
 
 LIFECYCLE_SOAK_OPERATIONS = 100
 LIFECYCLE_SOAK_SCHEMA = "CREATE TABLE IF NOT EXISTS lifecycle_soak(value INTEGER)"
@@ -93,7 +94,7 @@ def run_spend_ledger_instance_soak(ledger_path, baseline):
 
 
 def run_legacy_pool_cap_probe(ledger_path, baseline):
-    with patch.object(config, "ledger_read_pool_settings", return_value=(
+    with patch.object(ledger_connection, "ledger_read_pool_settings", return_value=(
             LIFECYCLE_READ_TEST_CAP, config.LEDGER_POOL_IDLE_TIMEOUT_DEFAULT_S)):
         retained = []
         for operation in range(LIFECYCLE_SOAK_OPERATIONS):
@@ -193,7 +194,7 @@ def run_isolated_recycler_lease_ownership_probe(ledger_path, inject_lock_regress
 
     raw_keys = [f"{lease_key}-{index}" for index in range(LIFECYCLE_READ_TEST_CAP)]
     try:
-        with patch.object(config, "ledger_read_pool_settings", return_value=(
+        with patch.object(ledger_connection, "ledger_read_pool_settings", return_value=(
                 LIFECYCLE_READ_TEST_CAP, LIFECYCLE_READ_HOLD_S)):
             raw_handles = [config.pooled_ledger_conn(key, ensure_lifecycle_soak_schema, ledger_path)
                            for key in raw_keys]
@@ -241,7 +242,7 @@ def run_bounded_read_lifecycle_probe(ledger_path, baseline):
         except RuntimeError:
             pass
 
-    with patch.object(config, "ledger_read_pool_settings", return_value=(
+    with patch.object(ledger_connection, "ledger_read_pool_settings", return_value=(
             LIFECYCLE_READ_TEST_CAP, config.LEDGER_POOL_IDLE_TIMEOUT_DEFAULT_S)):
         with concurrent.futures.ThreadPoolExecutor(max_workers=LIFECYCLE_READ_TEST_WORKERS) as readers:
             list(readers.map(hold_bounded_read_lease, range(LIFECYCLE_SOAK_OPERATIONS)))

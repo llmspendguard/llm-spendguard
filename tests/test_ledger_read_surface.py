@@ -18,6 +18,7 @@ os.environ.setdefault("SPENDGUARD_HOME", tempfile.mkdtemp())
 
 import spendguard
 from spendguard import config, ledger_read
+from spendguard.store.configuration import ledger_connection
 from spendguard.ledger import SpendLedger
 from spendguard.ledger_writer import close_ledger_writers
 from spendguard import calls, cli, mcp_server, receipt
@@ -204,14 +205,14 @@ def run_surface_guards(failures):
             else:
                 check_surface_guard("progress budget raises typed timeout naming budget", False, failures)
         sql_statements = []
-        original_opener = config.open_ledger_connection
+        original_opener = ledger_connection.open_ledger_connection
 
         def trace_surface_open(*args, **kwargs):
             connection = original_opener(*args, **kwargs)
             connection.set_trace_callback(sql_statements.append)
             return connection
 
-        with patch.object(config, "open_ledger_connection", side_effect=trace_surface_open):
+        with patch.object(ledger_connection, "open_ledger_connection", side_effect=trace_surface_open):
             ledger_read.read_ledger_rows(request, path=path)
         check_surface_guard("surface selects named columns", bool(sql_statements) and all(
             "SELECT *" not in statement.upper() for statement in sql_statements), failures)

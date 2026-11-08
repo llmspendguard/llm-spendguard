@@ -10,6 +10,7 @@ from _pytest_fixture_bridge import align_test_startup_home, run_pytest_style
 align_test_startup_home(prefix=__name__)
 
 from spendguard import config
+from spendguard.store.configuration import ledger_connection
 
 JOURNAL_TRANSITION_WATCHDOG_S = 10
 
@@ -25,7 +26,7 @@ def test_fork_child_tuned_open_replaces_held_journal_lock(tmp_path):
     release = threading.Event()
 
     def hold_parent_journal_transition_lock():
-        with config._LEDGER_JOURNAL_MODE_LOCK:
+        with ledger_connection._LEDGER_JOURNAL_MODE_LOCK:
             held.set()
             release.wait()
 
@@ -54,7 +55,7 @@ def test_concurrent_cold_opens_transition_journal_once(tmp_path):
     second_started = threading.Event()
     statements = []
     failures = []
-    execute = config._CountedLedgerConnection.execute
+    execute = ledger_connection._CountedLedgerConnection.execute
 
     def pause_first_journal_transition(connection, statement, *args, **kwargs):
         cursor = execute(connection, statement, *args, **kwargs)
@@ -73,7 +74,7 @@ def test_concurrent_cold_opens_transition_journal_once(tmp_path):
         except BaseException as failure:
             failures.append(failure)
 
-    with patch.object(config._CountedLedgerConnection, "execute", pause_first_journal_transition):
+    with patch.object(ledger_connection._CountedLedgerConnection, "execute", pause_first_journal_transition):
         first = threading.Thread(target=open_cold_journal_connection)
         second = threading.Thread(target=open_cold_journal_connection, args=(second_started,))
         first.start()

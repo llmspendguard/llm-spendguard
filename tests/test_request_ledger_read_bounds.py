@@ -26,6 +26,7 @@ REQUEST_LEDGER_MOVED_MODULE_PATHS = {
     "codex_daemon": ("manage", "token_operations", "codex_daemon.py"),
     "codex_daemon_broker": ("manage", "token_operations", "codex_daemon_broker.py"),
     "config": ("store", "configuration", "config.py"),
+    "ledger_connection": ("store", "configuration", "ledger_connection.py"),
     "ledger": ("store", "money_ledger", "ledger.py"),
     "ledger_read": ("store", "spend_search", "ledger_read.py"),
     "ledger_request_cursor": ("store", "spend_search", "ledger_request_cursor.py"),
@@ -42,7 +43,7 @@ REQUEST_LEDGER_REQUIRED_EDGES = {
         "_ledger_bounded_read_handle": ("managed_ledger_read_connection", "set_progress_handler", "rollback", "__exit__"),
         "ledger_request_scope": ("cancel_ledger_request",),
     },
-    "config": {
+    "ledger_connection": {
         "open_ledger_connection": ("connect",),
         "managed_ledger_read_connection": ("open_ledger_connection", "closing", "notify"),
         "_dispatch_home_aligned_cursor_operation": ("dispatch_managed_request_cursor_step",),
@@ -104,7 +105,7 @@ def _assert_request_ledger_connection_graph(trees):
             calls = {_request_ledger_ast_callee(node.func) for node in ast.walk(definitions[function])
                      if isinstance(node, ast.Call)}
             assert set(required_callees) <= calls, (module, function, set(required_callees) - calls)
-    config_open = next(node for node in ast.walk(trees["config"])
+    config_open = next(node for node in ast.walk(trees["ledger_connection"])
                        if isinstance(node, ast.FunctionDef) and node.name == "open_ledger_connection")
     connections = [node for node in ast.walk(config_open) if isinstance(node, ast.Call)
                    and _request_ledger_ast_callee(node.func) == "connect"]
@@ -133,7 +134,7 @@ class RequestLedgerReadBoundsGraphGuards(unittest.TestCase):
         parser_edges = (
             ("ledger_request_cursor", "dispatch_managed_request_cursor_step", "prepare_managed_statement_facts"),
             ("ledger_request_cursor", "prepare_managed_statement_facts", "set_authorizer"),
-            ("config", "set_authorizer", "replace_managed_user_authorizer"),
+            ("ledger_connection", "set_authorizer", "replace_managed_user_authorizer"),
         )
         for module, function, callee in parser_edges:
             altered_trees = copy.deepcopy(trees)

@@ -40,6 +40,7 @@
         "store.configuration.config_schema",
         "store.configuration.config",
         "store.configuration.config_store",
+        "store.configuration.ledger_connection",
         "store.configuration.config_accessors",
         "store.configuration.ledger_connection_accessors",
         "store.configuration.provider_key_env_registry"

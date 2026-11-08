@@ -14,6 +14,7 @@ os.environ.setdefault("SPENDGUARD_TEST_ISOLATED", "1")
 os.environ.setdefault("SPENDGUARD_HOME", tempfile.mkdtemp())
 
 from spendguard import config
+from spendguard.store.configuration import ledger_connection
 from spendguard.ledger import SpendLedger
 from spendguard import lane_economics, lane_queue
 from spendguard.ledger_writer import close_ledger_writers
@@ -55,7 +56,7 @@ def run_ledger_bounds_checks(failures):
     # namespace. Both old and replacement handles report the same identity;
     # finalizing the closed old handle must not release the replacement's slot.
     recycled_identity = object()
-    recycled_config = runpy.run_path(config.__file__, init_globals={
+    recycled_config = runpy.run_path(ledger_connection.__file__, init_globals={
         "id": lambda connection: recycled_identity,
     })
     recycled_open = recycled_config["open_ledger_connection"]
@@ -78,17 +79,17 @@ def run_ledger_bounds_checks(failures):
     with tempfile.TemporaryDirectory() as bounds_dir:
         bounds_path = Path(bounds_dir) / "bounds.sqlite"
         baseline = config.ledger_connection_count()
-        with patch.object(config, "_cfg_get", return_value=BOUNDS_TEST_CEILING):
+        with patch.object(ledger_connection, "_cfg_get", return_value=BOUNDS_TEST_CEILING):
             check_ledger_bounds("ceiling is read from ledger configuration",
                                 config.ledger_connection_limit() == BOUNDS_TEST_CEILING, failures)
-        with patch.object(config, "_cfg_get", return_value=0):
+        with patch.object(ledger_connection, "_cfg_get", return_value=0):
             try:
                 config.ledger_connection_limit()
             except ValueError:
                 check_ledger_bounds("invalid ceiling fails closed", True, failures)
             else:
                 check_ledger_bounds("invalid ceiling fails closed", False, failures)
-        with patch.object(config, "ledger_connection_limit", return_value=baseline + BOUNDS_WRITER_OWNERS + BOUNDS_TEST_CEILING):
+        with patch.object(ledger_connection, "ledger_connection_limit", return_value=baseline + BOUNDS_WRITER_OWNERS + BOUNDS_TEST_CEILING):
             config.fresh_ledger_conn(ensure_bounds_probe, bounds_path).close()
             baseline = config.ledger_connection_count()
             connections = [config.fresh_ledger_conn(ensure_bounds_probe, bounds_path)
@@ -147,7 +148,7 @@ def run_ledger_bounds_checks(failures):
                 start.abort()
                 raise
 
-        with patch.object(config, "ledger_connection_limit", return_value=baseline + BOUNDS_TEST_CEILING + BOUNDS_WRITER_OWNERS):
+        with patch.object(ledger_connection, "ledger_connection_limit", return_value=baseline + BOUNDS_TEST_CEILING + BOUNDS_WRITER_OWNERS):
             config.fresh_ledger_conn(ensure_bounds_probe, bounds_path).close()
             with concurrent.futures.ThreadPoolExecutor(max_workers=BOUNDS_TEST_WORKERS) as workers:
                 worker_results = list(workers.map(lambda _: contend_bounds_worker(), range(BOUNDS_TEST_WORKERS)))
@@ -240,7 +241,7 @@ def run_ledger_bounds_checks(failures):
         gc.collect()
         check_ledger_bounds("collection releases unreferenced connections", config.ledger_connection_count() == baseline, failures)
         inherited = config.open_ledger_connection(bounds_path, tune=False)
-        with patch.object(config, "ledger_connection_limit", return_value=ceiling + 1):
+        with patch.object(ledger_connection, "ledger_connection_limit", return_value=ceiling + 1):
             try:
                 resized = config.open_ledger_connection(bounds_path)
             except config.LedgerConnectionLimitError:
@@ -251,12 +252,12 @@ def run_ledger_bounds_checks(failures):
         check_ledger_bounds("untuned readers share the cache budget",
                             -inherited.execute("PRAGMA cache_size").fetchone()[0] * ceiling <= config.LEDGER_CACHE_BUDGET_KIB, failures)
         inherited.close()
-        with patch.object(config, "ledger_connection_limit", return_value=BOUNDS_FORK_CEILING):
+        with patch.object(ledger_connection, "ledger_connection_limit", return_value=BOUNDS_FORK_CEILING):
             inherited = config.pooled_ledger_conn(BOUNDS_FORK_POOL_KEY, ensure_bounds_probe, bounds_path)
-            parent_generation = config._LEDGER_ADMISSION
-            config._abandon_inherited_ledger_generation_in_fork_child()
+            parent_generation = ledger_connection._LEDGER_ADMISSION
+            ledger_connection._abandon_inherited_ledger_generation_in_fork_child()
             check_ledger_bounds("same-process hook preserves live accounting",
-                                config._LEDGER_ADMISSION is parent_generation
+                                ledger_connection._LEDGER_ADMISSION is parent_generation
                                 and config.ledger_connection_count() == BOUNDS_FORK_CEILING, failures)
             sys.stdout.flush()
             child_pid = os.fork()
@@ -264,13 +265,13 @@ def run_ledger_bounds_checks(failures):
                 _, child_status = os.waitpid(child_pid, 0)
                 check_ledger_bounds("real fork child admission checks pass", os.waitstatus_to_exitcode(child_status) == 0, failures)
                 check_ledger_bounds("fork leaves parent generation and handle intact",
-                                    config._LEDGER_ADMISSION is parent_generation
+                                    ledger_connection._LEDGER_ADMISSION is parent_generation
                                     and config.ledger_connection_count() == BOUNDS_FORK_CEILING
                                     and inherited.execute("SELECT COUNT(*) FROM bounds_probe").fetchone()[0] == 0, failures)
                 config.reset_ledger_conn(BOUNDS_FORK_POOL_KEY)
                 return
             check_ledger_bounds("child records abandoned inherited count",
-                                config._LEDGER_ADMISSION.abandoned_inherited_count == BOUNDS_FORK_CEILING, failures)
+                                ledger_connection._LEDGER_ADMISSION.abandoned_inherited_count == BOUNDS_FORK_CEILING, failures)
             check_ledger_bounds("fork reset abandons inherited accounting", config.ledger_connection_count() == 0, failures)
             child_connections = [config.pooled_ledger_conn(BOUNDS_FORK_POOL_KEY, ensure_bounds_probe, bounds_path)]
             check_ledger_bounds("fork reset abandons inherited pooled handle",

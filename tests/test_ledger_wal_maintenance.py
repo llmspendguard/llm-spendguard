@@ -13,6 +13,7 @@ from _pytest_fixture_bridge import align_test_startup_home, run_pytest_style
 align_test_startup_home(prefix=__name__)
 
 from spendguard import config, ledger_wal_maintenance as maintenance
+from spendguard.store.configuration import ledger_connection
 
 WAL_GUARD_ROWS = 256
 WAL_GUARD_PAYLOAD_BYTES = 4096
@@ -46,7 +47,7 @@ def wal_guard_controlled_deadline_clock():
 
     clock.monotonic = wal_guard_deadline_monotonic
     with ExitStack() as stack:
-        for module in (config, ledger_read, ledger_request_cursor):
+        for module in (ledger_connection, ledger_read, ledger_request_cursor):
             stack.enter_context(patch.object(module, "time", clock))
         yield clock
 
@@ -618,7 +619,7 @@ def test_wal_connection_close_owner_bypass_mutation_is_detected(tmp_path, monkey
     import pytest
     from contextlib import nullcontext
 
-    guarded_close = config._CountedLedgerConnection.close
+    guarded_close = ledger_connection._CountedLedgerConnection.close
 
     def bypass_wal_close_owner_synchronization(connection):
         observed_lock = connection._ledger_request_step_lock
@@ -629,7 +630,7 @@ def test_wal_connection_close_owner_bypass_mutation_is_detected(tmp_path, monkey
             connection._ledger_request_step_lock = observed_lock
 
     with monkeypatch.context() as close_owner_mutation:
-        close_owner_mutation.setattr(config._CountedLedgerConnection, "close", bypass_wal_close_owner_synchronization)
+        close_owner_mutation.setattr(ledger_connection._CountedLedgerConnection, "close", bypass_wal_close_owner_synchronization)
         with pytest.raises(AssertionError, match="close bypassed the expiry owner lock"):
             test_wal_connection_close_joins_idle_expiry_owner(tmp_path, close_owner_mutation)
 

@@ -13,6 +13,7 @@ os.environ.setdefault("SPENDGUARD_HOME", tempfile.mkdtemp())
 import spendguard
 from spendguard import calls, claudecode, config, guard, ledger_read, mcp_server
 from spendguard.ledger import SpendLedger
+from spendguard.store.configuration import ledger_connection
 
 GLOBAL_CAP_OVERFLOW_COUNT = 5
 GLOBAL_CAP_LEDGER_ROW_COUNT = ledger_read.DEFAULT_LEDGER_READ_ROW_CAP + GLOBAL_CAP_OVERFLOW_COUNT
@@ -77,7 +78,8 @@ def seed_global_cap_ledger(path):
          GLOBAL_CAP_INVOICE_VALUE, GLOBAL_CAP_INVOICE_INTENT))
     writer._conn.commit()
     writer._conn.close()
-    with patch.object(config, "db_path", return_value=path):
+    with patch.object(config, "db_path", return_value=path), \
+            patch.object(ledger_connection, "db_path", return_value=path):
         decision_connection = guard._decisions_db()
     calls._ensure_call_observation_schema(decision_connection)
     call_rows = ((GLOBAL_CAP_CALL_TIMESTAMP, GLOBAL_CAP_DECISION_INTENT, GLOBAL_CAP_CALL_PROVIDER,
@@ -105,6 +107,7 @@ def run_bounded_global_cap_guards():
         path = Path(isolated_home) / GLOBAL_CAP_DATABASE_NAME
         seed_global_cap_ledger(path)
         with patch.object(config, "db_path", return_value=path), \
+                patch.object(ledger_connection, "db_path", return_value=path), \
                 patch.object(claudecode, "_overage_events", return_value={}), \
                 patch.object(claudecode, "_overage_windows", return_value=(
                     [(GLOBAL_CAP_OVERAGE_WINDOW_START, GLOBAL_CAP_OVERAGE_WINDOW_END)], None)):

@@ -16,6 +16,7 @@ align_test_startup_home(prefix=__name__)
 import spendguard
 spendguard.require()
 from spendguard import config, ledger_wal_maintenance as maintenance
+from spendguard.store.configuration import ledger_connection
 
 WAL_HYGIENE_WAIT_MS = 200
 WAL_HYGIENE_RELEASE_S = 0.04
@@ -107,7 +108,7 @@ def _check_wal_hygiene_admission_wait_bound(ledger_path, monkeypatch):
     monkeypatch.setattr(maintenance._WAL_MAINTENANCE_LOG, "warning", lambda *args: warnings.append(args))
 
     def hold_wal_hygiene_admission_lock():
-        with config._LEDGER_ADMISSION.lock:
+        with ledger_connection._LEDGER_ADMISSION.lock:
             admission_held.set()
             release_admission.wait(WAL_HYGIENE_THREAD_JOIN_S)
 
@@ -188,7 +189,7 @@ def check_wal_checkpoint_config_keys_present(monkeypatch):
     for environment_key in (WAL_HYGIENE_CHECKPOINT_WAIT_ENV, WAL_HYGIENE_READER_WAIT_ENV,
                             WAL_HYGIENE_AUTOCHECKPOINT_ENV):
         monkeypatch.delenv(environment_key, raising=False)
-    monkeypatch.setattr(config, "_cfg_get", lambda section, key, default: settings.get(key, default))
+    monkeypatch.setattr(ledger_connection, "_cfg_get", lambda section, key, default: settings.get(key, default))
     assert config.ledger_wal_checkpoint_busy_timeout_ms() == WAL_HYGIENE_WAIT_MS
     assert config.ledger_read_busy_timeout_ms() == WAL_HYGIENE_WAIT_MS
     assert config.ledger_wal_autocheckpoint_pages() == WAL_HYGIENE_AUTOCHECKPOINT_PAGES

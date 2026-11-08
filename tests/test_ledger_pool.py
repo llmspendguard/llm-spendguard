@@ -19,6 +19,7 @@ os.environ.setdefault("SPENDGUARD_TEST_ISOLATED", "1")
 os.environ.setdefault("SPENDGUARD_HOME", tempfile.mkdtemp(prefix="spendguard-ledgerpool-"))
 
 from spendguard import config
+from spendguard.store.configuration import ledger_connection
 
 _fails = []
 def ck(label, cond):
@@ -86,7 +87,7 @@ ck("the uncommitted row was rolled back, not persisted",
 ck("rollback_ledger_conn on an unknown key is a harmless no-op", config.rollback_ledger_conn("no-such-key") is None)
 
 print("-- the after-fork handler clears the whole pool --")
-config._abandon_inherited_ledger_generation_in_fork_child()
+ledger_connection._abandon_inherited_ledger_generation_in_fork_child()
 ck("same-process hook preserves the pool", config.pooled_ledger_conn("subA", _noschema) is ca)
 sys.stdout.flush()
 pool_child_pid = os.fork()

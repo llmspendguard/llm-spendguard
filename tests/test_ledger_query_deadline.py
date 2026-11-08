@@ -17,6 +17,7 @@ _, runner_budget_scale = measure_isolated_runner_budget_scale()
 align_test_startup_home(prefix=__name__)
 
 from spendguard import budget, config, ledger, ledger_read, ledger_writer
+from spendguard.store.configuration import ledger_connection
 
 DEADLINE_GUARD_ROWS = 512
 DEADLINE_GUARD_SCAN_S = 1.0
@@ -66,7 +67,7 @@ def advance_deadline_guard_on_sqlite_progress():
     clock_proxy = SimpleNamespace(**{name: getattr(time, name) for name in dir(time)})
     clock_proxy.monotonic = deadline_guard_virtual_monotonic
     with ExitStack() as patches:
-        for module in (ledger, ledger_read, config, budget):
+        for module in (ledger, ledger_read, ledger_connection, budget):
             patches.enter_context(patch.object(module, "time", clock_proxy))
         patches.enter_context(patch.object(ledger._DecSum, "step", charge_deadline_guard_aggregate))
         yield clock_proxy
@@ -311,7 +312,7 @@ def test_ledger_query_deadline_replacement_fault_recovers():
         budget.spent_all_time()  # include the managed read-only generation observer in the live baseline
         before = capture_deadline_guard_rows(current)
         baseline = config.ledger_connection_count()
-        original_open = config.open_ledger_connection
+        original_open = ledger_connection.open_ledger_connection
         failed_handles = []
 
         def fail_deadline_guard_replacement(*args, mode=failure_mode, opener=original_open,
@@ -326,7 +327,7 @@ def test_ledger_query_deadline_replacement_fault_recovers():
 
         try:
             with advance_deadline_guard_on_sqlite_progress(), \
-                    patch.object(config, "open_ledger_connection", side_effect=fail_deadline_guard_replacement):
+                    patch.object(ledger_connection, "open_ledger_connection", side_effect=fail_deadline_guard_replacement):
                 try:
                     budget.spent_since(DEADLINE_GUARD_DAY, deadline_s=DEADLINE_GUARD_BUDGET_S)
                 except ledger_read.LedgerReadError:

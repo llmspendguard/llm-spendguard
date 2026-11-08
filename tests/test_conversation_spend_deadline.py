@@ -16,6 +16,7 @@ _, runner_budget_scale = measure_isolated_runner_budget_scale()
 align_test_startup_home(prefix=__name__)
 
 from spendguard import budget, config, ledger, ledger_read
+from spendguard.store.configuration import ledger_connection
 import spendguard
 from spendguard.money_scale import NANO_USD_PER_USD
 
@@ -226,7 +227,7 @@ def test_conversation_spend_deadline_non_busy_open_errors():
     for error_code in CONVERSATION_NON_BUSY_OPEN_CODES:
         open_error = sqlite3.OperationalError()
         open_error.sqlite_errorcode = error_code
-        with patch.object(config, "open_ledger_connection", side_effect=open_error):
+        with patch.object(ledger_connection, "open_ledger_connection", side_effect=open_error):
             try:
                 budget.spent_since(CONVERSATION_FAULT_DAY, conv=CONVERSATION_FAULT_ID,
                                    deadline_s=CONVERSATION_FAULT_FAST_S)
@@ -251,7 +252,7 @@ def test_conversation_spend_deadline_invalid_durations_refuse():
 def test_conversation_spend_deadline_busy_admission_refuses():
     seed_conversation_consumer_fault_rows()
     with concurrent.futures.ThreadPoolExecutor(max_workers=CONVERSATION_FAULT_WORKERS) as pool:
-        with config._LEDGER_ADMISSION.lock:
+        with ledger_connection._LEDGER_ADMISSION.lock:
             started = time.monotonic()
             future = pool.submit(budget.spent_since, CONVERSATION_FAULT_DAY,
                                  conv=CONVERSATION_FAULT_ID,
@@ -277,8 +278,8 @@ def test_conversation_spend_deadline_concurrent_admission_accounts_once():
 
     handles = []
     try:
-        with patch.object(config, "ledger_connection_limit", return_value=baseline + CONVERSATION_FAULT_WORKERS):
-            with patch.object(config, "budget_ledger_connection_memory", synchronize_conversation_connection_setup):
+        with patch.object(ledger_connection, "ledger_connection_limit", return_value=baseline + CONVERSATION_FAULT_WORKERS):
+            with patch.object(ledger_connection, "budget_ledger_connection_memory", synchronize_conversation_connection_setup):
                 with concurrent.futures.ThreadPoolExecutor(max_workers=CONVERSATION_FAULT_WORKERS) as pool:
                     futures = [pool.submit(config.open_ledger_connection, config.db_path(), tune=False,
                                            deadline_at=time.monotonic() + CONVERSATION_FAULT_FAST_S)

@@ -14,6 +14,7 @@ os.environ.setdefault("SPENDGUARD_HOME", tempfile.mkdtemp())
 
 import spendguard
 from spendguard import config
+from spendguard.store.configuration import ledger_connection
 
 RECLAMATION_JOIN_CONNECTION_LIMIT = 2
 RECLAMATION_JOIN_WAIT_S = 90.0
@@ -26,11 +27,11 @@ RECLAMATION_JOIN_DATABASE_NAME = "reclamation-join.sqlite"
 
 def run_ledger_admission_reclamation_join_guard():
     spendguard.require()
-    original_limit = config.ledger_connection_limit
-    original_collect = config.gc.collect
-    original_generation = config._LEDGER_ADMISSION
-    config._LEDGER_ADMISSION = config._LedgerAdmissionGeneration()
-    config.ledger_connection_limit = lambda: RECLAMATION_JOIN_CONNECTION_LIMIT
+    original_limit = ledger_connection.ledger_connection_limit
+    original_collect = ledger_connection.gc.collect
+    original_generation = ledger_connection._LEDGER_ADMISSION
+    ledger_connection._LEDGER_ADMISSION = ledger_connection._LedgerAdmissionGeneration()
+    ledger_connection.ledger_connection_limit = lambda: RECLAMATION_JOIN_CONNECTION_LIMIT
     collection_started = threading.Event()
     collection_release = threading.Event()
     competing_collection = threading.Event()
@@ -51,7 +52,7 @@ def run_ledger_admission_reclamation_join_guard():
                     return 0  # CPython returns immediately when collection is active.
                 collection_started.set()
                 # GC callbacks can reenter admission on the collector's thread.
-                reclamation_lock = config._LEDGER_ADMISSION.reclamation_lock
+                reclamation_lock = ledger_connection._LEDGER_ADMISSION.reclamation_lock
                 reentered = reclamation_lock.acquire(blocking=False)
                 assert reentered, "collector callback would deadlock on admission"
                 reclamation_lock.release()
@@ -60,7 +61,7 @@ def run_ledger_admission_reclamation_join_guard():
                     connection.close()
                 return len(expired)
 
-            config.gc.collect = simulate_nonreentrant_stalled_collection
+            ledger_connection.gc.collect = simulate_nonreentrant_stalled_collection
 
             def attempt_reclamation_join_admission(second_caller=False):
                 if second_caller:
@@ -104,9 +105,9 @@ def run_ledger_admission_reclamation_join_guard():
             worker.join(RECLAMATION_JOIN_WAIT_S)
         for connection in admitted + expired:
             connection.close()
-        config.gc.collect = original_collect
-        config.ledger_connection_limit = original_limit
-        config._LEDGER_ADMISSION = original_generation
+        ledger_connection.gc.collect = original_collect
+        ledger_connection.ledger_connection_limit = original_limit
+        ledger_connection._LEDGER_ADMISSION = original_generation
     print("ledger admission reclamation join: PASS")
 
 

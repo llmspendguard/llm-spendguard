@@ -451,7 +451,7 @@ _pr.UNPRICED_SEEN.clear()
 check("no module opens its own socket to a provider any more",
       "urlopen" not in (SRC / "analyze/reconciliation/reconcile_anthropic.py").read_text())
 check("the shared transport always passes a timeout",
-      "timeout=timeout" in (SRC / "store" / "configuration" / "config.py").read_text())
+      "timeout=timeout" in (SRC / "store" / "configuration" / "config_store.py").read_text())
 
 # cachetest had a second, weaker system-prompt extractor whose regex truncated at an escaped quote — and the
 # truncated length feeds the "is this worth caching" threshold.

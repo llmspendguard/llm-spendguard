@@ -10,6 +10,7 @@ align_test_startup_home(prefix=__name__)
 
 from spendguard import best_value, config, ledger_writer
 from spendguard.ledger_read import ledger_request_scope
+from spendguard.store.configuration import ledger_connection
 
 WRITER_ROLLBACK_BUDGET_S = 10
 WRITER_ROLLBACK_OLD_FP = "old"
@@ -57,8 +58,8 @@ def test_caught_second_statement_rolls_back_actual_owner(writer_owned, reset_own
 def test_writer_abort_has_one_rollback_and_no_commit(raise_after_abort, bulk_scope):
     rollback_handles = []
     commit_handles = []
-    native_rollback = config._CountedLedgerConnection.rollback
-    native_commit = config._CountedLedgerConnection.commit
+    native_rollback = ledger_connection._CountedLedgerConnection.rollback
+    native_commit = ledger_connection._CountedLedgerConnection.commit
 
     def observe_writer_abort_rollback(connection):
         rollback_handles.append(connection)
@@ -78,8 +79,8 @@ def test_writer_abort_has_one_rollback_and_no_commit(raise_after_abort, bulk_sco
 
     ledger_writer.run_ledger_write(best_value._bestvalue_verdict_db)
     with ledger_request_scope(deadline_s=WRITER_ROLLBACK_BUDGET_S), \
-            patch.object(config._CountedLedgerConnection, "rollback", observe_writer_abort_rollback), \
-            patch.object(config._CountedLedgerConnection, "commit", observe_writer_abort_commit):
+            patch.object(ledger_connection._CountedLedgerConnection, "rollback", observe_writer_abort_rollback), \
+            patch.object(ledger_connection._CountedLedgerConnection, "commit", observe_writer_abort_commit):
         scope = ledger_writer.ledger_writer_bulk_transaction if bulk_scope else nullcontext
         if raise_after_abort:
             with pytest.raises(RuntimeError), scope():

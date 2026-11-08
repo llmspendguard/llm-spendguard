@@ -12,6 +12,7 @@ _, runner_budget_scale = measure_isolated_runner_budget_scale()
 align_test_startup_home(prefix=__name__)
 
 from spendguard import config, ledger, ledger_read
+from spendguard.store.configuration import ledger_connection
 
 import pytest
 
@@ -48,7 +49,7 @@ def assert_ambient_pool_refusal(current, accessor):
             occupied.set()
             release.wait(timeout=hold_s)
 
-    with patch.object(config, "ledger_read_pool_settings", return_value=(ADMISSION_REPRO_CAP, hold_s)):
+    with patch.object(ledger_connection, "ledger_read_pool_settings", return_value=(ADMISSION_REPRO_CAP, hold_s)):
         holder = threading.Thread(target=occupy_ambient_deadline_pool)
         holder.start()
         try:
@@ -78,7 +79,7 @@ def test_aggregate_deadline_expires_before_pool_release():
                 occupied.set()
                 release.wait(timeout=hold_s)
 
-        with patch.object(config, "ledger_read_pool_settings", return_value=(ADMISSION_REPRO_CAP, hold_s)):
+        with patch.object(ledger_connection, "ledger_read_pool_settings", return_value=(ADMISSION_REPRO_CAP, hold_s)):
             holder = threading.Thread(target=occupy_aggregate_deadline_pool)
             holder.start()
             try:

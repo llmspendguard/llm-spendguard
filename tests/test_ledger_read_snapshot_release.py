@@ -10,6 +10,7 @@ from _pytest_fixture_bridge import align_test_startup_home
 align_test_startup_home(prefix=__name__)
 
 from spendguard import config, ledger_read
+from spendguard.store.configuration import ledger_connection
 
 SNAPSHOT_RELEASE_BUDGET_S = 0.05
 SNAPSHOT_RELEASE_RECURSIVE_STEPS = 1000000000
@@ -40,7 +41,7 @@ class LedgerDeadlineSnapshotReleaseGuards(unittest.TestCase):
                 writer.execute(SNAPSHOT_RELEASE_SCHEMA)
                 writer.execute(SNAPSHOT_RELEASE_INSERT, (__name__,))
                 writer.commit()
-                original_open = config.open_ledger_connection
+                original_open = ledger_connection.open_ledger_connection
                 retained_handles = []
 
                 class SnapshotCloseLossMutation:
@@ -70,7 +71,7 @@ class LedgerDeadlineSnapshotReleaseGuards(unittest.TestCase):
                     return proxy(opener(*args, **kwargs))
 
                 try:
-                    with patch.object(config, "open_ledger_connection",
+                    with patch.object(ledger_connection, "open_ledger_connection",
                                       side_effect=(open_snapshot_close_loss_mutant
                                                    if suppress_recovery else original_open)):
                         with self.assertRaises(ledger_read.LedgerReadTimeout):

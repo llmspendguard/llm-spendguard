@@ -10,6 +10,7 @@ os.environ.setdefault("SPENDGUARD_HOME", tempfile.mkdtemp())
 
 import spendguard
 from spendguard import config, ledger_read
+from spendguard.store.configuration import ledger_connection
 
 RECORDED_GUARD_DATABASE = "consumer-ledger.sqlite"
 RECORDED_GUARD_ABSENT = "absent.sqlite"
@@ -44,7 +45,7 @@ def assert_recorded_admission_deadline(path):
     release_admission = threading.Event()
 
     def hold_consumer_admission_lock():
-        with config._LEDGER_ADMISSION.lock:
+        with ledger_connection._LEDGER_ADMISSION.lock:
             admission_held.set()
             release_admission.wait()
 
@@ -112,7 +113,7 @@ def run_recorded_total_metrics_guards():
             assert after["read_calls_issued"] == before["read_calls_issued"] + RECORDED_GUARD_READ_INCREMENT
             assert after["cumulative_read_seconds"] >= before["cumulative_read_seconds"]
             assert after["open_connections"] == before["open_connections"]
-            with patch.object(config, "open_ledger_connection",
+            with patch.object(ledger_connection, "open_ledger_connection",
                               side_effect=config.LedgerConnectionLimitError("test resource refusal")):
                 assert_recorded_unknown(database)
             with patch.object(ledger_read, "DEFAULT_LEDGER_READ_PROGRESS_VM_INSTRUCTIONS",
@@ -171,14 +172,14 @@ def run_recorded_total_metrics_guards():
         assert_recorded_admission_deadline(database)
         # Reproduce cyclic-GC finalization inside a bounded open while another
         # caller owns admission. An explicitly closed slot must never wait again.
-        original_recorded_guard_open = config.open_ledger_connection
+        original_recorded_guard_open = ledger_connection.open_ledger_connection
 
         def finalize_closed_recorded_handle_before_admission(*args, **kwargs):
             writer.__del__()
             return original_recorded_guard_open(*args, **kwargs)
 
         before_finalizer_count = config.ledger_connection_count()
-        with patch.object(config, "open_ledger_connection",
+        with patch.object(ledger_connection, "open_ledger_connection",
                           side_effect=finalize_closed_recorded_handle_before_admission):
             assert_recorded_admission_deadline(database)
         assert config.ledger_connection_count() == before_finalizer_count
