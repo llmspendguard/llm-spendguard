@@ -2197,8 +2197,8 @@
     ],
     "reason": "These actual foundation modules own immutable parser data, pure deadline cadence, and launchd label constants; each currently depends only on the standard library. Prevent application/surface imports into these foundations. Broader core/surface separation is not claimed: config and pricing currently import adapters/calls."
   },
-  "max_cyclic_edge_count": 8,
-  "max_largest_scc_size": 4,
+  "max_cyclic_edge_count": 5,
+  "max_largest_scc_size": 3,
   "max_legacy_shim_count": 219,
   "package": "spendguard",
   "recorded_cross_context_nonsurface_imports": [
@@ -6703,10 +6703,6 @@
   "recorded_cyclic_edges": [
     [
       "spendguard.platform.distribution",
-      "spendguard.platform.fleet"
-    ],
-    [
-      "spendguard.platform.distribution",
       "spendguard.platform.manifest"
     ],
     [
@@ -6714,16 +6710,8 @@
       "spendguard.platform.release"
     ],
     [
-      "spendguard.platform.fleet",
-      "spendguard.platform.release"
-    ],
-    [
       "spendguard.platform.manifest",
       "spendguard.platform.distribution"
-    ],
-    [
-      "spendguard.platform.manifest",
-      "spendguard.platform.fleet"
     ],
     [
       "spendguard.platform.release",

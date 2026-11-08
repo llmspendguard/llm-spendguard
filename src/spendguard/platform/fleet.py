@@ -32,6 +32,7 @@ import threading
 from contextlib import closing
 
 from .. import config
+from spendguard.platform import platform_accessors
 
 _registered_pid = None                               # successful once-per-process register() guard, fork-safe by PID
 _consumer_deregister_hook_pid = None
@@ -488,7 +489,7 @@ def register_consumer(label=None, role=None, supervision_mode=None, supervision_
             return
         resolved_role = CONSUMER_ROLE_UNSPECIFIED if role is None else role
         try:
-            from .. import release, _version
+            from .. import _version
             import spendguard.manage.admission.admission_accessors as gate
             # Observe THIS process without require()/install(): those would repair
             # the state being attested. Legacy registrations have no proof.
@@ -496,7 +497,7 @@ def register_consumer(label=None, role=None, supervision_mode=None, supervision_
                 consumer_gate_enforcing = not gate.resolve__disabled() and gate.resolve__enforcement_armed()
             except Exception:
                 consumer_gate_enforcing = False
-            s = release.served_sha() or {}
+            s = platform_accessors.resolve_served_sha() or {}
             now = _fleet_iso()
             try:
                 try:
@@ -564,8 +565,7 @@ def running_consumers(prune=True):
     from the current green pointer — it is running code older/other than what deploy promoted). Dead pids are pruned
     from the registry (default). `stale` is None when it cannot be told (no green pointer, or a consumer with no
     served_sha — a pinned, non-git install — in which case `version` is the only signal). $0, never raises."""
-    from . import release
-    g = release.green_pointer() or {}
+    g = platform_accessors.resolve_green_pointer() or {}
     green_sha = g.get("sha")
     out, gone = [], []
     inventory_surface = "consumer registry"
@@ -665,8 +665,7 @@ def restart_stale(apply=False, consumer_id=None, all_supervised=False):
     restarted, requested, confirmed, failed, warn, transient = [], [], [], [], [], []
     green_sha = None
     try:
-        from . import release
-        green_sha = (release.green_pointer() or {}).get("sha")
+        green_sha = (platform_accessors.resolve_green_pointer() or {}).get("sha")
     except Exception:
         pass
     enabled = fleet_control_restarts_enabled()
@@ -1016,9 +1015,8 @@ def verify_and_refresh_registered_interpreters(apply=False):
 
 def fleet_summary():
     """One dict for `spendguard fleet` / doctor, including any identity-verification gap. $0."""
-    from . import release
     procs = running_consumers()
-    g = release.green_pointer() or {}
+    g = platform_accessors.resolve_green_pointer() or {}
     return {"green": g.get("short") or g.get("sha"), "n": len(procs),
             "stale": sum(1 for p in procs if p.get("stale")),
             "unverifiable": sum(1 for p in procs if not p.get("identity_verified")), "consumers": procs}
