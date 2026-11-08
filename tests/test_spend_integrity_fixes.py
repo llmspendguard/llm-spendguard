@@ -24,6 +24,7 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
 
 from spendguard import budget, backfill, trust, saas, config   # noqa: E402
 from spendguard import estimate_divergence as ed               # noqa: E402
+from spendguard.manage.admission import budget_ledger_access    # noqa: E402
 
 EMERGENCY_SPOOL_FIXTURE_COST = 0.5
 
@@ -38,10 +39,11 @@ def ck(label, cond, extra=""):
 
 
 # ── 1. fork reset drops both sqlite connections ──────────────────────────────────────────────────────────────
-budget._conn = "SENTINEL_CONN"
+budget_ledger_access._conn = "SENTINEL_CONN"
 budget._LEDGER_TL.led = "SENTINEL_LEDGER"
 budget._reset_budget_after_fork()
-ck("fork reset drops the shared _conn", budget._conn is None, repr(budget._conn))
+ck("fork reset drops the shared _conn", budget_ledger_access._conn is None,
+   repr(budget_ledger_access._conn))
 ck("fork reset drops the thread-local ledger", getattr(budget._LEDGER_TL, "led", "x") is None)
 
 

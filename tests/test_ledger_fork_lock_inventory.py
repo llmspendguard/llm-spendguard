@@ -12,8 +12,11 @@ align_test_startup_home(prefix=__name__)
 
 LEDGER_FORK_INVENTORY_MODULES = (
     "config", "ledger_writer", "ledger_deadletter", "ledger_read", "ledger_request_cursor",
-    "ledger_wal_maintenance", "mcp_fd_lifecycle", "budget", "calls", "callio", "learn",
+    "ledger_wal_maintenance", "mcp_fd_lifecycle", "calls", "callio", "learn",
     "semcache", "bulkgate", "batch_tracker", "content_retention",
+    # budget_ledger_access owns budget's _lock after the ledger-access carve. Inventory the
+    # owner because the at-fork callback rebinds the leaf global, not budget's facade re-export.
+    "manage.admission.budget_ledger_access",
     # config_store owns _scoped_intent_cap_lock after the configuration carve; the facade
     # ("config") no longer re-exports it (a re-import would go stale at fork), so inventory it
     # at its owning module where new_fork_reset_ledger_state actually rebinds it in the child.

@@ -435,6 +435,7 @@
         "manage.admission.semcache",
         "manage.admission.gate",
         "manage.admission.budget",
+        "manage.admission.budget_ledger_access",
         "manage.admission.budget_accessors",
         "manage.admission.budget_quarantine",
         "manage.admission.budget_reattribution",
