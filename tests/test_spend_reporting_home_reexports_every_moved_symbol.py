@@ -6,7 +6,7 @@ from pathlib import Path
 
 
 SPEND_REPORTING_DIRECTORY = Path(__file__).resolve().parents[1] / "src/spendguard/analyze/spend_reporting"
-HOME_NAMES = ("receipt", "report")
+HOME_NAMES = ("receipt_tally", "report")
 ACCESSORS_NAME = "spend_reporting_accessors"
 BOOTSTRAP_NAME = "spend_reporting_resolver_bootstrap"
 

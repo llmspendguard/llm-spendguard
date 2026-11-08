@@ -20,6 +20,7 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
 from _script_checks import record_script_check  # noqa: E402
 
 from spendguard import compaction, receipt
+from spendguard.analyze.spend_reporting import receipt_cli
 
 fails = []
 HOME = os.environ["SPENDGUARD_HOME"]
@@ -46,14 +47,14 @@ record_script_check(fails, "a NON-compact SessionStart is ignored (still 1 event
 
 # ── authoritative Claude Code hook schemas + cross-compaction re-injection ──
 def hook(args, payload):
-    old = receipt.sys.stdin
-    receipt.sys.stdin = io.StringIO(json.dumps(payload))
+    old = receipt_cli.sys.stdin
+    receipt_cli.sys.stdin = io.StringIO(json.dumps(payload))
     buf = io.StringIO()
     try:
         with contextlib.redirect_stdout(buf):
             rc = receipt.cli(args)
     finally:
-        receipt.sys.stdin = old
+        receipt_cli.sys.stdin = old
     record_script_check(fails, "hook exits cleanly: " + args[0], rc == 0)
     return json.loads(buf.getvalue()) if buf.getvalue().strip() else {}
 

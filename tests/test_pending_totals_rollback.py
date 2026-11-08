@@ -60,7 +60,7 @@ def test_pending_coverage_and_tally_never_persist_after_rollback(tmp_path):
             patch.object(receipt_emit, "render_line", return_value=""), \
             patch("spendguard.compaction.measured_explicit_compaction_ratio", return_value=(None, 0)), \
             patch("spendguard.claudecode.measured_compaction_ratio", return_value=(PENDING_TOTALS_AMOUNT, 1)), \
-            patch.object(receipt.config, "update_json") as publish_report, \
+            patch.object(receipt_emit.config, "update_json") as publish_report, \
             patch("spendguard.lane_value.refresh_lane_value_if_stale"):
         with pytest.raises(RuntimeError):
             with current.bulk():

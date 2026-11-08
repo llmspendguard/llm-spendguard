@@ -759,3 +759,16 @@ def _plan_label():
     if os.getenv("SPENDGUARD_PLAN_USD") or config._cfg_get("subscription", "plan_usd", None):
         return "Subscription (configured)"
     return "Subscription (" + " + ".join(n for n, _ in _DEFAULT_PLANS) + ")"
+
+
+from . import spend_reporting_accessors as _spend_reporting_accessors
+
+_spend_reporting_accessors.set__money_resolver(lambda *args, **kwargs: _money(*args, **kwargs))
+_spend_reporting_accessors.set__plan_usd_resolver(lambda *args, **kwargs: _plan_usd(*args, **kwargs))
+_spend_reporting_accessors.set__receipt_aggregate_cache_path_resolver(
+    lambda *args, **kwargs: _receipt_aggregate_cache_path(*args, **kwargs))
+_spend_reporting_accessors.set__rewindow_resolver(lambda *args, **kwargs: _rewindow(*args, **kwargs))
+_spend_reporting_accessors.set__utc_today_resolver(lambda *args, **kwargs: _utc_today(*args, **kwargs))
+_spend_reporting_accessors.set__windows_resolver(lambda *args, **kwargs: _windows(*args, **kwargs))
+_spend_reporting_accessors.set_stamp_est_value_resolver(lambda *args, **kwargs: stamp_est_value(*args, **kwargs))
+_spend_reporting_accessors.set_stamp_remote_resolver(lambda *args, **kwargs: stamp_remote(*args, **kwargs))

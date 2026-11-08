@@ -4,7 +4,8 @@ import tempfile
 from pathlib import Path
 from unittest.mock import patch
 
-from spendguard import calibrate, config, lane_balance, ledger_read, receipt
+from spendguard import calibrate, config, lane_balance, ledger_read
+from spendguard.analyze.spend_reporting import receipt_tally
 
 DEGRADE_TEST_DATABASE = "absent-ledger.sqlite"
 DEGRADE_TEST_INTENT = "contract-guard"
@@ -31,7 +32,7 @@ def run_ledger_degrade_contract_guards():
             check_ledger_degrade_contract(
                 "absent ledger returns empty recent counts",
                 lane_balance._recent_calls_by_lane, {}, failures)
-            with patch.object(receipt, "_plan_usd", return_value=(0.0, False)):
+            with patch.object(receipt_tally, "_plan_usd", return_value=(0.0, False)):
                 check_ledger_degrade_contract(
                     "lane utilization succeeds with absent ledger",
                     lambda: all(row["calls_recent"] == 0 for row in lane_balance.lane_utilization()["lanes"]),

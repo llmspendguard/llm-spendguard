@@ -10,6 +10,7 @@ from unittest.mock import patch
 
 import spendguard
 from spendguard import claudecode, config, ledger_read, pricing, receipt
+from spendguard.analyze.spend_reporting import receipt_cli
 
 DISPLAY_RESIDENCY_EXTRA_ROWS = 1
 DISPLAY_RESIDENCY_DATABASE_NAME = "receipt-residency.sqlite"
@@ -51,9 +52,9 @@ def run_receipt_residency_display_containment():
                 patch.object(config, "db_path", return_value=display_residency_path), \
                 patch.object(claudecode, "_conv_transcript_records", return_value=display_residency_records), \
                 patch.object(claudecode, "_resident_instruction_tokens", return_value=(0, [])), \
-                patch.object(receipt, "render_tree", return_value=""), \
-                patch.object(receipt, "_conv_org", return_value=None), \
-                patch.object(receipt, "_est_tree", return_value={}), \
+                patch.object(receipt_cli, "render_tree", return_value=""), \
+                patch.object(receipt_cli, "_conv_org", return_value=None), \
+                patch.object(receipt_cli, "_est_tree", return_value={}), \
                 patch("spendguard.lane_value.refresh_lane_value_if_stale"), \
                 contextlib.redirect_stdout(display_residency_stdout):
             display_residency_totals = ledger_read.read_cc_residency_totals()

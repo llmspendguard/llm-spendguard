@@ -23,6 +23,7 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
     os.execv(sys.executable, [sys.executable] + sys.argv)
 
 from spendguard import receipt, calls, budget
+from spendguard.analyze.spend_reporting import receipt_cli
 
 fails = []
 from functools import partial
@@ -199,13 +200,13 @@ with contextlib.redirect_stdout(buf):
 hk = _json.loads(buf.getvalue())   # MUST be valid JSON — Claude Code parses it
 ck("--stop-hook: valid JSON, systemMessage carries the tally", "systemMessage" in hk and "real" in hk["systemMessage"] and "est value" in hk["systemMessage"])
 
-_real_stdin = receipt.sys.stdin
-receipt.sys.stdin = io.StringIO('{"workspace":{"current_dir":"/a/b/myrepo"},'
+_real_stdin = receipt_cli.sys.stdin
+receipt_cli.sys.stdin = io.StringIO('{"workspace":{"current_dir":"/a/b/myrepo"},'
                                 '"model":{"display_name":"Opus 4.8"},"context_window":{"used_percentage":12.4}}')
 buf = io.StringIO()
 with contextlib.redirect_stdout(buf):
     receipt.cli(["--statusline"])
-receipt.sys.stdin = _real_stdin
+receipt_cli.sys.stdin = _real_stdin
 sl = buf.getvalue()
 ck("--statusline: prefixes cwd · model · ctx% then the tally",
    "myrepo" in sl and "Opus 4.8" in sl and "12% ctx" in sl and "real" in sl)
