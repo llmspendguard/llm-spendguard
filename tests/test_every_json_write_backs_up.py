@@ -123,25 +123,34 @@ print("\n-- the DATABASE gets the same treatment as the files --")
 # snapshot() was written the day config.json was lost and then called from exactly ONE place, while six
 # functions issue a DELETE against the ledger. Same shape as keep_backups=0: built, made opt-in, not opted
 # into. Every function that DELETEs money rows must snapshot first.
-_bsrc = (SRC / "manage/admission/budget.py").read_text()
-_btree = ast.parse(_bsrc)
+# The budget hub has been split into single-responsibility siblings (budget_true_down.py, …), so a
+# money-deleting reader may now live in a carved sibling and reach snapshot_once through the admission
+# seam (`_admission_accessors.resolve_snapshot_once`) rather than by bare name. Scan budget.py AND every
+# budget*.py beside it, and accept the seam-routed snapshot call as satisfying the snapshot-before-delete
+# invariant — the invariant is the same, only the call spelling crossed the seam.
+_budget_trees = [ast.parse(p.read_text()) for p in sorted((SRC / "manage/admission").glob("budget*.py"))]
+_snapshot_resolver_names = BUDGET_SNAPSHOT_CALL_NAMES | {f"resolve_{_n}" for _n in BUDGET_SNAPSHOT_CALL_NAMES}
 _unsnapped, _checked = [], []
-for _fn in [n for n in ast.walk(_btree) if isinstance(n, ast.FunctionDef)]:
-    _calls = [n for n in ast.walk(_fn) if isinstance(n, ast.Call)]
-    # Match the DELETE protocol independently of receiver spelling: maintenance
-    # owns an injected ledger, while ordinary writers call _ledger().
-    _deletes = [n for n in _calls if isinstance(n.func, ast.Attribute) and n.func.attr == "delete"]
-    if not _deletes:
-        continue
-    _checked.append(_fn.name)
-    _snapshots = [n for n in _calls if isinstance(n.func, ast.Name)
-                  and n.func.id in BUDGET_SNAPSHOT_CALL_NAMES]
-    if not any(n.lineno < min(call.lineno for call in _deletes) for n in _snapshots):
-        _unsnapped.append(_fn.name)
+for _btree in _budget_trees:
+    for _fn in [n for n in ast.walk(_btree) if isinstance(n, ast.FunctionDef)]:
+        _calls = [n for n in ast.walk(_fn) if isinstance(n, ast.Call)]
+        # Match the DELETE protocol independently of receiver spelling: maintenance
+        # owns an injected ledger, while ordinary writers call _ledger().
+        _deletes = [n for n in _calls if isinstance(n.func, ast.Attribute) and n.func.attr == "delete"]
+        if not _deletes:
+            continue
+        _checked.append(_fn.name)
+        # snapshot_once reached either by bare name (budget.py) or through the admission seam resolver
+        # (a carved sibling: `_admission_accessors.resolve_snapshot_once`).
+        _snapshots = [n for n in _calls
+                      if (isinstance(n.func, ast.Name) and n.func.id in BUDGET_SNAPSHOT_CALL_NAMES)
+                      or (isinstance(n.func, ast.Attribute) and n.func.attr in _snapshot_resolver_names)]
+        if not any(n.lineno < min(call.lineno for call in _deletes) for n in _snapshots):
+            _unsnapped.append(_fn.name)
 check("the check actually FOUND the deleting functions (an empty set would pass vacuously)",
       frozenset(_checked) == BUDGET_MONEY_DELETE_OWNERS, f"found {_checked}")
 check("every ledger function that DELETEs money rows snapshots first", not _unsnapped, str(_unsnapped))
-_true_down_wrapper = next(n for n in ast.walk(_btree)
+_true_down_wrapper = next(n for _btree in _budget_trees for n in ast.walk(_btree)
                          if isinstance(n, ast.FunctionDef) and n.name == "clear_true_down")
 check("clear_true_down delegates to the snapshotted readable-provider deletion owner",
       any(isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == "clear_readable_true_down"

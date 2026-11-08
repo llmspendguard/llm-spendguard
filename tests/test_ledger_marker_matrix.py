@@ -173,17 +173,24 @@ _COUNT_ONLY = {"unpriced_since", "input_cache_split"}
 
 
 def aggregators():
-    """Every budget.py function that SUMS DOLLARS out of spend_events. DISCOVERED from the AST — a function is a
+    """Every budget-hub function that SUMS DOLLARS out of spend_events. DISCOVERED from the AST — a function is a
     candidate if it CALLS a SpendLedger dollar primitive (_DOLLAR_PRIMITIVES); the count-only readers are removed
     by the adjudicated _COUNT_ONLY set. A new aggregator therefore appears here whether or not anyone remembered
-    it. (Finding the functions is format-determined; what they COUNT is settled by arithmetic below.)"""
-    tree = ast.parse(pathlib.Path(inspect.getfile(budget)).read_text())
+    it. (Finding the functions is format-determined; what they COUNT is settled by arithmetic below.)
+
+    The budget hub has been split into single-responsibility sibling modules (budget_true_down.py, …), so an
+    aggregator may now live in a carved sibling rather than budget.py. Discovery scans budget.py AND every
+    budget*.py beside it; the dollar-primitive filter naturally admits only the summing READERS, so writer-only
+    siblings (budget_unpriced.py, budget_quarantine.py) contribute nothing and need no exclusion."""
+    hub_dir = pathlib.Path(inspect.getfile(budget)).parent
     found = set()
-    for node in tree.body:
-        if isinstance(node, ast.FunctionDef) and any(
-                isinstance(c, ast.Call) and isinstance(c.func, ast.Attribute) and c.func.attr in _DOLLAR_PRIMITIVES
-                for c in ast.walk(node)):
-            found.add(node.name)
+    for source_path in sorted(hub_dir.glob("budget*.py")):
+        tree = ast.parse(source_path.read_text())
+        for node in tree.body:
+            if isinstance(node, ast.FunctionDef) and any(
+                    isinstance(c, ast.Call) and isinstance(c.func, ast.Attribute) and c.func.attr in _DOLLAR_PRIMITIVES
+                    for c in ast.walk(node)):
+                found.add(node.name)
     return found - _COUNT_ONLY
 
 
