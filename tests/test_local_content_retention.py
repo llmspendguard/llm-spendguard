@@ -5,6 +5,7 @@ import os
 import sqlite3
 import sys
 import tempfile
+from unittest import mock
 
 
 if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
@@ -18,6 +19,8 @@ from spendguard import adapters, callio, calls, config, content_retention, saas,
 
 failures = []
 TEST_MODEL = "openai:gpt-5.5"
+CONTENT_RETENTION_THROTTLE_TEST_OPENS = 20
+CONTENT_RETENTION_TEST_MONOTONIC_START = 0.0
 
 
 
@@ -45,6 +48,24 @@ finally:
     adapters._call_guarded = original_guarded
 
 connection = content_retention._content_retention_db()
+with mock.patch.object(content_retention, "_content_retention_last_purge_time", None), \
+        mock.patch.object(content_retention.time, "monotonic", return_value=CONTENT_RETENTION_TEST_MONOTONIC_START) as retention_clock, \
+        mock.patch.object(content_retention, "_purge_expired_content_rows", wraps=content_retention._purge_expired_content_rows) as retention_purge:
+    for retention_open_index in range(CONTENT_RETENTION_THROTTLE_TEST_OPENS):
+        content_retention._content_retention_db().close()
+    record_script_check(failures, "repeated connection opens purge exactly once within the interval",
+                        retention_purge.call_count == 1)
+    retention_clock.return_value += content_retention.CONTENT_RETENTION_PURGE_MIN_INTERVAL_SECONDS
+    content_retention._content_retention_db().close()
+    record_script_check(failures, "TTL maintenance resumes at the interval boundary",
+                        retention_purge.call_count == 2)
+    retention_clock.return_value += content_retention.CONTENT_RETENTION_PURGE_MIN_INTERVAL_SECONDS
+    retention_purge.side_effect = sqlite3.OperationalError("fixture")
+    for retention_open_index in range(CONTENT_RETENTION_THROTTLE_TEST_OPENS):
+        content_retention._content_retention_db().close()
+    record_script_check(failures, "failed purge attempts are throttled and non-fatal",
+                        retention_purge.call_count == 3)
+
 row = connection.execute(
     f"SELECT call_id,prompt_json,system_json,response_json FROM {content_retention.CONTENT_RETENTION_TABLE}"
 ).fetchone()
@@ -84,6 +105,7 @@ try:
 except sqlite3.DatabaseError:
     pass
 try:
+    content_retention._content_retention_last_purge_time = None
     content_retention._ensure_content_retention_schema(connection)
 except sqlite3.DatabaseError:
     purge_failure_propagated = True

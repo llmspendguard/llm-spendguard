@@ -8,6 +8,7 @@ import datetime
 import json
 import logging
 import threading
+import time
 
 from ... import config
 from ...ledger_fork_locks import new_fork_reset_ledger_state
@@ -22,8 +23,11 @@ CONTENT_RETENTION_DAYS_KEY = "retention_days"
 CONTENT_RETENTION_TABLE = "call_content"
 CONTENT_RETENTION_PURGE_BATCH_ROWS = 1000
 CONTENT_RETENTION_PURGE_SAVEPOINT = "content_retention_purge"
+CONTENT_RETENTION_PURGE_MIN_INTERVAL_SECONDS = 300
 
 _content_retention_lock = new_fork_reset_ledger_state(globals(), "_content_retention_lock", threading.RLock)
+_content_retention_last_purge_time = new_fork_reset_ledger_state(
+    globals(), "_content_retention_last_purge_time", type(None))
 _content_retention_logger = logging.getLogger(__name__)
 
 
@@ -82,7 +86,8 @@ def _purge_expired_content_rows(connection, *, now=None):
 
 
 def _ensure_content_retention_schema(connection):
-    """Apply the additive schema upgrade and attempt an atomic bounded TTL purge."""
+    """Apply the additive schema upgrade and throttle process-local TTL maintenance."""
+    global _content_retention_last_purge_time
     connection.execute(f"""CREATE TABLE IF NOT EXISTS {CONTENT_RETENTION_TABLE}(
         id TEXT PRIMARY KEY,
         call_id TEXT NOT NULL,
@@ -94,11 +99,19 @@ def _ensure_content_retention_schema(connection):
     ensure_ordered_index_coverage(connection, CONTENT_RETENTION_TABLE, ("ts",))
     ensure_ordered_index_coverage(connection, CONTENT_RETENTION_TABLE, ("call_id",))
     connection.commit()
-    try:
-        _purge_expired_content_rows(connection)
-    except Exception:
-        _content_retention_logger.exception(
-            "local content TTL purge failed; transaction rolled back without deleting rows")
+    with _content_retention_lock:
+        purge_time = time.monotonic()
+        if (_content_retention_last_purge_time is not None and
+                purge_time - _content_retention_last_purge_time <
+                CONTENT_RETENTION_PURGE_MIN_INTERVAL_SECONDS):
+            return
+        # Claim the interval even on failure: retries on every open cause a lock storm.
+        _content_retention_last_purge_time = purge_time
+        try:
+            _purge_expired_content_rows(connection)
+        except Exception:
+            _content_retention_logger.exception(
+                "local content TTL purge failed; transaction rolled back without deleting rows")
 
 
 def _content_retention_db():
