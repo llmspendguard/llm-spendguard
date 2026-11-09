@@ -219,12 +219,18 @@ jobs:
         run: |
           # The manifest includes ambient-scope-never-refuses-ledger-ops; selfcheck
           # executes its complete regression under the isolated offline harness.
-          # wheel-source-module-conformance needs pip/setuptools/wheel to build a real wheel;
-          # this readiness env is created by `uv venv` without them, so the gate is UNREVIEWED
-          # here. The real wheel build + bidirectional module-set equality runs on this same
-          # commit in the sharded `test` job (which provisions the declared build backend), so
-          # that single UNREVIEWED is tolerated while every FAIL and every other UNREVIEWED blocks.
+          # Two gates are UNREVIEWED under this offline harness (never FAIL), each because an
+          # input it needs is absent here but present where the real check runs:
+          #   - wheel-source-module-conformance needs pip/setuptools/wheel to build a real wheel;
+          #     this readiness env is created by `uv venv` without them. The real wheel build +
+          #     bidirectional module-set equality runs on this same commit in the sharded `test`
+          #     job (which provisions the declared build backend).
+          #   - docs-present's doc-currency check makes an agentic deprecated-import judgement that
+          #     needs a reachable LLM lane; this runner is network-isolated, so that leg cannot run
+          #     and the gate reports UNREVIEWED. The judgement runs on operator machines where a
+          #     lane is present; a real doc-currency regression there FAILs and is never tolerated.
+          # Both UNREVIEWEDs are tolerated here while every FAIL and every other UNREVIEWED blocks.
           export HTTP_PROXY="$CI_OFFLINE_PROXY" HTTPS_PROXY="$CI_OFFLINE_PROXY" ALL_PROXY="$CI_OFFLINE_PROXY"
           export http_proxy="$CI_OFFLINE_PROXY" https_proxy="$CI_OFFLINE_PROXY" all_proxy="$CI_OFFLINE_PROXY"
           export NO_PROXY= no_proxy= PIP_NO_INDEX=1
-          spendguard selfcheck --environment-report "$CI_READINESS_ENVIRONMENT_REPORT" --tolerate-unreviewed wheel-source-module-conformance
+          spendguard selfcheck --environment-report "$CI_READINESS_ENVIRONMENT_REPORT" --tolerate-unreviewed wheel-source-module-conformance --tolerate-unreviewed docs-present

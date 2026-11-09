@@ -142,7 +142,7 @@ This is a **format** check; whether an answer is *correct* is a judgement and st
 **Budgets:** `caps.meta` = spendguard's own advisor spend; `caps.{llm,compute,total}.{daily,monthly}` = your workload
 ceilings; **per-repo** = tag the repo via `saas.project` (or a repo-local `.spendguard.json`) and set org/team caps
 centrally in the dashboard. The full registry — every setting, default, valid options, secret-or-not — is
-`src/spendguard/config_schema.py` (it drives `spendguard init` and `spendguard config`).
+`src/spendguard/store/configuration/config_schema.py` (it drives `spendguard init` and `spendguard config`).
 
 ## Pricing configuration
 The curated/override files use this structure (`src/spendguard/prices.json`, `~/.spendguard/prices.json`, or `$SPENDGUARD_PRICES`):
@@ -207,7 +207,7 @@ variable always wins, so CI/secret-managers are never clobbered. Per provider: `
 `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `DEEPSEEK_API_KEY`, `DASHSCOPE_API_KEY` (Qwen), `ZAI_API_KEY` (z.ai/GLM),
 `MOONSHOT_API_KEY` (Kimi). **Add another in one line:**
 ```python
-from spendguard.adapters import register_provider
+from spendguard.generate.execution.adapters import register_provider
 register_provider("together", "https://api.together.xyz/v1", "TOGETHER_API_KEY", ("meta-llama", "mistralai"))
 ```
 
@@ -237,7 +237,7 @@ one sanctioned call path and the caller has no way to truncate at all:
 ```python
 import spendguard
 # files=[…] assembles each WHOLE, stamped, self-verified file into the prompt via attach_many:
-r = spendguard.adapters.call("claude-opus-4-8", "Find the bug in these:", files=["a.py", "b.py"])
+r = spendguard.generate.execution.adapters.call("claude-opus-4-8", "Find the bug in these:", files=["a.py", "b.py"])
 ```
 
 ### Let spendguard choose the model + effort — `reasoning="best-value"`
@@ -249,7 +249,7 @@ its provenance rather than inventing evidence. Learn the per-intent effort
 first with `spendguard effort-titrate <intent>` (estimate-first); apply it fleet-wide via the same call path.
 ```python
 import spendguard
-r = spendguard.adapters.call(None, "Adjudicate this edge case …",
+r = spendguard.generate.execution.adapters.call(None, "Adjudicate this edge case …",
                              reasoning="best-value", intent="edge-adjudicate")
 # r["best_value"] records the measured selection and its provenance.
 ```
@@ -461,7 +461,7 @@ it without adding a dependency:
    method (e.g. `register("cohere", "Client", "chat", gate_fn)`). Write a small `gate_fn` that reads the request
    shape and estimates cost; add the model's prices to the table (`prices.json` / your override).
 2. **Add an OpenAI-compatible provider in one line** (for `compare` + metering — most providers expose one):
-   `from spendguard.adapters import register_provider; register_provider("together", "https://api.together.xyz/v1", "TOGETHER_API_KEY", ("meta-llama", "mistralai"))`.
+   `from spendguard.generate.execution.adapters import register_provider; register_provider("together", "https://api.together.xyz/v1", "TOGETHER_API_KEY", ("meta-llama", "mistralai"))`.
 3. **Emit anywhere:** route the per-call event to a webhook, OpenTelemetry, or an in-process callback
    (`spendguard.on_event(...)`) — see [Observability](#observability-feed-your-existing-stack).
 

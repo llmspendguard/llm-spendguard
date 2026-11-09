@@ -103,7 +103,7 @@ spendguard reliability [--run] [--remediate] [--notify] [--json]   # sweep every
 #   --notify: fire a macOS notification on any red (for a scheduled/headless run). The result is CACHED, so a down lane also surfaces in the receipt EVERY turn — and a lane that fails mid-use surfaces INSTANTLY (event-driven) + auto-clears on recovery.
 #   Schedule it: a launchd agent running `reliability --run --remediate --notify` daily = a standing lane-health watch (see docs/SUBSCRIPTION_VALUE.md).
 # One-shot verdict/classification: pass an INTENT (not a guessed model id) with reasoning="best-value" —
-#   spendguard.adapters.call(None, prompt, reasoning="best-value", intent="X") → cheapest measured-good (model,effort), $0 lane first, metered fallback.
+#   spendguard.generate.execution.adapters.call(None, prompt, reasoning="best-value", intent="X") → cheapest measured-good (model,effort), $0 lane first, metered fallback.
 # Batch comprehension → `spendguard comprehend`; self-contained workspace-write → `spendguard delegate --cwd … --yes`.
 # Full API/job chooser and cold-vs-warm facts: README.md "Routing cheat-sheet".
 
@@ -131,7 +131,7 @@ spendguard lanes --bulk <intent> [--file t.txt|--jsonl] [--tier G] [--lanes a,b,
 spendguard lanes --bakeoff X "<task>" | --estimate   # seed the learned cross-lane router (--estimate = $0 judge-cost preview)
 spendguard lanes --propose X <primary> | --confirm X <sub>   # a judge PROPOSES acceptable substitutes (PENDING) → you confirm once
 #   PIN semantics: a pin is a PROVIDER + a reasoning FLOOR. Work rides the $0 lane; a miss falls to that SAME provider's metered
-#   API at EQUAL-or-GREATER reasoning (src/spendguard/reasoning_equivalence.py) — never a different vendor, never less reasoning.
+#   API at EQUAL-or-GREATER reasoning (src/spendguard/store/reference_data/reasoning_equivalence.py) — never a different vendor, never less reasoning.
 #   Programmatic fan: lane_balance.bulk_delegate(tasks, intent, model_for=…|tier=…, on_miss="batch"|"error"|"api", hedge_ms=…, strategy="auto") — see docs/GATED_BULK_LANES.md
 
 # work-done attribution (org → team × project), all sources

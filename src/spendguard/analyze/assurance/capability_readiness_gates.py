@@ -13,6 +13,7 @@ READINESS_HASH_CHUNK_BYTES = 1024 * 1024
 READINESS_REQUIRED_ENVIRONMENTS = 2
 READINESS_SCRIPT_HARNESS_PATH = Path("scripts") / "test" / "chunked_suite.py"
 WHEEL_CONFORMANCE_OFFLINE_SKIP_MARKER = "[SKIP] unbuildable offline — run in CI"
+DOCS_DEPRECATED_IMPORT_UNREVIEWED_MARKER = "[UNREVIEWED] docs deprecated-import candidates require a reachable lane"
 
 
 def assess_protected_lane_leak_readiness(*, context, hours=1.0, min_other_calls=None, ledger_path=None):
@@ -132,6 +133,16 @@ def assess_wheel_source_conformance_readiness(*, context, scripts):
     if any(WHEEL_CONFORMANCE_OFFLINE_SKIP_MARKER in item for item in result.evidence):
         return CapabilityReadinessEvidence(
             "UNREVIEWED", "Wheel is unbuildable offline — run the conformance gate in CI", result.evidence)
+    return result
+
+
+def assess_document_currency_readiness(*, context, scripts):
+    """Keep mechanical docs checks mandatory while preserving offline agentic uncertainty."""
+    result = run_capability_script_readiness_gate(context=context, scripts=scripts)
+    if any(DOCS_DEPRECATED_IMPORT_UNREVIEWED_MARKER in item for item in result.evidence):
+        return CapabilityReadinessEvidence(
+            "UNREVIEWED", "Deprecated-import meaning needs a reachable lane; mechanical checks passed", result.evidence
+        )
     return result
 
 

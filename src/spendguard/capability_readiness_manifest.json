@@ -122,11 +122,12 @@
     },
     {
       "id": "docs-present",
-      "description": "Generated API reference and parameter contracts match the current registry.",
-      "gate": "spendguard.capability_readiness_gates:run_capability_script_readiness_gate",
+      "description": "Generated API reference, parameter contracts, and handwritten source references match the current tree.",
+      "gate": "spendguard.capability_readiness_gates:assess_document_currency_readiness",
       "arguments": {
         "scripts": [
-          "tests/test_capability_documentation_guard.py"
+          "tests/test_capability_documentation_guard.py",
+          "tests/test_docs_reference_live_source_paths.py"
         ]
       }
     },

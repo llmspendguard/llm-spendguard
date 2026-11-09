@@ -10,9 +10,7 @@ A supplied clean-environment report must match the current input fingerprint and
 ## Project invariants
 
 - [ ] **wheel-source-module-conformance** — A clean offline wheel contains exactly every recursive source module and no stale modules.
-  Gate: `spendguard.capability_readiness_gates:assess_wheel_source_conformance_readiness`; inputs: `{"scripts": ["tests/test_wheel_ships_every_source_subpackage.py"]}`. Missing offline build tooling is UNREVIEWED and must run in CI.
-
-- **Nightly ledger performance** (GATED-NIGHTLY): `spendguard bench --check` compares hot ledger p50/p95/p99 and end-to-end data-flow latency/throughput with the committed same-runner baseline. The separate `perf-nightly.yml` workflow repeats both mechanical tests ten times; the PR gate remains unchanged.
+  Gate: `spendguard.capability_readiness_gates:assess_wheel_source_conformance_readiness`; inputs: `{"scripts": ["tests/test_wheel_ships_every_source_subpackage.py"]}`.
 
 - [ ] **surface-parity** — Every capability is exposed on CLI, API and MCP except declared deliberate absences.
   Gate: `spendguard.capability_readiness_gates:run_capability_script_readiness_gate`; inputs: `{"scripts": ["tests/test_capability_surface_parity_guard.py"]}`.
@@ -26,17 +24,20 @@ A supplied clean-environment report must match the current input fingerprint and
 - [ ] **help-non-trivial** — Every CLI command exposes real flags or its explicit no-flags declaration.
   Gate: `spendguard.capability_readiness_gates:run_capability_script_readiness_gate`; inputs: `{"scripts": ["tests/test_capability_cli_help_guard.py"]}`.
 
-- [ ] **docs-present** — Generated API reference and parameter contracts match the current registry.
-  Gate: `spendguard.capability_readiness_gates:run_capability_script_readiness_gate`; inputs: `{"scripts": ["tests/test_capability_documentation_guard.py"]}`.
+- [ ] **docs-present** — Generated API reference, parameter contracts, and handwritten source references match the current tree.
+  Gate: `spendguard.capability_readiness_gates:run_capability_script_readiness_gate`; inputs: `{"scripts": ["tests/test_capability_documentation_guard.py", "tests/test_docs_reference_live_source_paths.py"]}`.
 
 - [ ] **no-release-on-red-ci** — Release promotion fails closed when CI is red or unknown.
   Gate: `spendguard.capability_readiness_gates:run_capability_script_readiness_gate`; inputs: `{"scripts": ["tests/test_release_green_pointer.py"]}`.
 
 - [ ] **env-parity-in-verification** — Current source passes required checks in independent clean environments.
-  Gate: `spendguard.capability_readiness_gates:assess_capability_environment_evidence`; inputs: `{"patterns": ["src/spendguard/**/*.py", "src/spendguard/capability*.json", "src/spendguard/capability*.jsonl", "src/spendguard/architectural_fitness_baseline.json", "scripts/test/*.py", "tests/**/*.py", "pyproject.toml", ".github/workflows/*", "docs/*.md", "LICENSE", "SECURITY.md", "CONTRIBUTING.md", "README.md", "CHANGELOG.md", "src/spendguard/distribution_build_wheels/*.whl"], "required_checks": ["ruff", "name-uniqueness", "surface-suites", "offline-audit"]}`.
+  Gate: `spendguard.capability_readiness_gates:assess_capability_environment_evidence`; inputs: `{"patterns": ["src/spendguard/**/*.py", "src/spendguard/capability*.json", "src/spendguard/interface/capability*.jsonl", "src/spendguard/architectural_fitness_baseline.json", "scripts/test/*.py", "tests/**/*.py", "pyproject.toml", ".github/workflows/*", "docs/*.md", "LICENSE", "SECURITY.md", "CONTRIBUTING.md", "README.md", "CHANGELOG.md", "src/spendguard/platform/distribution_build_wheels/*.whl"], "required_checks": ["ruff", "name-uniqueness", "surface-suites", "offline-audit"]}`.
 
 - [ ] **money-correctness** — Money scale, exact ledger arithmetic and global receipt allocation remain correct.
   Gate: `spendguard.capability_readiness_gates:run_capability_script_readiness_gate`; inputs: `{"scripts": ["tests/test_money_scale.py", "tests/test_ledger_money_is_exact_decimal.py", "tests/test_receipt_global_dollar_allocation.py"]}`.
+
+- [ ] **effort-learn-loop** — Reasoning-effort is on the measured frontier, titrated, best-value-selected and applied per panel member without collapse.
+  Gate: `spendguard.capability_readiness_gates:run_capability_script_readiness_gate`; inputs: `{"scripts": ["tests/test_effort_on_frontier.py", "tests/test_best_value_select.py", "tests/test_bakeoff_effort_sweep.py", "tests/test_effort_titration.py", "tests/test_lane_records_applied_effort.py", "tests/test_panel_effort_autoapply.py"]}`.
 
 - [ ] **budget-projection-snapshot-seam** — Grounded monetary read roots use the snapshot seam; projections require finite contracts; mutation controls reject raw writer reads.
   Gate: `spendguard.capability_readiness_gates:run_capability_script_readiness_gate`; inputs: `{"scripts": ["tests/test_budget_projection_seam_guard.py"]}`.
@@ -46,6 +47,12 @@ A supplied clean-environment report must match the current input fingerprint and
 
 - [ ] **ledger-read-never-spurious-refuse** — Cap and delegate admission reads serve committed snapshots despite writer transactions or expired request scopes; genuine query deadlines still refuse.
   Gate: `spendguard.capability_readiness_gates:assess_ledger_read_never_spurious_refuse_readiness`; inputs: `{"scripts": ["tests/test_ledger_read_never_spurious_refuse.py"]}`.
+
+- [ ] **ledger-write-never-refused-on-expired-ambient-scope** — Serialized durable writes persist delegate and dead-letter evidence despite expired ambient request time; genuine abandonment and operation deadlines still abort.
+  Gate: `spendguard.capability_readiness_gates:assess_ledger_write_ambient_scope_persistence_readiness`; inputs: `{"scripts": ["tests/test_ledger_write_never_refused_on_expired_ambient_scope.py"]}`.
+
+- [ ] **ambient-scope-never-refuses-ledger-ops** — Reads, serialized writes, connection admission, content retention and dead-letter drains survive elapsed ambient request time; cancellation and operation budgets still refuse.
+  Gate: `spendguard.capability_readiness_gates:assess_ambient_scope_ledger_operation_readiness`; inputs: `{"scripts": ["tests/test_ambient_scope_never_refuses_ledger_ops.py"]}`.
 
 ## External standards — reviewed offline subsets
 
@@ -89,6 +96,14 @@ Objective offline fitness functions enforce the recorded scope and measured ratc
   Gate: `spendguard.architectural_fitness:run_architectural_fitness_gate`; inputs: `{"invariant": "cycles"}`.
   Review: AST includes deferred imports. Exact measured cyclic components and reviewed scope are recorded in architectural_fitness_baseline.json; removing existing cycles is tracked in docs/READINESS-FOLLOWUP.md. No claim of complete acyclicity.
 
+- [ ] **architecture-context-boundaries** — Reject new cross-context imports that bypass the target context's declared surface.
+  Gate: `spendguard.architectural_fitness:run_architectural_fitness_gate`; inputs: `{"invariant": "boundaries"}`.
+  Review: The measured flat-module debt is a reviewed shrink-only ratchet; intra-context, declared shim-source, and surface-routed edges are allowed, while unassigned endpoints remain explicit unreviewed coverage.
+
+- [ ] **architecture-no-new-flat-module** — Reject new top-level flat package modules while allowing reviewed legacy flat-module debt only to shrink.
+  Gate: `spendguard.architectural_fitness:run_architectural_fitness_gate`; inputs: `{"invariant": "new_code"}`.
+  Review: The measured direct-child Python module set is recorded as reviewed legacy debt. New code belongs inside a context package; nested modules are outside this mechanical placement ratchet.
+
 - [ ] **architecture-layer-boundaries** — Application code may use the recorded standard-library-only foundations; foundations may not import application modules.
   Gate: `spendguard.architectural_fitness:run_architectural_fitness_gate`; inputs: `{"invariant": "layers"}`.
   Review: Actual foundation modules and rationale are baseline data. Full core/adapters/surfaces layering is reviewed N/A: config and pricing contain deferred imports into adapters/calls. Track broader decomposition in docs/READINESS-FOLLOWUP.md.
@@ -116,3 +131,4 @@ Objective offline fitness functions enforce the recorded scope and measured ratc
 - [ ] **architecture-surface-parity** — Existing capability-surface-parity fitness function, also declared as surface-parity in Project invariants.
   Gate: `spendguard.capability_readiness_gates:run_capability_script_readiness_gate`; inputs: `{"scripts": ["tests/test_capability_surface_parity_guard.py"]}`.
   Review: Cites and reuses the existing parity gate; its projection/SSOT implementation is unchanged.
+

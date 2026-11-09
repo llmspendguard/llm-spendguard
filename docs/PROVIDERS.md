@@ -11,7 +11,7 @@ a pricing.py PR. **Never hardcode a price anywhere else** — `pricing.price(mod
 
 ## Level 2 — realtime/compare adapter
 ```python
-from spendguard.adapters import register_provider
+from spendguard.generate.execution.adapters import register_provider
 register_provider("groq", "https://api.groq.com/openai/v1", "GROQ_API_KEY", ("groq/", "llama-"))
 ```
 Registers the provider for `spendguard compare` and realtime calls; the gate accounts them like any
@@ -69,13 +69,13 @@ groq = "spendguard_provider_groq:activate"
 ```python
 # spendguard_provider_groq/__init__.py — activate() MUST be zero-arg and idempotent
 def activate():
-    from spendguard.adapters import register_provider
+    from spendguard.generate.execution.adapters import register_provider
     register_provider("groq", "https://api.groq.com/openai/v1", "GROQ_API_KEY", ("groq/",))
 ```
 
 ## Conformance — prove it before you publish
 ```python
-from spendguard.provider_kit import assert_conformance
+from spendguard.generate.execution.provider_kit import assert_conformance
 from spendguard_provider_groq import activate
 
 def test_conformance():
@@ -135,7 +135,7 @@ fixture doc-URLs cited inline), not live-verified against provider accounts.
 # spendguard_provider_acmegpu/__init__.py — activate() zero-arg + idempotent, registered via the
 # [project.entry-points."spendguard.providers"] group exactly like an LLM provider plugin
 def activate():
-    from spendguard.gpu_port import register_source, ProviderGPUSource
+    from spendguard.generate.spend_capture.gpu_port import register_source, ProviderGPUSource
     from .provider import AcmeGPUProvider          # implements gpu_port.GPUProvider
     p = AcmeGPUProvider()
     register_source(f"gpu:{p.name}", lambda: ProviderGPUSource(p) if p.configured() else None)

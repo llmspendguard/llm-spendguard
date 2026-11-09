@@ -24,10 +24,10 @@ Outcome facts are returned and written through the existing gate audit/telemetry
 Modified:
 
 * `pyproject.toml`
-* `src/spendguard/adapters.py`
-* `src/spendguard/config_schema.py`
-* `src/spendguard/lane_queue.py`
-* `src/spendguard/vendor_call.py`
+* `src/spendguard/generate/execution/adapters.py`
+* `src/spendguard/store/configuration/config_schema.py`
+* `src/spendguard/manage/token_operations/lane_queue.py`
+* `src/spendguard/generate/execution/vendor_call.py`
 * `tests/conftest.py`
 * `tests/test_runner.py`
 * `tests/test_ensure_success_routing.py`
@@ -39,7 +39,7 @@ Modified:
 
 Added:
 
-* `src/spendguard/lane_recovery.py`
+* `src/spendguard/manage/token_operations/lane_recovery.py`
 * `tests/test_lane_recovery_axis4.py`
 * `tests/chaos/lane_faults.py`
 * `tests/chaos/mutation_proof.py`

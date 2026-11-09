@@ -216,7 +216,7 @@ client is **production-ready and fully standalone**. The team/org dashboard is *
 **A) Set up with Claude (recommended).** Point Claude Code / the desktop app at this repo and say:
 > *Install spendguard from this repo and run the guided setup in `SETUP.md`.*
 
-Or just run `spendguard init` — it reads the **config registry** (`src/spendguard/config_schema.py` — the
+Or just run `spendguard init` — it reads the **config registry** (`src/spendguard/store/configuration/config_schema.py` — the
 single source of truth for every setting, its default, valid options, and whether it's secret) and walks you
 through caps, projects, and providers **conversationally**, one question at a time, then writes your config.
 Pointed at this repo, Claude does the same end-to-end: installs the package, runs the interview off that same

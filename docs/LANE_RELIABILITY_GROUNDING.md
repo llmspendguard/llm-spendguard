@@ -1,7 +1,7 @@
 # Part 0: grounding before implementation
 
 The honestreview hook sources are outside this checkout. Their documented public entry is
-`vendor_call.call` (`src/spendguard/vendor_call.py:398-434`), which admits dispatch, then
+`vendor_call.call` (`src/spendguard/generate/execution/vendor_call.py:298-434`), which admits dispatch, then
 `_attempt` calls `adapters.call(..., no_substitution=True)` (`vendor_call.py:555-562`).
 Direct hook calls to adapters share the same path. Panel/fan enters `vendor_call.fan_out`
 (`vendor_call.py:1228`) or `lane_balance.bulk_delegate` (`lane_balance.py:502`), then adapters.
