@@ -12,6 +12,7 @@ from .capability_readiness import CapabilityReadinessEvidence
 READINESS_HASH_CHUNK_BYTES = 1024 * 1024
 READINESS_REQUIRED_ENVIRONMENTS = 2
 READINESS_SCRIPT_HARNESS_PATH = Path("scripts") / "test" / "chunked_suite.py"
+WHEEL_CONFORMANCE_OFFLINE_SKIP_MARKER = "[SKIP] unbuildable offline — run in CI"
 
 
 def assess_protected_lane_leak_readiness(*, context, hours=1.0, min_other_calls=None, ledger_path=None):
@@ -123,6 +124,15 @@ def run_capability_script_readiness_gate(*, context, scripts):
         "\n".join(failed) if failed else "All declared checks passed under " + sys.version.split()[0],
         tuple(evidence),
     )
+
+
+def assess_wheel_source_conformance_readiness(*, context, scripts):
+    """Require exact wheel/source equality; offline build-tool absence remains UNREVIEWED."""
+    result = run_capability_script_readiness_gate(context=context, scripts=scripts)
+    if any(WHEEL_CONFORMANCE_OFFLINE_SKIP_MARKER in item for item in result.evidence):
+        return CapabilityReadinessEvidence(
+            "UNREVIEWED", "Wheel is unbuildable offline — run the conformance gate in CI", result.evidence)
+    return result
 
 
 def assess_ledger_read_never_spurious_refuse_readiness(*, context, scripts):

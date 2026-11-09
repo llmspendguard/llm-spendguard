@@ -1,6 +1,6 @@
 # Readiness
 
-Definition revision: 4
+Definition revision: 7
 
 Square means every checklist item has a reviewed deterministic gate and every gate passes.
 `spendguard selfcheck` runs each gate and exits nonzero for FAIL or UNREVIEWED.
@@ -8,6 +8,9 @@ Coverage counts PASS and FAIL items with reviewed gates; UNREVIEWED counts as ne
 A supplied clean-environment report must match the current input fingerprint and its complete verification logs.
 
 ## Project invariants
+
+- [ ] **wheel-source-module-conformance** — A clean offline wheel contains exactly every recursive source module and no stale modules.
+  Gate: `spendguard.capability_readiness_gates:assess_wheel_source_conformance_readiness`; inputs: `{"scripts": ["tests/test_wheel_ships_every_source_subpackage.py"]}`. Missing offline build tooling is UNREVIEWED and must run in CI.
 
 - **Nightly ledger performance** (GATED-NIGHTLY): `spendguard bench --check` compares hot ledger p50/p95/p99 and end-to-end data-flow latency/throughput with the committed same-runner baseline. The separate `perf-nightly.yml` workflow repeats both mechanical tests ten times; the PR gate remains unchanged.
 

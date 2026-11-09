@@ -1,6 +1,13 @@
 {
-  "revision": 6,
+  "revision": 7,
   "items": [
+    {
+      "id": "wheel-source-module-conformance",
+      "description": "A clean offline wheel contains exactly every recursive source module and no stale modules.",
+      "gate": "spendguard.capability_readiness_gates:assess_wheel_source_conformance_readiness",
+      "arguments": {"scripts": ["tests/test_wheel_ships_every_source_subpackage.py"]},
+      "reason": "The gate quarantines build output before a no-build-isolation wheel build and compares the complete bidirectional module sets. Missing offline tooling is UNREVIEWED and must run in CI."
+    },
     {
       "id": "architecture-import-cycles",
       "section": "architecture",
