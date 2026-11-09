@@ -804,7 +804,9 @@ def install_hook(venv=None, uninstall=False, install_pkg=True, user=False, pytho
         open(hook, "w").write(body)
     else:
         pkg_root = str(Path(__file__).resolve().parents[3])
-        if install_pkg:
+        from .manifest import MANIFEST_EDITABLE_KIND, inspect_current_interpreter_install_kind
+        current_install_kind = inspect_current_interpreter_install_kind().get("install_kind")
+        if install_pkg and current_install_kind == MANIFEST_EDITABLE_KIND:
             print(f"  pip install -e {pkg_root}  →  {venv}")
             try:
                 refresh_consumer_editable_package(target, pkg_root, timeout=None)

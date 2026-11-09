@@ -833,6 +833,8 @@ def _consumer_install_is_verified_fresh(install_state, source_version, catalog_v
 def consumer_install_drift():
     """Return actionable install skew for registered consumer venvs; read-only and idempotent."""
     from spendguard.platform._version import __version__
+    from spendguard.platform.manifest import MANIFEST_DISTRIBUTION_NAME
+    from .. import pricing
     repo_root = pathlib.Path(__file__).resolve().parents[3]
     drift = []
     try:
@@ -846,9 +848,11 @@ def consumer_install_drift():
         python_executable = pathlib.Path(registered_python) if registered_python else pathlib.Path(venv) / "bin" / "python"
         try:
             details = _consumer_install_state(python_executable, repo_root, __version__)
-            if details["state"] != "editable_current":
+            if not _consumer_install_is_verified_fresh(details, __version__, pricing.PRICING_VERIFIED):
                 if details["state"] == "editable_shadowed_by_egg_info":
                     remediation = "remove stale in-tree metadata: %s" % details.get("selected_metadata_path")
+                elif details["state"] == "noneditable_pinned":
+                    remediation = f"{python_executable} -m pip install --upgrade {MANIFEST_DISTRIBUTION_NAME}"
                 else:
                     remediation = f"{python_executable} -m pip install -e {repo_root}"
                 drift.append({"venv": venv, **details,
