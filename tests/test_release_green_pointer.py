@@ -134,14 +134,45 @@ release_workflow_path = repository_root / ".github" / "workflows" / "release.yml
 release_workflow = yaml.safe_load(release_workflow_path.read_text())
 release_test_steps = release_workflow["jobs"]["test"]["steps"]
 release_test_commands = [str(step.get("run", "")).splitlines() for step in release_test_steps]
+
+# The release selfcheck runs offline on a SINGLE interpreter, so two readiness gates are UNREVIEWED there even
+# though both are proven green on this SAME commit elsewhere in the job: env-parity-in-verification (branch CI
+# attests parity across two independent interpreters) and wheel-source-module-conformance (the real wheel/source
+# module-set equality runs in the `pytest -n auto` suite above, with the build backend provisioned). The release
+# gate must tolerate EXACTLY those two UNREVIEWEDs and nothing else — so a future loosening (any third id slipped
+# in) OR a silent drop of either one both break this guard. Mirrors ci.yml, which tolerates the same wheel gate.
+EXPECTED_RELEASE_SELFCHECK_TOLERANCES = frozenset(
+    {"env-parity-in-verification", "wheel-source-module-conformance"})
+
+
+def extract_selfcheck_tolerated_identifiers(selfcheck_command_line):
+    """Parse the tolerated-id SET from a `spendguard selfcheck ...` command line (fixed flag format, not a decision)."""
+    command_tokens = selfcheck_command_line.split()
+    if command_tokens[:2] != ["spendguard", "selfcheck"]:
+        return None
+    tolerated_identifiers = set()
+    token_index = 2
+    while token_index < len(command_tokens):
+        if command_tokens[token_index] == "--tolerate-unreviewed" and token_index + 1 < len(command_tokens):
+            tolerated_identifiers.add(command_tokens[token_index + 1])
+            token_index += 2
+        else:
+            token_index += 1
+    return tolerated_identifiers
+
+
+release_selfcheck_tolerances = next(
+    (tolerated_identifiers
+     for commands in release_test_commands
+     for command in commands
+     for tolerated_identifiers in (extract_selfcheck_tolerated_identifiers(command.strip()),)
+     if tolerated_identifiers is not None),
+    None,
+)
 record_script_check(
     fails,
-    "release test job tolerates only the env-parity UNREVIEWED result",
-    any(
-        "spendguard selfcheck --tolerate-unreviewed env-parity-in-verification"
-        in [command.strip() for command in commands]
-        for commands in release_test_commands
-    ),
+    "release test job tolerates exactly the env-parity and wheel-conformance UNREVIEWEDs (both proven on this commit)",
+    release_selfcheck_tolerances == EXPECTED_RELEASE_SELFCHECK_TOLERANCES,
 )
 record_script_check(
     fails,
