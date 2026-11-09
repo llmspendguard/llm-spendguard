@@ -780,8 +780,8 @@
             "mi": 68.14868072197874
           },
           "src/spendguard/manage/token_operations/delegate_worktrees.py": {
-            "max_cc": 10,
-            "mi": 58.494595475720615
+            "max_cc": 15,
+            "mi": 47.20065899946486
           },
           "src/spendguard/manage/token_operations/dispatch.py": {
             "max_cc": 23,
@@ -1840,8 +1840,8 @@
             "mi": 68.14868072197874
           },
           "src/spendguard/manage/token_operations/delegate_worktrees.py": {
-            "max_cc": 10,
-            "mi": 58.494595475720615
+            "max_cc": 15,
+            "mi": 47.20065899946486
           },
           "src/spendguard/manage/token_operations/dispatch.py": {
             "max_cc": 23,

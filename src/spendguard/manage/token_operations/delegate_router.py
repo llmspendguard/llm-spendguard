@@ -444,25 +444,36 @@ def _persist_delegate_workspace_metadata(metadata, execution_id):
             lambda previous: metadata, reason="persist isolated delegate workspace", required=True)
 
 
+def _configured_delegate_worktree_retention_seconds(default_retention_s):
+    return float(config._cfg_get("delegate", "worktree_retention_s", default_retention_s)
+                 or default_retention_s)
+
+
 def _run_isolated_agentic_provider(executor, cwd):
-    from .delegate_worktrees import DELEGATE_WORKTREE_DIRECTORY, run_isolated_delegate
+    from .delegate_worktrees import (
+        DELEGATE_WORKTREE_DEFAULT_RETENTION_S,
+        DELEGATE_WORKTREE_DIRECTORY,
+        run_isolated_delegate,
+    )
     from . import execution_journal
     execution_id = execution_journal.current_durable_execution_id()
     return run_isolated_delegate(executor, cwd, worktree_root=config._cfg_get("delegate", "worktree_root", None)
         or config.HOME / DELEGATE_WORKTREE_DIRECTORY,
-        metadata_writer=lambda metadata: _persist_delegate_workspace_metadata(metadata, execution_id))
+        metadata_writer=lambda metadata: _persist_delegate_workspace_metadata(metadata, execution_id),
+        retention_s=_configured_delegate_worktree_retention_seconds(DELEGATE_WORKTREE_DEFAULT_RETENTION_S))
 
 
-def _finalize_accepted_delegate_workspace(execution):
-    from .delegate_worktrees import finalize_delegate_worktree
+def _schedule_terminal_delegate_workspace_reclaim(execution):
+    from .delegate_worktrees import DELEGATE_WORKTREE_DEFAULT_RETENTION_S, schedule_delegate_worktree_reclaim
     from . import execution_journal
     execution_id = execution.get("execution_id") or execution_journal.current_durable_execution_id()
-    def persist_accepted_delegate_envelope(payload):
+    def persist_terminal_delegate_envelope(payload):
         if execution_id:
             execution_journal.persist_durable_execution_payload(execution_id, envelope=json.dumps(payload, ensure_ascii=False))
-    finalize_delegate_worktree(execution,
+    schedule_delegate_worktree_reclaim(execution,
         metadata_writer=lambda metadata: _persist_delegate_workspace_metadata(metadata, execution_id),
-        envelope_writer=persist_accepted_delegate_envelope)
+        envelope_writer=persist_terminal_delegate_envelope,
+        retention_s=_configured_delegate_worktree_retention_seconds(DELEGATE_WORKTREE_DEFAULT_RETENTION_S))
 
 
 def _route_agentic(plan, prompt, model, timeout, cwd, warm=False):
@@ -571,7 +582,7 @@ def _assemble_delegate_execution_result(execution, *, result, classification, es
                "est_value_basis": est_value_basis}
     completed_result = {**result, "status": "executed", "execution": execution,
                         "receipt": receipt, "changed_files": changed_files}
-    _finalize_accepted_delegate_workspace(execution)
+    _schedule_terminal_delegate_workspace_reclaim(execution)
     if degraded_signal_lines:
         completed_result["warnings"] = [{"reason": DELEGATE_EXECUTION_DEGRADED_TOOL_ENVELOPE,
                                           "signals": degraded_signal_lines,
@@ -594,6 +605,8 @@ def _run_delegate_job_to_completion(job_id, plan, prompt, model, timeout, cwd, d
             changed_files=(execution.get("worktree", {}).get("changed_files")
                            if isinstance(execution, dict) else None))
         terminal_state = "done" if completed.get("status") == "executed" else "failed"
+        if terminal_state == "failed" and isinstance(execution, dict):
+            _schedule_terminal_delegate_workspace_reclaim(execution)
         delegate_jobs.finish_delegate_job(
             job_id, state=terminal_state, result_payload=completed,
             terminal_reason=None if terminal_state == "done" else completed.get("reason"),
@@ -605,6 +618,7 @@ def _run_delegate_job_to_completion(job_id, plan, prompt, model, timeout, cwd, d
         failed_result = {**result, "status": "error", "reason": reason, "why": str(exc)}
         if isinstance(execution, dict):
             failed_result["execution"] = execution
+            _schedule_terminal_delegate_workspace_reclaim(execution)
         delegate_jobs.finish_delegate_job(job_id, state="failed", result_payload=failed_result,
                                           terminal_reason=reason, error=str(exc))
 

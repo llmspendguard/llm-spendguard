@@ -170,7 +170,7 @@ def _assemble_stubbed(**overrides):
     kwargs.update(overrides)
     # Deliberately do NOT stub _measured_claude_overage_ratio: its ledger READ must run under the persistence
     # scope too, so the real read exercises the widened coverage (on the isolated empty ledger it returns None).
-    with patch.object(delegate_router, "_finalize_accepted_delegate_workspace", lambda execution: None), \
+    with patch.object(delegate_router, "_schedule_terminal_delegate_workspace_reclaim", lambda execution: None), \
          patch.object(delegate_router.lane_registry, "lane_spec",
                       lambda plan: {"provider": "codex", "exec": "codex_exec"}), \
          patch.object(delegate_router.pricing, "realtime_cost", lambda *a, **k: 0.0):
