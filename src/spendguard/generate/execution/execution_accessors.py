@@ -3,6 +3,36 @@ import os
 import threading
 import time
 
+import functools
+import sys
+import types
+
+
+def _late_bind_execution_module_function(resolver):
+    """Preserve module-attribute dispatch while retaining safe callable fallback."""
+    resolver_module_name = getattr(resolver, "__module__", None)
+    resolver_function_name = getattr(resolver, "__name__", None)
+    resolver_qualified_name = getattr(resolver, "__qualname__", None)
+    is_top_level_function = (
+        isinstance(resolver, types.FunctionType)
+        and isinstance(resolver_module_name, str)
+        and isinstance(resolver_function_name, str)
+        and resolver_function_name != "<lambda>"
+        and resolver_qualified_name == resolver_function_name
+    )
+    if not is_top_level_function:
+        return resolver
+
+    @functools.wraps(resolver)
+    def call_current_execution_module_function(*args, **kwargs):
+        resolver_module = sys.modules.get(resolver_module_name)
+        current_resolver = getattr(resolver_module, resolver_function_name, None)
+        if not callable(current_resolver):
+            current_resolver = resolver
+        return current_resolver(*args, **kwargs)
+
+    return call_current_execution_module_function
+
 SPENDGUARD_IMPORT_NAME = "spendguard"
 LANE_MIN_TIMEOUT_S = 150.0
 MAX_TOKEN_CEILING = 128_000
@@ -116,7 +146,7 @@ __LANES_resolver = None
 def set__LANES_resolver(resolver):
     global __LANES_resolver
     with _execution_accessor_lock:
-        __LANES_resolver = resolver
+        __LANES_resolver = _late_bind_execution_module_function(resolver)
 
 def resolve__LANES():
     resolver = __LANES_resolver
@@ -129,7 +159,7 @@ __compose_gemini_reasoning_resolver = None
 def set__compose_gemini_reasoning_resolver(resolver):
     global __compose_gemini_reasoning_resolver
     with _execution_accessor_lock:
-        __compose_gemini_reasoning_resolver = resolver
+        __compose_gemini_reasoning_resolver = _late_bind_execution_module_function(resolver)
 
 def resolve__compose_gemini_reasoning(*args, **kwargs):
     resolver = __compose_gemini_reasoning_resolver
@@ -142,7 +172,7 @@ __est_call_tokens_resolver = None
 def set__est_call_tokens_resolver(resolver):
     global __est_call_tokens_resolver
     with _execution_accessor_lock:
-        __est_call_tokens_resolver = resolver
+        __est_call_tokens_resolver = _late_bind_execution_module_function(resolver)
 
 def resolve__est_call_tokens(*args, **kwargs):
     resolver = __est_call_tokens_resolver
@@ -155,7 +185,7 @@ __exception_failure_kind_resolver = None
 def set__exception_failure_kind_resolver(resolver):
     global __exception_failure_kind_resolver
     with _execution_accessor_lock:
-        __exception_failure_kind_resolver = resolver
+        __exception_failure_kind_resolver = _late_bind_execution_module_function(resolver)
 
 def resolve__exception_failure_kind(*args, **kwargs):
     resolver = __exception_failure_kind_resolver
@@ -168,7 +198,7 @@ __executor_resolver = None
 def set__executor_resolver(resolver):
     global __executor_resolver
     with _execution_accessor_lock:
-        __executor_resolver = resolver
+        __executor_resolver = _late_bind_execution_module_function(resolver)
 
 def resolve__executor(*args, **kwargs):
     resolver = __executor_resolver
@@ -181,7 +211,7 @@ __image_input_tokens_resolver = None
 def set__image_input_tokens_resolver(resolver):
     global __image_input_tokens_resolver
     with _execution_accessor_lock:
-        __image_input_tokens_resolver = resolver
+        __image_input_tokens_resolver = _late_bind_execution_module_function(resolver)
 
 def resolve__image_input_tokens(*args, **kwargs):
     resolver = __image_input_tokens_resolver
@@ -194,7 +224,7 @@ __lane_cooling_resolver = None
 def set__lane_cooling_resolver(resolver):
     global __lane_cooling_resolver
     with _execution_accessor_lock:
-        __lane_cooling_resolver = resolver
+        __lane_cooling_resolver = _late_bind_execution_module_function(resolver)
 
 def resolve__lane_cooling(*args, **kwargs):
     resolver = __lane_cooling_resolver
@@ -207,7 +237,7 @@ __lane_for_resolver = None
 def set__lane_for_resolver(resolver):
     global __lane_for_resolver
     with _execution_accessor_lock:
-        __lane_for_resolver = resolver
+        __lane_for_resolver = _late_bind_execution_module_function(resolver)
 
 def resolve__lane_for(*args, **kwargs):
     resolver = __lane_for_resolver
@@ -220,7 +250,7 @@ __output_budget_resolver = None
 def set_output_budget_resolver(resolver):
     global __output_budget_resolver
     with _execution_accessor_lock:
-        __output_budget_resolver = resolver
+        __output_budget_resolver = _late_bind_execution_module_function(resolver)
 
 def resolve_output_budget(*args, **kwargs):
     resolver = __output_budget_resolver
@@ -233,7 +263,7 @@ _json_schema_request_resolver = None
 def set_json_schema_request_resolver(resolver):
     global _json_schema_request_resolver
     with _execution_accessor_lock:
-        _json_schema_request_resolver = resolver
+        _json_schema_request_resolver = _late_bind_execution_module_function(resolver)
 
 def resolve_json_schema_request(*args, **kwargs):
     resolver = _json_schema_request_resolver
@@ -246,7 +276,7 @@ __warn_once_caller_maxtokens_resolver = None
 def set__warn_once_caller_maxtokens_resolver(resolver):
     global __warn_once_caller_maxtokens_resolver
     with _execution_accessor_lock:
-        __warn_once_caller_maxtokens_resolver = resolver
+        __warn_once_caller_maxtokens_resolver = _late_bind_execution_module_function(resolver)
 
 def resolve__warn_once_caller_maxtokens(*args, **kwargs):
     resolver = __warn_once_caller_maxtokens_resolver
@@ -259,7 +289,7 @@ __heal_guard_resolver = None
 def set__heal_guard_resolver(resolver):
     global __heal_guard_resolver
     with _execution_accessor_lock:
-        __heal_guard_resolver = resolver
+        __heal_guard_resolver = _late_bind_execution_module_function(resolver)
 
 def resolve__heal_guard():
     resolver = __heal_guard_resolver
@@ -272,7 +302,7 @@ __resolve_guard_resolver = None
 def set__resolve_guard_resolver(resolver):
     global __resolve_guard_resolver
     with _execution_accessor_lock:
-        __resolve_guard_resolver = resolver
+        __resolve_guard_resolver = _late_bind_execution_module_function(resolver)
 
 def resolve__resolve_guard():
     resolver = __resolve_guard_resolver
@@ -285,7 +315,7 @@ __lane_model_cooling_resolver = None
 def set__lane_model_cooling_resolver(resolver):
     global __lane_model_cooling_resolver
     with _execution_accessor_lock:
-        __lane_model_cooling_resolver = resolver
+        __lane_model_cooling_resolver = _late_bind_execution_module_function(resolver)
 
 def resolve__lane_model_cooling(*args, **kwargs):
     resolver = __lane_model_cooling_resolver
@@ -298,7 +328,7 @@ __load_image_resolver = None
 def set__load_image_resolver(resolver):
     global __load_image_resolver
     with _execution_accessor_lock:
-        __load_image_resolver = resolver
+        __load_image_resolver = _late_bind_execution_module_function(resolver)
 
 def resolve__load_image(*args, **kwargs):
     resolver = __load_image_resolver
@@ -311,7 +341,7 @@ _call_resolver = None
 def set_call_resolver(resolver):
     global _call_resolver
     with _execution_accessor_lock:
-        _call_resolver = resolver
+        _call_resolver = _late_bind_execution_module_function(resolver)
 
 def resolve_call(*args, **kwargs):
     resolver = _call_resolver
@@ -324,7 +354,7 @@ _deadline_for_resolver = None
 def set_deadline_for_resolver(resolver):
     global _deadline_for_resolver
     with _execution_accessor_lock:
-        _deadline_for_resolver = resolver
+        _deadline_for_resolver = _late_bind_execution_module_function(resolver)
 
 def resolve_deadline_for(*args, **kwargs):
     resolver = _deadline_for_resolver
@@ -337,7 +367,7 @@ _llm_capability_import_names_resolver = None
 def set_llm_capability_import_names_resolver(resolver):
     global _llm_capability_import_names_resolver
     with _execution_accessor_lock:
-        _llm_capability_import_names_resolver = resolver
+        _llm_capability_import_names_resolver = _late_bind_execution_module_function(resolver)
 
 def resolve_llm_capability_import_names(*args, **kwargs):
     resolver = _llm_capability_import_names_resolver
@@ -350,7 +380,7 @@ _metered_fallback_id_resolver = None
 def set_metered_fallback_id_resolver(resolver):
     global _metered_fallback_id_resolver
     with _execution_accessor_lock:
-        _metered_fallback_id_resolver = resolver
+        _metered_fallback_id_resolver = _late_bind_execution_module_function(resolver)
 
 def resolve_metered_fallback_id(*args, **kwargs):
     resolver = _metered_fallback_id_resolver
@@ -363,7 +393,7 @@ _provider_for_resolver = None
 def set_provider_for_resolver(resolver):
     global _provider_for_resolver
     with _execution_accessor_lock:
-        _provider_for_resolver = resolver
+        _provider_for_resolver = _late_bind_execution_module_function(resolver)
 
 def resolve_provider_for(*args, **kwargs):
     resolver = _provider_for_resolver
@@ -376,7 +406,7 @@ _oai_compat_client_resolver = None
 def set__oai_compat_client_resolver(resolver):
     global _oai_compat_client_resolver
     with _execution_accessor_lock:
-        _oai_compat_client_resolver = resolver
+        _oai_compat_client_resolver = _late_bind_execution_module_function(resolver)
 
 def resolve__oai_compat_client():
     resolver = _oai_compat_client_resolver
@@ -389,7 +419,7 @@ _schema_capability_resolver = None
 def set_schema_capability_resolver(resolver):
     global _schema_capability_resolver
     with _execution_accessor_lock:
-        _schema_capability_resolver = resolver
+        _schema_capability_resolver = _late_bind_execution_module_function(resolver)
 
 def resolve_schema_capability(*args, **kwargs):
     resolver = _schema_capability_resolver
@@ -402,7 +432,7 @@ _strict_map_violation_resolver = None
 def set_strict_map_violation_resolver(resolver):
     global _strict_map_violation_resolver
     with _execution_accessor_lock:
-        _strict_map_violation_resolver = resolver
+        _strict_map_violation_resolver = _late_bind_execution_module_function(resolver)
 
 def resolve_strict_map_violation(*args, **kwargs):
     resolver = _strict_map_violation_resolver
@@ -415,7 +445,7 @@ _structured_reply_resolver = None
 def set_structured_reply_resolver(resolver):
     global _structured_reply_resolver
     with _execution_accessor_lock:
-        _structured_reply_resolver = resolver
+        _structured_reply_resolver = _late_bind_execution_module_function(resolver)
 
 def resolve_structured_reply(*args, **kwargs):
     resolver = _structured_reply_resolver
@@ -428,7 +458,7 @@ _vision_resolver = None
 def set_vision_resolver(resolver):
     global _vision_resolver
     with _execution_accessor_lock:
-        _vision_resolver = resolver
+        _vision_resolver = _late_bind_execution_module_function(resolver)
 
 def resolve_vision(*args, **kwargs):
     resolver = _vision_resolver
@@ -441,7 +471,7 @@ _model_ids_resolver = None
 def set_model_ids_resolver(resolver):
     global _model_ids_resolver
     with _execution_accessor_lock:
-        _model_ids_resolver = resolver
+        _model_ids_resolver = _late_bind_execution_module_function(resolver)
 
 def resolve_model_ids(*args, **kwargs):
     resolver = _model_ids_resolver
@@ -454,7 +484,7 @@ _poll_resolver = None
 def set_poll_resolver(resolver):
     global _poll_resolver
     with _execution_accessor_lock:
-        _poll_resolver = resolver
+        _poll_resolver = _late_bind_execution_module_function(resolver)
 
 def resolve_poll(*args, **kwargs):
     resolver = _poll_resolver
@@ -467,7 +497,7 @@ _status_resolver = None
 def set_status_resolver(resolver):
     global _status_resolver
     with _execution_accessor_lock:
-        _status_resolver = resolver
+        _status_resolver = _late_bind_execution_module_function(resolver)
 
 def resolve_status(*args, **kwargs):
     resolver = _status_resolver
@@ -480,7 +510,7 @@ _submit_offload_resolver = None
 def set_submit_offload_resolver(resolver):
     global _submit_offload_resolver
     with _execution_accessor_lock:
-        _submit_offload_resolver = resolver
+        _submit_offload_resolver = _late_bind_execution_module_function(resolver)
 
 def resolve_submit_offload(*args, **kwargs):
     resolver = _submit_offload_resolver
@@ -493,7 +523,7 @@ __bin_resolver = None
 def set__bin_resolver(resolver):
     global __bin_resolver
     with _execution_accessor_lock:
-        __bin_resolver = resolver
+        __bin_resolver = _late_bind_execution_module_function(resolver)
 
 def resolve__bin(*args, **kwargs):
     resolver = __bin_resolver
@@ -506,7 +536,7 @@ __codex_effort_resolver = None
 def set__codex_effort_resolver(resolver):
     global __codex_effort_resolver
     with _execution_accessor_lock:
-        __codex_effort_resolver = resolver
+        __codex_effort_resolver = _late_bind_execution_module_function(resolver)
 
 def resolve__codex_effort(*args, **kwargs):
     resolver = __codex_effort_resolver
@@ -519,7 +549,7 @@ __daemon_enabled_resolver = None
 def set__daemon_enabled_resolver(resolver):
     global __daemon_enabled_resolver
     with _execution_accessor_lock:
-        __daemon_enabled_resolver = resolver
+        __daemon_enabled_resolver = _late_bind_execution_module_function(resolver)
 
 def resolve__daemon_enabled(*args, **kwargs):
     resolver = __daemon_enabled_resolver
@@ -532,7 +562,7 @@ __mcp_disable_flags_resolver = None
 def set__mcp_disable_flags_resolver(resolver):
     global __mcp_disable_flags_resolver
     with _execution_accessor_lock:
-        __mcp_disable_flags_resolver = resolver
+        __mcp_disable_flags_resolver = _late_bind_execution_module_function(resolver)
 
 def resolve__mcp_disable_flags(*args, **kwargs):
     resolver = __mcp_disable_flags_resolver
@@ -545,7 +575,7 @@ __plugin_disable_flags_resolver = None
 def set__plugin_disable_flags_resolver(resolver):
     global __plugin_disable_flags_resolver
     with _execution_accessor_lock:
-        __plugin_disable_flags_resolver = resolver
+        __plugin_disable_flags_resolver = _late_bind_execution_module_function(resolver)
 
 def resolve__plugin_disable_flags(*args, **kwargs):
     resolver = __plugin_disable_flags_resolver
@@ -558,7 +588,7 @@ _capture_execution_codex_thread_resolver = None
 def set_capture_execution_codex_thread_resolver(resolver):
     global _capture_execution_codex_thread_resolver
     with _execution_accessor_lock:
-        _capture_execution_codex_thread_resolver = resolver
+        _capture_execution_codex_thread_resolver = _late_bind_execution_module_function(resolver)
 
 def resolve_capture_execution_codex_thread(*args, **kwargs):
     resolver = _capture_execution_codex_thread_resolver
@@ -571,7 +601,7 @@ _codex_daemon_worker_home_resolver = None
 def set_codex_daemon_worker_home_resolver(resolver):
     global _codex_daemon_worker_home_resolver
     with _execution_accessor_lock:
-        _codex_daemon_worker_home_resolver = resolver
+        _codex_daemon_worker_home_resolver = _late_bind_execution_module_function(resolver)
 
 def resolve_codex_daemon_worker_home(*args, **kwargs):
     resolver = _codex_daemon_worker_home_resolver
@@ -584,7 +614,7 @@ _hold_execution_codex_session_resolver = None
 def set_hold_execution_codex_session_resolver(resolver):
     global _hold_execution_codex_session_resolver
     with _execution_accessor_lock:
-        _hold_execution_codex_session_resolver = resolver
+        _hold_execution_codex_session_resolver = _late_bind_execution_module_function(resolver)
 
 def resolve_hold_execution_codex_session(*args, **kwargs):
     resolver = _hold_execution_codex_session_resolver
@@ -597,7 +627,7 @@ _reap_execution_codex_sessions_resolver = None
 def set_reap_execution_codex_sessions_resolver(resolver):
     global _reap_execution_codex_sessions_resolver
     with _execution_accessor_lock:
-        _reap_execution_codex_sessions_resolver = resolver
+        _reap_execution_codex_sessions_resolver = _late_bind_execution_module_function(resolver)
 
 def resolve_reap_execution_codex_sessions(*args, **kwargs):
     resolver = _reap_execution_codex_sessions_resolver
@@ -610,7 +640,7 @@ _run_cold_prompt_resolver = None
 def set_run_cold_prompt_resolver(resolver):
     global _run_cold_prompt_resolver
     with _execution_accessor_lock:
-        _run_cold_prompt_resolver = resolver
+        _run_cold_prompt_resolver = _late_bind_execution_module_function(resolver)
 
 def resolve_run_cold_prompt(*args, **kwargs):
     resolver = _run_cold_prompt_resolver
@@ -623,7 +653,7 @@ _settle_execution_codex_session_resolver = None
 def set_settle_execution_codex_session_resolver(resolver):
     global _settle_execution_codex_session_resolver
     with _execution_accessor_lock:
-        _settle_execution_codex_session_resolver = resolver
+        _settle_execution_codex_session_resolver = _late_bind_execution_module_function(resolver)
 
 def resolve_settle_execution_codex_session(*args, **kwargs):
     resolver = _settle_execution_codex_session_resolver
@@ -636,7 +666,7 @@ _cross_check_openrouter_resolver = None
 def set_cross_check_openrouter_resolver(resolver):
     global _cross_check_openrouter_resolver
     with _execution_accessor_lock:
-        _cross_check_openrouter_resolver = resolver
+        _cross_check_openrouter_resolver = _late_bind_execution_module_function(resolver)
 
 def resolve_cross_check_openrouter(*args, **kwargs):
     resolver = _cross_check_openrouter_resolver
@@ -649,7 +679,7 @@ __count_tokens_resolver = None
 def set__count_tokens_resolver(resolver):
     global __count_tokens_resolver
     with _execution_accessor_lock:
-        __count_tokens_resolver = resolver
+        __count_tokens_resolver = _late_bind_execution_module_function(resolver)
 
 def resolve__count_tokens(*args, **kwargs):
     resolver = __count_tokens_resolver
@@ -662,7 +692,7 @@ _submit_chat_tasks_resolver = None
 def set_submit_chat_tasks_resolver(resolver):
     global _submit_chat_tasks_resolver
     with _execution_accessor_lock:
-        _submit_chat_tasks_resolver = resolver
+        _submit_chat_tasks_resolver = _late_bind_execution_module_function(resolver)
 
 def resolve_submit_chat_tasks(*args, **kwargs):
     resolver = _submit_chat_tasks_resolver
@@ -675,7 +705,7 @@ _submit_message_batch_resolver = None
 def set_submit_message_batch_resolver(resolver):
     global _submit_message_batch_resolver
     with _execution_accessor_lock:
-        _submit_message_batch_resolver = resolver
+        _submit_message_batch_resolver = _late_bind_execution_module_function(resolver)
 
 def resolve_submit_message_batch(*args, **kwargs):
     resolver = _submit_message_batch_resolver
@@ -688,7 +718,7 @@ __classify_resolver = None
 def set__classify_resolver(resolver):
     global __classify_resolver
     with _execution_accessor_lock:
-        __classify_resolver = resolver
+        __classify_resolver = _late_bind_execution_module_function(resolver)
 
 def resolve__classify(*args, **kwargs):
     resolver = __classify_resolver
@@ -701,7 +731,7 @@ _caps_resolver = None
 def set_caps_resolver(resolver):
     global _caps_resolver
     with _execution_accessor_lock:
-        _caps_resolver = resolver
+        _caps_resolver = _late_bind_execution_module_function(resolver)
 
 def resolve_caps(*args, **kwargs):
     resolver = _caps_resolver
@@ -714,7 +744,7 @@ _closest_served_resolver = None
 def set_closest_served_resolver(resolver):
     global _closest_served_resolver
     with _execution_accessor_lock:
-        _closest_served_resolver = resolver
+        _closest_served_resolver = _late_bind_execution_module_function(resolver)
 
 def resolve_closest_served(*args, **kwargs):
     resolver = _closest_served_resolver
@@ -727,7 +757,7 @@ _consensus_resolver = None
 def set_consensus_resolver(resolver):
     global _consensus_resolver
     with _execution_accessor_lock:
-        _consensus_resolver = resolver
+        _consensus_resolver = _late_bind_execution_module_function(resolver)
 
 def resolve_consensus(*args, **kwargs):
     resolver = _consensus_resolver
@@ -740,7 +770,7 @@ _fan_out_resolver = None
 def set_fan_out_resolver(resolver):
     global _fan_out_resolver
     with _execution_accessor_lock:
-        _fan_out_resolver = resolver
+        _fan_out_resolver = _late_bind_execution_module_function(resolver)
 
 def resolve_fan_out(*args, **kwargs):
     resolver = _fan_out_resolver
@@ -753,7 +783,7 @@ _first_ok_resolver = None
 def set_first_ok_resolver(resolver):
     global _first_ok_resolver
     with _execution_accessor_lock:
-        _first_ok_resolver = resolver
+        _first_ok_resolver = _late_bind_execution_module_function(resolver)
 
 def resolve_first_ok(*args, **kwargs):
     resolver = _first_ok_resolver
@@ -766,7 +796,7 @@ _list_models_resolver = None
 def set_list_models_resolver(resolver):
     global _list_models_resolver
     with _execution_accessor_lock:
-        _list_models_resolver = resolver
+        _list_models_resolver = _late_bind_execution_module_function(resolver)
 
 def resolve_list_models(*args, **kwargs):
     resolver = _list_models_resolver
@@ -779,7 +809,7 @@ _served_check_resolver = None
 def set_served_check_resolver(resolver):
     global _served_check_resolver
     with _execution_accessor_lock:
-        _served_check_resolver = resolver
+        _served_check_resolver = _late_bind_execution_module_function(resolver)
 
 def resolve_served_check(*args, **kwargs):
     resolver = _served_check_resolver

@@ -2,6 +2,36 @@
 
 import threading
 
+import functools
+import sys
+import types
+
+
+def _late_bind_platform_module_function(resolver):
+    """Preserve module-attribute dispatch while retaining safe callable fallback."""
+    resolver_module_name = getattr(resolver, "__module__", None)
+    resolver_function_name = getattr(resolver, "__name__", None)
+    resolver_qualified_name = getattr(resolver, "__qualname__", None)
+    is_top_level_function = (
+        isinstance(resolver, types.FunctionType)
+        and isinstance(resolver_module_name, str)
+        and isinstance(resolver_function_name, str)
+        and resolver_function_name != "<lambda>"
+        and resolver_qualified_name == resolver_function_name
+    )
+    if not is_top_level_function:
+        return resolver
+
+    @functools.wraps(resolver)
+    def call_current_platform_module_function(*args, **kwargs):
+        resolver_module = sys.modules.get(resolver_module_name)
+        current_resolver = getattr(resolver_module, resolver_function_name, None)
+        if not callable(current_resolver):
+            current_resolver = resolver
+        return current_resolver(*args, **kwargs)
+
+    return call_current_platform_module_function
+
 
 CONSUMER_ROLE_DAEMON = "daemon"
 CONSUMER_ROLE_EPHEMERAL = "ephemeral"
@@ -22,7 +52,7 @@ def __getattr__(attribute_name):
 
         def set_platform_symbol_resolver(resolver):
             with _platform_accessor_lock:
-                _platform_resolvers[symbol_name] = resolver
+                _platform_resolvers[symbol_name] = _late_bind_platform_module_function(resolver)
 
         set_platform_symbol_resolver.__name__ = attribute_name
         globals()[attribute_name] = set_platform_symbol_resolver

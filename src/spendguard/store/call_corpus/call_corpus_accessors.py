@@ -1,6 +1,36 @@
 """Dependency-free runtime accessors for the call corpus."""
 import threading
 
+import functools
+import sys
+import types
+
+
+def _late_bind_call_corpus_module_function(resolver):
+    """Preserve module-attribute dispatch while retaining safe callable fallback."""
+    resolver_module_name = getattr(resolver, "__module__", None)
+    resolver_function_name = getattr(resolver, "__name__", None)
+    resolver_qualified_name = getattr(resolver, "__qualname__", None)
+    is_top_level_function = (
+        isinstance(resolver, types.FunctionType)
+        and isinstance(resolver_module_name, str)
+        and isinstance(resolver_function_name, str)
+        and resolver_function_name != "<lambda>"
+        and resolver_qualified_name == resolver_function_name
+    )
+    if not is_top_level_function:
+        return resolver
+
+    @functools.wraps(resolver)
+    def call_current_call_corpus_module_function(*args, **kwargs):
+        resolver_module = sys.modules.get(resolver_module_name)
+        current_resolver = getattr(resolver_module, resolver_function_name, None)
+        if not callable(current_resolver):
+            current_resolver = resolver
+        return current_resolver(*args, **kwargs)
+
+    return call_current_call_corpus_module_function
+
 CALL_OBSERVATION_NANO_COLUMNS = {column: f"{column}_nano" for column in ("cost", "input_cost_floor")}
 _CONF = {"explicit": 1.0, "truncation": 1.0, "judge": 0.95, "used": 0.6, "mined": 0.5}
 _local = threading.local()
@@ -18,7 +48,7 @@ def __getattr__(attribute_name):
 
         def set_inbound_callio_resolver(resolver):
             with _inbound_callio_resolver_lock:
-                _inbound_callio_resolvers[symbol_name] = resolver
+                _inbound_callio_resolvers[symbol_name] = _late_bind_call_corpus_module_function(resolver)
 
         set_inbound_callio_resolver.__name__ = attribute_name
         globals()[attribute_name] = set_inbound_callio_resolver
@@ -89,7 +119,7 @@ _calls_tested_recently_resolver_lock = threading.Lock()
 
 def _set_calls_resolver(resolver_name, resolver, resolver_lock):
     with resolver_lock:
-        globals()[resolver_name] = resolver
+        globals()[resolver_name] = _late_bind_call_corpus_module_function(resolver)
 
 
 def _resolve_calls_provider(resolver_name, resolver_lock, display_name, args, kwargs):
@@ -132,7 +162,7 @@ def set_calls_insert_resolver(calls_insert_resolver):
     """Wire the resolver for inserting call-corpus rows."""
     global _calls_insert_resolver
     with _calls_insert_resolver_lock:
-        _calls_insert_resolver = calls_insert_resolver
+        _calls_insert_resolver = _late_bind_call_corpus_module_function(calls_insert_resolver)
 
 
 def resolve_calls_insert(*args, **kwargs):
@@ -148,7 +178,7 @@ def set_calls_cost_summary_resolver(calls_cost_summary_resolver):
     """Wire the resolver for summarizing call-corpus costs."""
     global _calls_cost_summary_resolver
     with _calls_cost_summary_resolver_lock:
-        _calls_cost_summary_resolver = calls_cost_summary_resolver
+        _calls_cost_summary_resolver = _late_bind_call_corpus_module_function(calls_cost_summary_resolver)
 
 
 def resolve_calls_cost_summary(*args, **kwargs):
@@ -164,7 +194,7 @@ def set_calls_record_call_resolver(calls_record_call_resolver):
     """Wire the resolver for recording call-corpus rows."""
     global _calls_record_call_resolver
     with _calls_record_call_resolver_lock:
-        _calls_record_call_resolver = calls_record_call_resolver
+        _calls_record_call_resolver = _late_bind_call_corpus_module_function(calls_record_call_resolver)
 
 
 def resolve_calls_record_call(*args, **kwargs):

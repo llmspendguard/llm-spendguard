@@ -1,6 +1,36 @@
 """Dependency-free runtime accessors for bulk cost-estimation resolvers."""
 import threading
 
+import functools
+import sys
+import types
+
+
+def _late_bind_cost_estimation_module_function(resolver):
+    """Preserve module-attribute dispatch while retaining safe callable fallback."""
+    resolver_module_name = getattr(resolver, "__module__", None)
+    resolver_function_name = getattr(resolver, "__name__", None)
+    resolver_qualified_name = getattr(resolver, "__qualname__", None)
+    is_top_level_function = (
+        isinstance(resolver, types.FunctionType)
+        and isinstance(resolver_module_name, str)
+        and isinstance(resolver_function_name, str)
+        and resolver_function_name != "<lambda>"
+        and resolver_qualified_name == resolver_function_name
+    )
+    if not is_top_level_function:
+        return resolver
+
+    @functools.wraps(resolver)
+    def call_current_cost_estimation_module_function(*args, **kwargs):
+        resolver_module = sys.modules.get(resolver_module_name)
+        current_resolver = getattr(resolver_module, resolver_function_name, None)
+        if not callable(current_resolver):
+            current_resolver = resolver
+        return current_resolver(*args, **kwargs)
+
+    return call_current_cost_estimation_module_function
+
 
 _bulk_maxtokens_resolver = None
 _bulk_model_outputs_resolver = None
@@ -13,7 +43,7 @@ def set_bulk_maxtokens_resolver(bulk_maxtokens_resolver):
     """Wire the resolver for bulk maximum-token measurements."""
     global _bulk_maxtokens_resolver
     with _cost_estimation_resolver_lock:
-        _bulk_maxtokens_resolver = bulk_maxtokens_resolver
+        _bulk_maxtokens_resolver = _late_bind_cost_estimation_module_function(bulk_maxtokens_resolver)
 
 
 def resolve_bulk_maxtokens(sig, *args, **kwargs):
@@ -29,7 +59,7 @@ def set_bulk_model_outputs_resolver(bulk_model_outputs_resolver):
     """Wire the resolver for bulk model-output measurements."""
     global _bulk_model_outputs_resolver
     with _cost_estimation_resolver_lock:
-        _bulk_model_outputs_resolver = bulk_model_outputs_resolver
+        _bulk_model_outputs_resolver = _late_bind_cost_estimation_module_function(bulk_model_outputs_resolver)
 
 
 def resolve_bulk_model_outputs(model, *args, **kwargs):
@@ -45,7 +75,7 @@ def set_bulk_sig_resolver(bulk_sig_resolver):
     """Wire the resolver for bulk call signatures."""
     global _bulk_sig_resolver
     with _cost_estimation_resolver_lock:
-        _bulk_sig_resolver = bulk_sig_resolver
+        _bulk_sig_resolver = _late_bind_cost_estimation_module_function(bulk_sig_resolver)
 
 
 def resolve_bulk_sig(model, template_id=None, *args, **kwargs):
@@ -61,7 +91,7 @@ def set_bulk_reasoning_out_estimate_resolver(bulk_reasoning_out_estimate_resolve
     """Wire the resolver for bulk reasoning-output estimates."""
     global _bulk_reasoning_out_estimate_resolver
     with _cost_estimation_resolver_lock:
-        _bulk_reasoning_out_estimate_resolver = bulk_reasoning_out_estimate_resolver
+        _bulk_reasoning_out_estimate_resolver = _late_bind_cost_estimation_module_function(bulk_reasoning_out_estimate_resolver)
 
 
 def resolve_bulk_reasoning_out_estimate(*args, **kwargs):
