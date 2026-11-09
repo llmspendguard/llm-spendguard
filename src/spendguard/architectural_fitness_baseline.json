@@ -2285,7 +2285,7 @@
           },
           "src/spendguard/store/call_corpus/content_retention.py": {
             "max_cc": 8,
-            "mi": 54.53311488559375
+            "mi": 52.28099395009641
           },
           "src/spendguard/store/call_corpus/routing_audit.py": {
             "max_cc": 14,
@@ -2516,7 +2516,8 @@
     "reviewed_warm_daemon_reader_join_teardown": "Reviewed the sole-reader bounded join on every warm-daemon teardown path and the loud join-timeout warning; the measured MI cost is essential to close the evidence-write-after-teardown correctness race, not avoidable churn.",
     "reviewed_budget_ledger_access_carve": "Mechanical extraction of shared budget ledger-access plumbing into a leaf without logic changes.",
     "reviewed_g7_convergence_integration": "Measured convergence-trunk complexity after integration fixes.",
-    "reviewed_restructure_domain_taxonomy_complexity": "The approved Phase 3-5 domain-taxonomy restructure re-recorded measured per-file complexity on linux/amd64 py3.12 (the CI readiness platform); only three existing files diverged from the prior baseline. store/spend_search/ledger_read.py rose max_cc 27->28, a single added decision branch from restructure churn in the relocated ledger-read code. generate/spend_capture/compaction.py and platform/lanes.py differ only in the trailing floating-point digits of their maintainability index (libm platform variance; integer max_cc unchanged at 18 and 157). All three stay within the recorded worst-case envelope (max_cc ceiling 247, MI floor 0.0); reviewed and accepted. Measured linux/amd64 py3.12 matching CI."
+    "reviewed_restructure_domain_taxonomy_complexity": "The approved Phase 3-5 domain-taxonomy restructure re-recorded measured per-file complexity on linux/amd64 py3.12 (the CI readiness platform); only three existing files diverged from the prior baseline. store/spend_search/ledger_read.py rose max_cc 27->28, a single added decision branch from restructure churn in the relocated ledger-read code. generate/spend_capture/compaction.py and platform/lanes.py differ only in the trailing floating-point digits of their maintainability index (libm platform variance; integer max_cc unchanged at 18 and 157). All three stay within the recorded worst-case envelope (max_cc ceiling 247, MI floor 0.0); reviewed and accepted. Measured linux/amd64 py3.12 matching CI.",
+    "reviewed_content_retention_purge_throttle_complexity": "content_retention.py MI 54.53->52.28 (amd64 py3.12) from the once-per-process TTL purge throttle: a reliability fix removing the per-connection-open purge write-lock contention that intermittently blew the connection-storm 15s deadline. max_cc unchanged at 8 (no new worst-case branching); the added lines are a named interval constant, a fork-reset throttle timestamp, and a lock-guarded once-per-interval check. Reviewed and accepted."
   },
   "dead_allowlist": [
     {
