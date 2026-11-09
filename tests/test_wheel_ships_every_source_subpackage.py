@@ -82,6 +82,7 @@ def build_clean_offline_wheel(wheel_directory, quarantine_directory):
     quarantined_build = quarantine_directory / BUILD_DIRECTORY.name
     build_was_present = BUILD_DIRECTORY.exists()
     if build_was_present:
+        quarantine_directory.mkdir(parents=True, exist_ok=True)
         BUILD_DIRECTORY.replace(quarantined_build)
     try:
         completed = subprocess.run(

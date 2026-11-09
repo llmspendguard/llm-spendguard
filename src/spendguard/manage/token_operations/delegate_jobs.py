@@ -170,7 +170,8 @@ def finish_delegate_job(job_id, *, state, result_payload=None, terminal_reason=N
     if row["execution_id"]:
         from .execution_journal import terminalize_durable_execution
         terminal = terminalize_durable_execution(
-            row["execution_id"], DELEGATE_JOB_JOURNAL_STATES[state], result=result_payload)
+            row["execution_id"], DELEGATE_JOB_JOURNAL_STATES[state],
+            terminal_recovery_result=result_payload)
         winner_state = next(job_state for job_state, journal_state in DELEGATE_JOB_JOURNAL_STATES.items()
                             if journal_state == terminal["state"])
         if winner_state != state:

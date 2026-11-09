@@ -354,7 +354,7 @@ def persist_durable_execution_payload(execution_id, *, result=None, stdout=None,
 
 
 def _persist_locked_execution_payload(directory, state, *, result=None, stdout=None, stderr=None,
-                                      exit_code=None, envelope=None):
+                                      exit_code=None, envelope=None, result_establishes_capture=True):
     for key, payload in (("result", result), ("stdout", stdout), ("stderr", stderr), ("envelope", envelope)):
         if payload is not None:
             with (directory / EXECUTION_PAYLOAD_FILENAMES[key]).open("w", encoding="utf-8") as stream:
@@ -363,7 +363,7 @@ def _persist_locked_execution_payload(directory, state, *, result=None, stdout=N
                 os.fsync(stream.fileno())
     if exit_code is not None:
         state["exit_code"] = exit_code
-    if result is not None:
+    if result is not None and result_establishes_capture:
         state["captured_result"] = True
 
 
@@ -381,7 +381,8 @@ def append_durable_execution_evidence(execution_id, *, stdout=None, stderr=None,
 
 
 @_protect_durable_execution_io
-def terminalize_durable_execution(execution_id, state, *, root=None, expected_process_identity=None, **payload):
+def terminalize_durable_execution(execution_id, state, *, root=None, expected_process_identity=None,
+                                  terminal_recovery_result=None, **payload):
     """The sole terminal-write seam, serialized across owner and detached observer."""
     if state not in EXECUTION_TERMINAL_STATES:
         raise ValueError(f"invalid execution terminal state: {state}")
@@ -410,7 +411,14 @@ def terminalize_durable_execution(execution_id, state, *, root=None, expected_pr
             record["exit_code"] = terminal.get("exit_code")
             record["terminal_authority"] = terminal.get("terminal_authority", EXECUTION_INFERENTIAL_AUTHORITY)
         else:
-            _persist_locked_execution_payload(directory, record, **payload)
+            recovery_result = payload.get("result")
+            recovery_result_is_captured = recovery_result is not None
+            if (recovery_result is None and terminal_recovery_result is not None
+                    and not record.get("captured_result", False)):
+                recovery_result = terminal_recovery_result
+            _persist_locked_execution_payload(
+                directory, record, **{**payload, "result": recovery_result},
+                result_establishes_capture=recovery_result_is_captured)
             for filename in EXECUTION_PAYLOAD_FILENAMES.values():
                 with (directory / filename).open("rb") as evidence:
                     os.fsync(evidence.fileno())

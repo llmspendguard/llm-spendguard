@@ -49,6 +49,7 @@ LEDGER_READ_OVERFLOW_PROBE_ROW_COUNT = 1
 
 
 DEFAULT_LEDGER_READ_TIME_BUDGET_S = config.LEDGER_READ_TIME_BUDGET_S
+DEFAULT_LEDGER_READ_CONNECTION_OPENER = config.open_ledger_connection
 # sqlite3.set_progress_handler fires the callback every N SQLite virtual-machine instructions
 # (opcodes), NOT N "progress steps" — this is that instruction interval, the wall-clock budget's
 # polling granularity. Smaller = more frequent timeout checks at a small per-instruction cost.
@@ -552,6 +553,7 @@ def _ledger_read_connection(path=None, time_budget=DEFAULT_LEDGER_READ_TIME_BUDG
 
 @contextmanager
 def _ledger_bounded_read_handle(path, time_budget, *, bulk_chunked=False):
+    from ..configuration import ledger_connection
     if not math.isfinite(time_budget) or time_budget <= 0:
         raise ValueError("Ledger read time budget must be finite and positive")
     if DEFAULT_LEDGER_READ_PROGRESS_VM_INSTRUCTIONS <= 0:
@@ -571,9 +573,16 @@ def _ledger_bounded_read_handle(path, time_budget, *, bulk_chunked=False):
         # Bounded consumer reads own an independent read-only WAL snapshot.
         # They must not queue behind legacy pooled writer handles: hook
         # processes need their first read even while another owner is writing.
-        read_owner = closing(config.open_ledger_connection(read_path, uri=True,
-            tune=False, timeout=min(config.LEDGER_CONNECT_TIMEOUT_S, remaining),
-            deadline_at=deadline_at))
+        read_open_options = {
+            "uri": True,
+            "tune": False,
+            "timeout": min(config.LEDGER_CONNECT_TIMEOUT_S, remaining),
+            "deadline_at": deadline_at,
+        }
+        if config.open_ledger_connection is not DEFAULT_LEDGER_READ_CONNECTION_OPENER:
+            read_owner = closing(config.open_ledger_connection(read_path, **read_open_options))
+        else:
+            read_owner = closing(ledger_connection.open_ledger_connection(read_path, **read_open_options))
         connection = read_owner.__enter__()
     except TimeoutError as exc:
         raise LedgerReadTimeout(time_budget) from exc
