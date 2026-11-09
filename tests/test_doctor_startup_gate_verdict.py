@@ -18,11 +18,11 @@ from spendguard import config, fleet, gate, setup  # noqa: E402
 DOCTOR_FRESH_REGISTRY_DIRECTORY = "fresh-registry"
 
 
-def _run_doctor_with_startup_probe_result(startup_gate_active):
+def _run_doctor_with_startup_probe_result(startup_gate_active, enforcement_armed=True):
     doctor_output = io.StringIO()
     with (
         patch.object(gate, "install"),
-        patch.object(gate, "_enforcement_armed", return_value=True),
+        patch.object(gate, "_enforcement_armed", return_value=enforcement_armed),
         patch.object(setup, "_startup_gate_active", return_value=startup_gate_active),
         contextlib.redirect_stdout(doctor_output),
     ):
@@ -48,6 +48,13 @@ def test_doctor_reports_yes_when_process_and_startup_gate_are_active():
     assert doctor_exit_code == 0
 
 
+def test_doctor_returns_nonzero_when_process_enforcement_is_broken():
+    doctor_exit_code, doctor_output = _run_doctor_with_startup_probe_result(True, enforcement_armed=False)
+
+    assert gate.ENFORCING_NO in doctor_output
+    assert doctor_exit_code != 0
+
+
 def test_doctor_registration_initializes_absent_state_at_write_seam():
     with tempfile.TemporaryDirectory() as temporary:
         fresh_state = Path(temporary) / DOCTOR_FRESH_REGISTRY_DIRECTORY
@@ -63,5 +70,6 @@ def test_doctor_registration_initializes_absent_state_at_write_seam():
 
 test_doctor_refuses_yes_when_bare_python_startup_gate_is_inactive()
 test_doctor_reports_yes_when_process_and_startup_gate_are_active()
+test_doctor_returns_nonzero_when_process_enforcement_is_broken()
 test_doctor_registration_initializes_absent_state_at_write_seam()
 print("[OK] doctor binds its verdict to bare-Python startup gating")

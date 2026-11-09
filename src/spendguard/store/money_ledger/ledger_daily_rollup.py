@@ -21,7 +21,8 @@ SPEND_DAILY_ROLLUP_TABLE = "spend_daily_rollup"
 ROLLUP_DAY_FINGERPRINT_TABLE = "rollup_day_fingerprint"
 ROLLUP_DIRTY_DAY_TABLE = "rollup_dirty_day"
 ROLLUP_STATE_TABLE = "rollup_cache_state"
-ROLLUP_OPEN_DAY_SQL_FUNCTION = "spendguard_rollup_open_day"
+ROLLUP_TRIGGER_SCHEMA_TABLE = "rollup_trigger_schema"
+ROLLUP_TRIGGER_SCHEMA_REVISION = 1
 _ROLLUP_AUDIT_ATTEMPTS = {}
 _ROLLUP_AUDIT_THREADS = set()
 _ROLLUP_AUDIT_CONTEXTS = {}
@@ -56,32 +57,61 @@ def initialize_spend_daily_rollup(connection, nano_columns):
         connection.execute(f"UPDATE {ROLLUP_STATE_TABLE} SET open_day=NULL,timezone=NULL WHERE singleton=1")
 
 
+def _declared_rollup_dirty_trigger_statements():
+    """Return the complete current trigger set, keyed by its schema name."""
+    statements = {}
+    managed_tables = ("spend_events", SPEND_DAILY_ROLLUP_TABLE, ROLLUP_DAY_FINGERPRINT_TABLE)
+    for action, references in (("INSERT", ("NEW",)), ("UPDATE", ("OLD", "NEW")), ("DELETE", ("OLD",))):
+        trigger = f"rollup_dirty_event_{action.lower()}"
+        body = " ".join(
+            f"INSERT INTO {ROLLUP_DIRTY_DAY_TABLE}(day,revision) "
+            f"SELECT {reference}.day,1 WHERE {reference}.day < "
+            f"(SELECT open_day FROM {ROLLUP_STATE_TABLE} WHERE singleton=1) "
+            "ON CONFLICT(day) DO UPDATE SET revision=revision+1;" for reference in references)
+        statements[trigger] = f"CREATE TRIGGER {trigger} AFTER {action} ON {managed_tables[0]} BEGIN {body} END"
+    for table, label in ((managed_tables[1], "cache"), (managed_tables[2], "fingerprint")):
+        for action, references in (("UPDATE", ("OLD", "NEW")), ("DELETE", ("OLD",)), ("INSERT", ("NEW",))):
+            trigger = f"rollup_dirty_{label}_{action.lower()}"
+            body = " ".join(
+                f"INSERT INTO {ROLLUP_DIRTY_DAY_TABLE}(day,revision) VALUES ({reference}.day,1) "
+                "ON CONFLICT(day) DO UPDATE SET revision=revision+1;" for reference in references)
+            statements[trigger] = (f"CREATE TRIGGER {trigger} AFTER {action} ON {table} "
+                                   f"WHEN (SELECT publishing FROM {ROLLUP_STATE_TABLE} WHERE singleton=1)=0 "
+                                   f"BEGIN {body} END")
+    return managed_tables, statements
+
+
+def converge_rollup_dirty_trigger_schema(connection):
+    """Replace stale managed-table triggers once per declared schema revision."""
+    connection.execute(f"CREATE TABLE IF NOT EXISTS {ROLLUP_TRIGGER_SCHEMA_TABLE} ("
+                       "singleton INTEGER PRIMARY KEY, revision INTEGER NOT NULL)")
+    current = connection.execute(
+        f"SELECT revision FROM {ROLLUP_TRIGGER_SCHEMA_TABLE} WHERE singleton=1").fetchone()
+    if current is not None and current[0] == ROLLUP_TRIGGER_SCHEMA_REVISION:
+        return False
+    managed_tables, statements = _declared_rollup_dirty_trigger_statements()
+    placeholders = ",".join("?" for _ in managed_tables)
+    stale_names = tuple(row[0] for row in connection.execute(
+        f"SELECT name FROM sqlite_master WHERE type='trigger' AND tbl_name IN ({placeholders})",
+        managed_tables))
+    for trigger in stale_names:
+        connection.execute(f'DROP TRIGGER IF EXISTS "{trigger.replace(chr(34), chr(34) * 2)}"')
+    for statement in statements.values():
+        connection.execute(statement)
+    connection.execute(
+        f"INSERT INTO {ROLLUP_TRIGGER_SCHEMA_TABLE}(singleton,revision) VALUES (1,?) "
+        "ON CONFLICT(singleton) DO UPDATE SET revision=excluded.revision",
+        (ROLLUP_TRIGGER_SCHEMA_REVISION,))
+    return True
+
+
 def initialize_rollup_dirty_triggers(connection):
     """Dirty only memoized closed days for every writer, including raw SQL.
 
     The persisted open-day frontier is sufficient even after midnight: days on
     or beyond it were never trusted and rollover recomputes them from the heap.
     """
-    for action, references in (("INSERT", ("NEW",)), ("UPDATE", ("OLD", "NEW")), ("DELETE", ("OLD",))):
-        body = " ".join(
-            f"INSERT INTO {ROLLUP_DIRTY_DAY_TABLE}(day,revision) "
-            f"SELECT {reference}.day,1 WHERE {reference}.day < "
-            f"(SELECT open_day FROM {ROLLUP_STATE_TABLE} WHERE singleton=1) "
-            "ON CONFLICT(day) DO UPDATE SET revision=revision+1;" for reference in references)
-        connection.execute(f"DROP TRIGGER IF EXISTS rollup_dirty_event_{action.lower()}")
-        connection.execute(f"CREATE TRIGGER rollup_dirty_event_{action.lower()} "
-                           f"AFTER {action} ON spend_events BEGIN {body} END")
-    # Cache tampering also fails closed without hashing every historical day.
-    for table, label in ((SPEND_DAILY_ROLLUP_TABLE, "cache"), (ROLLUP_DAY_FINGERPRINT_TABLE, "fingerprint")):
-        for action, references in (("UPDATE", ("OLD", "NEW")), ("DELETE", ("OLD",)), ("INSERT", ("NEW",))):
-            trigger = f"rollup_dirty_{label}_{action.lower()}"
-            connection.execute(f"DROP TRIGGER IF EXISTS {trigger}")
-            body = " ".join(
-                f"INSERT INTO {ROLLUP_DIRTY_DAY_TABLE}(day,revision) VALUES ({reference}.day,1) "
-                "ON CONFLICT(day) DO UPDATE SET revision=revision+1;" for reference in references)
-            connection.execute(f"CREATE TRIGGER {trigger} AFTER {action} ON {table} "
-                               f"WHEN (SELECT publishing FROM {ROLLUP_STATE_TABLE} WHERE singleton=1)=0 "
-                               f"BEGIN {body} END")
+    converge_rollup_dirty_trigger_schema(connection)
 
 
 def mark_rollup_day_dirty(connection, day, open_day):
