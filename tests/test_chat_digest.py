@@ -11,7 +11,7 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
 
 from _script_checks import record_script_check  # noqa: E402
 
-from spendguard import chat
+from spendguard.generate.spend_capture import chat
 
 fails = []
 # ── _claudeai_project: project_uuid→projmap name · embedded project dict · else "" ──
@@ -27,7 +27,8 @@ conv = {"uuid": "u1", "name": "Schema chat", "summary": "  some summary  ", "pro
 dg = chat._digest_conv(conv, detail, {"p1": "LMM"}, prev=None)
 record_script_check(fails, "digest: uuid + title carried", dg["uuid"] == "u1" and dg["title"] == "Schema chat")
 record_script_check(fails, "digest: value == Σ day values", abs(dg["value"] - round(sum(d["value"] for d in dg["days"].values()), 6)) < 1e-9 and dg["value"] > 0)
-record_script_check(fails, "digest: first_user extracted from the first human message", dg["first_user"].startswith("design the schema"))
+record_script_check(fails, "digest: first_user passed whole without a 300-character cut",
+                    dg["first_user"] == "design the schema " + "q" * 400)
 record_script_check(fails, "digest: ai_project resolved from projmap", dg["ai_project"] == "LMM")
 record_script_check(fails, "digest: no prior classification → empty org/team/project/allocation", dg["org"] == "" and dg["project"] == "" and dg["allocation"] == [])
 dg2 = chat._digest_conv(conv, detail, {"p1": "LMM"}, prev={"org": "Acme", "team": "NLP", "project": "lmm", "allocation": [{"project": "lmm", "pct": 100}], "classify_conf": 0.9})
