@@ -2576,10 +2576,14 @@ def validate_advisor():
 def control_gate_runtime(cmd: str = "status", live: bool = False):
     """Render gate status and return the diagnostic contract.
 
-    ``doctor`` returns nonzero exactly when enforcement is broken or a fail-closed
-    installation invariant cannot be established. Reported UNKNOWN catalogue or
-    headroom coverage does not change the exit status. Other control commands
-    retain their existing success contract.
+    ``doctor`` returns nonzero exactly when an INSTALL-INTEGRITY invariant is
+    violated — a stale editable install, a consumer install drift, or a startup-gate
+    gap (this process is armed but bare ``python`` would not auto-load the gate). A
+    process that is simply not armed here (``ENFORCING HERE: NO`` on an otherwise
+    healthy install, e.g. ``doctor`` run from an ungated shell) is REPORTED loudly
+    but does not bind the exit code — you must be able to diagnose from anywhere.
+    Reported UNKNOWN catalogue or headroom coverage likewise does not change the
+    exit status. Other control commands retain their existing success contract.
     """
     _stale_install = False              # set True when _stale_editable_install() finds code!=metadata (a broken install)
     _consumer_install_drift_found = False
@@ -2935,7 +2939,7 @@ def control_gate_runtime(cmd: str = "status", live: bool = False):
     # / an install-verify step / a `doctor && <next>` chain CATCHES the drift instead of proceeding on a broken install
     # whose frozen deps may be missing. `status` stays exit-0 (a casual glance); only the diagnostic `doctor` binds.
     return 1 if (cmd == "doctor" and (
-        not enforcing or _stale_install or _consumer_install_drift_found or _doctor_startup_gate_gap_found
+        _stale_install or _consumer_install_drift_found or _doctor_startup_gate_gap_found
     )) else 0
 
 
