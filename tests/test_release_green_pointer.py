@@ -135,14 +135,18 @@ release_workflow = yaml.safe_load(release_workflow_path.read_text())
 release_test_steps = release_workflow["jobs"]["test"]["steps"]
 release_test_commands = [str(step.get("run", "")).splitlines() for step in release_test_steps]
 
-# The release selfcheck runs offline on a SINGLE interpreter, so two readiness gates are UNREVIEWED there even
-# though both are proven green on this SAME commit elsewhere in the job: env-parity-in-verification (branch CI
-# attests parity across two independent interpreters) and wheel-source-module-conformance (the real wheel/source
-# module-set equality runs in the `pytest -n auto` suite above, with the build backend provisioned). The release
-# gate must tolerate EXACTLY those two UNREVIEWEDs and nothing else — so a future loosening (any third id slipped
-# in) OR a silent drop of either one both break this guard. Mirrors ci.yml, which tolerates the same wheel gate.
+# The release selfcheck runs offline on a SINGLE interpreter, so three readiness gates are UNREVIEWED there even
+# though each is proven elsewhere (on this SAME commit, or on operator machines): env-parity-in-verification
+# (branch CI attests parity across two independent interpreters), wheel-source-module-conformance (the real
+# wheel/source module-set equality runs in the `pytest -n auto` suite above, with the build backend provisioned),
+# and docs-present (its doc-currency check makes an agentic deprecated-import judgement that needs a reachable LLM
+# lane; the release runner is network-isolated so that leg cannot run and the gate reports UNREVIEWED — the
+# judgement runs on operator machines where a lane is present, and a real doc-currency regression there FAILs and
+# is never tolerated). The release gate must tolerate EXACTLY those three UNREVIEWEDs and nothing else — so a
+# future loosening (any fourth id slipped in) OR a silent drop of any one both break this guard. Mirrors ci.yml,
+# which tolerates the same wheel and docs-present gates.
 EXPECTED_RELEASE_SELFCHECK_TOLERANCES = frozenset(
-    {"env-parity-in-verification", "wheel-source-module-conformance"})
+    {"env-parity-in-verification", "wheel-source-module-conformance", "docs-present"})
 
 
 def extract_selfcheck_tolerated_identifiers(selfcheck_command_line):
@@ -171,7 +175,7 @@ release_selfcheck_tolerances = next(
 )
 record_script_check(
     fails,
-    "release test job tolerates exactly the env-parity and wheel-conformance UNREVIEWEDs (both proven on this commit)",
+    "release test job tolerates exactly the env-parity, wheel-conformance and docs-present UNREVIEWEDs (each proven on this commit or on operator machines)",
     release_selfcheck_tolerances == EXPECTED_RELEASE_SELFCHECK_TOLERANCES,
 )
 record_script_check(
