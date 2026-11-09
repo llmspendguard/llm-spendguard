@@ -4,6 +4,35 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 
 ## [Unreleased]
 
+## [0.16.31] — 2026-11-09
+
+First release cut from the domain-taxonomy restructured trunk, which is now `main`. This is an **internal
+architecture** release: the public CLI, programmatic API, and MCP surfaces are unchanged and remain at parity
+(enforced by the capability-SSOT conformance gate), so no caller code needs to change.
+
+### Changed (internal architecture)
+- **Phase 3 — structural move.** Relocated modules into bounded-context packages (e.g. `store/spend_search`),
+  with compatibility shims re-exporting every moved symbol from its prior import path.
+- **Phase 4 — acyclicity.** Dissolved import-cycle strongly-connected components across admission, platform,
+  reconciliation, measurement, learning, delegate, and spend-capture via accessor/leaf seams; recorded the
+  remaining reviewed cyclic magnitude as a shrink-only ratchet with no new cyclic edges admitted.
+- **Phase 5 — god-module carves.** Split the `config`, `adapters`, `budget`, and `receipt` hubs into
+  bounded-context leaves (ledger-connection, provider-keys, cli-resolution, lane-subprocess-env, provider/schema/
+  embedding/lane-health surfaces, quarantine and unpriced-write lifecycles, receipt tally/render/emit/cli), each a
+  thin facade preserving behavior.
+- Re-baselined the SQUARE architectural-readiness ratchets (context boundaries, complexity, duplication, dead-code,
+  type scope) for the new structure; every re-baseline carries a recorded review and no ratchet was relaxed
+  without one. The offline readiness job tolerates the wheel-conformance gate's UNREVIEWED (its `uv venv` cannot
+  build a wheel offline); the real wheel build + bidirectional module-set equality runs in the sharded `test` job.
+
+### Fixed (ported onto the restructured trunk)
+- `delegate`: retain handed-back worktrees for a configurable TTL (#295); attach the authoritative payload to
+  journal terminalization so crash-recovery is complete.
+- `doctor`: correct `install-hook` and drift remediation for non-editable (wheel) installs.
+- `ledger`: bounded hook-time reads on an independent WAL snapshot (#294).
+- `chat`: whole-evidence digest (#290, #292).
+- `release`: deploy-pointer seam repointed to the relocated `platform._version` SSOT (#297).
+
 ## [0.16.28] — 2026-11-02
 
 The ambient request-scope deadline no longer refuses ledger operations centrally, at the two root gates (#291) —
