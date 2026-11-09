@@ -1,6 +1,7 @@
 """Offline target identity, bounded interpreter probe and host-doctor failure proof."""
 import json
 import os
+from pathlib import Path
 import subprocess
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -16,15 +17,27 @@ GOOD_PROBE_FIXTURE = {"confirmed": True, "version": TARGET_FIXTURE["version"],
 
 
 def test_distribution_target_uses_pointer_commit_version_and_rejects_missing_or_conflicting_pointer():
+    deployed_version_path = (Path(*dist.__package__.split(".")) / "release_identity.py").as_posix()
+    repository_root = os.path.abspath(os.curdir)
+
+    def deployed_version_git_fixture(*arguments):
+        if arguments[:-1] == dist.DISTRIBUTION_GIT_TREE_LIST_ARGUMENTS:
+            return deployed_version_path
+        if arguments == (*dist.DISTRIBUTION_GIT_REPOSITORY_ROOT_ARGUMENTS,):
+            return repository_root
+        if arguments[0] == "show":
+            return f"__version__ = {TARGET_FIXTURE['version']!r}"
+        return None
+
     with patch.object(dist.release, "green_pointer", return_value={"sha": TARGET_FIXTURE["sha"]}), patch.object(
-            dist.release, "_git_src", return_value=f"__version__ = {TARGET_FIXTURE['version']!r}") as git_source:
+            dist.release, "_git_src", side_effect=deployed_version_git_fixture) as git_source:
         target = dist.resolve_distribution_target()
         assert target["version"] == TARGET_FIXTURE["version"] and target["sha"] == TARGET_FIXTURE["sha"]
-        assert git_source.call_args.args[0] == "show"
-        assert git_source.call_args.args[1].split(":", 1)[0] == TARGET_FIXTURE["sha"]
+        show_calls = [call.args for call in git_source.call_args_list if call.args[0] == "show"]
+        assert show_calls[0][1].split(":", 1)[0] == TARGET_FIXTURE["sha"]
     for pointer in (None, {"sha": TARGET_FIXTURE["sha"], "version": "conflicting-fixture-version"}):
         with patch.object(dist.release, "green_pointer", return_value=pointer), patch.object(
-                dist.release, "_git_src", return_value=f"__version__ = {TARGET_FIXTURE['version']!r}"):
+                dist.release, "_git_src", side_effect=deployed_version_git_fixture):
             try:
                 dist.resolve_distribution_target()
             except ValueError:

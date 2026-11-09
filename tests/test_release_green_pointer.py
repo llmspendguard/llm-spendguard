@@ -37,13 +37,14 @@ STATE = {"head": "a" * 40, "dirty": False, "known": {"a" * 40, "b" * 40}}
 def _fake_git(*args):
     if args[:2] == ("rev-parse", "HEAD"):
         return STATE["head"]
-    if args[:1] == ("rev-parse",):                    # resolve/validate an arbitrary ref → full sha or None
-        ref = args[1]
+    if args[:1] == ("rev-parse",):                    # peel/validate an arbitrary ref → full sha or None
+        ref = args[1].removesuffix("^{commit}")
         return ref if ref in STATE["known"] else None
     if args[:2] == ("status", "--porcelain"):
         return "M src/spendguard/x.py" if STATE["dirty"] else ""
     if args[:1] == ("describe",):
-        return "v0.10.0-1-g" + STATE["head"][:7]
+        described_sha = args[-1] if len(args) > 3 else STATE["head"]
+        return "v0.10.0-1-g" + described_sha[:7]
     return None
 
 
