@@ -40,7 +40,7 @@ REQUEST_LEDGER_MOVED_MODULE_PATHS = {
 }
 REQUEST_LEDGER_REQUIRED_EDGES = {
     "ledger_read": {
-        "_ledger_bounded_read_handle": ("managed_ledger_read_connection", "set_progress_handler", "rollback", "__exit__"),
+        "_ledger_bounded_read_handle": ("open_ledger_connection", "closing", "set_progress_handler", "rollback", "__exit__"),
         "ledger_request_scope": ("cancel_ledger_request",),
     },
     "ledger_connection": {

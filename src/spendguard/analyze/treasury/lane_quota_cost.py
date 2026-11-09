@@ -1,19 +1,86 @@
 """Measured lane token cost and fail-closed plan-quota admission."""
+import fcntl
+import hashlib
+import json
 import os
 
 from spendguard.platform import platform_accessors as _platform_accessors
 from ... import config, lane_economics, lane_registry
-from spendguard.store.spend_search.ledger_read_contracts import LEDGER_CALLS_TABLE, LedgerReadOpenError, LedgerReadTableAbsent, LedgerSQLReadRequest
+from spendguard.store.spend_search.ledger_read_contracts import LEDGER_CALLS_TABLE, LedgerReadOpenError, LedgerReadTableAbsent, LedgerReadTimeout, LedgerSQLReadRequest
 from spendguard.store.spend_search.ledger_read_accessors import resolve_read_ledger_sql as read_ledger_sql
 
 MIN_SAMPLES_FOR_MEASURED = 5
 MAX_PLAN_FRACTION_DEFAULT = 0.05
 UNMEASURED_FANOUT_REFUSE_SIZE = 3
 AVOID_CLAUDE_LANE_DEFAULT = True
+DEGRADED_LANE_TOKEN_COST_BASIS = "degraded_cached_max"
+DEGRADED_LANE_TOKEN_COST_REFUSAL = "lane token cost evidence is degraded; refusing admission closed"
+LANE_TOKEN_COST_MAXIMA_STATE_NAME = "lane_token_cost_maxima"
+LANE_TOKEN_COST_MAXIMA_LOCK_SUFFIX = ".lock"
+LANE_TOKEN_COST_MAXIMA_BACKUP_COUNT = 0
 
 
 class PlanQuotaRefusal(RuntimeError):
     """A deliberate refusal before subscription-plan quota is consumed."""
+
+
+class DegradedLaneTokenCostSnapshot(dict):
+    """Durable last-known maxima returned only when an authoritative read expires."""
+
+    authoritative = False
+
+
+def _durable_lane_cost_scope_key(intent):
+    """Identify one ledger and intent without exposing either in the state-file schema."""
+    identity = json.dumps(
+        [os.path.realpath(os.fspath(config.db_path())), intent],
+        separators=(",", ":"), ensure_ascii=False)
+    return hashlib.sha256(identity.encode("utf-8")).hexdigest()
+
+
+def _durable_lane_cost_state_path():
+    return config.state_path(LANE_TOKEN_COST_MAXIMA_STATE_NAME)
+
+
+def _write_authoritative_lane_cost_maxima(intent, measured_costs):
+    """Merge authoritative costs into durable per-ledger maxima under a process lock."""
+    state_path = _durable_lane_cost_state_path()
+    lock_path = state_path.with_name(state_path.name + LANE_TOKEN_COST_MAXIMA_LOCK_SUFFIX)
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("a+b") as lock_handle:
+        fcntl.flock(lock_handle, fcntl.LOCK_EX)
+
+        def merge_scope_maxima(state):
+            scopes = state.setdefault("scopes", {})
+            scope = scopes.setdefault(_durable_lane_cost_scope_key(intent), {})
+            for lane, measured in measured_costs.items():
+                previous = scope.get(lane)
+                measured_tokens = measured.get("tokens_per_call")
+                previous_tokens = None if previous is None else previous.get("tokens_per_call")
+                if previous is None or previous_tokens is None or (
+                        measured_tokens is not None and measured_tokens > previous_tokens):
+                    scope[lane] = dict(measured)
+                elif measured.get("samples", 0) > previous.get("samples", 0):
+                    previous["samples"] = measured["samples"]
+
+        config.update_json(state_path, merge_scope_maxima, reason=LANE_TOKEN_COST_MAXIMA_STATE_NAME,
+                           keep_backups=LANE_TOKEN_COST_MAXIMA_BACKUP_COUNT, quarantine_unparseable=True)
+
+
+def _read_degraded_lane_cost_maxima(intent):
+    """Read durable maxima without ever mutating the degrade store."""
+    try:
+        state = json.loads(_durable_lane_cost_state_path().read_text())
+        costs = state.get("scopes", {}).get(_durable_lane_cost_scope_key(intent))
+        if not isinstance(costs, dict) or not costs:
+            return None
+        degraded = DegradedLaneTokenCostSnapshot({
+            lane: {**cost, "basis": DEGRADED_LANE_TOKEN_COST_BASIS}
+            for lane, cost in costs.items() if isinstance(cost, dict)
+        })
+        return degraded or None
+    except (OSError, ValueError, TypeError):
+        return None
 
 
 def _configured_bool(section, key, env_name, default):
@@ -57,6 +124,11 @@ def measured_lane_token_cost(intent=None):
             f"SELECT {lane_expr}, COUNT(*), {average_sql} "
             f"FROM calls WHERE {lane_expr} IS NOT NULL GROUP BY {lane_expr}",
             required_tables=(LEDGER_CALLS_TABLE,)))
+    except LedgerReadTimeout:
+        degraded_costs = _read_degraded_lane_cost_maxima(intent)
+        if degraded_costs is None:
+            raise
+        return degraded_costs
     except (LedgerReadOpenError, LedgerReadTableAbsent):
         # A fresh installation has no measurements; quota admission already
         # represents that as unmeasured. Incomplete settlements still raise.
@@ -70,6 +142,12 @@ def measured_lane_token_cost(intent=None):
         out[lane] = {"tokens_per_call": chosen_avg, "samples": chosen_count,
                      "basis": ("unknown" if chosen_avg is None else
                                "measured" if chosen_count >= MIN_SAMPLES_FOR_MEASURED else "unmeasured")}
+    try:
+        _write_authoritative_lane_cost_maxima(intent, out)
+    except (OSError, ValueError, TypeError):
+        # The ledger remains authoritative. Failure to refresh optional degrade evidence
+        # must not turn a successful authoritative read into a quota outage.
+        pass
     return out
 
 
@@ -98,6 +176,7 @@ def estimate_lane_quota(calls_per_lane, *, intent=None, headroom_rows=None, toke
     by_lane = {row.get("lane"): row for row in headroom_rows}
     economics = {row.get("lane"): row for row in lane_economics.economics(headroom_rows=headroom_rows)}
     token_costs = token_costs if token_costs is not None else measured_lane_token_cost(intent)
+    cost_evidence_degraded = isinstance(token_costs, DegradedLaneTokenCostSnapshot)
     statements = []
     for lane, n_calls in calls_per_lane.items():
         cost = token_costs.get(lane) or {"tokens_per_call": None, "samples": 0, "basis": "unmeasured"}
@@ -117,6 +196,7 @@ def estimate_lane_quota(calls_per_lane, *, intent=None, headroom_rows=None, toke
         statements.append({"lane": lane, "calls": int(n_calls), **cost, "est_tokens": est_tokens,
                            "cap_tokens": cap, "pct_of_cap": pct, "live_remaining_pct": remaining_pct,
                            "quota_known": quota_known,
+                           "cost_evidence_degraded": cost_evidence_degraded,
                            "projected_remaining_after": projected,
                            "effective_token_usd": est_tokens * rate if est_tokens is not None and rate is not None else None})
     return statements
@@ -135,6 +215,8 @@ def quota_preflight(calls_per_lane, *, intent=None, auth_over_quota=False, headr
                             f"headroom={row['live_remaining_pct']}% basis={row['basis']} samples={row['samples']}")
         if emit:
             emit(row["statement"])
+        if row["cost_evidence_degraded"] and row["calls"]:
+            refusals.append(f"{row['lane']}: {DEGRADED_LANE_TOKEN_COST_REFUSAL}")
         if not row["quota_known"]:
             continue
         if row["basis"] != "measured" and row["calls"] > UNMEASURED_FANOUT_REFUSE_SIZE:
@@ -172,6 +254,9 @@ def enforce_single_call_plan_fraction(lane, projected_tokens, *, auth_over_quota
     if headroom_rows is None:
         headroom_rows = _platform_accessors.resolve_lane_headroom(do_fetch=False)
     row = estimate_lane_quota({lane: 1}, headroom_rows=headroom_rows, token_costs=token_costs)[0]
+    if row["cost_evidence_degraded"] and not auth_over_quota:
+        raise PlanQuotaRefusal(f"{lane}: {DEGRADED_LANE_TOKEN_COST_REFUSAL} "
+                               "(pass auth_over_quota=True to authorize)")
     if not row["quota_known"]:
         return row
     cap = row.get("cap_tokens")

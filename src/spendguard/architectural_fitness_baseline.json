@@ -337,7 +337,7 @@
           },
           "src/spendguard/analyze/treasury/lane_quota_cost.py": {
             "max_cc": 21,
-            "mi": 31.5790541514238
+            "mi": 25.844960754213258
           },
           "src/spendguard/analyze/treasury/lane_value.py": {
             "max_cc": 20,
@@ -1441,7 +1441,7 @@
           },
           "src/spendguard/analyze/treasury/lane_quota_cost.py": {
             "max_cc": 21,
-            "mi": 31.603773947651447
+            "mi": 25.662768904370118
           },
           "src/spendguard/analyze/treasury/lane_value.py": {
             "max_cc": 20,
@@ -2125,6 +2125,7 @@
     "reviewed_federation_egress_domain_seam": "Federation egress dependency inversion adds a dependency-free resolver leaf and deferred bootstrap, repoints cyclic consumers without behavior changes, and adds one startup wiring helper.",
     "reviewed_import_behavior_snapshot_harness": "Reviewed the complete import-behavior snapshot harness: subprocess isolation, deterministic module-order capture, SDK wrapper-state invariants, name normalization, and explicit atomic regeneration.",
     "reviewed_lane_queue_maintenance_size_guard": "2026-11-01: Reviewed assess_lane_queue_maintenance_readiness in full; its measured MI cost is essential to enforce the lane-queue maintenance size, freelist-ratio, and old-terminal-count readiness guard.",
+    "reviewed_lane_token_cost_durable_degrade": "2026-11-08: Durable lane-cost degradation adds a conservative per-ledger maxima ratchet and explicit non-authoritative sentinel. Extraction is declined on cohesion grounds: the degraded snapshot's only meaning is refuse, and its three mandatory enforcement consumers remain co-located in lane_quota_cost.py. Max CC remains 21; whole-file MI is recorded as a zero-margin ceiling from independent Radon 6.0.1 measurements under Python 3.11 and 3.12.",
     "reviewed_ledger_performance_benchmark": "Measured offline ledger performance benchmark core and relative baseline comparison.",
     "reviewed_ledger_performance_profile_wiring": "Reviewed benchmark profile wiring adds bounded metadata derivation, fixture construction, and read-only source-ledger integration.",
     "reviewed_ledger_read_expiry_debug_demote_ssot": "Promoting the self-healing managed-read-expiry deferral log line to a module-level SSOT message\nconstant (MANAGED_READ_EXPIRY_DEFERRED_LOG_MESSAGE) and demoting it from WARNING to DEBUG marginally\nlowers this file's maintainability index (max CC unchanged at 34; MI 29.6357 -> 29.5825). The demote\nis a deliberate, reviewed observability change: the deferral is routine under connection-step-lock\ncontention and self-healing (the background expiry sweep re-schedules; outcome flag\nMANAGED_READ_CLEANUP_DEFERRED), so DEBUG is the correct level. It stops production WARNING log spam and\nbenign leakage into tests that assert logger silence, while hiding no terminal error (raised\nLedgerQueryDeadline/LedgerReadTimeout paths are unchanged and still surface). The SSOT constant removes\na duplicated string literal so the one observability assertion can import it rather than re-hardcode it.\nReviewed and accepted as part of closing the busy-connection / ledger-read-expiry timing flake family.",

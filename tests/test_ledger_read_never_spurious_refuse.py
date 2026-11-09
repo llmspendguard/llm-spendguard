@@ -1,8 +1,11 @@
 """Committed cap/dispatch evidence survives unrelated writer/request lifetimes."""
 import datetime
 import contextlib
+import os
 import pathlib
 import sqlite3
+import subprocess
+import sys
 import tempfile
 import time
 import unittest
@@ -15,6 +18,7 @@ align_test_startup_home(prefix=__name__)
 from spendguard import budget, config, delegate_router, ledger_read
 from spendguard.ledger import SpendLedger, SPEND_EVENT_NANO_COLUMNS
 from spendguard.money_scale import usd_to_nano_usd
+from spendguard.store.configuration import ledger_connection
 
 READ_REFUSAL_COMMITTED_USD = "1.125000001"
 READ_REFUSAL_PENDING_USD = "9.0"
@@ -37,6 +41,12 @@ READ_REFUSAL_SLOW_SQL = """WITH RECURSIVE work(value) AS
 SELECT SUM(value) FROM work"""
 READ_REFUSAL_PENDING_UPDATE_SQL = (
     f"UPDATE spend_events SET realtime_usd=?, {SPEND_EVENT_NANO_COLUMNS['realtime_usd']}=? WHERE source=?")
+READ_REFUSAL_CONTENTION_POOL_KEY = "ledger-read-contention-writer"
+READ_REFUSAL_COLD_PROCESS_TEST = (
+    "LedgerReadNeverSpuriousRefuseGuards."
+    "test_saturated_writer_pool_does_not_delay_independent_read_snapshot")
+READ_REFUSAL_SUBPROCESS_BUDGET_MULTIPLIER = 2
+READ_REFUSAL_HOME_ENVIRONMENT_VARIABLE = "SPENDGUARD_HOME"
 
 
 class LedgerReadNeverSpuriousRefuseGuards(unittest.TestCase):
@@ -134,6 +144,52 @@ class LedgerReadNeverSpuriousRefuseGuards(unittest.TestCase):
                              READ_REFUSAL_PENDING_USD)
         finally:
             self.connection.rollback()
+
+    def test_saturated_writer_pool_does_not_delay_independent_read_snapshot(self):
+        original_pool_settings = ledger_connection.ledger_read_pool_settings
+
+        def ensure_contention_ledger_schema(connection):
+            connection.execute("SELECT 1").close()
+
+        writer = ledger_connection.pooled_ledger_conn(
+            READ_REFUSAL_CONTENTION_POOL_KEY, ensure_contention_ledger_schema, self.path)
+        saturated_pool_cap = sum(
+            not handle._ledger_released for handle in ledger_connection._LEDGER_POOL_REGISTRY)
+
+        def contention_pool_settings():
+            _, admission_timeout = original_pool_settings()
+            return saturated_pool_cap, admission_timeout
+
+        writer.execute("BEGIN IMMEDIATE")
+        writer.execute(READ_REFUSAL_PENDING_UPDATE_SQL,
+                       (READ_REFUSAL_PENDING_USD, usd_to_nano_usd(READ_REFUSAL_PENDING_USD), __name__))
+        try:
+            with patch.object(ledger_connection, "ledger_read_pool_settings", side_effect=contention_pool_settings):
+                started = time.monotonic()
+                self.assertEqual(self.read_central_sql_amount(), READ_REFUSAL_COMMITTED_USD)
+                self.assertLess(time.monotonic() - started,
+                                ledger_read.DEFAULT_LEDGER_READ_TIME_BUDGET_S)
+        finally:
+            writer.rollback()
+            ledger_connection.rollback_ledger_conn(READ_REFUSAL_CONTENTION_POOL_KEY)
+            ledger_connection.reset_ledger_conn(READ_REFUSAL_CONTENTION_POOL_KEY)
+
+    def test_writer_absent_independent_read_snapshot_control(self):
+        started = time.monotonic()
+        self.assertEqual(self.read_central_sql_amount(), READ_REFUSAL_COMMITTED_USD)
+        self.assertLess(time.monotonic() - started,
+                        ledger_read.DEFAULT_LEDGER_READ_TIME_BUDGET_S)
+
+    def test_cold_process_first_read_survives_saturated_writer_pool(self):
+        with tempfile.TemporaryDirectory() as cold_process_home:
+            cold_process_environment = os.environ.copy()
+            cold_process_environment[READ_REFUSAL_HOME_ENVIRONMENT_VARIABLE] = cold_process_home
+            completed = subprocess.run(
+                [sys.executable, __file__, READ_REFUSAL_COLD_PROCESS_TEST],
+                capture_output=True, text=True, check=False, env=cold_process_environment,
+                timeout=(ledger_read.DEFAULT_LEDGER_READ_TIME_BUDGET_S
+                         * READ_REFUSAL_SUBPROCESS_BUDGET_MULTIPLIER))
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
 
     def test_expired_ambient_request_does_not_consume_query_budget(self):
         with ledger_read.ledger_request_scope() as scope:
