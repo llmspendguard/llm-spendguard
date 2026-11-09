@@ -1,7 +1,7 @@
 # Domain discovery — run 1 cross-check (seed hypothesis vs independent re-derivation)
 
 **Date:** 2026-11-02. **Corpus:** 220 `src/spendguard/*.py` modules (built by
-[`scripts/probe/build_domain_corpus.py`](../scripts/probe/build_domain_corpus.py), full docstrings un-truncated).
+`scripts/probe/build_domain_corpus.py`, full docstrings un-truncated).
 **Discovery output:** [`DOMAIN_TAXONOMY.discovery_run1.json`](DOMAIN_TAXONOMY.discovery_run1.json) — one holistic DDD
 pass over the whole corpus (not per-file: a bounded-context analysis needs every module + its import edges in one
 context). **Seed under test:** [`DOMAIN_TAXONOMY.seed.md`](DOMAIN_TAXONOMY.seed.md) (10 domains, 5 kinds).

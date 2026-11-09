@@ -380,7 +380,7 @@ that `config` was a safe L0 leaf was false, which is why the plan now grounds ev
 ## 5. Open items (post-finalization)
 
 - **#2 whole-job planner** — `submit(jobs, goal)` built on the capability core (Routing + Token Operations), per
-  [`.claude/plans/zany-cooking-moon.md`](../.claude/plans/zany-cooking-moon.md).
+  `.claude/plans/zany-cooking-moon.md`.
 - **Phase 0 acyclicity ratchet** (§3 decision) — the one scheduled follow-up: make `architectural_fitness` gate the
   cycle's *magnitude* against a shrink-only baseline, asserted on the real package. Bounded, low-risk.
 - The 142-module SCC itself is **known debt**, not scheduled work — the §3 degree-ranked hub decoupling runs only if

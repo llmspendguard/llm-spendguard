@@ -148,7 +148,7 @@
         "patterns": [
           "src/spendguard/**/*.py",
           "src/spendguard/capability*.json",
-          "src/spendguard/capability*.jsonl",
+          "src/spendguard/interface/capability*.jsonl",
           "src/spendguard/architectural_fitness_baseline.json",
           "scripts/test/*.py",
           "tests/**/*.py",
