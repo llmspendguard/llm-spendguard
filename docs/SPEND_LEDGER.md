@@ -22,7 +22,7 @@ record/update/lock_period/reverse/adjust/history + `spend_audit` hash chain. `sp
 production writer** — `budget._record_spend_event` (the single shared write), driven by the gate AND by the
 `claudecode` ingest path (`source="claude-code"` est-value + `claude-code-overflow`/`anthropic-invoice` overage) —
 so it is no longer migration-/planned-only (the attribution engine, Step 3, continues to build on top). File:
-`src/spendguard/ledger.py`. DB: `~/.spendguard/spend.db`.
+`src/spendguard/store/money_ledger/ledger.py`. DB: `~/.spendguard/spend.db`.
 
 ---
 

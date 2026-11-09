@@ -78,7 +78,7 @@ Grounded against the code + the live ledger before building (repo rule #0). Find
   "current model" — the single-model label is misleading for any long session that switched models.
 
 ## Pricing — from spendguard only, never hardcoded
-Use `spendguard.pricing.cost_or_unpriced(model, in_tok, out_tok, cached_in_tok=<cache_read>,
+Use `spendguard.store.reference_data.pricing.cost_or_unpriced(model, in_tok, out_tok, cached_in_tok=<cache_read>,
 cache_creation_tok=<cache_write>, batch=False)`. Claude Code is interactive → **`batch=False`**.
 Cache multipliers already live in pricing (`CACHE_READ_MULTIPLIER=0.1`, `CACHE_WRITE_5M_MULTIPLIER=1.25`).
 

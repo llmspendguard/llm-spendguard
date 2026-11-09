@@ -148,7 +148,7 @@ The bounded read-only reader raises a `LedgerReadError` subclass when it cannot 
 The two honestreview consumer policies can therefore share one library call:
 
 ```python
-from spendguard.ledger_read import LedgerReadError, read_recorded_call_total
+from spendguard.store.spend_search.ledger_read import LedgerReadError, read_recorded_call_total
 
 try:
     recorded_total = read_recorded_call_total()

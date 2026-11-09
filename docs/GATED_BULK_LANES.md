@@ -157,7 +157,7 @@ The VISION case (`images_for`) rides the metered API by construction — the lan
 
 ### The reasoning-equivalence map (the one place the pair is proven)
 
-`src/spendguard/reasoning_equivalence.py` is the single, derived, persisted source of truth for how every
+`src/spendguard/store/reference_data/reasoning_equivalence.py` is the single, derived, persisted source of truth for how every
 `(lane, model, reasoning)` maps to its same-provider metered call. It unifies what used to be scattered across
 `models.normalize_reasoning`, `codex_exec._codex_effort`, `lane_catalog.REASONING_QUIRK` and
 `adapters.metered_fallback_id`, and it **verifies the equal-model metered call is actually priced + served** (an

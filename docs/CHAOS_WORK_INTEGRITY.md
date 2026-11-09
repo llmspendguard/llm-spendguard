@@ -103,11 +103,11 @@ never-lose-work      disable_disposition_assertion       RED
 Files changed for this task:
 
 ```text
-src/spendguard/work_integrity.py
-src/spendguard/submit.py
-src/spendguard/batch_tracker.py
-src/spendguard/lane_queue.py
-src/spendguard/whole_job.py
+src/spendguard/generate/work_integrity/work_integrity.py
+src/spendguard/generate/execution/submit.py
+src/spendguard/generate/execution/batch_tracker.py
+src/spendguard/manage/token_operations/lane_queue.py
+src/spendguard/manage/routing/whole_job.py
 tests/chaos/exactly_once_faults.py
 tests/chaos/never_lose_work_faults.py
 tests/chaos/mutation_proof.py

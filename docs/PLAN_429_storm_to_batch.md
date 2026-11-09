@@ -185,7 +185,7 @@ replay). Fixed to the repo's race-safe attempt-and-swallow pattern (bulkgate.py:
 (6 rounds × 24 threads, barrier-forced) — reliably RED on the old pattern, GREEN 5× on the fix (teeth proven).
 
 **Reframe build order:**
-- ✅ **(1) cross-process shared RATE budget (panel #1) — DONE + wired + proven.** `src/spendguard/xp_rate_window.py`:
+- ✅ **(1) cross-process shared RATE budget (panel #1) — DONE + wired + proven.** `src/spendguard/manage/token_operations/xp_rate_window.py`:
   a sqlite sliding-window reservation (multi-window per-second + per-minute rpm + per-minute tpm, NO burst allowance
   beyond the per-second sub-cap, fail-open on infra not on rate). Wired into `dispatch.acquire` (dispatch.py:~836,
   metered vendors only, before the scarce flock slot; `SPENDGUARD_DISPATCH_XP_RATE_OFF=1` kill-switch). Tests:
@@ -194,7 +194,7 @@ replay). Fixed to the repo's race-safe attempt-and-swallow pattern (bulkgate.py:
   validation: the incident replay's internal 429s dropped 931 → 0** (the stampede is killed even in ONE process, because
   the shared window has no burst allowance — unlike the in-process `_Bucket`). 0 regressions across 10 dispatch tests.
   ⇒ The 429 SAFETY axis is solved for the metered path: zero surfaced AND zero internal 429s, paced under the wall.
-- ✅ **(2) coalesce→combo for LATENCY/deadlock — DONE (engine) + ⭐ GREEN.** `src/spendguard/storm_submit.py`
+- ✅ **(2) coalesce→combo for LATENCY/deadlock — DONE (engine) + ⭐ GREEN.** `src/spendguard/manage/token_operations/storm_submit.py`
   `submit_storm(tasks, intent, model, execute_batch, deadline_s, ...)` drives the proven StormCoalescer: realtime rides
   the REAL governed metered path (adapters.call → dispatch.admit → the cross-process rate window → _call_guarded), the
   overflow diverts to the (injected, provider-aware) Batch API, and it COLLECTS N final results demuxed by id in order.
