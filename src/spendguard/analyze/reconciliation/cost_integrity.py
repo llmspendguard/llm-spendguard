@@ -91,7 +91,11 @@ def classify_impossible_cost_buckets(rows, *, gaps=None):
                                                       charge_date=day, recorded_rates=recorded_rates)
                         if split else _max_token_cost(model, in_tok, out_tok, kind == "batch"))
             if expected is None:
-                raise ValueError("Pricing returned no token cost")
+                unpriced += 1
+                if gaps is not None:
+                    gaps.append({**identity, "gap": "token_cost_reconstruction_unavailable",
+                                 "error": "pricing returned no token cost"})
+                continue
             lc = float(ledger_cost)
             if not math.isfinite(lc) or lc < 0:
                 raise ValueError(f"Invalid ledger cost: {ledger_cost!r}")

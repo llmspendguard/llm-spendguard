@@ -17,8 +17,13 @@ install_packaged_domain_legacy_path_finder()
 # measure-then-project path was unreachable by its obvious import, which is part of why a cost was quoted
 # from invented token counts instead. A module and a function cannot share a name in one namespace; the
 # function is the one that moves, since the module's name says exactly what it is.
+_CANONICAL_CLI_MODULE = "spendguard.interface.cli"
+_CANONICAL_CLI_PACKAGE = "spendguard.interface"
+_LEGACY_CLI_MODULE = "spendguard.cli"
+
+
 def _cli_submodule_is_being_imported():
-    """True only while importlib is resolving ``spendguard.cli`` or ``spendguard.__main__``.
+    """True only while importlib is resolving a supported CLI module or ``spendguard.__main__``.
 
     A package initializer runs before the requested submodule, so the CLI cannot set an environment flag before
     this code executes.  Importlib does, however, carry the fully-qualified requested module in its loader frame.
@@ -28,7 +33,8 @@ def _cli_submodule_is_being_imported():
     frame = sys._getframe()
     while frame is not None:
         requested = frame.f_locals.get("name")
-        if requested in ("spendguard.cli", "spendguard.__main__"):
+        if requested in (_CANONICAL_CLI_MODULE, _CANONICAL_CLI_PACKAGE,
+                         _LEGACY_CLI_MODULE, "spendguard.__main__"):
             return True
         frame = frame.f_back
     return False
@@ -262,16 +268,16 @@ __all__ = ["install", "require", "register", "install_litellm", "install_bedrock
            "cancel_on_zero_billable", "relative_escalation_gate",
            "ItemLedger", "compute_job_fingerprint", "guard_resume", "compare_fingerprints", "read_fingerprint",
            "write_fingerprint", "JobPlanDrift", "JobMethodUndecided"]
-from .capability_surface_generation import build_capability_api_exports as _build_capability_api_exports
+from .interface.capability_surface_generation import build_capability_api_exports as _build_capability_api_exports
 
 _capability_api_exports, CAPABILITY_API_COVERAGE = _build_capability_api_exports()
 globals().update(_capability_api_exports)
 __all__.extend(_capability_api_exports)
-# Version SSOT: src/spendguard/_version.py, read LIVE from source so `__version__` is always the version of the CODE
+# Version SSOT: src/spendguard/platform/_version.py, read LIVE from source so `__version__` is always the version of the CODE
 # actually running — including an editable install whose frozen dist-info metadata lags source (importlib.metadata
 # reads install-time metadata, so it reported 0.7.2 while running 0.10.0 code). pyproject consumes the SAME file at
 # build time via [tool.setuptools.dynamic]. One authoring home; never a metadata read, never a second literal.
-from ._version import __version__ as __version__   # `as __version__`: explicit re-export (this IS the public attr)
+from .platform._version import __version__ as __version__   # `as __version__`: explicit re-export (this IS the public attr)
 
 
 def which_package():

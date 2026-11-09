@@ -40,7 +40,7 @@ check("the pre-fix stale literal can never come back", spendguard.__version__ !=
 # __init__ must NOT go back to reading importlib.metadata for its own version (the editable-install lie).
 init_src = open(os.path.join(os.path.dirname(os.path.dirname(_version.__file__)), "__init__.py")).read()
 check("__init__ does not read importlib.metadata for __version__ (reads the SSOT instead)",
-      "from ._version import __version__" in init_src and "_pkg_version(" not in init_src)
+      "from .platform._version import __version__" in init_src and "_pkg_version(" not in init_src)
 
 # pyproject must be dynamic (no static literal) and derive the version from the SSOT at build time.
 pyproject_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "pyproject.toml")

@@ -1245,7 +1245,7 @@
         "files": {
           "src/spendguard/__init__.py": {
             "max_cc": 7,
-            "mi": 59.54322994978568
+            "mi": 59.30735967944874
           },
           "src/spendguard/__main__.py": {
             "max_cc": 0,
@@ -1500,8 +1500,8 @@
             "mi": 57.4577650356951
           },
           "src/spendguard/analyze/reconciliation/cost_integrity.py": {
-            "max_cc": 19,
-            "mi": 47.99645428589699
+            "max_cc": 20,
+            "mi": 47.22817434648761
           },
           "src/spendguard/analyze/reconciliation/ledger_sync.py": {
             "max_cc": 56,
@@ -2345,7 +2345,7 @@
           },
           "src/spendguard/store/money_ledger/ledger_daily_rollup.py": {
             "max_cc": 25,
-            "mi": 29.299462890954953
+            "mi": 26.83916174813674
           },
           "src/spendguard/store/money_ledger/ledger_deadletter.py": {
             "max_cc": 24,
@@ -2517,7 +2517,8 @@
     "reviewed_budget_ledger_access_carve": "Mechanical extraction of shared budget ledger-access plumbing into a leaf without logic changes.",
     "reviewed_g7_convergence_integration": "Measured convergence-trunk complexity after integration fixes.",
     "reviewed_restructure_domain_taxonomy_complexity": "The approved Phase 3-5 domain-taxonomy restructure re-recorded measured per-file complexity on linux/amd64 py3.12 (the CI readiness platform); only three existing files diverged from the prior baseline. store/spend_search/ledger_read.py rose max_cc 27->28, a single added decision branch from restructure churn in the relocated ledger-read code. generate/spend_capture/compaction.py and platform/lanes.py differ only in the trailing floating-point digits of their maintainability index (libm platform variance; integer max_cc unchanged at 18 and 157). All three stay within the recorded worst-case envelope (max_cc ceiling 247, MI floor 0.0); reviewed and accepted. Measured linux/amd64 py3.12 matching CI.",
-    "reviewed_content_retention_purge_throttle_complexity": "content_retention.py MI 54.53->52.28 (amd64 py3.12) from the once-per-process TTL purge throttle: a reliability fix removing the per-connection-open purge write-lock contention that intermittently blew the connection-storm 15s deadline. max_cc unchanged at 8 (no new worst-case branching); the added lines are a named interval constant, a fork-reset throttle timestamp, and a lock-guarded once-per-interval check. Reviewed and accepted."
+    "reviewed_content_retention_purge_throttle_complexity": "content_retention.py MI 54.53->52.28 (amd64 py3.12) from the once-per-process TTL purge throttle: a reliability fix removing the per-connection-open purge write-lock contention that intermittently blew the connection-storm 15s deadline. max_cc unchanged at 8 (no new worst-case branching); the added lines are a named interval constant, a fork-reset throttle timestamp, and a lock-guarded once-per-interval check. Reviewed and accepted.",
+    "reviewed_defect_a_costless_catalogue_gap_branch": "Defect A fix (PR #302): cost_integrity.py routes a costless-catalogue entry through the named-gap reporter (unpriced += 1; append token_cost_reconstruction_unavailable gap; continue) instead of raising an unhandled ValueError. That adds one decision branch (CC 19->20) and lowers MI. The added path is a required fail-safe replacing a traceback with a named UNKNOWN; the complexity is essential, not accidental."
   },
   "dead_allowlist": [
     {

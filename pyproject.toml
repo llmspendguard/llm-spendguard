@@ -47,7 +47,7 @@ dev = ["pytest>=7", "pytest-xdist>=3", "build", "twine", "ruff>=0.6", "coverage[
        "vulture==2.16", "mypy==2.4.1"]   # measured fitness baselines use these tool versions
 
 [project.scripts]
-spendguard = "spendguard.cli:main"
+spendguard = "spendguard.interface.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
