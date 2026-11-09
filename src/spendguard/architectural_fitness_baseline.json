@@ -1797,7 +1797,7 @@
           },
           "src/spendguard/generate/spend_capture/compaction.py": {
             "max_cc": 18,
-            "mi": 33.41722462486337
+            "mi": 33.417224624863366
           },
           "src/spendguard/generate/spend_capture/gpu_port.py": {
             "max_cc": 23,
@@ -2209,7 +2209,7 @@
           },
           "src/spendguard/platform/lanes.py": {
             "max_cc": 157,
-            "mi": 1.526495343565901
+            "mi": 1.5264953435658968
           },
           "src/spendguard/platform/launchd_labels.py": {
             "max_cc": 0,
@@ -2456,7 +2456,7 @@
             "mi": 85.66475876502862
           },
           "src/spendguard/store/spend_search/ledger_read.py": {
-            "max_cc": 27,
+            "max_cc": 28,
             "mi": 0.0
           },
           "src/spendguard/store/spend_search/ledger_read_accessors.py": {
@@ -2515,39 +2515,40 @@
     "reviewed_supported_minor_parity_for_existing_lifecycle_guards": "Restore supported Python 3.11 measurement parity for existing reviewed changes already recorded under Python 3.12: delegate cancel-retention directory guard; managed read-expiry DEBUG SSOT observability; bounded ledger-writer shutdown drain; report whole-collector deadline; realtime storm per-item deadline. The six source files are unchanged by the broker fix. Their existing review narratives remain authoritative; this entry records only the omitted 3.11 Linux/amd64 Radon 6.0.1 measurements, preserving independent tokenizer-specific baselines. The same Linux measurement also records model_catalog MI 12.608930133037463 instead of 12.608930133037466, a platform floating-point difference with unchanged CC 43 and unchanged source. Broker execution_journal maximum CC remains 23 and MI improves, requiring no ratchet increase.",
     "reviewed_warm_daemon_reader_join_teardown": "Reviewed the sole-reader bounded join on every warm-daemon teardown path and the loud join-timeout warning; the measured MI cost is essential to close the evidence-write-after-teardown correctness race, not avoidable churn.",
     "reviewed_budget_ledger_access_carve": "Mechanical extraction of shared budget ledger-access plumbing into a leaf without logic changes.",
-    "reviewed_g7_convergence_integration": "Measured convergence-trunk complexity after integration fixes."
+    "reviewed_g7_convergence_integration": "Measured convergence-trunk complexity after integration fixes.",
+    "reviewed_restructure_domain_taxonomy_complexity": "The approved Phase 3-5 domain-taxonomy restructure re-recorded measured per-file complexity on linux/amd64 py3.12 (the CI readiness platform); only three existing files diverged from the prior baseline. store/spend_search/ledger_read.py rose max_cc 27->28, a single added decision branch from restructure churn in the relocated ledger-read code. generate/spend_capture/compaction.py and platform/lanes.py differ only in the trailing floating-point digits of their maintainability index (libm platform variance; integer max_cc unchanged at 18 and 157). All three stay within the recorded worst-case envelope (max_cc ceiling 247, MI floor 0.0); reviewed and accepted. Measured linux/amd64 py3.12 matching CI."
   },
   "dead_allowlist": [
     {
-      "line": 150,
+      "line": 151,
       "message": "unused variable 'cap_chars'",
       "name": "cap_chars",
       "path": "src/spendguard/store/call_corpus/callio.py",
       "reason": "record_io_sample keeps the historical cap_chars argument for API compatibility; evidence is never truncated."
     },
     {
-      "line": 942,
+      "line": 950,
       "message": "unused variable 'current_prompt'",
       "name": "current_prompt",
       "path": "src/spendguard/store/call_corpus/calls.py",
       "reason": "_link_used preserves the documented compatibility argument; linkage no longer uses prompt text."
     },
     {
-      "line": 48,
+      "line": 55,
       "message": "unused variable 'start_time'",
       "name": "start_time",
       "path": "src/spendguard/generate/spend_capture/litellm_adapter.py",
       "reason": "record_litellm callback signature is required by the external LiteLLM callback protocol."
     },
     {
-      "line": 48,
+      "line": 55,
       "message": "unused variable 'end_time'",
       "name": "end_time",
       "path": "src/spendguard/generate/spend_capture/litellm_adapter.py",
       "reason": "record_litellm callback signature is required by the external LiteLLM callback protocol."
     },
     {
-      "line": 1200,
+      "line": 1117,
       "message": "unused variable 'n_vendors'",
       "name": "n_vendors",
       "path": "src/spendguard/generate/execution/vendor_call.py",
@@ -2557,8 +2558,8 @@
   "dead_confidence": 100,
   "dead_confidence_justification": "Vulture defines 100% findings as definite unused arguments/variables and unreachable code. Lower-confidence unused public functions and attributes require caller/dynamic-registration review and are explicitly tracked separately; this gate does not claim full dead-code absence.",
   "duplication": {
-    "duplicate_lines": 303,
-    "groups": 48
+    "duplicate_lines": 426,
+    "groups": 55
   },
   "duplication_justification": "Use pylint symilar's documented default minimum of four significant lines; comments, docstrings, imports and function signatures are declarations rather than implementation duplication. Compare every source file against every other source file. Ratchet lines and groups to measured current values.",
   "duplication_options": {
@@ -2583,7 +2584,27 @@
   "recorded_cross_context_nonsurface_imports": [
     [
       "spendguard",
+      "spendguard.analyze.measurement.measurement_resolver_bootstrap"
+    ],
+    [
+      "spendguard",
+      "spendguard.analyze.reconciliation.reconciliation_resolver_bootstrap"
+    ],
+    [
+      "spendguard",
+      "spendguard.analyze.spend_reporting.spend_reporting_resolver_bootstrap"
+    ],
+    [
+      "spendguard",
+      "spendguard.egress.egress_resolver_bootstrap"
+    ],
+    [
+      "spendguard",
       "spendguard.egress.emit"
+    ],
+    [
+      "spendguard",
+      "spendguard.generate.execution.execution_resolver_bootstrap"
     ],
     [
       "spendguard",
@@ -2592,6 +2613,14 @@
     [
       "spendguard",
       "spendguard.generate.spend_capture.litellm_adapter"
+    ],
+    [
+      "spendguard",
+      "spendguard.generate.spend_capture.realtime_spend_recorder"
+    ],
+    [
+      "spendguard",
+      "spendguard.generate.spend_capture.spend_capture_resolver_bootstrap"
     ],
     [
       "spendguard",
@@ -2607,6 +2636,18 @@
     ],
     [
       "spendguard",
+      "spendguard.manage.admission.admission_accessors"
+    ],
+    [
+      "spendguard",
+      "spendguard.manage.admission.admission_resolver_bootstrap"
+    ],
+    [
+      "spendguard",
+      "spendguard.manage.admission.budget"
+    ],
+    [
+      "spendguard",
       "spendguard.manage.admission.bulkgate"
     ],
     [
@@ -2619,7 +2660,35 @@
     ],
     [
       "spendguard",
+      "spendguard.manage.admission.spend_refusal_error"
+    ],
+    [
+      "spendguard",
+      "spendguard.manage.routing.routing_resolver_bootstrap"
+    ],
+    [
+      "spendguard",
+      "spendguard.manage.token_operations.token_operations_resolver_bootstrap"
+    ],
+    [
+      "spendguard",
       "spendguard.platform._version"
+    ],
+    [
+      "spendguard",
+      "spendguard.platform.fleet"
+    ],
+    [
+      "spendguard",
+      "spendguard.platform.lanes"
+    ],
+    [
+      "spendguard",
+      "spendguard.platform.platform_resolver_bootstrap"
+    ],
+    [
+      "spendguard",
+      "spendguard.store.call_corpus.call_corpus_resolver_bootstrap"
     ],
     [
       "spendguard",
@@ -2628,6 +2697,18 @@
     [
       "spendguard",
       "spendguard.store.reference_data.pricing"
+    ],
+    [
+      "spendguard",
+      "spendguard.store.reference_data.reference_data_resolver_bootstrap"
+    ],
+    [
+      "spendguard",
+      "spendguard.store.spend_search.ledger_read"
+    ],
+    [
+      "spendguard",
+      "spendguard.store.spend_search.ledger_request_cursor"
     ],
     [
       "spendguard.analyze.assurance.architectural_fitness",
@@ -2675,7 +2756,7 @@
     ],
     [
       "spendguard.analyze.assurance.consumer_audit",
-      "spendguard.generate.execution.adapters"
+      "spendguard.generate.execution.execution_accessors"
     ],
     [
       "spendguard.analyze.assurance.consumer_audit",
@@ -2683,15 +2764,7 @@
     ],
     [
       "spendguard.analyze.assurance.consumer_audit",
-      "spendguard.platform.fleet"
-    ],
-    [
-      "spendguard.analyze.assurance.consumer_audit",
-      "spendguard.platform.release"
-    ],
-    [
-      "spendguard.analyze.assurance.consumer_audit",
-      "spendguard.platform.setup"
+      "spendguard.platform.platform_accessors"
     ],
     [
       "spendguard.analyze.assurance.consumer_audit",
@@ -2699,15 +2772,11 @@
     ],
     [
       "spendguard.analyze.assurance.coverage",
-      "spendguard.generate.execution.adapters"
+      "spendguard.generate.execution.execution_accessors"
     ],
     [
       "spendguard.analyze.assurance.coverage",
-      "spendguard.platform.fleet"
-    ],
-    [
-      "spendguard.analyze.assurance.coverage",
-      "spendguard.platform.setup"
+      "spendguard.platform.platform_accessors"
     ],
     [
       "spendguard.analyze.assurance.coverage",
@@ -2755,7 +2824,7 @@
     ],
     [
       "spendguard.analyze.assurance.keys_audit",
-      "spendguard.store.configuration.config"
+      "spendguard.store.configuration.provider_keys"
     ],
     [
       "spendguard.analyze.assurance.ledger_performance_benchmark",
@@ -2767,7 +2836,7 @@
     ],
     [
       "spendguard.analyze.assurance.metadata_audit",
-      "spendguard.generate.execution.vendor_call"
+      "spendguard.generate.execution.execution_accessors"
     ],
     [
       "spendguard.analyze.assurance.metadata_audit",
@@ -2779,11 +2848,11 @@
     ],
     [
       "spendguard.analyze.assurance.metadata_audit",
-      "spendguard.store.reference_data.sync"
+      "spendguard.store.reference_data.reference_data_accessors"
     ],
     [
       "spendguard.analyze.assurance.metadata_audit",
-      "spendguard.store.reference_data.sync_capabilities"
+      "spendguard.store.reference_data.sync"
     ],
     [
       "spendguard.analyze.assurance.token_caps",
@@ -2811,7 +2880,7 @@
     ],
     [
       "spendguard.analyze.assurance.verify",
-      "spendguard.generate.execution.adapters"
+      "spendguard.generate.execution.execution_accessors"
     ],
     [
       "spendguard.analyze.assurance.verify",
@@ -2819,11 +2888,7 @@
     ],
     [
       "spendguard.analyze.assurance.verify",
-      "spendguard.manage.admission.gate"
-    ],
-    [
-      "spendguard.analyze.assurance.verify",
-      "spendguard.manage.admission.model_preflight"
+      "spendguard.manage.admission.admission_accessors"
     ],
     [
       "spendguard.analyze.assurance.verify",
@@ -2835,11 +2900,11 @@
     ],
     [
       "spendguard.analyze.assurance.verify",
-      "spendguard.store.reference_data.lane_catalog"
+      "spendguard.store.reference_data.reference_data_accessors"
     ],
     [
       "spendguard.analyze.cost_estimation.calibrate",
-      "spendguard.analyze.spend_reporting.receipt"
+      "spendguard.analyze.spend_reporting.spend_reporting_accessors"
     ],
     [
       "spendguard.analyze.cost_estimation.calibrate",
@@ -2847,7 +2912,7 @@
     ],
     [
       "spendguard.analyze.cost_estimation.calibrate",
-      "spendguard.egress.saas"
+      "spendguard.egress.saas_accessors"
     ],
     [
       "spendguard.analyze.cost_estimation.calibrate",
@@ -2855,7 +2920,7 @@
     ],
     [
       "spendguard.analyze.cost_estimation.calibrate",
-      "spendguard.manage.admission.bulkgate"
+      "spendguard.manage.admission.admission_accessors"
     ],
     [
       "spendguard.analyze.cost_estimation.calibrate",
@@ -2875,11 +2940,15 @@
     ],
     [
       "spendguard.analyze.cost_estimation.calibrate",
-      "spendguard.store.spend_search.ledger_read"
+      "spendguard.store.spend_search.ledger_read_accessors"
+    ],
+    [
+      "spendguard.analyze.cost_estimation.calibrate",
+      "spendguard.store.spend_search.ledger_read_contracts"
     ],
     [
       "spendguard.analyze.cost_estimation.content_tokens",
-      "spendguard.generate.execution.adapters"
+      "spendguard.generate.execution.execution_accessors"
     ],
     [
       "spendguard.analyze.cost_estimation.content_tokens",
@@ -2903,7 +2972,7 @@
     ],
     [
       "spendguard.analyze.cost_estimation.estimate_divergence",
-      "spendguard.generate.execution.adapters"
+      "spendguard.generate.execution.execution_accessors"
     ],
     [
       "spendguard.analyze.cost_estimation.estimate_divergence",
@@ -2911,15 +2980,11 @@
     ],
     [
       "spendguard.analyze.cost_estimation.estimate_divergence",
-      "spendguard.store.call_corpus.calls"
+      "spendguard.store.call_corpus.call_corpus_accessors"
     ],
     [
       "spendguard.analyze.cost_estimation.estimate_divergence",
       "spendguard.store.configuration.config"
-    ],
-    [
-      "spendguard.analyze.cost_estimation.expected_output",
-      "spendguard.manage.admission.bulkgate"
     ],
     [
       "spendguard.analyze.cost_estimation.expected_output",
@@ -2931,7 +2996,7 @@
     ],
     [
       "spendguard.analyze.cost_estimation.provider_tokens",
-      "spendguard.generate.execution.adapters"
+      "spendguard.generate.execution.execution_accessors"
     ],
     [
       "spendguard.analyze.cost_estimation.provider_tokens",
@@ -2939,19 +3004,11 @@
     ],
     [
       "spendguard.analyze.cost_estimation.provider_tokens",
-      "spendguard.manage.admission.budget"
+      "spendguard.manage.admission.admission_accessors"
     ],
     [
       "spendguard.analyze.cost_estimation.provider_tokens",
-      "spendguard.manage.admission.gate"
-    ],
-    [
-      "spendguard.analyze.cost_estimation.provider_tokens",
-      "spendguard.store.call_corpus.callio"
-    ],
-    [
-      "spendguard.analyze.cost_estimation.provider_tokens",
-      "spendguard.store.call_corpus.calls"
+      "spendguard.store.call_corpus.call_corpus_accessors"
     ],
     [
       "spendguard.analyze.cost_estimation.provider_tokens",
@@ -2983,7 +3040,7 @@
     ],
     [
       "spendguard.analyze.learning.advise",
-      "spendguard.manage.admission.budget"
+      "spendguard.manage.admission.admission_accessors"
     ],
     [
       "spendguard.analyze.learning.advise",
@@ -3003,15 +3060,15 @@
     ],
     [
       "spendguard.analyze.learning.advise",
-      "spendguard.store.spend_search.ledger_read"
+      "spendguard.store.spend_search.ledger_read_accessors"
+    ],
+    [
+      "spendguard.analyze.learning.advise",
+      "spendguard.store.spend_search.ledger_read_contracts"
     ],
     [
       "spendguard.analyze.learning.advisor",
-      "spendguard.generate.execution.adapters"
-    ],
-    [
-      "spendguard.analyze.learning.advisor",
-      "spendguard.generate.execution.submit"
+      "spendguard.generate.execution.execution_accessors"
     ],
     [
       "spendguard.analyze.learning.advisor",
@@ -3023,15 +3080,11 @@
     ],
     [
       "spendguard.analyze.learning.advisor",
-      "spendguard.manage.admission.budget"
+      "spendguard.manage.admission.admission_accessors"
     ],
     [
       "spendguard.analyze.learning.advisor",
-      "spendguard.store.call_corpus.callio"
-    ],
-    [
-      "spendguard.analyze.learning.advisor",
-      "spendguard.store.call_corpus.calls"
+      "spendguard.store.call_corpus.call_corpus_accessors"
     ],
     [
       "spendguard.analyze.learning.advisor",
@@ -3095,7 +3148,7 @@
     ],
     [
       "spendguard.analyze.learning.brief",
-      "spendguard.store.spend_search.ledger_read"
+      "spendguard.store.spend_search.ledger_read_accessors"
     ],
     [
       "spendguard.analyze.learning.conv",
@@ -3103,11 +3156,7 @@
     ],
     [
       "spendguard.analyze.learning.conv",
-      "spendguard.generate.execution.adapters"
-    ],
-    [
-      "spendguard.analyze.learning.conv",
-      "spendguard.generate.execution.submit"
+      "spendguard.generate.execution.execution_accessors"
     ],
     [
       "spendguard.analyze.learning.conv",
@@ -3115,7 +3164,7 @@
     ],
     [
       "spendguard.analyze.learning.conv",
-      "spendguard.generate.spend_capture.resources"
+      "spendguard.generate.spend_capture.spend_capture_accessors"
     ],
     [
       "spendguard.analyze.learning.conv",
@@ -3127,15 +3176,11 @@
     ],
     [
       "spendguard.analyze.learning.conv",
-      "spendguard.manage.admission.budget"
+      "spendguard.manage.admission.admission_accessors"
     ],
     [
       "spendguard.analyze.learning.conv",
-      "spendguard.manage.admission.gate"
-    ],
-    [
-      "spendguard.analyze.learning.conv",
-      "spendguard.store.call_corpus.calls"
+      "spendguard.store.call_corpus.call_corpus_accessors"
     ],
     [
       "spendguard.analyze.learning.conv",
@@ -3167,19 +3212,15 @@
     ],
     [
       "spendguard.analyze.learning.intent_model_prior",
-      "spendguard.generate.execution.adapters"
+      "spendguard.generate.execution.execution_accessors"
     ],
     [
       "spendguard.analyze.learning.intent_model_prior",
-      "spendguard.generate.execution.submit"
+      "spendguard.manage.admission.admission_accessors"
     ],
     [
       "spendguard.analyze.learning.intent_model_prior",
-      "spendguard.manage.admission.gate"
-    ],
-    [
-      "spendguard.analyze.learning.intent_model_prior",
-      "spendguard.store.call_corpus.calls"
+      "spendguard.store.call_corpus.call_corpus_accessors"
     ],
     [
       "spendguard.analyze.learning.intent_model_prior",
@@ -3199,19 +3240,11 @@
     ],
     [
       "spendguard.analyze.learning.lane_bandit",
-      "spendguard.generate.execution.adapters"
+      "spendguard.generate.execution.execution_accessors"
     ],
     [
       "spendguard.analyze.learning.lane_bandit",
-      "spendguard.manage.admission.bulkgate"
-    ],
-    [
-      "spendguard.analyze.learning.lane_bandit",
-      "spendguard.manage.admission.gate"
-    ],
-    [
-      "spendguard.analyze.learning.lane_bandit",
-      "spendguard.manage.routing.lane_balance"
+      "spendguard.manage.admission.admission_accessors"
     ],
     [
       "spendguard.analyze.learning.lane_bandit",
@@ -3219,11 +3252,15 @@
     ],
     [
       "spendguard.analyze.learning.lane_bandit",
-      "spendguard.platform.lanes"
+      "spendguard.manage.routing.routing_accessors"
     ],
     [
       "spendguard.analyze.learning.lane_bandit",
-      "spendguard.store.call_corpus.calls"
+      "spendguard.platform.platform_accessors"
+    ],
+    [
+      "spendguard.analyze.learning.lane_bandit",
+      "spendguard.store.call_corpus.call_corpus_accessors"
     ],
     [
       "spendguard.analyze.learning.lane_bandit",
@@ -3235,11 +3272,11 @@
     ],
     [
       "spendguard.analyze.learning.lane_bandit",
-      "spendguard.store.reference_data.lane_catalog"
+      "spendguard.store.reference_data.pricing"
     ],
     [
       "spendguard.analyze.learning.lane_bandit",
-      "spendguard.store.reference_data.pricing"
+      "spendguard.store.reference_data.reference_data_accessors"
     ],
     [
       "spendguard.analyze.learning.learn",
@@ -3255,7 +3292,7 @@
     ],
     [
       "spendguard.analyze.learning.validate",
-      "spendguard.store.call_corpus.calls"
+      "spendguard.store.call_corpus.call_corpus_accessors"
     ],
     [
       "spendguard.analyze.learning.validate",
@@ -3271,11 +3308,7 @@
     ],
     [
       "spendguard.analyze.measurement.bakeoff",
-      "spendguard.generate.execution.adapters"
-    ],
-    [
-      "spendguard.analyze.measurement.bakeoff",
-      "spendguard.generate.execution.submit"
+      "spendguard.generate.execution.execution_accessors"
     ],
     [
       "spendguard.analyze.measurement.bakeoff",
@@ -3283,15 +3316,11 @@
     ],
     [
       "spendguard.analyze.measurement.bakeoff",
-      "spendguard.manage.admission.gate"
+      "spendguard.manage.admission.admission_accessors"
     ],
     [
       "spendguard.analyze.measurement.bakeoff",
-      "spendguard.store.call_corpus.callio"
-    ],
-    [
-      "spendguard.analyze.measurement.bakeoff",
-      "spendguard.store.call_corpus.calls"
+      "spendguard.store.call_corpus.call_corpus_accessors"
     ],
     [
       "spendguard.analyze.measurement.bakeoff",
@@ -3303,7 +3332,7 @@
     ],
     [
       "spendguard.analyze.measurement.cacheaudit",
-      "spendguard.generate.execution.submit"
+      "spendguard.generate.execution.execution_accessors"
     ],
     [
       "spendguard.analyze.measurement.cacheaudit",
@@ -3311,7 +3340,7 @@
     ],
     [
       "spendguard.analyze.measurement.cacheaudit",
-      "spendguard.store.call_corpus.callio"
+      "spendguard.store.call_corpus.call_corpus_accessors"
     ],
     [
       "spendguard.analyze.measurement.cacheaudit",
@@ -3339,7 +3368,7 @@
     ],
     [
       "spendguard.analyze.measurement.cachetest",
-      "spendguard.store.call_corpus.callio"
+      "spendguard.store.call_corpus.call_corpus_accessors"
     ],
     [
       "spendguard.analyze.measurement.cachetest",
@@ -3379,7 +3408,7 @@
     ],
     [
       "spendguard.analyze.measurement.effort_titration",
-      "spendguard.manage.admission.budget"
+      "spendguard.manage.admission.admission_accessors"
     ],
     [
       "spendguard.analyze.measurement.effort_titration",
@@ -3447,7 +3476,7 @@
     ],
     [
       "spendguard.analyze.measurement.experiment",
-      "spendguard.store.call_corpus.callio"
+      "spendguard.store.call_corpus.call_corpus_accessors"
     ],
     [
       "spendguard.analyze.measurement.experiment",
@@ -3467,11 +3496,11 @@
     ],
     [
       "spendguard.analyze.measurement.guard",
-      "spendguard.generate.execution.adapters"
+      "spendguard.generate.execution.execution_accessors"
     ],
     [
       "spendguard.analyze.measurement.guard",
-      "spendguard.manage.admission.budget"
+      "spendguard.manage.admission.admission_accessors"
     ],
     [
       "spendguard.analyze.measurement.guard",
@@ -3495,11 +3524,15 @@
     ],
     [
       "spendguard.analyze.measurement.guard",
-      "spendguard.store.spend_search.ledger_read"
+      "spendguard.store.spend_search.ledger_read_accessors"
+    ],
+    [
+      "spendguard.analyze.measurement.guard",
+      "spendguard.store.spend_search.ledger_read_contracts"
     ],
     [
       "spendguard.analyze.measurement.lane_eligibility",
-      "spendguard.store.call_corpus.calls"
+      "spendguard.store.call_corpus.call_corpus_accessors"
     ],
     [
       "spendguard.analyze.measurement.lane_eligibility",
@@ -3511,15 +3544,11 @@
     ],
     [
       "spendguard.analyze.measurement.lane_servability",
-      "spendguard.generate.execution.adapters"
+      "spendguard.generate.execution.execution_accessors"
     ],
     [
       "spendguard.analyze.measurement.lane_servability",
-      "spendguard.generate.execution.vendor_call"
-    ],
-    [
-      "spendguard.analyze.measurement.lane_servability",
-      "spendguard.store.call_corpus.calls"
+      "spendguard.store.call_corpus.call_corpus_accessors"
     ],
     [
       "spendguard.analyze.measurement.lane_servability",
@@ -3527,11 +3556,7 @@
     ],
     [
       "spendguard.analyze.measurement.lane_servability",
-      "spendguard.store.reference_data.catalog"
-    ],
-    [
-      "spendguard.analyze.measurement.lane_servability",
-      "spendguard.store.reference_data.lane_catalog"
+      "spendguard.store.reference_data.reference_data_accessors"
     ],
     [
       "spendguard.analyze.measurement.measurement",
@@ -3543,7 +3568,7 @@
     ],
     [
       "spendguard.analyze.measurement.measurement",
-      "spendguard.store.call_corpus.callio"
+      "spendguard.store.call_corpus.call_corpus_accessors"
     ],
     [
       "spendguard.analyze.measurement.measurement",
@@ -3555,11 +3580,11 @@
     ],
     [
       "spendguard.analyze.measurement.measurement",
-      "spendguard.store.spend_search.ledger_read"
+      "spendguard.store.spend_search.ledger_read_accessors"
     ],
     [
       "spendguard.analyze.measurement.prompts",
-      "spendguard.generate.execution.adapters"
+      "spendguard.generate.execution.execution_accessors"
     ],
     [
       "spendguard.analyze.measurement.prompts",
@@ -3567,15 +3592,11 @@
     ],
     [
       "spendguard.analyze.measurement.prompts",
-      "spendguard.manage.admission.gate"
+      "spendguard.manage.admission.admission_accessors"
     ],
     [
       "spendguard.analyze.measurement.prompts",
-      "spendguard.manage.admission.plan_admission"
-    ],
-    [
-      "spendguard.analyze.measurement.prompts",
-      "spendguard.store.call_corpus.calls"
+      "spendguard.store.call_corpus.call_corpus_accessors"
     ],
     [
       "spendguard.analyze.measurement.prompts",
@@ -3587,7 +3608,11 @@
     ],
     [
       "spendguard.analyze.measurement.prompts",
-      "spendguard.store.spend_search.ledger_read"
+      "spendguard.store.spend_search.ledger_read_accessors"
+    ],
+    [
+      "spendguard.analyze.measurement.prompts",
+      "spendguard.store.spend_search.ledger_read_contracts"
     ],
     [
       "spendguard.analyze.measurement.realized",
@@ -3599,11 +3624,15 @@
     ],
     [
       "spendguard.analyze.measurement.realized",
-      "spendguard.store.spend_search.ledger_read"
+      "spendguard.store.spend_search.ledger_read_accessors"
+    ],
+    [
+      "spendguard.analyze.measurement.realized",
+      "spendguard.store.spend_search.ledger_read_contracts"
     ],
     [
       "spendguard.analyze.measurement.reliability",
-      "spendguard.generate.execution.adapters"
+      "spendguard.generate.execution.execution_accessors"
     ],
     [
       "spendguard.analyze.measurement.reliability",
@@ -3611,23 +3640,15 @@
     ],
     [
       "spendguard.analyze.measurement.reliability",
-      "spendguard.manage.admission.budget"
+      "spendguard.manage.admission.admission_accessors"
     ],
     [
       "spendguard.analyze.measurement.reliability",
-      "spendguard.manage.admission.gate"
+      "spendguard.platform.platform_accessors"
     ],
     [
       "spendguard.analyze.measurement.reliability",
-      "spendguard.manage.admission.model_preflight"
-    ],
-    [
-      "spendguard.analyze.measurement.reliability",
-      "spendguard.platform.lanes"
-    ],
-    [
-      "spendguard.analyze.measurement.reliability",
-      "spendguard.store.call_corpus.calls"
+      "spendguard.store.call_corpus.call_corpus_accessors"
     ],
     [
       "spendguard.analyze.measurement.reliability",
@@ -3636,10 +3657,6 @@
     [
       "spendguard.analyze.measurement.reliability",
       "spendguard.store.money_ledger.ledger_writer"
-    ],
-    [
-      "spendguard.analyze.measurement.reliability",
-      "spendguard.store.reference_data.catalog"
     ],
     [
       "spendguard.analyze.measurement.reliability",
@@ -3655,15 +3672,19 @@
     ],
     [
       "spendguard.analyze.measurement.reliability",
-      "spendguard.store.spend_search.ledger_read"
+      "spendguard.store.reference_data.reference_data_accessors"
+    ],
+    [
+      "spendguard.analyze.measurement.reliability",
+      "spendguard.store.spend_search.ledger_read_accessors"
     ],
     [
       "spendguard.analyze.measurement.requirement_judge",
-      "spendguard.generate.execution.adapters"
+      "spendguard.generate.execution.execution_accessors"
     ],
     [
       "spendguard.analyze.measurement.requirement_judge",
-      "spendguard.store.call_corpus.calls"
+      "spendguard.store.call_corpus.call_corpus_accessors"
     ],
     [
       "spendguard.analyze.measurement.requirement_judge",
@@ -3679,11 +3700,7 @@
     ],
     [
       "spendguard.analyze.measurement.review",
-      "spendguard.generate.execution.adapters"
-    ],
-    [
-      "spendguard.analyze.measurement.review",
-      "spendguard.generate.execution.submit"
+      "spendguard.generate.execution.execution_accessors"
     ],
     [
       "spendguard.analyze.measurement.review",
@@ -3695,15 +3712,11 @@
     ],
     [
       "spendguard.analyze.measurement.review",
-      "spendguard.manage.admission.budget"
+      "spendguard.manage.admission.admission_accessors"
     ],
     [
       "spendguard.analyze.measurement.review",
-      "spendguard.store.call_corpus.callio"
-    ],
-    [
-      "spendguard.analyze.measurement.review",
-      "spendguard.store.call_corpus.calls"
+      "spendguard.store.call_corpus.call_corpus_accessors"
     ],
     [
       "spendguard.analyze.measurement.review",
@@ -3727,7 +3740,7 @@
     ],
     [
       "spendguard.analyze.measurement.stability",
-      "spendguard.generate.execution.adapters"
+      "spendguard.generate.execution.execution_accessors"
     ],
     [
       "spendguard.analyze.measurement.stability",
@@ -3735,11 +3748,11 @@
     ],
     [
       "spendguard.analyze.reconciliation.attribution",
-      "spendguard.generate.execution.adapters"
+      "spendguard.generate.execution.execution_accessors"
     ],
     [
       "spendguard.analyze.reconciliation.attribution",
-      "spendguard.generate.spend_capture.chat"
+      "spendguard.generate.spend_capture.spend_capture_accessors"
     ],
     [
       "spendguard.analyze.reconciliation.attribution",
@@ -3747,7 +3760,7 @@
     ],
     [
       "spendguard.analyze.reconciliation.attribution",
-      "spendguard.store.call_corpus.calls"
+      "spendguard.store.call_corpus.call_corpus_accessors"
     ],
     [
       "spendguard.analyze.reconciliation.attribution",
@@ -3771,11 +3784,11 @@
     ],
     [
       "spendguard.analyze.reconciliation.ledger_sync",
-      "spendguard.analyze.spend_reporting.report"
+      "spendguard.analyze.spend_reporting.spend_reporting_accessors"
     ],
     [
       "spendguard.analyze.reconciliation.ledger_sync",
-      "spendguard.egress.saas"
+      "spendguard.egress.saas_accessors"
     ],
     [
       "spendguard.analyze.reconciliation.ledger_sync",
@@ -3787,11 +3800,7 @@
     ],
     [
       "spendguard.analyze.reconciliation.ledger_sync",
-      "spendguard.manage.admission.budget"
-    ],
-    [
-      "spendguard.analyze.reconciliation.ledger_sync",
-      "spendguard.manage.admission.gate"
+      "spendguard.manage.admission.admission_accessors"
     ],
     [
       "spendguard.analyze.reconciliation.ledger_sync",
@@ -3850,6 +3859,10 @@
       "spendguard.store.spend_search.ledger_read"
     ],
     [
+      "spendguard.analyze.reconciliation.reconcile_calls",
+      "spendguard.store.spend_search.ledger_read_contracts"
+    ],
+    [
       "spendguard.analyze.reconciliation.reconcile_estimate_stage",
       "spendguard.store.configuration.config"
     ],
@@ -3859,11 +3872,15 @@
     ],
     [
       "spendguard.analyze.reconciliation.reconcile_estimate_stage",
-      "spendguard.store.spend_search.ledger_read"
+      "spendguard.store.spend_search.ledger_read_accessors"
+    ],
+    [
+      "spendguard.analyze.reconciliation.reconcile_estimate_stage",
+      "spendguard.store.spend_search.ledger_read_contracts"
     ],
     [
       "spendguard.analyze.reconciliation.reconcile_gap_ownership",
-      "spendguard.manage.admission.budget"
+      "spendguard.manage.admission.admission_accessors"
     ],
     [
       "spendguard.analyze.reconciliation.reconcile_gap_ownership",
@@ -3883,7 +3900,11 @@
     ],
     [
       "spendguard.analyze.reconciliation.reconcile_maintenance_owner",
-      "spendguard.store.spend_search.ledger_read"
+      "spendguard.store.spend_search.ledger_read_accessors"
+    ],
+    [
+      "spendguard.analyze.reconciliation.reconcile_maintenance_owner",
+      "spendguard.store.spend_search.ledger_read_contracts"
     ],
     [
       "spendguard.analyze.reconciliation.reconcile_openai",
@@ -3903,7 +3924,7 @@
     ],
     [
       "spendguard.analyze.reconciliation.tag",
-      "spendguard.manage.admission.budget"
+      "spendguard.manage.admission.admission_accessors"
     ],
     [
       "spendguard.analyze.reconciliation.tag",
@@ -3911,7 +3932,11 @@
     ],
     [
       "spendguard.analyze.reconciliation.tag",
-      "spendguard.store.spend_search.ledger_read"
+      "spendguard.store.spend_search.ledger_read_accessors"
+    ],
+    [
+      "spendguard.analyze.reconciliation.tag",
+      "spendguard.store.spend_search.ledger_read_contracts"
     ],
     [
       "spendguard.analyze.reconciliation.trust",
@@ -3919,7 +3944,7 @@
     ],
     [
       "spendguard.analyze.reconciliation.trust",
-      "spendguard.egress.saas"
+      "spendguard.egress.saas_accessors"
     ],
     [
       "spendguard.analyze.reconciliation.trust",
@@ -3927,11 +3952,7 @@
     ],
     [
       "spendguard.analyze.reconciliation.trust",
-      "spendguard.manage.admission.budget"
-    ],
-    [
-      "spendguard.analyze.reconciliation.trust",
-      "spendguard.manage.admission.gate"
+      "spendguard.manage.admission.admission_accessors"
     ],
     [
       "spendguard.analyze.reconciliation.trust",
@@ -3943,7 +3964,7 @@
     ],
     [
       "spendguard.analyze.reconciliation.truth",
-      "spendguard.egress.saas"
+      "spendguard.egress.saas_accessors"
     ],
     [
       "spendguard.analyze.reconciliation.truth",
@@ -3955,11 +3976,11 @@
     ],
     [
       "spendguard.analyze.reconciliation.workdone",
-      "spendguard.egress.saas"
+      "spendguard.egress.saas_accessors"
     ],
     [
       "spendguard.analyze.reconciliation.workdone",
-      "spendguard.generate.execution.adapters"
+      "spendguard.generate.execution.execution_accessors"
     ],
     [
       "spendguard.analyze.reconciliation.workdone",
@@ -3971,11 +3992,7 @@
     ],
     [
       "spendguard.analyze.reconciliation.workdone",
-      "spendguard.store.call_corpus.callio"
-    ],
-    [
-      "spendguard.analyze.reconciliation.workdone",
-      "spendguard.store.call_corpus.calls"
+      "spendguard.store.call_corpus.call_corpus_accessors"
     ],
     [
       "spendguard.analyze.reconciliation.workdone",
@@ -3998,96 +4015,136 @@
       "spendguard.interface.capability_cli_parsing"
     ],
     [
-      "spendguard.analyze.spend_reporting.receipt",
-      "spendguard.analyze.learning.learn"
-    ],
-    [
-      "spendguard.analyze.spend_reporting.receipt",
-      "spendguard.analyze.measurement.guard"
-    ],
-    [
-      "spendguard.analyze.spend_reporting.receipt",
-      "spendguard.analyze.measurement.reliability"
-    ],
-    [
-      "spendguard.analyze.spend_reporting.receipt",
+      "spendguard.analyze.spend_reporting.receipt_cli",
       "spendguard.analyze.treasury.lane_value"
     ],
     [
-      "spendguard.analyze.spend_reporting.receipt",
-      "spendguard.egress.saas"
-    ],
-    [
-      "spendguard.analyze.spend_reporting.receipt",
-      "spendguard.generate.execution.adapters"
-    ],
-    [
-      "spendguard.analyze.spend_reporting.receipt",
+      "spendguard.analyze.spend_reporting.receipt_cli",
       "spendguard.generate.spend_capture.claudecode"
     ],
     [
-      "spendguard.analyze.spend_reporting.receipt",
+      "spendguard.analyze.spend_reporting.receipt_cli",
       "spendguard.generate.spend_capture.codex"
     ],
     [
-      "spendguard.analyze.spend_reporting.receipt",
+      "spendguard.analyze.spend_reporting.receipt_cli",
       "spendguard.generate.spend_capture.compaction"
     ],
     [
-      "spendguard.analyze.spend_reporting.receipt",
+      "spendguard.analyze.spend_reporting.receipt_cli",
       "spendguard.generate.spend_capture.sources"
     ],
     [
-      "spendguard.analyze.spend_reporting.receipt",
+      "spendguard.analyze.spend_reporting.receipt_cli",
       "spendguard.interface.capability_cli_parsing"
     ],
     [
-      "spendguard.analyze.spend_reporting.receipt",
-      "spendguard.manage.admission.budget"
+      "spendguard.analyze.spend_reporting.receipt_cli",
+      "spendguard.manage.admission.admission_accessors"
     ],
     [
-      "spendguard.analyze.spend_reporting.receipt",
-      "spendguard.manage.admission.plan_admission"
-    ],
-    [
-      "spendguard.analyze.spend_reporting.receipt",
-      "spendguard.manage.admission.residency_gate"
-    ],
-    [
-      "spendguard.analyze.spend_reporting.receipt",
-      "spendguard.manage.token_operations.lane_queue"
-    ],
-    [
-      "spendguard.analyze.spend_reporting.receipt",
-      "spendguard.store.call_corpus.calls"
-    ],
-    [
-      "spendguard.analyze.spend_reporting.receipt",
+      "spendguard.analyze.spend_reporting.receipt_cli",
       "spendguard.store.configuration.config"
     ],
     [
-      "spendguard.analyze.spend_reporting.receipt",
-      "spendguard.store.money_ledger.ledger"
+      "spendguard.analyze.spend_reporting.receipt_emit",
+      "spendguard.analyze.treasury.lane_value"
     ],
     [
-      "spendguard.analyze.spend_reporting.receipt",
+      "spendguard.analyze.spend_reporting.receipt_emit",
+      "spendguard.generate.spend_capture.claudecode"
+    ],
+    [
+      "spendguard.analyze.spend_reporting.receipt_emit",
+      "spendguard.generate.spend_capture.compaction"
+    ],
+    [
+      "spendguard.analyze.spend_reporting.receipt_emit",
+      "spendguard.manage.admission.admission_accessors"
+    ],
+    [
+      "spendguard.analyze.spend_reporting.receipt_emit",
+      "spendguard.store.call_corpus.call_corpus_accessors"
+    ],
+    [
+      "spendguard.analyze.spend_reporting.receipt_emit",
+      "spendguard.store.configuration.config"
+    ],
+    [
+      "spendguard.analyze.spend_reporting.receipt_emit",
       "spendguard.store.money_ledger.ledger_writer"
     ],
     [
-      "spendguard.analyze.spend_reporting.receipt",
+      "spendguard.analyze.spend_reporting.receipt_render",
+      "spendguard.analyze.learning.learn"
+    ],
+    [
+      "spendguard.analyze.spend_reporting.receipt_render",
+      "spendguard.analyze.measurement.guard"
+    ],
+    [
+      "spendguard.analyze.spend_reporting.receipt_render",
+      "spendguard.analyze.measurement.reliability"
+    ],
+    [
+      "spendguard.analyze.spend_reporting.receipt_render",
+      "spendguard.egress.saas_accessors"
+    ],
+    [
+      "spendguard.analyze.spend_reporting.receipt_render",
+      "spendguard.manage.admission.admission_accessors"
+    ],
+    [
+      "spendguard.analyze.spend_reporting.receipt_render",
+      "spendguard.manage.token_operations.lane_queue"
+    ],
+    [
+      "spendguard.analyze.spend_reporting.receipt_render",
+      "spendguard.store.configuration.config"
+    ],
+    [
+      "spendguard.analyze.spend_reporting.receipt_tally",
+      "spendguard.analyze.treasury.lane_value"
+    ],
+    [
+      "spendguard.analyze.spend_reporting.receipt_tally",
+      "spendguard.generate.execution.execution_accessors"
+    ],
+    [
+      "spendguard.analyze.spend_reporting.receipt_tally",
+      "spendguard.generate.spend_capture.sources"
+    ],
+    [
+      "spendguard.analyze.spend_reporting.receipt_tally",
+      "spendguard.manage.admission.admission_accessors"
+    ],
+    [
+      "spendguard.analyze.spend_reporting.receipt_tally",
+      "spendguard.store.configuration.config"
+    ],
+    [
+      "spendguard.analyze.spend_reporting.receipt_tally",
+      "spendguard.store.money_ledger.ledger"
+    ],
+    [
+      "spendguard.analyze.spend_reporting.receipt_tally",
       "spendguard.store.reference_data.model_catalog"
     ],
     [
-      "spendguard.analyze.spend_reporting.receipt",
+      "spendguard.analyze.spend_reporting.receipt_tally",
       "spendguard.store.reference_data.money_scale"
     ],
     [
-      "spendguard.analyze.spend_reporting.receipt",
+      "spendguard.analyze.spend_reporting.receipt_tally",
       "spendguard.store.reference_data.pricing"
     ],
     [
-      "spendguard.analyze.spend_reporting.receipt",
-      "spendguard.store.spend_search.ledger_read"
+      "spendguard.analyze.spend_reporting.receipt_tally",
+      "spendguard.store.spend_search.ledger_read_accessors"
+    ],
+    [
+      "spendguard.analyze.spend_reporting.receipt_tally",
+      "spendguard.store.spend_search.ledger_read_contracts"
     ],
     [
       "spendguard.analyze.spend_reporting.report",
@@ -4127,7 +4184,7 @@
     ],
     [
       "spendguard.analyze.spend_reporting.report",
-      "spendguard.egress.saas"
+      "spendguard.egress.saas_accessors"
     ],
     [
       "spendguard.analyze.spend_reporting.report",
@@ -4139,11 +4196,7 @@
     ],
     [
       "spendguard.analyze.spend_reporting.report",
-      "spendguard.manage.admission.budget"
-    ],
-    [
-      "spendguard.analyze.spend_reporting.report",
-      "spendguard.manage.admission.gate"
+      "spendguard.manage.admission.admission_accessors"
     ],
     [
       "spendguard.analyze.spend_reporting.report",
@@ -4155,7 +4208,7 @@
     ],
     [
       "spendguard.analyze.treasury.balances",
-      "spendguard.generate.execution.adapters"
+      "spendguard.generate.execution.execution_accessors"
     ],
     [
       "spendguard.analyze.treasury.balances",
@@ -4163,15 +4216,11 @@
     ],
     [
       "spendguard.analyze.treasury.balances",
-      "spendguard.manage.admission.budget"
+      "spendguard.manage.admission.admission_accessors"
     ],
     [
       "spendguard.analyze.treasury.balances",
-      "spendguard.manage.admission.plan_admission"
-    ],
-    [
-      "spendguard.analyze.treasury.balances",
-      "spendguard.store.call_corpus.calls"
+      "spendguard.store.call_corpus.call_corpus_accessors"
     ],
     [
       "spendguard.analyze.treasury.balances",
@@ -4179,15 +4228,15 @@
     ],
     [
       "spendguard.analyze.treasury.lane_economics",
-      "spendguard.analyze.spend_reporting.receipt"
+      "spendguard.analyze.spend_reporting.spend_reporting_accessors"
     ],
     [
       "spendguard.analyze.treasury.lane_economics",
-      "spendguard.manage.routing.lane_balance"
+      "spendguard.manage.routing.routing_accessors"
     ],
     [
       "spendguard.analyze.treasury.lane_economics",
-      "spendguard.platform.lanes"
+      "spendguard.platform.platform_accessors"
     ],
     [
       "spendguard.analyze.treasury.lane_economics",
@@ -4199,11 +4248,11 @@
     ],
     [
       "spendguard.analyze.treasury.lane_economics",
-      "spendguard.store.spend_search.ledger_read"
+      "spendguard.store.spend_search.ledger_read_accessors"
     ],
     [
       "spendguard.analyze.treasury.lane_quota_cost",
-      "spendguard.platform.lanes"
+      "spendguard.platform.platform_accessors"
     ],
     [
       "spendguard.analyze.treasury.lane_quota_cost",
@@ -4215,19 +4264,23 @@
     ],
     [
       "spendguard.analyze.treasury.lane_quota_cost",
-      "spendguard.store.spend_search.ledger_read"
+      "spendguard.store.spend_search.ledger_read_accessors"
+    ],
+    [
+      "spendguard.analyze.treasury.lane_quota_cost",
+      "spendguard.store.spend_search.ledger_read_contracts"
     ],
     [
       "spendguard.analyze.treasury.lane_value",
-      "spendguard.analyze.spend_reporting.receipt"
+      "spendguard.analyze.spend_reporting.spend_reporting_accessors"
     ],
     [
       "spendguard.analyze.treasury.lane_value",
-      "spendguard.egress.saas"
+      "spendguard.egress.saas_accessors"
     ],
     [
       "spendguard.analyze.treasury.lane_value",
-      "spendguard.generate.execution.adapters"
+      "spendguard.generate.execution.execution_accessors"
     ],
     [
       "spendguard.analyze.treasury.lane_value",
@@ -4239,11 +4292,15 @@
     ],
     [
       "spendguard.analyze.treasury.lane_value",
-      "spendguard.store.reference_data.lane_catalog"
+      "spendguard.store.reference_data.reference_data_accessors"
     ],
     [
       "spendguard.analyze.treasury.lane_value",
-      "spendguard.store.spend_search.ledger_read"
+      "spendguard.store.spend_search.ledger_read_accessors"
+    ],
+    [
+      "spendguard.analyze.treasury.lane_value",
+      "spendguard.store.spend_search.ledger_read_contracts"
     ],
     [
       "spendguard.analyze.treasury.overage",
@@ -4255,7 +4312,11 @@
     ],
     [
       "spendguard.analyze.treasury.overage",
-      "spendguard.store.spend_search.ledger_read"
+      "spendguard.store.spend_search.ledger_read_accessors"
+    ],
+    [
+      "spendguard.analyze.treasury.overage",
+      "spendguard.store.spend_search.ledger_read_contracts"
     ],
     [
       "spendguard.egress.emit",
@@ -4279,11 +4340,7 @@
     ],
     [
       "spendguard.egress.focus_export",
-      "spendguard.store.spend_search.ledger_read"
-    ],
-    [
-      "spendguard.egress.saas",
-      "spendguard"
+      "spendguard.store.spend_search.ledger_read_accessors"
     ],
     [
       "spendguard.egress.saas",
@@ -4339,6 +4396,10 @@
     ],
     [
       "spendguard.egress.saas",
+      "spendguard.generate.execution.execution_accessors"
+    ],
+    [
+      "spendguard.egress.saas",
       "spendguard.generate.spend_capture.chat"
     ],
     [
@@ -4351,19 +4412,15 @@
     ],
     [
       "spendguard.egress.saas",
-      "spendguard.manage.admission.budget"
+      "spendguard.manage.admission.admission_accessors"
     ],
     [
       "spendguard.egress.saas",
-      "spendguard.manage.admission.gate"
+      "spendguard.platform._version"
     ],
     [
       "spendguard.egress.saas",
-      "spendguard.platform.lanes"
-    ],
-    [
-      "spendguard.egress.saas",
-      "spendguard.platform.setup"
+      "spendguard.platform.platform_accessors"
     ],
     [
       "spendguard.egress.saas",
@@ -4371,15 +4428,11 @@
     ],
     [
       "spendguard.egress.saas",
-      "spendguard.store.reference_data.catalog"
-    ],
-    [
-      "spendguard.egress.saas",
       "spendguard.store.reference_data.catalog_price_authoring"
     ],
     [
       "spendguard.egress.saas",
-      "spendguard.store.reference_data.pricing"
+      "spendguard.store.reference_data.reference_data_accessors"
     ],
     [
       "spendguard.egress.saas",
@@ -4415,7 +4468,7 @@
     ],
     [
       "spendguard.egress.signal",
-      "spendguard.store.call_corpus.callio"
+      "spendguard.store.call_corpus.call_corpus_accessors"
     ],
     [
       "spendguard.egress.signal",
@@ -4432,10 +4485,6 @@
     [
       "spendguard.generate.execution.adapters",
       "spendguard.analyze.cost_estimation.expected_output"
-    ],
-    [
-      "spendguard.generate.execution.adapters",
-      "spendguard.analyze.measurement.cacheaudit"
     ],
     [
       "spendguard.generate.execution.adapters",
@@ -4463,15 +4512,11 @@
     ],
     [
       "spendguard.generate.execution.adapters",
-      "spendguard.manage.admission.bulkgate"
+      "spendguard.manage.admission.admission_accessors"
     ],
     [
       "spendguard.generate.execution.adapters",
-      "spendguard.manage.admission.gate"
-    ],
-    [
-      "spendguard.generate.execution.adapters",
-      "spendguard.manage.admission.plan_admission"
+      "spendguard.manage.admission.spend_refusal_error"
     ],
     [
       "spendguard.generate.execution.adapters",
@@ -4503,23 +4548,11 @@
     ],
     [
       "spendguard.generate.execution.adapters",
-      "spendguard.platform.distribution"
+      "spendguard.platform.platform_accessors"
     ],
     [
       "spendguard.generate.execution.adapters",
-      "spendguard.platform.fleet"
-    ],
-    [
-      "spendguard.generate.execution.adapters",
-      "spendguard.platform.lanes"
-    ],
-    [
-      "spendguard.generate.execution.adapters",
-      "spendguard.store.call_corpus.callio"
-    ],
-    [
-      "spendguard.generate.execution.adapters",
-      "spendguard.store.call_corpus.calls"
+      "spendguard.store.call_corpus.call_corpus_accessors"
     ],
     [
       "spendguard.generate.execution.adapters",
@@ -4532,14 +4565,6 @@
     [
       "spendguard.generate.execution.adapters",
       "spendguard.store.configuration.config"
-    ],
-    [
-      "spendguard.generate.execution.adapters",
-      "spendguard.store.reference_data.catalog"
-    ],
-    [
-      "spendguard.generate.execution.adapters",
-      "spendguard.store.reference_data.lane_catalog"
     ],
     [
       "spendguard.generate.execution.adapters",
@@ -4559,7 +4584,7 @@
     ],
     [
       "spendguard.generate.execution.adapters",
-      "spendguard.store.reference_data.reasoning_equivalence"
+      "spendguard.store.reference_data.reference_data_accessors"
     ],
     [
       "spendguard.generate.execution.antigravity_exec",
@@ -4591,7 +4616,7 @@
     ],
     [
       "spendguard.generate.execution.batch_tracker",
-      "spendguard.manage.admission.gate"
+      "spendguard.manage.admission.admission_accessors"
     ],
     [
       "spendguard.generate.execution.batch_tracker",
@@ -4599,7 +4624,7 @@
     ],
     [
       "spendguard.generate.execution.batch_tracker",
-      "spendguard.store.call_corpus.callio"
+      "spendguard.store.call_corpus.call_corpus_accessors"
     ],
     [
       "spendguard.generate.execution.batch_tracker",
@@ -4619,15 +4644,35 @@
     ],
     [
       "spendguard.generate.execution.codex_exec",
-      "spendguard.manage.token_operations.codex_daemon"
-    ],
-    [
-      "spendguard.generate.execution.codex_exec",
       "spendguard.manage.token_operations.execution_journal"
     ],
     [
       "spendguard.generate.execution.codex_exec",
+      "spendguard.manage.token_operations.token_operations_accessors"
+    ],
+    [
+      "spendguard.generate.execution.codex_exec",
       "spendguard.store.configuration.config"
+    ],
+    [
+      "spendguard.generate.execution.embeddings",
+      "spendguard.manage.admission.admission_accessors"
+    ],
+    [
+      "spendguard.generate.execution.embeddings",
+      "spendguard.platform.platform_accessors"
+    ],
+    [
+      "spendguard.generate.execution.embeddings",
+      "spendguard.store.configuration.config"
+    ],
+    [
+      "spendguard.generate.execution.embeddings",
+      "spendguard.store.reference_data.model_catalog"
+    ],
+    [
+      "spendguard.generate.execution.embeddings",
+      "spendguard.store.reference_data.pricing"
     ],
     [
       "spendguard.generate.execution.kimi_exec",
@@ -4646,6 +4691,30 @@
       "spendguard.store.configuration.config"
     ],
     [
+      "spendguard.generate.execution.lane_health",
+      "spendguard.analyze.measurement.lane_servability"
+    ],
+    [
+      "spendguard.generate.execution.lane_health",
+      "spendguard.analyze.measurement.reliability"
+    ],
+    [
+      "spendguard.generate.execution.lane_health",
+      "spendguard.manage.token_operations.resource_state"
+    ],
+    [
+      "spendguard.generate.execution.lane_health",
+      "spendguard.platform.platform_accessors"
+    ],
+    [
+      "spendguard.generate.execution.lane_health",
+      "spendguard.store.configuration.config"
+    ],
+    [
+      "spendguard.generate.execution.lane_health",
+      "spendguard.store.reference_data.reference_data_accessors"
+    ],
+    [
       "spendguard.generate.execution.openai_batch_cli",
       "spendguard.interface.capability_cli_parsing"
     ],
@@ -4654,12 +4723,64 @@
       "spendguard.store.call_corpus.calls"
     ],
     [
+      "spendguard.generate.execution.price_identity_judge",
+      "spendguard.interface.ui"
+    ],
+    [
+      "spendguard.generate.execution.price_identity_judge",
+      "spendguard.store.call_corpus.call_corpus_accessors"
+    ],
+    [
+      "spendguard.generate.execution.price_identity_judge",
+      "spendguard.store.configuration.config"
+    ],
+    [
+      "spendguard.generate.execution.price_identity_judge",
+      "spendguard.store.reference_data.model_catalog"
+    ],
+    [
+      "spendguard.generate.execution.price_identity_judge",
+      "spendguard.store.reference_data.models"
+    ],
+    [
+      "spendguard.generate.execution.price_identity_judge",
+      "spendguard.store.reference_data.pricing"
+    ],
+    [
       "spendguard.generate.execution.provider_kit",
       "spendguard.manage.admission.gate"
     ],
     [
       "spendguard.generate.execution.provider_kit",
       "spendguard.store.reference_data.pricing"
+    ],
+    [
+      "spendguard.generate.execution.providers",
+      "spendguard.analyze.measurement.cacheaudit"
+    ],
+    [
+      "spendguard.generate.execution.providers",
+      "spendguard.store.configuration.config"
+    ],
+    [
+      "spendguard.generate.execution.providers",
+      "spendguard.store.configuration.provider_key_env_registry"
+    ],
+    [
+      "spendguard.generate.execution.providers",
+      "spendguard.store.reference_data.model_catalog"
+    ],
+    [
+      "spendguard.generate.execution.providers",
+      "spendguard.store.reference_data.reference_data_accessors"
+    ],
+    [
+      "spendguard.generate.execution.schema",
+      "spendguard.generate.work_integrity.output_contract"
+    ],
+    [
+      "spendguard.generate.execution.schema",
+      "spendguard.store.reference_data.models"
     ],
     [
       "spendguard.generate.execution.submit",
@@ -4683,11 +4804,11 @@
     ],
     [
       "spendguard.generate.execution.submit",
-      "spendguard.manage.admission.gate"
+      "spendguard.manage.admission.admission_accessors"
     ],
     [
       "spendguard.generate.execution.submit",
-      "spendguard.store.call_corpus.calls"
+      "spendguard.store.call_corpus.call_corpus_accessors"
     ],
     [
       "spendguard.generate.execution.submit",
@@ -4723,19 +4844,11 @@
     ],
     [
       "spendguard.generate.execution.vendor_call",
-      "spendguard.manage.admission.budget"
+      "spendguard.manage.admission.admission_accessors"
     ],
     [
       "spendguard.generate.execution.vendor_call",
-      "spendguard.manage.admission.bulkgate"
-    ],
-    [
-      "spendguard.generate.execution.vendor_call",
-      "spendguard.manage.admission.gate"
-    ],
-    [
-      "spendguard.generate.execution.vendor_call",
-      "spendguard.manage.admission.plan_admission"
+      "spendguard.manage.admission.spend_refusal_error"
     ],
     [
       "spendguard.generate.execution.vendor_call",
@@ -4743,15 +4856,11 @@
     ],
     [
       "spendguard.generate.execution.vendor_call",
-      "spendguard.store.call_corpus.calls"
+      "spendguard.store.call_corpus.call_corpus_accessors"
     ],
     [
       "spendguard.generate.execution.vendor_call",
       "spendguard.store.configuration.config"
-    ],
-    [
-      "spendguard.generate.execution.vendor_call",
-      "spendguard.store.reference_data.catalog"
     ],
     [
       "spendguard.generate.execution.vendor_call",
@@ -4760,6 +4869,10 @@
     [
       "spendguard.generate.execution.vendor_call",
       "spendguard.store.reference_data.pricing"
+    ],
+    [
+      "spendguard.generate.execution.vendor_call",
+      "spendguard.store.reference_data.reference_data_accessors"
     ],
     [
       "spendguard.generate.execution.zai_exec",
@@ -4799,7 +4912,7 @@
     ],
     [
       "spendguard.generate.spend_capture.backfill",
-      "spendguard.store.call_corpus.calls"
+      "spendguard.store.call_corpus.call_corpus_accessors"
     ],
     [
       "spendguard.generate.spend_capture.backfill",
@@ -4819,15 +4932,15 @@
     ],
     [
       "spendguard.generate.spend_capture.chat",
-      "spendguard.analyze.spend_reporting.receipt"
+      "spendguard.analyze.spend_reporting.spend_reporting_accessors"
     ],
     [
       "spendguard.generate.spend_capture.chat",
-      "spendguard.egress.saas"
+      "spendguard.egress.saas_accessors"
     ],
     [
       "spendguard.generate.spend_capture.chat",
-      "spendguard.generate.execution.adapters"
+      "spendguard.generate.execution.execution_accessors"
     ],
     [
       "spendguard.generate.spend_capture.chat",
@@ -4839,7 +4952,7 @@
     ],
     [
       "spendguard.generate.spend_capture.chat",
-      "spendguard.store.call_corpus.calls"
+      "spendguard.store.call_corpus.call_corpus_accessors"
     ],
     [
       "spendguard.generate.spend_capture.chat",
@@ -4859,15 +4972,15 @@
     ],
     [
       "spendguard.generate.spend_capture.claudecode",
-      "spendguard.analyze.spend_reporting.receipt"
+      "spendguard.analyze.spend_reporting.spend_reporting_accessors"
     ],
     [
       "spendguard.generate.spend_capture.claudecode",
-      "spendguard.egress.saas"
+      "spendguard.egress.saas_accessors"
     ],
     [
       "spendguard.generate.spend_capture.claudecode",
-      "spendguard.generate.execution.adapters"
+      "spendguard.generate.execution.execution_accessors"
     ],
     [
       "spendguard.generate.spend_capture.claudecode",
@@ -4879,11 +4992,11 @@
     ],
     [
       "spendguard.generate.spend_capture.claudecode",
-      "spendguard.manage.admission.budget"
+      "spendguard.manage.admission.admission_accessors"
     ],
     [
       "spendguard.generate.spend_capture.claudecode",
-      "spendguard.store.call_corpus.calls"
+      "spendguard.store.call_corpus.call_corpus_accessors"
     ],
     [
       "spendguard.generate.spend_capture.claudecode",
@@ -4899,7 +5012,7 @@
     ],
     [
       "spendguard.generate.spend_capture.claudecode",
-      "spendguard.store.spend_search.ledger_read"
+      "spendguard.store.spend_search.ledger_read_accessors"
     ],
     [
       "spendguard.generate.spend_capture.codex",
@@ -4907,11 +5020,11 @@
     ],
     [
       "spendguard.generate.spend_capture.codex",
-      "spendguard.analyze.spend_reporting.receipt"
+      "spendguard.analyze.spend_reporting.spend_reporting_accessors"
     ],
     [
       "spendguard.generate.spend_capture.codex",
-      "spendguard.egress.saas"
+      "spendguard.egress.saas_accessors"
     ],
     [
       "spendguard.generate.spend_capture.codex",
@@ -4931,7 +5044,7 @@
     ],
     [
       "spendguard.generate.spend_capture.compaction",
-      "spendguard.generate.execution.adapters"
+      "spendguard.generate.execution.execution_accessors"
     ],
     [
       "spendguard.generate.spend_capture.compaction",
@@ -4939,7 +5052,7 @@
     ],
     [
       "spendguard.generate.spend_capture.compaction",
-      "spendguard.store.call_corpus.calls"
+      "spendguard.store.call_corpus.call_corpus_accessors"
     ],
     [
       "spendguard.generate.spend_capture.compaction",
@@ -4951,7 +5064,7 @@
     ],
     [
       "spendguard.generate.spend_capture.gpu_port",
-      "spendguard.egress.saas"
+      "spendguard.egress.saas_accessors"
     ],
     [
       "spendguard.generate.spend_capture.gpu_port",
@@ -4959,15 +5072,11 @@
     ],
     [
       "spendguard.generate.spend_capture.http_capture",
-      "spendguard.manage.admission.budget"
+      "spendguard.manage.admission.admission_accessors"
     ],
     [
       "spendguard.generate.spend_capture.http_capture",
-      "spendguard.manage.admission.gate"
-    ],
-    [
-      "spendguard.generate.spend_capture.http_capture",
-      "spendguard.store.call_corpus.calls"
+      "spendguard.store.call_corpus.call_corpus_accessors"
     ],
     [
       "spendguard.generate.spend_capture.http_capture",
@@ -4994,6 +5103,22 @@
       "spendguard.store.reference_data.pricing"
     ],
     [
+      "spendguard.generate.spend_capture.realtime_spend_recorder",
+      "spendguard.manage.admission.admission_accessors"
+    ],
+    [
+      "spendguard.generate.spend_capture.realtime_spend_recorder",
+      "spendguard.store.call_corpus.call_corpus_accessors"
+    ],
+    [
+      "spendguard.generate.spend_capture.realtime_spend_recorder",
+      "spendguard.store.configuration.config"
+    ],
+    [
+      "spendguard.generate.spend_capture.realtime_spend_recorder",
+      "spendguard.store.reference_data.pricing"
+    ],
+    [
       "spendguard.generate.spend_capture.resources",
       "spendguard.analyze.cost_estimation.expected_output"
     ],
@@ -5011,15 +5136,15 @@
     ],
     [
       "spendguard.generate.spend_capture.resources",
-      "spendguard.analyze.spend_reporting.receipt"
+      "spendguard.analyze.spend_reporting.spend_reporting_accessors"
     ],
     [
       "spendguard.generate.spend_capture.resources",
-      "spendguard.egress.saas"
+      "spendguard.egress.saas_accessors"
     ],
     [
       "spendguard.generate.spend_capture.resources",
-      "spendguard.generate.execution.adapters"
+      "spendguard.generate.execution.execution_accessors"
     ],
     [
       "spendguard.generate.spend_capture.resources",
@@ -5031,7 +5156,7 @@
     ],
     [
       "spendguard.generate.spend_capture.resources",
-      "spendguard.store.call_corpus.calls"
+      "spendguard.store.call_corpus.call_corpus_accessors"
     ],
     [
       "spendguard.generate.spend_capture.resources",
@@ -5055,7 +5180,7 @@
     ],
     [
       "spendguard.generate.spend_capture.sources",
-      "spendguard.generate.execution.adapters"
+      "spendguard.generate.execution.execution_accessors"
     ],
     [
       "spendguard.generate.spend_capture.sources",
@@ -5127,6 +5252,10 @@
     ],
     [
       "spendguard.interface.cli",
+      "spendguard.generate.execution.price_identity_judge"
+    ],
+    [
+      "spendguard.interface.cli",
       "spendguard.manage.admission.budget"
     ],
     [
@@ -5195,23 +5324,19 @@
     ],
     [
       "spendguard.interface.cli",
-      "spendguard.store.spend_search.ledger_read"
+      "spendguard.store.spend_search.ledger_read_contracts"
     ],
     [
       "spendguard.interface.crossllm",
-      "spendguard.generate.execution.adapters"
+      "spendguard.generate.execution.execution_accessors"
     ],
     [
       "spendguard.interface.crossllm",
-      "spendguard.generate.execution.vendor_call"
+      "spendguard.manage.admission.admission_accessors"
     ],
     [
       "spendguard.interface.crossllm",
-      "spendguard.manage.admission.gate"
-    ],
-    [
-      "spendguard.interface.crossllm",
-      "spendguard.manage.admission.model_preflight"
+      "spendguard.manage.admission.spend_refusal_error"
     ],
     [
       "spendguard.interface.crossllm",
@@ -5219,7 +5344,7 @@
     ],
     [
       "spendguard.interface.crossllm",
-      "spendguard.store.call_corpus.calls"
+      "spendguard.store.call_corpus.call_corpus_accessors"
     ],
     [
       "spendguard.interface.crossllm",
@@ -5231,7 +5356,7 @@
     ],
     [
       "spendguard.interface.mcp_fd_lifecycle",
-      "spendguard.manage.admission.budget"
+      "spendguard.manage.admission.admission_accessors"
     ],
     [
       "spendguard.interface.mcp_fd_lifecycle",
@@ -5243,7 +5368,7 @@
     ],
     [
       "spendguard.interface.mcp_fd_lifecycle",
-      "spendguard.store.spend_search.ledger_read"
+      "spendguard.store.spend_search.ledger_read_accessors"
     ],
     [
       "spendguard.interface.mcp_server",
@@ -5287,15 +5412,7 @@
     ],
     [
       "spendguard.interface.mcp_server",
-      "spendguard.generate.execution.adapters"
-    ],
-    [
-      "spendguard.interface.mcp_server",
-      "spendguard.generate.execution.batch_tracker"
-    ],
-    [
-      "spendguard.interface.mcp_server",
-      "spendguard.generate.execution.codex_exec"
+      "spendguard.generate.execution.execution_accessors"
     ],
     [
       "spendguard.interface.mcp_server",
@@ -5307,7 +5424,11 @@
     ],
     [
       "spendguard.interface.mcp_server",
-      "spendguard.manage.admission.gate"
+      "spendguard.manage.admission.admission_accessors"
+    ],
+    [
+      "spendguard.interface.mcp_server",
+      "spendguard.manage.admission.spend_refusal_error"
     ],
     [
       "spendguard.interface.mcp_server",
@@ -5320,10 +5441,6 @@
     [
       "spendguard.interface.mcp_server",
       "spendguard.manage.routing.whole_job"
-    ],
-    [
-      "spendguard.interface.mcp_server",
-      "spendguard.manage.token_operations.codex_daemon"
     ],
     [
       "spendguard.interface.mcp_server",
@@ -5347,7 +5464,11 @@
     ],
     [
       "spendguard.interface.mcp_server",
-      "spendguard.platform.fleet"
+      "spendguard.manage.token_operations.token_operations_accessors"
+    ],
+    [
+      "spendguard.interface.mcp_server",
+      "spendguard.platform._version"
     ],
     [
       "spendguard.interface.mcp_server",
@@ -5355,7 +5476,7 @@
     ],
     [
       "spendguard.interface.mcp_server",
-      "spendguard.platform.release"
+      "spendguard.platform.platform_accessors"
     ],
     [
       "spendguard.interface.mcp_server",
@@ -5379,7 +5500,11 @@
     ],
     [
       "spendguard.interface.mcp_server",
-      "spendguard.store.spend_search.ledger_read"
+      "spendguard.store.spend_search.ledger_read_accessors"
+    ],
+    [
+      "spendguard.interface.mcp_server",
+      "spendguard.store.spend_search.ledger_read_contracts"
     ],
     [
       "spendguard.interface.serve",
@@ -5423,19 +5548,15 @@
     ],
     [
       "spendguard.manage.admission.agent_spawn_gate",
-      "spendguard.store.spend_search.ledger_read"
+      "spendguard.store.spend_search.ledger_read_contracts"
     ],
     [
       "spendguard.manage.admission.budget",
-      "spendguard.generate.execution.adapters"
+      "spendguard.platform.platform_accessors"
     ],
     [
       "spendguard.manage.admission.budget",
-      "spendguard.platform.distribution"
-    ],
-    [
-      "spendguard.manage.admission.budget",
-      "spendguard.store.call_corpus.calls"
+      "spendguard.store.call_corpus.call_corpus_accessors"
     ],
     [
       "spendguard.manage.admission.budget",
@@ -5455,11 +5576,11 @@
     ],
     [
       "spendguard.manage.admission.budget",
-      "spendguard.store.reference_data.pricing"
+      "spendguard.store.spend_search.ledger_read_accessors"
     ],
     [
       "spendguard.manage.admission.budget",
-      "spendguard.store.spend_search.ledger_read"
+      "spendguard.store.spend_search.ledger_read_contracts"
     ],
     [
       "spendguard.manage.admission.budget_ledger_access",
@@ -5490,8 +5611,64 @@
       "spendguard.store.spend_search.ledger_read_contracts"
     ],
     [
+      "spendguard.manage.admission.budget_quarantine",
+      "spendguard.store.money_ledger.ledger"
+    ],
+    [
+      "spendguard.manage.admission.budget_quarantine",
+      "spendguard.store.money_ledger.ledger_writer"
+    ],
+    [
+      "spendguard.manage.admission.budget_reattribution",
+      "spendguard.generate.execution.execution_accessors"
+    ],
+    [
+      "spendguard.manage.admission.budget_reattribution",
+      "spendguard.store.configuration.config"
+    ],
+    [
+      "spendguard.manage.admission.budget_reattribution",
+      "spendguard.store.money_ledger.ledger"
+    ],
+    [
+      "spendguard.manage.admission.budget_reattribution",
+      "spendguard.store.money_ledger.ledger_writer"
+    ],
+    [
+      "spendguard.manage.admission.budget_reconciliation",
+      "spendguard.store.money_ledger.ledger_writer"
+    ],
+    [
+      "spendguard.manage.admission.budget_true_down",
+      "spendguard.store.money_ledger.ledger"
+    ],
+    [
+      "spendguard.manage.admission.budget_true_down",
+      "spendguard.store.money_ledger.ledger_writer"
+    ],
+    [
+      "spendguard.manage.admission.budget_true_down",
+      "spendguard.store.spend_search.ledger_read_accessors"
+    ],
+    [
+      "spendguard.manage.admission.budget_unpriced",
+      "spendguard.store.money_ledger.ledger"
+    ],
+    [
+      "spendguard.manage.admission.budget_unpriced",
+      "spendguard.store.money_ledger.ledger_writer"
+    ],
+    [
+      "spendguard.manage.admission.budget_unpriced",
+      "spendguard.store.reference_data.pricing"
+    ],
+    [
       "spendguard.manage.admission.bulkgate",
       "spendguard.analyze.cost_estimation.calibrate"
+    ],
+    [
+      "spendguard.manage.admission.bulkgate",
+      "spendguard.analyze.cost_estimation.cost_estimation_accessors"
     ],
     [
       "spendguard.manage.admission.bulkgate",
@@ -5499,7 +5676,7 @@
     ],
     [
       "spendguard.manage.admission.bulkgate",
-      "spendguard.generate.execution.adapters"
+      "spendguard.generate.execution.execution_accessors"
     ],
     [
       "spendguard.manage.admission.bulkgate",
@@ -5507,7 +5684,7 @@
     ],
     [
       "spendguard.manage.admission.bulkgate",
-      "spendguard.store.call_corpus.calls"
+      "spendguard.store.call_corpus.call_corpus_accessors"
     ],
     [
       "spendguard.manage.admission.bulkgate",
@@ -5535,15 +5712,11 @@
     ],
     [
       "spendguard.manage.admission.escalation_ladder",
-      "spendguard.store.call_corpus.calls"
+      "spendguard.store.call_corpus.call_corpus_accessors"
     ],
     [
       "spendguard.manage.admission.escalation_ladder",
       "spendguard.store.configuration.config"
-    ],
-    [
-      "spendguard.manage.admission.gate",
-      "spendguard"
     ],
     [
       "spendguard.manage.admission.gate",
@@ -5591,11 +5764,15 @@
     ],
     [
       "spendguard.manage.admission.gate",
-      "spendguard.egress.saas"
+      "spendguard.egress.saas_accessors"
     ],
     [
       "spendguard.manage.admission.gate",
       "spendguard.generate.execution.adapters"
+    ],
+    [
+      "spendguard.manage.admission.gate",
+      "spendguard.generate.execution.execution_accessors"
     ],
     [
       "spendguard.manage.admission.gate",
@@ -5635,19 +5812,15 @@
     ],
     [
       "spendguard.manage.admission.gate",
-      "spendguard.platform.fleet"
+      "spendguard.platform._version"
     ],
     [
       "spendguard.manage.admission.gate",
-      "spendguard.platform.lanes"
+      "spendguard.platform.platform_accessors"
     ],
     [
       "spendguard.manage.admission.gate",
-      "spendguard.platform.setup"
-    ],
-    [
-      "spendguard.manage.admission.gate",
-      "spendguard.store.call_corpus.calls"
+      "spendguard.store.call_corpus.call_corpus_accessors"
     ],
     [
       "spendguard.manage.admission.gate",
@@ -5659,19 +5832,19 @@
     ],
     [
       "spendguard.manage.admission.gate",
+      "spendguard.store.reference_data.reference_data_accessors"
+    ],
+    [
+      "spendguard.manage.admission.gate",
       "spendguard.store.reference_data.sync"
     ],
     [
       "spendguard.manage.admission.gate",
-      "spendguard.store.spend_search.ledger_read"
+      "spendguard.store.spend_search.ledger_read_contracts"
     ],
     [
       "spendguard.manage.admission.model_preflight",
-      "spendguard.generate.execution.adapters"
-    ],
-    [
-      "spendguard.manage.admission.model_preflight",
-      "spendguard.generate.execution.vendor_call"
+      "spendguard.generate.execution.execution_accessors"
     ],
     [
       "spendguard.manage.admission.model_preflight",
@@ -5695,7 +5868,7 @@
     ],
     [
       "spendguard.manage.admission.plan_admission",
-      "spendguard.generate.execution.adapters"
+      "spendguard.generate.execution.execution_accessors"
     ],
     [
       "spendguard.manage.admission.plan_admission",
@@ -5707,7 +5880,7 @@
     ],
     [
       "spendguard.manage.admission.plan_admission",
-      "spendguard.platform.lanes"
+      "spendguard.platform.platform_accessors"
     ],
     [
       "spendguard.manage.admission.plan_admission",
@@ -5715,19 +5888,15 @@
     ],
     [
       "spendguard.manage.admission.plan_admission",
-      "spendguard.store.reference_data.lane_catalog"
-    ],
-    [
-      "spendguard.manage.admission.plan_admission",
       "spendguard.store.reference_data.lane_registry"
     ],
     [
-      "spendguard.manage.admission.residency_gate",
-      "spendguard"
+      "spendguard.manage.admission.plan_admission",
+      "spendguard.store.reference_data.reference_data_accessors"
     ],
     [
       "spendguard.manage.admission.residency_gate",
-      "spendguard.generate.execution.adapters"
+      "spendguard.generate.execution.execution_accessors"
     ],
     [
       "spendguard.manage.admission.residency_gate",
@@ -5743,7 +5912,7 @@
     ],
     [
       "spendguard.manage.admission.residency_gate",
-      "spendguard.store.call_corpus.calls"
+      "spendguard.store.call_corpus.call_corpus_accessors"
     ],
     [
       "spendguard.manage.admission.residency_gate",
@@ -5755,7 +5924,7 @@
     ],
     [
       "spendguard.manage.admission.residency_gate",
-      "spendguard.store.spend_search.ledger_read"
+      "spendguard.store.spend_search.ledger_read_contracts"
     ],
     [
       "spendguard.manage.admission.semcache",
@@ -5795,7 +5964,7 @@
     ],
     [
       "spendguard.manage.admission.weekly_cap_guard",
-      "spendguard.platform.lanes"
+      "spendguard.platform.platform_accessors"
     ],
     [
       "spendguard.manage.admission.weekly_cap_guard",
@@ -5803,7 +5972,7 @@
     ],
     [
       "spendguard.manage.admission.weekly_cap_guard",
-      "spendguard.store.spend_search.ledger_read"
+      "spendguard.store.spend_search.ledger_read_contracts"
     ],
     [
       "spendguard.manage.routing.best_value",
@@ -5811,19 +5980,15 @@
     ],
     [
       "spendguard.manage.routing.best_value",
-      "spendguard.generate.execution.adapters"
+      "spendguard.generate.execution.execution_accessors"
     ],
     [
       "spendguard.manage.routing.best_value",
-      "spendguard.manage.admission.gate"
+      "spendguard.manage.admission.admission_accessors"
     ],
     [
       "spendguard.manage.routing.best_value",
-      "spendguard.manage.admission.plan_admission"
-    ],
-    [
-      "spendguard.manage.routing.best_value",
-      "spendguard.store.call_corpus.calls"
+      "spendguard.store.call_corpus.call_corpus_accessors"
     ],
     [
       "spendguard.manage.routing.best_value",
@@ -5883,7 +6048,7 @@
     ],
     [
       "spendguard.manage.routing.lane_balance",
-      "spendguard.analyze.spend_reporting.receipt"
+      "spendguard.analyze.spend_reporting.spend_reporting_accessors"
     ],
     [
       "spendguard.manage.routing.lane_balance",
@@ -5895,7 +6060,7 @@
     ],
     [
       "spendguard.manage.routing.lane_balance",
-      "spendguard.generate.execution.adapters"
+      "spendguard.generate.execution.execution_accessors"
     ],
     [
       "spendguard.manage.routing.lane_balance",
@@ -5915,15 +6080,11 @@
     ],
     [
       "spendguard.manage.routing.lane_balance",
-      "spendguard.manage.admission.bulkgate"
+      "spendguard.manage.admission.admission_accessors"
     ],
     [
       "spendguard.manage.routing.lane_balance",
-      "spendguard.manage.admission.gate"
-    ],
-    [
-      "spendguard.manage.routing.lane_balance",
-      "spendguard.manage.admission.plan_admission"
+      "spendguard.manage.admission.spend_refusal_error"
     ],
     [
       "spendguard.manage.routing.lane_balance",
@@ -5935,19 +6096,15 @@
     ],
     [
       "spendguard.manage.routing.lane_balance",
-      "spendguard.platform.lanes"
+      "spendguard.platform.platform_accessors"
     ],
     [
       "spendguard.manage.routing.lane_balance",
-      "spendguard.store.call_corpus.calls"
+      "spendguard.store.call_corpus.call_corpus_accessors"
     ],
     [
       "spendguard.manage.routing.lane_balance",
       "spendguard.store.configuration.config"
-    ],
-    [
-      "spendguard.manage.routing.lane_balance",
-      "spendguard.store.reference_data.lane_catalog"
     ],
     [
       "spendguard.manage.routing.lane_balance",
@@ -5959,7 +6116,15 @@
     ],
     [
       "spendguard.manage.routing.lane_balance",
-      "spendguard.store.spend_search.ledger_read"
+      "spendguard.store.reference_data.reference_data_accessors"
+    ],
+    [
+      "spendguard.manage.routing.lane_balance",
+      "spendguard.store.spend_search.ledger_read_accessors"
+    ],
+    [
+      "spendguard.manage.routing.lane_balance",
+      "spendguard.store.spend_search.ledger_read_contracts"
     ],
     [
       "spendguard.manage.routing.route_economics",
@@ -6023,7 +6188,7 @@
     ],
     [
       "spendguard.manage.routing.route_utility",
-      "spendguard.generate.execution.adapters"
+      "spendguard.generate.execution.execution_accessors"
     ],
     [
       "spendguard.manage.routing.route_utility",
@@ -6031,7 +6196,7 @@
     ],
     [
       "spendguard.manage.routing.route_utility",
-      "spendguard.platform.lanes"
+      "spendguard.platform.platform_accessors"
     ],
     [
       "spendguard.manage.routing.route_utility",
@@ -6039,15 +6204,15 @@
     ],
     [
       "spendguard.manage.routing.route_utility",
-      "spendguard.store.reference_data.lane_catalog"
-    ],
-    [
-      "spendguard.manage.routing.route_utility",
       "spendguard.store.reference_data.pricing"
     ],
     [
+      "spendguard.manage.routing.route_utility",
+      "spendguard.store.reference_data.reference_data_accessors"
+    ],
+    [
       "spendguard.manage.routing.tier_config",
-      "spendguard.generate.execution.adapters"
+      "spendguard.generate.execution.execution_accessors"
     ],
     [
       "spendguard.manage.routing.tier_config",
@@ -6055,11 +6220,11 @@
     ],
     [
       "spendguard.manage.routing.tier_config",
-      "spendguard.manage.admission.gate"
+      "spendguard.manage.admission.admission_accessors"
     ],
     [
       "spendguard.manage.routing.tier_config",
-      "spendguard.platform.lanes"
+      "spendguard.platform.platform_accessors"
     ],
     [
       "spendguard.manage.routing.tier_config",
@@ -6067,11 +6232,11 @@
     ],
     [
       "spendguard.manage.routing.tier_config",
-      "spendguard.store.reference_data.lane_catalog"
+      "spendguard.store.reference_data.pricing"
     ],
     [
       "spendguard.manage.routing.tier_config",
-      "spendguard.store.reference_data.pricing"
+      "spendguard.store.reference_data.reference_data_accessors"
     ],
     [
       "spendguard.manage.routing.whole_job",
@@ -6079,11 +6244,7 @@
     ],
     [
       "spendguard.manage.routing.whole_job",
-      "spendguard.generate.execution.adapters"
-    ],
-    [
-      "spendguard.manage.routing.whole_job",
-      "spendguard.generate.execution.submit"
+      "spendguard.generate.execution.execution_accessors"
     ],
     [
       "spendguard.manage.routing.whole_job",
@@ -6099,7 +6260,7 @@
     ],
     [
       "spendguard.manage.routing.whole_job",
-      "spendguard.manage.admission.gate"
+      "spendguard.manage.admission.admission_accessors"
     ],
     [
       "spendguard.manage.routing.whole_job",
@@ -6115,19 +6276,19 @@
     ],
     [
       "spendguard.manage.token_operations.codex_broker_owner",
-      "spendguard.platform.fleet"
-    ],
-    [
-      "spendguard.manage.token_operations.codex_broker_owner",
       "spendguard.platform.launchd_labels"
     ],
     [
       "spendguard.manage.token_operations.codex_broker_owner",
+      "spendguard.platform.platform_accessors"
+    ],
+    [
+      "spendguard.manage.token_operations.codex_broker_owner",
       "spendguard.store.configuration.config"
     ],
     [
       "spendguard.manage.token_operations.codex_daemon",
-      "spendguard.generate.execution.codex_exec"
+      "spendguard.generate.execution.execution_accessors"
     ],
     [
       "spendguard.manage.token_operations.codex_daemon",
@@ -6135,19 +6296,19 @@
     ],
     [
       "spendguard.manage.token_operations.codex_daemon",
-      "spendguard.store.spend_search.ledger_read"
+      "spendguard.store.spend_search.ledger_read_accessors"
     ],
     [
       "spendguard.manage.token_operations.codex_daemon_broker",
-      "spendguard"
+      "spendguard.generate.execution.execution_accessors"
     ],
     [
       "spendguard.manage.token_operations.codex_daemon_broker",
-      "spendguard.generate.execution.codex_exec"
+      "spendguard.platform._version"
     ],
     [
       "spendguard.manage.token_operations.codex_daemon_broker",
-      "spendguard.platform.release"
+      "spendguard.platform.platform_accessors"
     ],
     [
       "spendguard.manage.token_operations.codex_daemon_broker",
@@ -6155,7 +6316,7 @@
     ],
     [
       "spendguard.manage.token_operations.codex_daemon_broker",
-      "spendguard.store.spend_search.ledger_read"
+      "spendguard.store.spend_search.ledger_read_accessors"
     ],
     [
       "spendguard.manage.token_operations.comprehend",
@@ -6211,11 +6372,7 @@
     ],
     [
       "spendguard.manage.token_operations.delegate_router",
-      "spendguard.manage.admission.bulkgate"
-    ],
-    [
-      "spendguard.manage.token_operations.delegate_router",
-      "spendguard.manage.admission.gate"
+      "spendguard.manage.admission.admission_accessors"
     ],
     [
       "spendguard.manage.token_operations.delegate_router",
@@ -6223,19 +6380,11 @@
     ],
     [
       "spendguard.manage.token_operations.delegate_router",
-      "spendguard.platform.fleet"
+      "spendguard.platform.platform_accessors"
     ],
     [
       "spendguard.manage.token_operations.delegate_router",
-      "spendguard.platform.lanes"
-    ],
-    [
-      "spendguard.manage.token_operations.delegate_router",
-      "spendguard.platform.release"
-    ],
-    [
-      "spendguard.manage.token_operations.delegate_router",
-      "spendguard.store.call_corpus.calls"
+      "spendguard.store.call_corpus.call_corpus_accessors"
     ],
     [
       "spendguard.manage.token_operations.delegate_router",
@@ -6251,7 +6400,7 @@
     ],
     [
       "spendguard.manage.token_operations.delegate_router",
-      "spendguard.store.spend_search.ledger_read"
+      "spendguard.store.spend_search.ledger_read_accessors"
     ],
     [
       "spendguard.manage.token_operations.delegate_worker",
@@ -6259,19 +6408,15 @@
     ],
     [
       "spendguard.manage.token_operations.dispatch",
-      "spendguard.generate.execution.adapters"
+      "spendguard.generate.execution.execution_accessors"
     ],
     [
       "spendguard.manage.token_operations.dispatch",
-      "spendguard.manage.admission.bulkgate"
+      "spendguard.manage.admission.admission_accessors"
     ],
     [
       "spendguard.manage.token_operations.dispatch",
-      "spendguard.manage.admission.gate"
-    ],
-    [
-      "spendguard.manage.token_operations.dispatch",
-      "spendguard.platform.lanes"
+      "spendguard.platform.platform_accessors"
     ],
     [
       "spendguard.manage.token_operations.dispatch",
@@ -6279,11 +6424,11 @@
     ],
     [
       "spendguard.manage.token_operations.dispatch",
-      "spendguard.store.reference_data.lane_catalog"
+      "spendguard.store.reference_data.model_catalog"
     ],
     [
       "spendguard.manage.token_operations.dispatch",
-      "spendguard.store.reference_data.model_catalog"
+      "spendguard.store.reference_data.reference_data_accessors"
     ],
     [
       "spendguard.manage.token_operations.execution_journal",
@@ -6299,11 +6444,7 @@
     ],
     [
       "spendguard.manage.token_operations.lane_queue",
-      "spendguard.generate.execution.adapters"
-    ],
-    [
-      "spendguard.manage.token_operations.lane_queue",
-      "spendguard.generate.execution.batch_tracker"
+      "spendguard.generate.execution.execution_accessors"
     ],
     [
       "spendguard.manage.token_operations.lane_queue",
@@ -6315,15 +6456,11 @@
     ],
     [
       "spendguard.manage.token_operations.lane_queue",
-      "spendguard.manage.admission.gate"
+      "spendguard.manage.admission.admission_accessors"
     ],
     [
       "spendguard.manage.token_operations.lane_queue",
-      "spendguard.manage.routing.lane_balance"
-    ],
-    [
-      "spendguard.manage.token_operations.lane_queue",
-      "spendguard.platform.fleet"
+      "spendguard.manage.routing.routing_accessors"
     ],
     [
       "spendguard.manage.token_operations.lane_queue",
@@ -6331,11 +6468,11 @@
     ],
     [
       "spendguard.manage.token_operations.lane_queue",
-      "spendguard.platform.release"
+      "spendguard.platform.platform_accessors"
     ],
     [
       "spendguard.manage.token_operations.lane_queue",
-      "spendguard.store.call_corpus.callio"
+      "spendguard.store.call_corpus.call_corpus_accessors"
     ],
     [
       "spendguard.manage.token_operations.lane_queue",
@@ -6351,11 +6488,15 @@
     ],
     [
       "spendguard.manage.token_operations.lane_queue",
-      "spendguard.store.spend_search.ledger_read"
+      "spendguard.store.spend_search.ledger_read_accessors"
     ],
     [
       "spendguard.manage.token_operations.lane_recovery",
-      "spendguard.manage.admission.gate"
+      "spendguard.manage.admission.admission_accessors"
+    ],
+    [
+      "spendguard.manage.token_operations.lane_recovery",
+      "spendguard.manage.admission.spend_refusal_error"
     ],
     [
       "spendguard.manage.token_operations.lane_recovery",
@@ -6363,11 +6504,11 @@
     ],
     [
       "spendguard.manage.token_operations.queue_planner",
-      "spendguard.generate.execution.adapters"
+      "spendguard.generate.execution.execution_accessors"
     ],
     [
       "spendguard.manage.token_operations.queue_planner",
-      "spendguard.manage.admission.gate"
+      "spendguard.manage.admission.admission_accessors"
     ],
     [
       "spendguard.manage.token_operations.queue_planner",
@@ -6383,11 +6524,7 @@
     ],
     [
       "spendguard.manage.token_operations.storm_route",
-      "spendguard.generate.execution.adapters"
-    ],
-    [
-      "spendguard.manage.token_operations.storm_submit",
-      "spendguard.generate.execution.adapters"
+      "spendguard.generate.execution.execution_accessors"
     ],
     [
       "spendguard.manage.token_operations.storm_submit",
@@ -6395,15 +6532,11 @@
     ],
     [
       "spendguard.manage.token_operations.storm_submit",
-      "spendguard.generate.execution.submit"
+      "spendguard.generate.execution.execution_accessors"
     ],
     [
       "spendguard.manage.token_operations.storm_submit",
-      "spendguard.store.call_corpus.callio"
-    ],
-    [
-      "spendguard.manage.token_operations.storm_submit",
-      "spendguard.store.call_corpus.calls"
+      "spendguard.store.call_corpus.call_corpus_accessors"
     ],
     [
       "spendguard.manage.token_operations.warm_stdio_daemon",
@@ -6419,7 +6552,11 @@
     ],
     [
       "spendguard.manage.token_operations.xp_rate_window",
-      "spendguard.store.spend_search.ledger_read"
+      "spendguard.store.spend_search.ledger_read_accessors"
+    ],
+    [
+      "spendguard.manage.token_operations.xp_rate_window",
+      "spendguard.store.spend_search.ledger_read_contracts"
     ],
     [
       "spendguard.platform.distribution",
@@ -6451,19 +6588,15 @@
     ],
     [
       "spendguard.platform.fleet",
-      "spendguard"
-    ],
-    [
-      "spendguard.platform.fleet",
-      "spendguard.manage.admission.gate"
-    ],
-    [
-      "spendguard.platform.fleet",
-      "spendguard.manage.token_operations.codex_broker_owner"
+      "spendguard.manage.admission.admission_accessors"
     ],
     [
       "spendguard.platform.fleet",
       "spendguard.manage.token_operations.lane_queue"
+    ],
+    [
+      "spendguard.platform.fleet",
+      "spendguard.manage.token_operations.token_operations_accessors"
     ],
     [
       "spendguard.platform.fleet",
@@ -6507,7 +6640,7 @@
     ],
     [
       "spendguard.platform.lanes",
-      "spendguard.generate.execution.adapters"
+      "spendguard.generate.execution.execution_accessors"
     ],
     [
       "spendguard.platform.lanes",
@@ -6519,7 +6652,7 @@
     ],
     [
       "spendguard.platform.lanes",
-      "spendguard.manage.admission.gate"
+      "spendguard.manage.admission.admission_accessors"
     ],
     [
       "spendguard.platform.lanes",
@@ -6543,10 +6676,6 @@
     ],
     [
       "spendguard.platform.lanes",
-      "spendguard.store.reference_data.lane_catalog"
-    ],
-    [
-      "spendguard.platform.lanes",
       "spendguard.store.reference_data.lane_registry"
     ],
     [
@@ -6555,7 +6684,7 @@
     ],
     [
       "spendguard.platform.lanes",
-      "spendguard.store.reference_data.reasoning_equivalence"
+      "spendguard.store.reference_data.reference_data_accessors"
     ],
     [
       "spendguard.platform.manifest",
@@ -6564,10 +6693,6 @@
     [
       "spendguard.platform.manifest",
       "spendguard.store.configuration.config"
-    ],
-    [
-      "spendguard.platform.release",
-      "spendguard"
     ],
     [
       "spendguard.platform.release",
@@ -6619,11 +6744,11 @@
     ],
     [
       "spendguard.platform.setup",
-      "spendguard.egress.saas"
+      "spendguard.egress.saas_accessors"
     ],
     [
       "spendguard.platform.setup",
-      "spendguard.generate.execution.adapters"
+      "spendguard.generate.execution.execution_accessors"
     ],
     [
       "spendguard.platform.setup",
@@ -6635,7 +6760,7 @@
     ],
     [
       "spendguard.platform.setup",
-      "spendguard.manage.admission.gate"
+      "spendguard.manage.admission.admission_accessors"
     ],
     [
       "spendguard.platform.setup",
@@ -6643,7 +6768,7 @@
     ],
     [
       "spendguard.platform.setup",
-      "spendguard.store.call_corpus.calls"
+      "spendguard.store.call_corpus.call_corpus_accessors"
     ],
     [
       "spendguard.platform.setup",
@@ -6671,11 +6796,7 @@
     ],
     [
       "spendguard.store.call_corpus.callio",
-      "spendguard.manage.admission.budget"
-    ],
-    [
-      "spendguard.store.call_corpus.callio",
-      "spendguard.manage.admission.bulkgate"
+      "spendguard.manage.admission.admission_accessors"
     ],
     [
       "spendguard.store.call_corpus.callio",
@@ -6707,15 +6828,7 @@
     ],
     [
       "spendguard.store.call_corpus.calls",
-      "spendguard.manage.admission.budget"
-    ],
-    [
-      "spendguard.store.call_corpus.calls",
-      "spendguard.manage.admission.bulkgate"
-    ],
-    [
-      "spendguard.store.call_corpus.calls",
-      "spendguard.manage.admission.gate"
+      "spendguard.manage.admission.admission_accessors"
     ],
     [
       "spendguard.store.call_corpus.calls",
@@ -6755,7 +6868,11 @@
     ],
     [
       "spendguard.store.call_corpus.calls",
-      "spendguard.store.spend_search.ledger_read"
+      "spendguard.store.spend_search.ledger_read_accessors"
+    ],
+    [
+      "spendguard.store.call_corpus.calls",
+      "spendguard.store.spend_search.ledger_read_contracts"
     ],
     [
       "spendguard.store.call_corpus.content_compression_backfill",
@@ -6783,6 +6900,10 @@
     ],
     [
       "spendguard.store.call_corpus.routing_audit",
+      "spendguard.store.configuration.config"
+    ],
+    [
+      "spendguard.store.call_corpus.routing_audit",
       "spendguard.store.money_ledger.schema_indexes"
     ],
     [
@@ -6790,52 +6911,36 @@
       "spendguard.store.reference_data.money_scale"
     ],
     [
-      "spendguard.store.configuration.config",
-      "spendguard.generate.execution.adapters"
+      "spendguard.store.configuration.config_schema",
+      "spendguard.manage.admission.admission_accessors"
     ],
     [
-      "spendguard.store.configuration.config",
-      "spendguard.generate.execution.codex_exec"
+      "spendguard.store.configuration.config_schema",
+      "spendguard.platform.platform_accessors"
     ],
     [
-      "spendguard.store.configuration.config",
-      "spendguard.store.call_corpus.content_compression"
-    ],
-    [
-      "spendguard.store.configuration.config",
+      "spendguard.store.configuration.config_store",
       "spendguard.store.money_ledger.ledger_fork_locks"
     ],
     [
-      "spendguard.store.configuration.config",
+      "spendguard.store.configuration.ledger_connection",
+      "spendguard.store.call_corpus.content_compression"
+    ],
+    [
+      "spendguard.store.configuration.ledger_connection",
       "spendguard.store.money_ledger.ledger_wal_maintenance"
     ],
     [
-      "spendguard.store.configuration.config",
-      "spendguard.store.money_ledger.ledger_writer"
+      "spendguard.store.configuration.ledger_connection",
+      "spendguard.store.money_ledger.ledger_writer_accessors"
     ],
     [
-      "spendguard.store.configuration.config",
-      "spendguard.store.reference_data.pricing"
+      "spendguard.store.configuration.ledger_connection",
+      "spendguard.store.spend_search.ledger_read_accessors"
     ],
     [
-      "spendguard.store.configuration.config",
-      "spendguard.store.spend_search.ledger_read"
-    ],
-    [
-      "spendguard.store.configuration.config",
-      "spendguard.store.spend_search.ledger_request_cursor"
-    ],
-    [
-      "spendguard.store.configuration.config_schema",
-      "spendguard.manage.admission.residency_gate"
-    ],
-    [
-      "spendguard.store.configuration.config_schema",
-      "spendguard.manage.admission.weekly_cap_guard"
-    ],
-    [
-      "spendguard.store.configuration.config_schema",
-      "spendguard.platform.fleet"
+      "spendguard.store.configuration.ledger_connection",
+      "spendguard.store.spend_search.ledger_request_cursor_accessors"
     ],
     [
       "spendguard.store.money_ledger.ledger",
@@ -6851,11 +6956,15 @@
     ],
     [
       "spendguard.store.money_ledger.ledger",
-      "spendguard.store.spend_search.ledger_read"
+      "spendguard.store.spend_search.ledger_read_accessors"
+    ],
+    [
+      "spendguard.store.money_ledger.ledger",
+      "spendguard.store.spend_search.ledger_read_contracts"
     ],
     [
       "spendguard.store.money_ledger.ledger_deadletter",
-      "spendguard.manage.admission.budget"
+      "spendguard.manage.admission.admission_accessors"
     ],
     [
       "spendguard.store.money_ledger.ledger_deadletter",
@@ -6863,7 +6972,11 @@
     ],
     [
       "spendguard.store.money_ledger.ledger_deadletter",
-      "spendguard.store.spend_search.ledger_read"
+      "spendguard.store.spend_search.ledger_read_accessors"
+    ],
+    [
+      "spendguard.store.money_ledger.ledger_deadletter",
+      "spendguard.store.spend_search.ledger_read_contracts"
     ],
     [
       "spendguard.store.money_ledger.ledger_wal_maintenance",
@@ -6875,7 +6988,7 @@
     ],
     [
       "spendguard.store.money_ledger.ledger_writer",
-      "spendguard.manage.admission.gate"
+      "spendguard.manage.admission.admission_accessors"
     ],
     [
       "spendguard.store.money_ledger.ledger_writer",
@@ -6883,7 +6996,11 @@
     ],
     [
       "spendguard.store.money_ledger.ledger_writer",
-      "spendguard.store.spend_search.ledger_read"
+      "spendguard.store.spend_search.ledger_read_accessors"
+    ],
+    [
+      "spendguard.store.money_ledger.ledger_writer",
+      "spendguard.store.spend_search.ledger_read_contracts"
     ],
     [
       "spendguard.store.money_ledger.migrate_charges",
@@ -6899,19 +7016,11 @@
     ],
     [
       "spendguard.store.reference_data.catalog",
-      "spendguard.egress.saas"
+      "spendguard.egress.saas_accessors"
     ],
     [
       "spendguard.store.reference_data.catalog",
-      "spendguard.generate.execution.adapters"
-    ],
-    [
-      "spendguard.store.reference_data.catalog",
-      "spendguard.generate.execution.antigravity_exec"
-    ],
-    [
-      "spendguard.store.reference_data.catalog",
-      "spendguard.generate.execution.vendor_call"
+      "spendguard.generate.execution.execution_accessors"
     ],
     [
       "spendguard.store.reference_data.catalog",
@@ -6919,7 +7028,7 @@
     ],
     [
       "spendguard.store.reference_data.lane_catalog",
-      "spendguard.generate.execution.adapters"
+      "spendguard.generate.execution.execution_accessors"
     ],
     [
       "spendguard.store.reference_data.lane_catalog",
@@ -6939,10 +7048,6 @@
     ],
     [
       "spendguard.store.reference_data.models",
-      "spendguard.generate.execution.vendor_call"
-    ],
-    [
-      "spendguard.store.reference_data.models",
       "spendguard.store.configuration.config"
     ],
     [
@@ -6951,27 +7056,11 @@
     ],
     [
       "spendguard.store.reference_data.pricing",
-      "spendguard.generate.execution.adapters"
-    ],
-    [
-      "spendguard.store.reference_data.pricing",
-      "spendguard.interface.ui"
-    ],
-    [
-      "spendguard.store.reference_data.pricing",
-      "spendguard.store.call_corpus.calls"
-    ],
-    [
-      "spendguard.store.reference_data.pricing",
       "spendguard.store.configuration.config"
     ],
     [
       "spendguard.store.reference_data.reasoning_equivalence",
-      "spendguard.generate.execution.adapters"
-    ],
-    [
-      "spendguard.store.reference_data.reasoning_equivalence",
-      "spendguard.generate.execution.codex_exec"
+      "spendguard.generate.execution.execution_accessors"
     ],
     [
       "spendguard.store.reference_data.reasoning_equivalence",
@@ -6999,15 +7088,11 @@
     ],
     [
       "spendguard.store.reference_data.sync",
-      "spendguard.manage.admission.gate"
-    ],
-    [
-      "spendguard.store.reference_data.sync",
       "spendguard.store.configuration.config"
     ],
     [
       "spendguard.store.reference_data.sync_capabilities",
-      "spendguard.egress.saas"
+      "spendguard.egress.saas_accessors"
     ],
     [
       "spendguard.store.reference_data.sync_capabilities",
@@ -7015,7 +7100,7 @@
     ],
     [
       "spendguard.store.reference_data.sync_capabilities",
-      "spendguard.manage.admission.gate"
+      "spendguard.manage.admission.admission_accessors"
     ],
     [
       "spendguard.store.reference_data.sync_capabilities",
@@ -7023,15 +7108,19 @@
     ],
     [
       "spendguard.store.spend_search.ledger_read",
-      "spendguard.manage.admission.budget"
+      "spendguard.manage.admission.admission_accessors"
     ],
     [
       "spendguard.store.spend_search.ledger_read",
-      "spendguard.store.call_corpus.calls"
+      "spendguard.store.call_corpus.call_corpus_accessors"
     ],
     [
       "spendguard.store.spend_search.ledger_read",
       "spendguard.store.configuration.config"
+    ],
+    [
+      "spendguard.store.spend_search.ledger_read",
+      "spendguard.store.configuration.ledger_connection"
     ],
     [
       "spendguard.store.spend_search.ledger_read",
@@ -7040,6 +7129,10 @@
     [
       "spendguard.store.spend_search.ledger_read",
       "spendguard.store.money_ledger.ledger_writer"
+    ],
+    [
+      "spendguard.store.spend_search.ledger_read",
+      "spendguard.store.reference_data.models"
     ],
     [
       "spendguard.store.spend_search.ledger_read",
@@ -7175,7 +7268,9 @@
   "reviewed_phase_3_work_integrity_shims": "Phase 3 work-integrity move adds six reviewed identity-preserving compatibility shims: two eager through finder-first installation and four lazy.",
   "source_root": "src/spendguard",
   "type_scope": [
-    "src/spendguard/capability_cli_projection_models.py"
+    "src/spendguard/interface/capability_cli_projection_models.py"
   ],
-  "type_scope_reason": "Existing annotated immutable CLI data model passes mypy with normal diagnostics. Follow-imports skip isolates this explicitly recorded surface; it does not claim typing of transitive application imports or full-package coverage."
+  "type_scope_reason": "Existing annotated immutable CLI data model passes mypy with normal diagnostics. Follow-imports skip isolates this explicitly recorded surface; it does not claim typing of transitive application imports or full-package coverage.",
+  "reviewed_restructure_boundary_rebaseline": "Re-baseline after the approved Phase 3-5 domain-taxonomy restructure + config carve + integration sweep relocated ~220 modules into bounded-context packages. Net cross-context non-surface edge delta is +23 (390 new / 367 removed) \u2014 relocation churn of foundational shared-module imports (config, pricing, models/model_catalog, money_ledger, platform._version, the shared spend_refusal_error exception, reporting reads) and the ports-and-adapters accessor/contracts access pattern, not new coupling. The 73 direct deep-internal reach-ins are relocated pre-existing imports; routing them through accessors is tracked as future work. Measured linux/amd64 py3.12 matching CI.",
+  "reviewed_restructure_duplication_rebaseline": "Duplication rose 303->426 lines / 48->55 groups entirely from the restructure's parallel ports-and-adapters boilerplate: 14 per-context *_accessors headers (~17 lines each), parallel provider adapters (codex/claudecode/chat) and parallel admission gates (agent_spawn/residency/weekly_cap). Factoring these into a shared base would couple the bounded contexts and undo Phase-4 acyclicity, so the parallel structure is recorded, not de-duplicated. Measured linux/amd64 py3.12 matching CI."
 }
