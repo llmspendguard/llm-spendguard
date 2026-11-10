@@ -36,7 +36,12 @@ def record_readiness_environment(repo_root, output_directory, clean_install_repo
         "ruff": [sys.executable, "-m", "ruff", "check", "src", "tests"],
         "offline-audit": [sys.executable, "-m", "spendguard", "audit", "--ci"],
     }
-    script_checks = {"name-uniqueness": ["tests/test_names_stay_unique.py"], "surface-suites": surface_scripts}
+    script_checks = {
+        "name-uniqueness": ["tests/test_names_stay_unique.py"],
+        "surface-suites": surface_scripts,
+        "catalog-portable": ["tests/test_catalog_portable.py"],
+        "keys-single-source": ["tests/test_keys_single_source.py"],
+    }
     # The manifest is authoritative: adding a required check cannot silently produce a pass.
     if set(check_commands) | set(script_checks) != set(environment_item.arguments["required_checks"]):
         raise ValueError("Environment evidence commands do not cover the manifest's required checks")

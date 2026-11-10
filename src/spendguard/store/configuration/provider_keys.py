@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 
 from spendguard.store.configuration.config_store import HOME, saas_config
+from spendguard.store.configuration.provider_key_env_registry import all_provider_key_env_items
 from spendguard.store.configuration.provider_key_env_registry import resolve_provider_key_env
 
 
@@ -46,7 +47,7 @@ def _key_profile():
 
 
 def load_key_files():
-    """Load the secret files (~/.spendguard/keys.env, then legacy ~/.spendguard/.env, then $SPENDGUARD_ENV) into
+    """Load the declared secret files (~/.spendguard/keys.env, then $SPENDGUARD_ENV) into
     os.environ, so BOTH spendguard AND the user's OWN clients — openai.OpenAI() / anthropic.Anthropic(), which
     read their key from the environment — pick the keys up after a plain `import spendguard`. A REAL environment
     variable ALWAYS wins (a set var is never overwritten) and blank placeholders are skipped, so prod / CI /
@@ -59,9 +60,9 @@ def load_key_files():
     Precedence, highest first: real environment → active profile entry → unsuffixed file entry. Suffixed
     entries never leak into env under any other (or no) profile."""
     entries = {}
-    for p in (KEYS_ENV, HOME / ".env", *( [Path(os.environ["SPENDGUARD_ENV"])] if os.environ.get("SPENDGUARD_ENV") else [] )):
+    for p in (KEYS_ENV, *( [Path(os.environ["SPENDGUARD_ENV"])] if os.environ.get("SPENDGUARD_ENV") else [] )):
         for k, v in _iter_env_file(p):
-            if k and v and k not in entries:             # first file wins per var (keys.env over legacy .env)
+            if k and v and k not in entries:             # first declared file wins per variable
                 entries[k] = v
     for k, v in entries.items():
         if "__" in k:
@@ -205,7 +206,7 @@ def provider_key_status():
     Read-only, $0, last-4 only (never the secret)."""
     shadows = {s["name"]: s for s in (key_shadow_report() or [])}
     out = []
-    for prov, name in (("openai", "OPENAI_API_KEY"), ("anthropic", "ANTHROPIC_API_KEY")):
+    for prov, name in sorted(all_provider_key_env_items().items()):
         k = api_key(name)
         if not k:
             out.append({"prov": prov, "name": name, "resolved4": "", "state": "missing"})
@@ -238,18 +239,14 @@ def key_fingerprint(provider):
 
 
 def api_key(name):
-    """Resolve an API key: os.environ first, then a CHAIN of .env files — $SPENDGUARD_ENV, ./.env (cwd), and
-    SPENDGUARD_HOME/.env. The last is cwd-INDEPENDENT, so keys resolve from any repo (if spendguard lives outside a
-    consumer repo, a cwd-only ./.env silently loses the keys — financial data must not depend on which directory you ran from)."""
+    """Resolve an API key from the process environment or declared key SSOT files only."""
     k = os.environ.get(name, "")
     if k:
         return k
     candidates = []
     if os.getenv("SPENDGUARD_ENV"):
         candidates.append(Path(os.getenv("SPENDGUARD_ENV")))
-    candidates.append(Path.cwd() / ".env")
     candidates.append(HOME / "keys.env")       # the scaffolded secrets file (primary) — found from any directory
-    candidates.append(HOME / ".env")           # legacy stable-home .env (still honored for existing installs)
     for envp in candidates:
         try:
             if envp.exists():
