@@ -45,6 +45,8 @@ CODEX_POOL_ISOLATE_DEFAULT = False
 CODEX_POOL_HEALTH_INTERVAL_DEFAULT_S = 25.0
 CODEX_POOL_RESPAWN_BACKOFF_DEFAULT_S = 1.0
 CODEX_POOL_RESPAWN_BACKOFF_MULTIPLIER = 2
+CODEX_POOL_RESOURCE_EXHAUSTION_BACKOFF_DEFAULT_S = 5.0
+CODEX_POOL_RESOURCE_EXHAUSTION_RESTART_THRESHOLD_DEFAULT = 3
 CODEX_POOL_OWNER_MARKER_FILENAME = ".spendguard-owner.json"
 CODEX_POOL_HOME_STALE_AGE_DEFAULT_S = 3600.0
 CODEX_POOL_TRUE_VALUES = frozenset(("1", "true", "yes", "on"))
@@ -341,7 +343,7 @@ def consumer_audit_settings(checkout_path=None):
 
 CODEX_SESSION_REAP_DEFAULTS = {
     "enabled": True, "success_grace_s": 300, "failure_grace_s": 600,
-    "max_per_pass": 200, "delete_timeout_s": 30,
+    "max_per_pass": 200, "delete_timeout_s": 30, "max_delete_attempts": 3,
 }
 
 
@@ -355,9 +357,10 @@ def codex_session_reap_settings():
         settings[key] = float(settings[key])
         if not math.isfinite(settings[key]) or settings[key] < 0:
             raise ValueError(f"codex_session_reap.{key} must be finite and nonnegative")
-    cap = settings["max_per_pass"]
-    if isinstance(cap, bool) or not isinstance(cap, int) or cap <= 0:
-        raise ValueError("codex_session_reap.max_per_pass must be a positive integer")
+    for key in ("max_per_pass", "max_delete_attempts"):
+        cap = settings[key]
+        if isinstance(cap, bool) or not isinstance(cap, int) or cap <= 0:
+            raise ValueError(f"codex_session_reap.{key} must be a positive integer")
     if settings["delete_timeout_s"] <= 0:
         raise ValueError("codex_session_reap.delete_timeout_s must be positive")
     return settings
@@ -383,8 +386,19 @@ def codex_daemon_pool_settings():
                                      CODEX_POOL_RESPAWN_BACKOFF_DEFAULT_S))
     if not math.isfinite(respawn_backoff_s) or respawn_backoff_s <= 0:
         raise ValueError("advisor.codex_daemon_pool_respawn_backoff_s must be positive and finite")
+    resource_backoff_s = float(_cfg_get(
+        "advisor", "codex_daemon_pool_resource_exhaustion_backoff_s",
+        CODEX_POOL_RESOURCE_EXHAUSTION_BACKOFF_DEFAULT_S))
+    if not math.isfinite(resource_backoff_s) or resource_backoff_s <= 0:
+        raise ValueError("advisor.codex_daemon_pool_resource_exhaustion_backoff_s must be positive and finite")
+    restart_threshold = _cfg_get(
+        "advisor", "codex_daemon_pool_resource_exhaustion_restart_threshold",
+        CODEX_POOL_RESOURCE_EXHAUSTION_RESTART_THRESHOLD_DEFAULT)
+    if isinstance(restart_threshold, bool) or not isinstance(restart_threshold, int) or restart_threshold <= 0:
+        raise ValueError("advisor.codex_daemon_pool_resource_exhaustion_restart_threshold must be a positive integer")
     return {"size": size, "isolate_homes": bool(isolated), "health_interval_s": health_interval_s,
-            "respawn_backoff_s": respawn_backoff_s}
+            "respawn_backoff_s": respawn_backoff_s, "resource_exhaustion_backoff_s": resource_backoff_s,
+            "resource_exhaustion_restart_threshold": restart_threshold}
 
 
 def codex_daemon_admission_settings():

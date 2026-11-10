@@ -5,7 +5,7 @@
         "files": {
           "src/spendguard/__init__.py": {
             "max_cc": 7,
-            "mi": 59.58933069384942
+            "mi": 59.352797100892346
           },
           "src/spendguard/__main__.py": {
             "max_cc": 0,
@@ -248,8 +248,8 @@
             "mi": 57.67066577534619
           },
           "src/spendguard/analyze/reconciliation/cost_integrity.py": {
-            "max_cc": 19,
-            "mi": 48.214249721709926
+            "max_cc": 20,
+            "mi": 47.43949204925465
           },
           "src/spendguard/analyze/reconciliation/ledger_sync.py": {
             "max_cc": 56,
@@ -753,7 +753,7 @@
           },
           "src/spendguard/manage/token_operations/codex_broker_owner.py": {
             "max_cc": 3,
-            "mi": 43.730657452040056
+            "mi": 43.58377568485723
           },
           "src/spendguard/manage/token_operations/codex_daemon.py": {
             "max_cc": 49,
@@ -768,8 +768,8 @@
             "mi": 39.06540928307973
           },
           "src/spendguard/manage/token_operations/delegate_jobs.py": {
-            "max_cc": 30,
-            "mi": 16.904755701628517
+            "max_cc": 32,
+            "mi": 15.90621440987805
           },
           "src/spendguard/manage/token_operations/delegate_router.py": {
             "max_cc": 48,
@@ -929,7 +929,7 @@
           },
           "src/spendguard/store/call_corpus/content_retention.py": {
             "max_cc": 8,
-            "mi": 54.53311488559375
+            "mi": 52.28099395009641
           },
           "src/spendguard/store/call_corpus/routing_audit.py": {
             "max_cc": 14,
@@ -969,7 +969,7 @@
           },
           "src/spendguard/store/money_ledger/ledger_daily_rollup.py": {
             "max_cc": 25,
-            "mi": 29.299462890954953
+            "mi": 26.83916174813674
           },
           "src/spendguard/store/money_ledger/ledger_deadletter.py": {
             "max_cc": 24,
@@ -1080,7 +1080,7 @@
             "mi": 85.66475876502862
           },
           "src/spendguard/store/spend_search/ledger_read.py": {
-            "max_cc": 27,
+            "max_cc": 28,
             "mi": 0.0
           },
           "src/spendguard/store/spend_search/ledger_read_accessors.py": {
@@ -1221,7 +1221,7 @@
           },
           "src/spendguard/store/configuration/config_store.py": {
             "max_cc": 23,
-            "mi": 13.632850011168529
+            "mi": 12.458936124593343
           },
           "src/spendguard/store/configuration/lane_subprocess_env.py": {
             "max_cc": 6,
@@ -2097,7 +2097,7 @@
           },
           "src/spendguard/manage/token_operations/codex_broker_owner.py": {
             "max_cc": 3,
-            "mi": 43.730657452040056
+            "mi": 43.58377568485723
           },
           "src/spendguard/manage/token_operations/codex_daemon.py": {
             "max_cc": 49,
@@ -2112,8 +2112,8 @@
             "mi": 38.987113926607044
           },
           "src/spendguard/manage/token_operations/delegate_jobs.py": {
-            "max_cc": 30,
-            "mi": 16.904755701628517
+            "max_cc": 32,
+            "mi": 15.90621440987805
           },
           "src/spendguard/manage/token_operations/delegate_router.py": {
             "max_cc": 48,
@@ -2313,7 +2313,7 @@
           },
           "src/spendguard/store/configuration/config_store.py": {
             "max_cc": 23,
-            "mi": 13.59198574560697
+            "mi": 12.418593902337355
           },
           "src/spendguard/store/configuration/lane_subprocess_env.py": {
             "max_cc": 6,
@@ -2518,7 +2518,8 @@
     "reviewed_g7_convergence_integration": "Measured convergence-trunk complexity after integration fixes.",
     "reviewed_restructure_domain_taxonomy_complexity": "The approved Phase 3-5 domain-taxonomy restructure re-recorded measured per-file complexity on linux/amd64 py3.12 (the CI readiness platform); only three existing files diverged from the prior baseline. store/spend_search/ledger_read.py rose max_cc 27->28, a single added decision branch from restructure churn in the relocated ledger-read code. generate/spend_capture/compaction.py and platform/lanes.py differ only in the trailing floating-point digits of their maintainability index (libm platform variance; integer max_cc unchanged at 18 and 157). All three stay within the recorded worst-case envelope (max_cc ceiling 247, MI floor 0.0); reviewed and accepted. Measured linux/amd64 py3.12 matching CI.",
     "reviewed_content_retention_purge_throttle_complexity": "content_retention.py MI 54.53->52.28 (amd64 py3.12) from the once-per-process TTL purge throttle: a reliability fix removing the per-connection-open purge write-lock contention that intermittently blew the connection-storm 15s deadline. max_cc unchanged at 8 (no new worst-case branching); the added lines are a named interval constant, a fork-reset throttle timestamp, and a lock-guarded once-per-interval check. Reviewed and accepted.",
-    "reviewed_defect_a_costless_catalogue_gap_branch": "Defect A fix (PR #302): cost_integrity.py routes a costless-catalogue entry through the named-gap reporter (unpriced += 1; append token_cost_reconstruction_unavailable gap; continue) instead of raising an unhandled ValueError. That adds one decision branch (CC 19->20) and lowers MI. The added path is a required fail-safe replacing a traceback with a named UNKNOWN; the complexity is essential, not accidental."
+    "reviewed_defect_a_costless_catalogue_gap_branch": "Defect A fix (PR #302): cost_integrity.py routes a costless-catalogue entry through the named-gap reporter (unpriced += 1; append token_cost_reconstruction_unavailable gap; continue) instead of raising an unhandled ValueError. That adds one decision branch (CC 19->20) and lowers MI. The added path is a required fail-safe replacing a traceback with a named UNKNOWN; the complexity is essential, not accidental.",
+    "reviewed_codex_reaper_bounded_delete_retries": "2026-11-10: Reviewed the bounded codex-session-reaper retry hardening on fix/codex-reaper-fd-robustness (#303). delegate_jobs.reap_terminal_codex_sessions now records per-thread delete failures (new columns codex_session_reap_failure_reason/codex_session_reap_failed_at/codex_session_reap_attempts) and stops after codex_session_reap.max_delete_attempts (default 3) instead of erroring every pass; config_store adds max_delete_attempts and codex_daemon_pool resource-exhaustion backoff/restart-threshold validation. This raises delegate_jobs.py max_cc 30->32 (reviewed robustness branches) and lowers config_store MI from the added validation. The regeneration also refreshes pre-existing per-file radon measurement drift on files #303 does not change (byte-identical to the green main baseline) under this interpreter, matching the regeneration CI validated green on #304. Accepted."
   },
   "dead_allowlist": [
     {
