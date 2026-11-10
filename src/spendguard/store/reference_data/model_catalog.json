@@ -227,6 +227,41 @@
     }
   },
   "models": {
+    "jev-1.14.0": {
+      "id": "jev-1.14.0",
+      "provider": "typesafe",
+      "aliases": [
+        "jev-latest",
+        "jev-preview"
+      ],
+      "retired_alias_of": null,
+      "metered_id": "jev-1.14.0",
+      "lane_spellings": {},
+      "price": {
+        "in_": 0.042,
+        "out": 0.0,
+        "source": "https://docs.typesafe.ai/models - fetched 2026-11-10; api.typesafe.ai/v1/systemone endpoint: input $42/Btok = $0.042/1M, output free ($0). NOT jevtypesafeai.com/api/v1/decide prepaid-pack pricing ($0.25-0.42/M), which is a different product surface and does not apply to api.typesafe.ai.",
+        "verified": "2026-11-10"
+      },
+      "price_error": null,
+      "as_of": "2026-11-10"
+    },
+    "jev-1.13.0": {
+      "id": "jev-1.13.0",
+      "provider": "typesafe",
+      "aliases": [],
+      "retired_alias_of": null,
+      "metered_id": "jev-1.13.0",
+      "lane_spellings": {},
+      "price": {
+        "in_": 0.042,
+        "out": 0.0,
+        "source": "https://docs.typesafe.ai/models - fetched 2026-11-10; api.typesafe.ai/v1/systemone endpoint: input $42/Btok = $0.042/1M, output free ($0). NOT jevtypesafeai.com/api/v1/decide prepaid-pack pricing ($0.25-0.42/M), which is a different product surface and does not apply to api.typesafe.ai.",
+        "verified": "2026-11-10"
+      },
+      "price_error": null,
+      "as_of": "2026-11-10"
+    },
     "Qwen/Qwen2.5-14B-Instruct-AWQ": {
       "id": "Qwen/Qwen2.5-14B-Instruct-AWQ",
       "provider": "custom",
