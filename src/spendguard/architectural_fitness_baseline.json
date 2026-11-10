@@ -769,7 +769,7 @@
           },
           "src/spendguard/manage/token_operations/delegate_jobs.py": {
             "max_cc": 32,
-            "mi": 7.827011717692264
+            "mi": 6.708547744346037
           },
           "src/spendguard/manage/token_operations/delegate_router.py": {
             "max_cc": 53,
@@ -781,7 +781,7 @@
           },
           "src/spendguard/manage/token_operations/delegate_worktrees.py": {
             "max_cc": 15,
-            "mi": 47.20065899946486
+            "mi": 44.48664130864728
           },
           "src/spendguard/manage/token_operations/dispatch.py": {
             "max_cc": 23,
@@ -2121,7 +2121,7 @@
           },
           "src/spendguard/manage/token_operations/delegate_jobs.py": {
             "max_cc": 32,
-            "mi": 7.827011717692264
+            "mi": 6.708547744346037
           },
           "src/spendguard/manage/token_operations/delegate_router.py": {
             "max_cc": 53,
@@ -2133,7 +2133,7 @@
           },
           "src/spendguard/manage/token_operations/delegate_worktrees.py": {
             "max_cc": 15,
-            "mi": 47.20065899946486
+            "mi": 44.48664130864728
           },
           "src/spendguard/manage/token_operations/dispatch.py": {
             "max_cc": 23,
@@ -2539,7 +2539,8 @@
     "reviewed_delegate_jobs_lifecycle_maintenance": "#304 adds active delegate-jobs lifecycle maintenance (reap stale-running rows whose owning worker died, reap aged orphan running rows lacking a durable execution_id, bound result_payload via payload_archive_path offload, honest batch-cap) on top of #303's bounded codex-reaper. This raises delegate_router.py max_cc 48->53 (the lifecycle maintenance dispatch) and lowers delegate_jobs.py MI 15.9->7.83 (added schema columns + reap/bound logic in one module). Reviewed: the added complexity is the lifecycle hygiene itself, cohesive within the delegate-jobs seam; measured under 3.11 and 3.12.",
     "reviewed_catalog_ssot_stage1_store_and_provenance": "Catalog SSOT Stage 1 (#315) added store.reference_data.catalog_store (the one managed accessor over the physical SQLite catalog) and store.reference_data.catalog_provenance. Both are genuinely new source files with no prior complexity baseline entry; their measured radon CC maxima and MI are recorded here under review so the ratchet has a reviewed floor. No existing file's complexity is loosened.",
     "reviewed_rebase_reconcile_codex_pool_fd_self_heal": "Rebase of #307 (codex-pool broker self-heal on repeated FD exhaustion / EMFILE) onto main after the catalog SSOT Stage 1 cascade; baseline re-derived from the rebased code via the SSOT regenerate tooling.",
-    "reviewed_rebase_reconcile_lane_bandit_sentinel": "Rebase of #305 onto main (incl #307) shifted the already-reviewed importlib dynamic import in lane_bandit one line; magnitude ceilings unchanged; move-neutral reconcile recording the exact measured dynamic-import set, plus the new cross-context edge and the reviewed complexity regression for the rebased tree."
+    "reviewed_rebase_reconcile_lane_bandit_sentinel": "Rebase of #305 onto main (incl #307) shifted the already-reviewed importlib dynamic import in lane_bandit one line; magnitude ceilings unchanged; move-neutral reconcile recording the exact measured dynamic-import set, plus the new cross-context edge and the reviewed complexity regression for the rebased tree.",
+    "reviewed_rebase_reconcile_lost_delegate_worktree_recovery": "rebase onto main incl #305/#308: re-record the MI regression for delegate_jobs.py and delegate_worktrees.py from the lost-worktree recovery change"
   },
   "dead_allowlist": [
     {
@@ -6438,6 +6439,10 @@
       "spendguard"
     ],
     [
+      "spendguard.manage.token_operations.delegate_worktrees",
+      "spendguard.store.configuration.config"
+    ],
+    [
       "spendguard.manage.token_operations.dispatch",
       "spendguard.generate.execution.execution_accessors"
     ],
@@ -7284,7 +7289,7 @@
     "src/spendguard/manage/admission/gate.py:2318",
     "src/spendguard/manage/admission/gate.py:2360",
     "src/spendguard/manage/token_operations/delegate_router.py:229",
-    "src/spendguard/manage/token_operations/delegate_router.py:494",
+    "src/spendguard/manage/token_operations/delegate_router.py:493",
     "src/spendguard/platform/lanes.py:65"
   ],
   "recorded_legacy_flat_modules": [

@@ -436,12 +436,11 @@ def _worktree_changed_files(cwd, before_dirty):
 
 
 def _persist_delegate_workspace_metadata(metadata, execution_id):
-    from .delegate_worktrees import delegate_worktree_metadata_path
+    from .delegate_worktrees import write_delegate_worktree_details
     from . import execution_journal
     if execution_id:
-        config.update_json(delegate_worktree_metadata_path(
-            execution_journal.durable_execution_payload_paths(execution_id)["envelope"]),
-            lambda previous: metadata, reason="persist isolated delegate workspace", required=True)
+        write_delegate_worktree_details(
+            execution_journal.durable_execution_payload_paths(execution_id)["envelope"], metadata)
 
 
 def _configured_delegate_worktree_retention_seconds(default_retention_s):
