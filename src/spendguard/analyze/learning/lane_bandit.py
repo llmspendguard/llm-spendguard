@@ -278,7 +278,7 @@ def bakeoff_judge(task, out_a, out_b, arm_a, arm_b, cost_a=None, cost_b=None):
     return None, "tie"                                 # an explicit, DECIDED tie (reason set → recorded 0.5/0.5)
 
 
-def _run_arm(arm, task, system, reasoning, timeout_s):
+def _run_arm(arm, task, system, reasoning, timeout_s, intent):
     """Run ONE arm on its lane DIRECTLY (no API fallback — a lane that fails or returns blank just LOSES the bake-off,
     so the judge scores the LANE's own output, never a metered stand-in). Records the successful lane call for
     est-value. Returns (text, out_tok): ('', 0) on any failure; out_tok is the completed call's output-token count
@@ -291,24 +291,43 @@ def _run_arm(arm, task, system, reasoning, timeout_s):
         prov = reference_data_accessors.resolve_lane_provider(lane)
         entry = _execution_accessors.resolve__LANES().get(prov)
         if not entry:
+            config.warn_once(f"[spendguard] lane-bandit {lane}/{use_name}: no lane executor registered")
             return "", 0
         mod = importlib.import_module("." + entry[1], "spendguard")
         base, level = reference_data_accessors.resolve_parse_use_name(use_name, lane)
         # gemini carries effort in the model SUFFIX (pass the whole use-name); the others take it as `reasoning`
         model = use_name if reference_data_accessors.resolve_quirk(lane)["style"] == "suffix" else base
+        from ...store.reference_data import models
+        eff = level or reasoning
+        if eff is not None and eff not in models._EFFORT_LADDER:
+            resolved = models.effort_for(model, intent)
+            eff = resolved
+            if eff not in models._EFFORT_LADDER:
+                eff = None
+                config.warn_once(
+                    f"[spendguard] lane-bandit {lane}/{use_name}: best-value has no measured "
+                    f"effort basis for intent {intent!r}; using the lane CLI default")
         cap = int(getattr(mod, "TIMEOUT_S", 300))
         r = mod.run_prompt(task, system=system, model=model, timeout=min(cap, int(timeout_s or cap)),
-                           reasoning=(level or reasoning))
+                           reasoning=eff)
         if not isinstance(r, dict) or r.get("error") or not (r.get("text") or "").strip():
+            if not isinstance(r, dict):
+                failure_reason = f"invalid reply: {r!r}"
+            elif r.get("error"):
+                failure_reason = f"lane error: {r['error']}"
+            else:
+                failure_reason = "empty/blank reply"
+            config.warn_once(f"[spendguard] lane-bandit {lane}/{use_name}: {failure_reason}")
             return "", 0
         out_tok = int(r.get("out_tok") or 0)
         try:
             _call_corpus_accessors.resolve_calls_record_call(prov, model, "subscription", 0.0, in_tok=r.get("in_tok", 0), out_tok=r.get("out_tok"),
-                         latency=r.get("latency"), executor=lane, effort=(level or reasoning))
+                         latency=r.get("latency"), executor=lane, effort=eff)
         except Exception:
             pass
         return (r.get("text") or ""), out_tok
-    except Exception:
+    except Exception as exc:
+        config.warn_once(f"[spendguard] lane-bandit {lane}/{use_name}: exception: {exc!r}")
         return "", 0
 
 
@@ -325,8 +344,8 @@ def run_bakeoff(intent, task, system=None, reasoning=None, timeout_s=None):
     st = arm_stats(intent)
     live.sort(key=lambda a: (st.get(a, {}).get("trials", 0.0), st.get(a, {}).get("last_ts") or ""))
     arm_a, arm_b = live[0], live[1]
-    out_a, _ = _run_arm(arm_a, task, system, reasoning, timeout_s)   # bake-off: out_tok unused here — the value JUDGE
-    out_b, _ = _run_arm(arm_b, task, system, reasoning, timeout_s)   #   weighs realized cost (A2.3's overshoot penalty is exploit-only)
+    out_a, _ = _run_arm(arm_a, task, system, reasoning, timeout_s, intent)   # bake-off: out_tok unused here — the value JUDGE
+    out_b, _ = _run_arm(arm_b, task, system, reasoning, timeout_s, intent)   #   weighs realized cost (A2.3's overshoot penalty is exploit-only)
     costs = _intent_realized_costs(intent, [arm_a, arm_b])   # realized $/call (incl. reasoning) → the judge weighs VALUE
     winner, reason = bakeoff_judge(task, out_a, out_b, arm_a, arm_b, costs.get(arm_a), costs.get(arm_b))
     if winner == arm_a:
@@ -400,7 +419,7 @@ def bandit_call(intent, task, system=None, reasoning=None, timeout_s=None):
         return None
     from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
     pre_norm = _call_corpus_accessors.resolve_calls_mean_out_by_executor_model(intent)   # PRE-call norm (this call not yet recorded) → no self-inflation
-    out, out_tok = _run_arm(arm, task, system, reasoning, timeout_s)
+    out, out_tok = _run_arm(arm, task, system, reasoning, timeout_s, intent)
     if out:
         won = _exploit_overshoot_reward(intent, arm, out_tok, pre_norm)   # 1.0, or a PENALTY on a cost-runaway (A2.3)
         record_trial(intent, arm[0], arm[1], won)     # usable answer → keep; a runaway keep is PARTIAL so cheaper arms overtake

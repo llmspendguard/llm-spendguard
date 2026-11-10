@@ -7269,7 +7269,7 @@
     ]
   ],
   "recorded_dynamic_spendguard_imports": [
-    "src/spendguard/analyze/learning/lane_bandit.py:295",
+    "src/spendguard/analyze/learning/lane_bandit.py:296",
     "src/spendguard/analyze/measurement/lane_servability.py:289",
     "src/spendguard/generate/execution/adapters.py:1511",
     "src/spendguard/generate/execution/adapters.py:96",
