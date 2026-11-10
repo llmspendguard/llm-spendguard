@@ -21,7 +21,7 @@ from spendguard.manage.token_operations import token_operations_accessors  # noq
 config.HOME = Path(REAPER_TEST_HOME)
 REAPER_TEST_NOW = datetime.datetime.now(datetime.timezone.utc)
 REAPER_TEST_SETTINGS = {"enabled": True, "success_grace_s": 30, "failure_grace_s": 60,
-                        "max_per_pass": 20, "delete_timeout_s": 10}
+                        "max_per_pass": 20, "delete_timeout_s": 10, "max_delete_attempts": 3}
 REAPER_TEST_OLD_AGE_S = 90
 REAPER_TEST_MIDDLE_AGE_S = 45
 REAPER_TEST_NEW_AGE_S = 10
@@ -66,7 +66,8 @@ def check_session_reaper_migration():
         delegate_jobs._ensure_delegate_jobs_schema(connection)
         delegate_jobs._ensure_delegate_jobs_schema(connection)
         columns = {row[1] for row in connection.execute("PRAGMA table_info(delegate_jobs)")}
-        assert {"codex_thread_id", "codex_session_reaped_at"} <= columns
+        assert {"codex_thread_id", "codex_session_reaped_at", "codex_session_reap_attempts",
+                "codex_session_reap_failed_at", "codex_session_reap_failure_reason"} <= columns
         assert connection.execute("SELECT result_payload FROM delegate_jobs").fetchone()[0] == json.dumps({"whole": "payload"})
         indexed_columns = []
         for index in connection.execute("PRAGMA index_list(delegate_jobs)").fetchall():
@@ -138,6 +139,9 @@ def check_session_reaper_selection_and_retry():
         assert failed_report["errors"] and read_session_reaper_row(retry_job)["codex_session_reaped_at"] is None
         deletion.return_value = SimpleNamespace(returncode=0, stdout="", stderr="")
         assert run_session_reaper_fixture()["reaped"] == [retry_job]
+        transient_row = read_session_reaper_row(retry_job)
+        assert transient_row["codex_session_reap_attempts"] == 1
+        assert transient_row["codex_session_reap_failed_at"] is None
         for _ in range(REAPER_TEST_LIMIT + 1):
             make_session_reaper_job()
         with patch.object(config, "codex_session_reap_settings", return_value={**REAPER_TEST_SETTINGS, "max_per_pass": REAPER_TEST_LIMIT}):
@@ -148,6 +152,42 @@ def check_session_reaper_selection_and_retry():
             deletion.reset_mock()
             assert run_session_reaper_fixture()["reaped"] == []
             deletion.assert_not_called()
+
+
+def check_session_reaper_failure_tombstone_bound():
+    with delegate_jobs._open_delegate_jobs_connection() as connection:
+        connection.execute("DELETE FROM delegate_jobs")
+    failed_job, _ = make_session_reaper_job()
+    with patch.object(config, "codex_session_reap_settings", return_value=REAPER_TEST_SETTINGS), \
+            patch.object(codex_exec, "_bin", return_value=REAPER_TEST_BINARY), \
+            patch.object(config, "lane_exec_env", return_value={}), \
+            patch.object(delegate_jobs.subprocess, "run", return_value=SimpleNamespace(
+                returncode=1, stdout="", stderr="persistent unexpected failure")) as deletion:
+        for _ in range(REAPER_TEST_SETTINGS["max_delete_attempts"] + REAPER_TEST_LIMIT):
+            run_session_reaper_fixture()
+    failed_row = read_session_reaper_row(failed_job)
+    assert deletion.call_count == REAPER_TEST_SETTINGS["max_delete_attempts"]
+    assert failed_row["codex_session_reaped_at"] is not None
+    assert failed_row["codex_session_reap_failed_at"] is not None
+    assert failed_row["codex_session_reap_attempts"] == REAPER_TEST_SETTINGS["max_delete_attempts"]
+    assert failed_row["codex_session_reap_failure_reason"].endswith("persistent unexpected failure")
+
+
+def check_session_reaper_emfile_tombstone_bound():
+    with delegate_jobs._open_delegate_jobs_connection() as connection:
+        connection.execute("DELETE FROM delegate_jobs")
+    failed_job, _ = make_session_reaper_job()
+    emfile = OSError(24, "Too many open files")
+    with patch.object(config, "codex_session_reap_settings", return_value=REAPER_TEST_SETTINGS), \
+            patch.object(codex_exec, "_bin", return_value=REAPER_TEST_BINARY), \
+            patch.object(config, "lane_exec_env", return_value={}), \
+            patch.object(delegate_jobs.subprocess, "run", side_effect=emfile) as deletion:
+        for _ in range(REAPER_TEST_SETTINGS["max_delete_attempts"] + REAPER_TEST_LIMIT):
+            run_session_reaper_fixture()
+    failed_row = read_session_reaper_row(failed_job)
+    assert deletion.call_count == REAPER_TEST_SETTINGS["max_delete_attempts"]
+    assert failed_row["codex_session_reap_failed_at"] is not None
+    assert failed_row["codex_session_reap_failure_reason"] == "OSError: [Errno 24] Too many open files"
 
 
 def check_session_reaper_live_lease_safety():
@@ -279,6 +319,8 @@ def check_session_reaper_transport_capture():
 check_session_reaper_migration()
 check_session_reaper_terminal_capture()
 check_session_reaper_selection_and_retry()
+check_session_reaper_failure_tombstone_bound()
+check_session_reaper_emfile_tombstone_bound()
 check_session_reaper_live_lease_safety()
 check_session_reaper_lease_transition()
 check_session_reaper_stale_lease_cleanup()

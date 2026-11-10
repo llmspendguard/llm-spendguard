@@ -14,6 +14,7 @@ CODEX_BROKER_OWNER_PLIST_SUFFIX = ".plist"
 CODEX_BROKER_OWNER_LAUNCHD_DIRECTORY_PARTS = ("Library", "LaunchAgents")
 CODEX_BROKER_OWNER_KICKSTART_TIMEOUT_S = 15
 LAUNCHD_GUI_DOMAIN_TEMPLATE = "gui/%d"
+CODEX_BROKER_OWNER_NUMBER_OF_FILES_SOFT_LIMIT = 4096
 
 
 def run_declared_launchd_action(action_arguments, label):
@@ -45,6 +46,7 @@ def install_codex_broker_owner_launchd():
     document = {"Label": CODEX_BROKER_OWNER_LAUNCHD_LABEL,
                 "ProgramArguments": codex_broker_owner_program_arguments(),
                 "RunAtLoad": True, "KeepAlive": True,
+                "SoftResourceLimits": {"NumberOfFiles": CODEX_BROKER_OWNER_NUMBER_OF_FILES_SOFT_LIMIT},
                 "StandardErrorPath": str(log_path), "StandardOutPath": str(log_path)}
     encoded = plistlib.dumps(document)
     try:

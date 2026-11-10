@@ -78,9 +78,13 @@ def _ensure_delegate_jobs_schema(connection):
     columns = {row[1] for row in connection.execute("PRAGMA table_info(delegate_jobs)")}
     if "execution_id" not in columns:
         connection.execute("ALTER TABLE delegate_jobs ADD COLUMN execution_id TEXT")
-    for column in ("codex_thread_id", "codex_session_reaped_at"):
+    for column in ("codex_thread_id", "codex_session_reaped_at", "codex_session_reap_failed_at",
+                   "codex_session_reap_failure_reason"):
         if column not in columns:
             connection.execute(f"ALTER TABLE delegate_jobs ADD COLUMN {column} TEXT")
+    if "codex_session_reap_attempts" not in columns:
+        connection.execute(
+            "ALTER TABLE delegate_jobs ADD COLUMN codex_session_reap_attempts INTEGER NOT NULL DEFAULT 0")
     if "codex_thread_id" not in columns:
         for job_id, payload in connection.execute(
                 "SELECT job_id,result_payload FROM delegate_jobs WHERE result_payload IS NOT NULL").fetchall():
@@ -537,6 +541,7 @@ def reap_terminal_codex_sessions(now=None, *, executable=None, owner_identity_st
                     report["skipped"].append(job_id)
                     continue
                 attempts += 1
+                failure_reason = None
                 try:
                     deleted = subprocess.run([executable, "delete", thread_id, "--force"],
                                              capture_output=True, text=True,
@@ -547,10 +552,25 @@ def reap_terminal_codex_sessions(now=None, *, executable=None, owner_identity_st
                     missing = any(line.removeprefix("Error: ") in expected_missing
                                   for line in (deleted.stderr or "").splitlines())
                     if deleted.returncode != 0 and not missing:
-                        report["errors"].append(f"{job_id}: codex delete exited {deleted.returncode}: {deleted.stderr}")
-                        continue
+                        failure_reason = f"codex delete exited {deleted.returncode}: {deleted.stderr}"
                 except (OSError, subprocess.SubprocessError) as error:
-                    report["errors"].append(f"{job_id}: {error}")
+                    failure_reason = f"{type(error).__name__}: {error}"
+                if failure_reason is not None:
+                    connection.execute(
+                        "UPDATE delegate_jobs SET codex_session_reap_attempts=codex_session_reap_attempts+1,"
+                        "codex_session_reap_failure_reason=? WHERE codex_thread_id=? "
+                        "AND codex_session_reaped_at IS NULL", (failure_reason, thread_id))
+                    failure_attempts = connection.execute(
+                        "SELECT MAX(codex_session_reap_attempts) FROM delegate_jobs WHERE codex_thread_id=?",
+                        (thread_id,)).fetchone()[0]
+                    if failure_attempts >= settings["max_delete_attempts"]:
+                        connection.execute(
+                            "UPDATE delegate_jobs SET codex_session_reaped_at=?,codex_session_reap_failed_at=? "
+                            "WHERE codex_thread_id=? AND codex_session_reaped_at IS NULL",
+                            (current.isoformat(), current.isoformat(), thread_id))
+                        connection.execute("DELETE FROM delegate_codex_session_leases WHERE thread_id=?", (thread_id,))
+                        report["reaped"].extend(eligible)
+                    report["errors"].append(f"{job_id}: {failure_reason}")
                     continue
                 connection.execute("UPDATE delegate_jobs SET codex_session_reaped_at=? "
                                    "WHERE codex_thread_id=? AND codex_session_reaped_at IS NULL",

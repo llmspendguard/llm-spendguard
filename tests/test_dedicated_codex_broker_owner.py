@@ -1,5 +1,8 @@
 """Anti-amnesia guards for dedicated Codex broker ownership. Offline: no socket bind, launchd, or app-server."""
 import os
+import importlib
+import pathlib
+import plistlib
 import sys
 import tempfile
 from unittest.mock import patch
@@ -15,7 +18,9 @@ if os.environ.get("SPENDGUARD_TEST_ISOLATED") != "1":
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
-from spendguard import codex_broker_owner, codex_daemon_broker, warm_stdio_daemon  # noqa: E402
+codex_broker_owner = importlib.import_module("spendguard.manage.token_operations.codex_broker_owner")
+codex_daemon_broker = importlib.import_module("spendguard.manage.token_operations.codex_daemon_broker")
+warm_stdio_daemon = importlib.import_module("spendguard.manage.token_operations.warm_stdio_daemon")
 from _script_checks import record_script_check  # noqa: E402
 
 
@@ -144,6 +149,20 @@ record_script_check(failures, "unknown owner is not dead",
                     warm_stdio_daemon._warm_owner_provably_dead(os.getpid(), owner_marker.get(
                         warm_stdio_daemon.WARM_OWNER_BOOT_ENV)) is False)
 warm_stdio_daemon.psutil.Process = original_process
+
+with tempfile.TemporaryDirectory(prefix="sg-codex-owner-plist-") as plist_root:
+    plist_home = pathlib.Path(plist_root)
+    with patch.object(codex_broker_owner.pathlib.Path, "home", return_value=plist_home):
+        first_path = codex_broker_owner.install_codex_broker_owner_launchd()
+        first_bytes = first_path.read_bytes()
+        first_mtime = first_path.stat().st_mtime_ns
+        second_path = codex_broker_owner.install_codex_broker_owner_launchd()
+    plist_document = plistlib.loads(first_bytes)
+    record_script_check(failures, "broker plist sets named fd ceiling",
+                        plist_document["SoftResourceLimits"]["NumberOfFiles"]
+                        == codex_broker_owner.CODEX_BROKER_OWNER_NUMBER_OF_FILES_SOFT_LIMIT)
+    record_script_check(failures, "broker plist reinstall is idempotent",
+                        second_path.read_bytes() == first_bytes and second_path.stat().st_mtime_ns == first_mtime)
 
 print("\n%s test_dedicated_codex_broker_owner: %d failure(s)" %
       ("[FAIL]" if failures else "OK", len(failures)))
