@@ -525,10 +525,21 @@ def recover_durable_execution(execution_id, *, root=None):
 
 
 def _observe_durable_execution(execution_id, root, interval):
+    import psutil
     directory = _durable_execution_directory(execution_id, root)
-    with (directory / EXECUTION_OBSERVER_READY_FILENAME).open("w") as ready:
-        ready.flush()
-        os.fsync(ready.fileno())
+    try:
+        # Publish the detached writer identity under the state lock before readiness.
+        # Owners can then join the observer rather than racing its final state writes.
+        with _locked_durable_execution(execution_id, root):
+            record = json.loads((directory / EXECUTION_STATE_FILENAME).read_text())
+            record.update(observer_pid=os.getpid(), observer_birth=psutil.Process().create_time())
+            _write_durable_execution_state(directory, record)
+        with (directory / EXECUTION_OBSERVER_READY_FILENAME).open("w") as ready:
+            ready.flush()
+            os.fsync(ready.fileno())
+    except FileNotFoundError:
+        # An archive may already have been reclaimed before observer startup.
+        return
     while True:
         try:
             with _locked_durable_execution(execution_id, root):

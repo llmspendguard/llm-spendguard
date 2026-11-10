@@ -778,6 +778,14 @@ def delegate_cli(argv=None):
     add_registered_cli_argument(parser, 'delegate/delegate_router.delegate_cli/parser/--mixed-stream')
     add_registered_cli_argument(parser, 'delegate/delegate_router.delegate_cli/parser/--timeout', type=float)
     add_registered_cli_argument(parser, 'delegate/delegate_router.delegate_cli/parser/--cwd', default=os.getcwd())
+    maintenance = parser.add_argument_group("delegate-job lifecycle maintenance")
+    maintenance.add_argument("--jobs-reap", action="store_true",
+                             help="plan stale running-job reclamation")
+    maintenance.add_argument("--jobs-retention", action="store_true",
+                             help="plan terminal payload archival")
+    maintenance.add_argument("--jobs-execute", action="store_true",
+                             help="apply the selected lifecycle maintenance; default is dry-run")
+    maintenance.add_argument("--json", action="store_true", help="emit lifecycle report as JSON")
     lookup = parser.add_mutually_exclusive_group()
     add_registered_cli_argument(lookup, 'delegate/delegate_router.delegate_cli/lookup/--collect')
     add_registered_cli_argument(lookup, 'delegate/delegate_router.delegate_cli/lookup/--status')
@@ -786,6 +794,19 @@ def delegate_cli(argv=None):
     add_registered_cli_argument(lookup, 'delegate/delegate_router.delegate_cli/lookup/--kill')
     args = parser.parse_args(argv)
     diagnostic_stream = sys.stdout if args.mixed_stream else sys.stderr
+    if args.jobs_reap or args.jobs_retention:
+        from .delegate_jobs import maintain_delegate_job_lifecycle
+        report = maintain_delegate_job_lifecycle(
+            execute=args.jobs_execute, reap_running=args.jobs_reap, retain_payloads=args.jobs_retention)
+        if args.json:
+            print(json.dumps(report, indent=2, sort_keys=True))
+        else:
+            print(f"delegate-job lifecycle ({report['mode']}): "
+                  f"reclaimed={len(report['reclaimed'])}, archived={len(report['archived'])}, "
+                  f"reclaimable_bytes={report['reclaimable_payload_bytes']}, vacuum={report['vacuum']}")
+            for error in report["errors"]:
+                print(f"  error: {error}", file=sys.stderr)
+        return 1 if report["errors"] else 0
     if args.timeout_s is not None and not args.wait:
         parser.error('--timeout-s requires --wait')
     if args.wait and not args.collect:
