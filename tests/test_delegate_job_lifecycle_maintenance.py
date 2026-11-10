@@ -10,6 +10,9 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(
 from spendguard.manage.token_operations import delegate_jobs, execution_journal  # noqa: E402
 
 STALE_GRACE_SECONDS = 60
+ORPHAN_RUNNING_GRACE_SECONDS = 600
+AGED_ORPHAN_AGE_SECONDS = ORPHAN_RUNNING_GRACE_SECONDS + STALE_GRACE_SECONDS
+YOUNG_ORPHAN_AGE_SECONDS = STALE_GRACE_SECONDS * 2
 PAYLOAD_RETENTION_DAYS = 7
 MAINTENANCE_BATCH_SIZE = 100
 TRUNCATION_TEST_BATCH_SIZE = 1
@@ -39,6 +42,7 @@ def insert_delegate_maintenance_fixture(job_id, state, updated_ts, payload, exec
 
 original_cfg_get = delegate_jobs.config._cfg_get
 configured_values = {"stale_running_grace_s": STALE_GRACE_SECONDS,
+                     "orphan_running_grace_s": ORPHAN_RUNNING_GRACE_SECONDS,
                      "payload_retention_days": PAYLOAD_RETENTION_DAYS,
                      "maintenance_batch_size": MAINTENANCE_BATCH_SIZE,
                      "vacuum_min_freed_bytes": VACUUM_MIN_FREED_BYTES}
@@ -53,6 +57,12 @@ child.terminate()
 child.wait(timeout=CHILD_WAIT_SECONDS)
 insert_delegate_maintenance_fixture("dead-stale-job", "running", old, None, "dead-execution")
 insert_delegate_maintenance_fixture("live-stale-job", "running", old, None, "live-execution")
+insert_delegate_maintenance_fixture(
+    "aged-orphan-job", "running",
+    current - datetime.timedelta(seconds=AGED_ORPHAN_AGE_SECONDS), None, None)
+insert_delegate_maintenance_fixture(
+    "young-orphan-job", "running",
+    current - datetime.timedelta(seconds=YOUNG_ORPHAN_AGE_SECONDS), None, None)
 identities = {"dead-execution": {"owner_pid": child.pid, "owner_birth": child_birth},
               "live-execution": {"owner_pid": os.getpid(),
                                  "owner_birth": psutil.Process(os.getpid()).create_time()}}
@@ -60,11 +70,19 @@ with mock.patch.object(delegate_jobs.config, "_cfg_get", configured_getter), moc
         execution_journal, "recover_durable_execution", side_effect=lambda execution_id: identities[execution_id]):
     reap_report = delegate_jobs.maintain_delegate_job_lifecycle(
         execute=True, reap_running=True, retain_payloads=False, now=current)
-check_delegate_maintenance_contract("dead stale worker is reclaimed", reap_report["reclaimed"] == ["dead-stale-job"])
+check_delegate_maintenance_contract("dead stale worker is reclaimed", "dead-stale-job" in reap_report["reclaimed"])
 check_delegate_maintenance_contract("reclaimed state is auditable",
                                     delegate_jobs._delegate_job_row("dead-stale-job")["state"] == "reclaimed")
 check_delegate_maintenance_contract("live stale worker is untouched",
                                     delegate_jobs._delegate_job_row("live-stale-job")["state"] == "running")
+aged_orphan_row = delegate_jobs._delegate_job_row("aged-orphan-job")
+check_delegate_maintenance_contract("aged orphan is reclaimed",
+                                    aged_orphan_row["state"] == delegate_jobs.DELEGATE_JOB_RECLAIMED_STATE)
+check_delegate_maintenance_contract("aged orphan has its distinct terminal reason",
+                                    aged_orphan_row["terminal_reason"] == delegate_jobs.DELEGATE_JOB_ORPHAN_REASON)
+check_delegate_maintenance_contract("young orphan is untouched",
+                                    delegate_jobs._delegate_job_row("young-orphan-job")["state"]
+                                    == delegate_jobs.DELEGATE_JOB_RUNNING_STATE)
 
 old_payload = {"execution": {"text": "whole archived evidence"}, "tail": ["late", "evidence"]}
 young_payload = {"execution": {"text": "young evidence remains hot"}}

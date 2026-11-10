@@ -25,6 +25,7 @@ import uuid
 from pathlib import Path
 
 from ... import config
+from ...store.configuration.config_store import DELEGATE_JOB_ORPHAN_RUNNING_GRACE_DEFAULT_S
 from .process_group_reaper import PROCESS_GROUP_LIVENESS_PROBE_SIGNAL, reap_process_group_bounded
 
 DELEGATE_JOBS_DATABASE_FILENAME = "delegate_jobs.db"
@@ -55,6 +56,7 @@ DELEGATE_JOB_DEFAULT_VACUUM_MIN_FREED_BYTES = 64 * 1024 * 1024
 DELEGATE_JOB_ARCHIVE_DIRECTORY_NAME = "delegate-job-payloads"
 DELEGATE_JOB_ARCHIVE_POINTER_KIND = "spendguard-delegate-payload-archive-v1"
 DELEGATE_JOB_RECLAIM_REASON = "local-worker-provably-dead-after-stale-grace"
+DELEGATE_JOB_ORPHAN_REASON = "orphan: running with no durable execution record, aged past orphan grace"
 CODEX_DELETE_MISSING_SESSION_TEMPLATES = (
     "No active or archived session found matching '{thread_id}'.",
     "thread not found: {thread_id}",
@@ -465,6 +467,8 @@ def _delegate_jobs_maintenance_settings():
     settings = {
         "stale_running_grace_s": float(config._cfg_get(
             "delegate_jobs", "stale_running_grace_s", DELEGATE_JOB_DEFAULT_STALE_RUNNING_GRACE_S)),
+        "orphan_running_grace_s": float(config._cfg_get(
+            "delegate_jobs", "orphan_running_grace_s", DELEGATE_JOB_ORPHAN_RUNNING_GRACE_DEFAULT_S)),
         "payload_retention_days": float(config._cfg_get(
             "delegate_jobs", "payload_retention_days", DELEGATE_JOB_DEFAULT_PAYLOAD_RETENTION_DAYS)),
         "batch_size": int(config._cfg_get(
@@ -495,6 +499,8 @@ def maintain_delegate_job_lifecycle(*, execute=False, reap_running=True, retain_
         connection.row_factory = sqlite3.Row
         if reap_running:
             cutoff = (current - datetime.timedelta(seconds=settings["stale_running_grace_s"])).isoformat()
+            orphan_cutoff = (current - datetime.timedelta(
+                seconds=settings["orphan_running_grace_s"])).isoformat()
             report["reap_eligible_total"] = connection.execute(
                 "SELECT COUNT(*) FROM delegate_jobs WHERE state=? AND updated_ts<?",
                 (DELEGATE_JOB_RUNNING_STATE, cutoff)).fetchone()[0]
@@ -503,8 +509,20 @@ def maintain_delegate_job_lifecycle(*, execute=False, reap_running=True, retain_
                 (DELEGATE_JOB_RUNNING_STATE, cutoff, settings["batch_size"])).fetchall()
             report["reap_limit_reached"] = len(candidates) == settings["batch_size"]
             for row in candidates:
-                if row["owning_host"] != socket.gethostname() or not row["execution_id"]:
+                if row["owning_host"] != socket.gethostname():
                     report["skipped"].append(row["job_id"])
+                    continue
+                if not row["execution_id"]:
+                    if row["updated_ts"] >= orphan_cutoff:
+                        report["skipped"].append(row["job_id"])
+                        continue
+                    report["reclaimed"].append(row["job_id"])
+                    if execute:
+                        connection.execute(
+                            "UPDATE delegate_jobs SET state=?,updated_ts=?,terminal_reason=? "
+                            "WHERE job_id=? AND state=?",
+                            (DELEGATE_JOB_RECLAIMED_STATE, current.isoformat(), DELEGATE_JOB_ORPHAN_REASON,
+                             row["job_id"], DELEGATE_JOB_RUNNING_STATE))
                     continue
                 try:
                     execution = recover_durable_execution(row["execution_id"])
