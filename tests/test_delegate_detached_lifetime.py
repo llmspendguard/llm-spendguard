@@ -1,4 +1,5 @@
 """Exercise the real detached launcher boundary with an offline executor."""
+import datetime
 import json
 import os
 from pathlib import Path
@@ -7,8 +8,12 @@ import sys
 import tempfile
 import time
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
+import psutil
+
+DETACHED_TEST_RECLAIM_RETENTION_S = 0
+DETACHED_TEST_ZERO_WAIT_S = 0
 DETACHED_TEST_COMPLETION_DELAY_S = 0.5
 DETACHED_TEST_COMPLETION_BOUND_S = 15
 DETACHED_TEST_POLL_S = 0.05
@@ -21,50 +26,85 @@ DETACHED_TEST_GUARD_PREFIX = "sg-detached-join-guard-"
 DETACHED_TEST_GUARD_EXECUTION_ID = "offline-guard-execution"
 
 
-def remove_detached_test_worktree(repository, worktree):
-    subprocess.run(["git", "-C", str(repository), "worktree", "remove", "--force", worktree["path"]],
-                   capture_output=True, check=True)
+def remove_detached_test_worktree(repository, worktree, directory):
+    """Drain writers before synchronously running the real scheduled reclaim."""
+    from spendguard import config
+    from spendguard.manage.token_operations import delegate_worktrees
+    wait_for_detached_test_state_processes(directory)
+    sidecars = list(directory.glob("delegate-executions/*/worktree.json"))
+    assert sidecars, "missing retained workspace metadata"
+    metadata = [json.loads(sidecar.read_text()) for sidecar in sidecars]
+    # Cancellation may precede the terminal envelope's scheduling step. Complete
+    # that same step after all writers exit, using the persisted workspace data.
+    for sidecar, retained in zip(sidecars, metadata):
+        if retained.get("reclaim_not_before"):
+            continue
+        delegate_worktrees.schedule_delegate_worktree_reclaim(
+            {"worktree": retained}, metadata_writer=lambda updated, path=sidecar: path.write_text(json.dumps(updated)),
+            retention_s=DETACHED_TEST_RECLAIM_RETENTION_S)
+    # Advance the reaper's injected clock to the actual retention floor. No wall
+    # clock delay or directory deletion can substitute for successful reclamation.
+    reclaim_at = max(datetime.datetime.fromisoformat(retained["reclaim_not_before"]) for retained in metadata)
+    report = delegate_worktrees.reclaim_expired_delegate_worktrees(
+        now=reclaim_at, journal_root_resolver=lambda: directory / "delegate-executions",
+        metadata_updater=config.update_json, worktree_root=Path(worktree["path"]).parent)
+    assert not report["gaps"], report
+    assert report["reclaimed"] == len(sidecars), report
+    assert not Path(worktree["path"]).exists(), worktree
+    assert all(json.loads(sidecar.read_text())["retained"] is False for sidecar in sidecars)
+    registered = subprocess.run(["git", "-C", str(repository), "worktree", "list", "--porcelain"],
+                                capture_output=True, text=True, check=True)
+    assert worktree["path"] not in registered.stdout, registered.stdout
 
 
 def wait_for_detached_test_state_processes(directory):
-    """Wait until persisted detached workers and children can no longer touch the test root."""
+    """Join every recorded writer, including the detached journal observer."""
     state_paths = list(directory.glob("delegate-executions/*/state.json"))
-    persisted_process_ids = set()
+    identities = set()
     for state_path in state_paths:
         state = json.loads(state_path.read_text())
-        persisted_process_ids.update(state.get(key) for key in ("child_pid", "worker_pid") if state.get(key))
+        assert state.get("observer_pid") and state.get("observer_birth"), state
+        identities.update((state.get(f"{role}_pid"), state.get(f"{role}_birth"))
+                          for role in ("worker", "child", "observer"))
     deadline = time.monotonic() + DETACHED_TEST_COMPLETION_BOUND_S
-    for process_id in persisted_process_ids:
-        while True:
-            try:
-                os.kill(process_id, 0)
-            except ProcessLookupError:
-                break
-            assert time.monotonic() < deadline, f"detached process {process_id} did not exit before cleanup"
-            time.sleep(DETACHED_TEST_POLL_S)
+    for process_id, birth in identities:
+        if not process_id:
+            continue
+        assert birth is not None, f"missing birth identity for detached process {process_id}"
+        try:
+            process = psutil.Process(process_id)
+            if process.create_time() != birth:
+                continue  # The original writer exited and its PID was reused.
+            process.wait(timeout=max(DETACHED_TEST_ZERO_WAIT_S, deadline - time.monotonic()))
+        except psutil.NoSuchProcess:
+            pass
+        except psutil.TimeoutExpired as error:
+            raise AssertionError(f"detached process {process_id} did not exit before cleanup") from error
 
 
 def check_detached_process_join_guard():
-    """Prove the teardown join polls a live PID and fails loudly when it never exits."""
+    """Prove every writer is joined and a live writer times out loudly."""
     with tempfile.TemporaryDirectory(prefix=DETACHED_TEST_GUARD_PREFIX) as temporary:
         state_directory = Path(temporary)
         execution_directory = state_directory / "delegate-executions" / DETACHED_TEST_GUARD_EXECUTION_ID
         execution_directory.mkdir(parents=True)
-        state_path = execution_directory / "state.json"
-        state_path.write_text(json.dumps({"worker_pid": os.getpid()}))
-        with patch("os.kill", side_effect=(None, ProcessLookupError)), \
-                patch("time.sleep") as joined_sleep:
+        identity = psutil.Process()
+        (execution_directory / "state.json").write_text(json.dumps({
+            "observer_pid": identity.pid, "observer_birth": identity.create_time()}))
+        joined = Mock()
+        joined.create_time.return_value = identity.create_time()
+        with patch.object(psutil, "Process", return_value=joined):
             wait_for_detached_test_state_processes(state_directory)
-        joined_sleep.assert_called_once_with(DETACHED_TEST_POLL_S)
-        with patch("os.kill", return_value=None), \
-                patch("time.monotonic", side_effect=(0, DETACHED_TEST_COMPLETION_BOUND_S)):
+        joined.wait.assert_called_once()
+        joined.wait.side_effect = psutil.TimeoutExpired(DETACHED_TEST_COMPLETION_BOUND_S)
+        with patch.object(psutil, "Process", return_value=joined):
             try:
                 wait_for_detached_test_state_processes(state_directory)
             except AssertionError:
                 pass
             else:
                 raise AssertionError("detached process join did not fail at its completion bound")
-    print("2 passed: detached PID join waits for exit and times out loudly")
+    print("2 passed: detached writer join waits for exit and times out loudly")
 
 
 def install_detached_lifetime_fixture():
@@ -156,8 +196,7 @@ def check_detached_lifetime_boundary(cancel_isolated_job=False):
             assert retained["retained"] is True and Path(retained["path"]).is_dir(), result
             assert not (repository / DETACHED_TEST_EDIT_FILENAME).exists()
             assert Path(retained["path"]) != repository
-            wait_for_detached_test_state_processes(directory)
-            remove_detached_test_worktree(repository, retained)
+            remove_detached_test_worktree(repository, retained, directory)
             print("4 passed: detached isolated cancel, retained collect metadata, primary unchanged, separate workspace")
             return
         assert isinstance(result, dict) and result.get("execution", {}).get("text") == "offline detached result", result
@@ -175,8 +214,7 @@ def check_detached_lifetime_boundary(cancel_isolated_job=False):
         assert not (repository / DETACHED_TEST_EDIT_FILENAME).exists()
         persisted = json.loads((states[0].parent / "worktree.json").read_text())
         assert persisted == worktree, persisted
-        wait_for_detached_test_state_processes(directory)
-        remove_detached_test_worktree(repository, worktree)
+        remove_detached_test_worktree(repository, worktree, directory)
         print("9 passed: detached completion/collection, PID identity, terminal signal, retained isolated patch")
 
 
@@ -251,6 +289,7 @@ def check_warm_cancellation_stops_retry():
 
 
 if __name__ == "__main__":
+    sys.path.insert(0, str(DETACHED_TEST_SOURCE_ROOT))
     check_detached_process_join_guard()
     check_detached_lifetime_boundary()
     check_detached_lifetime_boundary(cancel_isolated_job=True)
