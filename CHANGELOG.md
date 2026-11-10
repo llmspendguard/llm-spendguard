@@ -4,6 +4,30 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 
 ## [Unreleased]
 
+## [0.16.32] — 2026-11-09
+
+A correctness + docs-integrity release on the restructured trunk. The public CLI, programmatic API, and MCP
+surfaces are unchanged and remain at parity; no caller code needs to change.
+
+### Fixed (#302)
+- `doctor`: the exit code binds to **install-integrity invariants only** (stale install, consumer-install drift,
+  startup-gate gap) — a healthy install diagnosed from an ungated shell reports `ENFORCING HERE: NO` and still
+  exits 0, so `doctor` is runnable from anywhere. A prior `not enforcing` term had made a fresh install exit
+  nonzero from an offline/ungated runner; the contract is restored and pinned by test.
+- `doctor`: costless-catalogue gap is recorded through the named-gap reporter instead of raising.
+- `ledger`: rollup-trigger schema convergence — `converge_rollup_dirty_trigger_schema()` makes the daily-rollup
+  dirty-trigger schema idempotently self-healing (the cause behind a deadletter capture gap).
+- packaging: a single canonical console entry point (removes an ambiguous duplicate).
+
+### Changed / Docs (#301)
+- All hand-written docs refreshed to the post-restructure import paths (e.g. `spendguard.platform._version`),
+  with a test asserting doc code-paths resolve to live source.
+- New **agentic doc-currency readiness guard** (`assess_document_currency_readiness`): it FAILs when a doc
+  references a moved/deprecated import, and reports **UNREVIEWED** offline (its deprecated-import judgement needs
+  a reachable LLM lane). The offline CI/release runners tolerate that UNREVIEWED exactly as they already tolerate
+  `wheel-source-module-conformance`; a real doc-currency regression still FAILs on operator machines and is never
+  tolerated.
+
 ## [0.16.31] — 2026-11-09
 
 First release cut from the domain-taxonomy restructured trunk, which is now `main`. This is an **internal
