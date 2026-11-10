@@ -25,7 +25,6 @@ import uuid
 from pathlib import Path
 
 from ... import config
-from ...store.configuration.config_store import DELEGATE_JOB_ORPHAN_RUNNING_GRACE_DEFAULT_S
 from .process_group_reaper import PROCESS_GROUP_LIVENESS_PROBE_SIGNAL, reap_process_group_bounded
 
 DELEGATE_JOBS_DATABASE_FILENAME = "delegate_jobs.db"
@@ -50,6 +49,7 @@ DELEGATE_JOB_CANCEL_GROUP_POLL_DEFAULT_S = 0.05
 DELEGATE_JOB_CANCEL_GROUP_WARNING_CONTEXT = "delegate cancel"
 DELEGATE_JOB_CANCEL_REASON = "operator-cancelled"
 DELEGATE_JOB_DEFAULT_STALE_RUNNING_GRACE_S = 3600
+DELEGATE_JOB_DEFAULT_ORPHAN_RUNNING_GRACE_S = 86400
 DELEGATE_JOB_DEFAULT_PAYLOAD_RETENTION_DAYS = 30
 DELEGATE_JOB_DEFAULT_MAINTENANCE_BATCH_SIZE = 100
 DELEGATE_JOB_DEFAULT_VACUUM_MIN_FREED_BYTES = 64 * 1024 * 1024
@@ -468,7 +468,7 @@ def _delegate_jobs_maintenance_settings():
         "stale_running_grace_s": float(config._cfg_get(
             "delegate_jobs", "stale_running_grace_s", DELEGATE_JOB_DEFAULT_STALE_RUNNING_GRACE_S)),
         "orphan_running_grace_s": float(config._cfg_get(
-            "delegate_jobs", "orphan_running_grace_s", DELEGATE_JOB_ORPHAN_RUNNING_GRACE_DEFAULT_S)),
+            "delegate_jobs", "orphan_running_grace_s", DELEGATE_JOB_DEFAULT_ORPHAN_RUNNING_GRACE_S)),
         "payload_retention_days": float(config._cfg_get(
             "delegate_jobs", "payload_retention_days", DELEGATE_JOB_DEFAULT_PAYLOAD_RETENTION_DAYS)),
         "batch_size": int(config._cfg_get(
@@ -483,7 +483,6 @@ def _delegate_jobs_maintenance_settings():
 
 def maintain_delegate_job_lifecycle(*, execute=False, reap_running=True, retain_payloads=True, now=None):
     """Plan or apply bounded reaping and lossless payload archiving for delegate jobs."""
-    from ...store.configuration.config_store import disk_guard_floor_bytes
     from .execution_journal import recover_durable_execution
     from .warm_stdio_daemon import _warm_owner_identity_state, WARM_OWNER_IDENTITY_DEAD
 
@@ -586,7 +585,7 @@ def maintain_delegate_job_lifecycle(*, execute=False, reap_running=True, retain_
             connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
         report["checkpoint"] = True
         database_path = delegate_jobs_database_path()
-        required_headroom = database_path.stat().st_size + disk_guard_floor_bytes()
+        required_headroom = database_path.stat().st_size + config.disk_guard_floor_bytes()
         if report["reclaimable_payload_bytes"] < settings["vacuum_min_freed_bytes"]:
             report["vacuum"] = "below-configured-benefit-threshold"
         elif shutil.disk_usage(database_path.parent).free < required_headroom:

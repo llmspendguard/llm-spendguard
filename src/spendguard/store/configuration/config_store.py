@@ -32,7 +32,6 @@ RT_LOG = HOME / "realtime_log.jsonl"          # real-time spend log (per-day-per
 CONFIG_JSON = HOME / "config.json"             # operational (non-secret) config: caps, budget, emit
 
 
-DELEGATE_JOB_ORPHAN_RUNNING_GRACE_DEFAULT_S = 86400
 CODEX_POOL_SIZE_DEFAULT = 20   # warm codex app-servers kept ready per host, fleet-wide default (was 12). The
 #   warm lane is the fast path (~5s warm vs >75s cold); a larger floor absorbs concurrent delegate/review fan-out
 #   without cold-start churn. An explicit advisor.codex_daemon_pool_size / SPENDGUARD_CODEX_DAEMON_POOL_SIZE still
