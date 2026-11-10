@@ -176,6 +176,9 @@ def test_b2b_complete_supervised_daemon_inventory_has_respawn_safe_points():
 
     broker = object.__new__(codex_daemon_broker._CodexDaemonBroker)
     broker._stopping = type("OneTickStop", (), {"wait": lambda self, _timeout: bool(respawn_checks)})()
+    # The owner loop now queries the local pool's resource-exhaustion self-heal signal before the
+    # respawn-safe-point check; this minimal broker stubs it to False so the safe-point path is exercised.
+    broker._local = type("NoRestartPool", (), {"pool_restart_requested": lambda self: False})()
     respawn_checks.clear()
     with patch.object(broker, "_become_owner_if_available", return_value=True), \
          patch.object(codex_daemon_broker.config, "codex_daemon_pool_settings",

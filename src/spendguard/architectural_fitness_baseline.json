@@ -757,7 +757,7 @@
           },
           "src/spendguard/manage/token_operations/codex_daemon.py": {
             "max_cc": 49,
-            "mi": 7.880856918064156
+            "mi": 7.036056170057994
           },
           "src/spendguard/manage/token_operations/codex_daemon_broker.py": {
             "max_cc": 17,
@@ -2109,7 +2109,7 @@
           },
           "src/spendguard/manage/token_operations/codex_daemon.py": {
             "max_cc": 49,
-            "mi": 7.880856918064156
+            "mi": 7.036056170057994
           },
           "src/spendguard/manage/token_operations/codex_daemon_broker.py": {
             "max_cc": 17,
@@ -2537,7 +2537,8 @@
     "reviewed_defect_a_costless_catalogue_gap_branch": "Defect A fix (PR #302): cost_integrity.py routes a costless-catalogue entry through the named-gap reporter (unpriced += 1; append token_cost_reconstruction_unavailable gap; continue) instead of raising an unhandled ValueError. That adds one decision branch (CC 19->20) and lowers MI. The added path is a required fail-safe replacing a traceback with a named UNKNOWN; the complexity is essential, not accidental.",
     "reviewed_codex_reaper_bounded_delete_retries": "2026-11-10: Reviewed the bounded codex-session-reaper retry hardening on fix/codex-reaper-fd-robustness (#303). delegate_jobs.reap_terminal_codex_sessions now records per-thread delete failures (new columns codex_session_reap_failure_reason/codex_session_reap_failed_at/codex_session_reap_attempts) and stops after codex_session_reap.max_delete_attempts (default 3) instead of erroring every pass; config_store adds max_delete_attempts and codex_daemon_pool resource-exhaustion backoff/restart-threshold validation. This raises delegate_jobs.py max_cc 30->32 (reviewed robustness branches) and lowers config_store MI from the added validation. The regeneration also refreshes pre-existing per-file radon measurement drift on files #303 does not change (byte-identical to the green main baseline) under this interpreter, matching the regeneration CI validated green on #304. Accepted.",
     "reviewed_delegate_jobs_lifecycle_maintenance": "#304 adds active delegate-jobs lifecycle maintenance (reap stale-running rows whose owning worker died, reap aged orphan running rows lacking a durable execution_id, bound result_payload via payload_archive_path offload, honest batch-cap) on top of #303's bounded codex-reaper. This raises delegate_router.py max_cc 48->53 (the lifecycle maintenance dispatch) and lowers delegate_jobs.py MI 15.9->7.83 (added schema columns + reap/bound logic in one module). Reviewed: the added complexity is the lifecycle hygiene itself, cohesive within the delegate-jobs seam; measured under 3.11 and 3.12.",
-    "reviewed_catalog_ssot_stage1_store_and_provenance": "Catalog SSOT Stage 1 (#315) added store.reference_data.catalog_store (the one managed accessor over the physical SQLite catalog) and store.reference_data.catalog_provenance. Both are genuinely new source files with no prior complexity baseline entry; their measured radon CC maxima and MI are recorded here under review so the ratchet has a reviewed floor. No existing file's complexity is loosened."
+    "reviewed_catalog_ssot_stage1_store_and_provenance": "Catalog SSOT Stage 1 (#315) added store.reference_data.catalog_store (the one managed accessor over the physical SQLite catalog) and store.reference_data.catalog_provenance. Both are genuinely new source files with no prior complexity baseline entry; their measured radon CC maxima and MI are recorded here under review so the ratchet has a reviewed floor. No existing file's complexity is loosened.",
+    "reviewed_rebase_reconcile_codex_pool_fd_self_heal": "Rebase of #307 (codex-pool broker self-heal on repeated FD exhaustion / EMFILE) onto main after the catalog SSOT Stage 1 cascade; baseline re-derived from the rebased code via the SSOT regenerate tooling."
   },
   "dead_allowlist": [
     {
