@@ -104,6 +104,7 @@ def reachability_probe(save=True):
     {asof, rows:[{lane, model, tiers, served, error}]}."""
     from spendguard.platform import platform_accessors as _platform_accessors
     import spendguard.manage.admission.admission_accessors as gate
+    from spendguard.manage.admission.spend_refusal_error import MeteredCallRefused
     groups = route_utility.tiers()
     enabled = {ln["lane"] for ln in _platform_accessors.resolve_lanes_status()["lanes"] if ln["enabled"]}
     targets = {}                                         # (lane, model) -> the tiers that declare it (probe each once)
@@ -122,7 +123,10 @@ def reachability_probe(save=True):
             r = _execution_accessors.resolve_call(pinned, _REACH_PROMPT, no_substitution=True, no_metered_fallback=True,
                               sig="spendguard:reachability-probe", timeout_s=_REACH_TIMEOUT_S)
         except Exception as e:
-            if gate.resolve_is_deliberate_stop(e):               # a deadline/refusal (DispatchTimeout, SpendGateRefused) HALTS
+            # A $0-refusal (MeteredCallRefused) IS this probe's designed "cannot serve at $0" signal — under
+            # no_metered_fallback a lane miss now RAISES it (seam $0-or-raise), so RECORD it as not-served rather
+            # than halting. A genuine deadline/budget deliberate-stop (DispatchTimeout, SpendGateRefused) still HALTS.
+            if gate.resolve_is_deliberate_stop(e) and not isinstance(e, MeteredCallRefused):
                 raise                                    # the probe — never downgraded to a 'not served' row
             r = {"error": f"{type(e).__name__}: {str(e)[:80]}"}
         rows.append({"lane": ln, "model": model, "tiers": sorted(tiers),

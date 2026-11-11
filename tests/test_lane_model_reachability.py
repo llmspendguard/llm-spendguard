@@ -67,5 +67,35 @@ rows, age = tier_config.cached_reachability()
 record_script_check(fails, "cached_reachability returns the persisted rows + a non-negative age",
    rows is not None and age is not None and age >= 0 and any(r["model"] == "m-bad" for r in rows))
 
+print("-- Fix C: a lane that RAISES MeteredCallRefused (the REAL seam $0-or-raise, not a returned row) reads "
+      "not-served and does NOT abort the probe --")
+# The seam now RAISES MeteredCallRefused on a lane miss under no_metered_fallback (was a returned error row). The
+# probe pins no_substitution + no_metered_fallback, so an unservable enabled lane RAISES here. A $0-refusal is this
+# probe's designed "cannot serve at $0" signal — it must read served=False, NOT halt the whole probe. The Fix-B
+# check above stubs a RETURNED row, so it cannot exercise this raise path; this one does.
+from spendguard.manage.admission.spend_refusal_error import MeteredCallRefused   # noqa: E402
+from spendguard.generate.execution import execution_accessors as _ea            # noqa: E402
+
+route_utility.tiers = lambda: {"cheap": ["m-ok1"], "mid": ["m-raise"], "strong": ["m-ok2"]}
+lane_catalog.lane_model_for_tier = lambda ln, g: {"cheap": "m-ok1", "mid": "m-raise", "strong": "m-ok2"}.get(g)
+
+
+def _raising_resolve(pinned, prompt, **kw):
+    if pinned == "prov:m-raise":
+        raise MeteredCallRefused("no_metered_fallback: L1 cannot serve (miss:lane_error)")   # a DOWN lane, $0-or-raise
+    return {"text": "OK", "model": pinned.split(":")[-1], "cost": 0.0, "executor": "L1"}
+
+
+_ea.resolve_call = _raising_resolve
+snap2 = tier_config.reachability_probe(save=False)
+by2 = {r["model"]: r for r in snap2["rows"]}
+record_script_check(fails, "a lane that RAISES MeteredCallRefused reads served=False (the designed not-served signal)",
+   by2.get("m-raise", {}).get("served") is False and bool(by2.get("m-raise", {}).get("error")))
+record_script_check(fails, "...and the probe COMPLETES — both other models are still probed (no early abort)",
+   by2.get("m-ok1", {}).get("served") is True and by2.get("m-ok2", {}).get("served") is True
+   and len(snap2["rows"]) == 3)
+# MUTATION-PROOF: delete `and not isinstance(e, MeteredCallRefused)` in tier_config.reachability_probe's except →
+# the raise is re-raised, reachability_probe() propagates it, snap2 is never built, and BOTH checks above REDDEN.
+
 print(f"\n{'[FAIL]' if fails else 'OK'} test_lane_model_reachability: {len(fails)} failure(s)")
 sys.exit(1 if fails else 0)

@@ -131,16 +131,26 @@ record_script_check(fails, "...and no_substitution=True SKIPS the different-mode
 # ── no_metered_fallback is literal $0-or-fail for both task misses and down lanes ──
 # (a) a DOWN lane under the explicit flag is still $0-or-fail.
 adapters._lane_for = lambda prov: ("deadlane", _DeadLane())
-r = _run(no_substitution=True, no_metered_fallback=True)
-record_script_check(fails, "refuse_billed + a DOWN lane returns a free error and never calls metered",
-   _metered_calls == [] and r.get("executor") == "deadlane" and r.get("cost") is None and r.get("error"))
+try:
+    _run(no_substitution=True, no_metered_fallback=True)
+except Exception as down_refusal:
+    from spendguard.manage.admission.spend_refusal_error import MeteredCallRefused
+    down_refused_deliberately = isinstance(down_refusal, MeteredCallRefused)
+else:
+    down_refused_deliberately = False
+record_script_check(fails, "refuse_billed + a DOWN lane deliberately refuses and never calls metered",
+                    _metered_calls == [] and down_refused_deliberately)
 # (b) a TASK miss (ran, empty, NO error) under refuse_billed → $0 refusal, metered NEVER called (the preserved contract).
 #     Asserted structurally: the metered leg never ran, the row is attributed to the LANE, nothing was answered/charged.
 adapters._lane_for = lambda prov: ("emptylane", _EmptyLane())
-r = _run(no_substitution=True, no_metered_fallback=True)
+try:
+    _run(no_substitution=True, no_metered_fallback=True)
+except Exception as empty_refusal:
+    empty_refused_deliberately = isinstance(empty_refusal, MeteredCallRefused)
+else:
+    empty_refused_deliberately = False
 record_script_check(fails, "refuse_billed + a TASK miss (empty) → the metered API is NEVER called ($0 by construction)", _metered_calls == [])
-record_script_check(fails, "...and the miss is attributed to the LANE executor, not 'api'", r.get("executor") == "emptylane")
-record_script_check(fails, "...and nothing was answered or charged (a refusal row, not an answer)", r.get("text") is None and r.get("cost") is None and r.get("error") is not None)
+record_script_check(fails, "...and the miss raises the deliberate refusal", empty_refused_deliberately)
 
 # ── no_substitution=False DOES consult the different-model failover (the other half of the separation) ──
 adapters._lane_for = lambda prov: ("deadlane", _DeadLane())    # a failing lane → the reactive different-model path

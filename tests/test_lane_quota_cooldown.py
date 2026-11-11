@@ -78,8 +78,14 @@ adapters._lane_for = lambda prov: ("gemini", _QuotaLane)     # force the gemini 
 adapters._lane_too_big = lambda lane, prompt: False
 adapters._lane_model_cooling = lambda lane, model: False
 lane_balance.route_decision = lambda intent, model, reactive=False: (None, "no sub (test)")
-r = adapters._call_once("gemini:g-low", "hi", max_tokens=100, no_metered_fallback=True)
-fails += ck("refuse path still returns a refusal error row", "refused" in (r.get("error") or "").lower())
+try:
+    adapters._call_once("gemini:g-low", "hi", max_tokens=100, no_metered_fallback=True)
+except Exception as quota_refusal:
+    from spendguard.manage.admission.spend_refusal_error import MeteredCallRefused
+    quota_refused_deliberately = isinstance(quota_refusal, MeteredCallRefused)
+else:
+    quota_refused_deliberately = False
+fails += ck("refuse path raises the deliberate refusal", quota_refused_deliberately)
 fails += ck("(C) the quota lane is now COOLING after the refuse-billed miss (it was not, before)",
             adapters._lane_cooling("gemini"))
 _cap = adapters._max_quota_cool_s()
