@@ -428,6 +428,21 @@ SETTINGS = [
     dict(section="advisor", key="codex_daemon_pool_size", store="config.json:advisor.codex_daemon_pool_size",
          env="SPENDGUARD_CODEX_DAEMON_POOL_SIZE", default=CODEX_POOL_SIZE_DEFAULT, kind="int", secret=False,
          desc="Always-warm exclusive Codex workers behind the single host broker; one restores single-child capacity."),
+    dict(section="advisor", key="codex_workspace_write_network_access",
+         store="config.json:advisor.codex_workspace_write_network_access",
+         env=config.CODEX_WORKSPACE_WRITE_NETWORK_ACCESS_ENV,
+         default=config.CODEX_WORKSPACE_WRITE_NETWORK_ACCESS_DEFAULT,
+         kind="bool", secret=False,
+         desc="Set networkAccess on the explicit per-turn workspace-write sandbox policy used by agentic delegates. "
+              "An explicit policy replaces the config.toml-derived policy, so this field must always be sent or "
+              "Codex defaults it to false. Set false to deny agentic delegates network access."),
+    dict(section="advisor", key="codex_read_only_network_access",
+         store="config.json:advisor.codex_read_only_network_access",
+         env=config.CODEX_READ_ONLY_NETWORK_ACCESS_ENV, default=config.CODEX_READ_ONLY_NETWORK_ACCESS_DEFAULT,
+         kind="bool", secret=False,
+         desc="Set networkAccess on the explicit per-turn read-only sandbox policy used by the one-shot "
+              "comprehension lane. An explicit policy replaces the config.toml-derived policy, so this field must "
+              "always be sent or Codex defaults it to false. Set true to allow comprehension turns network access."),
     dict(section="advisor", key="codex_daemon_lease_idle_s",
          store="config.json:advisor.codex_daemon_lease_idle_s",
          env="SPENDGUARD_CODEX_DAEMON_LEASE_IDLE_S", default=config.CODEX_DAEMON_LEASE_IDLE_S_DEFAULT,

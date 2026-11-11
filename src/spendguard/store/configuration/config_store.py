@@ -39,6 +39,15 @@ CODEX_POOL_SIZE_DEFAULT = 20   # warm codex app-servers kept ready per host, fle
 CODEX_DAEMON_MAX_WAITERS_DEFAULT = 32
 CODEX_DAEMON_REQUEST_READ_TIMEOUT_DEFAULT_S = 5.0
 CODEX_DAEMON_RECYCLE_ON_TIMEOUT_DEFAULT = True
+# Agentic delegates need network access for URLs, package indexes, and live hosts.
+CODEX_WORKSPACE_WRITE_NETWORK_ACCESS_DEFAULT = True
+CODEX_WORKSPACE_WRITE_NETWORK_ACCESS_ENV = "SPENDGUARD_CODEX_WORKSPACE_WRITE_NETWORK_ACCESS"
+# Read-only comprehension operates on supplied text, so network access is denied by default.
+CODEX_READ_ONLY_NETWORK_ACCESS_DEFAULT = False
+CODEX_READ_ONLY_NETWORK_ACCESS_ENV = "SPENDGUARD_CODEX_READ_ONLY_NETWORK_ACCESS"
+CODEX_READ_ONLY_SANDBOX_MODE = "read-only"
+CODEX_WORKSPACE_WRITE_SANDBOX_MODE = "workspace-write"
+CODEX_SANDBOX_MODES = (CODEX_READ_ONLY_SANDBOX_MODE, CODEX_WORKSPACE_WRITE_SANDBOX_MODE)
 CODEX_DAEMON_LEASE_IDLE_S_DEFAULT = 120  # Reclaim a leased worker after this long without progress.
 CODEX_DAEMON_LEASE_MAX_S_DEFAULT = 1800  # Reclaim a progressing lease at this absolute runaway backstop.
 CODEX_POOL_ISOLATE_DEFAULT = False
@@ -426,6 +435,30 @@ def codex_daemon_admission_settings():
     return {"max_waiters": max_waiters, "request_read_timeout_s": read_timeout,
             "recycle_on_timeout": bool(recycle), "lease_idle_s": lease_idle_s,
             "lease_max_s": lease_max_s}
+
+
+def validate_codex_sandbox_mode(sandbox):
+    """Reject sandbox modes that spendguard does not deliberately support."""
+    if sandbox not in CODEX_SANDBOX_MODES:
+        raise ValueError(f"Unrecognized Codex sandbox mode {sandbox!r}; recognized modes: {CODEX_SANDBOX_MODES!r}")
+    return sandbox
+
+
+def codex_network_access_enabled_for_sandbox(sandbox):
+    """Return the env-first network setting for a Codex per-turn sandbox mode."""
+    sandbox = validate_codex_sandbox_mode(sandbox)
+    if sandbox == CODEX_WORKSPACE_WRITE_SANDBOX_MODE:
+        env = CODEX_WORKSPACE_WRITE_NETWORK_ACCESS_ENV
+        key = "codex_workspace_write_network_access"
+        default = CODEX_WORKSPACE_WRITE_NETWORK_ACCESS_DEFAULT
+    else:
+        env = CODEX_READ_ONLY_NETWORK_ACCESS_ENV
+        key = "codex_read_only_network_access"
+        default = CODEX_READ_ONLY_NETWORK_ACCESS_DEFAULT
+    value = os.getenv(env)
+    if value is None:
+        value = _cfg_get("advisor", key, default)
+    return value if isinstance(value, bool) else value.strip().lower() in CODEX_POOL_TRUE_VALUES
 
 
 def codex_daemon_worker_home_stale_age_s():
