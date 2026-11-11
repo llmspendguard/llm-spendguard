@@ -33,6 +33,7 @@ PATH_JSON_OBJECT = "json-object"
 PATH_EMBED = "embed"
 PATH_BATCH = "batch"
 PATH_VISION = "vision"
+CALL_IO_BATCH_ID_PREFIX = "batch_"
 USAGE_BANK_PATHS = (PATH_CHAT, PATH_JSON_STRICT, PATH_JSON_OBJECT, PATH_EMBED, PATH_BATCH, PATH_VISION)
 STATUS_PASS = "PASS"
 STATUS_FAIL = "FAIL"
@@ -96,7 +97,7 @@ def _usage_path(provider, model, batch, schema):
         return PATH_EMBED
     if mode == "vision":
         return PATH_VISION
-    if batch:
+    if isinstance(batch, str) and batch.startswith(CALL_IO_BATCH_ID_PREFIX):
         return PATH_BATCH
     if schema:
         return PATH_JSON_STRICT if schema_capability(provider) != SCHEMA_JSON_OBJECT else PATH_JSON_OBJECT

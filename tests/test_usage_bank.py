@@ -23,6 +23,9 @@ def sample_usage_bank_contract(path=usage_bank.PATH_JSON_STRICT):
 
 
 def main():
+    assert usage_bank._usage_path("openai", "gpt-5-nano", "live", None) == usage_bank.PATH_CHAT
+    assert usage_bank._usage_path("openai", "gpt-5-nano", "batch_deadbeef", None) == usage_bank.PATH_BATCH
+
     with mock.patch.object(adapters, "call", side_effect=AssertionError("estimate spent")), \
          mock.patch.object(usage_bank, "_cheapest_catalog_model", return_value="gpt-5-nano"), \
          mock.patch.object(usage_bank.pricing, "realtime_cost", return_value=0.01):
