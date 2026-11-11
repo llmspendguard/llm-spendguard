@@ -82,10 +82,10 @@ _lane_echoed = set()             # lanes already announced this run — echo "a 
                                  # lane so the user KNOWS their work rode a subscription (not once per call = spam).
 
 
-def _lane_for(prov):
+def _lane_for(prov, executor=None):
     """(lane_name, exec_module) if the configured executor covers this provider's prompts, else None.
     `pool` enables every provider's lane; a single-lane setting enables only its own provider."""
-    ex = _executor()
+    ex = executor.strip().lower() if executor is not None else _executor()
     lane, mod = _LANES.get(prov, (None, None))
     if lane is None or ex not in ("pool", lane):
         return None
@@ -363,7 +363,7 @@ def _returns_callresult(fn):
 @_returns_callresult
 def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=None, timeout_s=None,
          sig=None, intent=None, retries=2, files=None, _no_guard=False, no_metered_fallback=False, images=None,
-         no_substitution=False, measurement=False, metered_only=False, base_fallback=None, _probe=False, _route=True,
+         no_substitution=False, measurement=False, metered_only=False, executor=None, base_fallback=None, _probe=False, _route=True,
          _internal_pin=False, _coalesce_eligible=True, temperature=None, top_p=None, seed=None,
          soft_deadline_s=None, auth_over_quota=False, decomposition=None, **aliases):
     """Run one one-shot prompt through the governed model/lane router. Returns a CallResult (never raises).
@@ -392,6 +392,9 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
     reasoning scale + warm-daemon concurrency) would drift the verdict. Default False = the lane serves first and a
     miss falls back to the metered API (the cheap, faithful-for-capability default). A vision call (`images=`) is
     metered by construction regardless.
+
+    `executor=` is a thread-safe per-call override of the ambient executor selection; None leaves current
+    environment/config behavior unchanged.
 
     `measurement=True` declares that WHICH MODEL answers IS the result — a bakeoff, a cross-vendor panel, a priced
     A/B — and so IMPLIES no_substitution: the named model answers or the call errors, never a silent lane/bandit swap
@@ -968,12 +971,14 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
                                   schema=schema, timeout_s=timeout_s, sig=sig, retries=retries,
                                   no_metered_fallback=no_metered_fallback, images=images, _no_sub=no_substitution,
                                   metered_only=metered_only, _probe=_probe, _internal_pin=_internal_pin,
+                                  executor=executor,
                                   temperature=temperature, top_p=top_p, seed=seed, intent=intent,
                                   auth_over_quota=auth_over_quota)
             else:
                 r = _call_once(model, prompt, max_tokens=max_tokens, system=system, reasoning=reasoning,
                                schema=schema, timeout_s=timeout_s, no_metered_fallback=no_metered_fallback, images=images,
                                _no_sub=no_substitution, _skip_lane=metered_only, _internal_pin=_internal_pin,
+                               executor=executor,
                                temperature=temperature, top_p=top_p, seed=seed, intent=intent,
                                auth_over_quota=auth_over_quota)   # metered_only=True → skip the lane
         finally:
@@ -1431,7 +1436,7 @@ def _est_call_tokens(prompt, system, out_tokens, model=None, intent=None):
 def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, schema=None, timeout_s=None,
                _skip_lane=False, no_metered_fallback=False, images=None, _no_sub=False, _internal_pin=False,
                temperature=None, top_p=None, seed=None, _recovery_proof=None, intent=None,
-               auth_over_quota=False):
+               auth_over_quota=False, executor=None):
     """One raw request. Everything public goes through `call`, which adds the input and output guards.
 
     NO DEFAULT CAP. This carried `max_tokens=512` — the last place a number nobody chose could still reach a
@@ -1494,11 +1499,14 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
     # (agy/codex/claude-code) with no image channel, so an images= call skips the lane by construction.
     _configured_lane, _configured_module = _LANES.get(prov, (None, None))
     _lane_refusal_reason = None
-    _lane = None if (_skip_lane or images) else _lane_for(prov)
+    _eff_executor = executor.strip().lower() if executor is not None else _executor()
+    _lane = None if (_skip_lane or images) else (
+        _lane_for(prov, _eff_executor) if executor is not None else _lane_for(prov)
+    )
     if _lane is None and not (_skip_lane or images):
         # A cooldown is a retry schedule, not permission to bill. The recovery ladder owns the
         # final paid transition even when a previous caller cooled the shared lane.
-        if _configured_lane and _executor() in ("pool", _configured_lane):
+        if _configured_lane and _eff_executor in ("pool", _configured_lane):
             import importlib
             _lane = (_configured_lane, importlib.import_module(f".{_configured_module}", __package__))
     if _lane is None:
