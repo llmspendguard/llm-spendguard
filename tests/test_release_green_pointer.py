@@ -128,60 +128,55 @@ record_script_check(fails, "served_sha() is None when git is unavailable", relea
 record_script_check(fails, "stale_vs_green() is False when the served version is unknown", release.stale_vs_green() is False)
 record_script_check(fails, "release_status note says version unknown, server keeps running", "unknown" in release.release_status()["note"])
 
-print("\n-- the tag release cannot publish without the live selfcheck gate --")
+print("\n-- the tag release cannot publish without exact-commit green CI proof --")
 repository_root = pathlib.Path(__file__).resolve().parents[1]
 release_workflow_path = repository_root / ".github" / "workflows" / "release.yml"
 release_workflow = yaml.safe_load(release_workflow_path.read_text())
 release_test_steps = release_workflow["jobs"]["test"]["steps"]
-release_test_commands = [str(step.get("run", "")).splitlines() for step in release_test_steps]
-
-# The release selfcheck runs offline on a SINGLE interpreter, so three readiness gates are UNREVIEWED there even
-# though each is proven elsewhere (on this SAME commit, or on operator machines): env-parity-in-verification
-# (branch CI attests parity across two independent interpreters), wheel-source-module-conformance (the real
-# wheel/source module-set equality runs in the `pytest -n auto` suite above, with the build backend provisioned),
-# and docs-present (its doc-currency check makes an agentic deprecated-import judgement that needs a reachable LLM
-# lane; the release runner is network-isolated so that leg cannot run and the gate reports UNREVIEWED — the
-# judgement runs on operator machines where a lane is present, and a real doc-currency regression there FAILs and
-# is never tolerated). The release gate must tolerate EXACTLY those three UNREVIEWEDs and nothing else — so a
-# future loosening (any fourth id slipped in) OR a silent drop of any one both break this guard. Mirrors ci.yml,
-# which tolerates the same wheel and docs-present gates.
-EXPECTED_RELEASE_SELFCHECK_TOLERANCES = frozenset(
-    {"env-parity-in-verification", "wheel-source-module-conformance", "docs-present"})
-
-
-def extract_selfcheck_tolerated_identifiers(selfcheck_command_line):
-    """Parse the tolerated-id SET from a `spendguard selfcheck ...` command line (fixed flag format, not a decision)."""
-    command_tokens = selfcheck_command_line.split()
-    if command_tokens[:2] != ["spendguard", "selfcheck"]:
-        return None
-    tolerated_identifiers = set()
-    token_index = 2
-    while token_index < len(command_tokens):
-        if command_tokens[token_index] == "--tolerate-unreviewed" and token_index + 1 < len(command_tokens):
-            tolerated_identifiers.add(command_tokens[token_index + 1])
-            token_index += 2
-        else:
-            token_index += 1
-    return tolerated_identifiers
-
-
-release_selfcheck_tolerances = next(
-    (tolerated_identifiers
-     for commands in release_test_commands
-     for command in commands
-     for tolerated_identifiers in (extract_selfcheck_tolerated_identifiers(command.strip()),)
-     if tolerated_identifiers is not None),
+RELEASE_EXACT_SHA_GATE_STEP_NAME = "Require successful CI for the exact tagged commit"
+RELEASE_VERSION_SSOT_STEP_NAME_PREFIX = "Version SSOT"
+release_exact_sha_gate_step = next(
+    (step for step in release_test_steps if step.get("name") == RELEASE_EXACT_SHA_GATE_STEP_NAME),
     None,
 )
+release_exact_sha_gate_command = str((release_exact_sha_gate_step or {}).get("run", ""))
+release_version_ssot_step = next(
+    (step for step in release_test_steps
+     if str(step.get("name", "")).startswith(RELEASE_VERSION_SSOT_STEP_NAME_PREFIX)),
+    None,
+)
+release_version_ssot_command = str((release_version_ssot_step or {}).get("run", ""))
+
 record_script_check(
     fails,
-    "release test job tolerates exactly the env-parity, wheel-conformance and docs-present UNREVIEWEDs (each proven on this commit or on operator machines)",
-    release_selfcheck_tolerances == EXPECTED_RELEASE_SELFCHECK_TOLERANCES,
+    "release test job requires successful ci.yml for the exact tagged commit SHA",
+    release_exact_sha_gate_step is not None
+    and "actions/workflows/ci.yml/runs" in release_exact_sha_gate_command
+    and 'head_sha="$GITHUB_SHA"' in release_exact_sha_gate_command
+    and ".head_sha == env.GITHUB_SHA" in release_exact_sha_gate_command
+    and '.conclusion == "success"' in release_exact_sha_gate_command,
 )
 record_script_check(
     fails,
-    "publish needs the test job, so selfcheck failure blocks publication",
+    "exact-SHA CI gate fails closed with an annotation and nonzero exit when no successful run exists",
+    'if [ "$successful_run_count" -lt 1 ]' in release_exact_sha_gate_command
+    and "::error::" in release_exact_sha_gate_command
+    and "exit 1" in release_exact_sha_gate_command,
+)
+record_script_check(
+    fails,
+    "publish needs the test job, so exact-SHA CI gate failure blocks publication",
     release_workflow["jobs"]["publish"].get("needs") == "test",
+)
+record_script_check(
+    fails,
+    "release test job retains the version-SSOT tag-drift check",
+    release_version_ssot_step is not None
+    and "runpy.run_path" in release_version_ssot_command
+    and "src/spendguard/_version.py" in release_version_ssot_command
+    and 'if [ "$TAG_VERSION" != "$SOURCE_VERSION" ]' in release_version_ssot_command
+    and "::error::" in release_version_ssot_command
+    and "exit 1" in release_version_ssot_command,
 )
 
 passing_outcome = {"id": "source-ratchet", "status": "PASS"}
