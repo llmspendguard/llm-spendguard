@@ -12,6 +12,8 @@ reports the up-to-date / stale / no-pointer / unknown cases faithfully.
 Hermetic: isolated SPENDGUARD_HOME; git is stubbed via release._git_src; no network, no real repo, no ledger."""
 import os
 import pathlib
+import stat
+import subprocess
 import sys
 import tempfile
 
@@ -23,8 +25,9 @@ os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
 from _script_checks import record_script_check
-from spendguard import manifest, release   # noqa: E402
-from spendguard.capability_readiness import capability_selfcheck_exit_code  # noqa: E402
+from spendguard import release   # noqa: E402
+from spendguard.analyze.assurance.capability_readiness import capability_selfcheck_exit_code  # noqa: E402
+from spendguard.platform import manifest  # noqa: E402
 
 fails = []
 
@@ -139,45 +142,80 @@ release_exact_sha_gate_step = next(
     (step for step in release_test_steps if step.get("name") == RELEASE_EXACT_SHA_GATE_STEP_NAME),
     None,
 )
-release_exact_sha_gate_command = str((release_exact_sha_gate_step or {}).get("run", ""))
 release_version_ssot_step = next(
     (step for step in release_test_steps
      if str(step.get("name", "")).startswith(RELEASE_VERSION_SSOT_STEP_NAME_PREFIX)),
     None,
 )
-release_version_ssot_command = str((release_version_ssot_step or {}).get("run", ""))
+RELEASE_EXACT_SHA_GATE_SCRIPT = "scripts/ci/require_successful_ci_for_tagged_commit.sh"
+RELEASE_VERSION_SSOT_SCRIPT = "scripts/ci/assert_release_tag_matches_source_version.sh"
+release_exact_sha_gate_command = (release_exact_sha_gate_step or {}).get("run")
+release_version_ssot_command = (release_version_ssot_step or {}).get("run")
 
-record_script_check(
-    fails,
-    "release test job requires successful ci.yml for the exact tagged commit SHA",
-    release_exact_sha_gate_step is not None
-    and "actions/workflows/ci.yml/runs" in release_exact_sha_gate_command
-    and 'head_sha="$GITHUB_SHA"' in release_exact_sha_gate_command
-    and ".head_sha == env.GITHUB_SHA" in release_exact_sha_gate_command
-    and '.conclusion == "success"' in release_exact_sha_gate_command,
-)
-record_script_check(
-    fails,
-    "exact-SHA CI gate fails closed with an annotation and nonzero exit when no successful run exists",
-    'if [ "$successful_run_count" -lt 1 ]' in release_exact_sha_gate_command
-    and "::error::" in release_exact_sha_gate_command
-    and "exit 1" in release_exact_sha_gate_command,
-)
+record_script_check(fails, "release exact-SHA gate step invokes its executable gate script",
+    release_exact_sha_gate_command == f"bash {RELEASE_EXACT_SHA_GATE_SCRIPT}")
+record_script_check(fails, "release version-SSOT step invokes its executable gate script",
+    release_version_ssot_command == f"bash {RELEASE_VERSION_SSOT_SCRIPT}")
 record_script_check(
     fails,
     "publish needs the test job, so exact-SHA CI gate failure blocks publication",
     release_workflow["jobs"]["publish"].get("needs") == "test",
 )
-record_script_check(
-    fails,
-    "release test job retains the version-SSOT tag-drift check",
-    release_version_ssot_step is not None
-    and "runpy.run_path" in release_version_ssot_command
-    and "src/spendguard/_version.py" in release_version_ssot_command
-    and 'if [ "$TAG_VERSION" != "$SOURCE_VERSION" ]' in release_version_ssot_command
-    and "::error::" in release_version_ssot_command
-    and "exit 1" in release_version_ssot_command,
-)
+
+with tempfile.TemporaryDirectory(prefix="release-gate-contract-") as release_gate_temp_directory:
+    release_gate_temp_path = pathlib.Path(release_gate_temp_directory)
+    fake_gh_path = release_gate_temp_path / "gh"
+    fake_gh_path.write_text("#!/usr/bin/env bash\nprintf '%s\\n' \"$FAKE_GH_SUCCESSFUL_RUN_COUNT\"\n")
+    fake_gh_path.chmod(fake_gh_path.stat().st_mode | stat.S_IXUSR)
+    release_gate_environment = os.environ.copy()
+    release_gate_environment.update({
+        "GITHUB_REPOSITORY": "test-owner/test-repository",
+        "GITHUB_SHA": "1" * 40,
+        "PATH": os.pathsep.join((
+            str(release_gate_temp_path), str(pathlib.Path(sys.executable).parent), release_gate_environment["PATH"],
+        )),
+    })
+    exact_sha_gate_script_path = repository_root / RELEASE_EXACT_SHA_GATE_SCRIPT
+
+    zero_success_environment = release_gate_environment | {"FAKE_GH_SUCCESSFUL_RUN_COUNT": "0"}
+    zero_success_result = subprocess.run(
+        ["bash", str(exact_sha_gate_script_path)], cwd=repository_root, env=zero_success_environment,
+        capture_output=True, text=True, check=False,
+    )
+    record_script_check(fails, "exact-SHA gate exits nonzero and annotates zero successful CI runs",
+        zero_success_result.returncode != 0
+        and "::error::" in zero_success_result.stdout + zero_success_result.stderr)
+
+    successful_ci_environment = release_gate_environment | {"FAKE_GH_SUCCESSFUL_RUN_COUNT": "2"}
+    successful_ci_result = subprocess.run(
+        ["bash", str(exact_sha_gate_script_path)], cwd=repository_root, env=successful_ci_environment,
+        capture_output=True, text=True, check=False,
+    )
+    record_script_check(fails, "exact-SHA gate exits zero when successful CI proof exists",
+        successful_ci_result.returncode == 0)
+
+    temporary_version_source_path = release_gate_temp_path / "_version.py"
+    temporary_version_source_path.write_text('__version__ = "3.4.5"\n')
+    version_gate_script_path = repository_root / RELEASE_VERSION_SSOT_SCRIPT
+    matching_version_environment = release_gate_environment | {
+        "GITHUB_REF_NAME": "v3.4.5",
+        "SPENDGUARD_RELEASE_VERSION_SOURCE_PATH": str(temporary_version_source_path),
+    }
+    matching_version_result = subprocess.run(
+        ["bash", str(version_gate_script_path)], cwd=repository_root, env=matching_version_environment,
+        capture_output=True, text=True, check=False,
+    )
+    record_script_check(fails, "version-SSOT gate exits zero when tag and source version match",
+        matching_version_result.returncode == 0)
+
+    drifted_version_environment = matching_version_environment | {"GITHUB_REF_NAME": "v3.4.6"}
+    drifted_version_result = subprocess.run(
+        ["bash", str(version_gate_script_path)], cwd=repository_root, env=drifted_version_environment,
+        capture_output=True, text=True, check=False,
+    )
+    record_script_check(fails, "version-SSOT gate exits nonzero and annotates tag/source drift",
+        drifted_version_result.returncode != 0
+        and "::error::" in drifted_version_result.stdout + drifted_version_result.stderr)
 
 passing_outcome = {"id": "source-ratchet", "status": "PASS"}
 environment_unreviewed_outcome = {"id": "env-parity-in-verification", "status": "UNREVIEWED"}

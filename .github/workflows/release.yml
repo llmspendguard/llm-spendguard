@@ -25,24 +25,11 @@ jobs:
         # The published wheel's version comes from pyproject's dynamic attr = spendguard._version.__version__ (the
         # SSOT read live from source). If the tag and that literal disagree, PyPI would get the file's version while
         # git says another — so fail fast here, before any expensive step, rather than publish a mismatch.
-        run: |
-          TAG_VERSION="${GITHUB_REF_NAME#v}"
-          SOURCE_VERSION="$(python -c 'import runpy; print(runpy.run_path("src/spendguard/_version.py")["__version__"])')"
-          if [ "$TAG_VERSION" != "$SOURCE_VERSION" ]; then
-            echo "::error::tag $GITHUB_REF_NAME (=$TAG_VERSION) != src/spendguard/_version.py ($SOURCE_VERSION) — bump the file to match the tag"
-            exit 1
-          fi
-          echo "version SSOT ok: tag=$TAG_VERSION == source=$SOURCE_VERSION"
+        run: bash scripts/ci/assert_release_tag_matches_source_version.sh
       - name: Require successful CI for the exact tagged commit
         env:
           GH_TOKEN: ${{ github.token }}
-        run: |
-          successful_run_count="$(gh api --method GET --paginate "repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs" -f head_sha="$GITHUB_SHA" -f status=completed --jq '[.workflow_runs[] | select(.head_sha == env.GITHUB_SHA and .conclusion == "success")] | length' | awk '{total += $1} END {print total + 0}')"
-          if [ "$successful_run_count" -lt 1 ]; then
-            echo "::error::no successful ci.yml run exists for tagged commit $GITHUB_SHA"
-            exit 1
-          fi
-          echo "reused $successful_run_count successful ci.yml proof(s) for $GITHUB_SHA"
+        run: bash scripts/ci/require_successful_ci_for_tagged_commit.sh
 
   publish:
     needs: test                  # publish ONLY after version parity and exact-SHA green CI proof
