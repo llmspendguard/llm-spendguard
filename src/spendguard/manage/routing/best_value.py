@@ -172,6 +172,24 @@ def select_model_effort(intent, requested_model, pin_model=False, quality_target
         return dict(model=requested_model, effort=eff, considered=considered,
                     why="best-value: pinned %s @ learned effort %s (titration)" % (requested_model, eff))
 
+    # FREE-FIRST RESOLUTION SEAM. A fungible explicit best-value call prefers the best READY subscription lane,
+    # already ranked by measured headroom/pace in plan_admission, before asking the priced-model advisor. This is
+    # caller-independent: every model=None / explicit best-value path reaches this selector. The advisor remains the
+    # honest fallback only when no eligible $0 lane can serve.
+    try:
+        free_lane_pick = gate.resolve__best_ready_alt_lane(None, tier="cheap")
+    except Exception as free_lane_error:
+        if gate.resolve_is_deliberate_stop(free_lane_error):
+            raise
+        free_lane_pick = None
+    if free_lane_pick:
+        free_lane_name, free_lane_model = free_lane_pick
+        considered.update(source="eligible-free-lane", model_candidates=1,
+                          note=f"{free_lane_name} is ready and ranked first by subscription headroom")
+        free_lane_effort = models.effort_for(free_lane_model, intent)
+        return dict(model=free_lane_model, effort=free_lane_effort, considered=considered,
+                    why=f"best-value: eligible $0 lane {free_lane_name} before metered models")
+
     # CROSS-MODEL: the MODEL is an AGENTIC judgement over the measured frontier (recommend_models — meta-caged,
     # estimate-first). A deliberate stop (a spend refusal / deadline) PROPAGATES; any other advisor hiccup degrades
     # honestly to the named model. The reasoner ranks only models with evidence, so a cold intent yields no pick.

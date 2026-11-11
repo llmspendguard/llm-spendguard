@@ -71,16 +71,24 @@ adapters._lane_for = lambda prov: ("codexfake", _AlwaysFail) if prov == "openai"
 _n["fail"] = 0
 _original_quality_substitutes = lane_balance.quality_equivalent_free_substitutes
 _original_hold_free_recovery = lane_queue.hold_free_recovery
+refused_deliberately = False
 try:
     # This test owns the confirmation-retry rung. The complete substitute→queue→metered ladder is exercised by
     # test_ensure_success_routing.py; do not let its additional primary probes inflate this rung's attempt count.
     lane_balance.quality_equivalent_free_substitutes = lambda *args, **kwargs: []
     lane_queue.hold_free_recovery = lambda *args, **kwargs: {
         "error": "isolated recovery queue exhausted", "_free_hold": {"deadline_exhausted": True}}
-    adapters._call_once("openai:gpt-5.5", "hi", max_tokens=100, no_metered_fallback=True)
+    try:
+        adapters._call_once("openai:gpt-5.5", "hi", max_tokens=100, no_metered_fallback=True)
+    except Exception as confirmation_refusal:
+        from spendguard.manage.admission.spend_refusal_error import MeteredCallRefused
+        refused_deliberately = isinstance(confirmation_refusal, MeteredCallRefused)
 finally:
     lane_balance.quality_equivalent_free_substitutes = _original_quality_substitutes
     lane_queue.hold_free_recovery = _original_hold_free_recovery
+# EQUALITY/falsifiable: a silent normal return (no raise) leaves refused_deliberately False → this REDDENS.
+record_script_check(fails, "a confirmed miss under no_metered_fallback raises the deliberate refusal (not a silent return)",
+                    refused_deliberately)
 record_script_check(fails, "no proven-good history → bounded confirmation attempts", _n["fail"] == 2)
 
 print("\n-- a DELIBERATE stop from the lane PROPAGATES (halts), never swallowed + retried --")

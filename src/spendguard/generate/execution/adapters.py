@@ -100,6 +100,16 @@ def _lane_for(prov):
         return None
 
 
+def _raise_no_metered_fallback_refusal(lane_name, refusal_reason):
+    """Refuse the single metered-dispatch seam for an explicit $0-only call."""
+    from spendguard.manage.admission.spend_refusal_error import MeteredCallRefused
+
+    raise MeteredCallRefused(
+        f"no_metered_fallback: {lane_name or 'no configured lane'} cannot serve ({refusal_reason}); "
+        "refused metered API dispatch"
+    )
+
+
 GEN_KNOBS = ("temperature", "top_p", "seed")   # the caller-facing STANDARDIZED determinism surface (measurement-only)
 
 
@@ -1482,15 +1492,31 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
     # Any lane failure cools that lane and falls back to the caged API path below — degrade, never break.
     # VISION rides the metered API, never a subscription lane — the lane executors are text-only print-mode CLIs
     # (agy/codex/claude-code) with no image channel, so an images= call skips the lane by construction.
+    _configured_lane, _configured_module = _LANES.get(prov, (None, None))
+    _lane_refusal_reason = None
     _lane = None if (_skip_lane or images) else _lane_for(prov)
     if _lane is None and not (_skip_lane or images):
         # A cooldown is a retry schedule, not permission to bill. The recovery ladder owns the
         # final paid transition even when a previous caller cooled the shared lane.
-        _configured_lane, _configured_module = _LANES.get(prov, (None, None))
         if _configured_lane and _executor() in ("pool", _configured_lane):
             import importlib
             _lane = (_configured_lane, importlib.import_module(f".{_configured_module}", __package__))
-    if _lane and (_lane_too_big(_lane[0], prompt) or _lane_model_cooling(_lane[0], raw)):
+    if _lane is None:
+        if _skip_lane:
+            _lane_refusal_reason = "miss"
+        elif images:
+            _lane_refusal_reason = "not-eligible: image calls are not supported by subscription lanes"
+        elif _configured_lane is None:
+            _lane_refusal_reason = "not-eligible: provider has no configured subscription lane"
+        elif _executor() not in ("pool", _configured_lane):
+            _lane_refusal_reason = f"ambient-api: executor={_executor()} does not enable {_configured_lane}"
+        else:
+            _lane_refusal_reason = "not-eligible"
+    if _lane and _lane_too_big(_lane[0], prompt):
+        _lane_refusal_reason = "too-big"
+        _lane = None
+    elif _lane and _lane_model_cooling(_lane[0], raw):
+        _lane_refusal_reason = "cooling"
         _lane = None                                 # prompt too big for this lane, OR this MODEL was rejected here
         #                                              recently (the API served it) → straight to API, don't re-intercept
     # Only a strict-capable meter improves enforcement; compat vendors retain their free lane. An explicit
@@ -1663,8 +1689,7 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
             # outage. This is deliberately the rare exception to ensure-success; without this opt-in, the ladder below
             # exhausts quality-proven free lanes and then uses the metered twin. The structured reason is preserved so
             # a caller can distinguish task-unsuitable from infrastructure-down without parsing prose.
-            return {**base, "text": None, "cost": None, "executor": lane_name, "reason": _lane_reason,   # MISS is an
-                    "error": f"refused: would bill metered API ({s.get('error')})"}   # error row, NOT a paid retry — $0
+            _raise_no_metered_fallback_refusal(lane_name, f"miss:{_lane_reason}")
         if _lane_reason == "lane_error" and not no_metered_fallback:
             _surface_lane_down(lane_name, s.get("error"))  # empty); the ladder below reroutes + cools via _learn_from_fallback
         # LANE FAILED. REACTIVE FAILOVER FIRST: before paying the metered API, exhaust every $0 arm whose measured
@@ -1709,8 +1734,15 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
                 try:
                     from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
                     with _call_corpus_accessors.resolve_calls_redirect_context(model, "fallback ladder: " + _rwhy, _rsub_lane):
-                        _rr = call(_rsub, prompt, max_tokens=max_tokens, system=system, reasoning=reasoning,
-                                   schema=schema, timeout_s=timeout_s, no_metered_fallback=True)
+                        try:
+                            _rr = call(_rsub, prompt, max_tokens=max_tokens, system=system, reasoning=reasoning,
+                                       schema=schema, timeout_s=timeout_s, no_metered_fallback=True)
+                        except Exception as _free_refusal:
+                            from spendguard.manage.admission.spend_refusal_error import MeteredCallRefused
+                            if not isinstance(_free_refusal, MeteredCallRefused):
+                                raise
+                            _rr = {"text": None, "error": str(_free_refusal), "cost": None,
+                                   "executor": _rsub_lane}
                 finally:
                     _sub_guard.on = False
                 if not _rr.get("error"):
@@ -1751,8 +1783,7 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
                                         executor=lane_name, outcome="ok", disposition="served")
             return {**base, **_held, "cost": 0.0, "executor": lane_name, "lane_recovery": _recovery.events}
         if no_metered_fallback:
-            return {**base, "text": None, "cost": None, "executor": lane_name, "reason": _lane_reason,
-                    "lane_recovery": _recovery.events, "error": "refused: free recovery exhausted; metered forbidden"}
+            _raise_no_metered_fallback_refusal(lane_name, f"miss:{_lane_reason}")
         # No substitute (or it also failed) → fall back to the API on the SAME prompt (this recurses with the lane
         # disabled, so the existing API path runs once, unchanged) and let its OUTCOME settle whether the lane was
         # unsuitable for this prompt (keep it) or genuinely down (cool it).
@@ -1827,6 +1858,11 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
             _lane_chatter(f"[spendguard] {lane_name} lane unavailable — cooling {int(_pool_cooldown_s())}s; the API "
                           f"fallback also failed ({str(s['error'])[:60]})")
         return out
+    if no_metered_fallback:
+        _raise_no_metered_fallback_refusal(
+            _configured_lane,
+            _lane_refusal_reason or "not-eligible",
+        )
     key = config.api_key(spec["key_env"])
     if not key:
         return {**base, "error": f"no key ({spec['key_env']})"}

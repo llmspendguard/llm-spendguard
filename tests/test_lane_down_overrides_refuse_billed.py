@@ -53,13 +53,17 @@ def main():
         TIMEOUT_S=60,
         run_prompt=lambda prompt, system=None, model=None, timeout=None, **_kw: {
             "error": "access token could not be refreshed — please log out", "text": None})
-    rA = _run("codex-down", down_exec, no_metered_fallback=True)
-    ck(results, "a DOWN lane under no_metered_fallback returns the $0 'refused' miss",
-       str(rA.get("error") or "").startswith("refused"), extra=str(rA.get("error"))[:80])
+    try:
+        _run("codex-down", down_exec, no_metered_fallback=True)
+    except Exception as down_refusal:
+        from spendguard.manage.admission.spend_refusal_error import MeteredCallRefused
+        down_refused_deliberately = isinstance(down_refusal, MeteredCallRefused)
+    else:
+        down_refused_deliberately = False
+    ck(results, "a DOWN lane under no_metered_fallback raises the deliberate refusal",
+       down_refused_deliberately)
     ck(results, "...no metered-fallback outage alert is emitted",
        "codex-down" not in adapters._lane_announce._at)
-    ck(results, "...and it never leaves the lane for a metered leg",
-       rA.get("executor") == "codex-down" and rA.get("cost") is None)
 
     # ── a TASK miss (empty text, executor set NO error) under no_metered_fallback → stays a $0 'refused' miss ──
     resource_state._reset()
@@ -67,9 +71,14 @@ def main():
     empty_exec = types.SimpleNamespace(
         TIMEOUT_S=60,
         run_prompt=lambda prompt, system=None, model=None, timeout=None, **_kw: {"text": "", "error": None})
-    rB = _run("lane-empty", empty_exec, no_metered_fallback=True)
-    ck(results, "a TASK miss (empty) under no_metered_fallback stays a $0 'refused' miss (no surprise charge)",
-       str(rB.get("error") or "").startswith("refused"), extra=str(rB.get("error"))[:80])
+    try:
+        _run("lane-empty", empty_exec, no_metered_fallback=True)
+    except Exception as empty_refusal:
+        empty_refused_deliberately = isinstance(empty_refusal, MeteredCallRefused)
+    else:
+        empty_refused_deliberately = False
+    ck(results, "a TASK miss under no_metered_fallback raises the deliberate refusal",
+       empty_refused_deliberately)
     ck(results, "...a task miss is NOT surfaced as a lane-down (it is not infrastructure failure)",
        "lane-empty" not in adapters._lane_announce._at)
 

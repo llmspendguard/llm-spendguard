@@ -138,10 +138,15 @@ def main():
         metered_models.clear()
         with patch.dict(os.environ):
             os.environ.pop(config.CLI_TEST_OFFLINE_ENVIRONMENT_KEY, None)
-            refused = intercepted_once("anthropic:claude-opus-4-8", "task", max_tokens=100,
-                                       no_metered_fallback=True)
-        check(results, "refuse-billed returns a free error row", refused.get("text") is None
-              and refused.get("cost") is None and str(refused.get("error") or "").startswith("refused"))
+            try:
+                intercepted_once("anthropic:claude-opus-4-8", "task", max_tokens=100,
+                                 no_metered_fallback=True)
+            except Exception as refused:
+                from spendguard.manage.admission.spend_refusal_error import MeteredCallRefused
+                refused_deliberately = isinstance(refused, MeteredCallRefused)
+            else:
+                refused_deliberately = False
+        check(results, "refuse-billed raises the deliberate refusal", refused_deliberately)
         check(results, "refuse-billed made zero metered attempts", metered_models == [])
     finally:
         adapters._lane_for = original_lane_for

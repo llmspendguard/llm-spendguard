@@ -62,20 +62,28 @@ config._cfg_get = lambda s, k, d=None: ("on" if (s, k) == ("advisor", "lane_call
 print("-- a TASK miss (ran, empty, NO error) under refuse_billed → $0 refusal on the LANE, metered never reached --")
 adapters._lane_for = lambda prov: ("gemini", _EmptyLane)
 adapters._lane_announce._at.clear()
-r = adapters._call_once("gemini:g-low", "hi", max_tokens=100, no_metered_fallback=True)
-fails += ck("task miss + refuse_billed → row attributed to the LANE (not 'api')", r.get("executor") == "gemini")
-fails += ck("...carries NO cost and NO text (a refusal, not an answer)", r.get("cost") is None and r.get("text") is None)
+try:
+    adapters._call_once("gemini:g-low", "hi", max_tokens=100, no_metered_fallback=True)
+except Exception as empty_refusal:
+    from spendguard.manage.admission.spend_refusal_error import MeteredCallRefused
+    empty_refused_deliberately = isinstance(empty_refusal, MeteredCallRefused)
+else:
+    empty_refused_deliberately = False
+fails += ck("task miss + refuse_billed raises the deliberate refusal", empty_refused_deliberately)
 fails += ck("...and a task miss is NOT surfaced as a lane-down", "gemini" not in adapters._lane_announce._at)
 
 print("\n-- a DOWN lane (executor error) under refuse_billed → still $0-refused --")
 adapters._lane_for = lambda prov: ("gemini", _DownLane)
 adapters._lane_announce._at.clear()
-r = adapters._call_once("gemini:g-low", "hi", max_tokens=100, no_metered_fallback=True)
+try:
+    adapters._call_once("gemini:g-low", "hi", max_tokens=100, no_metered_fallback=True)
+except Exception as down_refusal:
+    down_refused_deliberately = isinstance(down_refusal, MeteredCallRefused)
+else:
+    down_refused_deliberately = False
 fails += ck("down lane + refuse_billed does not emit a metered-fallback alert",
             "gemini" not in adapters._lane_announce._at)
-fails += ck("...and remains a lane-attributed $0 refusal (no metered exception)",
-            r.get("executor") == "gemini" and r.get("cost") is None and r.get("text") is None
-            and str(r.get("error") or "").startswith("refused"))
+fails += ck("...and raises the deliberate refusal", down_refused_deliberately)
 
 print(f"\n{'[FAIL]' if fails else 'OK'} test_refuse_billed: {len(fails)} failure(s)")
 sys.exit(1 if fails else 0)
