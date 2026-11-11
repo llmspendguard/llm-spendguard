@@ -40,6 +40,14 @@ DAILY_GUARD_VOID_PERIOD = 11
 DAILY_GUARD_RECONSTRUCTED_PERIOD = 13
 DAILY_GUARD_FOREIGN_PERIOD = 17
 DAILY_GUARD_MIRROR_PERIOD = 19
+DAILY_GUARD_REPRESENTATIVE_ROWS = max(
+    DAILY_GUARD_META_PERIOD,
+    DAILY_GUARD_RECONCILED_PERIOD,
+    DAILY_GUARD_VOID_PERIOD,
+    DAILY_GUARD_RECONSTRUCTED_PERIOD,
+    DAILY_GUARD_FOREIGN_PERIOD,
+    DAILY_GUARD_MIRROR_PERIOD,
+) + 1
 DAILY_GUARD_SCHEMA_REOPENS = 2
 DAILY_GUARD_ARITHMETIC_MUTATION_NANOS = 1
 DAILY_GUARD_BOUNDARY_SHIFTS = (1, -1, 0)
@@ -53,7 +61,7 @@ DAILY_GUARD_REPORTING_ZONES = ("UTC", "Pacific/Honolulu")
 
 
 @contextlib.contextmanager
-def daily_guard_fixture(row_count=DAILY_GUARD_ROWS):
+def daily_guard_fixture(row_count=DAILY_GUARD_REPRESENTATIVE_ROWS):
     """A realistic low-flag, high-conversation-cardinality ledger, never live data."""
     with tempfile.TemporaryDirectory(dir=config.HOME) as directory:
         path = pathlib.Path(directory) / DAILY_GUARD_DATABASE
@@ -150,7 +158,7 @@ def check_daily_rollup_reconciles_to_heap_every_root():
         assert max(deltas) == 0, deltas
         daily_guard_verified_cache(writer, days[-1])
         # Scoped high-cardinality readers remain exact heap fallbacks.
-        for conversation in (str(1), str(DAILY_GUARD_ROWS - 1)):
+        for conversation in (str(1), str(DAILY_GUARD_REPRESENTATIVE_ROWS - 1)):
             assert budget.spent_since(days[-1], conv=conversation) == float(writer._cat_dec(
                 ledger.LLM_USD_COLS, writer._COUNTABLE, since=days[-1], where={"conv_id": conversation}))
         from spendguard import ledger_daily_rollup
@@ -172,7 +180,7 @@ def check_daily_rollup_reconciles_to_heap_every_root():
                 print("  arithmetic mutation detected: one nano-USD divergence")
             else:
                 raise AssertionError("reconciliation guard missed a one-nano arithmetic mutation")
-        print(f"  maximum reconciliation delta={max(deltas)}; fixture rows={DAILY_GUARD_ROWS}")
+        print(f"  maximum reconciliation delta={max(deltas)}; fixture rows={DAILY_GUARD_REPRESENTATIVE_ROWS}")
 
 
 def check_daily_rollup_window_boundaries_exact():
@@ -228,7 +236,7 @@ def check_daily_rollup_backdated_insert_invalidates_day():
 
 def check_daily_rollup_today_write_does_not_revalidate_closed_days():
     from spendguard import ledger_daily_rollup
-    with daily_guard_fixture() as (writer, days):
+    with daily_guard_fixture(DAILY_GUARD_ROWS) as (writer, days):
         daily_guard_verified_cache(writer, days[-1])
         # The pre-dirty-marker implementation re-fingerprints all closed days after
         # a TODAY write. Keep its fingerprint spy as a compatibility probe so
@@ -525,7 +533,7 @@ def check_daily_rollup_config_and_naming():
 
 
 def check_daily_rollup_rollup_is_orders_of_magnitude_smaller_than_heap():
-    with daily_guard_fixture() as (writer, days):
+    with daily_guard_fixture(DAILY_GUARD_ROWS) as (writer, days):
         daily_guard_roots(days[-1])
         rolled = writer._conn.execute(f"SELECT COUNT(*) FROM {DAILY_GUARD_ROLLUP_TABLE}").fetchone()[0]
         heap = writer._conn.execute("SELECT COUNT(*) FROM spend_events").fetchone()[0]
