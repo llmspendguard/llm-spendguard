@@ -478,7 +478,7 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None,
                   model_for=None, prompt_for=None, task_key=None, return_keyed=False,
                   on_miss=None, batch_submit=None, batch_model=None, batch_cap=None,
                   hedge_ms=None, strategy=None, metered_only=False, sla_class=None, record_route=True,
-                  budget_usd=None, auth_over_quota=False):
+                  budget_usd=None, auth_over_quota=False, executor=None):
     """Fan a LIST of similar tasks across ALL viable idle lanes CONCURRENTLY — the right shape for a BULK job (e.g.
     symgrep's ~6k one-sentence symbol descriptions) that the per-call bandit would trickle one at a time. Each task
     runs on a lane (round-robin across the lanes the bandit rates GOOD for this intent), each admission BOUNDED by
@@ -493,6 +493,8 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None,
     where the lane CLI's own reasoning scale + warm-daemon concurrency would drift the verdict. It BILLS — the
     deliberate trade for a fan where the verdict distribution is the product. Default False = the faithful-for-
     capability atomic pair (lane first, same-provider metered fallback). Applies to the pinned/vision runner only.
+
+    `executor=` is a thread-safe per-call override of the ambient executor selection; None leaves current behavior unchanged.
 
     `record_route=True` (default): with advisor.route_through_queue ON, each per-task _execution_accessors.resolve_call records its OWN
     durable queue row (observability + crash-recovery) as usual. `record_route=False` SUPPRESSES that per-task record
@@ -988,6 +990,7 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None,
                                   _internal_pin=True,   # CONFINEMENT, not a caller effort-insistence → an un-honorable effort
                                   #                       FLOORS here (path-independent, guardrail B), never EffortNotHonored
                                   metered_only=metered_only,   # opt-in: force the METERED half of the pin (skip the $0 lane)
+                                  executor=executor,
                                   _coalesce_eligible=False,   # explicit fan: already connection-window-governed + has its own
                                   #                             batch offload → never re-route through the 4b storm coalescer
                                   _route=record_route)   # already a governed queue row when drain/submit set record_route=False
@@ -1087,6 +1090,7 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None,
             #                                                                      effort insistence → an un-honorable effort
             #                                                                      FLOORS (path-independent), never refuses
                               _coalesce_eligible=False,                          # explicit fan (connection-window-governed +
+                              executor=executor,
             #                                                                      its own batch offload) → skip 4b coalescer
                               _route=record_route)                               # this fan IS a queue row when drain/submit
             #                                                                      set record_route=False → don't re-record
