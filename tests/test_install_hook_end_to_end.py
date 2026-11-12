@@ -51,6 +51,13 @@ def run_install_hook_end_to_end_regression():
             "ANTHROPIC_API_KEY": FAKE_ANTHROPIC_API_KEY,
         })
         isolated_environment.pop("PIP_FIND_LINKS", None)
+        # This E2E proves install-hook wires an ENFORCING consumer venv — a property of the
+        # installed hook, independent of the invoking shell's runtime kill switch. The kill switch
+        # (GATE_DISABLE=1, set by `spendguard off`) leaks in via os.environ.copy() and the runner's
+        # _child_env; left in place it forces install-hook's own startup-gate verification to report
+        # INACTIVE, so the subprocess returns 1 and the test false-fails. Strip it so the test owns
+        # its enforcement scenario and stays green whether or not the developer has the gate disabled.
+        isolated_environment.pop("GATE_DISABLE", None)
         consumer_python = consumer_venv / "bin" / "python"
         declared_build_requirement = _declared_setuptools_build_requirement(PROJECT_ROOT)
         importable_backend_probe = subprocess.run(
