@@ -384,11 +384,6 @@
       "verdict": "DUPLICATION",
       "why": "Both are identical one-line wrappers delegating to attribution.iso_period; the docstring even admits chat and claudecode each carried this same wrapper. The real logic already lives in one place, but "
     },
-    "_load_state": {
-      "n": 5,
-      "verdict": "PROTOCOL",
-      "why": "Each adapter's _load_state loads its OWN namespaced state with its OWN empty shape via the shared config.load_state helper. The docstring notes the FOUR duplicated bare-except copies were already refa[ctored]. n 4\u21925: resource_state._load_state (the unified per-resource cooldown/state store) added \u2014 same role, same shared config.load_state helper, its own namespace ('resource_state') and shape (per-key axes, with an expiry prune), read and confirmed as protocol."
-    },
     "_one": {
       "n": 2,
       "verdict": "DUPLICATION",
@@ -414,20 +409,10 @@
       "verdict": "PROTOCOL",
       "why": "These are sync and async variants of the same wrapper contract, each living on its respective stream class (_GatedMessageStream vs _GatedAsyncMessageStream). They are intentionally parallel implementations for sync/async duck-typed attribute wrapping, not accidental copies nor different jobs."
     },
-    "_save_state": {
-      "n": 3,
-      "verdict": "PROTOCOL",
-      "why": "Each adapter delegates to the shared config.save_state with its own module tag ('chat', 'claudecode', 'codex'). The prior byte-identical duplication has already been consolidated into config.save_stat PR0 adjudication covers only the following exact dispatched-contract pairs, including recorded shortened identities; it does not permit unrelated members sharing the bare name. n retains the planned source-definition baseline (or the planned repository count when no source definition exists); test/script pairs do not expand source coverage. [Verdict 155: src/spendguard/claudecode.py:_save_state <-> src/spendguard/codex.py:_save_state] Keep the Source adapter watermark persistence hook sources._LedgerSource.read dynamically invokes _mod._save_state(st) for the selected backend. Each thin hook delegates to the existing config.save_state implementation with its own resource key, rather than implementing duplicate persistence. Evidence: src/spendguard/sources.py:109; src/spendguard/claudecode.py:29; src/spendguard/codex.py:64; src/spendguard/config.py:1605."
-    },
     "_session_digests": {
       "n": 2,
       "verdict": "PROTOCOL",
       "why": "Both produce per-session digests filtered by days/cost for their respective backend (Claude Code vs Codex), but each reads a fundamentally different data source: one globs .jsonl files and computes di"
-    },
-    "_state_path": {
-      "n": 4,
-      "verdict": "PROTOCOL",
-      "why": "Each is a per-adapter module-private helper returning its own namespaced state path via config.state_path(<adapter>). They intentionally share a name as a per-module convention; each returns a distinc"
     },
     "_toklen": {
       "n": 3,

@@ -15,9 +15,9 @@ fails = []
 old_watermark = "2026-01-01T00:00:00Z"
 old_state = {"orgs": {"org": {"since": old_watermark}}, "convs": {}}
 saved = []
-chat._load_state = lambda: old_state
-chat._save_state = lambda state: saved.append({"since": state["orgs"]["org"]["since"],
-                                                "incomplete": state["orgs"]["org"].get("incomplete")})
+chat.config.load_state = lambda name, default=None: old_state
+chat.config.save_state = lambda name, state: saved.append({"since": state["orgs"]["org"]["since"],
+                                                           "incomplete": state["orgs"]["org"].get("incomplete")})
 chat._resolve_org = lambda cookies: "org"
 chat._digest_conv = lambda conv, detail, projmap, prev=None: {"uuid": conv["uuid"], "updated_at": conv["updated_at"], "v": chat._DIGEST_V}
 page = [{"uuid": "good", "updated_at": "2026-01-04T00:00:00Z"},
