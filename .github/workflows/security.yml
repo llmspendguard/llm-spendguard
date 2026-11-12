@@ -21,9 +21,9 @@ jobs:
       security-events: write   # CodeQL SARIF upload only
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - uses: github/codeql-action/init@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4
+      - uses: github/codeql-action/init@33d7b85da1a04171e211befe2c739303b9a4c066 # v4
         with: { languages: python }
-      - uses: github/codeql-action/analyze@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4
+      - uses: github/codeql-action/analyze@33d7b85da1a04171e211befe2c739303b9a4c066 # v4
 
   secrets:
     runs-on: ubuntu-latest
@@ -47,12 +47,12 @@ jobs:
       # reads: the tool claimed it VERIFIED a function name against Lob's API, so "verified" is not proof of a
       # live credential. Re-enable this detector the day we actually integrate Lob.
       - name: TruffleHog (verified secrets only)
-        uses: trufflesecurity/trufflehog@ea68ca03c865c5f324e86e849ced20ed3cf9dbbb  # v3.95.6 — 3rd-party action, SHA-pinned
+        uses: trufflesecurity/trufflehog@ea68ca03c865c5f324e86e849ced20ed3cf9dbbb  # v3.99.8 — 3rd-party action, SHA-pinned
         with:
           path: ./
           base: ""
           head: HEAD
-          version: 3.95.6                      # pin the SCANNER too, not just the wrapper
+          version: 3.99.8                      # pin the SCANNER too, not just the wrapper (matches the SHA's v3.99.8 tag)
           extra_args: --only-verified --exclude-detectors=lob
 
   dep-audit:
