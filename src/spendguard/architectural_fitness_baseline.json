@@ -716,8 +716,8 @@
             "mi": 100.0
           },
           "src/spendguard/manage/routing/best_value.py": {
-            "max_cc": 27,
-            "mi": 52.562080484834304
+            "max_cc": 30,
+            "mi": 51.4469459400108
           },
           "src/spendguard/manage/routing/cascade.py": {
             "max_cc": 25,
@@ -741,7 +741,7 @@
           },
           "src/spendguard/manage/routing/tier_config.py": {
             "max_cc": 40,
-            "mi": 45.99562750118811
+            "mi": 45.94985458820284
           },
           "src/spendguard/manage/routing/whole_job.py": {
             "max_cc": 27,
@@ -1234,6 +1234,14 @@
           "src/spendguard/store/configuration/provider_keys.py": {
             "max_cc": 16,
             "mi": 45.081007134254314
+          },
+          "src/spendguard/store/reference_data/catalog_provenance.py": {
+            "max_cc": 0,
+            "mi": 100.0
+          },
+          "src/spendguard/store/reference_data/catalog_store.py": {
+            "max_cc": 50,
+            "mi": 5.105218188294342
           }
         },
         "measured_extremes": {
@@ -2052,8 +2060,8 @@
             "mi": 100.0
           },
           "src/spendguard/manage/routing/best_value.py": {
-            "max_cc": 27,
-            "mi": 52.562080484834304
+            "max_cc": 30,
+            "mi": 51.4469459400108
           },
           "src/spendguard/manage/routing/cascade.py": {
             "max_cc": 25,
@@ -2085,7 +2093,7 @@
           },
           "src/spendguard/manage/routing/tier_config.py": {
             "max_cc": 40,
-            "mi": 45.77270699940731
+            "mi": 45.72823783433721
           },
           "src/spendguard/manage/routing/whole_job.py": {
             "max_cc": 27,
@@ -2395,6 +2403,14 @@
             "max_cc": 27,
             "mi": 38.398466988650554
           },
+          "src/spendguard/store/reference_data/catalog_provenance.py": {
+            "max_cc": 0,
+            "mi": 100.0
+          },
+          "src/spendguard/store/reference_data/catalog_store.py": {
+            "max_cc": 50,
+            "mi": 5.105218188294342
+          },
           "src/spendguard/store/reference_data/lane_catalog.py": {
             "max_cc": 10,
             "mi": 51.98353632526275
@@ -2520,7 +2536,8 @@
     "reviewed_content_retention_purge_throttle_complexity": "content_retention.py MI 54.53->52.28 (amd64 py3.12) from the once-per-process TTL purge throttle: a reliability fix removing the per-connection-open purge write-lock contention that intermittently blew the connection-storm 15s deadline. max_cc unchanged at 8 (no new worst-case branching); the added lines are a named interval constant, a fork-reset throttle timestamp, and a lock-guarded once-per-interval check. Reviewed and accepted.",
     "reviewed_defect_a_costless_catalogue_gap_branch": "Defect A fix (PR #302): cost_integrity.py routes a costless-catalogue entry through the named-gap reporter (unpriced += 1; append token_cost_reconstruction_unavailable gap; continue) instead of raising an unhandled ValueError. That adds one decision branch (CC 19->20) and lowers MI. The added path is a required fail-safe replacing a traceback with a named UNKNOWN; the complexity is essential, not accidental.",
     "reviewed_codex_reaper_bounded_delete_retries": "2026-11-10: Reviewed the bounded codex-session-reaper retry hardening on fix/codex-reaper-fd-robustness (#303). delegate_jobs.reap_terminal_codex_sessions now records per-thread delete failures (new columns codex_session_reap_failure_reason/codex_session_reap_failed_at/codex_session_reap_attempts) and stops after codex_session_reap.max_delete_attempts (default 3) instead of erroring every pass; config_store adds max_delete_attempts and codex_daemon_pool resource-exhaustion backoff/restart-threshold validation. This raises delegate_jobs.py max_cc 30->32 (reviewed robustness branches) and lowers config_store MI from the added validation. The regeneration also refreshes pre-existing per-file radon measurement drift on files #303 does not change (byte-identical to the green main baseline) under this interpreter, matching the regeneration CI validated green on #304. Accepted.",
-    "reviewed_delegate_jobs_lifecycle_maintenance": "#304 adds active delegate-jobs lifecycle maintenance (reap stale-running rows whose owning worker died, reap aged orphan running rows lacking a durable execution_id, bound result_payload via payload_archive_path offload, honest batch-cap) on top of #303's bounded codex-reaper. This raises delegate_router.py max_cc 48->53 (the lifecycle maintenance dispatch) and lowers delegate_jobs.py MI 15.9->7.83 (added schema columns + reap/bound logic in one module). Reviewed: the added complexity is the lifecycle hygiene itself, cohesive within the delegate-jobs seam; measured under 3.11 and 3.12."
+    "reviewed_delegate_jobs_lifecycle_maintenance": "#304 adds active delegate-jobs lifecycle maintenance (reap stale-running rows whose owning worker died, reap aged orphan running rows lacking a durable execution_id, bound result_payload via payload_archive_path offload, honest batch-cap) on top of #303's bounded codex-reaper. This raises delegate_router.py max_cc 48->53 (the lifecycle maintenance dispatch) and lowers delegate_jobs.py MI 15.9->7.83 (added schema columns + reap/bound logic in one module). Reviewed: the added complexity is the lifecycle hygiene itself, cohesive within the delegate-jobs seam; measured under 3.11 and 3.12.",
+    "reviewed_catalog_ssot_stage1_store_and_provenance": "Catalog SSOT Stage 1 (#315) added store.reference_data.catalog_store (the one managed accessor over the physical SQLite catalog) and store.reference_data.catalog_provenance. Both are genuinely new source files with no prior complexity baseline entry; their measured radon CC maxima and MI are recorded here under review so the ratchet has a reviewed floor. No existing file's complexity is loosened."
   },
   "dead_allowlist": [
     {
@@ -6225,6 +6242,10 @@
     [
       "spendguard.manage.routing.tier_config",
       "spendguard.manage.admission.admission_accessors"
+    ],
+    [
+      "spendguard.manage.routing.tier_config",
+      "spendguard.manage.admission.spend_refusal_error"
     ],
     [
       "spendguard.manage.routing.tier_config",
