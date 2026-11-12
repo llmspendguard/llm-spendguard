@@ -29,8 +29,9 @@ unbundling, chunking, retries, resume are spendguard's job — invisible to the 
 bulk fans drove 4,584 req/min against a 1,000-rpm cap → 8,088 anthropic 429s.
 
 What exists today: a proactive per-vendor cold-cap seed (admission paces from call #1, all vendors) + an output-aware
-token estimate + AIMD + decision functions should_batch_fan()/chunk_for_batch() that are NOT yet wired into execution
-(nothing auto-creates+runs+unbundles a batch) + a shallow test that only calls those functions directly.
+token estimate + AIMD + live storm→batch execution through storm_submit.submit_storm (proven end-to-end by
+tests/test_incident_replay_storm.py, GREEN). The superseded should_batch_fan()/chunk_for_batch() primitives and their
+shallow direct probes were removed; the chunker is tested by tests/test_queue_planner_chunking.py.
 
 YOUR TASK: enumerate the COMPLETE set of tests required to prove this requirement is ACTUALLY solved — not one
 example. Be exhaustive and concrete. For EACH test give: a one-line name, the exact ASSERTION(s) it makes, the layer

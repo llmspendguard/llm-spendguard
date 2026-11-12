@@ -9,9 +9,11 @@ doctrine ships with a guard test that it FIRES on a deliberate violation and sta
 
 ## Why these exist (the failures they each prevent, measured on llm-spendguard 2026-10-04)
 - A capability was *built but never wired* (`should_batch_fan`/`chunk_for_batch` had no live caller) and reported as
-  "fixed." → **Prompt 1**.
+  "fixed." **RESOLVED:** the superseded orphaned primitives were removed; live wiring is
+  `storm_submit.submit_storm` (acceptance: `tests/test_incident_replay_storm.py`). → **Prompt 1**.
 - A test was *named for an end-to-end behavior but only called internal functions* ("storm→batch→responses" asserted
-  by calling `should_batch_fan()` directly, never submitting N and getting N back). → **Prompt 2**.
+  by calling `should_batch_fan()` directly, never submitting N and getting N back). **RESOLVED:** those direct
+  probes were removed; `tests/test_incident_replay_storm.py` exercises `storm_submit.submit_storm` end-to-end. → **Prompt 2**.
 - There was *no recorded list of required tests*, so "I'll test X" was never tracked or coverage-asserted; promises
   evaporated. → **Prompt 3** (the manifest — the answer to "is that test added to the list of tests?").
 - A *live test passed while recording zero real effect* (0 ledger rows, $0, served from cache/no-op) — a hollow

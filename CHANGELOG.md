@@ -4,6 +4,9 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 
 ## [Unreleased]
 
+- Removed superseded, uncalled `route_horizon.should_batch_fan` / `chunk_for_batch`; the storm→Batch fix is served by
+  `storm_submit.submit_storm` (acceptance: `tests/test_incident_replay_storm.py`).
+
 ## [0.16.32] — 2026-11-09
 
 A correctness + docs-integrity release on the restructured trunk. The public CLI, programmatic API, and MCP
