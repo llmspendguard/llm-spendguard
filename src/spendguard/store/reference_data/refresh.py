@@ -127,7 +127,7 @@ def refresh_verified_catalog_prices(*, model: str = REFRESH_PRICE_LOOKUP_MODEL, 
     a = SimpleNamespace(model=model, write=write)
     key = config.api_key("ANTHROPIC_API_KEY")
     if not key:
-        print("no ANTHROPIC_API_KEY (set env, ~/.spendguard, or ./.env). Needed for the lookup."); return 1
+        print("no ANTHROPIC_API_KEY (set env, keys.env, or SPENDGUARD_ENV). Needed for the lookup."); return 1
     models = list(pricing.PRICING)
     print(f"Looking up {len(models)} models via {a.model} + web search (one paid LLM call)…")
     looked = _llm_lookup(models, a.model, key)

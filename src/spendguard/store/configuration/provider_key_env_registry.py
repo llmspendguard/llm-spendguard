@@ -36,3 +36,9 @@ def all_provider_key_envs():
     with _runtime_provider_key_env_lock:
         runtime_key_envs = set(_runtime_provider_key_env.values())
     return set(BUILTIN_PROVIDER_KEY_ENV.values()) | runtime_key_envs
+
+
+def all_provider_key_env_items():
+    """Return the complete provider-to-key-environment registry snapshot."""
+    with _runtime_provider_key_env_lock:
+        return {**BUILTIN_PROVIDER_KEY_ENV, **_runtime_provider_key_env}

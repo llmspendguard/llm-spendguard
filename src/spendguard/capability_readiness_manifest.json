@@ -167,7 +167,9 @@
           "ruff",
           "name-uniqueness",
           "surface-suites",
-          "offline-audit"
+          "offline-audit",
+          "catalog-portable",
+          "keys-single-source"
         ]
       }
     },
