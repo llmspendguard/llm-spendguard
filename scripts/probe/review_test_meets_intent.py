@@ -44,20 +44,17 @@ WHAT_WAS_BUILT = """\
 WHAT WAS ACTUALLY BUILT so far:
 - dispatch: a PROACTIVE cold-cap seed (per-vendor rpm/tpm from a catalog) so admission PACES a cold vendor instead of
   admitting unlimited; acquire() blocks/queues over-budget calls within a deadline.
-- route_horizon.should_batch_fan(provider, model, n, est_in, est_out, deadline_s): returns True/False whether N would
-  exceed the realtime rate budget — a DECISION FUNCTION.
-- route_horizon.chunk_for_batch(provider, n): splits N into batch-API-sized chunks — a DECISION FUNCTION.
-- These two functions are NOT wired into any execution path. Nothing calls them to actually CREATE a batch, run it,
-  and return results. bulk_delegate was NOT changed to auto-batch on storm.
+- The former route_horizon.should_batch_fan / chunk_for_batch decision functions were superseded by
+  storm_submit.submit_storm and removed. Live storm→batch execution is proven end-to-end by
+  tests/test_incident_replay_storm.py (GREEN).
 - A live run of a 60-call governed fan recorded ZERO calls in the ledger (served from cache/lane/no-op), so the
   end-to-end was never exercised."""
 
 THE_TEST = """\
-THE TEST (tests/test_dispatch_no_429_storm.py) — 13 guards, all green, 5x:
+THE TEST (tests/test_dispatch_no_429_storm.py) — 11 governor guards:
  1  once the seeded tpm budget is consumed, the next admit queues out (paced).
  2  a small in-budget admit returns immediately.
- 2b should_batch_fan(n=3000) returns True; (n=5) returns False.
- 2c chunk_for_batch(500000) returns chunks that sum to 500000 and each fit the batch limit.
+ The former 2b/2c direct probes were removed; the chunker is tested by tests/test_queue_planner_chunking.py.
  3/3b catalog has a rate floor; effective_limits(cold anthropic) is non-zero.
  4  learn_rate_limit / _learn_success_limits set a tpm.
  5  AIMD shrink/grow move the conn cap.

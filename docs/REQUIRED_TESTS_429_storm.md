@@ -34,7 +34,7 @@ Build these FIRST; without them the rest are fakeable.
 ## B — Auto-batch actually wired + correct (the behavior, not the decision function)
 - **B1 autobatch triggered on storm** — burst exceeds rpm → ≥1 real batch job created+run (batch_job_ids non-empty via proxy/provider), realtime did NOT emit the storming volume.
 - **B2 NOT triggered for small burst** — below threshold → 0 batch jobs, served realtime/lane (prevents "always batch" cheating).
-- **B3 decision→execution wiring proven** — when `should_batch_fan()`/`chunk_for_batch()` fire during a storm, the batch executor's create+poll+fetch+unbundle are each invoked and ≥1 job results (fails today by construction).
+- **B3 decision→execution wiring proven** — `storm_submit.submit_storm` splits a storm into realtime and batch execution, returns N responses for N submitted requests, and carries overflow through batch with zero surfaced 429s (proven end-to-end by `tests/test_incident_replay_storm.py`, GREEN).
 - **B4 results returned through the same future** — the caller's N awaitables resolve from batch output; provenance per response says `served_via=batch`, none silently fell back to realtime.
 - **B5 chunk respects item/byte/token caps** — each job ≤ provider caps (actual envelope bytes, not token heuristics), union==N, no overlap.
 

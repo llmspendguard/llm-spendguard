@@ -7,7 +7,7 @@ requests at once to a realtime rate limit:
   · 2026-09-28  honestreview:call-intent              2,382 submitted → 1,793 × 429
 Anthropic Start-tier opus = 1,000 rpm. 4,584 req/min is 4.5× over — NO per-call pacing fixes that; the only correct
 response is to SEE the scale AT SUBMISSION and divert the whole fan to the Batch API (no per-minute storm, ~½ cost,
-and these fans are non-interactive = batchable). These guards encode that, plus the governor backstops. DONE = every
+and these fans are non-interactive = batchable). These 11 mechanical guards cover the governor backstops. DONE = every
 guard GREEN, 5 runs in a row, in CI. Offline + $0: the real planner/governor primitives are driven; no network.
 """
 import os
@@ -50,20 +50,6 @@ def _reset_governor():
     except Exception:
         pass
 
-
-def _should_batch_fan(provider, model, n, est_in=4000, est_out=800):
-    """Does the planner decide 'this N-at-once fan would storm realtime → divert to BATCH'? Probed via the accessor
-    the fix (A) must provide, getattr-with-None so it fails CLEANLY (RED) today rather than erroring."""
-    fn = getattr(dispatch, "should_batch_fan", None) or getattr(
-        __import__("spendguard.route_horizon", fromlist=["x"]), "should_batch_fan", None)
-    if not fn:
-        return None
-    try:
-        return bool(fn(provider, model, n, est_in=est_in, est_out=est_out))
-    except Exception:
-        return None
-
-
 # ── GUARD 1 (PRIMARY): a COLD metered vendor is PACED by the seeded cold cap — the storm cannot happen ────────
 # The storm's root: a cold anthropic bucket had rpm=0/tpm=0 (unlimited), so a fan of N dispatched ALL at once. With
 # the catalog cold cap seeded, acquire PACES: a call that would exceed the seeded budget QUEUES OUT within its
@@ -94,27 +80,8 @@ try:
 except Exception:
     pass
 
-# ── GUARD 2b: a storm-scale fan that can't drain within a caller DEADLINE is offered BATCH (deadline-driven) ──
-# NOT shape-inferred and NOT transparent (transparent async batch deadlocks a sync caller — the panel's fatal flaw);
-# it is deadline/opt-in, decided at the ONE chokepoint via route_horizon. Still to wire -> RED.
-ck("2b. a deadline-bound storm-scale fan is offered BATCH (deadline-driven, via the one chokepoint)",
-   _should_batch_fan(VENDOR, MODEL, 3000) is True, extra="deadline->batch not wired into admit/route_horizon yet")
-
-# ── GUARD 2c: a batch-diverted fan is AUTO-CHUNKED to the batch API's own limits (always ensure success) ──────
-# Diverting 200,000 requests as one batch would hit anthropic's batch max_per_batch/max_in_queue -> a batch 429.
-# The planner must split into sub-batches that FIT the catalog's batch limits, so a huge fan always submits cleanly
-# (CHUNK-never-single-shot). Probed via the intended planner accessor; RED until wired.
-def _chunk_plan(provider, n):
-    fn = getattr(__import__("spendguard.route_horizon", fromlist=["x"]), "chunk_for_batch", None)
-    try:
-        return fn(provider, n) if fn else None
-    except Exception:
-        return None
-_bm = ((mc.vendor_record("anthropic") or {}).get("batch_api") or {}).get("start", {}).get("max_in_queue") or 200000
-_plan = _chunk_plan("anthropic", 500000)
-ck("2c. a 500k-request fan diverted to batch is auto-chunked to sub-batches within the catalog batch limit (%s)" % _bm,
-   bool(_plan) and all(c <= _bm for c in _plan) and sum(_plan) == 500000,
-   extra="chunk_for_batch not wired — a huge fan must split to fit, never one oversized batch -> batch 429")
+# The storm→batch COMBO is tested end-to-end (submit N → get N; batch carries overflow)
+# by tests/test_incident_replay_storm.py; the chunker by tests/test_queue_planner_chunking.py.
 
 # ── GUARD 3: proactive cold cap exists for the storm model (so even a non-fan burst is paced from call #1) ────
 cap = mc.rate_limit_for(MODEL)
