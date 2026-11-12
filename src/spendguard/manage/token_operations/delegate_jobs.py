@@ -244,6 +244,21 @@ def recover_delegate_job_execution(job_id):
         finish_delegate_job(job_id, state=terminal_state, result_payload=recovered.get("result"),
                             terminal_reason=recovered.get("terminal_reason"))
         row = _delegate_job_row(job_id)
+    if row["state"] == DELEGATE_JOB_LOST_STATE and row["execution_id"]:
+        try:
+            from .delegate_worktrees import (read_delegate_worktree_details,
+                                            recover_retained_delegate_worktree_patch,
+                                            write_delegate_worktree_details)
+            from .execution_journal import durable_execution_payload_paths
+            envelope = durable_execution_payload_paths(row["execution_id"])["envelope"]
+            metadata = read_delegate_worktree_details(envelope).get("worktree", {})
+            had_patch = bool(metadata.get("patch"))
+            recover_retained_delegate_worktree_patch(metadata)
+            if not had_patch and metadata.get("patch"):
+                write_delegate_worktree_details(envelope, metadata)
+        except Exception as error:
+            print(f"[spendguard] recover_delegate_job_execution: worktree recovery failed: {error}",
+                  file=sys.stderr, flush=True)
     return {**recovered, "job_id": job_id, "state": row["state"]}
 
 

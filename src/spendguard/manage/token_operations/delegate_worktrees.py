@@ -5,6 +5,7 @@ import datetime
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tempfile
 
 DELEGATE_WORKTREE_DIRECTORY = "delegate-worktrees"
@@ -33,6 +34,12 @@ def delegate_worktree_metadata_path(envelope_path):
 def read_delegate_worktree_details(envelope_path):
     workspace_metadata = delegate_worktree_metadata_path(envelope_path)
     return {"worktree": json.loads(workspace_metadata.read_text(encoding="utf-8"))} if workspace_metadata.exists() else {}
+
+
+def write_delegate_worktree_details(envelope_path, metadata):
+    from ... import config
+    config.update_json(delegate_worktree_metadata_path(envelope_path),
+                       lambda previous: metadata, reason="persist isolated delegate workspace", required=True)
 
 
 def _delegate_worktree_reclaim_timestamp(now, retention_s):
@@ -80,6 +87,8 @@ def run_isolated_delegate(executor, cwd, *, worktree_root, metadata_writer=None,
                 shutil.copy2(source, destination)
         _delegate_worktree_git(workspace, "add", "-A")
         baseline = _delegate_worktree_git(workspace, "write-tree").decode().strip()
+        metadata["baseline_tree"] = baseline
+        persist_delegate_worktree_metadata()
         execution = executor(os.fspath(workspace / relative_cwd))
         _delegate_worktree_git(workspace, "add", "-A")
         metadata["patch"] = _delegate_worktree_git(
@@ -93,6 +102,33 @@ def run_isolated_delegate(executor, cwd, *, worktree_root, metadata_writer=None,
             metadata["reclaim_not_before"] = _delegate_worktree_reclaim_timestamp(now, retention_s)
             persist_delegate_worktree_metadata()
         raise
+
+
+def recover_retained_delegate_worktree_patch(metadata, *, now=None,
+                                             retention_s=DELEGATE_WORKTREE_DEFAULT_RETENTION_S):
+    """Derive a lost owner's patch from its retained worktree and persisted baseline.
+
+    Stamp a reclaim deadline after capture. Return metadata unchanged when recovery
+    is unnecessary, unavailable, or fails.
+    """
+    if (not metadata.get("retained") or metadata.get("patch")
+            or not metadata.get("baseline_tree") or not metadata.get("path")):
+        return metadata
+    try:
+        workspace = Path(metadata["path"]).expanduser()
+        if not workspace.is_dir():
+            return metadata
+        _delegate_worktree_git(workspace, "add", "-A")
+        patch = _delegate_worktree_git(
+            workspace, "diff", "--cached", "--binary", metadata["baseline_tree"], "--").decode()
+        changed_files = [os.fsdecode(path) for path in _delegate_worktree_git(
+            workspace, "diff", "--cached", "--name-only", "-z", metadata["baseline_tree"], "--").split(b"\0") if path]
+        reclaim_not_before = metadata.get("reclaim_not_before") or _delegate_worktree_reclaim_timestamp(now, retention_s)
+    except Exception as error:
+        print(f"[spendguard] recover_retained_delegate_worktree_patch: {error}", file=sys.stderr, flush=True)
+        return metadata
+    metadata.update(patch=patch, changed_files=changed_files, reclaim_not_before=reclaim_not_before)
+    return metadata
 
 
 def schedule_delegate_worktree_reclaim(execution, *, metadata_writer=None, envelope_writer=None,
