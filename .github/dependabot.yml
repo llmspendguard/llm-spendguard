@@ -18,3 +18,10 @@ updates:
     directory: "/"
     schedule: { interval: weekly }
     open-pull-requests-limit: 5
+    groups:
+      # Bump every action in one PR so a multi-step action (e.g. github/codeql-action init + analyze)
+      # never lands on mismatched versions — a split bump fails CodeQL's "all steps must use the same
+      # version" configuration check, so neither half-PR can go green on its own.
+      actions:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
