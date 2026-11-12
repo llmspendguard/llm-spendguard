@@ -62,6 +62,8 @@ for line in sys.stdin:
         params = message["params"]
         assert params["approvalPolicy"] == "never"
         assert params["sandboxPolicy"]["type"] in ("readOnly", "workspaceWrite")
+        assert "networkAccess" in params["sandboxPolicy"]
+        assert isinstance(params["sandboxPolicy"]["networkAccess"], bool)
         prompt = params["input"][0]["text"]
         if prompt == "race":
             finish_turn(params["threadId"], turn_id, prompt)

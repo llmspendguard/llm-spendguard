@@ -40,6 +40,13 @@ _CODEX_AUTH_HTTP_STATUSES = (401, 403)
 _CODEX_AUTH_ERROR_CODES = ("unauthorized", "authenticationError", "authentication_error")
 
 
+def codex_turn_sandbox_policy(sandbox):
+    """Build the complete explicit sandbox policy required by Codex turn/start."""
+    sandbox = config.validate_codex_sandbox_mode(sandbox)
+    return {"type": "readOnly" if sandbox == config.CODEX_READ_ONLY_SANDBOX_MODE else "workspaceWrite",
+            "networkAccess": config.codex_network_access_enabled_for_sandbox(sandbox)}
+
+
 def _codex_worker_home_marker_path(worker_home):
     return Path(worker_home) / config.CODEX_POOL_OWNER_MARKER_FILENAME
 
@@ -370,8 +377,7 @@ class _CodexDaemon(_WarmStdioJsonRpcDaemon):
                 record_delegate_codex_thread(new_thread, evidence_execution_id)
 
                 turn_params = {"threadId": new_thread, "input": [{"type": "text", "text": prompt}],
-                               "cwd": task_cwd, "sandboxPolicy": {
-                                   "type": "readOnly" if sandbox == "read-only" else "workspaceWrite"},
+                               "cwd": task_cwd, "sandboxPolicy": codex_turn_sandbox_policy(sandbox),
                                "approvalPolicy": approval_policy}
                 if bare_model:
                     turn_params["model"] = bare_model
