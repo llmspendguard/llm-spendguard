@@ -129,17 +129,43 @@ def _load_pricing_breadth_snapshot():
 PRICING_BREADTH_SNAPSHOT = _load_pricing_breadth_snapshot()
 
 
+def _fill_derived_rates(rates, provider, conversion):
+    """Fill cached_in/batch_in/batch_out from in_/out when an authored catalog row omits them (a
+    published rate always wins, so this is a no-op for every row that carries explicit batch rates).
+
+    Batch is a provider-specific fraction of realtime (default 50%; e.g. moonshot 60%), cache-read a
+    fraction of input (10%) — the SAME pricing_conversion SSOT sync.py applies to the breadth layer, so
+    an authored row and a synced row derive identically. Without this an authored row that omits batch
+    (relying on the documented derivation) yields a PRICING entry with no batch_in, and every batch
+    consumer (price()'s batch path, the pricing self-check) raises KeyError on a fresh install."""
+    in_ = rates.get("in_")
+    if in_ is None:
+        return rates
+    out = rates.get("out")
+    batch_fraction = conversion["batch_fraction_by_provider"].get(
+        (provider or "").strip().lower(), conversion["batch_fraction_default"]
+    )
+    if rates.get("cached_in") is None:
+        rates["cached_in"] = round(in_ * conversion["cache_read_fraction_default"], 6)
+    if rates.get("batch_in") is None:
+        rates["batch_in"] = round(in_ * batch_fraction, 6)
+    if out is not None and rates.get("batch_out") is None:
+        rates["batch_out"] = round(out * batch_fraction, 6)
+    return rates
+
+
 def _derive_catalog_pricing_state(snapshot=None):
     """Derive rate, provider and ambiguity maps in memory; catalog overrides breadth for its vendor."""
     from . import model_catalog
     snapshot = PRICING_BREADTH_SNAPSHOT if snapshot is None else snapshot
+    conversion = model_catalog.catalog_pricing_metadata("pricing_conversion")
     providers = dict(snapshot.get("providers") or {})
     prices = {model: dict(row) for model, row in (snapshot.get("models") or {}).items()}
     ambiguous = set()
     for provider, rows in model_catalog.as_price_table().items():
         for model, row in rows.items():
             qualified = f"{provider}/{model}"
-            rates = {**prices.get(qualified, {}), **row, "provider": provider}
+            rates = _fill_derived_rates({**prices.get(qualified, {}), **row, "provider": provider}, provider, conversion)
             prices[qualified] = rates
             previous = prices.get(model)
             if previous is not None and providers.get(model) != provider and _rate_key(previous) != _rate_key(rates):
