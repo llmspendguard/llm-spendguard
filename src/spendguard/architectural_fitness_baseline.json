@@ -756,8 +756,8 @@
             "mi": 43.58377568485723
           },
           "src/spendguard/manage/token_operations/codex_daemon.py": {
-            "max_cc": 49,
-            "mi": 7.036056170057994
+            "max_cc": 48,
+            "mi": 6.927551838529705
           },
           "src/spendguard/manage/token_operations/codex_daemon_broker.py": {
             "max_cc": 17,
@@ -1221,7 +1221,7 @@
           },
           "src/spendguard/store/configuration/config_store.py": {
             "max_cc": 23,
-            "mi": 12.458936124593343
+            "mi": 11.307740809234092
           },
           "src/spendguard/store/configuration/lane_subprocess_env.py": {
             "max_cc": 6,
@@ -2108,8 +2108,8 @@
             "mi": 43.58377568485723
           },
           "src/spendguard/manage/token_operations/codex_daemon.py": {
-            "max_cc": 49,
-            "mi": 7.036056170057994
+            "max_cc": 48,
+            "mi": 6.927551838529705
           },
           "src/spendguard/manage/token_operations/codex_daemon_broker.py": {
             "max_cc": 17,
@@ -2321,7 +2321,7 @@
           },
           "src/spendguard/store/configuration/config_store.py": {
             "max_cc": 23,
-            "mi": 12.418593902337355
+            "mi": 11.268887641131013
           },
           "src/spendguard/store/configuration/lane_subprocess_env.py": {
             "max_cc": 6,
@@ -2541,7 +2541,8 @@
     "reviewed_rebase_reconcile_codex_pool_fd_self_heal": "Rebase of #307 (codex-pool broker self-heal on repeated FD exhaustion / EMFILE) onto main after the catalog SSOT Stage 1 cascade; baseline re-derived from the rebased code via the SSOT regenerate tooling.",
     "reviewed_rebase_reconcile_lane_bandit_sentinel": "Rebase of #305 onto main (incl #307) shifted the already-reviewed importlib dynamic import in lane_bandit one line; magnitude ceilings unchanged; move-neutral reconcile recording the exact measured dynamic-import set, plus the new cross-context edge and the reviewed complexity regression for the rebased tree.",
     "reviewed_rebase_reconcile_lost_delegate_worktree_recovery": "rebase onto main incl #305/#308: re-record the MI regression for delegate_jobs.py and delegate_worktrees.py from the lost-worktree recovery change",
-    "reviewed_rebase_reconcile_clean_room_env_parity": "Rebase of #309 (arm env-parity readiness gate: clean-room catalog + keys checks) onto main (incl #305/#306/#308); re-derive architectural ratchets for the rebased tree -- provider_key_env_registry MI regression, any new cross-context edges, and move-neutral dynamic-import line shifts; magnitude ceilings unchanged."
+    "reviewed_rebase_reconcile_clean_room_env_parity": "Rebase of #309 (arm env-parity readiness gate: clean-room catalog + keys checks) onto main (incl #305/#306/#308); re-derive architectural ratchets for the rebased tree -- provider_key_env_registry MI regression, any new cross-context edges, and move-neutral dynamic-import line shifts; magnitude ceilings unchanged.",
+    "reviewed_codex_turn_sandbox_network_access": "Measured review of PR #313 (codex turn sandbox networkAccess): codex_daemon.py gained a networkAccess ternary on the explicit sandbox policy and config_store.py gained two network-access config accessors; re-measured both interpreter baselines after that merge."
   },
   "dead_allowlist": [
     {
