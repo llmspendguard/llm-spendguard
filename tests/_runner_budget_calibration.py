@@ -1,5 +1,6 @@
 """Shared machine-speed calibration for isolated test runners and their children."""
 import math
+import os
 import time
 
 
@@ -15,6 +16,18 @@ RUNNER_BUDGET_SCALE_ENV = "SPENDGUARD_RUNNER_BUDGET_SCALE"
 
 class RunnerBudgetCalibrationError(RuntimeError):
     """Calibration cannot establish a finite positive compute measurement."""
+
+
+def effective_runner_budget_scale():
+    """Return the validated runner budget scale clamped to the supported range."""
+    raw_scale = os.environ.get(RUNNER_BUDGET_SCALE_ENV, "1.0")
+    try:
+        parsed_scale = float(raw_scale)
+    except ValueError as error:
+        raise RunnerBudgetCalibrationError(f"invalid runner budget scale: {raw_scale!r}") from error
+    if not math.isfinite(parsed_scale) or parsed_scale <= 0:
+        raise RunnerBudgetCalibrationError(f"invalid runner budget scale: {raw_scale!r}")
+    return max(MIN_RUNNER_SCALE, min(MAX_RUNNER_SCALE, parsed_scale))
 
 
 def runner_budget_cpu_yardstick():

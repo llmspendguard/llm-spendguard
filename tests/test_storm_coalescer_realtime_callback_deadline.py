@@ -12,6 +12,7 @@ import subprocess
 import sys
 import threading
 import time
+from _runner_budget_calibration import effective_runner_budget_scale
 
 
 REALTIME_HORIZON_S = 0.1
@@ -52,7 +53,7 @@ def run_hung_realtime_deadline_child():
     faulthandler.cancel_dump_traceback_later()
 
     surfaced = surfaced_stderr.getvalue()
-    assert elapsed_s < REALTIME_HORIZON_S * COORDINATOR_RETURN_MULTIPLIER, elapsed_s
+    assert elapsed_s < REALTIME_HORIZON_S * COORDINATOR_RETURN_MULTIPLIER * effective_runner_budget_scale(), elapsed_s
     assert rerouted == [pending]
     assert coalescer.realtime_timeout_rerouted == EXPECTED_TIMEOUT_COUNT
     assert TEST_PROVIDER in surfaced

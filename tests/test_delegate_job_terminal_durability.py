@@ -4,6 +4,7 @@ from pathlib import Path
 import subprocess
 import sys
 import time
+from _runner_budget_calibration import effective_runner_budget_scale
 from _pytest_fixture_bridge import align_test_startup_home
 
 JOB_DURABILITY_ROOT = Path(align_test_startup_home("sg-job-terminal-"))
@@ -41,7 +42,7 @@ def reproduce_delegate_job_dead_owner_terminal(journal_completed=False):
         finally:
             owner.kill()
             owner.wait(timeout=JOB_DURABILITY_WAIT_S)
-    terminal_deadline = time.monotonic() + JOB_DURABILITY_WAIT_S
+    terminal_deadline = time.monotonic() + JOB_DURABILITY_WAIT_S * effective_runner_budget_scale()
     while delegate_jobs._delegate_job_row(killed_job)["state"] == "running":
         assert time.monotonic() < terminal_deadline, "watchdog left an orphan running job"
         time.sleep(JOB_DURABILITY_POLL_S)
