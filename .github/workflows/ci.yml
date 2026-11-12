@@ -53,7 +53,7 @@ jobs:
         id: python
         with:
           python-version: ${{ matrix.python-version }}
-      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           enable-cache: true
           cache-dependency-glob: pyproject.toml
@@ -124,7 +124,7 @@ jobs:
         id: python
         with:
           python-version: ${{ matrix.python-version }}
-      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           enable-cache: true
           cache-dependency-glob: pyproject.toml
@@ -171,7 +171,7 @@ jobs:
         id: python
         with:
           python-version: ${{ matrix.python-version }}
-      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
       - name: Create a clean readiness environment
         run: |
           uv venv --clear --python "${{ steps.python.outputs.python-path }}" "$CI_TEST_VENV"
@@ -206,7 +206,7 @@ jobs:
         id: python
         with:
           python-version: "3.12"
-      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
       - name: Cache resolved environment and tiktoken vocabulary
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
