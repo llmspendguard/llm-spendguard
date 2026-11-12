@@ -42,6 +42,8 @@ POOL_CHAOS_TEMP_PREFIX = "sgc-"
 POOL_CHAOS_SOCKET_FILENAME = "gate.sock"
 DEAD_OWNER_PID = 99999999
 IMMEDIATE_STALE_AGE_S = 0.0
+POOL_RESOURCE_BACKOFF_S = 0.001
+POOL_RESOURCE_RESTART_THRESHOLD = 2
 
 
 def _pool_guard_fake_child(turn_handler=None):
@@ -59,6 +61,22 @@ def _pool_guard_wait_recovery(pool):
     for recovery in recoveries:
         recovery.join(timeout=POOL_EVENT_TIMEOUT_S)
         assert not recovery.is_alive(), "worker recovery failed to return its lease"
+
+
+def test_pool_spawn_resource_exhaustion_requests_broker_restart():
+    worker = _pool_guard_fake_child()
+    worker.ensure_running.return_value = None
+    settings = {**config.codex_daemon_pool_settings(),
+                "respawn_backoff_s": POOL_RESOURCE_BACKOFF_S,
+                "resource_exhaustion_backoff_s": POOL_RESOURCE_BACKOFF_S,
+                "resource_exhaustion_restart_threshold": POOL_RESOURCE_RESTART_THRESHOLD}
+    with patch.object(config, "codex_daemon_pool_settings", return_value=settings):
+        pool = codex_daemon._CodexDaemonPool(lambda: worker, size=1)
+        pool._pool_start_recovery(worker)
+        _pool_guard_wait_recovery(pool)
+    assert worker.ensure_running.call_count == POOL_RESOURCE_RESTART_THRESHOLD
+    assert pool.pool_restart_requested()
+    assert pool._pool_degraded[0] == "worker spawn returned no process"
 
 
 def test_pool_shutdown_removes_isolated_worker_home():
@@ -553,6 +571,7 @@ def _pool_chaos_exercise_wedge(wedge_mode):
 
 if __name__ == "__main__":
     for pool_guard_test in (
+            test_pool_spawn_resource_exhaustion_requests_broker_restart,
             test_pool_shutdown_removes_isolated_worker_home,
             test_worker_home_reaper_preserves_live_owner_and_removes_dead_owner,
             test_pool_parallel_turns_use_distinct_children_with_real_overlap,

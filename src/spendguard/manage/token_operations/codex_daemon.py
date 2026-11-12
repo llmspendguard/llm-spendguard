@@ -16,6 +16,7 @@ warm server a POOL of independent prompts rather than one growing conversation.
 from spendguard.generate.execution import execution_accessors as _execution_accessors
 import atexit
 import contextvars
+import errno
 import json
 import os
 from pathlib import Path
@@ -461,6 +462,7 @@ class _CodexDaemonPool:
         self._pool_monitor = None
         self._pool_recoveries = set()
         self._pool_degraded = {}
+        self._pool_restart_requested = threading.Event()
 
     def _configure_pool_worker(self, index, worker, isolate_homes):
         worker._keep_warm = True
@@ -566,6 +568,7 @@ class _CodexDaemonPool:
         backoff = settings["respawn_backoff_s"]
         ceiling = max(backoff, settings["health_interval_s"])
         reaped = False
+        resource_exhaustion_failures = 0
         try:
             while not self._pool_stopping.is_set():
                 try:
@@ -588,11 +591,24 @@ class _CodexDaemonPool:
                             self._pool_degraded.pop(slot_index, None)
                         break
                     failure = "worker spawn returned no process"
+                    resource_exhausted = True
                 except Exception as exc:
                     failure = str(exc)
+                    resource_exhausted = isinstance(exc, OSError) and exc.errno == errno.EMFILE
                 with self._pool_lock:
                     self._pool_degraded[slot_index] = failure
                 config.warn_once(f"[spendguard] DEGRADED codex pool slot {slot_index}: {failure}; retrying respawn")
+                if resource_exhausted:
+                    resource_exhaustion_failures += 1
+                    backoff = max(backoff, settings["resource_exhaustion_backoff_s"])
+                    if resource_exhaustion_failures >= settings["resource_exhaustion_restart_threshold"]:
+                        self._pool_restart_requested.set()
+                        config.warn_once(
+                            f"[spendguard] DEGRADED codex pool requested broker restart after "
+                            f"{resource_exhaustion_failures} resource-exhausted spawn failures")
+                        break
+                else:
+                    resource_exhaustion_failures = 0
                 if self._pool_stopping.wait(backoff):
                     break
                 backoff = min(ceiling, backoff * config.CODEX_POOL_RESPAWN_BACKOFF_MULTIPLIER)
@@ -744,6 +760,10 @@ class _CodexDaemonPool:
 
     def pool_running(self):
         return any(worker.running() for worker in self._workers)
+
+    def pool_restart_requested(self):
+        """Expose the resource-exhaustion health signal to the launchd-supervised broker owner."""
+        return self._pool_restart_requested.is_set()
 
     def pool_shutdown(self):
         self._pool_stopping.set()

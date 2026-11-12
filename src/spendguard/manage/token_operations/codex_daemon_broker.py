@@ -403,6 +403,10 @@ class _CodexDaemonBroker:
             return False
         from spendguard.platform import platform_accessors as _platform_accessors
         while not self._stopping.wait(config.codex_daemon_pool_settings()["health_interval_s"]):
+            if self._local.pool_restart_requested():
+                config.warn_once("[spendguard] codex broker owner exiting for resource-exhaustion self-heal")
+                self.broker_shutdown()
+                return False
             _platform_accessors.resolve_exit_if_stale(config.warn_once)
         return True
 
