@@ -741,6 +741,7 @@ def validate_catalog(models=None, allow_legacy_missing_as_of=True):
     into nothing). ``as_of`` is a strict, non-future YYYY-MM-DD. Missing/null dates are an explicit temporary legacy
     rollout exception; pass ``allow_legacy_missing_as_of=False`` after bootstrap to require completeness. Pure; no I/O
     beyond the load."""
+    validate_whole_catalog = models is None
     models = models if models is not None else _load_records()
     problems = []
     ids_present = set(models)
@@ -798,16 +799,20 @@ def validate_catalog(models=None, allow_legacy_missing_as_of=True):
         # A model may be unpriced only by declaring WHY — deliberately billing-exempt, a recorded price gap, or a
         # retired alias that resolves to another record. Resolved via the SAME function as_price_table uses, so the
         # validation rule and the omission can never drift. (An interval contract problem is already reported above;
-        # the sentinel avoids double-flagging it here as unpriced.)
-        try:
-            effective_in = (price_for_date_from_record(rec) or {}).get("in_")
-        except ValueError:
-            effective_in = "unresolved"
-        if effective_in is None and not rec.get("billing_exempt_reason") and not rec.get("price_error") \
-                and not rec.get("retired_alias_of"):
-            problems.append(
-                f"{rid}: unpriced (no current in_ rate) and declares no billing_exempt_reason, price_error, "
-                f"or retired_alias_of — as_price_table would drop it from the price table without a trace")
+        # the sentinel avoids double-flagging it here as unpriced.) This is a WHOLE-CATALOG completeness rule: it
+        # mirrors as_price_table, which projects only the shipped catalog (_load_records). A targeted call that passes
+        # synthetic records is exercising the per-record rules above (e.g. as_of), not the price-table projection, so
+        # a price-less stub there is legitimately unpriced and must NOT be flagged — hence the whole-catalog gate.
+        if validate_whole_catalog:
+            try:
+                effective_in = (price_for_date_from_record(rec) or {}).get("in_")
+            except ValueError:
+                effective_in = "unresolved"
+            if effective_in is None and not rec.get("billing_exempt_reason") and not rec.get("price_error") \
+                    and not rec.get("retired_alias_of"):
+                problems.append(
+                    f"{rid}: unpriced (no current in_ rate) and declares no billing_exempt_reason, price_error, "
+                    f"or retired_alias_of — as_price_table would drop it from the price table without a trace")
     # provider_base: at most ONE per provider, and a flagged base must be PRICED (a last-resort fallback must be usable)
     bases = {}
     for rid, rec in models.items():
