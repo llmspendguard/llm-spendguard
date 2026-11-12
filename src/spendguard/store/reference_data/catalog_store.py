@@ -35,6 +35,7 @@ MODEL_CATALOG_JSON_FILENAME = "model_catalog" + ".json"
 DATA_PATH = os.path.join(_HERE, MODEL_CATALOG_JSON_FILENAME)
 LEGACY_DEFAULT_DATA_PATH = DATA_PATH
 CATALOG_DATABASE_PATH = os.path.join(_HERE, "catalog.sqlite")
+SHIPPED_CATALOG_SEED_PATH = os.path.join(_HERE, "catalog_seed.sql")
 
 REASONING_STYLES = ("param", "suffix", "thinking", "none")   # enum domain for reasoning.style (DATA_CONTRACT)
 _REQUIRED_TOP = ("id", "provider")                            # a record must at least identify itself + its vendor
@@ -240,14 +241,46 @@ def _merged_records(floor_b, legacy_overlay_b, local_b):
     return {**_parse_models(floor_b), **_parse_models(legacy_overlay_b), **_parse_models(local_b)}
 
 
+@functools.lru_cache(maxsize=1)
+def _floor_bytes_from_packaged_seed():
+    """Serialized SQLite bytes for the BASE catalog, built in memory from the packaged, reviewable catalog_seed.sql.
+
+    The physical catalog.sqlite is an OPTIONAL build artifact (emitted by the wheel's build_py and by dev/test
+    builds); an editable or CI install, or any import entry point outside the test harness (e.g. `spendguard pricing`),
+    can run before it exists. The seed itself ALWAYS ships with the package, so the base is derived from it here — in
+    memory, never writing on import, so a read-only install is safe. Memoised once per process (the seed is immutable
+    in an install). Returns None only when the seed is unreadable (a packaging defect), leaving the caller to degrade
+    exactly as a genuinely absent floor would."""
+    seed = _read_bytes(SHIPPED_CATALOG_SEED_PATH)
+    if seed is None:
+        return None
+    connection = sqlite3.connect(":memory:")
+    try:
+        connection.executescript(seed.decode("utf-8"))
+        return connection.serialize()
+    finally:
+        connection.close()
+
+
+def _floor_bytes():
+    """The shipped BASE catalog bytes (T1 floor): the physical catalog.sqlite when present, else built from the
+    packaged seed. The ONE floor read choke point shared by every accessor, so a missing sqlite artifact can never
+    leave a surface with an empty catalog. Respects an explicit DATA_PATH override — a missing override is NOT
+    substituted with the seed. Returns None only when neither the artifact nor the seed is readable."""
+    floor_path = DATA_PATH if DATA_PATH != LEGACY_DEFAULT_DATA_PATH else CATALOG_DATABASE_PATH
+    floor_b = _read_bytes(floor_path)
+    if floor_b is None and floor_path == CATALOG_DATABASE_PATH:
+        floor_b = _floor_bytes_from_packaged_seed()
+    return floor_b
+
+
 def _load_records():
     """The {id: record} map, LAYERED per the data plane: the shipped curated floor (T1) OVERLAID by the server-synced
     / local-override catalog (SPENDGUARD_HOME/catalog_synced.json, T2) where present — synced records override/add by
     model id. CONTENT-keyed cache (see _merged_records) so a change is NEVER missed. Returns {} when NEITHER layer is
     present/readable — a missing catalog degrades to 'no curated record' (callers fall back to the synced breadth),
     never an exception."""
-    floor_path = DATA_PATH if DATA_PATH != LEGACY_DEFAULT_DATA_PATH else CATALOG_DATABASE_PATH
-    floor_b = _read_bytes(floor_path)
+    floor_b = _floor_bytes()
     legacy_overlay_b = _read_bytes(_overlay_path())
     local_b = _read_bytes(_local_database_path())
     if floor_b is None and legacy_overlay_b is None and local_b is None:
@@ -306,8 +339,7 @@ def unit_price_table():
 
 def catalog_pricing_metadata(section):
     """Read authored pricing metadata through the catalog's floor and overlay layers."""
-    floor_path = DATA_PATH if DATA_PATH != LEGACY_DEFAULT_DATA_PATH else CATALOG_DATABASE_PATH
-    floor = _catalog_document_or_empty(_read_bytes(floor_path))
+    floor = _catalog_document_or_empty(_floor_bytes())
     overlay_path = _overlay_path()
     overlay = _catalog_document_or_empty(_read_bytes(overlay_path))
     local = _catalog_document_or_empty(_read_bytes(_local_database_path()))
@@ -372,8 +404,7 @@ def _merged_vendors(floor_b, legacy_overlay_b, local_b):
 def _load_vendors():
     """The {provider: vendor_record} map, layered (shipped floor overlaid by the synced/override catalog). {} when
     neither layer is present — a missing vendors section degrades to 'no curated vendor', never an exception."""
-    floor_path = DATA_PATH if DATA_PATH != LEGACY_DEFAULT_DATA_PATH else CATALOG_DATABASE_PATH
-    floor_b = _read_bytes(floor_path)
+    floor_b = _floor_bytes()
     legacy_overlay_b = _read_bytes(_overlay_path())
     local_b = _read_bytes(_local_database_path())
     if floor_b is None and legacy_overlay_b is None and local_b is None:
