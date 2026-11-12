@@ -1,0 +1,14 @@
+"""Closed provenance vocabulary for every catalog row."""
+
+PROVENANCE_AUTHORED = "authored"
+PROVENANCE_SOURCED = "sourced"
+PROVENANCE_LEARNED = "learned"
+PROVENANCE_BREADTH = "breadth"
+PROVENANCE_LANE_CONFIG = "lane_config"
+PROVENANCE_VALUES = (
+    PROVENANCE_AUTHORED,
+    PROVENANCE_SOURCED,
+    PROVENANCE_LEARNED,
+    PROVENANCE_BREADTH,
+    PROVENANCE_LANE_CONFIG,
+)
