@@ -148,8 +148,8 @@
             "mi": 57.6135383030942
           },
           "src/spendguard/analyze/learning/lane_bandit.py": {
-            "max_cc": 17,
-            "mi": 34.53836449647356
+            "max_cc": 18,
+            "mi": 33.106578471562955
           },
           "src/spendguard/analyze/learning/learn.py": {
             "max_cc": 8,
@@ -1396,8 +1396,8 @@
             "mi": 57.52780301922131
           },
           "src/spendguard/analyze/learning/lane_bandit.py": {
-            "max_cc": 17,
-            "mi": 34.47896816266055
+            "max_cc": 18,
+            "mi": 33.05018732762015
           },
           "src/spendguard/analyze/learning/learn.py": {
             "max_cc": 8,
@@ -2538,7 +2538,8 @@
     "reviewed_codex_reaper_bounded_delete_retries": "2026-11-10: Reviewed the bounded codex-session-reaper retry hardening on fix/codex-reaper-fd-robustness (#303). delegate_jobs.reap_terminal_codex_sessions now records per-thread delete failures (new columns codex_session_reap_failure_reason/codex_session_reap_failed_at/codex_session_reap_attempts) and stops after codex_session_reap.max_delete_attempts (default 3) instead of erroring every pass; config_store adds max_delete_attempts and codex_daemon_pool resource-exhaustion backoff/restart-threshold validation. This raises delegate_jobs.py max_cc 30->32 (reviewed robustness branches) and lowers config_store MI from the added validation. The regeneration also refreshes pre-existing per-file radon measurement drift on files #303 does not change (byte-identical to the green main baseline) under this interpreter, matching the regeneration CI validated green on #304. Accepted.",
     "reviewed_delegate_jobs_lifecycle_maintenance": "#304 adds active delegate-jobs lifecycle maintenance (reap stale-running rows whose owning worker died, reap aged orphan running rows lacking a durable execution_id, bound result_payload via payload_archive_path offload, honest batch-cap) on top of #303's bounded codex-reaper. This raises delegate_router.py max_cc 48->53 (the lifecycle maintenance dispatch) and lowers delegate_jobs.py MI 15.9->7.83 (added schema columns + reap/bound logic in one module). Reviewed: the added complexity is the lifecycle hygiene itself, cohesive within the delegate-jobs seam; measured under 3.11 and 3.12.",
     "reviewed_catalog_ssot_stage1_store_and_provenance": "Catalog SSOT Stage 1 (#315) added store.reference_data.catalog_store (the one managed accessor over the physical SQLite catalog) and store.reference_data.catalog_provenance. Both are genuinely new source files with no prior complexity baseline entry; their measured radon CC maxima and MI are recorded here under review so the ratchet has a reviewed floor. No existing file's complexity is loosened.",
-    "reviewed_rebase_reconcile_codex_pool_fd_self_heal": "Rebase of #307 (codex-pool broker self-heal on repeated FD exhaustion / EMFILE) onto main after the catalog SSOT Stage 1 cascade; baseline re-derived from the rebased code via the SSOT regenerate tooling."
+    "reviewed_rebase_reconcile_codex_pool_fd_self_heal": "Rebase of #307 (codex-pool broker self-heal on repeated FD exhaustion / EMFILE) onto main after the catalog SSOT Stage 1 cascade; baseline re-derived from the rebased code via the SSOT regenerate tooling.",
+    "reviewed_rebase_reconcile_lane_bandit_sentinel": "Rebase of #305 onto main (incl #307) shifted the already-reviewed importlib dynamic import in lane_bandit one line; magnitude ceilings unchanged; move-neutral reconcile recording the exact measured dynamic-import set, plus the new cross-context edge and the reviewed complexity regression for the rebased tree."
   },
   "dead_allowlist": [
     {
@@ -3291,6 +3292,10 @@
     [
       "spendguard.analyze.learning.lane_bandit",
       "spendguard.store.money_ledger.ledger_write_decorators"
+    ],
+    [
+      "spendguard.analyze.learning.lane_bandit",
+      "spendguard.store.reference_data.models"
     ],
     [
       "spendguard.analyze.learning.lane_bandit",
@@ -7269,7 +7274,7 @@
     ]
   ],
   "recorded_dynamic_spendguard_imports": [
-    "src/spendguard/analyze/learning/lane_bandit.py:295",
+    "src/spendguard/analyze/learning/lane_bandit.py:296",
     "src/spendguard/analyze/measurement/lane_servability.py:289",
     "src/spendguard/generate/execution/adapters.py:1511",
     "src/spendguard/generate/execution/adapters.py:96",
@@ -7279,7 +7284,6 @@
     "src/spendguard/manage/admission/gate.py:2318",
     "src/spendguard/manage/admission/gate.py:2360",
     "src/spendguard/manage/token_operations/delegate_router.py:229",
-    "src/spendguard/manage/token_operations/delegate_router.py:483",
     "src/spendguard/manage/token_operations/delegate_router.py:494",
     "src/spendguard/platform/lanes.py:65"
   ],
