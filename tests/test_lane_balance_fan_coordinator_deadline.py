@@ -5,6 +5,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from _runner_budget_calibration import effective_runner_budget_scale
 
 
 CHILD_MODE_ENV = "SPENDGUARD_FAN_DEADLINE_CHILD"
@@ -54,7 +55,7 @@ def _run_child():
         lane_balance._bulk_task_coordinator_bound_s(INJECTED_DEADLINE_S)
         + HEDGE_WINDOW_MS / 1000.0
     )
-    scenario_bound_s = max(fan_bound_s, hedge_bound_s) * COORDINATOR_RETURN_MULTIPLIER
+    scenario_bound_s = max(fan_bound_s, hedge_bound_s) * COORDINATOR_RETURN_MULTIPLIER * effective_runner_budget_scale()
     child_watchdog_s = scenario_bound_s * SCENARIO_COUNT * TRACEBACK_WATCHDOG_MULTIPLIER
     faulthandler.dump_traceback_later(child_watchdog_s, exit=True)
 

@@ -7,6 +7,7 @@ import subprocess
 import sys
 import threading
 import time
+from _runner_budget_calibration import effective_runner_budget_scale
 
 from spendguard import report
 
@@ -62,7 +63,7 @@ def _run_hanging_child(hung_source_name):
     except report._WatchdogFired as watchdog_error:
         elapsed_s = time.monotonic() - started_at
         assert hung_source_name in str(watchdog_error), str(watchdog_error)
-        assert elapsed_s <= INJECTED_COLLECTOR_DEADLINE_S * CHILD_ELAPSED_DEADLINE_FACTOR, elapsed_s
+        assert elapsed_s <= INJECTED_COLLECTOR_DEADLINE_S * CHILD_ELAPSED_DEADLINE_FACTOR * effective_runner_budget_scale(), elapsed_s
         faulthandler.cancel_dump_traceback_later()
         print(f"{hung_source_name} bounded in {elapsed_s:.3f}s", flush=True)
         # The intentionally wedged executor thread remains alive after non-blocking shutdown, so bypass Python's

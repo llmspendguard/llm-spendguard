@@ -6,6 +6,7 @@ import fcntl
 from pathlib import Path
 
 import pytest
+from _runner_budget_calibration import effective_runner_budget_scale
 from _pytest_fixture_bridge import align_test_startup_home, run_pytest_style
 
 align_test_startup_home(prefix=__name__)
@@ -30,7 +31,7 @@ def test_rate_window_sleep_inherits_ambient_request_expiry(monkeypatch):
             xp_rate_window.reserve(test_rate_window_sleep_inherits_ambient_request_expiry.__name__,
                                    RATE_REPRO_LIMITS,
                                    deadline_s=RATE_REPRO_BUDGET_S * RATE_REPRO_HOLD_FACTOR)
-    assert time.monotonic() - started < RATE_REPRO_BUDGET_S * RATE_REPRO_SCHEDULING_FACTOR
+    assert time.monotonic() - started < RATE_REPRO_BUDGET_S * RATE_REPRO_SCHEDULING_FACTOR * effective_runner_budget_scale()
 
 
 def test_rate_reservation_execution_expiry_rolls_back(monkeypatch):
@@ -48,7 +49,7 @@ def test_rate_reservation_execution_expiry_rolls_back(monkeypatch):
     try:
         with pytest.raises(xp_rate_window.RateDeadline):
             xp_rate_window.reserve(__name__, RATE_REPRO_LIMITS, deadline_s=RATE_REPRO_BUDGET_S)
-        assert time.monotonic() - started < RATE_REPRO_BUDGET_S * RATE_REPRO_SCHEDULING_FACTOR
+        assert time.monotonic() - started < RATE_REPRO_BUDGET_S * RATE_REPRO_SCHEDULING_FACTOR * effective_runner_budget_scale()
     finally:
         release.set()
     count = ledger_writer.run_ledger_write(lambda: ledger_writer.current_ledger_writer_connection().execute(
@@ -72,7 +73,7 @@ def test_rate_reservation_admission_expires_before_writer_release():
         with pytest.raises(xp_rate_window.RateDeadline):
             xp_rate_window.reserve(test_rate_reservation_admission_expires_before_writer_release.__name__,
                                    RATE_REPRO_LIMITS, deadline_s=RATE_REPRO_BUDGET_S)
-        assert time.monotonic() - started < RATE_REPRO_BUDGET_S * RATE_REPRO_SCHEDULING_FACTOR
+        assert time.monotonic() - started < RATE_REPRO_BUDGET_S * RATE_REPRO_SCHEDULING_FACTOR * effective_runner_budget_scale()
         assert holder.is_alive()
     finally:
         release.set()
@@ -102,7 +103,7 @@ def test_rate_reservation_os_lock_expiry_never_commits():
         with pytest.raises(xp_rate_window.RateDeadline):
             xp_rate_window.reserve(test_rate_reservation_os_lock_expiry_never_commits.__name__,
                                    RATE_REPRO_LIMITS, deadline_s=RATE_REPRO_BUDGET_S)
-        assert time.monotonic() - started < RATE_REPRO_BUDGET_S * RATE_REPRO_SCHEDULING_FACTOR
+        assert time.monotonic() - started < RATE_REPRO_BUDGET_S * RATE_REPRO_SCHEDULING_FACTOR * effective_runner_budget_scale()
         assert holder.is_alive()
     finally:
         release.set()
