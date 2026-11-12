@@ -82,3 +82,9 @@ scripts/reliability/*.json
 .tiktoken-cache/
 .quarantine_*/
 scratchpad_corpus/
+
+# The model-catalog SQLite is a DISPOSABLE build artifact of the reviewable, committed catalog_seed.sql
+# (+ catalog_schema.sql) — never committed. The wheel builds it via setup.py's build_py; editable/CI and
+# dev builds build it on demand from the seed (tests/conftest.py + scripts/test/chunked_suite.py call
+# build_catalog_db.ensure_catalog_database). Committing the binary would let it drift from its seed.
+src/spendguard/store/reference_data/catalog.sqlite

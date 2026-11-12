@@ -67,6 +67,33 @@ def reject_spendguard_temp_leaks_at_session_end():
         session_temp_owner.cleanup()
 
 
+CATALOG_DATABASE_BUILDER_PATH = (
+    Path(__file__).resolve().parent.parent / "scripts" / "catalog" / "build_catalog_db.py")
+
+
+def ensure_reference_catalog_for_pytest():
+    """Build the gitignored catalog.sqlite from its committed seed before any test imports the catalog.
+
+    The SQLite binary is a disposable build artifact (shipped in the wheel via setup.py's build_py); an
+    editable/CI checkout has only the reviewable seed, so the controller and every xdist worker guarantee
+    the artifact here. Delegates to build_catalog_db.ensure_catalog_database, which is idempotent and atomic
+    (a no-op once the file is fresh), so concurrent workers converge without collision. No return value;
+    propagates OSError/ValueError from the builder rather than masking a broken seed.
+    """
+    specification = importlib.util.spec_from_file_location(
+        "spendguard_catalog_builder_for_pytest", CATALOG_DATABASE_BUILDER_PATH)
+    builder_module = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(builder_module)
+    builder_module.ensure_catalog_database()
+
+
+# Build the catalog at conftest IMPORT — before pytest_configure and before any test imports spendguard (a
+# missing catalog floor makes spendguard unimportable). Deliberately NOT inside pytest_configure: the runner
+# calibration mutation guard patches importlib.util within pytest_configure, which would otherwise intercept
+# this builder load. conftest is imported before that guard installs its patches, so the build runs unpatched.
+ensure_reference_catalog_for_pytest()
+
+
 def pytest_configure(config):
     """Only the controller measures speed; workers consume its exact result."""
     if hasattr(config, "workerinput"):

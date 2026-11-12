@@ -22,6 +22,29 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(os.path.dirname(HERE))
 TESTS = os.path.join(REPO, "tests")
 sys.path.insert(0, TESTS)
+
+CATALOG_DATABASE_BUILDER_PATH = os.path.join(REPO, "scripts", "catalog", "build_catalog_db.py")
+
+
+def ensure_reference_catalog_for_chunked_children():
+    """Build the gitignored catalog.sqlite from seed BEFORE this module imports spendguard.
+
+    The chunk children run as plain scripts, so tests/conftest.py's build hook never fires for them; the
+    parent guarantees the disposable SQLite artifact once here. It must run before the ``spendguard.config``
+    import below — a missing catalog floor makes spendguard unimportable (pricing.py reads the catalog at
+    import time). Delegates to the single builder (build_catalog_db.ensure_catalog_database) — idempotent
+    and atomic, a no-op once the file is fresh.
+    """
+    import importlib.util
+    specification = importlib.util.spec_from_file_location(
+        "spendguard_catalog_builder_for_chunked", CATALOG_DATABASE_BUILDER_PATH)
+    builder_module = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(builder_module)
+    builder_module.ensure_catalog_database()
+
+
+ensure_reference_catalog_for_chunked_children()
+
 from _gate_shard_plan import (  # noqa: E402
     GATE_SHARD_MANIFEST_FILENAME, GATE_SHARD_MINIMUM_COUNT,
     GATE_SHARD_SCHEMA_VERSION, GateShardEvidenceError, validate_gate_shard_manifest,
