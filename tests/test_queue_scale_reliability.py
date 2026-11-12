@@ -23,6 +23,7 @@ Isolation: SPENDGUARD_HOME → tempfile.mkdtemp BEFORE importing spendguard (chu
 fresh subprocess).
 """
 import json
+import math
 import os
 import random
 import sys
@@ -32,6 +33,8 @@ import time
 os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="spendguard-scale-")   # isolate BEFORE importing spendguard
 
 from spendguard import lane_queue as lq, vendor_call as vc   # noqa: E402
+
+from _runner_budget_calibration import MAX_RUNNER_SCALE, MIN_RUNNER_SCALE, RUNNER_BUDGET_SCALE_ENV  # noqa: E402
 
 # This test models transient RECOVERY by ATTEMPT COUNT (clear_at), driving retries via immediate re-lease in a
 # zero-wait drain loop that exits the instant lease() returns empty. The F4 retry backoff (a transient failure defers
@@ -48,7 +51,23 @@ SEED = 20260927              # fixed → reproducible draw + clear model
 P_CLEAR = 0.7                 # modelled: a transient fault clears with this prob per attempt (most clear in 1–3 tries)
 DOWN_FRACTION = 0.03          # modelled: this fraction of transient tasks are persistently down (never clear → exhaust)
 OLD_BLIND_BUDGET = 3          # the pre-Item-3 class-blind attempt budget, for the improvement metric
-MIN_THROUGHPUT = 100.0        # settles/sec floor (very conservative; SQLite/WAL does thousands — guards a real stall)
+# settles/sec floor on the REFERENCE runner (runner budget scale 1.0). This is a STALL GUARD, not a performance SLA:
+# SQLite/WAL settles thousands/sec, so a drop under this floor means the queue stopped making progress, not that it is
+# merely slow. On a loaded CI runner the SAME wall-clock work takes longer, exactly as the per-file time budget scales
+# by SPENDGUARD_RUNNER_BUDGET_SCALE in test_runner; so the floor is divided by that same scale (EFFECTIVE_MIN_THROUGHPUT
+# below) — the stall guard stays real on a fast runner (scale 1.0 keeps the full 100/s) and does not false-fail on a
+# slow one. The scale is read from the env the runner sets per child; absent/invalid → reference scale 1.0.
+MIN_THROUGHPUT = 100.0
+_DEFAULT_RUNNER_BUDGET_SCALE = 1.0
+_runner_budget_scale_text = os.environ.get(RUNNER_BUDGET_SCALE_ENV, str(_DEFAULT_RUNNER_BUDGET_SCALE))
+try:
+    RUNNER_BUDGET_SCALE = float(_runner_budget_scale_text)
+except ValueError as _scale_error:
+    raise AssertionError(f"invalid runner budget scale: {_runner_budget_scale_text!r}") from _scale_error
+if not math.isfinite(RUNNER_BUDGET_SCALE) or RUNNER_BUDGET_SCALE <= 0:
+    raise AssertionError(f"invalid runner budget scale: {RUNNER_BUDGET_SCALE!r}")
+RUNNER_BUDGET_SCALE = max(MIN_RUNNER_SCALE, min(MAX_RUNNER_SCALE, RUNNER_BUDGET_SCALE))
+EFFECTIVE_MIN_THROUGHPUT = MIN_THROUGHPUT / RUNNER_BUDGET_SCALE
 _DETERMINISTIC = (vc.TRUNCATED, vc.DEADLINE_EXCEEDED, vc.SCHEMA_VIOLATION, vc.REFUSED, vc.EMPTY,
                   vc.PAYLOAD_REJECTED, vc.UNFUNDED, vc.PREFLIGHT_UNMET)
 
@@ -169,7 +188,9 @@ def main():
 
     # 4. THROUGHPUT
     rate = settles / elapsed if elapsed > 0 else 0.0
-    c.ck("throughput floor met (queue scales)", rate >= MIN_THROUGHPUT, "%.0f settles/s" % rate)
+    c.ck("throughput floor met (queue scales)", rate >= EFFECTIVE_MIN_THROUGHPUT,
+         "%.0f settles/s (floor %.0f/s = ref %.0f/s / runner scale %.2f)"
+         % (rate, EFFECTIVE_MIN_THROUGHPUT, MIN_THROUGHPUT, RUNNER_BUDGET_SCALE))
 
     print("\n  scale summary (REAL mix, N=%d): ok=%d transient=%d deterministic=%d" % (VOLUME, n_ok, n_ret, n_det))
     print("    terminal: done=%d failed=%d stuck=%d  | rounds=%d settles=%d  %.2fs  (%.0f settles/s)"
