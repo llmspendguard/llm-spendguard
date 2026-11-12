@@ -47,7 +47,7 @@ jobs:
       # reads: the tool claimed it VERIFIED a function name against Lob's API, so "verified" is not proof of a
       # live credential. Re-enable this detector the day we actually integrate Lob.
       - name: TruffleHog (verified secrets only)
-        uses: trufflesecurity/trufflehog@ea68ca03c865c5f324e86e849ced20ed3cf9dbbb  # v3.95.6 — 3rd-party action, SHA-pinned
+        uses: trufflesecurity/trufflehog@ea68ca03c865c5f324e86e849ced20ed3cf9dbbb  # v3.99.8 — 3rd-party action, SHA-pinned
         with:
           path: ./
           base: ""
