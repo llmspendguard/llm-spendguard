@@ -52,7 +52,7 @@ jobs:
           path: ./
           base: ""
           head: HEAD
-          version: 3.95.6                      # pin the SCANNER too, not just the wrapper
+          version: 3.99.8                      # pin the SCANNER too, not just the wrapper (matches the SHA's v3.99.8 tag)
           extra_args: --only-verified --exclude-detectors=lob
 
   dep-audit:
