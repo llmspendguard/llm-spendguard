@@ -26,6 +26,8 @@ GATE_SHARD_COVERAGE_PATTERN = ".coverage.*"
 GATE_SHARD_COVERAGE_INVENTORY = "gate-coverage-manifest.json"
 GATE_SHARD_MINIMUM_COUNT = 1
 GATE_SHARD_FIRST_INDEX = 0
+GATE_SHARD_TARGET_SECONDS = 150.0
+GATE_SHARD_SUBPROCESS_NODEID_MARKER = "::test_script["
 GATE_SHARD_MANIFEST_FIELDS = frozenset(("schema_version", "shard_count", "durations"))
 GATE_SHARD_UNSUCCESSFUL_XML_TAGS = frozenset(("failure", "error", "skipped"))
 
@@ -94,9 +96,31 @@ def gate_shard_fallback_duration(durations):
     return float(statistics.median(known))
 
 
+def gate_shard_subprocess_floor_seconds(durations):
+    """Derive the subprocess-test floor from the manifest rather than inventing an import-tax constant."""
+    subprocess_durations = [duration for nodeid, duration in durations.items()
+                            if GATE_SHARD_SUBPROCESS_NODEID_MARKER in nodeid]
+    return min(subprocess_durations) if subprocess_durations else float(GATE_SHARD_FIRST_INDEX)
+
+
+def gate_shard_duration_weights(durations):
+    subprocess_floor = gate_shard_subprocess_floor_seconds(durations)
+    return {nodeid: max(duration, subprocess_floor)
+            if GATE_SHARD_SUBPROCESS_NODEID_MARKER in nodeid else duration
+            for nodeid, duration in durations.items()}
+
+
+def gate_shard_effective_count(manifest):
+    """Size the matrix from measured work while retaining the manifest count as a fail-safe minimum."""
+    validate_gate_shard_manifest(manifest)
+    total_seconds = math.fsum(gate_shard_duration_weights(manifest["durations"]).values())
+    target_derived_count = max(GATE_SHARD_MINIMUM_COUNT, math.ceil(total_seconds / GATE_SHARD_TARGET_SECONDS))
+    return min(len(manifest["durations"]), max(manifest["shard_count"], target_derived_count))
+
+
 def distribute_gate_shard_nodeids(nodeids, manifest):
     validate_gate_shard_manifest(manifest)
-    durations = manifest["durations"]
+    durations = gate_shard_duration_weights(manifest["durations"])
     if len(nodeids) != len(set(nodeids)):
         duplicates = sorted(name for name, count in Counter(nodeids).items() if count != GATE_SHARD_MINIMUM_COUNT)
         raise GateShardEvidenceError(f"collection contains duplicate nodeids: {duplicates}")
@@ -110,7 +134,7 @@ def distribute_gate_shard_nodeids(nodeids, manifest):
             f"weighting each at the median {fallback:.3f}s for balance. Record real timings with "
             f"`python tests/_gate_shard_plan.py refresh` so shards stay balanced: {untimed}\n")
     weight = lambda item: durations.get(item, fallback)  # noqa: E731 - local balance weight, not a decision
-    partitions = [[] for _ in range(manifest["shard_count"])]
+    partitions = [[] for _ in range(gate_shard_effective_count(manifest))]
     totals = [float(GATE_SHARD_FIRST_INDEX) for _ in partitions]
     for nodeid in sorted(nodeids, key=lambda item: (-weight(item), item)):
         index = min(range(len(partitions)), key=lambda item: (totals[item], len(partitions[item]), item))
@@ -124,7 +148,7 @@ def distribute_gate_shard_nodeids(nodeids, manifest):
 
 def gate_shard_workflow_matrix(manifest):
     validate_gate_shard_manifest(manifest)
-    return list(range(manifest["shard_count"]))
+    return list(range(gate_shard_effective_count(manifest)))
 
 
 def read_gate_shard_coverage_inventory(directory, inventory_name=GATE_SHARD_COVERAGE_INVENTORY):

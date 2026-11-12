@@ -11,83 +11,28 @@ permissions:
   contents: read
 
 jobs:
-  test:                          # GATE — a version tag must NOT publish an unverified build (forensic tool: no red build ships)
+  test:                          # GATE — reuse the exact tagged commit's successful CI proof
     runs-on: ubuntu-latest
-    env:
-      CI_OFFLINE_PROXY: http://127.0.0.1:9
-      # The offline suite (test_runner) strips keys + points a DEAD PROXY at any real call — so tiktoken cannot
-      # DOWNLOAD its o200k vocab on first use. Pin a cache dir the warm step below populates (with network) and the
-      # test subprocess inherits (test_runner copies os.environ), so the real-BPE token tests run offline, not a
-      # crude chars/token fallback that would 1-token-diverge the two estimators (measured: 257 vs 256).
-      TIKTOKEN_CACHE_DIR: ${{ github.workspace }}/.tiktoken-cache
+    permissions:
+      actions: read
+      contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
         with:
           python-version: '3.12'
-          cache: 'pip'                     # reuse the pip wheel cache across runs (CI uses uv's cache; this is the pip-path parity)
-          cache-dependency-path: pyproject.toml
-      - name: Install (same extras as CI)
-        # pydantic>=2 pinned (also on the extras): keep the release gate's resolve deterministic — a loose resolve can
-        # pull pydantic 1.x and break `import anthropic` (its httpx2.Timeout is a pydantic dataclass).
-        run: python -m pip install -e ".[openai,anthropic,dev]" "pydantic>=2"
       - name: Version SSOT — the tag MUST equal src/spendguard/_version.py (no file↔tag drift can publish)
         # The published wheel's version comes from pyproject's dynamic attr = spendguard._version.__version__ (the
         # SSOT read live from source). If the tag and that literal disagree, PyPI would get the file's version while
         # git says another — so fail fast here, before any expensive step, rather than publish a mismatch.
-        run: |
-          TAG_VERSION="${GITHUB_REF_NAME#v}"
-          SOURCE_VERSION="$(python -c 'import spendguard._version as v; print(v.__version__)')"
-          if [ "$TAG_VERSION" != "$SOURCE_VERSION" ]; then
-            echo "::error::tag $GITHUB_REF_NAME (=$TAG_VERSION) != src/spendguard/_version.py ($SOURCE_VERSION) — bump the file to match the tag"
-            exit 1
-          fi
-          echo "version SSOT ok: tag=$TAG_VERSION == source=$SOURCE_VERSION"
-      - name: Provision the declared build backend for offline consumers
-        run: |
-          # The install-hook regression (tests/test_install_hook_end_to_end.py) creates a consumer venv with
-          # --system-site-packages, so its `import setuptools` resolves against THIS job's BASE interpreter — not the
-          # editable install above, whose build backend lives in a build-isolated temp env that does not persist.
-          # Python 3.12's bare base ships no setuptools, so provision every declared build requirement here while the
-          # network is live, enabling the genuinely offline --no-build-isolation editable install the test exercises.
-          # Mirrors ci.yml's identical step so the release gate and the sharded PR gate run the same path;
-          # pyproject.toml's build-system.requires stays the single source of truth.
-          mapfile -t declared_build_requirements < <(python -c \
-            "import pathlib, tomllib; print(*tomllib.loads(pathlib.Path('pyproject.toml').read_text())['build-system']['requires'], sep='\n')")
-          python -m pip install "${declared_build_requirements[@]}"
-      - name: Warm the tiktoken o200k cache (the offline suite can't download it)
-        run: python -c "import tiktoken; tiktoken.get_encoding('o200k_base'); print('o200k cached')"
-      - name: Lint
-        run: ruff check src tests
-      - name: Test suite (offline, no spend)
-        # -n auto parallelises across cores (pytest-xdist, in the dev extra). The release gate previously ran this
-        # SERIALLY (~12min) and re-proved exactly what ci.yml already runs sharded+parallel on the same commit.
-        run: pytest -n auto
-      - name: Price-literal audit
-        run: SPENDGUARD_AUDIT_DIR=src/spendguard spendguard audit --ci
-      - name: Blocking offline capability and architectural readiness gates
-        # Three gates are UNREVIEWED (never FAIL) on this single-interpreter offline runner, and each is already
-        # proven elsewhere on THIS commit (or on operator machines), so all three are tolerated while every FAIL and
-        # every other UNREVIEWED blocks:
-        #   - env-parity-in-verification: branch CI attests env parity with two interpreters; this runner has one.
-        #   - wheel-source-module-conformance: the gate builds a real wheel, which needs network for build isolation;
-        #     this step runs offline (dead proxy + PIP_NO_INDEX) so it is UNREVIEWED here. The REAL check — build the
-        #     wheel and assert its module set == the recursive source set — already ran and PASSED in the
-        #     `pytest -n auto` suite above (tests/test_wheel_ships_every_source_subpackage.py, with the build backend
-        #     provisioned at the step above). This mirrors ci.yml's readiness selfcheck, which tolerates the same gate
-        #     because its sharded test job runs the identical real check.
-        #   - docs-present: the doc-currency check makes an agentic deprecated-import judgement that needs a reachable
-        #     LLM lane; this runner is network-isolated, so that leg cannot run and the gate reports UNREVIEWED. The
-        #     judgement runs on operator machines where a lane is present; a real doc-currency regression there FAILs
-        #     and is never tolerated. This mirrors ci.yml's readiness selfcheck, which tolerates the same gate.
-        run: |
-          export HTTP_PROXY="$CI_OFFLINE_PROXY" HTTPS_PROXY="$CI_OFFLINE_PROXY" ALL_PROXY="$CI_OFFLINE_PROXY"
-          export http_proxy="$CI_OFFLINE_PROXY" https_proxy="$CI_OFFLINE_PROXY" all_proxy="$CI_OFFLINE_PROXY"
-          export NO_PROXY= no_proxy= PIP_NO_INDEX=1
-          spendguard selfcheck --tolerate-unreviewed env-parity-in-verification --tolerate-unreviewed wheel-source-module-conformance --tolerate-unreviewed docs-present
+        run: bash scripts/ci/assert_release_tag_matches_source_version.sh
+      - name: Require successful CI for the exact tagged commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash scripts/ci/require_successful_ci_for_tagged_commit.sh
 
   publish:
-    needs: test                  # publish ONLY after the tagged commit passes lint + tests + audit
+    needs: test                  # publish ONLY after version parity and exact-SHA green CI proof
     runs-on: ubuntu-latest
     environment: pypi
     permissions:

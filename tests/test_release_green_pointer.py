@@ -12,6 +12,8 @@ reports the up-to-date / stale / no-pointer / unknown cases faithfully.
 Hermetic: isolated SPENDGUARD_HOME; git is stubbed via release._git_src; no network, no real repo, no ledger."""
 import os
 import pathlib
+import stat
+import subprocess
 import sys
 import tempfile
 
@@ -23,8 +25,9 @@ os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
 from _script_checks import record_script_check
-from spendguard import manifest, release   # noqa: E402
-from spendguard.capability_readiness import capability_selfcheck_exit_code  # noqa: E402
+from spendguard import release   # noqa: E402
+from spendguard.analyze.assurance.capability_readiness import capability_selfcheck_exit_code  # noqa: E402
+from spendguard.platform import manifest  # noqa: E402
 
 fails = []
 
@@ -128,61 +131,91 @@ record_script_check(fails, "served_sha() is None when git is unavailable", relea
 record_script_check(fails, "stale_vs_green() is False when the served version is unknown", release.stale_vs_green() is False)
 record_script_check(fails, "release_status note says version unknown, server keeps running", "unknown" in release.release_status()["note"])
 
-print("\n-- the tag release cannot publish without the live selfcheck gate --")
+print("\n-- the tag release cannot publish without exact-commit green CI proof --")
 repository_root = pathlib.Path(__file__).resolve().parents[1]
 release_workflow_path = repository_root / ".github" / "workflows" / "release.yml"
 release_workflow = yaml.safe_load(release_workflow_path.read_text())
 release_test_steps = release_workflow["jobs"]["test"]["steps"]
-release_test_commands = [str(step.get("run", "")).splitlines() for step in release_test_steps]
-
-# The release selfcheck runs offline on a SINGLE interpreter, so three readiness gates are UNREVIEWED there even
-# though each is proven elsewhere (on this SAME commit, or on operator machines): env-parity-in-verification
-# (branch CI attests parity across two independent interpreters), wheel-source-module-conformance (the real
-# wheel/source module-set equality runs in the `pytest -n auto` suite above, with the build backend provisioned),
-# and docs-present (its doc-currency check makes an agentic deprecated-import judgement that needs a reachable LLM
-# lane; the release runner is network-isolated so that leg cannot run and the gate reports UNREVIEWED — the
-# judgement runs on operator machines where a lane is present, and a real doc-currency regression there FAILs and
-# is never tolerated). The release gate must tolerate EXACTLY those three UNREVIEWEDs and nothing else — so a
-# future loosening (any fourth id slipped in) OR a silent drop of any one both break this guard. Mirrors ci.yml,
-# which tolerates the same wheel and docs-present gates.
-EXPECTED_RELEASE_SELFCHECK_TOLERANCES = frozenset(
-    {"env-parity-in-verification", "wheel-source-module-conformance", "docs-present"})
-
-
-def extract_selfcheck_tolerated_identifiers(selfcheck_command_line):
-    """Parse the tolerated-id SET from a `spendguard selfcheck ...` command line (fixed flag format, not a decision)."""
-    command_tokens = selfcheck_command_line.split()
-    if command_tokens[:2] != ["spendguard", "selfcheck"]:
-        return None
-    tolerated_identifiers = set()
-    token_index = 2
-    while token_index < len(command_tokens):
-        if command_tokens[token_index] == "--tolerate-unreviewed" and token_index + 1 < len(command_tokens):
-            tolerated_identifiers.add(command_tokens[token_index + 1])
-            token_index += 2
-        else:
-            token_index += 1
-    return tolerated_identifiers
-
-
-release_selfcheck_tolerances = next(
-    (tolerated_identifiers
-     for commands in release_test_commands
-     for command in commands
-     for tolerated_identifiers in (extract_selfcheck_tolerated_identifiers(command.strip()),)
-     if tolerated_identifiers is not None),
+RELEASE_EXACT_SHA_GATE_STEP_NAME = "Require successful CI for the exact tagged commit"
+RELEASE_VERSION_SSOT_STEP_NAME_PREFIX = "Version SSOT"
+release_exact_sha_gate_step = next(
+    (step for step in release_test_steps if step.get("name") == RELEASE_EXACT_SHA_GATE_STEP_NAME),
     None,
 )
-record_script_check(
-    fails,
-    "release test job tolerates exactly the env-parity, wheel-conformance and docs-present UNREVIEWEDs (each proven on this commit or on operator machines)",
-    release_selfcheck_tolerances == EXPECTED_RELEASE_SELFCHECK_TOLERANCES,
+release_version_ssot_step = next(
+    (step for step in release_test_steps
+     if str(step.get("name", "")).startswith(RELEASE_VERSION_SSOT_STEP_NAME_PREFIX)),
+    None,
 )
+RELEASE_EXACT_SHA_GATE_SCRIPT = "scripts/ci/require_successful_ci_for_tagged_commit.sh"
+RELEASE_VERSION_SSOT_SCRIPT = "scripts/ci/assert_release_tag_matches_source_version.sh"
+release_exact_sha_gate_command = (release_exact_sha_gate_step or {}).get("run")
+release_version_ssot_command = (release_version_ssot_step or {}).get("run")
+
+record_script_check(fails, "release exact-SHA gate step invokes its executable gate script",
+    release_exact_sha_gate_command == f"bash {RELEASE_EXACT_SHA_GATE_SCRIPT}")
+record_script_check(fails, "release version-SSOT step invokes its executable gate script",
+    release_version_ssot_command == f"bash {RELEASE_VERSION_SSOT_SCRIPT}")
 record_script_check(
     fails,
-    "publish needs the test job, so selfcheck failure blocks publication",
+    "publish needs the test job, so exact-SHA CI gate failure blocks publication",
     release_workflow["jobs"]["publish"].get("needs") == "test",
 )
+
+with tempfile.TemporaryDirectory(prefix="release-gate-contract-") as release_gate_temp_directory:
+    release_gate_temp_path = pathlib.Path(release_gate_temp_directory)
+    fake_gh_path = release_gate_temp_path / "gh"
+    fake_gh_path.write_text("#!/usr/bin/env bash\nprintf '%s\\n' \"$FAKE_GH_SUCCESSFUL_RUN_COUNT\"\n")
+    fake_gh_path.chmod(fake_gh_path.stat().st_mode | stat.S_IXUSR)
+    release_gate_environment = os.environ.copy()
+    release_gate_environment.update({
+        "GITHUB_REPOSITORY": "test-owner/test-repository",
+        "GITHUB_SHA": "1" * 40,
+        "PATH": os.pathsep.join((
+            str(release_gate_temp_path), str(pathlib.Path(sys.executable).parent), release_gate_environment["PATH"],
+        )),
+    })
+    exact_sha_gate_script_path = repository_root / RELEASE_EXACT_SHA_GATE_SCRIPT
+
+    zero_success_environment = release_gate_environment | {"FAKE_GH_SUCCESSFUL_RUN_COUNT": "0"}
+    zero_success_result = subprocess.run(
+        ["bash", str(exact_sha_gate_script_path)], cwd=repository_root, env=zero_success_environment,
+        capture_output=True, text=True, check=False,
+    )
+    record_script_check(fails, "exact-SHA gate exits nonzero and annotates zero successful CI runs",
+        zero_success_result.returncode != 0
+        and "::error::" in zero_success_result.stdout + zero_success_result.stderr)
+
+    successful_ci_environment = release_gate_environment | {"FAKE_GH_SUCCESSFUL_RUN_COUNT": "2"}
+    successful_ci_result = subprocess.run(
+        ["bash", str(exact_sha_gate_script_path)], cwd=repository_root, env=successful_ci_environment,
+        capture_output=True, text=True, check=False,
+    )
+    record_script_check(fails, "exact-SHA gate exits zero when successful CI proof exists",
+        successful_ci_result.returncode == 0)
+
+    temporary_version_source_path = release_gate_temp_path / "_version.py"
+    temporary_version_source_path.write_text('__version__ = "3.4.5"\n')
+    version_gate_script_path = repository_root / RELEASE_VERSION_SSOT_SCRIPT
+    matching_version_environment = release_gate_environment | {
+        "GITHUB_REF_NAME": "v3.4.5",
+        "SPENDGUARD_RELEASE_VERSION_SOURCE_PATH": str(temporary_version_source_path),
+    }
+    matching_version_result = subprocess.run(
+        ["bash", str(version_gate_script_path)], cwd=repository_root, env=matching_version_environment,
+        capture_output=True, text=True, check=False,
+    )
+    record_script_check(fails, "version-SSOT gate exits zero when tag and source version match",
+        matching_version_result.returncode == 0)
+
+    drifted_version_environment = matching_version_environment | {"GITHUB_REF_NAME": "v3.4.6"}
+    drifted_version_result = subprocess.run(
+        ["bash", str(version_gate_script_path)], cwd=repository_root, env=drifted_version_environment,
+        capture_output=True, text=True, check=False,
+    )
+    record_script_check(fails, "version-SSOT gate exits nonzero and annotates tag/source drift",
+        drifted_version_result.returncode != 0
+        and "::error::" in drifted_version_result.stdout + drifted_version_result.stderr)
 
 passing_outcome = {"id": "source-ratchet", "status": "PASS"}
 environment_unreviewed_outcome = {"id": "env-parity-in-verification", "status": "UNREVIEWED"}

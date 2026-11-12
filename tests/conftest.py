@@ -16,7 +16,7 @@ import pytest
 from _gate_shard_plan import (
     GATE_SHARD_FIRST_INDEX, GATE_SHARD_INDEX_ENV, GATE_SHARD_MANIFEST_FILENAME,
     GATE_SHARD_TIMINGS_ENV, GateShardEvidenceError, distribute_gate_shard_nodeids,
-    read_gate_shard_manifest, verify_gate_shard_partition,
+    gate_shard_effective_count, read_gate_shard_manifest, verify_gate_shard_partition,
 )
 
 RUNNER_CALIBRATION_MODULE_NAME = "spendguard_test_runner_calibration"
@@ -136,7 +136,7 @@ def pytest_collection_modifyitems(config, items):
         manifest_path = os.environ.get(GATE_SHARD_TIMINGS_ENV,
             str(Path(__file__).resolve().parent.parent / GATE_SHARD_MANIFEST_FILENAME))
         manifest = read_gate_shard_manifest(manifest_path)
-        if not GATE_SHARD_FIRST_INDEX <= index < manifest["shard_count"]:
+        if not GATE_SHARD_FIRST_INDEX <= index < gate_shard_effective_count(manifest):
             raise GateShardEvidenceError(f"shard index outside configured range: {configured_index}")
         nodeids = [item.nodeid for item in items]
         partitions = distribute_gate_shard_nodeids(nodeids, manifest)
