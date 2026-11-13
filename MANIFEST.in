@@ -1,0 +1,6 @@
+# The sdist must carry the build-time catalog generator so that building the wheel FROM the sdist
+# (python -m build's default build-via-sdist) can regenerate catalog.sqlite from the committed seed.
+# setup.py's CatalogBuildingBuildPy loads this exact path (scripts/catalog/build_catalog_db.py) at
+# build time; the seed itself ships as spendguard package-data. The generated catalog.sqlite is a
+# disposable build artifact and is intentionally NOT shipped in the sdist (it is gitignored).
+include scripts/catalog/build_catalog_db.py
