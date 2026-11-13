@@ -1365,7 +1365,7 @@
           },
           "src/spendguard/analyze/cost_estimation/provider_tokens.py": {
             "max_cc": 23,
-            "mi": 36.46813400726061
+            "mi": 35.35150910763796
           },
           "src/spendguard/analyze/learning/__init__.py": {
             "max_cc": 0,
@@ -1720,8 +1720,8 @@
             "mi": 14.684024120539261
           },
           "src/spendguard/generate/execution/embeddings.py": {
-            "max_cc": 32,
-            "mi": 35.73172368843533
+            "max_cc": 38,
+            "mi": 33.957392021015075
           },
           "src/spendguard/generate/execution/execution_accessors.py": {
             "max_cc": 6,
@@ -2558,7 +2558,8 @@
     "reviewed_output_cap_authority_and_synonym_resolver_py311": "C1 single-output-cap-authority + model-synonym resolver (rebased onto #325 catalog SSOT + #326 delegate persistence). Retirement-aware resolution exposed on PUBLIC model_catalog.model_record(resolve_retired=True); models.canonical_model_id uses the public path (satisfies gateway boundary guard). adapters.call() output-cap-ownership guards -> max_cc 247->255 (+8); adapters._call_once send-path guard; capability_registry.py surface rows; model_catalog.py relocated resolve_retired branch. Measured under Python 3.11.",
     "reviewed_output_cap_authority_and_synonym_resolver_py312": "C1 single-output-cap-authority + model-synonym resolver (rebased onto #325 + #326). Retirement-aware resolution exposed on PUBLIC model_catalog.model_record(resolve_retired=True); canonical_model_id uses public path. adapters.call() max_cc 247->255 (+8); _call_once send-path guard; capability_registry rows; model_catalog relocated resolve_retired branch. Measured under Python 3.12.",
     "reviewed_synonym_gap_sink_parameter_py311": "C1 boundary fix: model_catalog.catalog_record_from_snapshot gained an 'if on_synonym_gap is not None' guard (the gap-warning sink is now a threaded parameter instead of a config import, keeping model_catalog a config-free leaf per G2); +1 branch raises its CC. models.canonical_model_id passes config.warn_once. Measured under Python 3.11.",
-    "reviewed_synonym_gap_sink_parameter_py312": "C1 boundary fix: model_catalog.catalog_record_from_snapshot gained an 'if on_synonym_gap is not None' guard (the gap-warning sink is now a threaded parameter instead of a config import, keeping model_catalog a config-free leaf per G2); +1 branch raises its CC. models.canonical_model_id passes config.warn_once. Measured under Python 3.12."
+    "reviewed_synonym_gap_sink_parameter_py312": "C1 boundary fix: model_catalog.catalog_record_from_snapshot gained an 'if on_synonym_gap is not None' guard (the gap-warning sink is now a threaded parameter instead of a config import, keeping model_catalog a config-free leaf per G2); +1 branch raises its CC. models.canonical_model_id passes config.warn_once. Measured under Python 3.12.",
+    "reviewed_embed_token_unit_bounds_py312": "C3 embedding token-unit input bounds: embeddings.embed gains the catalog-sourced token guard (token-count check + conservative char fallback branch) replacing the single hardcoded char ceiling; the added branches raise measured CC/lower MI on 3.12. New offline test tests/test_embed_input_token_bounds.py measured in. Reviewed and accepted."
   },
   "dead_allowlist": [
     {
@@ -4699,6 +4700,10 @@
     [
       "spendguard.generate.execution.codex_exec",
       "spendguard.store.configuration.config"
+    ],
+    [
+      "spendguard.generate.execution.embeddings",
+      "spendguard.analyze.cost_estimation.provider_tokens"
     ],
     [
       "spendguard.generate.execution.embeddings",

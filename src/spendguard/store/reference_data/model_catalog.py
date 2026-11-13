@@ -659,6 +659,25 @@ def embedding_models(provider=None):
     return [(p, m) for _in, p, m in rows]
 
 
+def embedding_input_token_limit(model_id):
+    """The curated maximum input tokens for an embedding model, or None when absent/uncurated.
+
+    Embedding records carry their provider-published input limit in ``context_window``.  This accessor narrows that
+    general catalog fact to models explicitly authored with ``capabilities.mode == 'embedding'``, so chat windows can
+    never be mistaken for an embedding request limit.  The catalog remains the sole owner of the numeric value.
+    """
+    rec = model_record(model_id)
+    caps = (rec or {}).get("capabilities") if rec else None
+    if not isinstance(caps, dict) or caps.get("mode") != "embedding":
+        return None
+    window = (rec or {}).get("context_window")
+    value = window.get("value") if isinstance(window, dict) else None
+    try:
+        return int(value) if value is not None and int(value) > 0 else None
+    except (TypeError, ValueError):
+        return None
+
+
 def chat_models(provider=None):
     """Every curated CHAT model (capabilities.mode == 'chat'), optionally filtered to one provider — the SSOT for
     "which models chat", so NO caller hardcodes a chat model id. Returns [(provider, metered_id)] sorted by input price

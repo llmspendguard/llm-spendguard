@@ -23,7 +23,7 @@ os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
 from _script_checks import record_script_check
-from spendguard import adapters, submit, gate
+from spendguard import adapters, submit, gate, model_catalog
 # The embeddings surface (embed/embed_batch/embed_compare) + the _oai_compat_client factory it reads moved to
 # generate.execution.embeddings; embed is re-exported on adapters (calls still work), but embed reads embeddings'
 # module globals, so the client/embed STUBS are installed at their new home (embeddings.*), not on adapters.
@@ -80,11 +80,12 @@ embeddings._oai_compat_client = lambda prov, timeout_s=None: fake2
 r2 = adapters.embed(texts, "text-embedding-3-small", max_batch=2, checkpoint=r["checkpoint"])
 record_script_check(fails, "a re-run with the checkpoint RE-EMBEDS NOTHING (all served from the checkpoint)", fake2.calls == [] and all(v is not None for v in r2["vectors"]))
 
-# ── oversized input: marked failed, never sent; the rest still embed ──
+# ── token-oversized input: marked failed, never sent; the rest still embed ──
 embeddings._oai_compat_client = lambda prov, timeout_s=None: _FakeClient()
-big = "z" * (embeddings._EMBED_MAX_INPUT_CHARS + 1)
+token_limit = model_catalog.embedding_input_token_limit("text-embedding-3-small")
+big = "漢" * (token_limit + 1)
 r = adapters.embed(["ok1", big, "ok2"], "text-embedding-3-small", max_batch=10)
-record_script_check(fails, "an oversized input is marked failed (not sent)", any(f["i"] == 1 for f in r["failed"]) and r["vectors"][1] is None)
+record_script_check(fails, "a token-oversized input is marked failed (not sent)", any(f["i"] == 1 for f in r["failed"]) and r["vectors"][1] is None)
 record_script_check(fails, "...and the other inputs still embed", r["vectors"][0] is not None and r["vectors"][2] is not None)
 record_script_check(fails, "...and error names the unembedded count (never a silently-short list)", "unembedded" in (r["error"] or ""))
 
