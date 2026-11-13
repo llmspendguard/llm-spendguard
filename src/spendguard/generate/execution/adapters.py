@@ -231,11 +231,14 @@ def _warn_once_caller_maxtokens(key, passed):
     if key in _MAXTOK_WARN_LEDGER:
         return None
     _MAXTOK_WARN_LEDGER.add(key)
-    msg = ("[spendguard] max_tokens=%d passed (%s) — IGNORED. spendguard owns the output budget: it sends the model's "
-           "real ceiling (billed on ACTUAL tokens, so a high ceiling is free); a caller cap can only truncate. Omit it."
+    msg = ("[spendguard] caller output-cap arguments are deprecated: max_tokens=%s passed (%s) — IGNORED. "
+           "spendguard owns the output cap NAME and VALUE; autotune/output_budget sets both. "
+           "Callers MUST NOT pass max_tokens, max_completion_tokens, or max_output_tokens."
            % (passed, key))
-    import sys as _sysmt
-    print(msg, file=_sysmt.stderr)
+    config.warn_once(
+        "[spendguard] caller output-cap arguments are deprecated and ignored. Spendguard owns the output cap "
+        "NAME and VALUE through autotune/output_budget and the model catalog. Callers MUST NOT pass "
+        "max_tokens, max_completion_tokens, or max_output_tokens.")
     return msg
 
 
@@ -428,8 +431,11 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
               A reply the provider marks as cut off is RETRIED at double the budget; if it still will not fit,
               text=None and truncated=True, so a truncated body can never be read as a short answer.
 
-    `sig` names the call-class so the OUTPUT budget comes from its measured p99 (never a literal nobody picked),
-    and so each reply feeds that measurement. `intent` is the caller-facing ALIAS for it (the job-type label
+    Spendguard OWNS the output-cap parameter NAME and VALUE: autotune/output_budget selects the value and
+    the model catalog selects its wire name. Callers MUST NOT pass `max_tokens`, `max_completion_tokens`,
+    or `max_output_tokens`; these compatibility arguments are deprecated and ignored with a one-time warning.
+
+    `sig` names the call-class for measured output telemetry. `intent` is the caller-facing ALIAS for it (the job-type label
     advise/best-value/attribution key on): pass either — most callers pass one; if both, `sig` is the finer
     call-class and `intent` the job-type. `reasoning` (minimal|low|medium|high) sets reasoning effort for
     gpt-5/o-series models; defaults to 'minimal' for them (default-medium reasoning eats the token budget →
@@ -498,8 +504,13 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
     # unambiguous RENAMES; the canonical param wins if BOTH are given; a genuinely unknown kwarg fails LOUDLY with
     # guidance — never silently swallowed, because a dropped generation param is a silent wrong-result.
     if aliases:
-        _ALIASES = {"effort": "reasoning", "reasoning_effort": "reasoning",
-                    "max_output_tokens": "max_tokens", "max_completion_tokens": "max_tokens"}
+        _ALIASES = {"effort": "reasoning", "reasoning_effort": "reasoning"}
+        # Deprecated output caps remain accepted for compatibility, never advertised as generation controls.
+        for _cap_alias in ("max_output_tokens", "max_completion_tokens"):
+            if _cap_alias in aliases:
+                _ignored_cap = aliases.pop(_cap_alias)
+                if max_tokens is None:
+                    max_tokens = _ignored_cap
         # Two kinds of kwarg are NOT public renames and must be skipped here, or they die with a spurious
         # 'unexpected keyword' TypeError BEFORE the pop that owns them runs (this reject loop precedes the pops):
         #   • `governed` — a documented feature kwarg carried via **aliases, popped at the dispatch-governor step below;
@@ -517,8 +528,8 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
             _c = _ALIASES.get(_k)
             if not _c:
                 raise TypeError(
-                    "call() got an unexpected keyword %r. Pass: model, prompt, max_tokens (alias "
-                    "max_output_tokens/max_completion_tokens), reasoning=minimal|low|medium|high|best-value (alias "
+                    "call() got an unexpected keyword %r. Pass: model, prompt, "
+                    "reasoning=minimal|low|medium|high|best-value (alias "
                     "effort/reasoning_effort), intent (alias sig), system, schema, timeout_s, files, images, "
                     "no_metered_fallback, no_substitution, retries. Generation knobs temperature/top_p/seed are "
                     "accepted ONLY on a measurement call (measurement=True) — a deterministic A/B path; other knobs "
@@ -526,8 +537,13 @@ def call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=Non
             _canon[_c] = aliases[_k]
         if "reasoning" in _canon and reasoning is None:
             reasoning = _canon["reasoning"]
-        if "max_tokens" in _canon and max_tokens is None:
-            max_tokens = _canon["max_tokens"]
+
+    # Warn at the public boundary, before a subscription lane or any preflight can return early.
+    # Internal retries already carry the governed budget; they are not caller-supplied caps.
+    if (max_tokens is not None and not _no_guard and not _probe
+            and not getattr(_resolve_guard, "on", False) and not getattr(_heal_guard, "on", False)):
+        _warn_once_caller_maxtokens(sig or intent or model, max_tokens)
+        max_tokens = None
 
     # `intent` is the caller-facing ALIAS for `sig` (the job-type label advise/best-value/attribution key on). A
     # caller who reaches for intent= — the natural thing to pass for reasoning="best-value" — gets it honoured, not a
@@ -1450,6 +1466,16 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
             "_call_once needs an explicit max_tokens. It is the raw path — the measured budget lives in "
             "call()/_call_guarded, so use those unless you have deliberately chosen a number. A default "
             "here is how a cap nobody picked ends up truncating a real answer.")
+    from ... import models as send_model_catalog
+    from ...store.reference_data import model_catalog as send_spelling_catalog
+    canonical_send_id = send_model_catalog.canonical_model_id(model)
+    send_spelling_record = send_spelling_catalog.model_record(model) or {}
+    send_bare_spelling = model.split(":", 1)[-1]
+    send_is_lane_spelling = any(
+        send_bare_spelling in spellings
+        for spellings in (send_spelling_record.get("lane_spellings") or {}).values())
+    if canonical_send_id != model and not send_is_lane_spelling:
+        model = (model.split(":", 1)[0] + ":" + canonical_send_id) if ":" in model else canonical_send_id
     prov = provider_for(model)
     raw = model.split(":", 1)[1] if ":" in model else model
     if prov not in PROVIDERS:

@@ -87,7 +87,8 @@ ck("_call_once fired note_deadline_cancel on the cancel → the invisible waste 
 # an API failure row. Bypass admission/retry policy, retaining the synthetic SDK
 # deadline and the production forensic writer that converts absent local cost to $0.
 def _cancel_ledger_guarded_call(model, prompt, **kwargs):
-    return adapters._call_once(model, prompt, max_tokens=kwargs["max_tokens"],
+    # This stub replaces the budget-owning layer, so retain its output-budget contract.
+    return adapters._call_once(model, prompt, max_tokens=adapters.output_budget(model),
                                timeout_s=kwargs["timeout_s"], _skip_lane=True)
 
 

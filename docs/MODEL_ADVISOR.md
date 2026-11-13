@@ -87,7 +87,11 @@ The advisor (and any tool that calls an LLM through spendguard) uses `adapters.c
 documented so a consumer never has to reverse-engineer it. It returns a `CallResult` (a `dict` subclass whose keys
 are also attributes) for success and ordinary failure. Deliberate `SpendGateRefused` subtypes propagate by design:
 
-- **Request:** `call(model, prompt, max_tokens=None, system=None, reasoning=None, schema=None, timeout_s=None,
+Spendguard owns the output-cap NAME and VALUE through autotune/output_budget and the model catalog. Callers
+MUST NOT pass `max_tokens`, `max_completion_tokens`, or `max_output_tokens`; these deprecated compatibility
+arguments are ignored with a one-time warning.
+
+- **Request:** `call(model, prompt, system=None, reasoning=None, schema=None, timeout_s=None,
   sig=None, intent=None, files=None, images=None, no_metered_fallback=False, no_substitution=False,
   measurement=False, metered_only=False)`. `timeout_s` is a client-side cancel that actually stops the call **and** its billing (lane
   AND api). `schema` forces structured output. `intent` (alias for `sig`) tags the call's job-type for attribution —

@@ -12,7 +12,7 @@ intent labels adapters.call work for attribution, quality evidence and routing. 
 
 no_metered_fallback=True is the explicit subscription-only contract: a lane failure returns an error instead of billing a metered fallback. metered_only on adapters.call explicitly selects paid API execution.
 
-Normal adapters.call and vendor_call.call output budgets come from adapters.output_budget and the model's published output ceiling. Their max_tokens compatibility argument does not impose a caller-selected normal output cap; billing remains based on actual generated tokens. Input context limits are checked separately.
+Normal adapters.call and vendor_call.call output budgets come from adapters.output_budget and the model's published output ceiling; the catalog owns the wire parameter name. Callers MUST NOT pass max_tokens, max_completion_tokens, or max_output_tokens: these deprecated compatibility arguments are ignored with a one-time warning. Spendguard owns output-cap NAME and VALUE; billing remains based on actual generated tokens. Input context limits are checked separately.
 
 vendor_call.call requires a positive deadline_s covering the whole call and every retry; attempts and backoff_s govern retry handling. adapters.call timeout_s bounds execution, and retries governs retry handling. Each paid attempt can bill; a shorter output argument is not a money budget.
 
@@ -2229,7 +2229,7 @@ RETURNS a dict — NEVER raises — with the SAME keys on success and failure, s
 | --- | --- | --- | --- | --- |
 | model | Any | yes | required | Requested model; explicit best-value may substitute a quality-qualified measured model unless model substitution is pinned. |
 | prompt | Any | yes | required | Source parameter prompt at src/spendguard/adapters.py:931; see complete callable contract. |
-| max_tokens | Any | no | None | Compatibility argument: normal execution obtains the output ceiling from adapters.output_budget and ignores a caller-selected cap. Actual generated tokens determine billing; input context limits are separate. |
+| max_tokens | Any | no | None | Deprecated compatibility argument: callers MUST NOT pass it. Spendguard owns output-cap NAME and VALUE through autotune/output_budget and the model catalog; caller values are ignored with a one-time warning. Actual generated tokens determine billing; input context limits are separate. |
 | system | Any | no | None | Source parameter system at src/spendguard/adapters.py:931; see complete callable contract. |
 | reasoning | Any | no | None | Explicit 'best-value' selects measured model and reasoning effort for the intent when quality evidence qualifies. Inherited advisor.default_reasoning='best-value' preserves a supplied model and selects effort; no_substitution also pins the model. |
 | schema | Any | no | None | Source parameter schema at src/spendguard/adapters.py:931; see complete callable contract. |
@@ -7718,7 +7718,7 @@ measurement — `expected_output`/`bulkgate.maxtokens` — never guessed, and ne
 | deadline_s | Any | yes | required | Required positive total deadline covering the whole vendor call and every retry; validated against measured latency when evidence exists. |
 | purpose | Any | no | '' | Job label propagated into the intent context for attribution; vendor_call uses purpose rather than an intent keyword. |
 | system | Any | no | None | Source parameter system at src/spendguard/vendor_call.py:320; see complete callable contract. |
-| max_tokens | Any | no | None | Compatibility argument: normal execution obtains the output ceiling from adapters.output_budget and ignores a caller-selected cap. Actual generated tokens determine billing; input context limits are separate. |
+| max_tokens | Any | no | None | Deprecated compatibility argument: callers MUST NOT pass it. Spendguard owns output-cap NAME and VALUE through autotune/output_budget and the model catalog; caller values are ignored with a one-time warning. Actual generated tokens determine billing; input context limits are separate. |
 | schema | Any | no | None | Source parameter schema at src/spendguard/vendor_call.py:320; see complete callable contract. |
 | attempts | Any | no | IN_PROCESS_RETRY_ATTEMPTS | Maximum in-process attempts. Each paid attempt can bill; retry costs accumulate in the Result. |
 | backoff_s | Any | no | 2.0 | Base retry-backoff duration, bounded by the remaining total deadline. |

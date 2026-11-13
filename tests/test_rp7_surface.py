@@ -25,6 +25,10 @@ fails = []
 
 # ── GAP 3: sig= is keyed PER MODEL, not pooled ──
 _seen_keys = []
+# Isolate guarded telemetry keying from dispatch's independent pre-call token estimator.
+# Caller caps are ignored, so the estimator now legitimately consults its own history.
+_rp7_original_token_estimator = adapters._est_call_tokens
+adapters._est_call_tokens = lambda *args, **kwargs: None
 _orig_mt = bulkgate.maxtokens
 bulkgate.maxtokens = lambda s, **k: (_seen_keys.append(s), {})[1]
 adapters._call_once = lambda model, prompt, **kw: {"text": "ok", "cost": 0.0, "in_tok": 1, "out_tok": 1,
@@ -33,6 +37,7 @@ adapters._call_once = lambda model, prompt, **kw: {"text": "ok", "cost": 0.0, "i
 adapters.call("openai:gpt-5-nano", "hello", sig="warden:describe", max_tokens=64)
 adapters.call("anthropic:claude-opus-4-8", "hello", sig="warden:describe", max_tokens=64)
 bulkgate.maxtokens = _orig_mt
+adapters._est_call_tokens = _rp7_original_token_estimator
 record_script_check(fails, "sig= keyed per MODEL — same intent on two models → DIFFERENT keys (not pooled)",
    len(_seen_keys) == 2 and _seen_keys[0] != _seen_keys[1])
 record_script_check(fails, "...and the key IS bulkgate.sig(model, template_id=sig) (matches register-side keying)",
