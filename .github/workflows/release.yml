@@ -2,7 +2,7 @@ name: release
 # Publish to PyPI on a version tag (v*). Uses PyPI Trusted Publishing (OIDC) — no API token stored.
 # One-time setup on PyPI: add a Trusted Publisher for project `llm-spendguard` →
 #   owner: llmspendguard · repo: llm-spendguard · workflow: release.yml · environment: pypi
-# Then: bump src/spendguard/_version.py, update CHANGELOG.md, tag `vX.Y.Z`, push the tag.
+# Then: bump src/spendguard/platform/_version.py, update CHANGELOG.md, tag `vX.Y.Z`, push the tag.
 on:
   push:
     tags: ['v*']
@@ -21,7 +21,7 @@ jobs:
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
         with:
           python-version: '3.12'
-      - name: Version SSOT — the tag MUST equal src/spendguard/_version.py (no file↔tag drift can publish)
+      - name: Version SSOT — the tag MUST equal src/spendguard/platform/_version.py (no file↔tag drift can publish)
         # The published wheel's version comes from pyproject's dynamic attr = spendguard._version.__version__ (the
         # SSOT read live from source). If the tag and that literal disagree, PyPI would get the file's version while
         # git says another — so fail fast here, before any expensive step, rather than publish a mismatch.

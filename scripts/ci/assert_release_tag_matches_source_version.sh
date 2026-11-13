@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-readonly DEFAULT_RELEASE_VERSION_SOURCE_PATH="src/spendguard/_version.py"
+readonly DEFAULT_RELEASE_VERSION_SOURCE_PATH="src/spendguard/platform/_version.py"
 readonly RELEASE_VERSION_SOURCE_PATH="${1:-${SPENDGUARD_RELEASE_VERSION_SOURCE_PATH:-$DEFAULT_RELEASE_VERSION_SOURCE_PATH}}"
 
 TAG_VERSION="${GITHUB_REF_NAME#v}"
