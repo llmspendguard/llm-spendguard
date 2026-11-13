@@ -4703,6 +4703,10 @@
     ],
     [
       "spendguard.generate.execution.embeddings",
+      "spendguard.analyze.cost_estimation.provider_tokens"
+    ],
+    [
+      "spendguard.generate.execution.embeddings",
       "spendguard.manage.admission.admission_accessors"
     ],
     [
