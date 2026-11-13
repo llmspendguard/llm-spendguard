@@ -109,6 +109,8 @@ def inspect_catalog_audit_cells(records, contract):
                 "dict": lambda value=value: isinstance(value, dict),
                 "list": lambda value=value: isinstance(value, list)
                 and all(isinstance(v, str) and v.strip() for v in value),
+                "interval_list": lambda value=value: isinstance(value, list)
+                and all(isinstance(v, dict) for v in value),
                 "date": lambda value=value: isinstance(value, str)
                 and datetime.date.fromisoformat(value).isoformat() == value,
             }

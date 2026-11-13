@@ -21,6 +21,12 @@ GATEWAY_ACCESS_METHODS = frozenset((
 GATEWAY_TEST_REASON = "offline transactional catalog proof"
 GATEWAY_PRICE_SOURCE = "offline provenance fixture"
 GATEWAY_PRICE_DELTA = 1
+GATEWAY_INTERVAL_VALID_FROM = "2026-01-01"
+GATEWAY_INTERVAL_VALID_UNTIL = "2026-02-01"
+GATEWAY_UNKNOWN_MODEL_ID = "catalog-model-behavior-unknown-fixture"
+GATEWAY_MUTATED_CAPABILITY_MODE = "mutated-test-value"
+GATEWAY_BEHAVIOR_FIELDS = frozenset(
+    ("output_ceiling", "context_window", "reasoning", "vision", "capabilities"))
 
 
 def catalog_ast_lexical_bindings(tree):
@@ -386,6 +392,35 @@ def test_catalog_gateway_shared_renderer_matches_generator(tmp_path):
         provenance_authored=PROVENANCE_AUTHORED, provenance_sourced=PROVENANCE_SOURCED)
     assert count == len(document["models"])
     assert output.read_text() == rendered
+
+
+def test_catalog_gateway_price_intervals_round_trip_through_sqlite():
+    document = copy.deepcopy(model_catalog.catalog_seed_document())
+    model_id, record = next((item for item in sorted(document["models"].items())
+                             if item[1].get("price")))
+    interval = record.pop("price")
+    interval.update(valid_from=GATEWAY_INTERVAL_VALID_FROM,
+                    valid_until=GATEWAY_INTERVAL_VALID_UNTIL)
+    record["price_intervals"] = [interval]
+
+    _, _, database = model_catalog._prepare_catalog_bundle(document)
+    reconstructed = model_catalog._catalog_document_from_sqlite_bytes(database)
+
+    assert reconstructed == document
+    assert reconstructed["models"][model_id]["price_intervals"] == [interval]
+
+
+def test_catalog_model_behavior_is_the_detached_behavior_read_facade():
+    model_id, record = next((item for item in sorted(model_catalog.all_records().items())
+                             if item[1].get("capabilities") and item[1].get("reasoning")))
+    expected = {field: copy.deepcopy(record[field]) for field in GATEWAY_BEHAVIOR_FIELDS if field in record}
+
+    behavior = model_catalog.catalog_model_behavior(model_id)
+
+    assert behavior == expected
+    assert model_catalog.catalog_model_behavior(GATEWAY_UNKNOWN_MODEL_ID) is None
+    behavior["capabilities"]["mode"] = GATEWAY_MUTATED_CAPABILITY_MODE
+    assert model_catalog.catalog_model_behavior(model_id) == expected
 
 
 def test_catalog_gateway_seed_parity():

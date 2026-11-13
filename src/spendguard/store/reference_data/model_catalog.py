@@ -17,6 +17,7 @@ Record schema (the DATA CONTRACT — see validate()):
   aliases: [str]                            retired_alias_of: str | null
   metered_id: str                           lane_spellings: {lane: [use-name, ...]}
   price: {in_, out, cached_in, batch_in, batch_out, batch_cached_in?, source, verified} | null   price_error: str | null
+  price_intervals: [{in_, out, ..., source, verified, valid_from, valid_until}] (optional)
   output_ceiling: {value: int|null, source: str|null}     context_window: {value: int|null, source, verified} | null
   as_of: "YYYY-MM-DD" | null (last tracked price/capability change; nullable legacy during bootstrap rollout)
   provider_base: true (ONLY on the one reliable base model per provider — the tier-3 fallback target; absent else)
@@ -94,6 +95,7 @@ MODEL_CATALOG_COMPLETENESS_CONTRACT = {
     "price.source": ("str", "required"),
     "price.verified": ("date", "required"),
     "price_error": ("str", "nullable"),
+    "price_intervals": ("interval_list", "optional"),
     "provider": ("str", "required"),
     "provider_base": ("bool", "optional"),
     "reasoning": ("dict", "required"),
@@ -109,7 +111,8 @@ MODEL_CATALOG_COMPLETENESS_CONTRACT = {
 
 REASONING_STYLES = ("param", "suffix", "thinking", "none")   # enum domain for reasoning.style (DATA_CONTRACT)
 _REQUIRED_TOP = ("id", "provider")                            # a record must at least identify itself + its vendor
-_TRACKED_FIELDS = ("price", "vision", "capabilities", "context_window", "output_ceiling")
+_TRACKED_FIELDS = ("price", "price_intervals", "vision", "capabilities", "context_window", "output_ceiling")
+_CATALOG_MODEL_BEHAVIOR_FIELDS = ("output_ceiling", "context_window", "reasoning", "vision", "capabilities")
 _ISO_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 BILLING_EXEMPT_REASON_FIELD = "billing_exempt_reason"
 CATALOG_UNIT_PRICES_FIELD = "unit_prices"
@@ -611,11 +614,26 @@ def price_for_date_from_record(record, on_date=None):
     return dict(matches[0]) if matches else None
 
 
+def catalog_model_behavior(model_id):
+    """Return the catalog-owned behavior/capability fields for one model.
+
+    The returned mapping preserves each field's authored provenance shape and is
+    detached from the catalog snapshot so callers cannot mutate shared state.
+    ``None`` means the model is not present; an empty mapping means the model is
+    present but has no authored behavior fields.
+    """
+    record = model_record(model_id)
+    if record is None:
+        return None
+    return {field: copy.deepcopy(record[field])
+            for field in _CATALOG_MODEL_BEHAVIOR_FIELDS if field in record}
+
+
 def published_ceiling(model_id):
     """The curated published max-OUTPUT-tokens value (int) for a model, or None when unknown/not-curated. The
     RESOLVER (pricing.output_ceiling) reads this first, then live /models, then floors — this is just the datum."""
-    rec = model_record(model_id)
-    oc = (rec or {}).get("output_ceiling") if rec else None
+    behavior = catalog_model_behavior(model_id)
+    oc = (behavior or {}).get("output_ceiling")
     v = (oc or {}).get("value")
     try:
         return int(v) if v else None
@@ -628,8 +646,8 @@ def context_window(model_id):
     METERED API's window (provider-published, carried WITH source+verified provenance); a LANE's smaller practical
     input capacity is learned separately (resource_state size_ceiling) and must never be conflated with this. The
     datum only — a resolver may layer the synced breadth / a learned floor on top."""
-    rec = model_record(model_id)
-    cw = (rec or {}).get("context_window") if rec else None
+    behavior = catalog_model_behavior(model_id)
+    cw = (behavior or {}).get("context_window")
     v = cw.get("value") if isinstance(cw, dict) else None
     try:
         return int(v) if v else None
@@ -732,8 +750,8 @@ def provider_base(provider):
 def reasoning(model_id):
     """The reasoning sub-record {floor, effort_ok, reasoning_floor, reasons_by_default, tokens_param, style} for a
     model, or None when not curated. Per-model facts only; the lane<->metered effort SPELLING is reasoning_equivalence."""
-    rec = model_record(model_id)
-    return (rec or {}).get("reasoning") if rec else None
+    behavior = catalog_model_behavior(model_id)
+    return (behavior or {}).get("reasoning")
 
 
 def provider_of(model_id):
@@ -777,7 +795,8 @@ def vision_capable(model_id):
     asymmetry is deliberate: a wrong True would send an image to a blind model; a wrong None only keeps the caller's
     (already-vision) model."""
     rec = model_record(model_id)
-    v = (rec or {}).get("vision") if rec else None
+    behavior = catalog_model_behavior(model_id)
+    v = (behavior or {}).get("vision")
     if isinstance(v, bool):
         return v
     caps = _litellm_breadth_cache().get("capabilities") or {}
@@ -794,7 +813,8 @@ def model_capability(model_id, name):
     curated catalog `capabilities` block FIRST, then the LiteLLM cache breadth (where the field is `supports_<name>`) —
     the same catalog-override-then-breadth resolution as vision_capable, so everything we use/might use is covered."""
     rec = model_record(model_id)
-    cc = (rec or {}).get("capabilities") if rec else None
+    behavior = catalog_model_behavior(model_id)
+    cc = (behavior or {}).get("capabilities")
     if isinstance(cc, dict) and isinstance(cc.get(name), bool):
         return cc[name]
     caps = _litellm_breadth_cache().get("capabilities") or {}
