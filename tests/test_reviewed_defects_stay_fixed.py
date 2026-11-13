@@ -575,5 +575,26 @@ check("the module docstring no longer promises 'never 0'", "and never 0." not in
 check("...and says to check the basis instead", "CHECK THE BASIS" in _eo.__doc__)
 
 
+# ── C6 close-outs (2026-11-13). Behaviour is guarded end-to-end in the paired dedicated tests named below; these
+# pin the fix's invariant line so a regression that silently removes it is caught here too. ──────────────────────
+print("\n-- a stuck-running delegate job with a dead launcher and no child is reclaimed (delegate_jobs reaper) --")
+# Old reaper reclaimed only on a provably-DEAD warm owner; an UNKNOWN owner (owner_pid None, no child_pid) was
+# skipped forever. Behavioural guard: tests/test_delegate_job_lifecycle_maintenance.py (dead-launcher-no-child-job).
+_reaper_src = (SRC / "manage/token_operations/delegate_jobs.py").read_text()
+check("the reaper consults child-aware liveness + terminal state, not owner-identity DEAD alone",
+      "_durable_execution_has_live_process" in _reaper_src and "EXECUTION_TERMINAL_STATES" in _reaper_src
+      and "execution_is_terminal" in _reaper_src)
+
+print("\n-- doctor binds an unpriced advisor cap only when the advisor is the active default picker (gate) --")
+# The advisor-UNPRICED red ("the meta cap cannot be computed") is now magnitude-aware: it binds doctor's exit only
+# when _default_reasoning_is_best_value() (the advisor is on the hot path), and the SPENDGUARD_ALLOW_UNPRICED_ADVISOR
+# escape hatch waives the bind. Behavioural guard: tests/test_doctor_binds_advisor_unpriced_cap.py (states a/b/c).
+_gate_src = (SRC / "manage/admission/gate.py").read_text()
+check("doctor's advisor-cap bind is gated on the active-default-picker magnitude, with an escape hatch",
+      "_advisor_unpriced_cap_binds" in _gate_src and "_default_reasoning_is_best_value" in _gate_src
+      and 'ALLOW_UNPRICED_ADVISOR_ENV = "SPENDGUARD_ALLOW_UNPRICED_ADVISOR"' in _gate_src
+      and "_advisor_unpriced_cap_binds" in _gate_src.split("return 1 if (cmd ==")[1])
+
+
 print(f"\n{'[FAIL]' if failures else 'OK'} test_reviewed_defects_stay_fixed: {len(failures)} failure(s)")
 sys.exit(1 if failures else 0)
