@@ -304,8 +304,10 @@ Each absence below carries the registry's reviewed reason.
 | C278 | Record a quality outcome for a recorded call | ABSENT (DELIBERATE): Programmatic API or MCP contract, not a user-facing CLI command. | spendguard.feedback(call_id, ok=True, source="explicit", confidence=None) | capability_record_quality_feedback_spendguard_feedback | [spendguard:feedback](#core-f808d412b970120f1f3895bf185b3b418f36529625c8f29a2bfdd4c184e42a2f) |
 | C279 | Assess versioned project readiness with fail-closed evidence and coverage | selfcheck | capability_readiness_selfcheck_capability_readiness_assess_capability_readiness; capability_readiness_selfcheck_capability_readiness_run_capability_selfcheck | capability_readiness_selfcheck_capability_readiness_assess_capability_readiness; capability_readiness_selfcheck_capability_readiness_run_capability_selfcheck | [spendguard.capability_readiness:assess_capability_readiness](#core-338ee42e079697612ca024dd53e80591dc88fba822e615dfb983a69793a6e9d5); [spendguard.capability_readiness:run_capability_selfcheck](#core-af3c9425d056c61cb4885c201af073c5d2d56a68f9bd8f7356a7276f2f9c647a) |
 | C280 | Measure or check nightly ledger hot-path performance against a same-runner committed baseline | bench | ledger_performance_benchmark_ledger_performance_benchmark_run_ledger_performance_benchmark | ledger_performance_benchmark_ledger_performance_benchmark_run_ledger_performance_benchmark | [spendguard.ledger_performance_benchmark:run_ledger_performance_benchmark](#core-f67b31ebb2ff87950b46bd6abb6b2ce5534113fae77503d7eccd3d78893f69b6) |
+| C281 | Read the catalog and configured embedding input limits enforced by the embed guard | ABSENT (DELIBERATE): Embedding boundaries are an in-process pre-splitting contract; no standalone operator workflow is required. | capability_embedding_input_limits_spendguard_store_reference_data_model_catalog_embedding_input_limits | ABSENT (DELIBERATE): MCP agents do not locally split inputs before spendguard's embedding execution path. | [spendguard.store.reference_data.model_catalog:embedding_input_limits](#core-6c6b2218af3a699d533d98b68e9ca821a54406c3180c55c90c7c687adf5f80be) |
+| C282 | Check at zero cost and without a probe whether a model's routed metered provider credential is resolvable | metered-ready | capability_metered_call_readiness_spendguard_manage_admission_model_preflight_metered_call_readiness; capability_metered_call_readiness_spendguard_manage_admission_model_preflight_run_metered_call_readiness | capability_metered_call_readiness_spendguard_manage_admission_model_preflight_metered_call_readiness; capability_metered_call_readiness_spendguard_manage_admission_model_preflight_run_metered_call_readiness | [spendguard.manage.admission.model_preflight:metered_call_readiness](#core-b970d6145983071160d2eb35ca0d96ca39ad918dcfad5ee79f64476e25645745); [spendguard.manage.admission.model_preflight:run_metered_call_readiness](#core-8e5c841684a0f05f9ee6766f617a8326de389ae2ef24d11cbae288fb7c4040e7) |
 
-Counts: ABSENT 102; DELIBERATE 102; PRESENT 738
+Counts: ABSENT 104; DELIBERATE 104; PRESENT 742
 
 ## Capability parameter contracts
 
@@ -2103,6 +2105,23 @@ Use bench --record to commit p50/p95/p99 hot-read and record_event latency, data
 | iterations | int | no | LEDGER_PERFORMANCE_DEFAULT_ITERATIONS | Measured iterations per hot operation after warmup. |
 | warmups | int | no | LEDGER_PERFORMANCE_DEFAULT_WARMUPS | Warmup iterations discarded before measurement. |
 | volume | int | no | LEDGER_PERFORMANCE_DEFAULT_VOLUME | Synthetic fallback volume used only when spend_events and calls have no retrospective metadata. |
+
+### C281: Read the catalog and configured embedding input limits enforced by the embed guard
+
+The embed guard calls this accessor; the catalog owns token limits and safety configuration owns the character ratio.
+
+| Parameter | Type | Required | Default | Contract |
+| --- | --- | --- | --- | --- |
+| model_id | str | yes | required | Embedding model id whose enforced token and conservative character limits are requested. |
+
+### C282: Check at zero cost and without a probe whether a model's routed metered provider credential is resolvable
+
+Both report and fail-closed CLI use the same no-network core; provider and credential identities remain in spendguard registries.
+
+| Parameter | Type | Required | Default | Contract |
+| --- | --- | --- | --- | --- |
+| model | str | yes | required | Catalog model id; spendguard resolves its provider and credential identity. |
+| intent | str \| None {"alternatives": [{"alternatives": [], "enum": [], "items": null, "properties": [], "python_annotation": null, "type": "string"}, {"alternatives": [], "enum": [], "items": null, "properties": [], "python_annotation": null, "type": "null"}], "enum": [], "items": null, "properties": [], "python_annotation": "str \| None", "type": "string"} | no | None | Optional attribution intent; credential routing remains model-owned. |
 
 ## Programmatic core contracts
 
@@ -5807,6 +5826,36 @@ Compare provider batch truth with accounted and live-captured local ledger spend
 
 Returns: `Any`
 
+<a id="core-b970d6145983071160d2eb35ca0d96ca39ad918dcfad5ee79f64476e25645745"></a>
+
+### `spendguard.manage.admission.model_preflight:metered_call_readiness`
+
+Source: `src/spendguard/manage/admission/model_preflight.py`
+
+Return model, intent, routed provider, armed status, distinct status classification, and human reason without a network call.
+
+| Parameter | Type | Required | Default | Contract |
+| --- | --- | --- | --- | --- |
+| model | str | yes | required | Catalog model id whose routed credential readiness is requested. |
+| intent | str \| None {"alternatives": [{"alternatives": [], "enum": [], "items": null, "properties": [], "python_annotation": null, "type": "string"}, {"alternatives": [], "enum": [], "items": null, "properties": [], "python_annotation": null, "type": "null"}], "enum": [], "items": null, "properties": [], "python_annotation": "str \| None", "type": "string"} | no | None | Optional attribution intent. |
+
+Returns: `dict`
+
+<a id="core-8e5c841684a0f05f9ee6766f617a8326de389ae2ef24d11cbae288fb7c4040e7"></a>
+
+### `spendguard.manage.admission.model_preflight:run_metered_call_readiness`
+
+Source: `src/spendguard/manage/admission/model_preflight.py`
+
+Print the complete readiness report and return nonzero unless the model's routed provider credential is resolvable.
+
+| Parameter | Type | Required | Default | Contract |
+| --- | --- | --- | --- | --- |
+| model | str | yes | required | Catalog model id whose routed credential readiness is requested. |
+| intent | str \| None {"alternatives": [{"alternatives": [], "enum": [], "items": null, "properties": [], "python_annotation": null, "type": "string"}, {"alternatives": [], "enum": [], "items": null, "properties": [], "python_annotation": null, "type": "null"}], "enum": [], "items": null, "properties": [], "python_annotation": "str \| None", "type": "string"} | no | None | Optional attribution intent. |
+
+Returns: `int`
+
 <a id="core-ea5874a8af3dd6893dfe4cb22bf1e71c6eaaff0c5a8c6229271a54d8a078319d"></a>
 
 ### `spendguard.manifest:build_surface_manifest`
@@ -7390,6 +7439,20 @@ Never raises on a call failure — a failed replicate is counted (errors) and su
 | reasoning | Any | no | None | Run each prompt `k` times on its normal production path and report run-to-run variance.<br><br>`parse` (str -> hashable) extracts the comparable OUTCOME of each reply — a classification label, a decision — which<br>is PARSING a fixed-shape result, not judging meaning (so it stays on the right side of the agentic-decision rule);<br>the default compares the stripped raw text. For free-text where equivalence is a judgement, the caller passes a<br>`parse` that canonicalises, or scores the returned outcomes with its own agentic judge.<br><br>Returns a dict:<br>  model, k, n_prompts, executor (the path that served — a lane name or 'api', from the first served call)<br>  per_prompt: [{prompt_idx, outcomes:[o_1..o_k], distinct, stable (1 outcome & 0 errors), errors}]<br>  stable_frac: prompts stable across all k runs / n_prompts  (1.0 == fully reproducible at production settings)<br>  flipped:     prompt indices whose outcome was NOT identical across the k runs<br>  label_rate_by_run: {run_idx: {label: count}} — the per-RUN outcome distribution<br>  rate_spread: {label: {min_frac, max_frac, band}} — min..max of the label's per-run rate across runs; `band` is the<br>               nondeterminism amplitude (the 7.7%↔31.8% = 0.246 band the operator measured) to compare against the<br>               between-arm effect an A/B is trying to detect.<br>Never raises on a call failure — a failed replicate is counted (errors) and surfaced, never silently dropped. |
 
 Returns: `Any`
+
+<a id="core-6c6b2218af3a699d533d98b68e9ca821a54406c3180c55c90c7c687adf5f80be"></a>
+
+### `spendguard.store.reference_data.model_catalog:embedding_input_limits`
+
+Source: `src/spendguard/store/reference_data/model_catalog.py`
+
+Return the catalog token limit, enforced conservative character fallback, and configured worst-case characters-per-token ratio.
+
+| Parameter | Type | Required | Default | Contract |
+| --- | --- | --- | --- | --- |
+| model_id | str | yes | required | Embedding model id whose enforced limits are requested. |
+
+Returns: `dict`
 
 <a id="core-a974e1222b3cc14a610664eebd44b8cbc0e24e14506a23b3b5bd00b3ede9cad2"></a>
 

@@ -36,9 +36,12 @@ def main():
     model = "text-embedding-3-small"
     qualified_model = f"openai:{model}"
     token_limit = model_catalog.embedding_input_token_limit(model)
+    published_limits = embeddings.embedding_input_limits(model)
     record_script_check(failures, "embedding token limit is catalog-sourced", token_limit is not None)
     record_script_check(failures, "chat models have no embedding token limit",
                         model_catalog.embedding_input_token_limit("gpt-5") is None)
+    record_script_check(failures, "uncurated model publishes no enforced character limit",
+                        embeddings.embedding_input_limits("uncurated-embedding-model")["char_limit"] is None)
 
     real_client = embeddings._oai_compat_client
     real_counter = provider_tokens.count_exact_model_text_tokens
@@ -67,23 +70,32 @@ def main():
                             len(calls) == 1 and light_result["vectors"][0] == [1.0])
 
         provider_tokens.count_exact_model_text_tokens = lambda text, provider=None, model=None: None
-        fallback_text = "b" * (token_limit + 1)
         config._cfg_get = lambda section, key, default=None: (
             1.0 if (section, key) == ("safety", "embed_worst_case_chars_per_token")
             else real_cfg_get(section, key, default)
         )
+        published_limits = embeddings.embedding_input_limits(model)
+        boundary_text = "b" * published_limits["char_limit"]
+        fallback_text = boundary_text + "b"
+        calls.clear()
+        boundary = adapters.embed([boundary_text], model=qualified_model, checkpoint=False)
+        record_script_check(failures, "published character limit is the exact admitted guard boundary",
+                            len(calls) == 1 and boundary["vectors"][0] == [1.0])
         calls.clear()
         rejected = adapters.embed([fallback_text], model=qualified_model, checkpoint=False)
-        record_script_check(failures, "configured one-char worst case rejects above limit",
-                            not calls and rejected["failed"])
+        record_script_check(failures, "guard raises immediately beyond the published character limit",
+                            not calls and rejected["failed"] and
+                            str(published_limits["char_limit"]) in rejected["failed"][0]["reason"])
 
         config._cfg_get = lambda section, key, default=None: (
             2.0 if (section, key) == ("safety", "embed_worst_case_chars_per_token")
             else real_cfg_get(section, key, default)
         )
+        overridden_limits = embeddings.embedding_input_limits(model)
         calls.clear()
         admitted = adapters.embed([fallback_text], model=qualified_model, checkpoint=False)
-        record_script_check(failures, "changing config changes the fallback bound",
+        record_script_check(failures, "config override moves published and enforced bounds together",
+                            overridden_limits["char_limit"] > published_limits["char_limit"] and
                             len(calls) == 1 and admitted["vectors"][0] == [1.0])
 
         sized_chars = providers.safe_input_chars(model, reply_tokens=0, prompt_tokens=0)

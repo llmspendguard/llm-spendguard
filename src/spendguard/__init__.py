@@ -269,10 +269,13 @@ __all__ = ["install", "require", "register", "install_litellm", "install_bedrock
            "ItemLedger", "compute_job_fingerprint", "guard_resume", "compare_fingerprints", "read_fingerprint",
            "write_fingerprint", "JobPlanDrift", "JobMethodUndecided"]
 from .interface.capability_surface_generation import build_capability_api_exports as _build_capability_api_exports
+from .store.reference_data.model_catalog import embedding_input_limits as embedding_input_limits
+from .manage.admission.model_preflight import metered_call_readiness as metered_call_readiness
 
 _capability_api_exports, CAPABILITY_API_COVERAGE = _build_capability_api_exports()
 globals().update(_capability_api_exports)
 __all__.extend(_capability_api_exports)
+__all__.extend(["embedding_input_limits", "metered_call_readiness"])
 # Version SSOT: src/spendguard/platform/_version.py, read LIVE from source so `__version__` is always the version of the CODE
 # actually running — including an editable install whose frozen dist-info metadata lags source (importlib.metadata
 # reads install-time metadata, so it reported 0.7.2 while running 0.10.0 code). pyproject consumes the SAME file at
