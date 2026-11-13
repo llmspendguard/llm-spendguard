@@ -10,12 +10,15 @@ import threading
 import time
 from functools import partial
 from _script_checks import delayed_batch_results
+from _runner_budget_calibration import effective_runner_budget_scale
+
+_RUNNER_SCALE = effective_runner_budget_scale()
 
 os.environ["SPENDGUARD_HOME"] = tempfile.mkdtemp(prefix="sg-storm-submit-")
 os.environ.setdefault("SPENDGUARD_TEST_ISOLATED", "1")
 os.environ.setdefault("SPENDGUARD_NO_AUTOINSTALL", "1")
 os.environ["SPENDGUARD_DISPATCH_MANAGE_ALL"] = "1"
-os.environ["SPENDGUARD_DISPATCH_RPM_ANTHROPIC"] = "300"     # rate 5/s → with horizon 1s a realtime share is served
+os.environ["SPENDGUARD_DISPATCH_RPM_ANTHROPIC"] = "300"     # rate 5/s → with horizon 1.0 * runner-budget-scale seconds a realtime share is served
 _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(os.path.dirname(_HERE), "src"))
 sys.path.insert(0, _HERE)
@@ -27,7 +30,7 @@ from spendguard import storm_submit  # noqa: E402
 
 MODEL = "anthropic:claude-haiku-4-5"
 N = 20
-COLLECT_TIMEOUT_S = 1.5
+COLLECT_TIMEOUT_S = 1.5 * _RUNNER_SCALE
 STORM_SUBMIT_PROMPTNESS_MULTIPLE = 10
 STORM_SUBMIT_PROMPTNESS_SECONDS = COLLECT_TIMEOUT_S * STORM_SUBMIT_PROMPTNESS_MULTIPLE
 STORM_SUBMIT_RELEASE_MULTIPLE = 3
@@ -53,7 +56,7 @@ try:
     t0 = time.monotonic()
     res = storm_submit.submit_storm(
         [{"i": i} for i in range(N)], intent="acceptance:backpressure", model=MODEL, execute_batch=_hang_batch,
-        deadline_s=1.0, collect_timeout_s=COLLECT_TIMEOUT_S, system="terse", reasoning="minimal",
+        deadline_s=1.0 * _RUNNER_SCALE, collect_timeout_s=COLLECT_TIMEOUT_S, system="terse", reasoning="minimal",
         prompt_for=lambda t: "do %s" % H.canary(t["i"]), max_workers=8)
     elapsed = time.monotonic() - t0
 
