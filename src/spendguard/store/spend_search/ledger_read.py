@@ -1006,7 +1006,7 @@ def read_recent_calls(since=None, until=None, where=None, limit=None, path=None)
 
 
 def read_spend_aggregates(group_by=("provider", "day"), since=None, until=None, path=None):
-    from ...ledger import SPEND_EVENT_NANO_COLUMNS, USD_COLS, spend_event_nano_sum_to_decimal
+    from ...ledger import NON_BILLED_FAILURE_KIND, SPEND_EVENT_NANO_COLUMNS, USD_COLS, spend_event_nano_sum_to_decimal
     dimensions = tuple(group_by)
     if dimensions not in LEDGER_READ_AGGREGATE_DIMENSIONS:
         raise ValueError(f"Unsupported ledger aggregate dimensions {dimensions!r}")
@@ -1024,7 +1024,9 @@ def read_spend_aggregates(group_by=("provider", "day"), since=None, until=None, 
         legacy_nano = f"{column}*{NANO_USD_PER_USD}"
         expression = f"COALESCE({selected},{legacy_nano})" if selected == nano_column else legacy_nano
         expressions.append(f"SUM({expression}) AS {column}")
-    projections = dimensions + tuple(expressions) + ("COUNT(*) AS n",)
+    charge_event_count = ("SUM(CASE WHEN "
+                          f"COALESCE(cost_type,'') != '{NON_BILLED_FAILURE_KIND}' THEN 1 ELSE 0 END) AS n")
+    projections = dimensions + tuple(expressions) + (charge_event_count,)
     rows = read_ledger_rows(LedgerReadRequest(columns=projections, where_sql=" AND ".join(predicates),
         parameters=tuple(parameters), group_by=dimensions, order_by=dimensions), path)
     money_start = len(dimensions)

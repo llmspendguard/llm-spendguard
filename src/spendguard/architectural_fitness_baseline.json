@@ -7292,7 +7292,7 @@
   "recorded_dynamic_spendguard_imports": [
     "src/spendguard/analyze/learning/lane_bandit.py:296",
     "src/spendguard/analyze/measurement/lane_servability.py:289",
-    "src/spendguard/generate/execution/adapters.py:1537",
+    "src/spendguard/generate/execution/adapters.py:1538",
     "src/spendguard/generate/execution/adapters.py:96",
     "src/spendguard/generate/spend_capture/gpu_port.py:278",
     "src/spendguard/generate/spend_capture/sources.py:78",
