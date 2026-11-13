@@ -27,7 +27,6 @@ import os, sys, json, functools, datetime, time
 from ... import pricing
 from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
 _calls = None
-ALLOW_UNPRICED_ADVISOR_ENV = "SPENDGUARD_ALLOW_UNPRICED_ADVISOR"
 
 
 def _set_gate_calls_module_contract(calls_module_contract):
@@ -2574,6 +2573,11 @@ def validate_advisor():
     return problems
 
 
+# Escape hatch read only by control_gate_runtime's doctor path; co-located with its sole user so that
+# the module's import-site line pins (architectural dynamic-import ratchet) stay stable above this point.
+ALLOW_UNPRICED_ADVISOR_ENV = "SPENDGUARD_ALLOW_UNPRICED_ADVISOR"
+
+
 def control_gate_runtime(cmd: str = "status", live: bool = False):
     """Render gate status and return the diagnostic contract.
 
@@ -2729,7 +2733,7 @@ def control_gate_runtime(cmd: str = "status", live: bool = False):
                 print(f"      {_p}")
                 print("      fix: spendguard price <model> --in <$/1M> --out <$/1M> --source '<url>'")
             if _probs:
-                from spendguard.generate.execution import adapters as _adapters
+                from ... import adapters as _adapters
                 _advisor_is_active_default = _adapters._default_reasoning_is_best_value()
                 _unpriced_advisor_roles = ", ".join(_problem.split("=", 1)[0] for _problem in _probs)
                 if _advisor_is_active_default:
