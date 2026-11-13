@@ -34,6 +34,8 @@ MANIFEST_DAEMON_SURFACE_KIND = "mcp"
 MANIFEST_RUNNING_CONSUMER_SURFACE_KIND = "consumer"
 MANIFEST_UNREPRESENTABLE_CONSUMER_REASON = "missing_executable_and_supervision_identity"
 MANIFEST_DIST_INFO_UNSTATTABLE_SENTINEL = "unstattable-dist-info"
+MANIFEST_EGG_METADATA_SUFFIX = ".egg-info"
+MANIFEST_PROJECT_CONFIGURATION_NAME = "pyproject.toml"
 
 
 def determine_distribution_install_kind(distribution_name: str, import_package_name: str) -> dict:
@@ -75,7 +77,16 @@ def determine_distribution_install_kind(distribution_name: str, import_package_n
         spec = importlib.util.find_spec(import_package_name)
         origin = Path(spec.origin).resolve() if spec and spec.origin else None
         if origin:
-            kind = MANIFEST_WHEEL_KIND if origin.is_relative_to(site_root) else MANIFEST_EDITABLE_KIND
+            source_project = next((root for root in (site_root, site_root.parent)
+                                   if (root / MANIFEST_PROJECT_CONFIGURATION_NAME).is_file()), None)
+            if (metadata_root.suffix == MANIFEST_EGG_METADATA_SUFFIX
+                    and origin.is_relative_to(site_root) and source_project is not None):
+                # Build-generated checkout metadata can shadow the installed editable dist-info.
+                # Its parent is a source root, so containment alone cannot prove a wheel install.
+                kind = MANIFEST_EDITABLE_KIND
+                editable_origin = str(source_project)
+            else:
+                kind = MANIFEST_WHEEL_KIND if origin.is_relative_to(site_root) else MANIFEST_EDITABLE_KIND
     if kind is None:
         reason = reason or "distribution metadata and import origin did not resolve install kind"
     return {
@@ -91,6 +102,8 @@ MANIFEST_INTERPRETER_PROBE = "\n".join((
     f"MANIFEST_EDITABLE_KIND={MANIFEST_EDITABLE_KIND!r}",
     f"MANIFEST_WHEEL_KIND={MANIFEST_WHEEL_KIND!r}",
     f"MANIFEST_UNKNOWN_KIND={MANIFEST_UNKNOWN_KIND!r}",
+    f"MANIFEST_EGG_METADATA_SUFFIX={MANIFEST_EGG_METADATA_SUFFIX!r}",
+    f"MANIFEST_PROJECT_CONFIGURATION_NAME={MANIFEST_PROJECT_CONFIGURATION_NAME!r}",
     "Path=pathlib.Path",
     textwrap.dedent(inspect.getsource(determine_distribution_install_kind)),
     "print(json.dumps(determine_distribution_install_kind(*sys.argv[1:3])))",

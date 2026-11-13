@@ -39,7 +39,7 @@ def ck(label, condition, detail=""):
 hits = _catalog_path_literals()
 expected = (Path(model_catalog.__file__).resolve(), "model_catalog.json")
 ck("exactly one Python path literal has basename model_catalog.json", len(hits) == 1, hits)
-ck("the sole literal is model_catalog.DATA_PATH", len(hits) == 1 and
+ck("the sole literal belongs to the model_catalog gateway", len(hits) == 1 and
    (hits[0][0].resolve(), hits[0][2]) == expected, hits)
 ck("catalog.py's live cache uses a different basename",
    Path(catalog.CATALOG_CACHE).name != "model_catalog.json", catalog.CATALOG_CACHE)

@@ -15,6 +15,7 @@ CREATE TABLE models (
     vision INTEGER,
     capabilities TEXT,
     billing_exempt_reason TEXT,
+    price_intervals TEXT,
     present_fields TEXT NOT NULL,
     provenance TEXT NOT NULL CHECK (provenance IN ('authored','sourced','learned','breadth','lane_config'))
 );
@@ -52,4 +53,9 @@ CREATE TABLE catalog_sections (
     value TEXT NOT NULL,
     provenance TEXT NOT NULL CHECK (provenance IN ('authored','sourced','learned','breadth','lane_config')),
     PRIMARY KEY (section, entry_key)
+);
+
+CREATE TABLE catalog_section_shapes (
+    section TEXT PRIMARY KEY,
+    is_object INTEGER NOT NULL CHECK (is_object IN (0, 1))
 );

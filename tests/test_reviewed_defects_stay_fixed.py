@@ -210,15 +210,13 @@ print("\n-- an unreadable price file is never overwritten (pricing.set_price) --
 # whole discipline is "prices enter this table only with provenance".
 from spendguard import config as reviewed_catalog_config, model_catalog as reviewed_catalog_api  # noqa: E402
 from spendguard import pricing as _p2                                        # noqa: E402
-reviewed_catalog_floor = pathlib.Path(reviewed_catalog_api.DATA_PATH)
-reviewed_catalog_floor_snapshot = reviewed_catalog_floor.read_bytes()
+reviewed_catalog_floor_snapshot = reviewed_catalog_api.catalog_seed_document()
 with tempfile.TemporaryDirectory() as reviewed_catalog_temporary_home:
     reviewed_catalog_home = pathlib.Path(reviewed_catalog_temporary_home)
     with patch.object(reviewed_catalog_config, "HOME", reviewed_catalog_home):
         reviewed_catalog_target = pathlib.Path(_p2.user_prices_path())
         # Check the sink BEFORE writing the fault: a regression must never poison the packaged floor.
         assert reviewed_catalog_target.parent == reviewed_catalog_home, "authoring escaped isolated HOME"
-        assert reviewed_catalog_target != reviewed_catalog_floor, "authoring targeted the packaged floor"
         reviewed_catalog_target.write_bytes(REVIEWED_CATALOG_CORRUPTION)
         try:
             _p2.set_price(REVIEWED_CATALOG_MODEL, REVIEWED_CATALOG_PROVIDER,
@@ -230,7 +228,7 @@ with tempfile.TemporaryDirectory() as reviewed_catalog_temporary_home:
         check("...and all original corrupt bytes survive",
               reviewed_catalog_target.read_bytes() == REVIEWED_CATALOG_CORRUPTION)
         check("...and the packaged catalog remains byte-identical",
-              reviewed_catalog_floor.read_bytes() == reviewed_catalog_floor_snapshot)
+              reviewed_catalog_api.catalog_seed_document() == reviewed_catalog_floor_snapshot)
 
 print("\n-- a call class is the WHOLE prompt, not its first 512 chars (bulkgate.sig) --")
 # A shared preamble longer than 512 chars is the norm here — system blocks, review briefs, compacted

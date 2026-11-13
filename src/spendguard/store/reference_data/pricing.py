@@ -353,7 +353,8 @@ def unit_price(kind: str, model: str, variant: str = None) -> float:
     raise KeyError(
         f"No {kind} unit price for {model!r}"
         + (f" (variant {variant!r})" if variant else "")
-        + " — add it to model_catalog.json `unit_prices` with a source or run `spendguard sync-prices`."
+        + " — author `unit_prices` with a source through model_catalog.author_catalog_records(layer='seed') "
+        + "or run `spendguard sync-prices`."
     )
 
 
@@ -432,7 +433,8 @@ def _vendor_qualified(m, provider=None, exact_only=False):
         raise PriceUnknownError(
             f"Ambiguous price for {m!r}: vendors {sorted(k.split('/')[0] for k in cands)} publish DIFFERENT "
             f"rates. Pass the provider (`provider:{m}` / provider=) so the right one is billed — spendguard "
-            f"will not pick for you. Add an authoritative price to src/spendguard/model_catalog.json (the SSOT)."
+            f"will not pick for you. Author an authoritative price through `spendguard price` "
+            f"or model_catalog.author_catalog_records(layer='seed')."
         )
     return next(iter(cands.values()))
 
@@ -550,7 +552,8 @@ def price(model: str, provider: str = None, *, as_of=None) -> dict:
         )
     raise PriceUnknownError(
         f"cannot price {model!r}: not in the model_catalog SSOT, no variant/alias match, and no unambiguous "
-        f"fallback price. Add it to src/spendguard/model_catalog.json (the SSOT) WITH A SOURCE — DO NOT guess a "
+        f"fallback price. Author it WITH A SOURCE through `spendguard price` "
+        f"or model_catalog.author_catalog_records(layer='seed') — DO NOT guess a "
         f"price — or run `spendguard sync-prices` if it is a vendor-hosted breadth id the LiteLLM layer carries."
     )
 

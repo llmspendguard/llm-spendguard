@@ -30,17 +30,14 @@ def test_refresh_lookup_provenance_reaches_catalog(tmp_path, monkeypatch):
     monkeypatch.setattr(anthropic, "Anthropic", lambda **kwargs: SimpleNamespace(
         messages=SimpleNamespace(create=capture_refresh_provenance_request)))
     monkeypatch.setattr(bulkgate, "maxtokens", lambda signature: {})
-    isolated_catalog = tmp_path / Path(model_catalog.DATA_PATH).name
-    isolated_catalog.write_bytes(Path(model_catalog.DATA_PATH).read_bytes())
-    original_floor = isolated_catalog.read_bytes()
-    monkeypatch.setattr(model_catalog, "DATA_PATH", str(isolated_catalog))
+    original_floor = model_catalog.catalog_seed_document()
     monkeypatch.setattr(config, "HOME", tmp_path)
     looked = refresh._llm_lookup([model], model, uuid.uuid4().hex)
     assert all(field in prompts[0] for field in ("source", "verified", "cached_in"))
     target = Path(model_catalog.catalog_authoring_path())
     assert refresh._write(looked) == str(target)
-    assert target != isolated_catalog and target.is_file()
-    assert isolated_catalog.read_bytes() == original_floor
+    assert target.parent == tmp_path and target.is_file()
+    assert model_catalog.catalog_seed_document() == original_floor
     updated = model_catalog.model_record(model)["price"]
     assert updated["source"] == expected["source"]
     assert updated["verified"] == expected["verified"]

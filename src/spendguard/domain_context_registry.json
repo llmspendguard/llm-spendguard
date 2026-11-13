@@ -11,7 +11,7 @@
         "store.reference_data.catalog",
         "store.reference_data.catalog_price_authoring",
         "store.reference_data.catalog_provenance",
-        "store.reference_data.catalog_store",
+        "store.reference_data.catalog_seed_rendering",
         "store.reference_data.lane_catalog",
         "store.reference_data.lane_registry",
         "store.reference_data.model_catalog",

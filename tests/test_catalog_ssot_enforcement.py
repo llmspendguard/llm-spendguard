@@ -78,7 +78,7 @@ def test_catalog_ssot_distribution_wheel_excludes_stale_removed_leaf(tmp_path, m
     stale_package = checkout / distribution.DISTRIBUTION_BUILD_DIRECTORY_NAME / "lib" / package_path
     stale_package.mkdir(parents=True)
     (stale_package / LEGACY_PRICE_FILENAME).write_text("{}")
-    catalog_source = checkout / source_directory / package_path / Path(model_catalog.DATA_PATH).name
+    catalog_source = checkout / source_directory / package_path / "model_catalog.json"
     original_catalog = catalog_source.read_bytes()
     metadata_name = "stale.egg-info"
     stale_metadata = [checkout / metadata_name, checkout / source_directory / metadata_name]
@@ -140,7 +140,7 @@ def test_catalog_ssot_complete_source_structure():
     units = [(path, path.read_text()) for directory in ("src", "scripts")
              for path in (CATALOG_GUARD_ROOT / directory).rglob("*.py")]
     assert_catalog_source_structure(units)
-    assert not Path(model_catalog.DATA_PATH).with_name(LEGACY_PRICE_FILENAME).exists()
+    assert not Path(model_catalog.__file__).with_name(LEGACY_PRICE_FILENAME).exists()
 
 
 def test_catalog_ssot_source_mutations_are_rejected():
@@ -217,17 +217,14 @@ def test_catalog_ssot_seeded_observations_and_price_mutation(tmp_path, monkeypat
         })
         with pytest.raises(AssertionError, match="missing catalog price"):
             assert_catalog_observed_prices(models)
-    catalog = json.loads(Path(model_catalog.DATA_PATH).read_text())
+    catalog = model_catalog.catalog_seed_document()
     for model in observed:
         target = pricing.normalize(model)
         record = model_catalog.model_record(target)
         assert record is not None, f"missing mutation target catalog record: {model} (normalized {target})"
         mutated = json.loads(json.dumps(catalog))
         mutated["models"][record["id"]]["price"] = None
-        temporary_catalog = tmp_path / Path(model_catalog.DATA_PATH).name
-        temporary_catalog.write_text(json.dumps(mutated))
-        with monkeypatch.context() as mutation:
-            mutation.setattr(model_catalog, "DATA_PATH", str(temporary_catalog))
+        with monkeypatch.context() as mutation, model_catalog.catalog_source_override(mutated):
             mutation.setattr(model_catalog, "_overlay_path", lambda: None)
             refreshed_prices, refreshed_providers, refreshed_ambiguities = pricing._derive_catalog_pricing_state({})
             mutation.setattr(pricing, "PRICING", refreshed_prices)

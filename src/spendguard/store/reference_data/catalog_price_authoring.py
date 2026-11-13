@@ -1,17 +1,7 @@
-"""Provenance-required, serialized edits to the authored model catalog.
-
-The lock has a stable inode separate from the atomically replaced catalog. A
-verified byte-for-byte snapshot precedes replacement; failure leaves the catalog
-untouched and propagates to the caller.
-"""
+"""Provenance-required catalog mutations through the model catalog gateway."""
 import copy
 import datetime
-import fcntl
-import json
 import math
-import os
-from pathlib import Path
-import tempfile
 
 from . import model_catalog
 
@@ -23,6 +13,7 @@ CATALOG_AUTHOR_JSON_INDENT = 2
 CATALOG_AUTHOR_MIN_RATE = 0
 CATALOG_LOCAL_AUTHOR_IDS_KEY = "_local_price_authors"
 CATALOG_PRICE_RATE_FIELDS = ("in_", "out", "cached_in", "batch_in", "batch_out", "batch_cached_in")
+CATALOG_SYNC_AUTHOR_REASON = "refresh server catalog records while retaining local authorship"
 
 
 def _catalog_authoring_rate(value, field):
@@ -94,22 +85,13 @@ for updates. Corrupt/missing catalogs and failed snapshots fail closed.
              for key, value in supplied.items() if value is not None}
     if input is None or output is None:
         raise ValueError("input and output rates are required")
-    catalog_path = Path(model_catalog.catalog_authoring_path())
-    catalog_path.parent.mkdir(parents=True, exist_ok=True)
-    lock_path = Path(str(catalog_path) + CATALOG_AUTHOR_LOCK_SUFFIX)
-    with lock_path.open("a+b") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
-        original = catalog_path.read_bytes() if catalog_path.exists() else None
-        document = model_catalog.catalog_document_from_bytes(original, catalog_path)
+    authored_price_result = {}
+
+    def _apply_verified_catalog_price(document, snapshot):
         records = document.setdefault("models", {})
         if not isinstance(records, dict):
             raise ValueError("catalog models must be an object")
-        # Alias resolution belongs to the catalog read API; resolve inside the
-        # lock so another author cannot change it between lookup and update.
-        floor = model_catalog.catalog_document_from_bytes(
-            Path(model_catalog.DATA_PATH).read_bytes(), model_catalog.DATA_PATH)
-        snapshot = {**floor.get("models", {}), **records}
-        existing = model_catalog.catalog_record_from_snapshot(model, snapshot)
+        existing = model_catalog.catalog_record_from_snapshot(model, {**snapshot, **records})
         canonical = existing["id"] if existing else model.strip()
         record = records.get(canonical)
         if record is None and existing is not None:
@@ -132,28 +114,11 @@ for updates. Corrupt/missing catalogs and failed snapshots fail closed.
         model_catalog.merge_row_updates(record, updates, today=today)
         local_authors = _catalog_local_author_ids(document)
         document[CATALOG_LOCAL_AUTHOR_IDS_KEY] = sorted(local_authors | {canonical})
-        encoded = (json.dumps(document, indent=CATALOG_AUTHOR_JSON_INDENT) + "\n").encode(CATALOG_AUTHOR_ENCODING)
-        backup_path = Path(str(catalog_path) + CATALOG_AUTHOR_BACKUP_SUFFIX)
-        if original is not None:
-            backup_path.write_bytes(original)
-            if backup_path.read_bytes() != original:
-                raise OSError("catalog snapshot verification failed")
-        staging_path = None
-        try:
-            with tempfile.NamedTemporaryFile(dir=catalog_path.parent, prefix=catalog_path.name,
-                                             suffix=CATALOG_AUTHOR_STAGE_SUFFIX, delete=False) as staging:
-                staging_path = Path(staging.name)
-                staging.write(encoded)
-                staging.flush()
-                os.fsync(staging.fileno())
-            if original is not None:
-                os.chmod(staging_path, catalog_path.stat().st_mode)
-            os.replace(staging_path, catalog_path)
-        finally:
-            if staging_path is not None:
-                staging_path.unlink(missing_ok=True)
-    return str(catalog_path), {**price, "_source": price["source"], "_verified": verified,
-                               "provider": record["provider"]}
+        authored_price_result.update({**price, "_source": price["source"], "_verified": verified,
+                                      "provider": record["provider"]})
+
+    destination = model_catalog.author_catalog_records(_apply_verified_catalog_price, reason=source.strip())
+    return destination, authored_price_result
 
 
 def _catalog_local_author_ids(document):
@@ -168,19 +133,17 @@ _catalog_update_json_provider = None
 
 
 def set_catalog_update_json_provider(provider):
-    """Inject the atomic catalog-file rewriter — a callable with config.update_json's signature
-    (path, mutator, *, required=…). catalog_price_authoring is a dependency-free leaf by design: it must NOT import
-    config (that edge pulls it into the configuration import cycle). Its sole config use — the safe merge-under-lock
-    write in merge_synced_catalog_layer — therefore receives the rewriter through this provider, wired once by a
-    same-context consumer (pricing sets `config.update_json` at import). Idempotent; last writer wins."""
+    """Retain the legacy rewriter injection contract for compatibility.
+
+Catalog writes use model_catalog.author_catalog_records; this hook remains for
+consumers that resolve the historical provider independently.
+    """
     global _catalog_update_json_provider
     _catalog_update_json_provider = provider
 
 
 def _resolve_catalog_update_json():
-    """The atomic catalog-file rewriter via the injected provider. Fail LOUD if unset — a missing wiring is a bug to
-    surface, never a silently-skipped write (spendguard fail-loud doctrine). Import spendguard (which loads pricing,
-    the wirer) before writing the catalog layer."""
+    """Resolve the compatibility rewriter provider, failing loudly when unset."""
     if _catalog_update_json_provider is None:
         raise RuntimeError(
             "catalog_price_authoring update-json provider is not set; import spendguard (or "
@@ -190,13 +153,8 @@ def _resolve_catalog_update_json():
 
 
 def merge_synced_catalog_layer(models):
-    """Refresh server records under the price-author lock, preserving local authored records."""
-    catalog_path = Path(model_catalog.catalog_authoring_path())
-    catalog_path.parent.mkdir(parents=True, exist_ok=True)
-    with Path(str(catalog_path) + CATALOG_AUTHOR_LOCK_SUFFIX).open("a+b") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
-        original = catalog_path.read_bytes() if catalog_path.exists() else None
-        document = model_catalog.catalog_document_from_bytes(original, catalog_path)
+    """Refresh server records through the gateway, preserving local authored records."""
+    def _apply_synced_catalog_records(document, snapshot):
         records = document.setdefault("models", {})
         if not isinstance(records, dict):
             raise ValueError("GAP catalog_layer_models_corrupt: models must be an object")
@@ -205,15 +163,6 @@ def merge_synced_catalog_layer(models):
             raise ValueError("GAP catalog_author_ownership_corrupt: an owned record is missing")
         records.update({identifier: copy.deepcopy(record) for identifier, record in models.items()
                         if identifier not in local_authors})
-        if original is not None:
-            backup = Path(str(catalog_path) + CATALOG_AUTHOR_BACKUP_SUFFIX)
-            backup.write_bytes(original)
-            if backup.read_bytes() != original:
-                raise OSError("catalog snapshot verification failed")
-        # The injected rewriter IS config.update_json (wired by pricing); bind it to its own name so the
-        # disposition this caller CHOOSES stays visible at the choosing site — required=True (the irreplaceable
-        # catalog SSOT: RAISE on a corrupt file, never the silent-decline default). See
-        # tests/test_update_json_callers_pick_a_disposition.py.
-        update_json = _resolve_catalog_update_json()
-        update_json(catalog_path, lambda _previous: document, required=True)
+
+    model_catalog.author_catalog_records(_apply_synced_catalog_records, reason=CATALOG_SYNC_AUTHOR_REASON)
     return len(models)

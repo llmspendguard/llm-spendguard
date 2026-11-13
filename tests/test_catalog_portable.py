@@ -18,7 +18,7 @@ SYNTHETIC_OVERLAY_INPUT_PRICE = 1.0
 
 
 def catalog_portability_failures():
-    shipped_document = json.loads(Path(model_catalog.DATA_PATH).read_text(encoding="utf-8"))
+    shipped_document = model_catalog.catalog_seed_document()
     shipped_models = shipped_document["models"]
     failures = []
     for model_id, record in sorted(shipped_models.items()):

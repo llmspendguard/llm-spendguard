@@ -1,7 +1,11 @@
-"""catalog_price_authoring performs its catalog write through an injected update_json provider (architectural
-acyclicity: the leaf imports no config). The provider is wired on `import spendguard` by pricing; the resolver
-returns the wired rewriter; an unset provider fails loud."""
+"""Catalog sync writes through the gateway while the legacy provider remains resolvable."""
+import pytest
+
 from spendguard.store.reference_data import catalog_price_authoring
+
+CATALOG_SYNC_TEST_LOCAL_IDENTIFIER = "vendor/local-owned"
+CATALOG_SYNC_TEST_REMOTE_IDENTIFIER = "vendor/model-x"
+CATALOG_SYNC_TEST_PROVIDER = "vendor"
 
 
 def test_update_json_provider_is_wired_on_import_and_is_config_update_json():
@@ -11,25 +15,35 @@ def test_update_json_provider_is_wired_on_import_and_is_config_update_json():
     assert callable(resolved)
 
 
-def test_merge_synced_catalog_layer_uses_the_injected_provider(tmp_path, monkeypatch):
+def test_synced_catalog_layer_dispatches_gateway_and_preserves_local_ownership(monkeypatch):
     saved = catalog_price_authoring._catalog_update_json_provider
     calls = []
 
-    def fake_update_json(path, mutator, *, required=False):
-        calls.append((str(path), required))
-        # Exercise the mutator exactly as config.update_json would (no previous document).
-        mutator(None)
+    local_identifier = CATALOG_SYNC_TEST_LOCAL_IDENTIFIER
+    remote_identifier = CATALOG_SYNC_TEST_REMOTE_IDENTIFIER
+    authored_local_record = {"id": local_identifier, "provider": CATALOG_SYNC_TEST_PROVIDER, "vision": True}
+    gateway_document = {"models": {local_identifier: authored_local_record},
+                        catalog_price_authoring.CATALOG_LOCAL_AUTHOR_IDS_KEY: [local_identifier]}
 
-    # Point the catalog authoring path at a temp dir so no real catalog is touched.
-    monkeypatch.setattr(catalog_price_authoring.model_catalog, "catalog_authoring_path",
-                        lambda: str(tmp_path / "catalog.json"))
-    monkeypatch.setattr(catalog_price_authoring.model_catalog, "catalog_document_from_bytes",
-                        lambda original, path: {"models": {}})
+    def capture_synced_catalog_gateway(mutator, *, reason, layer="local"):
+        calls.append((reason, layer))
+        mutator(gateway_document, {})
+
+    def reject_legacy_synced_catalog_writer(*args, **kwargs):
+        raise AssertionError("catalog sync bypassed the gateway through its legacy writer")
+
+    monkeypatch.setattr(catalog_price_authoring.model_catalog, "author_catalog_records",
+                        capture_synced_catalog_gateway)
     try:
-        catalog_price_authoring.set_catalog_update_json_provider(fake_update_json)
-        n = catalog_price_authoring.merge_synced_catalog_layer({"vendor/model-x": {"input": 1.0}})
-        assert n == 1
-        assert len(calls) == 1 and calls[0][1] is True
+        catalog_price_authoring.set_catalog_update_json_provider(reject_legacy_synced_catalog_writer)
+        incoming_records = {remote_identifier: {"id": remote_identifier, "provider": CATALOG_SYNC_TEST_PROVIDER},
+                            local_identifier: {"id": local_identifier, "provider": CATALOG_SYNC_TEST_PROVIDER, "vision": False}}
+        n = catalog_price_authoring.merge_synced_catalog_layer(incoming_records)
+        assert n == len(incoming_records)
+        assert calls == [(catalog_price_authoring.CATALOG_SYNC_AUTHOR_REASON, "local")]
+        assert gateway_document["models"][local_identifier] == authored_local_record
+        assert gateway_document["models"][remote_identifier] == incoming_records[remote_identifier]
+        assert gateway_document["models"][remote_identifier] is not incoming_records[remote_identifier]
     finally:
         catalog_price_authoring.set_catalog_update_json_provider(saved)
 
@@ -47,3 +61,7 @@ def test_unset_provider_fails_loud():
         assert raised, "expected RuntimeError when the catalog update-json provider is unset"
     finally:
         catalog_price_authoring.set_catalog_update_json_provider(saved)
+
+
+if __name__ == "__main__":
+    raise SystemExit(pytest.main([__file__, "--noconftest", "-o", "addopts=", "-q", "--tb=short"]))

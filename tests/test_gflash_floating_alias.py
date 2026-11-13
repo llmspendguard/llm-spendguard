@@ -1,7 +1,5 @@
 """Offline floating Flash alias contract, including malformed-catalog fault injection."""
 import copy
-import json
-from pathlib import Path
 from unittest.mock import patch
 
 from spendguard import adapters, model_catalog, pricing
@@ -13,7 +11,7 @@ NUMERIC_FLASH_ID = "gemini-3.10-flash"
 EXCLUDED_FLASH_IDS = ("gemini-99-flash-lite", "gemini-99-flash-preview", "gemini-99-flash-high")
 MALFORMED_FLASH_ID = "gemini-broken-flash"
 TIED_FLASH_ID = "gemini-3.8.0-flash"
-CATALOG = json.loads(Path(model_catalog.DATA_PATH).read_text())["models"]
+CATALOG = model_catalog.catalog_seed_document()["models"]
 
 
 def assert_gflash_snapshot_target(snapshot, expected):

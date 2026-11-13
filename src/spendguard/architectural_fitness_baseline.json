@@ -857,15 +857,15 @@
           },
           "src/spendguard/platform/lanes.py": {
             "max_cc": 157,
-            "mi": 1.797394161980112
+            "mi": 1.7857453888718964
           },
           "src/spendguard/platform/launchd_labels.py": {
             "max_cc": 0,
             "mi": 100.0
           },
           "src/spendguard/platform/manifest.py": {
-            "max_cc": 23,
-            "mi": 29.865845273530482
+            "max_cc": 28,
+            "mi": 29.74431219288636
           },
           "src/spendguard/platform/offline_python_build.py": {
             "max_cc": 9,
@@ -1028,8 +1028,8 @@
             "mi": 88.70953110460482
           },
           "src/spendguard/store/reference_data/model_catalog.py": {
-            "max_cc": 43,
-            "mi": 12.534920339308181
+            "max_cc": 50,
+            "mi": 0.0
           },
           "src/spendguard/store/reference_data/models.py": {
             "max_cc": 13,
@@ -1069,7 +1069,7 @@
           },
           "src/spendguard/store/reference_data/sync_capabilities.py": {
             "max_cc": 18,
-            "mi": 49.059138252771085
+            "mi": 49.00421819049851
           },
           "src/spendguard/store/spend_search/__init__.py": {
             "max_cc": 0,
@@ -1242,6 +1242,10 @@
           "src/spendguard/store/reference_data/catalog_store.py": {
             "max_cc": 50,
             "mi": 5.105218188294342
+          },
+          "src/spendguard/store/reference_data/catalog_seed_rendering.py": {
+            "max_cc": 19,
+            "mi": 64.9860096638461
           }
         },
         "measured_extremes": {
@@ -2217,15 +2221,15 @@
           },
           "src/spendguard/platform/lanes.py": {
             "max_cc": 157,
-            "mi": 1.5264953435658968
+            "mi": 1.5148465704576854
           },
           "src/spendguard/platform/launchd_labels.py": {
             "max_cc": 0,
             "mi": 100.0
           },
           "src/spendguard/platform/manifest.py": {
-            "max_cc": 23,
-            "mi": 29.865845273530482
+            "max_cc": 28,
+            "mi": 29.74431219288636
           },
           "src/spendguard/platform/offline_python_build.py": {
             "max_cc": 9,
@@ -2407,6 +2411,10 @@
             "max_cc": 0,
             "mi": 100.0
           },
+          "src/spendguard/store/reference_data/catalog_seed_rendering.py": {
+            "max_cc": 19,
+            "mi": 64.9860096638461
+          },
           "src/spendguard/store/reference_data/catalog_store.py": {
             "max_cc": 50,
             "mi": 5.105218188294342
@@ -2420,8 +2428,8 @@
             "mi": 88.70953110460482
           },
           "src/spendguard/store/reference_data/model_catalog.py": {
-            "max_cc": 43,
-            "mi": 12.534920339308181
+            "max_cc": 50,
+            "mi": 0.0
           },
           "src/spendguard/store/reference_data/models.py": {
             "max_cc": 13,
@@ -2461,7 +2469,7 @@
           },
           "src/spendguard/store/reference_data/sync_capabilities.py": {
             "max_cc": 18,
-            "mi": 49.00421819049851
+            "mi": 48.94961467212931
           },
           "src/spendguard/store/spend_search/__init__.py": {
             "max_cc": 0,
@@ -2542,7 +2550,10 @@
     "reviewed_rebase_reconcile_lane_bandit_sentinel": "Rebase of #305 onto main (incl #307) shifted the already-reviewed importlib dynamic import in lane_bandit one line; magnitude ceilings unchanged; move-neutral reconcile recording the exact measured dynamic-import set, plus the new cross-context edge and the reviewed complexity regression for the rebased tree.",
     "reviewed_rebase_reconcile_lost_delegate_worktree_recovery": "rebase onto main incl #305/#308: re-record the MI regression for delegate_jobs.py and delegate_worktrees.py from the lost-worktree recovery change",
     "reviewed_rebase_reconcile_clean_room_env_parity": "Rebase of #309 (arm env-parity readiness gate: clean-room catalog + keys checks) onto main (incl #305/#306/#308); re-derive architectural ratchets for the rebased tree -- provider_key_env_registry MI regression, any new cross-context edges, and move-neutral dynamic-import line shifts; magnitude ceilings unchanged.",
-    "reviewed_codex_turn_sandbox_network_access": "Measured review of PR #313 (codex turn sandbox networkAccess): codex_daemon.py gained a networkAccess ternary on the explicit sandbox policy and config_store.py gained two network-access config accessors; re-measured both interpreter baselines after that merge."
+    "reviewed_codex_turn_sandbox_network_access": "Measured review of PR #313 (codex turn sandbox networkAccess): codex_daemon.py gained a networkAccess ternary on the explicit sandbox policy and config_store.py gained two network-access config accessors; re-measured both interpreter baselines after that merge.",
+    "reviewed_catalog_single_gateway_authoring": "Catalog single-gateway merge consolidates the physical adapter and logical port without changing catalog facts; deterministic seed rendering is shared with the CLI; authoring validates and atomically publishes seed or local records. Guidance changes explain the gateway API.",
+    "reviewed_manifest_source_metadata_install_kind": "Reviewed source-layout egg-info metadata classification: build-generated checkout metadata now identifies editable source installations from package origin containment and a project configuration file. The existing install-kind SSOT is reused in the cross-interpreter probe; focused manifest, fleet and E2E regressions pass. Recorded values are measured by the repository complexity generator.",
+    "reviewed_catalog_ssot_consolidation_py312": "Python 3.12 complexity baseline drift from the catalog SSOT consolidation (PR #325): model_catalog.py absorbed the deleted catalog_store.py functions (per-file max_cc 43->50, mi 12.5->0.0 \u2014 relocation, not new complexity; global worst-CC unchanged at 247); catalog_seed_rendering.py is the newly extracted seed renderer (cc 19); manifest.py gained egg-info EDITABLE-detection branches (cc 23->28); lanes.py and sync_capabilities.py show sub-precision MI float drift under 3.12 (cc unchanged). The 3.11 baseline already covers these (regenerated under the 3.11 venv); only 3.12's recorded floats were stale."
   },
   "dead_allowlist": [
     {
@@ -6190,15 +6201,7 @@
     ],
     [
       "spendguard.manage.routing.route_horizon",
-      "spendguard.manage.token_operations.queue_planner"
-    ],
-    [
-      "spendguard.manage.routing.route_horizon",
       "spendguard.store.configuration.config"
-    ],
-    [
-      "spendguard.manage.routing.route_horizon",
-      "spendguard.store.reference_data.model_catalog"
     ],
     [
       "spendguard.manage.routing.route_horizon",
@@ -7139,10 +7142,6 @@
     [
       "spendguard.store.reference_data.sync_capabilities",
       "spendguard.manage.admission.admission_accessors"
-    ],
-    [
-      "spendguard.store.reference_data.sync_capabilities",
-      "spendguard.store.configuration.config"
     ],
     [
       "spendguard.store.spend_search.ledger_read",

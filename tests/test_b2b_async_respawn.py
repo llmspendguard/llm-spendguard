@@ -1,5 +1,6 @@
 """Proving guards for install-aware respawn, complete daemon wiring, and non-blocking restart."""
 import io
+import importlib.util
 import json
 from pathlib import Path
 import subprocess
@@ -23,6 +24,12 @@ B2B_IMMEDIATE_HEALTH_INTERVAL = 0
 B2B_RPC_METHOD = "fixture"
 B2B_METADATA = "Metadata-Version: 2.1\nName: {name}\nVersion: {version}\n"
 B2B_UNRESOLVED_IMPORT_PACKAGE = f"{manifest.MANIFEST_IMPORT_PACKAGE_NAME}_fixture_missing"
+B2B_FIXTURE_IMPORT_PACKAGE = f"{manifest.MANIFEST_IMPORT_PACKAGE_NAME}_metadata_fixture"
+B2B_SOURCE_LAYOUTS = (("src", True), ("", True), ("site-packages", False))
+B2B_PROJECT_CONFIGURATION_NAME = "pyproject.toml"
+B2B_PACKAGE_INITIALIZER_NAME = "__init__.py"
+B2B_EGG_METADATA_SUFFIX = ".egg-info"
+B2B_EGG_METADATA_FILENAME = "PKG-INFO"
 
 
 def test_b2b_install_kind_aware_respawn_is_loop_safe():
@@ -112,6 +119,43 @@ def test_b2b_self_install_kind_cache_does_not_cache_wheel_version():
     assert determine_kind.call_count == 1
     assert first["wheel_version"] == B2B_RUNNING_VERSION
     assert second["wheel_version"] == B2B_INSTALLED_VERSION
+
+
+def test_b2b_source_egg_metadata_keeps_install_kind():
+    """Generated checkout metadata must not suppress consumer package installation."""
+    for source_directory, is_checkout in B2B_SOURCE_LAYOUTS:
+        with tempfile.TemporaryDirectory() as temporary:
+            project = Path(temporary)
+            source_root = project / source_directory
+            package_root = source_root / B2B_FIXTURE_IMPORT_PACKAGE
+            package_root.mkdir(parents=True)
+            initializer = package_root / B2B_PACKAGE_INITIALIZER_NAME
+            initializer.write_text("")
+            if is_checkout:
+                (project / B2B_PROJECT_CONFIGURATION_NAME).write_text("")
+            normalized_name = manifest.MANIFEST_DISTRIBUTION_NAME.replace("-", "_")
+            metadata_root = source_root / f"{normalized_name}{B2B_EGG_METADATA_SUFFIX}"
+            metadata_root.mkdir()
+            (metadata_root / B2B_EGG_METADATA_FILENAME).write_text(B2B_METADATA.format(
+                name=manifest.MANIFEST_DISTRIBUTION_NAME, version=B2B_INSTALLED_VERSION))
+            environment = {"PYTHONPATH": str(source_root)}
+            completed = subprocess.run(
+                [sys.executable, "-c", manifest.MANIFEST_INTERPRETER_PROBE,
+                 manifest.MANIFEST_DISTRIBUTION_NAME, B2B_FIXTURE_IMPORT_PACKAGE],
+                capture_output=True, text=True, check=True, env=environment,
+            )
+            cross_interpreter = json.loads(completed.stdout)
+            distribution = manifest.importlib.metadata.PathDistribution(metadata_root)
+            package_spec = importlib.util.spec_from_file_location(B2B_FIXTURE_IMPORT_PACKAGE, initializer)
+            with patch.object(manifest.importlib.metadata, "distribution", return_value=distribution), \
+                 patch.object(manifest.importlib.util, "find_spec", return_value=package_spec):
+                in_process = manifest.determine_distribution_install_kind(
+                    manifest.MANIFEST_DISTRIBUTION_NAME, B2B_FIXTURE_IMPORT_PACKAGE)
+            assert in_process == cross_interpreter
+            expected_kind = manifest.MANIFEST_EDITABLE_KIND if is_checkout else manifest.MANIFEST_WHEEL_KIND
+            assert in_process["install_kind"] == expected_kind, (source_directory, in_process)
+            if is_checkout:
+                assert in_process["editable_origin"] == str(project)
 
 
 def test_b2b_complete_supervised_daemon_inventory_has_respawn_safe_points():
@@ -230,6 +274,7 @@ if __name__ == "__main__":
     test_b2b_self_respawn_decision_never_uses_cross_interpreter_subprocess()
     test_b2b_install_kind_ssot_agrees_in_process_and_cross_interpreter()
     test_b2b_self_install_kind_cache_does_not_cache_wheel_version()
+    test_b2b_source_egg_metadata_keeps_install_kind()
     test_b2b_complete_supervised_daemon_inventory_has_respawn_safe_points()
     test_b2b_restart_request_never_polls_or_sleeps()
     print("[OK] B2b install-aware respawn, complete daemon wiring, and non-blocking restart proofs")
