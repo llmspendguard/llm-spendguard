@@ -30,9 +30,11 @@ def assert_terminal_journal_recovers_complete_artifacts_after_job_commit_failure
         "changed_files": ["complete-artifact.txt"],
     }
     original_connection_factory = delegate_jobs._open_delegate_jobs_connection
+    terminal_failure_job_id = job_id
 
     @contextlib.contextmanager
-    def fail_terminal_job_commit():
+    def fail_terminal_job_commit(*, job_id):
+        assert job_id == terminal_failure_job_id
         raise OSError("injected terminal job commit failure")
         yield
 

@@ -769,7 +769,7 @@
           },
           "src/spendguard/manage/token_operations/delegate_jobs.py": {
             "max_cc": 32,
-            "mi": 6.708547744346037
+            "mi": 3.8115001977669847
           },
           "src/spendguard/manage/token_operations/delegate_router.py": {
             "max_cc": 53,
@@ -972,8 +972,8 @@
             "mi": 26.83916174813674
           },
           "src/spendguard/store/money_ledger/ledger_deadletter.py": {
-            "max_cc": 24,
-            "mi": 29.928244183948888
+            "max_cc": 28,
+            "mi": 31.62112349150009
           },
           "src/spendguard/store/money_ledger/ledger_fork_locks.py": {
             "max_cc": 2,
@@ -2125,7 +2125,7 @@
           },
           "src/spendguard/manage/token_operations/delegate_jobs.py": {
             "max_cc": 32,
-            "mi": 6.708547744346037
+            "mi": 3.8115001977669847
           },
           "src/spendguard/manage/token_operations/delegate_router.py": {
             "max_cc": 53,
@@ -2360,8 +2360,8 @@
             "mi": 26.83916174813674
           },
           "src/spendguard/store/money_ledger/ledger_deadletter.py": {
-            "max_cc": 24,
-            "mi": 29.928244183948888
+            "max_cc": 28,
+            "mi": 31.62112349150009
           },
           "src/spendguard/store/money_ledger/ledger_fork_locks.py": {
             "max_cc": 2,
@@ -2553,7 +2553,8 @@
     "reviewed_codex_turn_sandbox_network_access": "Measured review of PR #313 (codex turn sandbox networkAccess): codex_daemon.py gained a networkAccess ternary on the explicit sandbox policy and config_store.py gained two network-access config accessors; re-measured both interpreter baselines after that merge.",
     "reviewed_catalog_single_gateway_authoring": "Catalog single-gateway merge consolidates the physical adapter and logical port without changing catalog facts; deterministic seed rendering is shared with the CLI; authoring validates and atomically publishes seed or local records. Guidance changes explain the gateway API.",
     "reviewed_manifest_source_metadata_install_kind": "Reviewed source-layout egg-info metadata classification: build-generated checkout metadata now identifies editable source installations from package origin containment and a project configuration file. The existing install-kind SSOT is reused in the cross-interpreter probe; focused manifest, fleet and E2E regressions pass. Recorded values are measured by the repository complexity generator.",
-    "reviewed_catalog_ssot_consolidation_py312": "Python 3.12 complexity baseline drift from the catalog SSOT consolidation (PR #325): model_catalog.py absorbed the deleted catalog_store.py functions (per-file max_cc 43->50, mi 12.5->0.0 \u2014 relocation, not new complexity; global worst-CC unchanged at 247); catalog_seed_rendering.py is the newly extracted seed renderer (cc 19); manifest.py gained egg-info EDITABLE-detection branches (cc 23->28); lanes.py and sync_capabilities.py show sub-precision MI float drift under 3.12 (cc unchanged). The 3.11 baseline already covers these (regenerated under the 3.11 venv); only 3.12's recorded floats were stale."
+    "reviewed_catalog_ssot_consolidation_py312": "Python 3.12 complexity baseline drift from the catalog SSOT consolidation (PR #325): model_catalog.py absorbed the deleted catalog_store.py functions (per-file max_cc 43->50, mi 12.5->0.0 \u2014 relocation, not new complexity; global worst-CC unchanged at 247); catalog_seed_rendering.py is the newly extracted seed renderer (cc 19); manifest.py gained egg-info EDITABLE-detection branches (cc 23->28); lanes.py and sync_capabilities.py show sub-precision MI float drift under 3.12 (cc unchanged). The 3.11 baseline already covers these (regenerated under the 3.11 venv); only 3.12's recorded floats were stale.",
+    "reviewed_delegate_persistence_complexity": "Complexity baseline for the delegate-jobs persistence fixes (PR #326): delegate_jobs.py gained payload offload + retention + VACUUM (cc unchanged at 32; mi lowered by the added code); ledger_deadletter.py gained the durable deadletter-drain record (cc 24->28; mi improved to 31.62). Global worst-CC unchanged at 247 \u2014 no new hotspot. Recorded for both 3.11 and 3.12 interpreters."
   },
   "dead_allowlist": [
     {

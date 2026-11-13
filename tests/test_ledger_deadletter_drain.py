@@ -14,7 +14,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from spendguard import budget, config
 from spendguard.ledger import SpendLedger
 from spendguard.ledger_deadletter import (append_spend_deadletter_event, drain_spend_deadletter_events,
-                                         LEDGER_DEADLETTER_RETRY_LIMIT)
+                                         LEDGER_DEADLETTER_RETRY_LIMIT,
+                                         LEDGER_DEADLETTER_OUTCOME_SUFFIX)
 
 DEADLETTER_FIXTURE_COST = "0.017"
 DEADLETTER_FIXTURE_TOKEN_COUNT = 17
@@ -73,3 +74,16 @@ try:
 finally:
     SpendLedger.record_event = original_record_event
 print("PASS: durable deadletters replay idempotently; failed writes retained with bounded retries")
+
+# Recovery must remain explainable after the spool has been replaced with an empty file.
+outcome_path = spool_path.with_name(spool_path.name + LEDGER_DEADLETTER_OUTCOME_SUFFIX)
+assert outcome_path.exists(), "drain erased queue without durable outcome evidence"
+outcomes = [json.loads(line) for line in outcome_path.read_text().splitlines()]
+recovered_outcomes = [item for item in outcomes if item["outcome"] == "recovered"]
+assert recovered_outcomes
+assert recovered_outcomes[0]["count"] == 1
+assert recovered_outcomes[0]["billed_usd"] == DEADLETTER_FIXTURE_COST
+assert recovered_outcomes[0]["reason"] == "ledger replay committed"
+assert recovered_outcomes[0]["recorded_at"]
+assert any(item["outcome"] == "retained" and item["reason"] for item in outcomes)
+print("PASS: every deadletter drain leaves durable outcome evidence")
