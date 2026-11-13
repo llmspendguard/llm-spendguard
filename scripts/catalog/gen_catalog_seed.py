@@ -24,29 +24,19 @@ _PROVENANCE_MODULE = importlib.util.module_from_spec(_PROVENANCE_SPEC)
 _PROVENANCE_SPEC.loader.exec_module(_PROVENANCE_MODULE)
 PROVENANCE_AUTHORED = _PROVENANCE_MODULE.PROVENANCE_AUTHORED
 PROVENANCE_SOURCED = _PROVENANCE_MODULE.PROVENANCE_SOURCED
+SEED_RENDERER_MODULE_PATH = REFERENCE_DATA_DIRECTORY / "catalog_seed_rendering.py"
+_SEED_RENDERER_SPEC = importlib.util.spec_from_file_location("catalog_seed_rendering", SEED_RENDERER_MODULE_PATH)
+if _SEED_RENDERER_SPEC is None or _SEED_RENDERER_SPEC.loader is None:
+    raise RuntimeError(f"cannot load seed renderer from {SEED_RENDERER_MODULE_PATH}")
+_SEED_RENDERER_MODULE = importlib.util.module_from_spec(_SEED_RENDERER_SPEC)
+_SEED_RENDERER_SPEC.loader.exec_module(_SEED_RENDERER_MODULE)
+render_catalog_seed = _SEED_RENDERER_MODULE.render_catalog_seed
+MODEL_SCALAR_FIELDS = _SEED_RENDERER_MODULE.MODEL_SCALAR_FIELDS
+MODEL_SOURCE_FIELDS = _SEED_RENDERER_MODULE.MODEL_SOURCE_FIELDS
+MODEL_OPTIONAL_SOURCE_FIELDS = _SEED_RENDERER_MODULE.MODEL_OPTIONAL_SOURCE_FIELDS
 DEFAULT_CATALOG_SOURCE = REFERENCE_DATA_DIRECTORY / "model_catalog.json"
 DEFAULT_SCHEMA_SOURCE = REFERENCE_DATA_DIRECTORY / "catalog_schema.sql"
 DEFAULT_SEED_OUTPUT = REFERENCE_DATA_DIRECTORY / "catalog_seed.sql"
-MODEL_SCALAR_FIELDS = (
-    "id", "provider", "retired_alias_of", "metered_id", "price", "price_error",
-    "output_ceiling", "context_window", "as_of", "provider_base", "reasoning",
-    "vision", "capabilities", "billing_exempt_reason",
-)
-MODEL_SOURCE_FIELDS = frozenset((*MODEL_SCALAR_FIELDS, "aliases", "lane_spellings"))
-
-
-def _sql_literal(value):
-    if value is None:
-        return "NULL"
-    if isinstance(value, bool):
-        return "1" if value else "0"
-    if isinstance(value, (dict, list)):
-        value = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
-    return "'" + str(value).replace("'", "''") + "'"
-
-
-def _insert(table, columns, values):
-    return f"INSERT INTO {table} ({', '.join(columns)}) VALUES ({', '.join(map(_sql_literal, values))});"
 
 
 def generate_seed(catalog_source, schema_source, seed_output):
@@ -74,46 +64,12 @@ def generate_seed(catalog_source, schema_source, seed_output):
     models = catalog.get("models") or {}
     if not models:
         raise ValueError("catalog source contains no models")
-    actual_fields = {key for record in models.values() for key in record}
-    if actual_fields != MODEL_SOURCE_FIELDS:
-        raise ValueError(f"model field contract changed: expected {sorted(MODEL_SOURCE_FIELDS)}, got {sorted(actual_fields)}")
-
-    statements = [schema_source.read_text(encoding="utf-8").rstrip(), "", "BEGIN IMMEDIATE;"]
-    emitted_models = 0
-    for model_id, record in sorted(models.items()):
-        if record.get("id") != model_id:
-            raise ValueError(f"catalog key/id mismatch: {model_id!r} != {record.get('id')!r}")
-        statements.append(_insert(
-            "models", (*MODEL_SCALAR_FIELDS, "present_fields", "provenance"),
-            tuple(record.get(field) for field in MODEL_SCALAR_FIELDS)
-            + (sorted(record), PROVENANCE_AUTHORED),
-        ))
-        emitted_models += 1
-        for ordinal, alias in enumerate(record.get("aliases") or []):
-            statements.append(_insert(
-                "model_aliases", ("model_id", "ordinal", "alias", "provenance"),
-                (model_id, ordinal, alias, PROVENANCE_AUTHORED),
-            ))
-        for lane, spellings in sorted((record.get("lane_spellings") or {}).items()):
-            for ordinal, spelling in enumerate(spellings):
-                statements.append(_insert(
-                    "model_lane_spellings", ("model_id", "lane", "ordinal", "spelling", "provenance"),
-                    (model_id, lane, ordinal, spelling, PROVENANCE_AUTHORED),
-                ))
-    if emitted_models != len(models):
-        raise AssertionError(f"emitted {emitted_models} model rows from {len(models)} source records")
-
-    for section, entries in sorted((key, value) for key, value in catalog.items() if key != "models"):
-        normalized_entries = entries if isinstance(entries, dict) else {"value": entries}
-        for entry_key, value in sorted(normalized_entries.items()):
-            statements.append(_insert(
-                "catalog_sections", ("section", "entry_key", "value", "provenance"),
-                (section, entry_key, json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False),
-                 PROVENANCE_SOURCED),
-            ))
-    statements.extend(("COMMIT;", ""))
-    seed_output.write_text("\n".join(statements), encoding="utf-8")
-    return emitted_models
+    seed_text = render_catalog_seed(
+        catalog, schema_source.read_text(encoding="utf-8"),
+        provenance_authored=PROVENANCE_AUTHORED, provenance_sourced=PROVENANCE_SOURCED,
+    )
+    seed_output.write_text(seed_text, encoding="utf-8")
+    return len(models)
 
 
 def generate_catalog_seed_cli(argv=None):

@@ -1015,7 +1015,7 @@ def _rt_precheck(provider, model, in_tok, est_out):
             raise SpendGateRefused(
                 f"Model {model!r} is not in the model_catalog SSOT and could not be mapped to a known model. "
                 "An unknown unmappable model hard-fails rather than spending an unknown amount. "
-                "Add it to src/spendguard/model_catalog.json WITH A SOURCE (or alias / semantic-map it to a "
+                "Author it WITH A SOURCE through model_catalog.author_catalog_records(layer='seed') (or alias / semantic-map it to a "
                 "known id), or set GATE_ALLOW=1 to proceed UNPRICED."
             ) from e
         import warnings as _w

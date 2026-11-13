@@ -66,7 +66,7 @@ try:
     ck("unknown raises PriceUnknownError", False, result)
 except pricing.PriceUnknownError as exc:
     ck("unknown raises PriceUnknownError", True)
-    ck("unknown error names SSOT", "model_catalog.json" in str(exc))
+    ck("unknown error names SSOT authoring API", "model_catalog.author_catalog_records" in str(exc))
 except Exception as exc:
     ck("unknown raises PriceUnknownError", False, str(exc))
 

@@ -3,6 +3,7 @@ import copy
 import datetime
 import fcntl
 import json
+import os
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -40,7 +41,7 @@ def _run_sync_author_preservation_guard():
             saas.sync_catalog_overlay()
             assert json.loads(target.read_text(encoding=SYNC_AUTHOR_ENCODING))["models"][identifier] == owned
             before = target.read_bytes()
-            with patch.object(author.os, "replace", side_effect=InterruptedError):
+            with patch.object(model_catalog.os, "replace", side_effect=InterruptedError):
                 try:
                     saas.sync_catalog_overlay()
                 except InterruptedError:
@@ -51,7 +52,7 @@ def _run_sync_author_preservation_guard():
             assert Path(str(target) + author.CATALOG_AUTHOR_BACKUP_SUFFIX).read_bytes() == before
             assert not list(home.glob("*.tmp"))
             entered, release, peer_started = Event(), Event(), Event()
-            replace = author.os.replace
+            replace = model_catalog.os.replace
 
             def pause_catalog_sync_replace(stage, destination):
                 if not entered.is_set():
@@ -66,17 +67,20 @@ def _run_sync_author_preservation_guard():
                     identifier, input=source["price"]["in_"], output=source["price"]["out"],
                     source=source["price"]["source"] + SYNC_AUTHOR_PEER_PROVENANCE_SUFFIX, verified=today)
 
-            with ThreadPoolExecutor(max_workers=SYNC_AUTHOR_PEERS) as pool, patch.object(author.os, "replace", pause_catalog_sync_replace):
+            with ThreadPoolExecutor(max_workers=SYNC_AUTHOR_PEERS) as pool, patch.object(model_catalog.os, "replace", pause_catalog_sync_replace):
                 first = pool.submit(saas.sync_catalog_overlay)
                 try:
                     assert entered.wait(SYNC_AUTHOR_WAIT_SECONDS)
-                    with Path(str(target) + author.CATALOG_AUTHOR_LOCK_SUFFIX).open("a+b") as probe:
+                    probe = os.open(home, os.O_RDONLY)
+                    try:
                         try:
                             fcntl.flock(probe, fcntl.LOCK_EX | fcntl.LOCK_NB)
                         except BlockingIOError:
                             pass
                         else:
                             raise AssertionError("sync must hold the shared author lock through replacement")
+                    finally:
+                        os.close(probe)
                     second = pool.submit(run_catalog_sync_peer)
                     assert peer_started.wait(SYNC_AUTHOR_WAIT_SECONDS)
                 finally:

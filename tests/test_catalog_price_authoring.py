@@ -17,6 +17,7 @@ AUTHOR_TEST_MODEL = "catalog-authoring-fixture"
 AUTHOR_TEST_PROVIDER = "catalog-authoring-provider"
 AUTHOR_TEST_SOURCE = "owner-supplied catalog-authoring fixture"
 AUTHOR_TEST_CATALOG_NAME = "catalog-authoring.json"
+AUTHOR_TEST_WORKSPACE_NAME = "isolated-authoring-workspace"
 AUTHOR_TEST_HOME_NAME = "isolated-price-author-home"
 AUTHOR_TEST_PEERS = ("catalog-authoring-peer-a", "catalog-authoring-peer-b")
 AUTHOR_TEST_INPUT_RATE = 7
@@ -33,21 +34,23 @@ def _run_catalog_authoring_guards():
         root = Path(temporary)
         isolated_home = root / AUTHOR_TEST_HOME_NAME
         isolated_home.mkdir()
-        catalog = root / AUTHOR_TEST_CATALOG_NAME
-        catalog.write_text(json.dumps({"models": {}}), encoding=AUTHOR_TEST_ENCODING)
-        floor_snapshot = catalog.read_bytes()
-        overlay = isolated_home / catalog.name
+        authoring_workspace = root / AUTHOR_TEST_WORKSPACE_NAME
+        overlay = isolated_home / AUTHOR_TEST_CATALOG_NAME
         with patch.dict(os.environ, {"SPENDGUARD_HOME": str(isolated_home)}), \
-                patch.object(model_catalog, "DATA_PATH", str(catalog)), \
+                model_catalog.catalog_authoring_workspace(authoring_workspace,
+                                                         document={"models": {}}), \
                 patch.object(model_catalog, "_overlay_path", return_value=str(overlay)), \
                 patch.object(model_catalog, "catalog_authoring_path", return_value=str(overlay)):
+            floor_snapshot = model_catalog.catalog_seed_document()
+            floor_file_snapshot = {path.relative_to(authoring_workspace): path.read_bytes()
+                                   for path in authoring_workspace.rglob("*") if path.is_file()}
             arguments = dict(input=AUTHOR_TEST_INPUT_RATE, output=AUTHOR_TEST_OUTPUT_RATE,
                              provider=AUTHOR_TEST_PROVIDER, source=AUTHOR_TEST_SOURCE,
                              verified=AUTHOR_TEST_INITIAL_VERIFIED)
             path, _ = catalog_price_authoring.set_catalog_model_price(AUTHOR_TEST_MODEL, **arguments)
             assert Path(path) == overlay, "the isolated catalog overlay is the price authoring destination"
             assert model_catalog.model_price(AUTHOR_TEST_MODEL)["in_"] == AUTHOR_TEST_INPUT_RATE
-            assert catalog.read_bytes() == floor_snapshot, "authoring must preserve the packaged floor"
+            assert model_catalog.catalog_seed_document() == floor_snapshot, "authoring must preserve the packaged floor"
             original = overlay.read_bytes()
             for invalid in ({"source": ""}, {"verified": None}, {"verified": "not-an-ISO-date"}):
                 try:
@@ -57,7 +60,7 @@ def _run_catalog_authoring_guards():
                 else:
                     raise AssertionError("missing/invalid provenance was accepted")
                 assert overlay.read_bytes() == original
-            with patch.object(catalog_price_authoring.os, "replace", side_effect=InterruptedError):
+            with patch.object(model_catalog.os, "replace", side_effect=InterruptedError):
                 try:
                     catalog_price_authoring.set_catalog_model_price(
                         AUTHOR_TEST_MODEL, **(arguments | {"input": AUTHOR_TEST_REVISED_RATE,
@@ -93,7 +96,9 @@ def _run_catalog_authoring_guards():
                 authored_record, AUTHOR_TEST_INITIAL_VERIFIED)["in_"] == AUTHOR_TEST_INPUT_RATE
             assert model_catalog.price_for_date_from_record(
                 authored_record, AUTHOR_TEST_VERIFIED)["in_"] == AUTHOR_TEST_REVISED_RATE
-            assert catalog.read_bytes() == floor_snapshot, "CLI must preserve the packaged floor"
+            assert model_catalog.catalog_seed_document() == floor_snapshot, "CLI must preserve the packaged floor"
+            assert {path.relative_to(authoring_workspace): path.read_bytes()
+                    for path in authoring_workspace.rglob("*") if path.is_file()} == floor_file_snapshot
             assert Path(pricing.user_prices_path()) == overlay, "CLI must share the catalog overlay authoring target"
             print("catalog price authoring: SSOT, provenance, interrupt, snapshot, concurrent callers PASS")
 

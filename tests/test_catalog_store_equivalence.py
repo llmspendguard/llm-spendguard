@@ -24,7 +24,7 @@ _WORKTREE_REFERENCE_DATA = os.path.join(
 if _WORKTREE_REFERENCE_DATA not in _reference_data_package.__path__:
     _reference_data_package.__path__.insert(0, _WORKTREE_REFERENCE_DATA)
 importlib.invalidate_caches()
-catalog_store = importlib.import_module("spendguard.store.reference_data.catalog_store")
+model_catalog = importlib.import_module("spendguard.store.reference_data.model_catalog")
 
 REPOSITORY_ROOT = pathlib.Path(__file__).resolve().parents[1]
 REFERENCE_DATA_DIRECTORY = REPOSITORY_ROOT / "src" / "spendguard" / "store" / "reference_data"
@@ -51,7 +51,7 @@ def _baseline_price_table(records):
     result = {}
     omitted_ids = []
     for record_id, record in records.items():
-        price = catalog_store.price_for_date_from_record(record) or {}
+        price = model_catalog.price_for_date_from_record(record) or {}
         if price.get("in_") is None:
             omitted_ids.append(record_id)
             continue
@@ -65,16 +65,16 @@ def _baseline_price_table(records):
 
 
 def _assert_equivalent(records, expected_price_table, expected_unit_prices):
-    actual = catalog_store.all_records()
+    actual = model_catalog.all_records()
     assert actual, "catalog equivalence must never pass on an empty catalog"
     assert set(actual) == set(records)
     for record_id in sorted(records):
         assert actual[record_id] == records[record_id], record_id
         ceiling = (records[record_id].get("output_ceiling") or {}).get("value")
         expected_ceiling = int(ceiling) if ceiling else None
-        assert catalog_store.published_ceiling(record_id) == expected_ceiling, record_id
-    assert catalog_store.as_price_table() == expected_price_table
-    assert catalog_store.unit_price_table() == expected_unit_prices
+        assert model_catalog.published_ceiling(record_id) == expected_ceiling, record_id
+    assert model_catalog.as_price_table() == expected_price_table
+    assert model_catalog.unit_price_table() == expected_unit_prices
 
 
 def _seed_without_one_model(seed_text):
@@ -102,7 +102,7 @@ def _seed_with_corrupt_price(seed_text, records):
 
 
 def main():
-    baseline_document = json.loads(CATALOG_JSON_PATH.read_text(encoding="utf-8"))
+    baseline_document = model_catalog.catalog_seed_document()
     baseline_records = baseline_document["models"]
     expected_price_table, omitted_from_price_table = _baseline_price_table(baseline_records)
     # Completeness proof: a model may leave the price table ONLY by declaring why it is unpriced. Any omission with
@@ -119,11 +119,11 @@ def main():
 
     with tempfile.TemporaryDirectory() as temporary_directory:
         temporary_root = pathlib.Path(temporary_directory)
-        catalog_store.set_catalog_home_provider(lambda: temporary_root)
+        model_catalog.set_catalog_home_provider(lambda: temporary_root)
 
         good_database = temporary_root / "catalog.sqlite"
         build_catalog_database(CATALOG_SEED_PATH, good_database)
-        catalog_store.CATALOG_DATABASE_PATH = str(good_database)
+        model_catalog._CATALOG_DATABASE_PATH = str(good_database)
         _assert_equivalent(baseline_records, expected_price_table, expected_unit_prices)
 
         # Mutation proof A: dropping one model INSERT must make the whole-catalog id-set assertion go RED.
@@ -131,7 +131,7 @@ def main():
         missing_seed.write_text(_seed_without_one_model(seed_text), encoding="utf-8")
         missing_database = temporary_root / "missing_model.sqlite"
         build_catalog_database(missing_seed, missing_database)
-        catalog_store.CATALOG_DATABASE_PATH = str(missing_database)
+        model_catalog._CATALOG_DATABASE_PATH = str(missing_database)
         try:
             _assert_equivalent(baseline_records, expected_price_table, expected_unit_prices)
         except AssertionError:
@@ -144,7 +144,7 @@ def main():
         corrupt_seed.write_text(_seed_with_corrupt_price(seed_text, baseline_records), encoding="utf-8")
         corrupt_database = temporary_root / "corrupt_price.sqlite"
         build_catalog_database(corrupt_seed, corrupt_database)
-        catalog_store.CATALOG_DATABASE_PATH = str(corrupt_database)
+        model_catalog._CATALOG_DATABASE_PATH = str(corrupt_database)
         try:
             _assert_equivalent(baseline_records, expected_price_table, expected_unit_prices)
         except AssertionError:
@@ -152,7 +152,7 @@ def main():
         else:
             raise AssertionError("mutation proof failed: corrupted price stayed GREEN")
 
-        catalog_store.CATALOG_DATABASE_PATH = str(good_database)
+        model_catalog._CATALOG_DATABASE_PATH = str(good_database)
         _assert_equivalent(baseline_records, expected_price_table, expected_unit_prices)
 
     print(f"PASS catalog equivalence ids={len(baseline_records)} mutation_missing=RED mutation_price=RED restored=GREEN")

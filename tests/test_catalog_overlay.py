@@ -6,7 +6,7 @@ embed ceiling — can reach a pip user via the overlay WITHOUT a package release
 hand to OVERRIDE the floor locally (the resolution order floor→synced→local).
 
 Pins: an overlay record OVERRIDES the floor by model id (embed_batch_ceiling returns the overlay value); a NEW overlay
-model appears; an ABSENT overlay = floor only; a CORRUPT overlay degrades to floor-only (never wipes it); and the
+model appears; an ABSENT overlay = floor only; a CORRUPT present overlay refuses reads and retains its bytes; and the
 cache is CONTENT-keyed — rewriting the overlay is reflected, never served stale (the durability property the memo now
 guarantees). Offline, isolated SPENDGUARD_HOME, no network, no spend.
 """
@@ -24,9 +24,11 @@ from _script_checks import record_script_check  # noqa: E402
 
 from spendguard import model_catalog   # noqa: E402
 
+OVERLAY_CORRUPTION_TEST_CONTENT = b"{ this is not json"
+
 
 def _write_overlay(models):
-    with open(model_catalog._overlay_path(), "w") as f:
+    with open(model_catalog.catalog_authoring_path(), "w") as f:
         json.dump({"models": models}, f)
 
 
@@ -38,7 +40,7 @@ def _emb(model_id, provider, cap):
 def main():
     fails = []
 
-    ovp = model_catalog._overlay_path() or ""
+    ovp = model_catalog.catalog_authoring_path()
     record_script_check(fails, "overlay path is catalog_synced.json under SPENDGUARD_HOME (not the package model_catalog.json)",
        ovp.endswith("catalog_synced.json") and os.environ["SPENDGUARD_HOME"] in ovp, str(ovp))
 
@@ -64,16 +66,24 @@ def main():
        model_catalog.embed_batch_ceiling("gemini-embedding-001") == 300,
        str(model_catalog.embed_batch_ceiling("gemini-embedding-001")))
 
-    # CORRUPT overlay → floor only (never wipes the floor)
-    with open(model_catalog._overlay_path(), "w") as f:
-        f.write("{ this is not json")
-    record_script_check(fails, "corrupt overlay degrades to floor-only: gemini back to shipped 100",
-       model_catalog.embed_batch_ceiling("gemini-embedding-001") == 100)
-    record_script_check(fails, "corrupt overlay does NOT wipe the floor (catalog still non-empty)",
-       len(model_catalog._load_records()) >= floor_n)
+    # A present corrupt authoring layer is irreplaceable data, so readers refuse it.
+    with open(model_catalog.catalog_authoring_path(), "wb") as f:
+        f.write(OVERLAY_CORRUPTION_TEST_CONTENT)
+    for overlay_corruption_reader in (
+            lambda: model_catalog.embed_batch_ceiling("gemini-embedding-001"), model_catalog.all_records):
+        try:
+            overlay_corruption_reader()
+        except model_catalog.CatalogLayerCorruptionError as overlay_corruption_error:
+            record_script_check(fails, "present corrupt overlay produces a named refusal",
+                                "catalog_layer_corrupt" in str(overlay_corruption_error))
+        else:
+            record_script_check(fails, "present corrupt overlay must refuse catalog reads", False)
+    with open(model_catalog.catalog_authoring_path(), "rb") as f:
+        record_script_check(fails, "read refusal preserves the complete corrupt overlay for repair",
+                            f.read() == OVERLAY_CORRUPTION_TEST_CONTENT)
 
     # ABSENT overlay → floor only
-    os.remove(model_catalog._overlay_path())
+    os.remove(model_catalog.catalog_authoring_path())
     record_script_check(fails, "absent overlay: floor-only restored (gemini 100 + count back to floor)",
        model_catalog.embed_batch_ceiling("gemini-embedding-001") == 100 and len(model_catalog._load_records()) == floor_n)
 

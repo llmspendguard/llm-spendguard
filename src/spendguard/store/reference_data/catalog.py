@@ -268,7 +268,7 @@ def main(argv=None):
     from ...egress import saas_accessors
     n_cur = saas_accessors.resolve_sync_catalog_overlay()
     if n_cur:
-        print(f"  curated overlay: {n_cur} models synced (source dates preserved) → {model_catalog._overlay_path()}")
+        print(f"  curated overlay: {n_cur} models synced (source dates preserved) → {model_catalog.catalog_authoring_path()}")
     return 0
 
 

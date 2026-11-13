@@ -1,4 +1,4 @@
-"""Sync per-model CAPABILITIES from LiteLLM's community catalog into model_catalog.json — the GROUND-TRUTH source for
+"""Sync per-model CAPABILITIES from LiteLLM's community catalog through the catalog gateway — the GROUND-TRUTH source for
 "does this model accept images / enforce a response schema / call functions / …" plus the token upper bounds.
 
 WHY LiteLLM and not a judge or a hand-list: capability is a verifiable FACT. An LLM judge cannot know models past its
@@ -12,7 +12,7 @@ with no guessing. Reads `litellm.model_cost`, matches a catalog model by its id 
     has none — a curated value is never overwritten.
 A model LiteLLM does not cover is LEFT ABSENT (never a guessed flag → the vision guard conservatively keeps the
 caller's model). $0 — a local dataset read (no LLM, no network of its own). The whole-file write goes through
-config.update_json (atomic + backups), so the SSOT catalog is never truncated.
+model_catalog.author_catalog_records (atomic + backups), which regenerates and verifies the shipped floor.
 """
 
 from ...capability_cli_parsing import add_registered_cli_argument
@@ -21,7 +21,9 @@ import argparse
 import datetime
 import sys
 
-from ... import config, model_catalog
+from ... import model_catalog
+
+CAPABILITY_SYNC_AUTHOR_REASON = "sync capabilities + upper bounds from LiteLLM"
 
 # LiteLLM supports_* field → our short capabilities key. supports_vision is handled separately (top-level `vision`,
 # what the guard reads). `mode` (chat/embedding/…) rides along as useful profile data.
@@ -186,8 +188,11 @@ def audit_catalog_completeness():
 
 
 def sync_capabilities(dry_run=False):
-    """Sync LiteLLM capabilities + upper bounds into model_catalog.json for every model LiteLLM covers. Returns the
-    summary dict. dry_run computes the summary and writes NOTHING. The write is atomic + backed up (config.update_json)."""
+    """Sync LiteLLM capabilities + upper bounds through the gateway for every covered model.
+
+Return the summary; dry_run writes nothing. The gateway regenerates the seed and
+SQLite floor together, verifies parity, and preserves a backup.
+    """
     models = model_catalog.all_records()
     updates, summary = _updates_for(models)
     run_date = datetime.datetime.now(datetime.timezone.utc).date()
@@ -200,16 +205,14 @@ def sync_capabilities(dry_run=False):
     if dry_run or not updates:
         return summary
 
-    def _merge_capability_updates(doc):
+    def _merge_capability_updates(doc, snapshot):
         m = (doc or {}).get("models") or {}
         for mid, u in updates.items():
             if mid in m:
                 model_catalog.merge_row_updates(m[mid], u, today=run_date)
         return doc
 
-    config.update_json(model_catalog.DATA_PATH, _merge_capability_updates, reason="sync capabilities + upper bounds from LiteLLM",
-                       required=True)   # the model_catalog SSOT carries HAND-AUTHORED records: a corrupt file RAISES (human
-    #                                     repairs) — never quarantined-and-rebuilt (that would lose the authored fields) nor silently declined
+    model_catalog.author_catalog_records(_merge_capability_updates, reason=CAPABILITY_SYNC_AUTHOR_REASON, layer="seed")
     return summary
 
 

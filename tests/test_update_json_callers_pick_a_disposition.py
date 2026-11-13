@@ -29,17 +29,15 @@ _MOVED_CLUSTER_A_PATHS = {
     "resources.py": ("generate", "spend_capture", "resources.py"),
     "setup.py": ("platform", "setup.py"),
     "catalog.py": ("store", "reference_data", "catalog.py"),
-    "catalog_price_authoring.py": ("store", "reference_data", "catalog_price_authoring.py"),
     "sync.py": ("store", "reference_data", "sync.py"),
-    "sync_capabilities.py": ("store", "reference_data", "sync_capabilities.py"),
     "review.py": ("analyze", "measurement", "review.py"),
 }
 
 # The files whose update_json callers were fixed in cluster A. Every update_json call in these files must carry a
 # disposition. (config.py is NOT here: it DEFINES update_json and its one call-site returns the value to its caller.)
 _CLUSTER_A_FILES = [
-    "balances.py", "calibrate.py", "catalog.py", "catalog_price_authoring.py", "lane_balance.py", "resources.py", "review.py",
-    "saas.py", "setup.py", "submit.py", "sync.py", "sync_capabilities.py", "tier_config.py", "vendor_call.py",
+    "balances.py", "calibrate.py", "catalog.py", "lane_balance.py", "resources.py", "review.py",
+    "saas.py", "setup.py", "submit.py", "sync.py", "tier_config.py", "vendor_call.py",
 ]
 
 # (file, lineno) call-sites deliberately left on the default because the caller HANDLES the None return itself.

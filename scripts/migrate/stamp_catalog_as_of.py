@@ -7,10 +7,11 @@ import os
 import subprocess
 import sys
 
-from spendguard import config, model_catalog
+from spendguard import model_catalog
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 CATALOG_REL = "src/spendguard/store/reference_data/model_catalog.json"
+CATALOG_STAMP_AUTHOR_REASON = "bootstrap semantic per-row catalog as_of"
 
 
 def _git(*args):
@@ -61,8 +62,7 @@ def main(argv=None):
     ap.add_argument("--write", action="store_true", help="write derived dates into only rows whose as_of is missing")
     ap.add_argument("--output", help="also write the complete dry-run table to this path")
     args = ap.parse_args(argv)
-    with open(model_catalog.DATA_PATH) as fh:
-        doc = json.load(fh)
+    doc = model_catalog.catalog_seed_document()
     proposals = derive_dates(doc.get("models") or {})
     lines = ["model_id\tproposed_as_of\tprovenance\treason"]
     for mid in sorted(proposals):
@@ -82,14 +82,14 @@ def main(argv=None):
 
     sys.stdout.write("\n".join(lines) + "\n")
 
-    def _stamp(catalog):
+    def _stamp(catalog, snapshot):
         for mid, p in proposals.items():
             rec = (catalog.get("models") or {}).get(mid)
             if rec is not None and rec.get("as_of") is None and p["date"]:
                 rec["as_of"] = p["date"]
         return catalog
 
-    config.update_json(model_catalog.DATA_PATH, _stamp, reason="bootstrap semantic per-row catalog as_of", required=True)
+    model_catalog.author_catalog_records(_stamp, reason=CATALOG_STAMP_AUTHOR_REASON, layer="seed")
     return 0
 
 

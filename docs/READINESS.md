@@ -1,6 +1,6 @@
 # Readiness
 
-Definition revision: 7
+Definition revision: 8
 
 Square means every checklist item has a reviewed deterministic gate and every gate passes.
 `spendguard selfcheck` runs each gate and exits nonzero for FAIL or UNREVIEWED.
@@ -25,13 +25,16 @@ A supplied clean-environment report must match the current input fingerprint and
   Gate: `spendguard.capability_readiness_gates:run_capability_script_readiness_gate`; inputs: `{"scripts": ["tests/test_capability_cli_help_guard.py"]}`.
 
 - [ ] **docs-present** — Generated API reference, parameter contracts, and handwritten source references match the current tree.
-  Gate: `spendguard.capability_readiness_gates:run_capability_script_readiness_gate`; inputs: `{"scripts": ["tests/test_capability_documentation_guard.py", "tests/test_docs_reference_live_source_paths.py"]}`.
+  Gate: `spendguard.capability_readiness_gates:assess_document_currency_readiness`; inputs: `{"scripts": ["tests/test_capability_documentation_guard.py", "tests/test_docs_reference_live_source_paths.py"]}`.
 
 - [ ] **no-release-on-red-ci** — Release promotion fails closed when CI is red or unknown.
   Gate: `spendguard.capability_readiness_gates:run_capability_script_readiness_gate`; inputs: `{"scripts": ["tests/test_release_green_pointer.py"]}`.
 
 - [ ] **env-parity-in-verification** — Current source passes required checks in independent clean environments.
-  Gate: `spendguard.capability_readiness_gates:assess_capability_environment_evidence`; inputs: `{"patterns": ["src/spendguard/**/*.py", "src/spendguard/capability*.json", "src/spendguard/interface/capability*.jsonl", "src/spendguard/architectural_fitness_baseline.json", "scripts/test/*.py", "tests/**/*.py", "pyproject.toml", ".github/workflows/*", "docs/*.md", "LICENSE", "SECURITY.md", "CONTRIBUTING.md", "README.md", "CHANGELOG.md", "src/spendguard/platform/distribution_build_wheels/*.whl"], "required_checks": ["ruff", "name-uniqueness", "surface-suites", "offline-audit"]}`.
+  Gate: `spendguard.capability_readiness_gates:assess_capability_environment_evidence`; inputs: `{"patterns": ["src/spendguard/**/*.py", "src/spendguard/capability*.json", "src/spendguard/interface/capability*.jsonl", "src/spendguard/architectural_fitness_baseline.json", "scripts/test/*.py", "tests/**/*.py", "pyproject.toml", ".github/workflows/*", "docs/*.md", "LICENSE", "SECURITY.md", "CONTRIBUTING.md", "README.md", "CHANGELOG.md", "src/spendguard/platform/distribution_build_wheels/*.whl"], "required_checks": ["ruff", "name-uniqueness", "surface-suites", "offline-audit", "catalog-portable", "keys-single-source"]}`.
+
+- [ ] **catalog-gateway-integrity** — The catalog gateway owns physical access and authoring; authored, seed and SQLite records agree across the complete catalog.
+  Gate: `spendguard.capability_readiness_gates:run_capability_script_readiness_gate`; inputs: `{"scripts": ["tests/test_catalog_gateway_integrity.py", "tests/test_model_catalog_completeness.py"]}`.
 
 - [ ] **money-correctness** — Money scale, exact ledger arithmetic and global receipt allocation remain correct.
   Gate: `spendguard.capability_readiness_gates:run_capability_script_readiness_gate`; inputs: `{"scripts": ["tests/test_money_scale.py", "tests/test_ledger_money_is_exact_decimal.py", "tests/test_receipt_global_dollar_allocation.py"]}`.
@@ -131,4 +134,3 @@ Objective offline fitness functions enforce the recorded scope and measured ratc
 - [ ] **architecture-surface-parity** — Existing capability-surface-parity fitness function, also declared as surface-parity in Project invariants.
   Gate: `spendguard.capability_readiness_gates:run_capability_script_readiness_gate`; inputs: `{"scripts": ["tests/test_capability_surface_parity_guard.py"]}`.
   Review: Cites and reuses the existing parity gate; its projection/SSOT implementation is unchanged.
-

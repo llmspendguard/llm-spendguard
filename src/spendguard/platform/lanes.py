@@ -393,13 +393,14 @@ def set_declared_lane_model(lane: str, model: str, *, tier: str | None = None) -
         print(f"unknown lane {lane!r} — known lanes: {', '.join(reference_data_accessors.resolve_lanes())}")
         return 2
     if model_catalog.model_record(model) is None:
-        print(f"refusing: {model!r} is not in model_catalog.json — a lane model must be catalogued so its "
-              f"lane→metered crosswalk has one authoring SSOT. Add the model and its lane_spellings there, "
+        print(f"refusing: {model!r} is not in the model catalog — a lane model must be catalogued so its "
+              f"lane→metered crosswalk has one authoring SSOT. Add the model and its lane_spellings through "
+              f"model_catalog.author_catalog_records(layer='seed'), "
               f"then re-run.")
         return 2
     if not tier_config._model_is_priced(model):
         print(f"refusing: {model!r} is not priced — a lane model must be priced (so lane VALUE + metered fallback "
-              f"are cost-visible). `spendguard sync-prices`, or add it to prices.json WITH A SOURCE, then re-run.")
+              f"are cost-visible). Run `spendguard sync-prices`, or use `spendguard price` WITH A SOURCE, then re-run.")
         return 2
     cur = _cfg._cfg_get("advisor", "lane_models", {}) or {}
     if tier:
