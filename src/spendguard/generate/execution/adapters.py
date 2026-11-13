@@ -1323,6 +1323,7 @@ def _exception_origin_frame(e):
 HTTP_CLIENT_ERROR_STATUS_MIN = 400
 HTTP_PROVIDER_THROTTLE_STATUS = 429
 HTTP_SERVER_ERROR_STATUS_MIN = 500
+FAILURE_KIND_CLIENT_BUG = "client_bug"
 
 
 def _exception_failure_kind(e, status_code):
@@ -1355,7 +1356,7 @@ def _exception_failure_kind(e, status_code):
         if status_code == HTTP_PROVIDER_THROTTLE_STATUS:
             return "provider_error"
         if status_code >= HTTP_CLIENT_ERROR_STATUS_MIN:
-            return "client_bug"
+            return FAILURE_KIND_CLIENT_BUG
         return "indeterminate"
     return "indeterminate"
 
@@ -2437,6 +2438,11 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
         # APITimeoutError / ReadTimeout) from a transport fault (the connection broke / was refused), so the
         # coverage report can say WHY a vendor didn't answer instead of lumping both under transport_error.
         _status, _perr, _retry = _exc_detail(e)
+        _failure_kind = _exception_failure_kind(e, _status)
+        if _failure_kind == FAILURE_KIND_CLIENT_BUG:
+            import spendguard.manage.admission.admission_accessors as _rejected_call_accessors
+            _rejected_call_accessors.resolve_record_rejected_provider_call_event(
+                prov, raw, _failure_kind, _status, intent=intent)
         if _status in (429, 529):                       # a provider rate limit / overload → PACE the governor when the
             try:                                        # vendor sent its limit headers (tpm/rpm + Retry-After). We do NOT
                 from ... import dispatch as _dispatch     # subtype the 429 here — guessing connection-vs-token from header
@@ -2457,7 +2463,7 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
         # `cause` surfaces the real reason behind a generic wrapper (e.g. 'Connection error.' ← 'ConnectTimeout').
         return {**base, "latency": time.time() - t0, "error": str(e), "error_type": type(e).__name__,
                 "error_module": type(e).__module__, "error_origin": _exception_origin_frame(e),
-                "failure_kind": _exception_failure_kind(e, _status),
+                "failure_kind": _failure_kind,
                 "status_code": _status, "provider_error": _perr, "retry_after": _retry,
                 "executor": "api", "cause": _exc_cause(e)}
 

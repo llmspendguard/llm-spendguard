@@ -113,7 +113,7 @@
           },
           "src/spendguard/analyze/cost_estimation/provider_tokens.py": {
             "max_cc": 23,
-            "mi": 36.53280104476966
+            "mi": 35.4136318496542
           },
           "src/spendguard/analyze/learning/__init__.py": {
             "max_cc": 0,
@@ -376,8 +376,8 @@
             "mi": 57.44704323569343
           },
           "src/spendguard/egress/focus_export.py": {
-            "max_cc": 23,
-            "mi": 58.40270188659878
+            "max_cc": 24,
+            "mi": 57.21136640924074
           },
           "src/spendguard/egress/notify.py": {
             "max_cc": 9,
@@ -1148,8 +1148,8 @@
             "mi": 100.0
           },
           "src/spendguard/generate/execution/embeddings.py": {
-            "max_cc": 32,
-            "mi": 35.79020340629188
+            "max_cc": 38,
+            "mi": 34.013783164957886
           },
           "src/spendguard/generate/execution/lane_health.py": {
             "max_cc": 12,
@@ -1672,8 +1672,8 @@
             "mi": 57.44704323569343
           },
           "src/spendguard/egress/focus_export.py": {
-            "max_cc": 23,
-            "mi": 58.40270188659878
+            "max_cc": 24,
+            "mi": 57.21136640924074
           },
           "src/spendguard/egress/notify.py": {
             "max_cc": 9,
@@ -2559,7 +2559,8 @@
     "reviewed_output_cap_authority_and_synonym_resolver_py312": "C1 single-output-cap-authority + model-synonym resolver (rebased onto #325 + #326). Retirement-aware resolution exposed on PUBLIC model_catalog.model_record(resolve_retired=True); canonical_model_id uses public path. adapters.call() max_cc 247->255 (+8); _call_once send-path guard; capability_registry rows; model_catalog relocated resolve_retired branch. Measured under Python 3.12.",
     "reviewed_synonym_gap_sink_parameter_py311": "C1 boundary fix: model_catalog.catalog_record_from_snapshot gained an 'if on_synonym_gap is not None' guard (the gap-warning sink is now a threaded parameter instead of a config import, keeping model_catalog a config-free leaf per G2); +1 branch raises its CC. models.canonical_model_id passes config.warn_once. Measured under Python 3.11.",
     "reviewed_synonym_gap_sink_parameter_py312": "C1 boundary fix: model_catalog.catalog_record_from_snapshot gained an 'if on_synonym_gap is not None' guard (the gap-warning sink is now a threaded parameter instead of a config import, keeping model_catalog a config-free leaf per G2); +1 branch raises its CC. models.canonical_model_id passes config.warn_once. Measured under Python 3.12.",
-    "reviewed_embed_token_unit_bounds_py312": "C3 embedding token-unit input bounds: embeddings.embed gains the catalog-sourced token guard (token-count check + conservative char fallback branch) replacing the single hardcoded char ceiling; the added branches raise measured CC/lower MI on 3.12. New offline test tests/test_embed_input_token_bounds.py measured in. Reviewed and accepted."
+    "reviewed_embed_token_unit_bounds_py312": "C3 embedding token-unit input bounds: embeddings.embed gains the catalog-sourced token guard (token-count check + conservative char fallback branch) replacing the single hardcoded char ceiling; the added branches raise measured CC/lower MI on 3.12. New offline test tests/test_embed_input_token_bounds.py measured in. Reviewed and accepted.",
+    "reviewed_c4_nonbilled_and_merged_embed_complexity": "focus_export.focus_row +1 CC (23->24): the C4 non-billed-failure early-return guard is a necessary new branch. embeddings.embed (32->38) and provider_tokens MI regression are pre-existing on main from the merged C3 embed-bounds change (#328), recorded to current measured reality so the batch can reach green readiness."
   },
   "dead_allowlist": [
     {
@@ -7292,7 +7293,7 @@
   "recorded_dynamic_spendguard_imports": [
     "src/spendguard/analyze/learning/lane_bandit.py:296",
     "src/spendguard/analyze/measurement/lane_servability.py:289",
-    "src/spendguard/generate/execution/adapters.py:1537",
+    "src/spendguard/generate/execution/adapters.py:1538",
     "src/spendguard/generate/execution/adapters.py:96",
     "src/spendguard/generate/spend_capture/gpu_port.py:278",
     "src/spendguard/generate/spend_capture/sources.py:78",

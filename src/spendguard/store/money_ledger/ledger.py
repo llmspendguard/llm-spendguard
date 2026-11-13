@@ -309,6 +309,7 @@ _KIND_TO_USD = {"batch": "batch_usd", "realtime": "realtime_usd",
                 "remote": "remote_compute_usd", "remote_compute": "remote_compute_usd", "gpu": "remote_compute_usd",
                 "subscription": "subscription_usd", "sub": "subscription_usd",
                 "external": "external_usd", "tool": "external_usd", "mcp": "external_usd"}
+NON_BILLED_FAILURE_KIND = "non_billed_failure"
 _USD_TO_KIND = {"batch_usd": "batch", "realtime_usd": "realtime", "est_chat_usd": "est_chat",
                 "remote_compute_usd": "remote_compute", "subscription_usd": "subscription",
                 "external_usd": "external"}
@@ -761,12 +762,13 @@ class SpendLedger:
         # A sub-micro real cost like $0.00000026 is now NON-zero (Decimal, not truncated micros) — the guard
         # fires only on a genuinely MISSING cost, which is the bug it was written to catch.
         nz = [c for c in USD_COLS if to_dec(ev.get(c)) != 0]
-        # UNPRICED is the ONE legitimate zero-money row: the call HAPPENED (tokens real) but its price is
-        # unknown, not zero. "$0" and "we can't price it" are different claims and only one is honest here, so
-        # an explicit cost_basis='unpriced' row is allowed through with no money column — it stays out of every
-        # $ total by summing to 0, and is findable by cost_basis for the "what we couldn't price" view. A row
-        # with neither a cost NOR the unpriced flag is a genuinely missing cost, which is still a hard error.
-        if not nz and ev.get("cost_basis") != "unpriced":
+        # UNPRICED and NON_BILLED_FAILURE are the legitimate zero-money rows. An unpriced call happened but its
+        # price is unknown; a non-billed failure was rejected before usage or a charge could exist. Both remain
+        # explicit forensic evidence without being assigned a money category. A row with neither a cost nor one
+        # of those explicit states has a genuinely missing cost, which remains a hard error.
+        is_non_billed_failure = (ev.get("cost_type") == NON_BILLED_FAILURE_KIND
+                                 and ev.get("billed") in (0, False))
+        if not nz and ev.get("cost_basis") != "unpriced" and not is_non_billed_failure:
             raise ValueError("spend event has no cost in any money column")
         if not ev.get("dedup_key") and not ev.get("source"):
             raise ValueError("spend event needs a dedup_key or a source")

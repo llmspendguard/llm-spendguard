@@ -25,6 +25,7 @@ import json
 import sys
 
 from .. import budget
+from ..ledger import NON_BILLED_FAILURE_KIND
 
 # The FOCUS 1.2 columns an LLM charge row needs, in a stable emit order. ChargeId is a spendguard convenience (FOCUS
 # 1.2 has no ChargeId column); everything else is a real FOCUS column. Kept as a named list so CSV headers and JSON
@@ -62,6 +63,8 @@ def _charge_axis(ev):
 def focus_row(ev):
     """Project ONE spend_events dict into a FOCUS 1.2 charge row (a dict keyed by FOCUS_COLUMNS). Pure mapping."""
     kind, amt = _charge_axis(ev)
+    if ev.get("cost_type") == NON_BILLED_FAILURE_KIND:
+        return None
     basis = (ev.get("cost_basis") or "").lower()
     is_correction = ev.get("conv_id") == budget._TRUE_DOWN_CONV
     provider = ev.get("provider") or "?"
@@ -110,7 +113,8 @@ def export_rows(since=None, until=None):
     """Every spend_events row in the window, projected to FOCUS. Read-only, through the shared ledger connection."""
     from spendguard.store.spend_search.ledger_read_accessors import resolve_read_spend_events as read_spend_events
     from ..ledger import SpendLedger
-    return [focus_row(SpendLedger._row(ev)) for ev in read_spend_events(since=since, until=until)]
+    projected = (focus_row(SpendLedger._row(ev)) for ev in read_spend_events(since=since, until=until))
+    return [row for row in projected if row is not None]
 
 
 def reconciliation_summary(rows):

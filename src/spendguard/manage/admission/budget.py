@@ -192,6 +192,41 @@ def record_charge(provider, model, kind, cost, project=None, conv_id=None, basis
                         project=proj or "", occurred_at=now, source="gate", in_tok=in_tok, out_tok=out_tok)
 
 
+def record_rejected_provider_call_event(provider, model, failure_kind, status_code, *, intent=None,
+                                        project=None, conv_id=None):
+    """Record one provider rejection that completed before any billable usage existed."""
+    from ...ledger import NON_BILLED_FAILURE_KIND, live_dedup_key
+    proj = project if project is not None else _project()
+    conv = conv_id if conv_id is not None else _conv()
+    try:
+        key_fp = config.key_fingerprint(provider)
+    except Exception:
+        key_fp = ""
+    actor = ""
+    chain = ""
+    try:
+        from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
+        current_call = _call_corpus_accessors.resolve_calls_current()
+        intent = intent if intent is not None else (current_call.get("intent") or "")
+        actor = _call_corpus_accessors.resolve_calls_caller() or ""
+        chain = current_call.get("chain") or ""
+    except Exception:
+        intent = intent or ""
+    occurred_at = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
+    event = {
+        "provider": provider or "?", "model": model or "?", "conv_id": conv or "",
+        "key_fp": key_fp, "intent": (intent or "")[:120], "actor": actor[:120], "chain": chain[:120],
+        "cost_type": NON_BILLED_FAILURE_KIND, "billed": 0, "status": "posted",
+        "in_tok": 0, "out_tok": 0, "num_calls": 1,
+        "tags": {"failure_kind": failure_kind, "status_code": status_code},
+        "occurred_at": occurred_at, "ts_utc": occurred_at,
+        "dedup_key": live_dedup_key(occurred_at), "source": LIVE_GATE_SOURCE,
+        "recorded_by": LIVE_GATE_SOURCE,
+    }
+    _attribute(event, proj or "")
+    _ledger().record_event(event, venv=sys.prefix)
+
+
 def reconcile_money_batch_estimate(provider, model, intent, in_tok, out_tok, cost):
     """Auditably revise the newest open gate estimate to the measured batch actual; never delete or clamp rows."""
     from ...ledger_writer import current_ledger_writer_connection, run_ledger_write
@@ -915,6 +950,7 @@ _admission_accessors.set_reading_history_resolver(lambda *a, **k: reading_histor
 _admission_accessors.set_reattribute_providers_resolver(lambda *a, **k: reattribute_providers(*a, **k))
 _admission_accessors.set_reconcile_money_batch_estimate_resolver(lambda *a, **k: reconcile_money_batch_estimate(*a, **k))
 _admission_accessors.set_reconciled_by_project_resolver(lambda *a, **k: reconciled_by_project(*a, **k))
+_admission_accessors.set_record_rejected_provider_call_event_resolver(record_rejected_provider_call_event)
 _admission_accessors.set_record_reconciled_resolver(lambda *a, **k: record_reconciled(*a, **k))
 _admission_accessors.set_record_true_down_resolver(lambda *a, **k: record_true_down(*a, **k))
 _admission_accessors.set_snapshot_resolver(lambda *a, **k: snapshot(*a, **k))
