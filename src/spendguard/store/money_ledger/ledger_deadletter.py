@@ -7,6 +7,7 @@ import os
 import tempfile
 import time
 from pathlib import Path
+from decimal import Decimal
 
 from ... import config
 from .ledger_writer import (serialize_ledger_function, require_ledger_writer_request_live,
@@ -15,6 +16,8 @@ from .ledger_writer import (serialize_ledger_function, require_ledger_writer_req
 
 LEDGER_DEADLETTER_RETRY_LIMIT = 3
 LEDGER_DEADLETTER_LOCK_SUFFIX = ".lock"
+LEDGER_DEADLETTER_OUTCOME_SUFFIX = ".outcomes.jsonl"
+LEDGER_DEADLETTER_ZERO_USD = Decimal("0")
 
 
 @contextlib.contextmanager
@@ -80,6 +83,8 @@ def stage_and_commit_spend_deadletters(paths, spool_locks):
         locked_spool_paths.add(candidate)
         with contextlib.nullcontext(spool_locks.enter_context(locked_spend_deadletter_path(candidate))) as retry_path:
             retained = []
+            recovered_events = []
+            retention_reasons = []
             with retry_path.open(newline="") as original_spool:
                 spool_lines = original_spool.read().splitlines(keepends=True)
             rollback_lines = list(spool_lines)
@@ -92,6 +97,7 @@ def stage_and_commit_spend_deadletters(paths, spool_locks):
                     attempts = int(payload.get("retry_attempts", 0))
                     if attempts >= retry_limit:
                         retained.append(line)
+                        retention_reasons.append("retry limit exhausted; evidence retained")
                         continue
                     event = payload.get("event")
                     if event is None:
@@ -113,13 +119,16 @@ def stage_and_commit_spend_deadletters(paths, spool_locks):
                     finally:
                         if ledger._conn is not None:
                             ledger._conn.close()
+                    recovered_events.append(event)
                     report["committed"] += 1
                 except LedgerQueryDeadline as deadline_error:
                     report["errors"].append(repr(deadline_error))
+                    retention_reasons.append(repr(deadline_error))
                     retained.extend(spool_lines[line_number:])
                     break
                 except Exception as retry_error:
                     report["errors"].append(repr(retry_error))
+                    retention_reasons.append(repr(retry_error))
                     try:
                         if not write_attempted:
                             retained.append(line)
@@ -130,7 +139,7 @@ def stage_and_commit_spend_deadletters(paths, spool_locks):
                         retained.append(rollback_lines[line_number])
                     except (UnboundLocalError, TypeError, AttributeError, ValueError):
                         retained.append(line)
-            staged_spools.append((retry_path, retained, rollback_lines))
+            staged_spools.append((retry_path, retained, rollback_lines, recovered_events, retention_reasons))
     committed = False
     finalization_error = None
     try:
@@ -144,9 +153,18 @@ def stage_and_commit_spend_deadletters(paths, spool_locks):
         finalization_error = commit_error
         from .ledger_writer import abort_current_ledger_writer_transaction
         abort_current_ledger_writer_transaction()
-    for retry_path, retained, rollback_lines in staged_spools:
+    for retry_path, retained, rollback_lines, recovered_events, retention_reasons in staged_spools:
         if not committed:
             retained = rollback_lines
+        # Record the outcome before shrinking the queue; failed journaling leaves
+        # original evidence available for a safe, deduplicated replay.
+        if committed and recovered_events:
+            persist_spend_deadletter_outcome(retry_path, "recovered", recovered_events,
+                                             "ledger replay committed")
+        if retained:
+            persist_spend_deadletter_outcome(
+                retry_path, "retained", retained,
+                repr(finalization_error) if not committed else "; ".join(retention_reasons))
         report["retained"] += len(retained)
         replace_spend_deadletter_spool(retry_path, retained)
     if not committed:
@@ -173,3 +191,34 @@ def replace_spend_deadletter_spool(retry_path, retained):
     finally:
         if os.path.exists(replacement):
             os.unlink(replacement)
+
+
+def persist_spend_deadletter_outcome(retry_path, outcome, evidence, reason):
+    """Fsync a separate recovery history before the corresponding spool shrinks."""
+    billed_usd = LEDGER_DEADLETTER_ZERO_USD
+    est_sub_value_usd = LEDGER_DEADLETTER_ZERO_USD
+    unknown_amount_count = 0
+    for item in evidence:
+        try:
+            payload = json.loads(item) if isinstance(item, str) else item
+            event = payload.get("event", payload)
+            amount = event.get("usd", payload.get("cost"))
+            if amount is None:
+                unknown_amount_count += 1
+            elif event.get("billed", 1):
+                billed_usd += Decimal(str(amount))
+            else:
+                est_sub_value_usd += Decimal(str(amount))
+        except (ValueError, TypeError, AttributeError, ArithmeticError):
+            unknown_amount_count += 1
+    outcome_path = retry_path.with_name(retry_path.name + LEDGER_DEADLETTER_OUTCOME_SUFFIX)
+    append_spend_deadletter_event(outcome_path, {
+        "outcome": outcome, "count": len(evidence), "billed_usd": str(billed_usd),
+        "est_sub_value_usd": str(est_sub_value_usd), "unknown_amount_count": unknown_amount_count,
+        "reason": reason, "recorded_at": time.time(), "spool_path": str(retry_path),
+    })
+    directory_fd = os.open(outcome_path.parent, os.O_RDONLY)
+    try:
+        os.fsync(directory_fd)
+    finally:
+        os.close(directory_fd)

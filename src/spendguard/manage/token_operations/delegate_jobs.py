@@ -40,6 +40,7 @@ DELEGATE_JOB_TERMINAL_STATES = (DELEGATE_JOB_DONE_STATE, DELEGATE_JOB_FAILED_STA
 DELEGATE_JOB_JOURNAL_STATES = {"done": "success", "failed": "failure", "lost": "lost", "killed": "killed"}
 DELEGATE_JOB_RESTART_REASON = "server-restart-unknown"
 DELEGATE_JOB_STORE_UNREADABLE_REASON = "store-unreadable"
+DELEGATE_JOB_DEFAULT_BUSY_TIMEOUT_MS = 5000
 DELEGATE_JOB_DEFAULT_RETENTION_S = 604800
 DELEGATE_JOB_DEFAULT_STALENESS_MARGIN_S = 60
 DELEGATE_JOB_DEFAULT_CODEX_TIMEOUT_S = 1800
@@ -53,6 +54,7 @@ DELEGATE_JOB_DEFAULT_ORPHAN_RUNNING_GRACE_S = 86400
 DELEGATE_JOB_DEFAULT_PAYLOAD_RETENTION_DAYS = 30
 DELEGATE_JOB_DEFAULT_MAINTENANCE_BATCH_SIZE = 100
 DELEGATE_JOB_DEFAULT_VACUUM_MIN_FREED_BYTES = 64 * 1024 * 1024
+DELEGATE_JOB_DEFAULT_PAYLOAD_INLINE_MAX_BYTES = 64 * 1024
 DELEGATE_JOB_ARCHIVE_DIRECTORY_NAME = "delegate-job-payloads"
 DELEGATE_JOB_ARCHIVE_POINTER_KIND = "spendguard-delegate-payload-archive-v1"
 DELEGATE_JOB_RECLAIM_REASON = "local-worker-provably-dead-after-stale-grace"
@@ -128,16 +130,28 @@ def _ensure_delegate_jobs_schema(connection):
 
 
 @contextlib.contextmanager
-def _open_delegate_jobs_connection():
+def _open_delegate_jobs_connection(job_id=None):
+    path = delegate_jobs_database_path()
     try:
-        path = delegate_jobs_database_path()
+        busy_timeout_ms = int(config._cfg_get(
+            "delegate_jobs", "busy_timeout_ms", DELEGATE_JOB_DEFAULT_BUSY_TIMEOUT_MS))
+        if busy_timeout_ms < 0:
+            raise ValueError("delegate_jobs.busy_timeout_ms must be nonnegative")
+
+        def initialize_delegate_jobs_with_contention_policy(connection):
+            config.run_ledger_setup_pragmas(connection, (f"busy_timeout={busy_timeout_ms}",))
+            _ensure_delegate_jobs_schema(connection)
+
         path.parent.mkdir(parents=True, exist_ok=True)
-        with contextlib.closing(config.fresh_ledger_conn(_ensure_delegate_jobs_schema, path)) as connection:
+        with contextlib.closing(config.fresh_ledger_conn(initialize_delegate_jobs_with_contention_policy, path)) as connection:
+            config.run_ledger_setup_pragmas(connection, (f"busy_timeout={busy_timeout_ms}",))
             with connection:
                 yield connection
     except (sqlite3.Error, OSError) as error:
         from .execution_journal import DurableExecutionPersistenceError
-        raise DurableExecutionPersistenceError("delegate job lifecycle persistence failed") from error
+        raise DurableExecutionPersistenceError(
+            f"delegate job lifecycle persistence failed: {type(error).__name__}: {error}; "
+            f"database={path}; job_id={job_id}") from error
 
 
 def _open_delegate_jobs_readonly_connection():
@@ -170,7 +184,8 @@ def create_delegate_job(*, kind, task_fingerprint, cwd, provider, intent, dirty_
         metadata["owner_pid"] = owner_pid
     execution_id = begin_durable_execution(metadata=metadata)
     now = _delegate_job_timestamp()
-    with _open_delegate_jobs_connection() as connection:
+    prune_delegate_jobs()
+    with _open_delegate_jobs_connection(job_id=job_id) as connection:
         connection.execute(
             "INSERT INTO delegate_jobs(job_id,created_ts,updated_ts,state,kind,task_fingerprint,cwd,provider,"
             "intent,dirty_before,execution_id,owning_host) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
@@ -207,17 +222,33 @@ def finish_delegate_job(job_id, *, state, result_payload=None, terminal_reason=N
             terminal_reason = None
             error = None
         state = winner_state
-    with _open_delegate_jobs_connection() as connection:
+    with _open_delegate_jobs_connection(job_id=job_id) as connection:
+        archive_path = None
+        inline_limit = int(config._cfg_get(
+            "delegate_jobs", "payload_inline_max_bytes", DELEGATE_JOB_DEFAULT_PAYLOAD_INLINE_MAX_BYTES))
+        if inline_limit < 0:
+            raise ValueError("delegate_jobs.payload_inline_max_bytes must be nonnegative")
+        # Hold the writer reservation through archival and projection: concurrent
+        # terminalizers must not replace the winning result's archive.
+        connection.execute("UPDATE delegate_jobs SET state=state WHERE job_id=?", (job_id,))
+        existing_state = connection.execute(
+            "SELECT state FROM delegate_jobs WHERE job_id=?", (job_id,)).fetchone()[0]
         if codex_thread_id:
             connection.execute("UPDATE delegate_jobs SET codex_thread_id=COALESCE(codex_thread_id,?) "
                                "WHERE job_id=?", (codex_thread_id, job_id))
+        if existing_state != DELEGATE_JOB_RUNNING_STATE and not (
+                existing_state == DELEGATE_JOB_LOST_STATE and state != DELEGATE_JOB_LOST_STATE):
+            return
+        if payload is not None and len(payload.encode("utf-8")) > inline_limit:
+            payload, archive_path = _archive_delegate_job_payload(job_id, payload.encode("utf-8"))
         connection.execute(
             "UPDATE delegate_jobs SET state=?,updated_ts=?,result_payload=?,terminal_reason=?,error=?,"
-            "codex_thread_id=COALESCE(?,codex_thread_id) "
+            "codex_thread_id=COALESCE(?,codex_thread_id),payload_archive_path=? "
             "WHERE job_id=? AND (state=? OR (state=? AND ?!=?))",
-            (state, _delegate_job_timestamp(), payload, terminal_reason, error, codex_thread_id,
+            (state, _delegate_job_timestamp(), payload, terminal_reason, error, codex_thread_id, archive_path,
              job_id, DELEGATE_JOB_RUNNING_STATE,
              DELEGATE_JOB_LOST_STATE, state, DELEGATE_JOB_LOST_STATE))
+    prune_delegate_jobs()
 
 
 def recover_delegate_job_execution(job_id):
@@ -467,15 +498,71 @@ def find_inflight_delegate_job(task_fingerprint, cwd):
     return None
 
 
-def prune_delegate_jobs(retention_s=DELEGATE_JOBS_RETENTION_S):
-    """Compatibility no-op: identity rows are permanent; maintenance archives payloads."""
-    return {"identity_rows_deleted": 0, "retention_s": retention_s}
+def prune_delegate_jobs(retention_s=None):
+    """Expire terminal history and its archives under the configured window."""
+    retention_s = float(config._cfg_get("delegate", "jobs_retention_s", DELEGATE_JOBS_RETENTION_S)
+                        if retention_s is None else retention_s)
+    if retention_s < 0:
+        raise ValueError("delegate.jobs_retention_s must be nonnegative")
+    cutoff = (datetime.datetime.now(datetime.timezone.utc)
+              - datetime.timedelta(seconds=retention_s)).isoformat()
+    placeholders = ",".join("?" for _ in DELEGATE_JOB_TERMINAL_STATES)
+    with _open_delegate_jobs_connection() as connection:
+        connection.execute("UPDATE delegate_jobs SET state=state WHERE 0")
+        expired = connection.execute(
+            f"SELECT job_id,payload_archive_path FROM delegate_jobs WHERE state IN ({placeholders}) "
+            "AND updated_ts<?", (*DELEGATE_JOB_TERMINAL_STATES, cutoff)).fetchall()
+        for job_id, archive_path in expired:
+            connection.execute("DELETE FROM delegate_jobs WHERE job_id=?", (job_id,))
+    for job_id, archive_path in expired:
+        if archive_path:
+            Path(archive_path).unlink(missing_ok=True)
+    vacuum = _vacuum_delegate_job_free_pages()
+    return {"identity_rows_deleted": len(expired), "retention_s": retention_s, "vacuum": vacuum}
 
 
 def _delegate_payload_archive_directory():
     configured = config._cfg_get("delegate_jobs", "payload_archive_dir", None)
     directory = Path(configured).expanduser() if configured else config.HOME / DELEGATE_JOB_ARCHIVE_DIRECTORY_NAME
     return directory if directory.is_absolute() else config.HOME / directory
+
+
+def _archive_delegate_job_payload(job_id, payload_bytes):
+    """Durably archive the whole serialized result using the existing pointer format."""
+    archive_path = _delegate_payload_archive_directory() / f"{job_id}.json.gz"
+    archive_path.parent.mkdir(parents=True, exist_ok=True)
+    temporary_path = archive_path.with_suffix(archive_path.suffix + ".tmp")
+    with temporary_path.open("wb") as raw_stream:
+        with gzip.GzipFile(fileobj=raw_stream, mode="wb") as archive_stream:
+            archive_stream.write(payload_bytes)
+        raw_stream.flush()
+        os.fsync(raw_stream.fileno())
+    temporary_path.replace(archive_path)
+    with gzip.open(archive_path, "rt", encoding="utf-8") as verification_stream:
+        json.load(verification_stream)
+    directory_fd = os.open(archive_path.parent, os.O_RDONLY)
+    try:
+        os.fsync(directory_fd)
+    finally:
+        os.close(directory_fd)
+    return json.dumps({"kind": DELEGATE_JOB_ARCHIVE_POINTER_KIND,
+                       "path": os.fspath(archive_path)}), os.fspath(archive_path)
+
+
+def _vacuum_delegate_job_free_pages():
+    """Reclaim actual free pages when configured benefit and disk headroom permit."""
+    settings = _delegate_jobs_maintenance_settings()
+    with _open_delegate_jobs_connection() as connection:
+        free_bytes = (connection.execute("PRAGMA freelist_count").fetchone()[0]
+                      * connection.execute("PRAGMA page_size").fetchone()[0])
+        if free_bytes <= settings["vacuum_min_freed_bytes"]:
+            return "below-configured-benefit-threshold"
+        database_path = delegate_jobs_database_path()
+        if shutil.disk_usage(database_path.parent).free < database_path.stat().st_size + config.disk_guard_floor_bytes():
+            return "skipped-insufficient-disk-headroom"
+        connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        connection.execute("VACUUM")
+    return "completed"
 
 
 def _delegate_jobs_maintenance_settings():
@@ -577,38 +664,16 @@ def maintain_delegate_job_lifecycle(*, execute=False, reap_running=True, retain_
                                            "bytes": len(payload_bytes)})
                 if not execute:
                     continue
-                archive_path.parent.mkdir(parents=True, exist_ok=True)
-                temporary_path = archive_path.with_suffix(archive_path.suffix + ".tmp")
-                with temporary_path.open("wb") as raw_stream:
-                    with gzip.GzipFile(fileobj=raw_stream, mode="wb") as archive_stream:
-                        archive_stream.write(payload_bytes)
-                    raw_stream.flush()
-                    os.fsync(raw_stream.fileno())
-                temporary_path.replace(archive_path)
-                with gzip.open(archive_path, "rt", encoding="utf-8") as verification_stream:
-                    json.load(verification_stream)
-                pointer = json.dumps({"kind": DELEGATE_JOB_ARCHIVE_POINTER_KIND,
-                                      "path": os.fspath(archive_path)})
+                pointer, archive_path = _archive_delegate_job_payload(row["job_id"], payload_bytes)
                 connection.execute(
                     "UPDATE delegate_jobs SET result_payload=?,payload_archive_path=? "
                     "WHERE job_id=? AND payload_archive_path IS NULL",
                     (pointer, os.fspath(archive_path), row["job_id"]))
     report["more_work_remaining"] = (
         report["reap_limit_reached"] or report["archive_limit_reached"])
-    if execute and report["archived"]:
-        with _open_delegate_jobs_connection() as connection:
-            connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-        report["checkpoint"] = True
-        database_path = delegate_jobs_database_path()
-        required_headroom = database_path.stat().st_size + config.disk_guard_floor_bytes()
-        if report["reclaimable_payload_bytes"] < settings["vacuum_min_freed_bytes"]:
-            report["vacuum"] = "below-configured-benefit-threshold"
-        elif shutil.disk_usage(database_path.parent).free < required_headroom:
-            report["vacuum"] = "skipped-insufficient-disk-headroom"
-        else:
-            with _open_delegate_jobs_connection() as connection:
-                connection.execute("VACUUM")
-            report["vacuum"] = "completed"
+    if execute:
+        report["vacuum"] = _vacuum_delegate_job_free_pages()
+        report["checkpoint"] = report["vacuum"] == "completed"
     return report
 
 
