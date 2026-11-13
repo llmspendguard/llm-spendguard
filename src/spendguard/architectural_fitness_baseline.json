@@ -408,7 +408,7 @@
             "mi": 100.0
           },
           "src/spendguard/generate/execution/adapters.py": {
-            "max_cc": 247,
+            "max_cc": 255,
             "mi": 0.0
           },
           "src/spendguard/generate/execution/antigravity_exec.py": {
@@ -601,7 +601,7 @@
           },
           "src/spendguard/interface/capability_registry.py": {
             "max_cc": 7,
-            "mi": 49.31401479219315
+            "mi": 49.251639581274205
           },
           "src/spendguard/interface/capability_surface_generation.py": {
             "max_cc": 18,
@@ -1033,7 +1033,7 @@
           },
           "src/spendguard/store/reference_data/models.py": {
             "max_cc": 13,
-            "mi": 38.97292515818195
+            "mi": 38.5840415781573
           },
           "src/spendguard/store/reference_data/money_scale.py": {
             "max_cc": 8,
@@ -1249,7 +1249,7 @@
           }
         },
         "measured_extremes": {
-          "max_cc": 247,
+          "max_cc": 255,
           "mi": 0.0
         }
       },
@@ -1704,7 +1704,7 @@
             "mi": 100.0
           },
           "src/spendguard/generate/execution/adapters.py": {
-            "max_cc": 247,
+            "max_cc": 255,
             "mi": 0.0
           },
           "src/spendguard/generate/execution/antigravity_exec.py": {
@@ -1925,7 +1925,7 @@
           },
           "src/spendguard/interface/capability_registry.py": {
             "max_cc": 7,
-            "mi": 49.31401479219315
+            "mi": 49.251639581274205
           },
           "src/spendguard/interface/capability_surface_generation.py": {
             "max_cc": 18,
@@ -2433,7 +2433,7 @@
           },
           "src/spendguard/store/reference_data/models.py": {
             "max_cc": 13,
-            "mi": 38.875089339863365
+            "mi": 38.488827870071496
           },
           "src/spendguard/store/reference_data/money_scale.py": {
             "max_cc": 8,
@@ -2501,7 +2501,7 @@
           }
         },
         "measured_extremes": {
-          "max_cc": 247,
+          "max_cc": 255,
           "mi": 0.0
         }
       }
@@ -2554,7 +2554,11 @@
     "reviewed_catalog_single_gateway_authoring": "Catalog single-gateway merge consolidates the physical adapter and logical port without changing catalog facts; deterministic seed rendering is shared with the CLI; authoring validates and atomically publishes seed or local records. Guidance changes explain the gateway API.",
     "reviewed_manifest_source_metadata_install_kind": "Reviewed source-layout egg-info metadata classification: build-generated checkout metadata now identifies editable source installations from package origin containment and a project configuration file. The existing install-kind SSOT is reused in the cross-interpreter probe; focused manifest, fleet and E2E regressions pass. Recorded values are measured by the repository complexity generator.",
     "reviewed_catalog_ssot_consolidation_py312": "Python 3.12 complexity baseline drift from the catalog SSOT consolidation (PR #325): model_catalog.py absorbed the deleted catalog_store.py functions (per-file max_cc 43->50, mi 12.5->0.0 \u2014 relocation, not new complexity; global worst-CC unchanged at 247); catalog_seed_rendering.py is the newly extracted seed renderer (cc 19); manifest.py gained egg-info EDITABLE-detection branches (cc 23->28); lanes.py and sync_capabilities.py show sub-precision MI float drift under 3.12 (cc unchanged). The 3.11 baseline already covers these (regenerated under the 3.11 venv); only 3.12's recorded floats were stale.",
-    "reviewed_delegate_persistence_complexity": "Complexity baseline for the delegate-jobs persistence fixes (PR #326): delegate_jobs.py gained payload offload + retention + VACUUM (cc unchanged at 32; mi lowered by the added code); ledger_deadletter.py gained the durable deadletter-drain record (cc 24->28; mi improved to 31.62). Global worst-CC unchanged at 247 \u2014 no new hotspot. Recorded for both 3.11 and 3.12 interpreters."
+    "reviewed_delegate_persistence_complexity": "Complexity baseline for the delegate-jobs persistence fixes (PR #326): delegate_jobs.py gained payload offload + retention + VACUUM (cc unchanged at 32; mi lowered by the added code); ledger_deadletter.py gained the durable deadletter-drain record (cc 24->28; mi improved to 31.62). Global worst-CC unchanged at 247 \u2014 no new hotspot. Recorded for both 3.11 and 3.12 interpreters.",
+    "reviewed_output_cap_authority_and_synonym_resolver_py311": "C1 single-output-cap-authority + model-synonym resolver (rebased onto #325 catalog SSOT + #326 delegate persistence). Retirement-aware resolution exposed on PUBLIC model_catalog.model_record(resolve_retired=True); models.canonical_model_id uses the public path (satisfies gateway boundary guard). adapters.call() output-cap-ownership guards -> max_cc 247->255 (+8); adapters._call_once send-path guard; capability_registry.py surface rows; model_catalog.py relocated resolve_retired branch. Measured under Python 3.11.",
+    "reviewed_output_cap_authority_and_synonym_resolver_py312": "C1 single-output-cap-authority + model-synonym resolver (rebased onto #325 + #326). Retirement-aware resolution exposed on PUBLIC model_catalog.model_record(resolve_retired=True); canonical_model_id uses public path. adapters.call() max_cc 247->255 (+8); _call_once send-path guard; capability_registry rows; model_catalog relocated resolve_retired branch. Measured under Python 3.12.",
+    "reviewed_synonym_gap_sink_parameter_py311": "C1 boundary fix: model_catalog.catalog_record_from_snapshot gained an 'if on_synonym_gap is not None' guard (the gap-warning sink is now a threaded parameter instead of a config import, keeping model_catalog a config-free leaf per G2); +1 branch raises its CC. models.canonical_model_id passes config.warn_once. Measured under Python 3.11.",
+    "reviewed_synonym_gap_sink_parameter_py312": "C1 boundary fix: model_catalog.catalog_record_from_snapshot gained an 'if on_synonym_gap is not None' guard (the gap-warning sink is now a threaded parameter instead of a config import, keeping model_catalog a config-free leaf per G2); +1 branch raises its CC. models.canonical_model_id passes config.warn_once. Measured under Python 3.12."
   },
   "dead_allowlist": [
     {
@@ -7283,7 +7287,7 @@
   "recorded_dynamic_spendguard_imports": [
     "src/spendguard/analyze/learning/lane_bandit.py:296",
     "src/spendguard/analyze/measurement/lane_servability.py:289",
-    "src/spendguard/generate/execution/adapters.py:1511",
+    "src/spendguard/generate/execution/adapters.py:1537",
     "src/spendguard/generate/execution/adapters.py:96",
     "src/spendguard/generate/spend_capture/gpu_port.py:278",
     "src/spendguard/generate/spend_capture/sources.py:78",

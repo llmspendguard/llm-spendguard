@@ -131,8 +131,21 @@ def _decode_fact(raw):
         return raw
 
 
+def canonical_model_id(name):
+    """Resolve authored catalog spellings and retirement links; preserve unknown names.
+
+    Reuse the catalog's alias/lane-spelling resolver rather than inventing model-name
+    heuristics. Broken retirement chains are named gaps, never guessed canonicals.
+    """
+    from . import model_catalog
+    from ... import config
+    record = model_catalog.model_record(name, resolve_retired=True, on_synonym_gap=config.warn_once)
+    return record["id"] if record else name
+
+
 def profile(model):
     """Family defaults merged with stored per-model facts (facts win)."""
+    model = canonical_model_id(model)
     p = _family(model)
     p["model"] = model
     f = facts(model)
@@ -182,6 +195,7 @@ def tokens_param(model, *, dialect=None):
     fact (add_fact(model,'tokens_param',…)) still overrides for a genuine exception, but the family-rule DEFAULT never
     forces legacy max_tokens onto a chat model — that was the latent miss for kimi-k3 / glm-5.2, which match no rule and
     so inherited the provider='?' default `max_tokens` while only the realtime hardcode kept them working."""
+    model = canonical_model_id(model)
     shape = dialect or profile(model).get("provider")
     if shape == "anthropic":
         return "max_tokens"

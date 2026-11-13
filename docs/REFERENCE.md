@@ -281,8 +281,10 @@ Pricing remains catalog-owned. In the current generated tables, `gemini-3-flash`
 million realtime tokens and $0.25 / $1.50 in batch; do not copy these rates into code—query `pricing.py`.
 **Ensure-success input** — `call()` accepts the kwargs you naturally reach for and translates them, instead of a
 cryptic `TypeError`: `intent=` (alias for `sig`, the job-type tag advise/best-value/attribution key on),
-`effort=` / `reasoning_effort=` (alias `reasoning=`), `max_output_tokens=` / `max_completion_tokens=` (alias
-`max_tokens=`). The canonical param wins if both are passed; a genuinely unknown kwarg fails **loudly with
+`effort=` / `reasoning_effort=` (alias `reasoning=`). Spendguard owns the output-cap NAME and VALUE through
+autotune/output_budget and the model catalog. Callers MUST NOT pass `max_tokens`, `max_output_tokens`, or
+`max_completion_tokens`: these deprecated compatibility arguments are ignored with a one-time warning.
+The canonical reasoning parameter wins if both are passed; a genuinely unknown kwarg fails **loudly with
 guidance** (it names the accepted params) rather than being silently dropped. Every provider call is also bounded at
 wall-clock by `timeout_s` — a client-side cancel that stops the request and its billing, so a slow high-reasoning
 model (kimi-k3, glm) can never wedge the caller.

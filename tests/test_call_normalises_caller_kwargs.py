@@ -6,8 +6,8 @@ and got `TypeError: call() got an unexpected keyword argument 'intent'`).
 Pins the ensure-success contract:
   · intent= is accepted (alias for sig): does NOT raise, aliases to sig, and best-value resolves the intent FROM it;
   · when BOTH sig and intent are given, best-value prefers the explicit intent (sig stays the finer call-class);
-  · effort= / reasoning_effort= alias reasoning=; max_output_tokens= / max_completion_tokens= alias max_tokens=;
-  · the canonical param WINS when both it and its alias are passed (the alias is only a fallback);
+  · effort= / reasoning_effort= alias reasoning=; deprecated output caps are accepted but ignored;
+  · the canonical reasoning param WINS when both it and its alias are passed (the alias is only a fallback);
   · a genuinely unknown kwarg fails LOUDLY with guidance (names the accepted params) — never silently swallowed.
 Offline: _call_guarded + best_value.select_model_effort are stubbed — no network, no spend.
 """
@@ -77,11 +77,11 @@ try:
     adapters.call("openai:gpt-5.5", "hi", max_tokens=50, reasoning="low", effort="high")
     check("explicit reasoning= WINS over the effort= alias", _seen.get("reasoning") == "low")
 
-    print("-- max_output_tokens= / max_completion_tokens= alias max_tokens= --")
+    print("-- deprecated output caps are accepted but removed before the governed layer --")
     adapters.call("openai:gpt-5.5", "hi", max_output_tokens=1234)
-    check("max_output_tokens= aliased to max_tokens=", _seen.get("max_tokens") == 1234)
+    check("max_output_tokens= is ignored before output_budget chooses the cap", _seen.get("max_tokens") is None)
     adapters.call("openai:gpt-5.5", "hi", max_completion_tokens=777)
-    check("max_completion_tokens= aliased to max_tokens=", _seen.get("max_tokens") == 777)
+    check("max_completion_tokens= is ignored before output_budget chooses the cap", _seen.get("max_tokens") is None)
 
     print("-- governed= is a FEATURE kwarg (dispatch governor), carried via **aliases — NOT alias-rejected --")
     # REGRESSION: the unknown-kwarg reject loop ran BEFORE the `aliases.pop('governed')` at the governor step, so a

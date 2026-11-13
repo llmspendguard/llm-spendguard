@@ -368,18 +368,51 @@ def _bare(model_id):
     return model_id.split(":", 1)[1] if ":" in model_id else model_id
 
 
-def model_record(model_id):
+def model_record(model_id, *, resolve_retired=False, on_synonym_gap=None):
     """The full catalog record for a model, or None if it has no curated record. Tries the id as given, then with the
     'provider:' prefix stripped, then each lane use-name (so 'gemini-3.8-flash-low' finds gemini-3.8-flash). Read-only.
 
     Callers that already hold a normalized base id (pricing does, before it looks up) get an exact hit; a caller
     passing a lane/suffixed/qualified id is resolved here. A floating alias raises
-    LatestGeminiFlashResolutionError when its candidate set cannot resolve uniquely."""
-    return catalog_record_from_snapshot(model_id, _load_records())
+    LatestGeminiFlashResolutionError when its candidate set cannot resolve uniquely.
+
+    With resolve_retired=True the record's retirement chain (retired_alias_of) is followed to the live canonical
+    record; broken or cyclic chains are named gaps (see catalog_record_from_snapshot), never guessed canonicals.
+    This is the public gateway path for retirement-aware resolution — callers never reach _load_records directly.
+    `on_synonym_gap` is the optional one-message warning sink for a tolerated self-priced retirement gap (see
+    catalog_record_from_snapshot): a non-leaf caller passes config.warn_once so this leaf stays config-free."""
+    return catalog_record_from_snapshot(
+        model_id, _load_records(), resolve_retired=resolve_retired, on_synonym_gap=on_synonym_gap)
 
 
-def catalog_record_from_snapshot(model_id, models):
-    """Resolve an authored spelling against one captured catalog snapshot."""
+def catalog_record_from_snapshot(model_id, models, *, resolve_retired=False, on_synonym_gap=None):
+    """Resolve an authored spelling against one captured catalog snapshot.
+
+    `on_synonym_gap`, when given, is called with a single human-readable message the one time a retirement chain
+    ends in an unknown target that the retired record itself prices (the self-priced gap below). model_catalog is
+    a config-free leaf (see module docstring), so it does not reach spendguard's warning registry itself — the
+    non-leaf caller passes config.warn_once as this sink. None (the default) means the gap is tolerated silently."""
+    if resolve_retired:
+        record = catalog_record_from_snapshot(model_id, models)
+        visited = set()
+        while record and record.get("retired_alias_of"):
+            identifier = record["id"]
+            if identifier in visited:
+                raise ValueError(f"model synonym gap: cyclic retirement for {model_id!r}")
+            visited.add(identifier)
+            target = record["retired_alias_of"]
+            target_record = catalog_record_from_snapshot(target, models)
+            if target_record is None:
+                authored_price = price_for_date_from_record(record)
+                if authored_price and authored_price.get("in_") is not None:
+                    if on_synonym_gap is not None:
+                        on_synonym_gap(
+                            f"model synonym gap: unknown retirement target {target!r} for {model_id!r}; "
+                            f"preserving self-priced catalog identity {identifier!r}")
+                    return record
+                raise ValueError(f"model synonym gap: unknown retirement target {target!r} for {model_id!r}")
+            record = target_record
+        return record
     if not model_id:
         return None
     if _bare(model_id) == GEMINI_FLASH_FLOATING_ALIAS:
