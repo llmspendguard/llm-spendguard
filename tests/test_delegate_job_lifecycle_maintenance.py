@@ -158,6 +158,29 @@ check_delegate_maintenance_contract("uncapped archival does not report its limit
                                     uncapped_archive_report["archive_limit_reached"] is False)
 check_delegate_maintenance_contract("uncapped archival reports no remaining rows",
                                     uncapped_archive_report["archive_remaining"] == 0)
+# ── Regression: a stuck-running job whose launcher is dead with NO child_pid. Its owner_pid is unverifiable, so
+# _warm_owner_identity_state returns UNKNOWN (never DEAD); the old reaper reclaimed only on a provably-DEAD owner and
+# skipped UNKNOWN on every pass → stuck "running" forever. The child-aware _durable_execution_has_live_process says
+# there is no live process, so the reaper now reclaims it. ───────────────────────────────────────────────────────
+with delegate_jobs._open_delegate_jobs_connection() as connection:
+    connection.execute("UPDATE delegate_jobs SET state=? WHERE state=?",
+                       (delegate_jobs.DELEGATE_JOB_KILLED_STATE, delegate_jobs.DELEGATE_JOB_RUNNING_STATE))
+insert_delegate_maintenance_fixture("dead-launcher-no-child-job", "running", old, None, "dead-launcher-execution")
+dead_launcher_executions = {"dead-launcher-execution": {"owner_pid": None, "owner_birth": None}}
+with mock.patch.object(delegate_jobs.config, "_cfg_get", configured_getter), mock.patch.object(
+        execution_journal, "recover_durable_execution",
+        side_effect=lambda execution_id: dead_launcher_executions[execution_id]):
+    dead_launcher_report = delegate_jobs.maintain_delegate_job_lifecycle(
+        execute=True, reap_running=True, retain_payloads=False, now=current)
+check_delegate_maintenance_contract(
+    "stuck-running job with a dead launcher and no child process is reclaimed (was UNKNOWN->skipped forever)",
+    "dead-launcher-no-child-job" in dead_launcher_report["reclaimed"]
+    and "dead-launcher-no-child-job" not in dead_launcher_report["skipped"])
+check_delegate_maintenance_contract(
+    "its reclaimed state is auditable",
+    delegate_jobs._delegate_job_row("dead-launcher-no-child-job")["state"]
+    == delegate_jobs.DELEGATE_JOB_RECLAIMED_STATE)
+
 if failures:
     raise SystemExit(f"{len(failures)} delegate maintenance contract(s) failed: {failures}")
 print("delegate-job lifecycle maintenance contracts passed")

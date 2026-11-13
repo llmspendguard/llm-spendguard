@@ -2573,6 +2573,11 @@ def validate_advisor():
     return problems
 
 
+# Escape hatch read only by control_gate_runtime's doctor path; co-located with its sole user so that
+# the module's import-site line pins (architectural dynamic-import ratchet) stay stable above this point.
+ALLOW_UNPRICED_ADVISOR_ENV = "SPENDGUARD_ALLOW_UNPRICED_ADVISOR"
+
+
 def control_gate_runtime(cmd: str = "status", live: bool = False):
     """Render gate status and return the diagnostic contract.
 
@@ -2588,6 +2593,7 @@ def control_gate_runtime(cmd: str = "status", live: bool = False):
     _stale_install = False              # set True when _stale_editable_install() finds code!=metadata (a broken install)
     _consumer_install_drift_found = False
     _doctor_startup_gate_gap_found = False
+    _advisor_unpriced_cap_binds = False
     if cmd == "off":
         open(FLAG, "w").write("disabled\n")
         print(f"🔴 spend gate DISABLED (persistent). Re-enable: spendguard on\n  flag: {FLAG}")
@@ -2726,6 +2732,21 @@ def control_gate_runtime(cmd: str = "status", live: bool = False):
             for _p in _probs:
                 print(f"      {_p}")
                 print("      fix: spendguard price <model> --in <$/1M> --out <$/1M> --source '<url>'")
+            if _probs:
+                from ... import adapters as _adapters
+                _advisor_is_active_default = _adapters._default_reasoning_is_best_value()
+                _unpriced_advisor_roles = ", ".join(_problem.split("=", 1)[0] for _problem in _probs)
+                if _advisor_is_active_default:
+                    print(f"      magnitude: {len(_probs)} unpriced advisor role(s) ({_unpriced_advisor_roles}); "
+                          "advisor.default_reasoning=best-value → meta-calls flow uncapped NOW")
+                    if os.getenv(ALLOW_UNPRICED_ADVISOR_ENV) == "1":
+                        print(f"      bind waived by {ALLOW_UNPRICED_ADVISOR_ENV}=1; UNPRICED remains unresolved")
+                    else:
+                        _advisor_unpriced_cap_binds = True
+                        print(f"      doctor will exit non-zero; set {ALLOW_UNPRICED_ADVISOR_ENV}=1 to proceed anyway")
+                else:
+                    print(f"      magnitude: {len(_probs)} unpriced advisor role(s) ({_unpriced_advisor_roles}); "
+                          "advisor is opt-in / not the default → no meta-calls currently uncapped — latent")
         except Exception as _e:
             print(f"  advisor   : ? could not be checked ({type(_e).__name__}) — not the same as 'fine'")
         print(f"  flag file : {FLAG}  ({'present → off' if os.path.exists(FLAG) else 'absent'})")
@@ -2946,6 +2967,7 @@ def control_gate_runtime(cmd: str = "status", live: bool = False):
     # whose frozen deps may be missing. `status` stays exit-0 (a casual glance); only the diagnostic `doctor` binds.
     return 1 if (cmd == "doctor" and (
         _stale_install or _consumer_install_drift_found or _doctor_startup_gate_gap_found
+        or _advisor_unpriced_cap_binds
     )) else 0
 
 
