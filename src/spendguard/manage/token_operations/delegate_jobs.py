@@ -585,7 +585,8 @@ def _delegate_jobs_maintenance_settings():
 
 def maintain_delegate_job_lifecycle(*, execute=False, reap_running=True, retain_payloads=True, now=None):
     """Plan or apply bounded reaping and lossless payload archiving for delegate jobs."""
-    from .execution_journal import recover_durable_execution
+    from .execution_journal import (EXECUTION_TERMINAL_STATES, _durable_execution_has_live_process,
+                                    recover_durable_execution)
     from .warm_stdio_daemon import _warm_owner_identity_state, WARM_OWNER_IDENTITY_DEAD
 
     current = now or datetime.datetime.now(datetime.timezone.utc)
@@ -632,7 +633,10 @@ def maintain_delegate_job_lifecycle(*, execute=False, reap_running=True, retain_
                 except Exception as error:
                     report["errors"].append(f"{row['job_id']}: liveness unavailable: {error}")
                     continue
-                if identity_state != WARM_OWNER_IDENTITY_DEAD:
+                execution_is_terminal = execution.get("state") in EXECUTION_TERMINAL_STATES
+                execution_has_live_process = _durable_execution_has_live_process(execution)
+                if (not execution_is_terminal and execution_has_live_process
+                        and identity_state != WARM_OWNER_IDENTITY_DEAD):
                     report["skipped"].append(row["job_id"])
                     continue
                 report["reclaimed"].append(row["job_id"])
