@@ -590,6 +590,9 @@ def cli_core_deploy(rest, cmd, argv):
         for _escape in _host_install_audit["escapes"]:
             print(f"deploy: 🔴 registry escape {_escape['python_executable']}: {_escape['remediation']}",
                   file=sys.stderr)
+        for _inventory_gap in _host_install_audit.get("gaps", ()):
+            print(f"deploy: 🔴 registry inventory gap {_inventory_gap.get('source')}: "
+                  f"{_inventory_gap.get('reason')}", file=sys.stderr)
         for _failure in _host_install_failures:
             print(f"deploy: 🔴 registry escape FAILED {_failure['python_executable']}: {_failure['error']}",
                   file=sys.stderr)

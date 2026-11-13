@@ -65,6 +65,8 @@ LANE_LEAK_TRIPWIRE_LAUNCHD_COMMAND_ARGUMENTS = (
 FLEET_LAUNCHD_OPERATION_TIMEOUT_S = 15
 FLEET_TEST_ISOLATION_ENV = "SPENDGUARD_TEST_ISOLATED"
 FLEET_WHICH_NO_INSTALLATIONS_EXIT_CODE = 1
+FLEET_PIPX_INVENTORY_SOURCE = "pipx"
+FLEET_PIPX_INVENTORY_COMMAND = ("pipx", "list", "--json")
 _INTERPRETER_REGISTRATION_TABLE = "registered_interpreters"
 CONSUMER_TABLE_NAME = "consumers"
 CONSUMER_ROLE_COLUMN = "role"
@@ -919,7 +921,13 @@ def refresh_stale_installs(apply=False):
 
 def reconcile_registered_host_installations(discovered=None):
     """Reconcile mechanically discovered spendguard installations against the authoritative registry."""
-    installations = discover_host_spendguard_installations() if discovered is None else discovered
+    discovery = discover_host_spendguard_installations() if discovered is None else discovered
+    if isinstance(discovery, dict):
+        installations = discovery["installations"]
+        gaps = list(discovery["gaps"])
+    else:
+        installations = discovery
+        gaps = []
     registered = {str(pathlib.Path(row["python_executable"]).resolve()) for row in registered_interpreters()}
     escapes = []
     for installation in installations:
@@ -928,12 +936,14 @@ def reconcile_registered_host_installations(discovered=None):
             continue
         escapes.append({**installation, "python_executable": executable,
                         "remediation": f"spendguard install-hook --user --python {executable}"})
-    return {"complete": not escapes, "discovered": installations, "escapes": escapes}
+    return {"complete": not escapes and not gaps, "discovered": installations,
+            "escapes": escapes, "gaps": gaps}
 
 
 def discover_host_spendguard_installations(cli_paths=None, pipx_document=None):
     """Discover PATH and pipx installations without guessing logical identity; resolved interpreter path is identity."""
     isolated_test = bool(os.environ.get(FLEET_TEST_ISOLATION_ENV))
+    gaps = []
     if cli_paths is None:
         if isolated_test:
             cli_paths = []
@@ -948,12 +958,18 @@ def discover_host_spendguard_installations(cli_paths=None, pipx_document=None):
             pipx_document = {}
         else:
             try:
-                result = subprocess.run(["pipx", "list", "--json"], capture_output=True, text=True, check=False)
+                result = subprocess.run(FLEET_PIPX_INVENTORY_COMMAND,
+                                        capture_output=True, text=True, check=False)
                 if result.returncode:
-                    raise RuntimeError(f"pipx inventory failed: {result.stderr or result.stdout}")
-                pipx_document = json.loads(result.stdout)
+                    gaps.append({"source": FLEET_PIPX_INVENTORY_SOURCE,
+                                 "reason": f"inventory failed: {result.stderr or result.stdout}"})
+                    pipx_document = {}
+                else:
+                    pipx_document = json.loads(result.stdout)
             except (OSError, ValueError, json.JSONDecodeError) as exc:
-                raise RuntimeError(f"pipx inventory unavailable: {exc}") from exc
+                gaps.append({"source": FLEET_PIPX_INVENTORY_SOURCE,
+                             "reason": f"inventory unavailable: {exc}"})
+                pipx_document = {}
     candidates = []
     for cli_path in cli_paths:
         try:
@@ -972,14 +988,15 @@ def discover_host_spendguard_installations(cli_paths=None, pipx_document=None):
             continue
         venv_dir = main_package.get("package_or_url") or package.get("venv_dir")
         if venv_dir:
-            candidates.append({"source": "pipx", "python_executable": str(pathlib.Path(venv_dir) / "bin" / "python")})
+            candidates.append({"source": FLEET_PIPX_INVENTORY_SOURCE,
+                               "python_executable": str(pathlib.Path(venv_dir) / "bin" / "python")})
         else:
             raise RuntimeError("pipx spendguard installation has no interpreter location; identity unproven")
     unique = {}
     for candidate in candidates:
         executable = str(pathlib.Path(candidate["python_executable"]).resolve())
         unique.setdefault(executable, {**candidate, "python_executable": executable})
-    return list(unique.values())
+    return {"installations": list(unique.values()), "gaps": gaps}
 
 
 def verify_and_refresh_registered_interpreters(apply=False):

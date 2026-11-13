@@ -466,7 +466,12 @@ def discover_distribution_interpreters(roots=None, settings=None, extra=None):
             ("registered interpreters", _platform_accessors.resolve_registered_interpreters),
             ("host installations", _platform_accessors.resolve_discover_host_spendguard_installations)):
         try:
-            for row in discover():
+            discovered = discover()
+            rows = discovered.get("installations", ()) if isinstance(discovered, dict) else discovered
+            for discovery_gap in discovered.get("gaps", ()) if isinstance(discovered, dict) else ():
+                gaps.append({"surface": discovery_gap.get("source", discovery_name),
+                             "reason": discovery_gap.get("reason", "discovery unverifiable")})
+            for row in rows:
                 retain_distribution_interpreter(row["python_executable"], row.get("venv_root"),
                                                 "venv" if row.get("venv_root") else "framework-python")
         except Exception as exc:

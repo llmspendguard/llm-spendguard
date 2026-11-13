@@ -15,6 +15,7 @@ from spendguard.delegate_router import CODEX_AGENTIC_EVENTS_SCHEMA_VERSION, code
 CODEX_DEMAND_LANE = "codex"
 CODEX_DEMAND_PERCENTILES = (50, 95)
 CODEX_DEMAND_SECONDS_PER_MINUTE = 60
+CODEX_DEMAND_MAX_TOLERATED_INVALID_ROWS = 1
 
 
 def codex_demand_weighted_quantile(histogram, percentile):
@@ -126,7 +127,9 @@ def codex_demand_read_agentic_events(path, since, until, pool_size):
     capture_start = min(coverage) if coverage else None
     if capture_start is None or capture_start > since:
         gaps["window_predates_capture"] += 1
-    complete = not gaps
+    fatal_gaps = {name: count for name, count in gaps.items()
+                  if name != "invalid_event" or count > CODEX_DEMAND_MAX_TOLERATED_INVALID_ROWS}
+    complete = not fatal_gaps
     observed = codex_demand_interval_summary(intervals, since, until, pool_size) if intervals or complete else None
     if not complete:
         verdict = "insufficient evidence: historical or incomplete capture cannot establish pool sizing"

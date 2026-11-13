@@ -3,7 +3,10 @@
 The lane classifier and Codex executor are stubbed; no provider CLI, network, or paid API can run.
 """
 import json
+import datetime
+import importlib.util
 import os
+from pathlib import Path
 import sys
 import tempfile
 from unittest.mock import patch
@@ -234,6 +237,32 @@ try:
     check("exceptional execution also ends its interval",
           [row["event"] for row in demand_events[-2:]] == ["start", "end"]
           and demand_events[-2]["execution_id"] == demand_events[-1]["execution_id"])
+    demand_probe_path = (Path(__file__).resolve().parents[1] / "scripts" / "probe" /
+                         "measure_codex_delegation_concurrency_demand.py")
+    demand_probe_spec = importlib.util.spec_from_file_location("codex_delegation_demand_probe", demand_probe_path)
+    demand_probe = importlib.util.module_from_spec(demand_probe_spec)
+    demand_probe_spec.loader.exec_module(demand_probe)
+    demand_window_start = datetime.datetime(2026, 1, 1, tzinfo=datetime.timezone.utc)
+    demand_window_end = demand_window_start + datetime.timedelta(hours=1)
+    demand_valid_start = demand_window_start + datetime.timedelta(minutes=10)
+    demand_valid_end = demand_window_start + datetime.timedelta(minutes=20)
+    demand_fixture_path = Path(demand_test_directory.name) / "agentic-events-with-invalid-row.jsonl"
+    demand_fixture_rows = [
+        {"schema_version": delegate_router.CODEX_AGENTIC_EVENTS_SCHEMA_VERSION,
+         "event": "coverage_start", "ts": demand_window_start.isoformat()},
+        {"schema_version": delegate_router.CODEX_AGENTIC_EVENTS_SCHEMA_VERSION,
+         "event": "start", "execution_id": "paired-fixture", "ts": demand_valid_start.isoformat()},
+        {"unkeyed": True},
+        {"schema_version": delegate_router.CODEX_AGENTIC_EVENTS_SCHEMA_VERSION,
+         "event": "end", "execution_id": "paired-fixture", "ts": demand_valid_end.isoformat()},
+    ]
+    demand_fixture_path.write_text("".join(json.dumps(row) + "\n" for row in demand_fixture_rows))
+    demand_measurement = demand_probe.codex_demand_read_agentic_events(
+        demand_fixture_path, demand_window_start, demand_window_end, pool_size=1)
+    check("one invalid agentic row remains named without discarding the observed summary",
+          demand_measurement["complete_window"] is True
+          and demand_measurement["gaps"] == {"invalid_event": 1}
+          and demand_measurement["observed"]["usable_intervals"] == 1)
     codex_exec.run_prompt = fake_codex
     original_demand_path = delegate_router.codex_agentic_events_path
     original_demand_warning = config.warn_once

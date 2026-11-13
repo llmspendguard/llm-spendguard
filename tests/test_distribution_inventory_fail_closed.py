@@ -17,6 +17,7 @@ INVENTORY_PROBE = dict(confirmed=True, version=INVENTORY_TARGET["version"],
                        dirty=False, gate_enforcing=True)
 INVENTORY_PID = 12345
 INVENTORY_HEALTHY_PID = 12344
+PIPX_MISSING_ERROR = FileNotFoundError("pipx fixture absent")
 
 
 @contextlib.contextmanager
@@ -71,7 +72,28 @@ def test_distribution_denied_pipx_inventory_is_named_gap():
             os.environ, {fleet.FLEET_TEST_ISOLATION_ENV: ""}), patch.object(
             fleet.subprocess, "run", side_effect=answer_inventory_command):
         assert_distribution_inventory_named_red(distribution.distribute_fleet(check=True, settings=settings),
-                                                "host installations")
+                                                fleet.FLEET_PIPX_INVENTORY_SOURCE)
+
+
+def test_missing_pipx_preserves_path_installation_and_names_reconciliation_gap():
+    with tempfile.TemporaryDirectory() as temporary:
+        root = Path(temporary)
+        python_executable = root / "python"
+        launcher = root / "spendguard"
+        python_executable.touch()
+        launcher.write_text(f"#!{python_executable}\n")
+        with patch.dict(os.environ, {fleet.FLEET_TEST_ISOLATION_ENV: ""}), patch.object(
+                fleet.subprocess, "run", side_effect=PIPX_MISSING_ERROR):
+            discovery = fleet.discover_host_spendguard_installations(cli_paths=[launcher])
+        assert discovery["installations"] == [{
+            "source": str(launcher.resolve()),
+            "python_executable": str(python_executable.resolve()),
+        }]
+        assert discovery["gaps"] and discovery["gaps"][0]["source"] == fleet.FLEET_PIPX_INVENTORY_SOURCE
+        with patch.object(fleet, "registered_interpreters", return_value=[]):
+            reconciliation = fleet.reconcile_registered_host_installations(discovery)
+        assert reconciliation["discovered"] == discovery["installations"]
+        assert reconciliation["gaps"] == discovery["gaps"] and not reconciliation["complete"]
 
 
 def test_distribution_check_empty_registry_is_read_only():
@@ -130,7 +152,8 @@ def test_distribution_related_host_inventory_failures_are_not_empty():
         assert_distribution_inventory_named_red(result, "host installations")
         assert str(missing_cli) in next(row["straggler_reason"] for row in result["surfaces"]
                                        if row["surface"] == "host installations")
-        assert original_inventory_discovery(cli_paths=[], pipx_document={}) == []
+        assert original_inventory_discovery(cli_paths=[], pipx_document={}) == {
+            "installations": [], "gaps": []}
 
 
 original_inventory_discovery = fleet.discover_host_spendguard_installations
@@ -165,8 +188,10 @@ def test_distribution_inventory_guards_are_load_bearing():
         (setup, "discover_distribution_interpreters", "if not configuration.is_file():", "if True:",
          test_distribution_external_symlinked_venv_is_named_consumer),
         (fleet, "discover_host_spendguard_installations",
-         'raise RuntimeError(f"pipx inventory failed: {result.stderr or result.stdout}")',
-         'return []', test_distribution_denied_pipx_inventory_is_named_gap),
+         'gaps.append({"source": FLEET_PIPX_INVENTORY_SOURCE,\n'
+         '                                 "reason": f"inventory failed: {result.stderr or result.stdout}"})',
+         'pass',
+         test_distribution_denied_pipx_inventory_is_named_gap),
         (fleet, "_fleet_db", "if read_only", "if False",
          test_distribution_check_empty_registry_is_read_only),
         (fleet, "running_consumers",
@@ -198,6 +223,7 @@ if __name__ == "__main__":
     failures = []
     for regression in (test_distribution_external_symlinked_venv_is_named_consumer,
                        test_distribution_denied_pipx_inventory_is_named_gap,
+                       test_missing_pipx_preserves_path_installation_and_names_reconciliation_gap,
                        test_distribution_check_empty_registry_is_read_only,
                        test_distribution_failed_consumer_row_is_named_gap,
                        test_distribution_related_host_inventory_failures_are_not_empty,
