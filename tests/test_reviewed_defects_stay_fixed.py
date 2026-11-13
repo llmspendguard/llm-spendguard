@@ -37,6 +37,7 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
     os.execv(sys.executable, [sys.executable] + sys.argv)
 
 from spendguard import expected_output as eo, reconcile
+from spendguard import fleet as reviewed_fleet
 
 failures = []
 
@@ -75,6 +76,22 @@ def test_a_measured_provider_total_of_zero_is_not_treated_as_absence():
     check("truth=None (fetch FAILED) is still distinct from truth=0 (provider billed nothing)",
           "UNKNOWN" in (reconcile.residual_warning(None, 12.50) or ""),
           "an unreadable bill and a zero bill are different facts and must not share a message")
+
+
+def test_missing_pipx_is_named_without_discarding_path_inventory():
+    with tempfile.TemporaryDirectory() as temporary:
+        root = pathlib.Path(temporary)
+        interpreter = root / "python"
+        launcher = root / "spendguard"
+        interpreter.touch()
+        launcher.write_text(f"#!{interpreter}\n")
+        with patch.dict(os.environ, {reviewed_fleet.FLEET_TEST_ISOLATION_ENV: ""}), patch.object(
+                reviewed_fleet.subprocess, "run", side_effect=FileNotFoundError("pipx unavailable fixture")):
+            discovery = reviewed_fleet.discover_host_spendguard_installations(cli_paths=[launcher])
+        check("missing pipx is a named inventory gap",
+              discovery["gaps"][0]["source"] == reviewed_fleet.FLEET_PIPX_INVENTORY_SOURCE)
+        check("PATH inventory survives missing pipx",
+              discovery["installations"][0]["python_executable"] == str(interpreter.resolve()))
 
 
 if __name__ == "__main__":

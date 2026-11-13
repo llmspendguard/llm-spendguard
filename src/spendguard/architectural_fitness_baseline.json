@@ -608,7 +608,7 @@
             "mi": 21.647400062518287
           },
           "src/spendguard/interface/cli.py": {
-            "max_cc": 38,
+            "max_cc": 39,
             "mi": 0.0
           },
           "src/spendguard/interface/cli_arguments.py": {
@@ -680,7 +680,7 @@
             "mi": 61.015689492322885
           },
           "src/spendguard/manage/admission/gate.py": {
-            "max_cc": 130,
+            "max_cc": 131,
             "mi": 0.0
           },
           "src/spendguard/manage/admission/gate_event_sink.py": {
@@ -1932,7 +1932,7 @@
             "mi": 21.647400062518287
           },
           "src/spendguard/interface/cli.py": {
-            "max_cc": 38,
+            "max_cc": 39,
             "mi": 0.0
           },
           "src/spendguard/interface/cli_arguments.py": {
@@ -2028,7 +2028,7 @@
             "mi": 61.015689492322885
           },
           "src/spendguard/manage/admission/gate.py": {
-            "max_cc": 130,
+            "max_cc": 131,
             "mi": 0.0
           },
           "src/spendguard/manage/admission/gate_event_sink.py": {
@@ -2560,7 +2560,8 @@
     "reviewed_synonym_gap_sink_parameter_py311": "C1 boundary fix: model_catalog.catalog_record_from_snapshot gained an 'if on_synonym_gap is not None' guard (the gap-warning sink is now a threaded parameter instead of a config import, keeping model_catalog a config-free leaf per G2); +1 branch raises its CC. models.canonical_model_id passes config.warn_once. Measured under Python 3.11.",
     "reviewed_synonym_gap_sink_parameter_py312": "C1 boundary fix: model_catalog.catalog_record_from_snapshot gained an 'if on_synonym_gap is not None' guard (the gap-warning sink is now a threaded parameter instead of a config import, keeping model_catalog a config-free leaf per G2); +1 branch raises its CC. models.canonical_model_id passes config.warn_once. Measured under Python 3.12.",
     "reviewed_embed_token_unit_bounds_py312": "C3 embedding token-unit input bounds: embeddings.embed gains the catalog-sourced token guard (token-count check + conservative char fallback branch) replacing the single hardcoded char ceiling; the added branches raise measured CC/lower MI on 3.12. New offline test tests/test_embed_input_token_bounds.py measured in. Reviewed and accepted.",
-    "reviewed_c4_nonbilled_and_merged_embed_complexity": "focus_export.focus_row +1 CC (23->24): the C4 non-billed-failure early-return guard is a necessary new branch. embeddings.embed (32->38) and provider_tokens MI regression are pre-existing on main from the merged C3 embed-bounds change (#328), recorded to current measured reality so the batch can reach green readiness."
+    "reviewed_c4_nonbilled_and_merged_embed_complexity": "focus_export.focus_row +1 CC (23->24): the C4 non-billed-failure early-return guard is a necessary new branch. embeddings.embed (32->38) and provider_tokens MI regression are pre-existing on main from the merged C3 embed-bounds change (#328), recorded to current measured reality so the batch can reach green readiness.",
+    "reviewed_c5_honest_unresolvable_gap_branches": "C5 honest-unresolvable gap surfacing: cli.cli_core_deploy (+1 CC 38->39) and gate.control_gate_runtime (+1 CC 130->131) each gain a necessary new branch that surfaces a named inventory gap (e.g. pipx unavailable) per the honest-unresolvable doctrine (clear but non-blocking). Recorded to current measured reality."
   },
   "dead_allowlist": [
     {

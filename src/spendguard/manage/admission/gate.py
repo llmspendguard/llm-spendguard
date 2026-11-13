@@ -2632,6 +2632,12 @@ def control_gate_runtime(cmd: str = "status", live: bool = False):
                     _consumer_install_drift_found = True
                     print(f"  registry  : 🔴 REGISTRATION ESCAPE {_escape.get('python_executable')} "
                           f"(discovered via {_escape.get('source')}); fix: `{_escape.get('remediation')}`")
+                for _registry_gap in _registry_audit.get("gaps", ()):
+                    # Clear but non-blocking: an unverifiable inventory source (e.g. pipx not installed) is a
+                    # named gap we surface honestly, but a small/benign unavailability must not stop work by
+                    # binding doctor's exit. Only a genuine registration drift (an escape, above) binds.
+                    print(f"  registry  : 🔴 UNVERIFIABLE {_registry_gap.get('source')} inventory — "
+                          f"{_registry_gap.get('reason')}")
                 if _registry_audit["complete"]:
                     print(f"  registry  : 🟢 complete across {len(_registry_audit['discovered'])} "
                           "discovered host installation(s)")
