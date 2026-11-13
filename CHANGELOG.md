@@ -4,8 +4,50 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 
 ## [Unreleased]
 
-- Removed superseded, uncalled `route_horizon.should_batch_fan` / `chunk_for_batch`; the storm→Batch fix is served by
-  `storm_submit.submit_storm` (acceptance: `tests/test_incident_replay_storm.py`).
+## [0.16.33] — 2026-11-13
+
+A correctness, durability, and architecture release. The public CLI, programmatic API, and MCP surfaces are
+unchanged and remain at parity; no caller code needs to change.
+
+### Catalog SSOT
+- The model catalogue is a single SQLite store behind one accessor (`model_catalog.py`), built from a reviewable
+  seed — no second physical access path (#315, #316, #325). Output caps route through a single `tokens_param`
+  authority with model-synonym resolution (#327). TypeSafe jev decision models are priced in the shipped SSOT (#308).
+
+### Delegate / jobs durability
+- Active lifecycle maintenance: stale rows are reaped, `result_payload` is bounded, the batch-cap is honest (#304).
+- Durable work is recovered from a lost job's retained worktree (#306); oversized `delegate_jobs` payloads are
+  offloaded with retention + VACUUM, the deadletter drain is durable, and contention is reported honestly (#326).
+- Dead-launcher delegate jobs (dead launcher, no child) are reclaimed instead of stuck `running` (#331).
+
+### Codex broker / pool robustness
+- Reaper delete retries are bounded and the pool self-heals on FD exhaustion / EMFILE (#303, #307); the explicit
+  turn sandbox policy carries `networkAccess` (#313, #319).
+
+### Lane routing correctness
+- `no_metered_fallback` is a seam-wide $0-or-raise invariant and best-value prefers an eligible $0 lane (#314); the
+  best-value sentinel resolves to a concrete effort and fails loud otherwise (#305). Per-call `executor=` scoping on
+  `resolve_call` / `bulk_delegate` is thread-safe with no `os.environ` mutation (#312).
+
+### Doctor / observability
+- The doctor advisor-cap red is magnitude-gated (#331). Provider 400 rejections are recorded as non-billed $0
+  observability rows, excluded from spend aggregates (#329). Honest-unresolvable inventory gaps (pipx unavailability,
+  a malformed journal row) are reported rather than raised (#330).
+
+### Embeddings
+- Embedding input bounds are catalog-token based with a configured character fallback (#328).
+
+### Readiness / CI / perf
+- The env-parity readiness gate is armed with clean-room catalog + keys checks (#309). The CI critical path is
+  roughly halved — more shards, a parallel readiness tail, and the release reuses green CI (#310). The daily-rollup
+  guard runs on representative rows (39.8s → 2.8s) (#311). Wall-clock deadline-test ceilings and the queue throughput
+  floor scale by the runner budget rather than absolute values (#321, #323). Superseded, uncalled
+  `route_horizon.should_batch_fan` / `chunk_for_batch` are removed; the storm→Batch fix is served by
+  `storm_submit.submit_storm` (#322).
+
+### Dependencies
+- Grouped action and dev-dependency bumps: codeql-action, trufflehog, mkdocs-material, setup-uv, dev group
+  (#287, #286, #299, #317, #320).
 
 ## [0.16.32] — 2026-11-09
 
