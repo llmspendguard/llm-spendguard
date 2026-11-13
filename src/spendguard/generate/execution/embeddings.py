@@ -13,8 +13,7 @@ _oai_compat_client = _execution_accessors.resolve__oai_compat_client()
 _EMBED_MAX_BATCH = 128            # inputs per /embeddings request — conservative, well under provider caps (OpenAI
 #                                   2048, Gemini smaller); overridable via max_batch=. A NAMED default, never magic.
 _EMBED_TIMEOUT_S = 60             # per-request wall bound so a hung embeddings call can't wedge a whole corpus run.
-_EMBED_MAX_INPUT_CHARS = 32000    # ~8k-token per-input ceiling (OpenAI) as a conservative CHAR guard — an oversized
-#                                   text is marked failed for THAT item, never sent to 400 the whole chunk it rides in.
+EMBED_WORST_CASE_CHARS_PER_TOKEN_DEFAULT = 1.0
 _DEFAULT_EMBED_MODEL = "text-embedding-3-small"   # LAST-RESORT fail-safe ONLY if the catalog curates no OpenAI embedding
 #                                                   model (a broken catalog) — never the normal path (see below).
 EMBED_CHECKPOINT_DIRNAME = "embed-checkpoints"
@@ -131,6 +130,7 @@ def embed(texts, model=None, *, dimensions=None, max_batch=None, timeout_s=None,
     _n = max(1, int(max_batch or _EMBED_MAX_BATCH))
     from ... import model_catalog as _mc
     _ceiling = _mc.embed_batch_ceiling(raw)                        # provider-enforced cap from the catalog SSOT (None if uncurated)
+    _input_token_limit = _mc.embedding_input_token_limit(raw)
     if _ceiling and _n > _ceiling:
         _n = _ceiling                                             # a caller CANNOT exceed it by accident — over the cap 400s the
         #                                                           WHOLE chunk (every input in it fails), so clamp, never trust max_batch
@@ -163,13 +163,28 @@ def embed(texts, model=None, *, dimensions=None, max_batch=None, timeout_s=None,
         return {**base, "error": str(e)[:200]}                        # client build (unknown provider / no key)
     failed = []
     todo = []                                                         # not-yet-embedded AND within the size guard
+    from spendguard.analyze.cost_estimation import provider_tokens as _provider_tokens
+    _worst_case_chars_per_token = float(config._cfg_get(
+        "safety", "embed_worst_case_chars_per_token", EMBED_WORST_CASE_CHARS_PER_TOKEN_DEFAULT
+    ))
+    if _worst_case_chars_per_token <= 0:
+        _worst_case_chars_per_token = EMBED_WORST_CASE_CHARS_PER_TOKEN_DEFAULT
     for i, k in enumerate(keys):
         if k in done:
             continue
-        if len(items[i]) > _EMBED_MAX_INPUT_CHARS:
-            failed.append({"i": i, "reason": f"input {len(items[i])} chars > {_EMBED_MAX_INPUT_CHARS} cap — split it"})
-        else:
-            todo.append(i)
+        _token_count = _provider_tokens.count_exact_model_text_tokens(items[i], provider=prov, model=raw)
+        if _input_token_limit is not None and _token_count is not None and _token_count > _input_token_limit:
+            failed.append({"i": i, "reason":
+                           f"input {_token_count} tokens > {_input_token_limit} token limit — split it"})
+            continue
+        if _input_token_limit is not None and _token_count is None:
+            _fallback_char_limit = int(_input_token_limit * _worst_case_chars_per_token)
+            if len(items[i]) > _fallback_char_limit:
+                failed.append({"i": i, "reason":
+                               f"input {len(items[i])} chars > {_fallback_char_limit} conservative character "
+                               "limit — split it"})
+                continue
+        todo.append(i)
     def _embed_one(grp):
         """Embed one group, writing vectors to `done`/checkpoint and failures to `failed`. On a (non-stop) REJECTION,
         BISECT and recurse — the PROVIDER's accept/reject is the oracle for the workable batch size, so NO error text

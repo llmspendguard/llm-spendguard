@@ -202,6 +202,25 @@ def count_text(text, provider=None, model=None):
     return max(1, int(round(len(text) / _char_ratio(provider))))
 
 
+def count_exact_model_text_tokens(text, provider=None, model=None):
+    """Return the exact model-encoding token count, or None when tiktoken cannot resolve that model.
+
+    This is the strict sizing companion to :func:`count_text`: callers enforcing a provider token limit must be able
+    to distinguish a real model tokenizer from count_text's deliberately fail-open proxy/character estimates.  It
+    reuses the module's sole tiktoken resolver and cache; no second tokenizer call site or guessed encoding exists.
+    """
+    text = text or ""
+    try:
+        encoder, exact = _encoder_for(provider, model)
+        if encoder is None or not exact:
+            return None
+        return len(encoder.encode(text))
+    except Exception as exc:
+        if _stop_or_locked(exc):
+            raise
+        return None
+
+
 def _provider_stats(ratios, char_ratios, in_sum, o_sum):
     """The full statistic panel the model chooses a factor FROM — median / token-weighted aggregate / mean / p10 /
     p90 / relative-IQR spread / n. The aggregate (Σin_tok÷Σo200k) is the least-biased central estimate for TOTAL
