@@ -1,4 +1,5 @@
 """Offline regression for a gate hook whose editable source path was dropped."""
+import ast
 import json
 import os
 import subprocess
@@ -18,6 +19,9 @@ EDITABLE_PTH_FILE_NAME = "__editable__.llm_spendguard.pth"
 GATE_HOOK_FAILURE_MARKER = "[spendguard-gate-hook] spendguard not installed:"
 SITECUSTOMIZE_FAILURE_MARKER = "[sitecustomize] spendguard not installed:"
 FAILCLOSED_IMPORT_MARKER = "[spendguard-gate-hook] gate could not arm"
+FAILCLOSED_FINDER_CLASS_MARKER = "class _SpendguardGateFailclosedFinder:"
+SPENDGUARD_IMPORT_MARKER = "import spendguard"
+SOURCE_PREPEND_MARKER = "sys.path.insert(0,"
 DUMMY_GATED_PACKAGE_NAME = "spendguard_probe_gated_sdk"
 DUMMY_NONGATED_PACKAGE_NAME = "spendguard_probe_nongated_sibling"
 HOOK_PROBE = (
@@ -41,6 +45,30 @@ FAILCLOSED_HOOK_PROBE = (
     "importlib.import_module('json');"
     "print(json.dumps({'blocked_message':blocked_message,'nongated_imported':True,'stdlib_imported':True}))"
 )
+
+
+def test_rendered_hook_prefer_installed_ordering():
+    source_directory = setup._pkg_src()
+    rendered_modes = {
+        prefer_installed: (
+            ast.literal_eval(ast.parse(setup._gate_hook_for_checkout_src(
+                source_directory, prefer_installed=prefer_installed
+            )).body[1].value.args[0]),
+            setup._sitecustomize_hook_source(
+                inject_src=source_directory, prefer_installed=prefer_installed),
+        )
+        for prefer_installed in (False, True)
+    }
+
+    for prefer_installed, rendered_hooks in rendered_modes.items():
+        for rendered_hook in rendered_hooks:
+            first_import = rendered_hook.index(SPENDGUARD_IMPORT_MARKER)
+            source_prepend = rendered_hook.index(SOURCE_PREPEND_MARKER)
+            if prefer_installed:
+                assert first_import < source_prepend
+            else:
+                assert source_prepend < first_import
+            assert FAILCLOSED_FINDER_CLASS_MARKER in rendered_hook
 
 
 def run_self_sufficient_gate_hook_regression():
@@ -152,5 +180,6 @@ def run_self_sufficient_gate_hook_regression():
                 failing_hook, probe_environment, failure_marker, expect_blocked=False)
 
 
+test_rendered_hook_prefer_installed_ordering()
 run_self_sufficient_gate_hook_regression()
 print("[OK] gate hook restores editable source path before importing spendguard")

@@ -4,6 +4,17 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 
 ## [Unreleased]
 
+### install-hook
+- `spendguard install-hook` gains an opt-in `--prefer-installed` ("wheel-mode") flag. By default the cross-interpreter
+  hook (`--user`/`--python`) still injects the checkout `src` path first, so the gate runs live source and is
+  never-stale **by construction**. With `--prefer-installed`, the generated hook imports an already-installable
+  `spendguard` first and only falls back to injecting `src` when none is importable — so a venv that carries its own
+  installed wheel (including a `system-site-packages` venv that would otherwise inherit a base interpreter's
+  src-injecting gate) runs the **wheel**, while a bare interpreter with no installed package still falls back to src
+  and stays gated. This trades never-stale-by-construction for never-stale-**by-convergence** (a stale venv is caught
+  by `distribute --check`'s `wrong_version`), which is why it is opt-in and the default is unchanged. The fail-closed
+  import finder is embedded in both modes.
+
 ## [0.16.34] — 2026-11-14
 
 A catalog-completeness and correctness release, following 0.16.33's SSOT build. The public CLI, programmatic API,
