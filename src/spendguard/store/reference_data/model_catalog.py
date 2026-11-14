@@ -696,6 +696,26 @@ def embedding_input_token_limit(model_id):
         return None
 
 
+EMBED_WORST_CASE_CHARS_PER_TOKEN_DEFAULT = 1.0
+
+
+def embedding_input_limits(model_id):
+    """Return the catalog/config limits enforced before an embedding request."""
+    from spendguard import config
+
+    token_limit = embedding_input_token_limit(model_id)
+    worst_case_chars_per_token = float(config._cfg_get(
+        "safety", "embed_worst_case_chars_per_token", EMBED_WORST_CASE_CHARS_PER_TOKEN_DEFAULT
+    ))
+    if worst_case_chars_per_token <= 0:
+        worst_case_chars_per_token = EMBED_WORST_CASE_CHARS_PER_TOKEN_DEFAULT
+    return {
+        "token_limit": token_limit,
+        "char_limit": (int(token_limit * worst_case_chars_per_token) if token_limit is not None else None),
+        "worst_case_chars_per_token": worst_case_chars_per_token,
+    }
+
+
 def chat_models(provider=None):
     """Every curated CHAT model (capabilities.mode == 'chat'), optionally filtered to one provider — the SSOT for
     "which models chat", so NO caller hardcodes a chat model id. Returns [(provider, metered_id)] sorted by input price

@@ -3,6 +3,7 @@
 import time
 
 from ... import config
+from spendguard.store.reference_data.model_catalog import embedding_input_limits
 from .execution_accessors import PROVIDERS
 from . import execution_accessors as _execution_accessors
 
@@ -13,7 +14,6 @@ _oai_compat_client = _execution_accessors.resolve__oai_compat_client()
 _EMBED_MAX_BATCH = 128            # inputs per /embeddings request — conservative, well under provider caps (OpenAI
 #                                   2048, Gemini smaller); overridable via max_batch=. A NAMED default, never magic.
 _EMBED_TIMEOUT_S = 60             # per-request wall bound so a hung embeddings call can't wedge a whole corpus run.
-EMBED_WORST_CASE_CHARS_PER_TOKEN_DEFAULT = 1.0
 _DEFAULT_EMBED_MODEL = "text-embedding-3-small"   # LAST-RESORT fail-safe ONLY if the catalog curates no OpenAI embedding
 #                                                   model (a broken catalog) — never the normal path (see below).
 EMBED_CHECKPOINT_DIRNAME = "embed-checkpoints"
@@ -130,7 +130,8 @@ def embed(texts, model=None, *, dimensions=None, max_batch=None, timeout_s=None,
     _n = max(1, int(max_batch or _EMBED_MAX_BATCH))
     from ... import model_catalog as _mc
     _ceiling = _mc.embed_batch_ceiling(raw)                        # provider-enforced cap from the catalog SSOT (None if uncurated)
-    _input_token_limit = _mc.embedding_input_token_limit(raw)
+    _input_limits = embedding_input_limits(raw)
+    _input_token_limit = _input_limits["token_limit"]
     if _ceiling and _n > _ceiling:
         _n = _ceiling                                             # a caller CANNOT exceed it by accident — over the cap 400s the
         #                                                           WHOLE chunk (every input in it fails), so clamp, never trust max_batch
@@ -164,11 +165,6 @@ def embed(texts, model=None, *, dimensions=None, max_batch=None, timeout_s=None,
     failed = []
     todo = []                                                         # not-yet-embedded AND within the size guard
     from spendguard.analyze.cost_estimation import provider_tokens as _provider_tokens
-    _worst_case_chars_per_token = float(config._cfg_get(
-        "safety", "embed_worst_case_chars_per_token", EMBED_WORST_CASE_CHARS_PER_TOKEN_DEFAULT
-    ))
-    if _worst_case_chars_per_token <= 0:
-        _worst_case_chars_per_token = EMBED_WORST_CASE_CHARS_PER_TOKEN_DEFAULT
     for i, k in enumerate(keys):
         if k in done:
             continue
@@ -178,7 +174,7 @@ def embed(texts, model=None, *, dimensions=None, max_batch=None, timeout_s=None,
                            f"input {_token_count} tokens > {_input_token_limit} token limit — split it"})
             continue
         if _input_token_limit is not None and _token_count is None:
-            _fallback_char_limit = int(_input_token_limit * _worst_case_chars_per_token)
+            _fallback_char_limit = _input_limits["char_limit"]
             if len(items[i]) > _fallback_char_limit:
                 failed.append({"i": i, "reason":
                                f"input {len(items[i])} chars > {_fallback_char_limit} conservative character "

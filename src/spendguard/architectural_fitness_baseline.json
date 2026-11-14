@@ -5,7 +5,7 @@
         "files": {
           "src/spendguard/__init__.py": {
             "max_cc": 7,
-            "mi": 59.352797100892346
+            "mi": 59.31948208716449
           },
           "src/spendguard/__main__.py": {
             "max_cc": 0,
@@ -689,7 +689,7 @@
           },
           "src/spendguard/manage/admission/model_preflight.py": {
             "max_cc": 18,
-            "mi": 57.23105182395799
+            "mi": 52.61366655607826
           },
           "src/spendguard/manage/admission/plan_admission.py": {
             "max_cc": 20,
@@ -1257,7 +1257,7 @@
         "files": {
           "src/spendguard/__init__.py": {
             "max_cc": 7,
-            "mi": 59.30735967944874
+            "mi": 59.274899961546886
           },
           "src/spendguard/__main__.py": {
             "max_cc": 0,
@@ -2037,7 +2037,7 @@
           },
           "src/spendguard/manage/admission/model_preflight.py": {
             "max_cc": 18,
-            "mi": 57.080672726687894
+            "mi": 52.4967060061828
           },
           "src/spendguard/manage/admission/plan_admission.py": {
             "max_cc": 20,
@@ -2562,7 +2562,8 @@
     "reviewed_embed_token_unit_bounds_py312": "C3 embedding token-unit input bounds: embeddings.embed gains the catalog-sourced token guard (token-count check + conservative char fallback branch) replacing the single hardcoded char ceiling; the added branches raise measured CC/lower MI on 3.12. New offline test tests/test_embed_input_token_bounds.py measured in. Reviewed and accepted.",
     "reviewed_c4_nonbilled_and_merged_embed_complexity": "focus_export.focus_row +1 CC (23->24): the C4 non-billed-failure early-return guard is a necessary new branch. embeddings.embed (32->38) and provider_tokens MI regression are pre-existing on main from the merged C3 embed-bounds change (#328), recorded to current measured reality so the batch can reach green readiness.",
     "reviewed_c5_honest_unresolvable_gap_branches": "C5 honest-unresolvable gap surfacing: cli.cli_core_deploy (+1 CC 38->39) and gate.control_gate_runtime (+1 CC 130->131) each gain a necessary new branch that surfaces a named inventory gap (e.g. pipx unavailable) per the honest-unresolvable doctrine (clear but non-blocking). Recorded to current measured reality.",
-    "reviewed_c6_doctor_advisor_cap_and_reaper_liveness": "C6 defect fixes add necessary branch logic: control_gate_runtime doctor path gained a three-way advisor-unpriced-cap magnitude check (latent vs active-default-picker bind vs waived escape hatch), raising gate.py max_cc 131->136; maintain_delegate_job_lifecycle reaper gained a terminal-state + child-aware live-process check so a dead launcher with no child is reclaimed, lowering delegate_jobs.py MI. Both rises are cohesive reviewed defect logic, far under the repo worst CC 255."
+    "reviewed_c6_doctor_advisor_cap_and_reaper_liveness": "C6 defect fixes add necessary branch logic: control_gate_runtime doctor path gained a three-way advisor-unpriced-cap magnitude check (latent vs active-default-picker bind vs waived escape hatch), raising gate.py max_cc 131->136; maintain_delegate_job_lifecycle reaper gained a terminal-state + child-aware live-process check so a dead launcher with no child is reclaimed, lowering delegate_jobs.py MI. Both rises are cohesive reviewed defect logic, far under the repo worst CC 255.",
+    "reviewed_metered_readiness_and_embedding_limits_ssot": "model_preflight.py gained the public metered_call_readiness SSOT accessor (resolves routed provider, credential identity, model record), lowering its MI (57.23->52.61 at 3.11); __init__.py MI shifted slightly from moving the two SSOT accessor imports (embedding_input_limits, metered_call_readiness) off the unconditional top level into the lazy _load_public_api_and_install_gate path, so the cli-help bootstrap stays free of these heavy homes (cli-help laziness guard). max_cc unchanged for both."
   },
   "dead_allowlist": [
     {
@@ -2706,6 +2707,10 @@
     ],
     [
       "spendguard",
+      "spendguard.manage.admission.model_preflight"
+    ],
+    [
+      "spendguard",
       "spendguard.manage.admission.spend_refusal_error"
     ],
     [
@@ -2739,6 +2744,10 @@
     [
       "spendguard",
       "spendguard.store.call_corpus.calls"
+    ],
+    [
+      "spendguard",
+      "spendguard.store.reference_data.model_catalog"
     ],
     [
       "spendguard",
@@ -5902,11 +5911,27 @@
     ],
     [
       "spendguard.manage.admission.model_preflight",
+      "spendguard.generate.execution.providers"
+    ],
+    [
+      "spendguard.manage.admission.model_preflight",
       "spendguard.interface.capability_cli_parsing"
     ],
     [
       "spendguard.manage.admission.model_preflight",
       "spendguard.store.configuration.config"
+    ],
+    [
+      "spendguard.manage.admission.model_preflight",
+      "spendguard.store.configuration.config_accessors"
+    ],
+    [
+      "spendguard.manage.admission.model_preflight",
+      "spendguard.store.configuration.provider_key_env_registry"
+    ],
+    [
+      "spendguard.manage.admission.model_preflight",
+      "spendguard.store.reference_data.model_catalog"
     ],
     [
       "spendguard.manage.admission.model_preflight",
@@ -7097,6 +7122,10 @@
       "spendguard.store.configuration.config"
     ],
     [
+      "spendguard.store.reference_data.model_catalog",
+      "spendguard.store.configuration.config"
+    ],
+    [
       "spendguard.store.reference_data.models",
       "spendguard.analyze.learning.learn"
     ],
@@ -7321,5 +7350,6 @@
   ],
   "type_scope_reason": "Existing annotated immutable CLI data model passes mypy with normal diagnostics. Follow-imports skip isolates this explicitly recorded surface; it does not claim typing of transitive application imports or full-package coverage.",
   "reviewed_restructure_boundary_rebaseline": "Re-baseline after the approved Phase 3-5 domain-taxonomy restructure + config carve + integration sweep relocated ~220 modules into bounded-context packages. Net cross-context non-surface edge delta is +23 (390 new / 367 removed) \u2014 relocation churn of foundational shared-module imports (config, pricing, models/model_catalog, money_ledger, platform._version, the shared spend_refusal_error exception, reporting reads) and the ports-and-adapters accessor/contracts access pattern, not new coupling. The 73 direct deep-internal reach-ins are relocated pre-existing imports; routing them through accessors is tracked as future work. Measured linux/amd64 py3.12 matching CI.",
-  "reviewed_restructure_duplication_rebaseline": "Duplication rose 303->426 lines / 48->55 groups entirely from the restructure's parallel ports-and-adapters boilerplate: 14 per-context *_accessors headers (~17 lines each), parallel provider adapters (codex/claudecode/chat) and parallel admission gates (agent_spawn/residency/weekly_cap). Factoring these into a shared base would couple the bounded contexts and undo Phase-4 acyclicity, so the parallel structure is recorded, not de-duplicated. Measured linux/amd64 py3.12 matching CI."
+  "reviewed_restructure_duplication_rebaseline": "Duplication rose 303->426 lines / 48->55 groups entirely from the restructure's parallel ports-and-adapters boilerplate: 14 per-context *_accessors headers (~17 lines each), parallel provider adapters (codex/claudecode/chat) and parallel admission gates (agent_spawn/residency/weekly_cap). Factoring these into a shared base would couple the bounded contexts and undo Phase-4 acyclicity, so the parallel structure is recorded, not de-duplicated. Measured linux/amd64 py3.12 matching CI.",
+  "reviewed_metered_readiness_embedding_limits_ssot_boundary_rebaseline": "Re-baseline after the two public SSOT accessors (embedding_input_limits, metered_call_readiness). Net cross-context non-surface edge delta is +7 (7 new / 0 removed), all deliberate and required by the accessors: __init__ exports spendguard->manage.admission.model_preflight and spendguard->store.reference_data.model_catalog; metered_call_readiness resolves its routed provider (model_preflight->generate.execution.providers), credential identity (model_preflight->store.configuration.provider_key_env_registry and ->config_accessors), and model record (model_preflight->store.reference_data.model_catalog) so the caller never names a provider or env var; and embedding_input_limits reads the config-overridable worst_case_chars_per_token (store.reference_data.model_catalog->store.configuration.config). No new coupling direction is introduced beyond spendguard owning the provider->credential map. Measured by spendguard selfcheck, matching CI."
 }

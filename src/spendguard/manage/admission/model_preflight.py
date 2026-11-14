@@ -16,11 +16,59 @@ action (stale → swap the named correction; unchecked → sync-catalog to resol
 Composes existing primitives — _execution_accessors.resolve_provider_for, _execution_accessors.resolve_metered_fallback_id (the lane→metered id map),
 _execution_accessors.resolve_served_check / closest_served, pricing.realtime_cost — it re-implements none of them; it makes them a
 single pre-spend gate. Run it before any batch, and on a cadence (`spendguard verify` calls it)."""
+import json
+
 from spendguard.generate.execution import execution_accessors as _execution_accessors
+from spendguard.generate.execution.providers import provider_for
+from spendguard.store.configuration.config_accessors import resolve_provider_api_key
+from spendguard.store.configuration.provider_key_env_registry import resolve_provider_key_env
+from spendguard.store.reference_data.model_catalog import model_record
 
 from ...capability_cli_parsing import add_registered_cli_argument
 
 from ... import config, pricing
+
+
+METERED_READINESS_ARMED_EXIT = 0
+METERED_READINESS_UNARMED_EXIT = 1
+
+
+def metered_call_readiness(model=None, intent=None):
+    """Report whether ``model`` has a resolvable metered credential, without probing or spending.
+
+    ``model`` carries a ``None`` default so the generated CLI command dispatches with no required
+    argparse argument (the callable-command dispatch contract calls the owner with ``{}`` when no
+    flags are given); a missing/empty id fails closed below as ``unknown-model`` rather than raising."""
+    requested_model = str(model or "").strip()
+    if not requested_model:
+        return {"armed": False, "status": "unknown-model", "model": requested_model, "intent": intent,
+                "provider": None, "reason": "model must be a non-empty catalog id"}
+    if model_record(requested_model) is None:
+        return {"armed": False, "status": "unknown-model", "model": requested_model, "intent": intent,
+                "provider": None, "reason": f"model {requested_model!r} is not present in the model catalog"}
+    try:
+        provider = provider_for(requested_model)
+    except ValueError as error:
+        return {"armed": False, "status": "unknown-provider", "model": requested_model, "intent": intent,
+                "provider": None, "reason": str(error)}
+    credential_name = resolve_provider_key_env(provider)
+    if credential_name is None:
+        return {"armed": False, "status": "unregistered-credential", "model": requested_model, "intent": intent,
+                "provider": provider, "reason": f"provider {provider!r} has no registered credential resolver"}
+    credential = resolve_provider_api_key(credential_name)
+    if not credential:
+        return {"armed": False, "status": "credential-missing", "model": requested_model, "intent": intent,
+                "provider": provider, "reason": f"provider {provider!r} credential is not resolvable"}
+    return {"armed": True, "status": "armed", "model": requested_model, "intent": intent,
+            "provider": provider, "reason": f"provider {provider!r} credential is resolvable"}
+
+
+def run_metered_call_readiness(model=None, intent=None):
+    """Print offline metered readiness and fail closed when the model is not armed (``None`` default
+    mirrors the accessor so a no-argument CLI dispatch reaches here and exits nonzero, never SystemExit(2))."""
+    report = metered_call_readiness(model, intent=intent)
+    print(json.dumps(report, sort_keys=True))
+    return METERED_READINESS_ARMED_EXIT if report["armed"] else METERED_READINESS_UNARMED_EXIT
 
 
 def _split_spec(spec):
