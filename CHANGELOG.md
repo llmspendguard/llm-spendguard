@@ -4,6 +4,8 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 
 ## [Unreleased]
 
+## [0.16.35] — 2026-11-14
+
 ### install-hook
 - `spendguard install-hook` gains an opt-in `--prefer-installed` ("wheel-mode") flag. By default the cross-interpreter
   hook (`--user`/`--python`) still injects the checkout `src` path first, so the gate runs live source and is
