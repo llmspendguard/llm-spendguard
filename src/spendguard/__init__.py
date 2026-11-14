@@ -55,6 +55,7 @@ def _load_public_api_and_install_gate():
     global cancel_on_zero_billable, relative_escalation_gate
     global compute_job_fingerprint, guard_resume, compare_fingerprints, read_fingerprint
     global write_fingerprint, JobPlanDrift, JobMethodUndecided
+    global embedding_input_limits, metered_call_readiness
     global _install_litellm, _install_bedrock, _install_vertex
     global _set_litellm_realtime_recorder, _set_bedrock_realtime_recorder, _set_vertex_realtime_recorder
 
@@ -83,6 +84,12 @@ def _load_public_api_and_install_gate():
     from .escalation_ladder import cancel_on_zero_billable, relative_escalation_gate
     from .job_fingerprint import (compute_job_fingerprint, guard_resume, compare_fingerprints, read_fingerprint,
                                   write_fingerprint, JobPlanDrift, JobMethodUndecided)
+    # Public SSOT accessors: bound on the normal `import spendguard` path only. Their homes
+    # (reference_data.model_catalog, admission.model_preflight) are already pulled transitively by the eager
+    # domain-home imports above, so binding them here costs no extra import — while the lazy CLI-bootstrap path
+    # (spendguard.cli / __main__) skips this function and stays free of these heavy homes (cli-help laziness guard).
+    from .store.reference_data.model_catalog import embedding_input_limits as embedding_input_limits
+    from .manage.admission.model_preflight import metered_call_readiness as metered_call_readiness
     from .litellm_adapter import (install as _install_litellm,
                                   set_litellm_realtime_recorder as _set_litellm_realtime_recorder)
     from .bedrock_adapter import (install as _install_bedrock,
@@ -269,8 +276,6 @@ __all__ = ["install", "require", "register", "install_litellm", "install_bedrock
            "ItemLedger", "compute_job_fingerprint", "guard_resume", "compare_fingerprints", "read_fingerprint",
            "write_fingerprint", "JobPlanDrift", "JobMethodUndecided"]
 from .interface.capability_surface_generation import build_capability_api_exports as _build_capability_api_exports
-from .store.reference_data.model_catalog import embedding_input_limits as embedding_input_limits
-from .manage.admission.model_preflight import metered_call_readiness as metered_call_readiness
 
 _capability_api_exports, CAPABILITY_API_COVERAGE = _build_capability_api_exports()
 globals().update(_capability_api_exports)

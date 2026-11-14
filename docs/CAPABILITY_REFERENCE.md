@@ -2120,7 +2120,7 @@ Both report and fail-closed CLI use the same no-network core; provider and crede
 
 | Parameter | Type | Required | Default | Contract |
 | --- | --- | --- | --- | --- |
-| model | str | yes | required | Catalog model id; spendguard resolves its provider and credential identity. |
+| model | str | no | None | Catalog model id; spendguard resolves its provider and credential identity. |
 | intent | str \| None {"alternatives": [{"alternatives": [], "enum": [], "items": null, "properties": [], "python_annotation": null, "type": "string"}, {"alternatives": [], "enum": [], "items": null, "properties": [], "python_annotation": null, "type": "null"}], "enum": [], "items": null, "properties": [], "python_annotation": "str \| None", "type": "string"} | no | None | Optional attribution intent; credential routing remains model-owned. |
 
 ## Programmatic core contracts
@@ -5836,7 +5836,7 @@ Return model, intent, routed provider, armed status, distinct status classificat
 
 | Parameter | Type | Required | Default | Contract |
 | --- | --- | --- | --- | --- |
-| model | str | yes | required | Catalog model id whose routed credential readiness is requested. |
+| model | str | no | None | Catalog model id whose routed credential readiness is requested. |
 | intent | str \| None {"alternatives": [{"alternatives": [], "enum": [], "items": null, "properties": [], "python_annotation": null, "type": "string"}, {"alternatives": [], "enum": [], "items": null, "properties": [], "python_annotation": null, "type": "null"}], "enum": [], "items": null, "properties": [], "python_annotation": "str \| None", "type": "string"} | no | None | Optional attribution intent. |
 
 Returns: `dict`
@@ -5851,7 +5851,7 @@ Print the complete readiness report and return nonzero unless the model's routed
 
 | Parameter | Type | Required | Default | Contract |
 | --- | --- | --- | --- | --- |
-| model | str | yes | required | Catalog model id whose routed credential readiness is requested. |
+| model | str | no | None | Catalog model id whose routed credential readiness is requested. |
 | intent | str \| None {"alternatives": [{"alternatives": [], "enum": [], "items": null, "properties": [], "python_annotation": null, "type": "string"}, {"alternatives": [], "enum": [], "items": null, "properties": [], "python_annotation": null, "type": "null"}], "enum": [], "items": null, "properties": [], "python_annotation": "str \| None", "type": "string"} | no | None | Optional attribution intent. |
 
 Returns: `int`

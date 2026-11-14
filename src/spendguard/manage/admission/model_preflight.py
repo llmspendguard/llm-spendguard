@@ -33,8 +33,12 @@ METERED_READINESS_ARMED_EXIT = 0
 METERED_READINESS_UNARMED_EXIT = 1
 
 
-def metered_call_readiness(model, intent=None):
-    """Report whether ``model`` has a resolvable metered credential, without probing or spending."""
+def metered_call_readiness(model=None, intent=None):
+    """Report whether ``model`` has a resolvable metered credential, without probing or spending.
+
+    ``model`` carries a ``None`` default so the generated CLI command dispatches with no required
+    argparse argument (the callable-command dispatch contract calls the owner with ``{}`` when no
+    flags are given); a missing/empty id fails closed below as ``unknown-model`` rather than raising."""
     requested_model = str(model or "").strip()
     if not requested_model:
         return {"armed": False, "status": "unknown-model", "model": requested_model, "intent": intent,
@@ -59,8 +63,9 @@ def metered_call_readiness(model, intent=None):
             "provider": provider, "reason": f"provider {provider!r} credential is resolvable"}
 
 
-def run_metered_call_readiness(model, intent=None):
-    """Print offline metered readiness and fail closed when the model is not armed."""
+def run_metered_call_readiness(model=None, intent=None):
+    """Print offline metered readiness and fail closed when the model is not armed (``None`` default
+    mirrors the accessor so a no-argument CLI dispatch reaches here and exits nonzero, never SystemExit(2))."""
     report = metered_call_readiness(model, intent=intent)
     print(json.dumps(report, sort_keys=True))
     return METERED_READINESS_ARMED_EXIT if report["armed"] else METERED_READINESS_UNARMED_EXIT
