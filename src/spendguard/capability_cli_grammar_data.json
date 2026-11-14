@@ -3247,6 +3247,11 @@
             "operation": "add_argument",
             "owner": "ap",
             "declaration_id": "install-hook/setup.cmd_install_hook/ap/--no-pkg"
+          },
+          {
+            "operation": "add_argument",
+            "owner": "ap",
+            "declaration_id": "install-hook/setup.cmd_install_hook/ap/--prefer-installed"
           }
         ]
       }

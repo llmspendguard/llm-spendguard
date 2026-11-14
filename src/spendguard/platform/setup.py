@@ -177,10 +177,22 @@ def _baked_failclosed_finder_source(gated_modules):
     }
 
 
-def _sitecustomize_hook_source(inject_src=None, gated_modules=None):
+def _sitecustomize_hook_source(inject_src=None, gated_modules=None, prefer_installed=False):
     injected_source_line = ""
+    installed_import_line = "        import spendguard\n"
     if inject_src is not None:
-        injected_source_line = f"        sys.path.insert(0, {inject_src!r})\n"
+        if prefer_installed:
+            installed_import_line = ""
+            injected_source_line = f'''        try:
+            import spendguard
+        except Exception:
+            _src = {inject_src!r}
+            if os.path.isdir(_src) and _src not in sys.path:
+                sys.path.insert(0, _src)
+            import spendguard
+'''
+        else:
+            injected_source_line = f"        sys.path.insert(0, {inject_src!r})\n"
     finder_source = "".join(
         f"            {line}\n" if line else "\n"
         for line in _baked_failclosed_finder_source(gated_modules).splitlines()
@@ -194,7 +206,7 @@ from pathlib import Path
 _home = os.environ.get("SPENDGUARD_HOME") or str(Path.home() / ".spendguard")
 if os.environ.get("GATE_DISABLE") != "1" and not os.path.exists(os.path.join(_home, "disabled")):
     try:
-{injected_source_line}        import spendguard
+{injected_source_line}{installed_import_line}\
         spendguard.install()
     except Exception as _e:  # never let the gate break a process
         sys.stderr.write(f"[sitecustomize] spendguard not installed: {{_e}}\\n")
@@ -210,20 +222,28 @@ _HOOK = _sitecustomize_hook_source()
 # ``sitecustomize`` import. Keep the kill switches identical to _HOOK. The checkout source directory
 # is supplied by the same _pkg_src() derivation used by the editable install, because sitecustomize may
 # discard the editable .pth path after site.addpackage processes it.
-def _gate_hook_for_checkout_src(checkout_src, gated_modules=None):
+def _gate_hook_for_checkout_src(checkout_src, gated_modules=None, prefer_installed=False):
     finder_source = "".join(
         f"            {line}\n" if line else "\n"
         for line in _baked_failclosed_finder_source(gated_modules).splitlines()
     )
+    source_import_lines = '''        try:
+            import spendguard
+        except Exception:
+            if os.path.isdir(_src) and _src not in sys.path:
+                sys.path.insert(0, _src)
+            import spendguard
+''' if prefer_installed else '''        if os.path.isdir(_src) and _src not in sys.path:
+            sys.path.insert(0, _src)
+        import spendguard
+'''
     hook_source = f'''import sys
 from pathlib import Path
 _src = {checkout_src!r}
 _home = os.environ.get("SPENDGUARD_HOME") or str(Path.home() / ".spendguard")
 if os.environ.get("GATE_DISABLE") != "1" and not os.path.exists(os.path.join(_home, "disabled")):
     try:
-        if os.path.isdir(_src) and _src not in sys.path:
-            sys.path.insert(0, _src)
-        import spendguard
+{source_import_lines}\
         spendguard.install()
     except Exception as _e:
         sys.stderr.write(f"[spendguard-gate-hook] spendguard not installed: {{_e}}\\n")
@@ -744,7 +764,7 @@ def _pkg_src():
 _PTH_HOOK = _gate_hook_for_checkout_src(_pkg_src())
 
 
-def install_hook(venv=None, uninstall=False, install_pkg=True, user=False, python=None):
+def install_hook(venv=None, uninstall=False, install_pkg=True, user=False, python=None, prefer_installed=False):
     """Gate every process in another interpreter:
       --venv <path>            pip-install spendguard + a sitecustomize hook (clean venv).
                                Missing pip/build backend is bootstrapped offline from bundled wheels.
@@ -805,7 +825,7 @@ def install_hook(venv=None, uninstall=False, install_pkg=True, user=False, pytho
         return 1
 
     if cross:                                       # path-injected — no pip (PEP668-safe)
-        body = _sitecustomize_hook_source(inject_src=_pkg_src())
+        body = _sitecustomize_hook_source(inject_src=_pkg_src(), prefer_installed=prefer_installed)
         open(hook, "w").write(body)
     else:
         pkg_root = str(Path(__file__).resolve().parents[3])
@@ -829,7 +849,8 @@ def install_hook(venv=None, uninstall=False, install_pkg=True, user=False, pytho
                 print(f"  ✗ startup gate INACTIVE: {resolved} shadows {hook}, and {pth_hook} is not ours; "
                       "refusing to overwrite it.")
                 return 1
-            pth_hook.write_text(_PTH_HOOK)
+            pth_hook.write_text(_gate_hook_for_checkout_src(
+                _pkg_src(), prefer_installed=prefer_installed))
             print(f"  ! {resolved} shadows {hook}; installed shadow-proof fallback → {pth_hook}")
             active = _startup_gate_active(target)
     if not active:
@@ -906,10 +927,12 @@ def cmd_install_hook(argv=None):
     add_registered_cli_argument(ap, 'install-hook/setup.cmd_install_hook/ap/--python')
     add_registered_cli_argument(ap, 'install-hook/setup.cmd_install_hook/ap/--uninstall')
     add_registered_cli_argument(ap, 'install-hook/setup.cmd_install_hook/ap/--no-pkg')
+    add_registered_cli_argument(ap, 'install-hook/setup.cmd_install_hook/ap/--prefer-installed')
     a = ap.parse_args(argv)
     if not a.venv and not a.user and not a.python:
         ap.error("give --venv <path>, or --user [--python <interp>]")
-    return install_hook(a.venv, uninstall=a.uninstall, install_pkg=not a.no_pkg, user=a.user, python=a.python)
+    return install_hook(a.venv, uninstall=a.uninstall, install_pkg=not a.no_pkg, user=a.user, python=a.python,
+                        prefer_installed=a.prefer_installed)
 
 
 def _resolve_setting(s):

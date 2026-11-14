@@ -4805,6 +4805,24 @@
     "evidence": "src/spendguard/setup.py:892"
   },
   {
+    "declaration_id": "install-hook/setup.cmd_install_hook/ap/--prefer-installed",
+    "commands": [
+      "install-hook"
+    ],
+    "names": [
+      "--prefer-installed"
+    ],
+    "attributes": {
+      "action": {
+        "literal": "store_true"
+      },
+      "help": {
+        "literal": "prefer an importable installed wheel; fall back to the checkout source path"
+      }
+    },
+    "evidence": "src/spendguard/setup.py:930"
+  },
+  {
     "declaration_id": "insights/share.cmd_export/ap/--out",
     "commands": [
       "insights"
