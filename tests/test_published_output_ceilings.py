@@ -39,7 +39,7 @@ finally:
     pricing.max_output = _real_learned
 
 print("\n-- (3) Kimi has NO override → the SAFE 32K floor (never a guessed/context-poisoned ceiling) --")
-for m in ["kimi-k3", "kimi-k2.6", "kimi-k2.7-code"]:
+for m in ["kimi-k3", "kimi-k2.7-code"]:
     record_script_check(fails, f"{m} has no authoritative output max → stays at the floor",
        pricing.max_output_tokens(m) is None and adapters.output_budget(f"moonshot:{m}") == FLOOR)
 

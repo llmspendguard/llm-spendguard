@@ -22,8 +22,33 @@ def ck(name, cond):
         fails.append(name)
 
 
-chat = model_catalog.chat_models()
-expected = chat[0][1]
+def _routable(model_id):
+    """A model is routable iff a registered provider adapter resolves it (lookup, not a judgement). Mirrors
+    adapters._model_is_routable independently so this test checks the contract rather than calling the code it tests."""
+    try:
+        adapters.provider_for(model_id)
+        return True
+    except ValueError:
+        return False
+
+
+def _cheapest_priced_routable_chat():
+    """Re-derive the contract independently of _chat_default_model: the cheapest priced chat model whose provider has a
+    registered adapter. A priced chat model on an attribution-only provider (no adapter — e.g. typesafe/jev) is
+    uncallable, so it must NEVER be the default even though it may be the cheapest priced chat model overall."""
+    rows = []
+    for record_id, record in model_catalog.all_records().items():
+        capabilities = record.get("capabilities") or {}
+        model_id = record.get("metered_id") or record_id
+        price_in = (record.get("price") or {}).get("in_")
+        if capabilities.get("mode") == "chat" and price_in is not None and _routable(model_id):
+            rows.append((price_in, model_id))
+    rows.sort(key=lambda row: (row[0], str(row[1])))
+    return rows
+
+
+_priced_routable_chat = _cheapest_priced_routable_chat()
+expected = _priced_routable_chat[0][1]
 
 print("-- reported model=None + metered_only path --")
 seen = {}
@@ -46,7 +71,7 @@ finally:
     adapters._resolve_guard.on = False
 
 ck("call returns a dict and does not raise", isinstance(result, dict))
-ck("model resolves before dispatch to the catalog's cheapest chat model", seen.get("model") == expected)
+ck("model resolves before dispatch to the catalog's cheapest routable chat model", seen.get("model") == expected)
 ck("resolved result model is the default", result.get("model") == adapters._chat_default_model() == expected)
 ck("default provenance is stamped", result.get("model_defaulted") is True)
 
@@ -59,13 +84,18 @@ try:
 finally:
     config._cfg_get = saved_cfg_get
 
-records = model_catalog.all_records()
-priced_chat = []
-for rid, rec in records.items():
-    if (rec.get("capabilities") or {}).get("mode") == "chat" and (rec.get("price") or {}).get("in_") is not None:
-        priced_chat.append(((rec["price"]["in_"]), rec.get("metered_id") or rid))
-priced_chat.sort(key=lambda row: (row[0], row[1]))
-ck("unset override uses minimum catalog chat input price", expected == priced_chat[0][1])
+ck("unset override uses minimum ROUTABLE catalog chat input price", expected == _priced_routable_chat[0][1])
+# A priced chat model on a provider with NO registered adapter (attribution-only) may be cheaper than `expected`, but
+# must be excluded from the default because it is uncallable — prove such a model, if present, is NOT chosen.
+_unroutable_cheaper = [
+    (((rec.get("price") or {}).get("in_")), rec.get("metered_id") or rid)
+    for rid, rec in model_catalog.all_records().items()
+    if (rec.get("capabilities") or {}).get("mode") == "chat"
+    and (rec.get("price") or {}).get("in_") is not None
+    and not _routable(rec.get("metered_id") or rid)]
+ck("the default is routable (its provider has a registered adapter)", _routable(expected))
+ck(f"any cheaper UNROUTABLE chat model ({sorted(m for _p, m in _unroutable_cheaper)}) is NOT chosen as the default",
+   all(m != expected for _p, m in _unroutable_cheaper))
 expected_rec = model_catalog.model_record(expected)
 ck("default is chat, not embedding/other mode", (expected_rec.get("capabilities") or {}).get("mode") == "chat")
 ck("default is not vision-only", (expected_rec.get("capabilities") or {}).get("mode") != "vision")

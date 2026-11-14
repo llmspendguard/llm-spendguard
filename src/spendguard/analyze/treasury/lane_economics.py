@@ -349,7 +349,7 @@ def _sunk_pool_models():
     cfg = config._cfg_get("balances", "compare_models", None)
     if isinstance(cfg, dict) and cfg:
         return dict(cfg)
-    return {"deepseek": "deepseek-v4-flash", "gemini": "gemini-flash-latest", "moonshot": "kimi-k2.6"}
+    return {"deepseek": "deepseek-v4-flash", "gemini": "gemini-flash-latest", "moonshot": "kimi-k3"}
 
 
 # ── PROMPT-METERED lanes (e.g. z.ai Coding Plan: a weekly PROMPT quota, not tokens, and NO usage API) ────────────────
