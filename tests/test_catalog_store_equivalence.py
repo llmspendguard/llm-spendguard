@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import os
+import re
 import sys
 import tempfile
 
@@ -78,10 +79,27 @@ def _assert_equivalent(records, expected_price_table, expected_unit_prices):
 
 
 def _seed_without_one_model(seed_text):
+    """Remove one model AND its FK child rows (model_aliases, lane_spellings, …) — an ON DELETE CASCADE enacted
+    in text. Parsing only (the id is the first quoted VALUES field of a fixed INSERT shape), never a decision.
+    Dropping only the parent INSERT would orphan its child rows and raise a FOREIGN KEY error at build time,
+    which masks the id-set assertion this mutation proof exists to make — and makes the proof depend on which
+    model the generator happens to emit first (a childless one passed, a model-with-aliases did not)."""
+    _first_value = re.compile(r"VALUES\s*\('((?:[^']|'')*)'")
     lines = seed_text.splitlines()
     for index, line in enumerate(lines):
         if line.startswith("INSERT INTO models "):
-            return "\n".join((*lines[:index], *lines[index + 1:], ""))
+            match = _first_value.search(line)
+            if not match:
+                raise AssertionError("model INSERT has no parseable id")
+            removed_id = match.group(1)
+            kept = []
+            for other in (*lines[:index], *lines[index + 1:]):
+                child = _first_value.search(other)
+                if (other.startswith("INSERT INTO ") and not other.startswith("INSERT INTO models ")
+                        and child and child.group(1) == removed_id):
+                    continue  # orphaned child of the removed model — cascade it out
+                kept.append(other)
+            return "\n".join((*kept, ""))
     raise AssertionError("generated seed has no model INSERT to remove")
 
 

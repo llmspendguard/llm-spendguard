@@ -17,9 +17,20 @@ from spendguard.store.configuration import config_accessors
 from spendguard.store.reference_data import model_catalog
 
 
+def _routable(model_id):
+    """True iff a registered provider adapter resolves this id (lookup against the provider registry, not a judgement)."""
+    try:
+        providers.provider_for(model_id)
+        return True
+    except ValueError:
+        return False
+
+
 def main():
     failures = []
-    provider, model = model_catalog.chat_models()[0]
+    # The cheapest chat model spendguard can actually ROUTE — a priced chat model on an attribution-only provider (no
+    # registered adapter, e.g. typesafe/jev) is uncallable and would raise in provider_for, so it is not a routed model.
+    provider, model = next((p, m) for p, m in model_catalog.chat_models() if _routable(m))
     qualified_model = f"{provider}:{model}"
     routed_provider = providers.provider_for(qualified_model)
     real_key_resolver = config_accessors._api_key

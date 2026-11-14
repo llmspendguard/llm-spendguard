@@ -4,6 +4,28 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 
 ## [Unreleased]
 
+## [0.16.34] — 2026-11-14
+
+A catalog-completeness and correctness release, following 0.16.33's SSOT build. The public CLI, programmatic API,
+and MCP surfaces are unchanged and remain at parity; no caller code needs to change.
+
+### Catalog completeness (G1)
+- Filled the model-catalogue completeness cells so the catalogue is gap-free, authored atomically through the one
+  seam so the SQLite SSOT, `catalog_seed.sql`, and `model_catalog.json` stay in parity. Retired `kimi-k2.6`
+  (superseded by `kimi-k3`) and dropped the synthetic `stub-vlm`.
+
+### Routing correctness
+- An unnamed (`model=None`) call now defaults to the cheapest priced chat model spendguard can actually **route**.
+  Previously an attribution-only/self-hosted provider's chat model with no registered adapter (e.g. `typesafe`'s
+  `jev-1.13.0`, a bare `custom` AWQ id) could be the cheapest priced chat model and was chosen as the default,
+  crashing every unnamed call at dispatch when `provider_for()` could not resolve it. `_chat_default_model()` now
+  requires routability; an empty/broken catalogue still raises `ModelSelectionContractRefused` loudly rather than
+  falling back to a hardcoded id.
+
+### Integrity restores
+- Restored the measured per-model `embed_max_batch` ceilings (gemini=100, text-embedding-3-small/large=2048) that
+  the completeness fill had overwritten — silent SSOT data loss the completeness audit could not see.
+
 ## [0.16.33] — 2026-11-13
 
 A correctness, durability, and architecture release. The public CLI, programmatic API, and MCP surfaces are

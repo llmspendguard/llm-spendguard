@@ -35,6 +35,18 @@ def check(label, condition):
         failures.append(label)
 
 
+def _routable(model_id):
+    """True iff a registered provider adapter resolves this id (a provider:model form resolves its literal provider;
+    a bare id must prefix-match a registered provider). A priced chat model on an attribution-only / self-hosted
+    provider with no adapter (e.g. a bare 'custom' AWQ id, typesafe/jev) is uncallable, so a dispatch fixture must
+    never feed it to adapters.call — provider_for would crash at admission."""
+    try:
+        adapters.provider_for(model_id)
+        return True
+    except ValueError:
+        return False
+
+
 seen = []
 original_guarded = adapters._call_guarded
 original_select = best_value.select_model_effort
@@ -79,7 +91,8 @@ try:
 
     chosen = next((record.get("metered_id") or record_id
                    for record_id, record in model_catalog.all_records().items()
-                   if (record.get("capabilities") or {}).get("mode") == "chat" and record.get("price")))
+                   if (record.get("capabilities") or {}).get("mode") == "chat" and record.get("price")
+                   and _routable(record.get("metered_id") or record_id)))
     best_value.select_model_effort = lambda *args, **kwargs: {
         "model": chosen, "effort": None, "why": "offline selection"
     }
@@ -127,7 +140,7 @@ try:
             adapters._chat_default_model()
         except gate.ModelSelectionContractRefused as exc:
             check("empty catalog + no default raises (no silent hardcoded fallback)",
-                  "no priced chat model" in str(exc))
+                  "no priced, routable chat model" in str(exc))
         else:
             check("empty catalog + no default raises (no silent hardcoded fallback)", False)
     finally:

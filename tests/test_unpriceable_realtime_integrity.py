@@ -23,7 +23,15 @@ INTEGRITY_ZERO_COST = 0.0
 INTEGRITY_CONCURRENT_SCANS = 4
 INTEGRITY_RECONSTRUCTION_GAP = "token_cost_reconstruction_unavailable"
 INTEGRITY_TRACEBACK_MARKER = "Traceback"
-INTEGRITY_SYNTHETIC_MODEL = "stub-vlm"
+INTEGRITY_SYNTHETIC_MODEL = "fixture-synthetic-billing-exempt-model"
+_integrity_real_billing_exempt = model_catalog.billing_exempt
+
+
+def integrity_billing_exempt(model):
+    """The synthetic fixture reads billing-exempt; every other id falls through to the real catalog lookup.
+    Decouples this integrity test from any specific shipped catalog row, so the receipt's exclusion-of-exempt
+    behaviour is exercised against a test-local fixture rather than a particular model that may be removed."""
+    return model == INTEGRITY_SYNTHETIC_MODEL or _integrity_real_billing_exempt(model)
 INTEGRITY_VERIFIED_FLAG = "--verified"
 INTEGRITY_CATALOG_REMEDY_MARKER = "model catalog SSOT"
 INTEGRITY_FAULT_ROWS = tuple(
@@ -71,8 +79,9 @@ print("OK concurrent realtime unknown prices remain named gaps without traceback
 
 integrity_receipt_rows = [{"model": model, "calls": INTEGRITY_FAULT_CALLS}
                           for model in (INTEGRITY_SYNTHETIC_MODEL, INTEGRITY_UNKNOWN_MODEL)]
-assert model_catalog.billing_exempt(INTEGRITY_SYNTHETIC_MODEL)
-with patch.object(budget, "unpriced_since", return_value=integrity_receipt_rows):
+assert integrity_billing_exempt(INTEGRITY_SYNTHETIC_MODEL)
+with patch.object(model_catalog, "billing_exempt", side_effect=integrity_billing_exempt), \
+        patch.object(budget, "unpriced_since", return_value=integrity_receipt_rows):
     integrity_receipt_text = "\n".join(receipt._unpriced_lines())
 assert INTEGRITY_SYNTHETIC_MODEL not in integrity_receipt_text
 assert INTEGRITY_UNKNOWN_MODEL in integrity_receipt_text
@@ -85,7 +94,8 @@ INTEGRITY_REPRICE_REMEDY = "spendguard reprice"
 integrity_pending_rows = integrity_receipt_rows + [
     {"model": INTEGRITY_KNOWN_MODEL, "calls": INTEGRITY_FAULT_CALLS}]
 integrity_pending_original = copy.deepcopy(integrity_pending_rows)
-with patch.object(budget, "unpriced_since", return_value=integrity_pending_rows), \
+with patch.object(model_catalog, "billing_exempt", side_effect=integrity_billing_exempt), \
+        patch.object(budget, "unpriced_since", return_value=integrity_pending_rows), \
         patch.object(pricing, "price", side_effect=inject_realtime_integrity_unknown_price):
     integrity_pending_lines = receipt._unpriced_lines()
 integrity_pending_text = "\n".join(integrity_pending_lines)

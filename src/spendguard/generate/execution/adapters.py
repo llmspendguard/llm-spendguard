@@ -1184,12 +1184,27 @@ def vision(model, prompt, images, *, schema=None, system=None, sig=None, reasoni
                 no_metered_fallback=no_metered_fallback, no_substitution=no_substitution)
 
 
+def _model_is_routable(model_id):
+    """True iff a registered provider adapter can route this model id — i.e. ``provider_for`` resolves it. A catalog
+    model whose provider has NO registered adapter (tracked for pricing/attribution only, e.g. a provider spendguard
+    prices but has no SDK binding for) is priced yet UNCALLABLE: choosing it for an unnamed call crashes at dispatch
+    (`provider_for` raises). This is a lookup against the provider registry — parsing, never a judgement about meaning."""
+    try:
+        provider_for(model_id)
+        return True
+    except ValueError:
+        return False
+
+
 def _chat_default_model():
     """The chat model for an unnamed call: config ``advisor.default_model`` if set, else the CATALOG's cheapest priced
-    chat model. Catalog prices denote direct metered APIs, so every candidate is metered-capable and no $0 lane is ever
-    returned here — an unnamed call made under ``metered_only=True`` is satisfied by construction, which is why the
-    caller forwards no flag. A broken/empty catalog is NOT papered over with a hardcoded
-    id: catalog errors propagate, and an absent priced chat model with no ``advisor.default_model`` raises
+    chat model THAT SPENDGUARD CAN ROUTE. Catalog prices denote direct metered APIs, so every candidate is
+    metered-capable and no $0 lane is ever returned here — an unnamed call made under ``metered_only=True`` is satisfied
+    by construction, which is why the caller forwards no flag. Routability is an extra, non-negotiable filter: a priced
+    chat model on a provider with no registered adapter (attribution-only, e.g. typesafe/jev) is tracked for pricing but
+    cannot actually be called, so it must never be the default — otherwise the cheapest such model silently wins and
+    `provider_for` crashes the call it was chosen for. A broken/empty catalog is NOT papered over with a hardcoded id:
+    catalog errors propagate, and an absent priced *routable* chat model with no ``advisor.default_model`` raises
     ModelSelectionContractRefused (a deliberate SpendGateRefused, never a silent fallback) so a broken pricing/routing
     SSOT is loud rather than masking a model nobody chose."""
     ov = config._cfg_get("advisor", "default_model", None)
@@ -1202,13 +1217,15 @@ def _chat_default_model():
         capabilities = record.get("capabilities") or {}
         model_id = record.get("metered_id") or record_id
         price_in = (record.get("price") or {}).get("in_")
-        if capabilities.get("mode") == "chat" and model_id not in embedding_ids and price_in is not None:
+        if (capabilities.get("mode") == "chat" and model_id not in embedding_ids and price_in is not None
+                and _model_is_routable(model_id)):
             rows.append((price_in, model_id))
     if not rows:
         from spendguard.manage.admission.spend_refusal_error import ModelSelectionContractRefused
         raise ModelSelectionContractRefused(
-            "no priced chat model in the model catalog and no advisor.default_model configured — cannot choose a "
-            "default for an unnamed call. Set advisor.default_model or repair the model catalog (the pricing SSOT).")
+            "no priced, routable chat model in the model catalog and no advisor.default_model configured — cannot "
+            "choose a default for an unnamed call (a priced chat model whose provider has no registered adapter is "
+            "attribution-only and uncallable). Set advisor.default_model or repair the model catalog (the pricing SSOT).")
     rows.sort(key=lambda row: (row[0], str(row[1])))
     return rows[0][1]
 

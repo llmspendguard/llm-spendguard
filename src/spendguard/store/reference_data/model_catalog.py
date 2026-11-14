@@ -70,6 +70,11 @@ MODEL_CATALOG_COMPLETENESS_CONTRACT = {
     "capabilities.embed_max_batch.value": ("positive_int", "required"),
     "capabilities.function_calling": ("bool", "optional"),
     "capabilities.mode": ("str", "required"),
+    # A chat model whose provider publishes NO authoritative output-token max declares that here (a non-empty,
+    # reviewed reason). The completeness audit then exempts output_ceiling for it (it floors at runtime) instead of
+    # fabricating a ceiling value — empty > wrong. Sits beside capabilities.mode, which already gates field
+    # applicability in the same audit. See tests/test_published_output_ceilings.py (the deliberate Kimi floor).
+    "capabilities.output_ceiling_exempt_reason": ("str", "optional"),
     "capabilities.parallel_function_calling": ("bool", "optional"),
     "capabilities.pdf_input": ("bool", "optional"),
     "capabilities.prompt_caching": ("bool", "optional"),
