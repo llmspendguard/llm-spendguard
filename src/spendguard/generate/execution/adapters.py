@@ -2343,6 +2343,14 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
                     _ladder = _RUNGS                     # unattributable: try each applicable rung
                 r = None
                 _last = e
+                def _bounded_create_with_catalog_output_cap(output_budget, output_cap_param=None):
+                    """Retry with one output-cap key, preserving the catalog's selected dialect by default."""
+                    retry_kwargs = dict(okw)
+                    catalog_output_cap_param = _mf.tokens_param(raw, dialect="openai")
+                    retry_kwargs.pop(catalog_output_cap_param, None)
+                    selected_output_cap_param = output_cap_param or catalog_output_cap_param
+                    retry_kwargs[selected_output_cap_param] = output_budget
+                    return _bounded_create(**retry_kwargs)
                 for _rung in _ladder:
                     if _rung == "_token_budget":
                         # THE FLOOR IS HIGH, AND SOME MODELS CANNOT TAKE IT. Sending 32K to a model whose
@@ -2351,7 +2359,7 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
                         # provider accepts, then record what it accepted as a learned fact so the next call
                         # starts there. The provider is the source of truth about its own limits.
                         r = _heal_token_budget(
-                            lambda b: _bounded_create(max_completion_tokens=b, **okw), max_tokens, raw)
+                            lambda b: _bounded_create_with_catalog_output_cap(b), max_tokens, raw)
                         if r is not None:
                             break                          # accepted at a plausible budget → learned + done
                         continue                           # nothing above the floor worked → try the next rung
@@ -2359,7 +2367,7 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
                         # Older endpoints take max_tokens, gpt-5+ take max_completion_tokens. A dialect
                         # difference, not a capability one — nothing is dropped, the other spelling is used.
                         try:
-                            r = _bounded_create(max_tokens=max_tokens, **okw)
+                            r = _bounded_create_with_catalog_output_cap(max_tokens, "max_tokens")
                             break
                         except Exception as e2:
                             if isinstance(e2, _CallDeadline):
@@ -2378,7 +2386,7 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
                         _pre = okw.get("reasoning_effort")
                         if _mh.heal_reasoning(raw, okw, e):
                             try:
-                                r = _bounded_create(max_completion_tokens=max_tokens, **okw)
+                                r = _bounded_create_with_catalog_output_cap(max_tokens)
                                 _mh.confirm_reasoning(raw, okw)      # the healed value WORKED → promote it to verified
                                 import sys as _sh
                                 print(f"[spendguard] {prov}/{raw} rejected reasoning_effort={_pre!r} → healed to "
@@ -2393,7 +2401,7 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
                         continue                          # not sent, so it cannot be what was refused
                     _saved = okw.pop(_rung)
                     try:
-                        r = _bounded_create(max_completion_tokens=max_tokens, **okw)
+                        r = _bounded_create_with_catalog_output_cap(max_tokens)
                         # SAY SO. A silently-dropped parameter makes the call succeed and makes any probe
                         # of "does this endpoint support X" answer yes — the fallback that keeps the system
                         # robust is exactly what blinds discovery. Recorded on the result so a caller can
