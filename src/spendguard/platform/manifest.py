@@ -234,6 +234,7 @@ def build_surface_manifest(*, roots=None, settings=None, now=None) -> dict:
     for item in discovery["interpreters"]:
         python_executable = canonical_manifest_surface_path(item["python"])
         install = inspect_interpreter_install_kind(python_executable, timeout_seconds=timeout_seconds)
+        install["prefer_installed"] = setup.interpreter_gate_hook_prefers_installed(python_executable)
         interpreter_installs[python_executable] = install
         identity = _manifest_served_identity(python_executable, {"probe_timeout_s": timeout_seconds})
         surfaces[("venv", python_executable)] = {

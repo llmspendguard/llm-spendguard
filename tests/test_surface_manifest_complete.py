@@ -81,6 +81,8 @@ def test_surface_manifest_persists_complete_discovery_with_editable_and_wheel_ki
 
         with patch.object(manifest.config, "HOME", root / "state"), \
              patch.object(manifest.setup, "discover_distribution_interpreters", return_value=discovery), \
+             patch.object(manifest.setup, "interpreter_gate_hook_prefers_installed",
+                          side_effect=lambda python: python == str(wheel_python.resolve())), \
              patch.object(manifest, "inspect_interpreter_install_kind", side_effect=fixture_install_kind), \
              patch.object(manifest, "_manifest_served_identity",
                           side_effect=lambda python, settings: {"served_sha": Path(python).parent.parent.name,
@@ -97,6 +99,8 @@ def test_surface_manifest_persists_complete_discovery_with_editable_and_wheel_ki
         assert venv_rows[str(editable_python.resolve())]["install_kind"] == manifest.MANIFEST_EDITABLE_KIND
         assert venv_rows[str(wheel_python.resolve())]["install_kind"] == manifest.MANIFEST_WHEEL_KIND
         assert venv_rows[str(wheel_python.resolve())]["wheel_version"] == MANIFEST_FIXTURE_WHEEL_VERSION
+        assert venv_rows[str(wheel_python.resolve())]["prefer_installed"] is True
+        assert venv_rows[str(editable_python.resolve())]["prefer_installed"] is False
         assert persisted == result
         assert result["writer_version"] == manifest.SPENDGUARD_WRITER_VERSION
         assert json.loads((root / "state" / manifest.MANIFEST_FILENAME).read_text()) == result
