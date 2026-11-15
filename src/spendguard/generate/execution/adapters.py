@@ -2228,6 +2228,7 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
                                   % (reasoning, raw, _eff), file=_sT.stderr)
                         except Exception:
                             pass
+            okw["max_tokens"] = max_tokens               # neutral internal spelling; catalog authority normalizes the wire key
             try:
                 from ... import models as _mf
                 _mf.apply_call_params(raw, okw, dialect="openai")
@@ -2303,10 +2304,8 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
             # ONE param-name authority (models.tokens_param) — the Batch door reads the SAME function via
             # apply_call_params, so the primary send can never drift from it again (the gpt-6.1-sol 400 storm). The
             # heal ladder below still tries the other spelling if the provider rejects this one.
-            from ... import models as _mtp
-            _primary_tok = _mtp.tokens_param(raw, dialect="openai")
             try:                                              # chat dialect → max_completion_tokens; ladder heals exceptions
-                r = _bounded_create(**{_primary_tok: max_tokens}, **okw)
+                r = _bounded_create(**okw)
             except Exception as e:
                 # WHICH PARAMETER, FROM THE TYPED FIELD — not from the message text. These branches matched
                 # `"response_format" in str(e)` and `"reasoning_effort" in str(e)`, so an error that merely

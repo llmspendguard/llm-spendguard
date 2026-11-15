@@ -221,8 +221,11 @@ def apply_call_params(model, kw, *, dialect=None):
     — so name-inference alone would drop the very facts the A/B was run to establish."""
     p = profile(model)
     shape = dialect or p.get("provider")
-    if tokens_param(model, dialect=shape) == "max_completion_tokens" and "max_tokens" in kw:
-        kw["max_completion_tokens"] = kw.pop("max_tokens")
+    cap_param = tokens_param(model, dialect=shape)
+    other_cap_param = "max_tokens" if cap_param == "max_completion_tokens" else "max_completion_tokens"
+    if other_cap_param in kw:
+        kw.setdefault(cap_param, kw[other_cap_param])
+        kw.pop(other_cap_param)
     eff = p.get("reasoning")
     # '?' is the family-rule miss marker, not a tier any endpoint accepts. Sending it is a 400.
     if shape == "openai" and eff and eff != "?":
