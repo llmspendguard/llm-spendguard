@@ -683,7 +683,7 @@ def _interpreter_purelib(target, timeout=10):
     """Ask *target* for the directory it actually imports pure Python packages from; never infer its version."""
     import subprocess
     try:
-        r = subprocess.run([target, "-c", "import sysconfig;print(sysconfig.get_path('purelib'))"],
+        r = subprocess.run([target, "-S", "-c", "import sysconfig;print(sysconfig.get_path('purelib'))"],
                            capture_output=True, text=True, check=True, timeout=timeout)
         path = r.stdout.strip()
         return path or None
