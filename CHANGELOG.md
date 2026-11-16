@@ -4,6 +4,27 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 
 ## [Unreleased]
 
+## [0.16.36] — 2026-11-16
+
+A correctness patch release. Two fixes; the public CLI, programmatic API, and MCP surfaces are unchanged and remain
+at parity.
+
+### adapters — output-cap param-name authority (#338)
+- An openai-dialect model whose output-cap parameter is `max_completion_tokens` (e.g. `gpt-6-luna`) no longer fails
+  with HTTP 400 on a `max_tokens` key. The catalog-selected output-cap parameter name now flows through the single
+  `models.tokens_param` / `apply_call_params` authority on **every** path, including the reactive recovery/fallback
+  legs, so a recovery call can no longer re-introduce a duplicate or wrong-dialect cap keyword. Guarded by
+  `tests/test_catalog_cap_wire_authority.py` (three wire-body guards).
+
+### distribute — recognize and preserve `--prefer-installed` wheel-mode venvs (#339)
+- `spendguard distribute --check` and convergence now recognize a venv armed with the opt-in `--prefer-installed`
+  ("wheel-mode") hook (shipped in 0.16.35): such a venv running its own installed wheel at the current version is
+  reported **converged**, not mislabeled `still_editable` / `wrong_version`, and is **not** re-armed with a
+  src-injecting hook that would undo wheel-mode. The interpreter purelib probe used to target the hook was also made
+  read-only (it no longer persists a `fleet.db` into the caller's home) and resolves a venv's true `site-packages`
+  without `-S` (which, by disabling site-init, had resolved to the base interpreter's path). Guarded by
+  `tests/test_distribution_wheel_convergence.py` and `tests/test_distribution_probe_readonly.py`.
+
 ## [0.16.35] — 2026-11-14
 
 ### install-hook
