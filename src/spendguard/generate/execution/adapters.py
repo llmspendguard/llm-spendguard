@@ -2330,8 +2330,16 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
                 # zeros), while a rejection worded differently fell through to `raise`. Trying the rungs is
                 # not a guess about meaning: it is bounded, it is recorded, and the outcome of the retry —
                 # not the wording of a sentence — decides what was actually wrong.
+                _GENERATION_KNOBS = ("temperature", "top_p", "seed")
                 _RUNGS = ("response_format", "reasoning_effort", "_token_dialect", "_token_budget")
-                if _bad in ("response_format", "json_schema"):
+                if _bad in _GENERATION_KNOBS:
+                    # A generation knob the provider TYPED as the rejected param (read from the fixed-shape
+                    # error envelope by _rejected_param, never from the message prose) gets its own heal
+                    # path. It must never enter the generic ladder: that would try the legacy max_tokens
+                    # dialect even though the catalog-selected max_completion_tokens spelling already
+                    # reached the provider — the misleading secondary error the prior attempts chased.
+                    _ladder = ("_generation_knob",)
+                elif _bad in ("response_format", "json_schema"):
                     _ladder = ("response_format",)
                 elif _bad == "reasoning_effort":
                     _ladder = ("reasoning_effort",)
@@ -2352,6 +2360,47 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
                     retry_kwargs[selected_output_cap_param] = output_budget
                     return _bounded_create(**retry_kwargs)
                 for _rung in _ladder:
+                    if _rung == "_generation_knob":
+                        # Generation knobs (temperature/top_p/seed) are optional measurement controls, not
+                        # caller-critical shape like response_format/schema, so dropping one degrades a
+                        # measurement gracefully rather than corrupting output. Whether the provider-named
+                        # knob was actually the cause is decided by the RETRY OUTCOME, never by reading the
+                        # error's prose (repo doctrine; see _rejected_param): drop the typed knob and retry.
+                        # Only a SUCCESSFUL retry proves the knob was the cause — then (and only then) learn
+                        # the model fact, warn, and surface the drop on the result. If the retry still fails
+                        # for another reason, surface that error unchanged and learn nothing. Loop so an
+                        # endpoint that rejects several knobs independently drops each the provider names.
+                        _dropped_knobs = {}
+                        while True:
+                            _rejected_knob = _mp._rejected_param(_last)
+                            if _rejected_knob not in _GENERATION_KNOBS or _rejected_knob not in okw:
+                                # No present generation knob is being rejected any more: either the cause
+                                # was never a gen knob, or a different cause remains after our drops. Learn
+                                # nothing from a failure we did not resolve; surface it.
+                                raise _last
+                            _dropped_knobs[_rejected_knob] = okw.pop(_rejected_knob)
+                            try:
+                                r = _bounded_create_with_catalog_output_cap(max_tokens)
+                            except Exception as e2:
+                                if isinstance(e2, _CallDeadline) or isinstance(
+                                        e2, _og.resolve_deliberate_stop_types()):
+                                    raise                   # a deadline / deliberate stop HALTS
+                                _last = e2                  # try the next provider-named knob, if any
+                                continue
+                            # Retry SUCCEEDED with the rejected knob(s) removed → each was a real cause.
+                            _healed_gen_dropped = dict(base.get("gen_params_dropped") or {})
+                            for _k, _v in _dropped_knobs.items():
+                                _mp.mark_gen_unsupported(raw, _k, reason="provider-400")
+                                _gen_applied.pop(_k, None)
+                                _healed_gen_dropped[_k] = _v
+                            base["gen_params_applied"] = _gen_applied or None
+                            base["gen_params_dropped"] = _healed_gen_dropped
+                            config.warn_once(
+                                "[spendguard] %s/%s rejected measurement knob(s) %s — DROPPED and learned "
+                                "as unsupported. Recorded on the result as gen_params_dropped."
+                                % (prov, raw, ",".join(sorted(_dropped_knobs))))
+                            break
+                        break
                     if _rung == "_token_budget":
                         # THE FLOOR IS HIGH, AND SOME MODELS CANNOT TAKE IT. Sending 32K to a model whose
                         # maximum output is 8192 is a 400. Rather than hardcode a per-model ceiling — a
