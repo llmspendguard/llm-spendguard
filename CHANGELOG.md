@@ -4,6 +4,25 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 
 ## [Unreleased]
 
+## [0.16.37] — 2026-11-16
+
+A correctness patch release. One fix; the public CLI, programmatic API, and MCP surfaces are unchanged and remain
+at parity.
+
+### adapters — self-heal generation-knob 400s on the determinism-forced metered path
+- A metered call that pins a determinism knob (`temperature` / `top_p` / `seed`) against an openai-dialect model that
+  rejects it (e.g. `gpt-6-luna`, which accepts only the default temperature) no longer 400-loops. The openai heal path
+  now routes a provider rejection whose **typed** `.param` is a generation knob to a dedicated rung that drops that
+  knob and retries, instead of falling through to the token-dialect ladder (which re-sent a legacy `max_tokens`
+  spelling and produced the misleading secondary 400 that defeated the prior fixes). Only a **successful** retry proves
+  the knob was the cause: the fact is then recorded as a measured `gen_unsupported:<knob>` via
+  `models.mark_gen_unsupported` (so the determinism SSOT self-heals and drops the knob up-front on later calls), a
+  `config.warn_once` is emitted, and the dropped knob is surfaced on the result as `gen_params_dropped`. The decision
+  is made by **retry outcome**, never by matching the provider's prose (which would mis-drop a knob rejected for an
+  unrelated reason). Caller-critical params such as `response_format` keep their existing behaviour and are never
+  silently dropped. Guarded by `tests/test_generation_knob_400_self_heal.py` (offline, parametrized over
+  temperature/top_p/seed; asserts drop-and-retry, no bare `max_tokens`, and fact persistence across calls).
+
 ## [0.16.36] — 2026-11-16
 
 A correctness patch release. Two fixes; the public CLI, programmatic API, and MCP surfaces are unchanged and remain
