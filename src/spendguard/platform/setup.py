@@ -682,13 +682,27 @@ def cmd_gate_discovered_host(argv=None):
 def _interpreter_purelib(target, timeout=10):
     """Ask *target* for the directory it actually imports pure Python packages from; never infer its version."""
     import subprocess
+    import shutil
+    import tempfile
+    # Query must stay read-only w.r.t. the caller's spendguard home. The target's own site-init may arm a
+    # gate hook that imports spendguard and opens the fleet DB; a pathological sitecustomize may even call
+    # spendguard.install() unconditionally. We CANNOT use `-S` to skip site-init: in a venv the purelib
+    # redirection lives in site.py, so `-S` resolves purelib to the BASE interpreter, not the venv. Instead
+    # we let site-init run (purelib correct) but neutralize its side effects — GATE_DISABLE=1 short-circuits
+    # a well-formed rendered hook before any import, and a throwaway SPENDGUARD_HOME absorbs any write a
+    # worst-case unconditional-install hook still makes, so the caller's real home is never touched.
+    throwaway_home = tempfile.mkdtemp(prefix="spendguard-purelib-probe-")
+    probe_env = {**os.environ, "GATE_DISABLE": "1", "SPENDGUARD_HOME": throwaway_home,
+                 "SPENDGUARD_NO_AUTOINSTALL": "1"}
     try:
-        r = subprocess.run([target, "-S", "-c", "import sysconfig;print(sysconfig.get_path('purelib'))"],
-                           capture_output=True, text=True, check=True, timeout=timeout)
+        r = subprocess.run([target, "-c", "import sysconfig;print(sysconfig.get_path('purelib'))"],
+                           capture_output=True, text=True, check=True, timeout=timeout, env=probe_env)
         path = r.stdout.strip()
         return path or None
     except Exception:
         return None
+    finally:
+        shutil.rmtree(throwaway_home, ignore_errors=True)
 
 
 def gate_pth_hidden_diagnosis(target, timeout=10):
