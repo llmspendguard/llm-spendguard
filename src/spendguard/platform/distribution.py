@@ -612,6 +612,9 @@ def distribution_install_attestation(install, probe, target, *, dev_venv=False):
         dev_target = {**target, "version": target.get("green_version", target["version"])}
         on_target = kind == manifest.MANIFEST_EDITABLE_KIND and distribution_interpreter_on_target(probe, dev_target)
         return on_target, None if on_target else "dev_editable_not_green"
+    if install.get("prefer_installed"):
+        on_target = distribution_wheel_interpreter_on_target(probe, target)
+        return on_target, None if on_target else "identity_not_green"
     if kind == manifest.MANIFEST_EDITABLE_KIND:
         return False, "still_editable"
     if kind != manifest.MANIFEST_WHEEL_KIND:
@@ -685,8 +688,10 @@ def inspect_distribution_install(python, policy):
     from . import manifest
     timeout = policy.get("probe_timeout_s", DISTRIBUTION_PROBE_TIMEOUT_S)
     with distribution_probe_environment(timeout) as environment:
-        return manifest.inspect_interpreter_install_kind(
+        install = manifest.inspect_interpreter_install_kind(
             python, timeout_seconds=timeout, environment=environment)
+    install["prefer_installed"] = setup.interpreter_gate_hook_prefers_installed(python)
+    return install
 
 
 def distribution_surface_row(surface, kind, on_version=False, healthy=False, fd_ok=None, action="none", reason=None, **evidence):
@@ -781,6 +786,7 @@ def distribute_fleet(*, check=False, roots=None, dry_run=False, settings=None, v
                          "kind": "venv", **({"install": {
                              "install_kind": surface.get("install_kind"),
                              "wheel_version": surface.get("wheel_version"),
+                             "prefer_installed": surface.get("prefer_installed", False),
                              "editable_origin": surface.get("editable_origin"),
                              "verification_error": surface.get("verification_error"),
                          }} if distribution_manifest_install_cache_valid(surface) else {})}
@@ -830,7 +836,7 @@ def distribute_fleet(*, check=False, roots=None, dry_run=False, settings=None, v
             planned.append((python, item, install, dev_status, classification_error))
 
         install_results = {}
-        wheel_candidates = [(python, item) for python, item, _install, dev_status, classification_error in planned
+        wheel_candidates = [(python, item, install) for python, item, install, dev_status, classification_error in planned
                             if dev_status is False and classification_error is None]
         editable_results = {}
         editable_candidates = [(python, item, classification_error)
@@ -841,21 +847,24 @@ def distribute_fleet(*, check=False, roots=None, dry_run=False, settings=None, v
                 DISTRIBUTION_CONFIG_SECTION, DISTRIBUTION_MAX_WORKERS_SETTING,
                 DISTRIBUTION_DEFAULT_MAX_WORKERS))
             worker_count = max(1, min(configured_workers, len(wheel_candidates) or 1))
-            def install_distribution_wheel_after_live_probe(python, item):
+            def install_distribution_wheel_after_live_probe(python, item, install):
                 probe = probe_distribution_interpreter(python, policy)
                 action = DISTRIBUTION_WHEEL_ALREADY_CONVERGED_ACTION
                 if not distribution_wheel_interpreter_on_target(probe, target):
                     setup.refresh_consumer_wheel_package(
                         python, distribution_wheel_cache_path(), target["version"], policy["install_timeout_s"])
                     action = "wheel-installed"
-                hook_code = (setup.install_hook(item["venv"], install_pkg=False) if item.get("venv")
-                             else setup.install_hook(user=True, python=python, install_pkg=False))
+                prefer_installed = bool(install.get("prefer_installed"))
+                hook_code = (setup.install_hook(
+                    item["venv"], install_pkg=False, prefer_installed=prefer_installed) if item.get("venv")
+                    else setup.install_hook(user=True, python=python, install_pkg=False,
+                                            prefer_installed=prefer_installed))
                 return action, hook_code
 
             with ThreadPoolExecutor(max_workers=worker_count) as executor:
                 futures = {executor.submit(
-                    install_distribution_wheel_after_live_probe, python, item): (python, item)
-                    for python, item in wheel_candidates if not wheel_error}
+                    install_distribution_wheel_after_live_probe, python, item, install): (python, item)
+                    for python, item, install in wheel_candidates if not wheel_error}
                 for future in as_completed(futures):
                     python, item = futures[future]
                     try:

@@ -17,6 +17,7 @@ from .. import config, config_schema
 # ours to overwrite. A distinctive marker we emit ourselves is the only honest test of authorship, and
 # deleting someone else's interpreter hook is not something they can recover from here.
 _PTH_NAME = "spendguard_gate_hook.pth"
+_SITECUSTOMIZE_HOOK_NAME = "sitecustomize.py"
 _FILEPROVIDER_XATTR_PREFIX = "com.apple.fileprovider."
 _GATED_SDKS = ("openai", "anthropic", "httpx")
 _STARTUP_GATE_PROBE_HOME_PREFIX = "spendguard-startup-probe-"
@@ -253,6 +254,48 @@ if os.environ.get("GATE_DISABLE") != "1" and not os.path.exists(os.path.join(_ho
 # {_SENTINEL}
 '''
     return f"import os;exec({hook_source!r})  # {_PTH_SENTINEL}\n"
+
+
+def rendered_gate_hook_prefers_installed(hook_source):
+    """Detect the generated import-first hook shape without interpreting its meaning."""
+    import ast
+    try:
+        parsed_source = ast.parse(hook_source)
+        if (len(parsed_source.body) == 2 and isinstance(parsed_source.body[1], ast.Expr)
+                and isinstance(parsed_source.body[1].value, ast.Call)
+                and isinstance(parsed_source.body[1].value.func, ast.Name)
+                and parsed_source.body[1].value.func.id == "exec"):
+            parsed_source = ast.parse(ast.literal_eval(parsed_source.body[1].value.args[0]))
+    except (SyntaxError, ValueError):
+        return False
+    spendguard_import_lines = [node.lineno for node in ast.walk(parsed_source)
+                               if isinstance(node, ast.Import)
+                               and any(alias.name == "spendguard" for alias in node.names)]
+    source_prepend_lines = [node.lineno for node in ast.walk(parsed_source)
+                            if isinstance(node, ast.Call)
+                            and isinstance(node.func, ast.Attribute)
+                            and node.func.attr == "insert"
+                            and node.args and isinstance(node.args[0], ast.Constant)
+                            and node.args[0].value == 0]
+    return bool(spendguard_import_lines and source_prepend_lines
+                and min(spendguard_import_lines) < min(source_prepend_lines))
+
+
+def interpreter_gate_hook_prefers_installed(python_executable):
+    """Read owned generated hooks and report whether either has import-first structure."""
+    from pathlib import Path
+    purelib = _interpreter_purelib(python_executable)
+    if not purelib:
+        return False
+    for hook_path in (Path(purelib) / _SITECUSTOMIZE_HOOK_NAME, Path(purelib) / _PTH_NAME):
+        try:
+            hook_source = hook_path.read_text()
+        except OSError:
+            continue
+        if (any(marker in hook_source for marker in (_SENTINEL, _PTH_SENTINEL))
+                and rendered_gate_hook_prefers_installed(hook_source)):
+            return True
+    return False
 
 # A portable rule for any AI coding assistant (Claude Code, Cursor, etc.). `install-rule` drops it into a
 # CLAUDE.md so EVERY conversation in that project automatically wires spendguard into whatever it builds.
@@ -639,13 +682,27 @@ def cmd_gate_discovered_host(argv=None):
 def _interpreter_purelib(target, timeout=10):
     """Ask *target* for the directory it actually imports pure Python packages from; never infer its version."""
     import subprocess
+    import shutil
+    import tempfile
+    # Query must stay read-only w.r.t. the caller's spendguard home. The target's own site-init may arm a
+    # gate hook that imports spendguard and opens the fleet DB; a pathological sitecustomize may even call
+    # spendguard.install() unconditionally. We CANNOT use `-S` to skip site-init: in a venv the purelib
+    # redirection lives in site.py, so `-S` resolves purelib to the BASE interpreter, not the venv. Instead
+    # we let site-init run (purelib correct) but neutralize its side effects — GATE_DISABLE=1 short-circuits
+    # a well-formed rendered hook before any import, and a throwaway SPENDGUARD_HOME absorbs any write a
+    # worst-case unconditional-install hook still makes, so the caller's real home is never touched.
+    throwaway_home = tempfile.mkdtemp(prefix="spendguard-purelib-probe-")
+    probe_env = {**os.environ, "GATE_DISABLE": "1", "SPENDGUARD_HOME": throwaway_home,
+                 "SPENDGUARD_NO_AUTOINSTALL": "1"}
     try:
         r = subprocess.run([target, "-c", "import sysconfig;print(sysconfig.get_path('purelib'))"],
-                           capture_output=True, text=True, check=True, timeout=timeout)
+                           capture_output=True, text=True, check=True, timeout=timeout, env=probe_env)
         path = r.stdout.strip()
         return path or None
     except Exception:
         return None
+    finally:
+        shutil.rmtree(throwaway_home, ignore_errors=True)
 
 
 def gate_pth_hidden_diagnosis(target, timeout=10):
@@ -791,7 +848,7 @@ def install_hook(venv=None, uninstall=False, install_pkg=True, user=False, pytho
         if not sp:
             print(f"  ✗ couldn't resolve {target}'s active purelib; refusing to guess from lib/python*/site-packages.")
             return 1
-        hook = os.path.join(sp, "sitecustomize.py")
+        hook = os.path.join(sp, _SITECUSTOMIZE_HOOK_NAME)
     pth_hook = Path(sp) / _PTH_NAME
 
     # OWNERSHIP IS A SENTINEL WE WROTE, NOT THE WORD "spendguard" APPEARING SOMEWHERE. A user's own
@@ -837,7 +894,8 @@ def install_hook(venv=None, uninstall=False, install_pkg=True, user=False, pytho
                 refresh_consumer_editable_package(target, pkg_root, timeout=None)
             except RuntimeError as exc:
                 print("  ✗ pip install failed:\n" + str(exc)); return 1
-        open(hook, "w").write(_sitecustomize_hook_source())
+        open(hook, "w").write(_sitecustomize_hook_source(
+            inject_src=_pkg_src(), prefer_installed=prefer_installed))
 
     print(f"  ✓ hook → {hook}")
     active = _startup_gate_active(target)

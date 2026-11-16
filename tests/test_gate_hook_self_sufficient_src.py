@@ -68,6 +68,7 @@ def test_rendered_hook_prefer_installed_ordering():
                 assert first_import < source_prepend
             else:
                 assert source_prepend < first_import
+            assert setup.rendered_gate_hook_prefers_installed(rendered_hook) is prefer_installed
             assert FAILCLOSED_FINDER_CLASS_MARKER in rendered_hook
 
 

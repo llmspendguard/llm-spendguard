@@ -157,6 +157,19 @@ def test_distribution_non_editable_consumer_is_not_dev(tmp_path):
         install, wheel_fixture_target(tmp_path / "checkout"), consumer_python) == (False, None)
 
 
+def test_distribution_prefer_installed_attestation_accepts_target_wheel_probe(tmp_path):
+    target = wheel_fixture_target(tmp_path)
+    target_probe = {"confirmed": True, "version": WHEEL_FIXTURE_VERSION,
+                    "metadata_version": WHEEL_FIXTURE_VERSION}
+    for stale_install in (
+            {"install_kind": manifest.MANIFEST_EDITABLE_KIND, "wheel_version": None,
+             "prefer_installed": True},
+            {"install_kind": manifest.MANIFEST_WHEEL_KIND, "wheel_version": WHEEL_FIXTURE_OLD_VERSION,
+             "prefer_installed": True}):
+        assert distribution.distribution_install_attestation(
+            stale_install, target_probe, target) == (True, None)
+
+
 def test_distribution_unreadable_worktree_metadata_is_unknown(tmp_path):
     checkout = tmp_path / "checkout"
     (checkout / distribution.DISTRIBUTION_GIT_METADATA_NAME).mkdir(parents=True)
@@ -214,18 +227,21 @@ def test_distribution_consumer_uses_wheel_and_canonical_dev_stays_editable(tmp_p
     (tmp_path / distribution.DISTRIBUTION_GIT_METADATA_NAME).mkdir()
     dev_python = str(tmp_path / "dev" / "bin" / "python")
     consumer_python = str(tmp_path / "consumer" / "bin" / "python")
+    default_consumer_python = str(tmp_path / "default-consumer" / "bin" / "python")
     inventory = {"interpreters": [
         {"python": dev_python, "venv": str(tmp_path / "dev"), "kind": "venv"},
         {"python": consumer_python, "venv": str(tmp_path / "consumer"), "kind": "venv"},
+        {"python": default_consumer_python, "venv": str(tmp_path / "default-consumer"), "kind": "venv"},
     ], "gaps": []}
     installs = []
+    hook_modes = {}
 
     def fixture_kind(python, *_args, **_options):
         if python == dev_python:
             return {"install_kind": manifest.MANIFEST_EDITABLE_KIND, "wheel_version": None,
                     "editable_origin": str(tmp_path)}
         return {"install_kind": manifest.MANIFEST_WHEEL_KIND, "wheel_version": WHEEL_FIXTURE_VERSION,
-                "editable_origin": None}
+                "editable_origin": None, "prefer_installed": python == consumer_python}
 
     target = wheel_fixture_target(tmp_path)
     healthy_wheel_probe = {"confirmed": True, "version": WHEEL_FIXTURE_VERSION,
@@ -245,6 +261,11 @@ def test_distribution_consumer_uses_wheel_and_canonical_dev_stays_editable(tmp_p
             return healthy_editable_probe if installed else stale_editable_probe
         return healthy_wheel_probe if installed else stale_wheel_probe
 
+    def fixture_install_hook(venv, *, install_pkg, prefer_installed=False):
+        assert install_pkg is False
+        hook_modes[venv] = prefer_installed
+        return 0
+
     healthy_host = distribution.distribution_surface_row("host", "host", True, True)
     with patch.object(distribution, "resolve_distribution_target", return_value=target), patch.object(
             distribution, "distribution_policy", return_value=WHEEL_FIXTURE_POLICY), patch.object(
@@ -258,7 +279,7 @@ def test_distribution_consumer_uses_wheel_and_canonical_dev_stays_editable(tmp_p
             side_effect=lambda python, cache, version, timeout: installs.append(("wheel", python, version))), patch.object(
             distribution.fleet, "_refresh_editable_install",
             side_effect=lambda python, checkout, timeout: installs.append(("editable", python, checkout))), patch.object(
-            distribution.setup, "install_hook", return_value=0), patch.object(
+            distribution.setup, "install_hook", side_effect=fixture_install_hook), patch.object(
             distribution, "probe_distribution_interpreter", side_effect=fixture_probe), patch.object(
             distribution, "attest_distribution_api_consumers", return_value=[]), patch.object(
             distribution, "attest_distribution_daemons", return_value=[]), patch.object(
@@ -267,8 +288,12 @@ def test_distribution_consumer_uses_wheel_and_canonical_dev_stays_editable(tmp_p
     assert result["exit_code"] == 0, result
     rows = {row["surface"]: row for row in result["surfaces"]}
     assert rows[consumer_python]["on_version"] is True
+    assert rows[default_consumer_python]["on_version"] is True
     assert ("wheel", consumer_python, WHEEL_FIXTURE_VERSION) in installs
+    assert ("wheel", default_consumer_python, WHEEL_FIXTURE_VERSION) in installs
     assert ("editable", dev_python, str(tmp_path)) in installs
+    assert hook_modes[str(tmp_path / "consumer")] is True
+    assert hook_modes[str(tmp_path / "default-consumer")] is False
     assert not any(event[0] == "wheel" and event[1] == dev_python for event in installs)
 
 
