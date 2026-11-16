@@ -1033,7 +1033,7 @@
           },
           "src/spendguard/store/reference_data/models.py": {
             "max_cc": 13,
-            "mi": 38.5840415781573
+            "mi": 38.55110233987363
           },
           "src/spendguard/store/reference_data/money_scale.py": {
             "max_cc": 8,
@@ -2433,7 +2433,7 @@
           },
           "src/spendguard/store/reference_data/models.py": {
             "max_cc": 13,
-            "mi": 38.488827870071496
+            "mi": 38.45683604758046
           },
           "src/spendguard/store/reference_data/money_scale.py": {
             "max_cc": 8,
@@ -2564,6 +2564,7 @@
     "reviewed_c5_honest_unresolvable_gap_branches": "C5 honest-unresolvable gap surfacing: cli.cli_core_deploy (+1 CC 38->39) and gate.control_gate_runtime (+1 CC 130->131) each gain a necessary new branch that surfaces a named inventory gap (e.g. pipx unavailable) per the honest-unresolvable doctrine (clear but non-blocking). Recorded to current measured reality.",
     "reviewed_c6_doctor_advisor_cap_and_reaper_liveness": "C6 defect fixes add necessary branch logic: control_gate_runtime doctor path gained a three-way advisor-unpriced-cap magnitude check (latent vs active-default-picker bind vs waived escape hatch), raising gate.py max_cc 131->136; maintain_delegate_job_lifecycle reaper gained a terminal-state + child-aware live-process check so a dead launcher with no child is reclaimed, lowering delegate_jobs.py MI. Both rises are cohesive reviewed defect logic, far under the repo worst CC 255.",
     "reviewed_metered_readiness_and_embedding_limits_ssot": "model_preflight.py gained the public metered_call_readiness SSOT accessor (resolves routed provider, credential identity, model record), lowering its MI (57.23->52.61 at 3.11); __init__.py MI shifted slightly from moving the two SSOT accessor imports (embedding_input_limits, metered_call_readiness) off the unconditional top level into the lazy _load_public_api_and_install_gate path, so the cli-help bootstrap stays free of these heavy homes (cli-help laziness guard). max_cc unchanged for both.",
+    "reviewed_pr_338_luna_cap_authority_recovery": "PR #338 recovery paths now preserve the catalog-selected output-cap authority without duplicate keyword arguments.",
     "reviewed_pr_339_distribute_prefer_installed_readonly": "Reviewed prefer-installed distribution inspection complexity for PR 339 read-only probe fix"
   },
   "dead_allowlist": [
