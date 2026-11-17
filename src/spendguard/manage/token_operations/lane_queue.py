@@ -677,7 +677,10 @@ def settle(row_id, result):
                 # pre-class behavior for a row a runner didn't classify, e.g. a governor/dispatch hiccup).
                 from ... import vendor_call as _vc
                 oc = result.get("outcome")
+                hold_owner_finished = bool(result.get("_free_hold_owner_finished"))
                 deterministic_failure = (
+                    hold_owner_finished
+                    or
                     bool(result.get("shape_miss"))
                     or result.get("reason") == "shape_miss"
                     or (result.get("status_code") == 400
@@ -702,6 +705,9 @@ def settle(row_id, result):
                 elif (result.get("status_code") == 400
                       and result.get("error_code") in _execution_accessors.UNSERVABLE_MODEL_ERROR_CODES):
                     terminal_reason = "unservable_model"
+                elif hold_owner_finished:
+                    terminal_reason = "free_hold_finished:" + str(
+                        result.get("outcome") or result.get("reason") or "unknown")
                 elif result.get("outcome") in (None,):
                     terminal_reason = "retry_budget_exhausted"
                 elif retryable:
@@ -1147,8 +1153,9 @@ def hold_free_recovery(intent, task, invoke, *, deadline_s, poll_s):
             if remaining:
                 time.sleep(min(poll_s, remaining))
         succeeded = bool(result.get("text") and not result.get("error"))
-        result = {**result, "_free_hold": {"deadline_s": deadline_s, "elapsed_s": time.monotonic() - started,
-                                           "polls": polls, "deadline_exhausted": not succeeded}}
+        result = {**result, "_free_hold_owner_finished": True,
+                  "_free_hold": {"deadline_s": deadline_s, "elapsed_s": time.monotonic() - started,
+                                 "polls": polls, "deadline_exhausted": not succeeded}}
         return result
     finally:
         record_close(rid, result)
