@@ -1818,12 +1818,21 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
         from ... import lane_queue
         from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
         _recovery.recovery_event("queue")
+        _hold_intent = (_call_corpus_accessors.resolve_calls_current() or {}).get("intent") or "lane-recovery"
+        from . import vendor_call as _hold_vendor_call
+        _hold_deadline_s, _hold_deadline_basis = _hold_vendor_call.time_budget(
+            prov, raw, sig=_hold_intent, default_s=timeout_s, in_chars=len(prompt))
         _held = lane_queue.hold_free_recovery(
-            (_call_corpus_accessors.resolve_calls_current() or {}).get("intent") or "lane-recovery", prompt, _poll_free_recovery,
-            deadline_s=lane_recovery.recovery_setting("queue_deadline_s", 15.0),
+            _hold_intent, prompt, _poll_free_recovery,
+            deadline_s=_hold_deadline_s,
             poll_s=lane_recovery.recovery_setting("queue_poll_s", 1.0))
-        _recovery.queue_checked = bool(_held.get("_free_hold", {}).get("deadline_exhausted"))
+        _held.setdefault("_free_hold", {})["deadline_basis"] = _hold_deadline_basis
+        _recovery.queue_checked = bool(_held.get("_free_hold", {}).get("durable_disposition"))
         _recovery.recovery_event("queue_outcome", **_held.get("_free_hold", {}))
+        if (_held.get("status_code") == 400
+                and _held.get("error_code") in _execution_accessors.UNSERVABLE_MODEL_ERROR_CODES):
+            from ... import lane_servability as _held_lane_servability
+            _held_lane_servability.record_structured_lane_rejection(lane_name, raw, _held)
         if not _held.get("error") and (_held.get("text") or "").strip():
             if _held.get("substituted_from"):
                 return _held

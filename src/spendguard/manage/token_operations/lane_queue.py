@@ -677,7 +677,13 @@ def settle(row_id, result):
                 # pre-class behavior for a row a runner didn't classify, e.g. a governor/dispatch hiccup).
                 from ... import vendor_call as _vc
                 oc = result.get("outcome")
-                retryable = (oc is None) or (oc in _vc.RETRYABLE)
+                deterministic_failure = (
+                    bool(result.get("shape_miss"))
+                    or result.get("reason") == "shape_miss"
+                    or (result.get("status_code") == 400
+                        and result.get("error_code") in _execution_accessors.UNSERVABLE_MODEL_ERROR_CODES)
+                )
+                retryable = (not deterministic_failure) and ((oc is None) or (oc in _vc.RETRYABLE))
                 state = ("pending" if attempts < maxa else "failed") if retryable else "failed"
                 new_attempts, new_parks = attempts, parks
                 if state == "pending":                 # F4: a transient-failed retry waits a backoff before re-lease —
@@ -691,6 +697,11 @@ def settle(row_id, result):
             elif state == "failed":
                 if saturated:
                     terminal_reason = "parking_limit_or_deadline"
+                elif result.get("shape_miss") or result.get("reason") == "shape_miss":
+                    terminal_reason = "shape_miss"
+                elif (result.get("status_code") == 400
+                      and result.get("error_code") in _execution_accessors.UNSERVABLE_MODEL_ERROR_CODES):
+                    terminal_reason = "unservable_model"
                 elif result.get("outcome") in (None,):
                     terminal_reason = "retry_budget_exhausted"
                 elif retryable:
@@ -1128,29 +1139,24 @@ def hold_free_recovery(intent, task, invoke, *, deadline_s, poll_s):
     started = time.monotonic()
     try:
         while time.monotonic() < end:
-            time.sleep(min(poll_s, max(0.0, end - time.monotonic())))
-            if time.monotonic() >= end:
-                break
             result = invoke()
             polls += 1
             if result.get("text") and not result.get("error"):
                 break
+            remaining = max(0.0, end - time.monotonic())
+            if remaining:
+                time.sleep(min(poll_s, remaining))
         succeeded = bool(result.get("text") and not result.get("error"))
         result = {**result, "_free_hold": {"deadline_s": deadline_s, "elapsed_s": time.monotonic() - started,
                                            "polls": polls, "deadline_exhausted": not succeeded}}
-        if not succeeded:
-            # This caller will now either stop or take its explicitly gated paid leg. A pending
-            # queue retry would duplicate that same work in a later drain.
-            result["outcome"] = _execution_accessors.DEADLINE_EXCEEDED
         return result
     finally:
-        if result.get("error") or not result.get("text"):
-            result = {**result, "outcome": _execution_accessors.DEADLINE_EXCEEDED}
         record_close(rid, result)
         # A failed terminal write must not turn a completed/expired hold into a future purchase.
         from ...work_integrity import WorkIntegrityProof
         states = row_results([rid]) if rid is not None else {}
         terminal = [r for r, value in states.items() if value["state"] in ("done", "failed")]
+        result.setdefault("_free_hold", {})["durable_disposition"] = bool(terminal)
         WorkIntegrityProof("free-hold-terminal").assert_work_partition([rid], [terminal])
 
 

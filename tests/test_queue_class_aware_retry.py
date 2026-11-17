@@ -1,6 +1,6 @@
 """Item 3 — CLASS-AWARE durable queue retry: settle() spends the retry-to-10 budget ONLY on TRANSIENT outcomes
-(vendor_call.RETRYABLE — transport_error / overloaded) and fails a DETERMINISTIC one FAST (payload_rejected / refused
-/ unfunded / deadline / truncated / empty), instead of the old behavior that retried every failure class equally.
+(vendor_call.RETRYABLE — transport_error / overloaded / deadline) and fails a DETERMINISTIC one FAST
+(payload_rejected / refused / unfunded / truncated / empty), instead of retrying every failure class equally.
 
 Offline + deterministic ($0, no provider call): drives the REAL lane_queue (enqueue → lease → settle) with synthetic
 result dicts carrying a vendor_call outcome KIND, and asserts the state machine. This is the anti-amnesia guard for the
@@ -55,14 +55,14 @@ def main():
          str(lq.MAX_ATTEMPTS_DEFAULT))
 
     # ── TRANSIENT (RETRYABLE) → retries the FULL budget, then fails only after 10 attempts ──
-    for oc in (vc.OVERLOADED, vc.TRANSPORT_ERROR):
+    for oc in (vc.OVERLOADED, vc.TRANSPORT_ERROR, vc.DEADLINE_EXCEEDED):
         st, att, rounds = _run_to_terminal("transient-%s" % oc, oc)
         c.ck("transient %s: retried to the budget then failed" % oc,
              st == "failed" and att == lq.MAX_ATTEMPTS_DEFAULT and rounds == lq.MAX_ATTEMPTS_DEFAULT,
              "state=%s attempts=%s rounds=%s" % (st, att, rounds))
 
     # ── DETERMINISTIC → fails FAST on the FIRST attempt, budget untouched ──
-    for oc in (vc.PAYLOAD_REJECTED, vc.REFUSED, vc.UNFUNDED, vc.DEADLINE_EXCEEDED, vc.TRUNCATED,
+    for oc in (vc.PAYLOAD_REJECTED, vc.REFUSED, vc.UNFUNDED, vc.TRUNCATED,
                vc.EMPTY, vc.PREFLIGHT_UNMET, vc.SCHEMA_VIOLATION, vc.GATE_REFUSED):
         st, att, rounds = _run_to_terminal("determ-%s" % oc, oc)
         c.ck("deterministic %s: failed fast at attempt 1 (no wasted retries)" % oc,
