@@ -306,8 +306,9 @@ Each absence below carries the registry's reviewed reason.
 | C280 | Measure or check nightly ledger hot-path performance against a same-runner committed baseline | bench | ledger_performance_benchmark_ledger_performance_benchmark_run_ledger_performance_benchmark | ledger_performance_benchmark_ledger_performance_benchmark_run_ledger_performance_benchmark | [spendguard.ledger_performance_benchmark:run_ledger_performance_benchmark](#core-f67b31ebb2ff87950b46bd6abb6b2ce5534113fae77503d7eccd3d78893f69b6) |
 | C281 | Read the catalog and configured embedding input limits enforced by the embed guard | ABSENT (DELIBERATE): Embedding boundaries are an in-process pre-splitting contract; no standalone operator workflow is required. | capability_embedding_input_limits_spendguard_store_reference_data_model_catalog_embedding_input_limits | ABSENT (DELIBERATE): MCP agents do not locally split inputs before spendguard's embedding execution path. | [spendguard.store.reference_data.model_catalog:embedding_input_limits](#core-6c6b2218af3a699d533d98b68e9ca821a54406c3180c55c90c7c687adf5f80be) |
 | C282 | Check at zero cost and without a probe whether a model's routed metered provider credential is resolvable | metered-ready | capability_metered_call_readiness_spendguard_manage_admission_model_preflight_metered_call_readiness; capability_metered_call_readiness_spendguard_manage_admission_model_preflight_run_metered_call_readiness | capability_metered_call_readiness_spendguard_manage_admission_model_preflight_metered_call_readiness; capability_metered_call_readiness_spendguard_manage_admission_model_preflight_run_metered_call_readiness | [spendguard.manage.admission.model_preflight:metered_call_readiness](#core-b970d6145983071160d2eb35ca0d96ca39ad918dcfad5ee79f64476e25645745); [spendguard.manage.admission.model_preflight:run_metered_call_readiness](#core-8e5c841684a0f05f9ee6766f617a8326de389ae2ef24d11cbae288fb7c4040e7) |
+| C283 | Dry-run or apply fail-closed reclamation of configured stale, ephemeral, rotated, and regenerated artifacts in the spendguard home | reclaim | capability_home_artifact_reclamation_spendguard_platform_home_reclaim_reclaim_home_artifacts; capability_home_artifact_reclamation_spendguard_platform_home_reclaim_run_home_reclaim_cli | capability_home_artifact_reclamation_spendguard_platform_home_reclaim_reclaim_home_artifacts; capability_home_artifact_reclamation_spendguard_platform_home_reclaim_run_home_reclaim_cli | [spendguard.platform.home_reclaim:reclaim_home_artifacts](#core-d800b01f4619ec553a287970b4aa8ca79033a8b4ed5e93dde04a253f09da4e2f); [spendguard.platform.home_reclaim:run_home_reclaim_cli](#core-e92184c6b8501e53ac7d395a4cd96db8d0eb4c8c2f3f8d7ee8b573a93d6dfd3d) |
 
-Counts: ABSENT 104; DELIBERATE 104; PRESENT 742
+Counts: ABSENT 104; DELIBERATE 104; PRESENT 745
 
 ## Capability parameter contracts
 
@@ -2122,6 +2123,12 @@ Both report and fail-closed CLI use the same no-network core; provider and crede
 | --- | --- | --- | --- | --- |
 | model | str | no | None | Catalog model id; spendguard resolves its provider and credential identity. |
 | intent | str \| None {"alternatives": [{"alternatives": [], "enum": [], "items": null, "properties": [], "python_annotation": null, "type": "string"}, {"alternatives": [], "enum": [], "items": null, "properties": [], "python_annotation": null, "type": "null"}], "enum": [], "items": null, "properties": [], "python_annotation": "str \| None", "type": "string"} | no | None | Optional attribution intent; credential routing remains model-owned. |
+
+### C283: Dry-run or apply fail-closed reclamation of configured stale, ephemeral, rotated, and regenerated artifacts in the spendguard home
+
+Selection is deterministic parsing of configured layout, age and filename grammar, not semantic judgement, so no LLM participates. The command is a distinct home-files operation; ledger freelist VACUUM remains scripts/ops/ledger_reclaim.py and is named in help/output.
+
+Takes no parameters.
 
 ## Programmatic core contracts
 
@@ -6218,6 +6225,38 @@ doctor/admission hot paths. Test isolation disables disk reuse but does not weak
 | force | Any | no | False | Return the observable current overage state and historical real-dollar overage by month.<br><br>Cached with a short TTL (plan_admission.overage_status_ttl_s, default 60s) because the underlying probe re-reads<br>the whole claude-code transcript tree (~10s) and the result changes only slowly. The cache is in-process AND<br>disk-backed so a fresh CLI process does not re-pay the scan. `force=True` (or `max_age_s=0`) bypasses the cache<br>and recomputes; `max_age_s` overrides the TTL for a caller that needs a tighter freshness bound. Every return<br>carries `as_of`/`age_s`/`cached` (see _stamp), so a TTL-served value is self-describing, never a silent skip.<br>A normal call is strictly cache-only and therefore bounded: a missing or stale cache returns an explicit<br>unknown verdict. Only ``force=True`` performs the full refresh, keeping transcript and ledger scans out of<br>doctor/admission hot paths. Test isolation disables disk reuse but does not weaken that bound. |
 
 Returns: `Any`
+
+<a id="core-d800b01f4619ec553a287970b4aa8ca79033a8b4ed5e93dde04a253f09da4e2f"></a>
+
+### `spendguard.platform.home_reclaim:reclaim_home_artifacts`
+
+Source: `src/spendguard/platform/home_reclaim.py`
+
+Return per-category item and byte counts, grand totals, freed bytes, and deliberate refusals. Apply defaults false. Every candidate is protected/contained before counting and again immediately before deletion; ephemeral units additionally require an output-clean owning-side lsof check.
+
+| Parameter | Type | Required | Default | Contract |
+| --- | --- | --- | --- | --- |
+| apply | bool | no | False | Delete accepted candidates only when true; false selects and counts without mutation. |
+| home | str \| None {"alternatives": [{"alternatives": [], "enum": [], "items": null, "properties": [], "python_annotation": null, "type": "string"}, {"alternatives": [], "enum": [], "items": null, "properties": [], "python_annotation": null, "type": "null"}], "enum": [], "items": null, "properties": [], "python_annotation": "str \| None", "type": "string"} | no | None | Optional spendguard home override; containment and protection are recomputed for this root. |
+| now_utc | str \| None {"alternatives": [{"alternatives": [], "enum": [], "items": null, "properties": [], "python_annotation": null, "type": "string"}, {"alternatives": [], "enum": [], "items": null, "properties": [], "python_annotation": null, "type": "null"}], "enum": [], "items": null, "properties": [], "python_annotation": "str \| None", "type": "string"} | no | None | Optional timezone-aware ISO-8601 selection clock for deterministic automation and tests. |
+
+Returns: `dict`
+
+<a id="core-e92184c6b8501e53ac7d395a4cd96db8d0eb4c8c2f3f8d7ee8b573a93d6dfd3d"></a>
+
+### `spendguard.platform.home_reclaim:run_home_reclaim_cli`
+
+Source: `src/spendguard/platform/home_reclaim.py`
+
+Print per-category counts and bytes plus totals/freed bytes. The help and heading explicitly distinguish home artifact removal from ledger VACUUM. Any refusal makes the command nonzero.
+
+| Parameter | Type | Required | Default | Contract |
+| --- | --- | --- | --- | --- |
+| apply | bool | no | False | Actually delete accepted artifacts; omission is a non-mutating dry run. |
+| json_output | bool | no | False | Emit the complete machine-readable report as JSON instead of the human category/byte summary. |
+| home | str \| None {"alternatives": [{"alternatives": [], "enum": [], "items": null, "properties": [], "python_annotation": null, "type": "string"}, {"alternatives": [], "enum": [], "items": null, "properties": [], "python_annotation": null, "type": "null"}], "enum": [], "items": null, "properties": [], "python_annotation": "str \| None", "type": "string"} | no | None | Optional spendguard home override; defaults to the configured active home. |
+
+Returns: `int`
 
 <a id="core-8b3ec2ebe70fca1529f4b14d6787c943eb5b5588ce61d460616fc51406a59a2e"></a>
 

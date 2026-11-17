@@ -38,13 +38,21 @@ def verify_registered_cli_help_projection():
                            for token in help_text.split()), name
     for command, (_, variant) in registered_callable_cli_commands().items():
         help_text = commands[command].format_help()
+        # A renamed parameter is exposed under its public flag, not its core name.
+        # Compute the flag exactly as populate_callable_cli_parser does so the
+        # conformance check verifies the flag a user actually types.
+        public_parameter_names = {
+            target: source for source, target in variant.parameter_renames.items()
+        }
         exposed = []
         for parameter in variant.parameters:
+            public_name = public_parameter_names.get(parameter.name, parameter.name)
+            flag = '--' + public_name.replace('_', '-')
             if any(surface == 'CLI' for surface, _reason in parameter.surface_restrictions):
-                assert '--' + parameter.name.replace('_', '-') not in help_text, command
+                assert flag not in help_text, command
                 continue
             exposed.append(parameter)
-            assert '--' + parameter.name.replace('_', '-') in help_text, command
+            assert flag in help_text, command
         if not exposed:
             assert 'Takes no flags.' in help_text, command
 

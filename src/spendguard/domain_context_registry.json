@@ -735,6 +735,7 @@
         "platform.distribution_daemon",
         "platform.manifest",
         "platform.fleet",
+        "platform.home_reclaim",
         "platform.schedule",
         "platform.setup",
         "platform.lanes",
