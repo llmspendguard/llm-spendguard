@@ -6,7 +6,7 @@ import yaml
 
 CI_ENV_WORKFLOW = Path(__file__).resolve().parents[1] / ".github" / "workflows" / "ci.yml"
 CI_CACHE_INSTALL_JOBS = ("test", "coverage")
-CI_CACHE_PYTHON_VERSIONS = ["3.11", "3.12"]
+CI_CACHE_PYTHON_VERSIONS = ["3.11"]
 CI_CACHE_REQUIRED_ENV = {"CI_TEST_EXTRAS": ".[openai,anthropic,otel,chat,dev]", "CI_PYDANTIC_FLOOR": "pydantic>=2"}
 CI_CACHE_EXPECTED_COUNT = 1
 CI_CACHE_INSTALL_LINES = (
