@@ -13,6 +13,8 @@ from pathlib import Path
 from _script_checks import record_script_check
 from spendguard import lanes, subscription_exec, codex_exec, antigravity_exec, zai_exec, kimi_exec, grok_exec
 from spendguard import lane_registry   # the ONE lane data table (a submodule import, like lane_catalog elsewhere)
+from spendguard import config          # re-exports CLI_TEST_OFFLINE_ENVIRONMENT_KEY, the offline-guard SSOT
+from unittest.mock import patch
 
 fails = []
 
@@ -30,6 +32,34 @@ lane_registry.lane_spec("codex")["creds"] = (_CODEX,)
 lane_registry.lane_spec("gemini")["creds"] = (tmp / "antigravity-oauth-token", _GEMINI)   # BOTH agy artifacts controlled
 lane_registry.lane_spec("kimi-code")["creds"] = (_KIMI,)
 lane_registry.lane_spec("grok")["creds"] = (_GROK,)   # grok cache file IS present on this dev host → repoint to temp
+
+print("-- grok reasoning effort: lane default and explicit pins reach the CLI --")
+UNSUPPORTED_GROK_OUTPUT_TOKEN_REQUEST = 123
+grok_commands = []
+real_grok_bin = grok_exec._bin
+real_grok_subprocess_run = grok_exec.subprocess.run
+grok_exec._bin = lambda: "/fake/grok"
+grok_exec.subprocess.run = lambda command, **kwargs: (
+    grok_commands.append(command) or type("R", (), {"returncode": 0, "stdout": "ok\n", "stderr": ""})()
+)
+# subprocess.run is stubbed above, so no real CLI launches here; lift the suite's offline guard ONLY around these
+# two stubbed calls so the real run_prompt command-build (which calls config.lane_exec_env) runs without
+# refuse_isolated_cli_launch() firing. Same sanctioned pattern as test_lane_runtime_path_and_probe_heal.py.
+with patch.dict(os.environ):
+    os.environ.pop(config.CLI_TEST_OFFLINE_ENVIRONMENT_KEY, None)
+    default_grok_result = grok_exec.run_prompt("prompt", max_tokens=UNSUPPORTED_GROK_OUTPUT_TOKEN_REQUEST)
+    high_grok_result = grok_exec.run_prompt("prompt", reasoning="high")
+grok_exec._bin = real_grok_bin
+grok_exec.subprocess.run = real_grok_subprocess_run
+grok_quirk = lane_registry.reasoning_quirk("grok")
+record_script_check(fails, "grok omitted effort uses the lane's low default",
+   grok_commands[0][-2:] == [grok_exec.GROK_REASONING_FLAG, "low"] and default_grok_result.get("error") is None)
+record_script_check(fails, "grok explicit high effort reaches the CLI",
+   grok_commands[1][-2:] == [grok_exec.GROK_REASONING_FLAG, "high"] and high_grok_result.get("error") is None)
+record_script_check(fails, "grok lane declares param reasoning with a low default",
+   grok_quirk["style"] == "param" and grok_quirk["default"] == "low")
+record_script_check(fails, "grok documents its unsupported output-token cap",
+   "no output-cap flag" in grok_exec.run_prompt.__doc__)
 
 print("-- executor=api: nothing enabled, summary stays silent --")
 os.environ["SPENDGUARD_ADVISOR_EXECUTOR"] = "api"

@@ -76,7 +76,7 @@ LANES = [
     {"lane": "grok", "provider": "xai", "exec": "grok_exec", "kind": "cli",
      "agentic": True,
      "creds": (_home_path(".grok", "models_cache.json"),), "keychain": None, "probe_tier": None,
-     "reasoning": {"style": "none", "levels": (), "default": None},
+     "reasoning": {"style": "param", "levels": ("low", "medium", "high", "xhigh"), "default": "low"},
      "login": "run `grok login` and sign in with the SuperGrok subscription account (not an xAI API key)",
      "relogin_cmd": "grok login"},
 ]
