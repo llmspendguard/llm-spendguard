@@ -4,6 +4,20 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 
 ## [Unreleased]
 
+## [0.16.39] — 2026-11-18
+
+A patch release. Makes the grok lane fast by default; no public CLI, API, or MCP surface changes, parity unchanged.
+
+### lanes — grok lane runs at `grok-4.7 --reasoning-effort low` by default
+- The **grok** lane now flows a reasoning-effort level through to the Grok CLI. Its lane-registry `reasoning` quirk
+  becomes `{"style": "param", "levels": ("low", "medium", "high", "xhigh"), "default": "low"}`, so an omitted level
+  uses **low** (the measured ~12s standard) and an explicit level (including the Grok-only `xhigh`) is passed through.
+  `grok_exec.run_prompt` maps the standard reasoning floor to Grok's own floor and appends `--reasoning-effort
+  <level>` to the headless `grok -p` command. `max_tokens` stays accepted-but-unsupported (Grok `-p` exposes no
+  output-cap flag), now documented rather than silently dropped.
+- Data-driven lane test asserts the omitted-effort default and an explicit pin both reach the CLI, exercising the
+  real command build under the suite's offline guard.
+
 ## [0.16.38] — 2026-11-18
 
 A feature release. Adds one new $0 subscription reviewer lane; existing public CLI, programmatic API, and MCP

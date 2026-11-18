@@ -14,6 +14,9 @@ GROK_MODELS_CACHE_FILENAME = "models_cache.json"
 GROK_WORK_DIRECTORY_PREFIX = "spendguard-grok-"
 GROK_USAGE_SOURCE = "grok_cli"
 GROK_USAGE_UNKNOWN_SAMPLE_COUNT = 0
+GROK_REASONING_FLAG = "--reasoning-effort"
+GROK_REASONING_DEFAULT = "low"               # lane default: Grok's floor and the chosen ~12s standard (lane_registry declares the same)
+GROK_STANDARD_REASONING_FLOOR = "minimal"    # the STANDARD ordinal floor (reasoning_equivalence STANDARD_LEVELS[0]); Grok has no spelling below 'low'
 
 
 def _bin():
@@ -64,10 +67,26 @@ def grok_headroom_report():
 HEADROOM_REPORT_READER = grok_headroom_report
 
 
+def _grok_effort(level):
+    """Map a STANDARD ordinal reasoning level → the Grok CLI's own effort scale (like codex_exec._codex_effort).
+
+    Grok ``-p`` accepts low|medium|high|xhigh and has NO spelling below ``low``, so the STANDARD floor
+    ``minimal`` maps to Grok's floor ``low``; the rest pass through and the CLI validates them (a bad value
+    fails fast). An omitted level uses the lane's ``low`` default (the ~12s standard). lane_registry declares
+    the same default and level set for the surface/router, and the lane test asserts the two agree.
+    """
+    requested = (level or "").strip().lower()
+    if not requested:
+        return GROK_REASONING_DEFAULT
+    return GROK_REASONING_DEFAULT if requested == GROK_STANDARD_REASONING_FLOOR else requested
+
+
 def run_prompt(prompt, system=None, model=None, timeout=TIMEOUT_S, reasoning=None, max_tokens=None,
                *, agentic=False, cwd=None):
-    """Run one authenticated headless Grok CLI completion and return the subscription result contract."""
-    del reasoning, max_tokens
+    """Run one authenticated headless Grok CLI completion and return the subscription result contract.
+
+    ``max_tokens`` is accepted for the shared lane-executor contract, but Grok ``-p`` exposes no output-cap flag.
+    """
     from ... import execution_journal
     durable_id = execution_journal.current_durable_execution_id()
     process_runner = (execution_journal.run_durable_delegate_subprocess if durable_id else subprocess.run)
@@ -83,6 +102,7 @@ def run_prompt(prompt, system=None, model=None, timeout=TIMEOUT_S, reasoning=Non
     command = [executable, "-p", full_prompt]
     if model_alias:
         command += ["-m", model_alias]
+    command += [GROK_REASONING_FLAG, _grok_effort(reasoning)]   # _grok_effort always yields an effort (low default)
     from ... import config
     environment = config.lane_exec_env(executable)
     started_at = time.time()
