@@ -45,6 +45,13 @@ from .spend_refusal_error import (EffortNotHonored, MeteredCallRefused,  # noqa:
 #                                                    break the job_fingerprint→gate import cycle; identity preserved
 
 
+def admission_prompt_is_interactive():
+    """Return whether this call has both a human TTY and no background dispatch."""
+    from ..token_operations import execution_journal
+    return bool(sys.stdin is not None and sys.stdin.isatty()
+                and execution_journal.current_durable_execution_id() is None)
+
+
 def _prompt_text(kw):
     parts = []
     if kw.get("system"):
@@ -517,7 +524,7 @@ def _decide(est):
     print(f"\n*** SPEND GATE: this single batch {_proj}, over the ${cap:.0f} cap. ***\n"
           f"{line}\nBetter first: declare expected_out_tokens · pack 25–40 items/request · use the cheaper executor · "
           f"split the scope. (raise GATE_CAP or GATE_ALLOW=1 to force.)", file=sys.stderr)
-    if sys.stdin and sys.stdin.isatty():
+    if admission_prompt_is_interactive():
         try:
             ans = input(f"Allow this ${est['cost']:.2f} submission anyway? type 'yes' to proceed: ").strip().lower()
         except Exception:
@@ -621,7 +628,7 @@ def _budget_check(cost, model, provider, kind):
     w, capv, proj = ex
     print(f"\n*** SPEND GATE: this call would push {w} spend to ${proj:.2f}, over the ${capv:.0f} {w} cap. ***",
           file=sys.stderr)
-    if sys.stdin and sys.stdin.isatty():
+    if admission_prompt_is_interactive():
         try:
             ans = input(f"Allow it anyway (over the {w} cap)? type 'yes' to proceed: ").strip().lower()
         except Exception:
@@ -739,7 +746,7 @@ def _batch1_check(est):
     print(f"\n*** [spend_gate] BATCH-1 CHECK: a {n:,}-request '{intent}' batch ({mdl}, {_amt}) with NO "
           f"realtime/batch-1 test of this intent in the last {days}d. The #1 batch waste is a prompt/tool bug a "
           f"1–5 item realtime test catches for ~$0 — run that first (PROMPT-CHECK → batch-1). ***", file=sys.stderr)
-    if sys.stdin and sys.stdin.isatty():
+    if admission_prompt_is_interactive():
         try:
             ans = input("Submit the full batch anyway? type 'yes' to proceed: ").strip().lower()
         except Exception:
@@ -1085,7 +1092,7 @@ def _rt_precheck_usd(provider, model, est):
         return
     msg = (f"[spend_gate] REAL-TIME budget: spent ${spent:.2f} + next ~${est:.2f} would exceed "
            f"${budget:.0f}/process (GATE_RT_BUDGET).")
-    if sys.stdin and sys.stdin.isatty():
+    if admission_prompt_is_interactive():
         try:
             ans = input(msg + " Allow the rest of this run's real-time calls? type 'yes': ").strip().lower()
         except Exception:
