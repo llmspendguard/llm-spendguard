@@ -634,19 +634,28 @@ SETTINGS = [
          desc="Shared Grok admission and warm-leader pool capacity. Values below the measured concurrency floor "
               "are raised to that floor so admission never throttles the executor pool."),
     dict(section="dispatch", key="vendor_concurrency", store="config.json:dispatch.vendor_concurrency",
-         env="SPENDGUARD_DISPATCH_VENDOR_CONCURRENCY", default=8, kind="int", secret=False,
-         desc="Max concurrent metered calls to ONE vendor, so a large cross-LLM fan-out (or a pinned-vendor matrix) "
-              "queues instead of 429-storming the provider. Enforced BOTH in-process AND ACROSS processes (flock "
-              "slot-files, like lanes) — so N concurrent runs share ONE cap per vendor, not N×8. PER-VENDOR override: "
-              "dispatch.vendor_concurrency_<vendor> (e.g. vendor_concurrency_openai=12) tunes each provider to its real "
-              "rate limit. Per-vendor requests/minute pacing is also available and OFF by default — set env "
-              "SPENDGUARD_DISPATCH_RPM_<VENDOR> (e.g. _MOONSHOT=60). SPENDGUARD_DISPATCH_XP_OFF=1 drops cross-process."),
+         env="SPENDGUARD_DISPATCH_VENDOR_CONCURRENCY", default=32, kind="int", secret=False,
+         desc="CEILING on concurrent metered calls to ONE vendor — the upper bound an adaptive (AIMD) connection window "
+              "grows toward. Concurrency is DISCOVERED per vendor: it starts at vendor_concurrency_floor, additively "
+              "climbs toward this ceiling on clean success ('push until 429'), and backs off on a 429/529 — so a tolerant "
+              "provider runs many in parallel while a touchy one self-throttles, with no single hardcoded cap. Enforced "
+              "BOTH in-process AND ACROSS processes (flock slot-files). PER-VENDOR override: dispatch.vendor_concurrency_"
+              "<vendor> (e.g. vendor_concurrency_openai=48 to let OpenAI go higher, or =1 to hard-cap a vendor at one). "
+              "Per-vendor RPM pacing is separate and OFF by default (env SPENDGUARD_DISPATCH_RPM_<VENDOR>). "
+              "SPENDGUARD_DISPATCH_XP_OFF=1 drops cross-process."),
+    dict(section="dispatch", key="vendor_concurrency_floor", store="config.json:dispatch.vendor_concurrency_floor",
+         env="SPENDGUARD_DISPATCH_VENDOR_CONCURRENCY_FLOOR", default=8, kind="int", secret=False,
+         desc="COLD-START concurrent metered calls to one vendor, before the adaptive window has learned anything — the "
+              "AIMD window grows INTO each vendor's real limit from here rather than cold-starting a whole wave at the "
+              "ceiling (which would 429-storm). Clamped to never exceed the vendor's ceiling, so an explicit low "
+              "vendor_concurrency_<vendor> wins. PER-VENDOR override: dispatch.vendor_concurrency_floor_<vendor>."),
     dict(section="dispatch", key="global_concurrency", store="config.json:dispatch.global_concurrency",
-         env="SPENDGUARD_DISPATCH_GLOBAL_CONCURRENCY", default=24, kind="int", secret=False,
+         env="SPENDGUARD_DISPATCH_GLOBAL_CONCURRENCY", default=128, kind="int", secret=False,
          desc="Machine-wide ceiling on in-flight LLM calls across ALL vendors/lanes — the last backstop against a "
-              "runaway fan-out. SPENDGUARD_DISPATCH_OFF=1 disables the governor entirely (every acquire a no-op). "
-              "Lane concurrency is also co-governed ACROSS processes via flock slot-files (two separate runs share "
-              "one subscription plan's budget); SPENDGUARD_DISPATCH_XP_OFF=1 disables just that cross-process layer."),
+              "runaway fan-out, set high enough that a multi-vendor fan is bounded by the per-vendor AIMD caps rather "
+              "than head-of-lined behind one busy vendor at this global slot. SPENDGUARD_DISPATCH_OFF=1 disables the "
+              "governor entirely (every acquire a no-op). Lane concurrency is also co-governed ACROSS processes via "
+              "flock slot-files; SPENDGUARD_DISPATCH_XP_OFF=1 disables just that cross-process layer."),
     dict(section="dispatch", key="lane_hedge_ms", store="config.json:dispatch.lane_hedge_ms",
          env="SPENDGUARD_DISPATCH_LANE_HEDGE_MS", default=0, kind="int", secret=False,
          desc="TAIL-HEDGING window in ms; 0 = OFF (the shipped default — hedging spends an extra $0 plan call, so it "

@@ -41,7 +41,7 @@ print = functools.partial(print, flush=True)             # unbuffered — a long
 
 MODEL = "claude-haiku-4-5"
 VENDOR = "anthropic"
-# varied: ceiling BELOW the governor's default vendor cap (8) so the window must LEARN+ratchet; varied burst + prompt size
+# varied: ceiling BELOW the governor's cold-start vendor floor (8) so the window must LEARN+ratchet; varied burst + prompt size
 _VARIETY = [(4, 40, 2000), (3, 60, 8000), (5, 50, 40000), (4, 80, 2000), (2, 30, 60000), (6, 100, 4000)]
 STORM_VARIETY_RUN_COUNT = len(_VARIETY)
 RUNS = int(os.environ.get("STORM_RUNS", str(STORM_VARIETY_RUN_COUNT)))
@@ -118,8 +118,8 @@ def _run_explicitly_collected_storm_matrix():
     run_ledger_write(lambda: None)
     gc.collect()
     cold_start_ledger_connections = config.ledger_connection_count()
-    print(f"== connection-storm reliability: {RUNS} cold-start runs (governor default vendor cap="
-          f"{dispatch.DEFAULT_VENDOR_CONCURRENCY}) ==")
+    print(f"== connection-storm reliability: {RUNS} cold-start runs (governor cold-start vendor floor="
+          f"{dispatch.DEFAULT_VENDOR_CONCURRENCY_FLOOR}) ==")
     for i in range(RUNS):
         # Each cold start owns a new executor. SQLite statement cycles can keep
         # expired workers' ledger handles alive until collection; reclaim them

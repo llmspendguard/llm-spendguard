@@ -4,6 +4,36 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 
 ## [Unreleased]
 
+## [0.16.41] — 2026-11-18
+
+A patch release. Makes per-vendor metered concurrency adaptive — discovered online instead of a flat cap — so a
+tolerant provider runs many calls in parallel while a touchy one still self-throttles, and a cross-provider fan is
+no longer head-of-lined behind one vendor.
+
+### dispatch — two-sided AIMD connection window (floor → grow → ceiling) per metered vendor
+- The per-vendor metered cap is now a **ceiling the window grows toward**, not a fixed limit. A vendor's connection
+  window starts at a cold-start **floor** (`dispatch.vendor_concurrency_floor`, default 8 = the prior flat cap, so
+  cold behaviour is unchanged), **additively grows** by one per `_GROW_WIN` toward its **ceiling**
+  (`dispatch.vendor_concurrency`, default raised 8 → 32; per-vendor `vendor_concurrency_<vendor>`), and
+  **multiplicatively backs off** on any 429/529. A vendor that never 429s now ramps into its real limit ("push until
+  429") instead of staying pinned at 8; a touchy vendor converges down exactly as before.
+- `_conn_admit` cold-admits only up to the floor (never unbounded), so a generous ceiling is safe — the window grows
+  *into* the limit rather than cold-starting a whole wave at the ceiling and 429-storming it.
+- The floor is clamped to never exceed the vendor's ceiling, so an explicit low cap (`vendor_concurrency_<v>=1`) still
+  hard-caps at one.
+- `dispatch.global_concurrency` default raised 24 → 128, so a multi-vendor fan is bounded by the per-vendor AIMD caps
+  rather than by the machine-wide slot (three vendors × 8 used to saturate 24 and head-of-line a healthy vendor).
+- New config key `dispatch.vendor_concurrency_floor` (+ per-vendor `_<vendor>`) declared in the config schema.
+- **Head-of-line fix:** the machine-wide global slot is now acquired **last**, after a call clears its own vendor's
+  gates — so a call parked waiting on a saturated vendor holds only that vendor's resources, never a global slot, and
+  can no longer starve calls to other healthy vendors out of the global ceiling. (Previously the global slot was taken
+  first; a backlog behind one busy vendor held N global slots.) The global ceiling still bounds total in-flight.
+- Proven offline: the connection-storm gate stays green (cold start still bounded to the floor, touchy vendors still
+  converge), a new gate (`test_adaptive_cross_provider_concurrency`) shows a tolerant vendor reaching live concurrency
+  of 16 (= its ceiling) under a 300-call burst with zero 429s, and `test_dispatch_head_of_line_fairness` proves a
+  saturated vendor's parked backlog no longer blocks a healthy vendor from a global slot (and fails under the old
+  global-first order).
+
 ## [0.16.40] — 2026-11-18
 
 A patch release. Makes the Grok subscription lane genuinely parallel and lean for one-shot completion work.
