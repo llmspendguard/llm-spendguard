@@ -53,9 +53,11 @@ grok_exec._bin = real_grok_bin
 grok_exec.subprocess.run = real_grok_subprocess_run
 grok_quirk = lane_registry.reasoning_quirk("grok")
 record_script_check(fails, "grok omitted effort uses the lane's low default",
-   grok_commands[0][-2:] == [grok_exec.GROK_REASONING_FLAG, "low"] and default_grok_result.get("error") is None)
+   grok_commands[0][grok_commands[0].index(grok_exec.GROK_REASONING_FLAG):][:2]
+   == [grok_exec.GROK_REASONING_FLAG, "low"] and default_grok_result.get("error") is None)
 record_script_check(fails, "grok explicit high effort reaches the CLI",
-   grok_commands[1][-2:] == [grok_exec.GROK_REASONING_FLAG, "high"] and high_grok_result.get("error") is None)
+   grok_commands[1][grok_commands[1].index(grok_exec.GROK_REASONING_FLAG):][:2]
+   == [grok_exec.GROK_REASONING_FLAG, "high"] and high_grok_result.get("error") is None)
 record_script_check(fails, "grok lane declares param reasoning with a low default",
    grok_quirk["style"] == "param" and grok_quirk["default"] == "low")
 record_script_check(fails, "grok documents its unsupported output-token cap",

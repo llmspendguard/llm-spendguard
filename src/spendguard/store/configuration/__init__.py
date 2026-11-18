@@ -41,6 +41,7 @@ install_domain_context_surface(globals(), {
     "external_cap": "spendguard.store.configuration.config:external_cap",
     "fresh_ledger_conn": "spendguard.store.configuration.config:fresh_ledger_conn",
     "git_root_project": "spendguard.store.configuration.config:git_root_project",
+    "grok_lane_concurrency": "spendguard.store.configuration.config:grok_lane_concurrency",
     "identity_path": "spendguard.store.configuration.config:identity_path",
     "intent_cap": "spendguard.store.configuration.config:intent_cap",
     "intent_cap_window_s": "spendguard.store.configuration.config:intent_cap_window_s",
