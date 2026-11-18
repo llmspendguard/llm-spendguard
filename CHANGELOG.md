@@ -4,6 +4,25 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 
 ## [Unreleased]
 
+## [0.16.38] — 2026-11-18
+
+A feature release. Adds one new $0 subscription reviewer lane; existing public CLI, programmatic API, and MCP
+surfaces are unchanged and remain at parity.
+
+### lanes — add grok (grok-4.7 / xai) as a $0 subscription reviewer lane
+- Wires **grok** into the subscription-lane surface alongside codex / gemini / kimi-code, driven by the authenticated
+  Grok CLI (`~/.grok/bin/grok`, provider/family `xai`). The SuperGrok proxy serves one-shot completions at **$0** on
+  the subscription. A new `grok_exec` lane executor mirrors the existing CLI-lane protocol (`_bin` via
+  `config.resolve_cli`, one headless `grok -p/-m` run on a neutral cwd, fail-closed model-alias lookup against the
+  CLI's `~/.grok/models_cache.json`, reader-wired UNKNOWN usage — the CLI exposes no quota endpoint, so the lane
+  stays non-blocking). `spendguard lanes --usage` surfaces `grok` as a ready lane once the CLI is authenticated.
+- Catalog carries `grok-4.5`, `grok-4.6`, and `grok-4.7` (provider `xai`), authored through the single catalog
+  gateway so the JSON source, rendered SQL, and SQLite floor stay in parity. The router can therefore prefer the
+  cheaper **4.5 / 4.6** over **4.7** for an intent when they are more cost-effective. A metered `api.x.ai` fallback
+  provider is registered for the non-subscription path.
+- Boundary, name-uniqueness, and per-interpreter complexity baselines updated for the new module; the shared CLI
+  search path gained `~/.grok/bin`. Woven into the data-driven lane-activation and probe tests.
+
 ## [0.16.37] — 2026-11-16
 
 A correctness patch release. One fix; the public CLI, programmatic API, and MCP surfaces are unchanged and remain
