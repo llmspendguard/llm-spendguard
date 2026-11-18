@@ -923,9 +923,13 @@ class Governor:
 
     def acquire(self, vendor, model, deadline_s, skip_lane=False, sla_class=None, est_tokens=0):
         """Admit one call. Returns seconds waited (0 when uncontended). Raises DispatchTimeout on deadline.
-        Order: global slot → per-key in-process slot → cross-process slot (lane keys AND metered vendor keys — a
-        per-provider cap shared across processes). release() unwinds all three; the held cross-process slot rides a
-        per-thread stack that release() pops (acquire and release run on the same fan_out worker thread).
+        Order: per-key in-process slot → cross-process slot (lane keys AND metered vendor keys — a per-provider cap
+        shared across processes) → metered connection window → GLOBAL slot LAST. The global machine-wide slot is taken
+        AFTER the per-vendor gates, so a call that blocks WAITING on its own vendor never holds a global slot — a
+        saturated vendor can no longer head-of-line calls to other, healthy vendors out of the global ceiling (it still
+        bounds total in-flight: a call that cleared its vendor gates waits for a global slot holding only its own
+        vendor's resources). release() unwinds each; the held cross-process slot rides a per-thread stack that
+        release() pops (acquire and release run on the same fan_out worker thread).
         `skip_lane=True` gates on the metered VENDOR key even for a lane vendor (a lane→metered shed); the paired
         release() MUST pass the same skip_lane so it frees the same bucket. `sla_class="batch"` gates on the batch
         SUB-limit of the per-key bucket (when a realtime reserve is configured for that key), so a batch fan can't
@@ -945,11 +949,7 @@ class Governor:
                 raise DispatchTimeout(f"'{vendor}' cooling {_cl:.0f}s after a 429 (Retry-After) — deadline "
                                       f"{float(deadline_s):.0f}s exhausted")
             time.sleep(_cl)
-        g = self._global_sem()
-        if not g.acquire(timeout=max(0.0, float(deadline_s) - (time.monotonic() - t0))):
-            raise DispatchTimeout(f"machine-wide dispatch ceiling ({_limit('global_concurrency', DEFAULT_GLOBAL_CONCURRENCY)}) "
-                                  f"full — deadline {float(deadline_s):.0f}s exhausted")
-        got_bucket, xp = False, None
+        key, got_bucket, xp, conn_admitted, g, g_acquired = None, False, None, False, None, False
         try:
             key, limit, _rpm, _is_lane = self._key_and_limit(vendor, model, skip_lane=skip_lane)
             _b = self._bucket(vendor, model, skip_lane=skip_lane)
@@ -977,14 +977,27 @@ class Governor:
             if not _is_lane:                         # DYNAMIC CONNECTION WINDOW (metered only; lanes don't hit a
                 # concurrent-CONNECTION 429): WAIT until in-flight connections are under the LIVE learned cap, so a
                 # ratchet throttles HERE with no semaphore rebuild (no orphaned holders). On timeout it raises and the
-                # except below unwinds the bucket/global/xp already taken; nothing was counted here, so there is no leak.
+                # except below unwinds the bucket/xp/conn already taken; _conn_admit counts ONLY on success, so a
+                # timeout here leaves conn_admitted False and nothing to un-count.
                 self._conn_admit(key, vendor, float(deadline_s) - (time.monotonic() - t0))
+                conn_admitted = True
+            # GLOBAL slot LAST — a machine-wide backstop taken only once this call has cleared its own vendor's gates,
+            # so a call blocked above (saturated vendor) never holds a global slot and never head-of-lines another
+            # vendor. The ceiling still bounds total in-flight: a call that cleared its gates waits HERE for a slot.
+            g = self._global_sem()
+            if not g.acquire(timeout=max(0.0, float(deadline_s) - (time.monotonic() - t0))):
+                raise DispatchTimeout(f"machine-wide dispatch ceiling ({_limit('global_concurrency', DEFAULT_GLOBAL_CONCURRENCY)}) "
+                                      f"full — deadline {float(deadline_s):.0f}s exhausted")
+            g_acquired = True
         except BaseException:                        # unwind anything already taken, in reverse, then re-raise
+            if g_acquired:
+                g.release()
+            if conn_admitted:
+                self._conn_release(key)
             if xp is not None:
                 xp.release()
             if got_bucket:
                 self._bucket(vendor, model, skip_lane=skip_lane).release(sla_class=sla_class)
-            g.release()
             raise
         _held().append(xp)
         return time.monotonic() - t0

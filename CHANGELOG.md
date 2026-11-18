@@ -24,9 +24,15 @@ no longer head-of-lined behind one vendor.
 - `dispatch.global_concurrency` default raised 24 → 128, so a multi-vendor fan is bounded by the per-vendor AIMD caps
   rather than by the machine-wide slot (three vendors × 8 used to saturate 24 and head-of-line a healthy vendor).
 - New config key `dispatch.vendor_concurrency_floor` (+ per-vendor `_<vendor>`) declared in the config schema.
+- **Head-of-line fix:** the machine-wide global slot is now acquired **last**, after a call clears its own vendor's
+  gates — so a call parked waiting on a saturated vendor holds only that vendor's resources, never a global slot, and
+  can no longer starve calls to other healthy vendors out of the global ceiling. (Previously the global slot was taken
+  first; a backlog behind one busy vendor held N global slots.) The global ceiling still bounds total in-flight.
 - Proven offline: the connection-storm gate stays green (cold start still bounded to the floor, touchy vendors still
-  converge), and a new gate (`test_adaptive_cross_provider_concurrency`) shows a tolerant vendor reaching live
-  concurrency of 16 (= its ceiling) under a 300-call burst with zero 429s.
+  converge), a new gate (`test_adaptive_cross_provider_concurrency`) shows a tolerant vendor reaching live concurrency
+  of 16 (= its ceiling) under a 300-call burst with zero 429s, and `test_dispatch_head_of_line_fairness` proves a
+  saturated vendor's parked backlog no longer blocks a healthy vendor from a global slot (and fails under the old
+  global-first order).
 
 ## [0.16.40] — 2026-11-18
 
