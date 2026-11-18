@@ -11,7 +11,7 @@ if not os.environ.get("SPENDGUARD_TEST_ISOLATED"):
 
 from pathlib import Path
 from _script_checks import record_script_check
-from spendguard import lanes, subscription_exec, codex_exec, antigravity_exec, zai_exec, kimi_exec
+from spendguard import lanes, subscription_exec, codex_exec, antigravity_exec, zai_exec, kimi_exec, grok_exec
 from spendguard import lane_registry   # the ONE lane data table (a submodule import, like lane_catalog elsewhere)
 
 fails = []
@@ -24,10 +24,12 @@ _CLAUDE = tmp / "claude-creds.json"
 _CODEX = tmp / "codex-auth.json"
 _GEMINI = tmp / "gemini-creds.json"
 _KIMI = tmp / "kimi-creds"
+_GROK = tmp / "grok-creds.json"
 lane_registry.lane_spec("claude-code")["creds"] = (_CLAUDE,)
 lane_registry.lane_spec("codex")["creds"] = (_CODEX,)
 lane_registry.lane_spec("gemini")["creds"] = (tmp / "antigravity-oauth-token", _GEMINI)   # BOTH agy artifacts controlled
 lane_registry.lane_spec("kimi-code")["creds"] = (_KIMI,)
+lane_registry.lane_spec("grok")["creds"] = (_GROK,)   # grok cache file IS present on this dev host → repoint to temp
 
 print("-- executor=api: nothing enabled, summary stays silent --")
 os.environ["SPENDGUARD_ADVISOR_EXECUTOR"] = "api"
@@ -40,6 +42,7 @@ subscription_exec._bin = lambda: None
 codex_exec._bin = lambda: None
 antigravity_exec._bin = lambda: None
 kimi_exec._bin = lambda: None                       # kimi CLI is installed on this dev host → stub it missing here
+grok_exec._bin = lambda: None                       # grok CLI is installed on this dev host → stub it missing here
 zai_exec._key = lambda: None                        # key-based lane: no key → unconfigured
 s = lanes.lanes_status()
 byln = {ln["lane"]: ln for ln in s["lanes"]}
@@ -55,6 +58,7 @@ subscription_exec._bin = lambda: "/fake/claude"
 codex_exec._bin = lambda: "/fake/codex"
 antigravity_exec._bin = lambda: "/fake/agy"
 kimi_exec._bin = lambda: "/fake/kimi"
+grok_exec._bin = lambda: "/fake/grok"
 zai_exec._key = lambda: None                                        # key-based lane still unconfigured here
 lane_registry.lane_spec("claude-code")["keychain"] = "spendguard-test-no-such-service"   # keychain lookup must MISS
 s = {ln["lane"]: ln for ln in lanes.lanes_status()["lanes"]}
@@ -72,6 +76,7 @@ _CODEX.write_text("{}")
 _CLAUDE.write_text("{}")
 _GEMINI.write_text("{}")
 _KIMI.write_text("{}")                                             # kimi login artifact now present
+_GROK.write_text("{}")                                             # grok login artifact now present
 zai_exec._key = lambda: "zai-test-key"                              # the plan key now resolves — the ONLY change for zai
 s = {ln["lane"]: ln for ln in lanes.lanes_status()["lanes"]}
 record_script_check(fails, "auth artifacts present → all lanes ok, no activation steps",
@@ -102,6 +107,7 @@ codex_exec.run_prompt = lambda p, system=None, model=None, timeout=None: {"error
 antigravity_exec.run_prompt = lambda p, system=None, model=None, timeout=None: {"error": "no agy in test"}
 zai_exec.run_prompt = lambda p, system=None, model=None, timeout=None: {"text": "OK", "in_tok": 3, "out_tok": 1, "latency": 0.4, "error": None}
 kimi_exec.run_prompt = lambda p, system=None, model=None, timeout=None, reasoning=None, max_tokens=None: {"text": "OK", "in_tok": 4, "out_tok": 1, "latency": 0.5, "error": None}
+grok_exec.run_prompt = lambda p, system=None, model=None, timeout=None, reasoning=None, max_tokens=None: {"text": "OK", "in_tok": 4, "out_tok": 1, "latency": 0.5, "error": None}
 res = {r["lane"]: r for r in lanes.probe()}
 record_script_check(fails, "live lane reports ok", res["claude-code"]["ok"] and res["claude-code"]["text"] == "OK")
 record_script_check(fails, "probe pins an explicit cheap tier (immune to a stale CLI default model)",

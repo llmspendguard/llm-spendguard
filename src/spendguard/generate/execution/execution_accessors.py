@@ -48,6 +48,7 @@ PROVIDERS = {
     "zai": {"base_url": "https://api.z.ai/api/paas/v4", "key_env": "ZAI_API_KEY", "prefixes": ("glm-",), "kind": "openai", "sdk_import": "zhipuai"},
     "voyage": {"base_url": "https://api.voyageai.com/v1", "key_env": "VOYAGE_API_KEY", "prefixes": ("voyage-",), "kind": "openai", "batch": False},
     "moonshot": {"base_url": "https://api.moonshot.ai/v1", "key_env": "MOONSHOT_API_KEY", "prefixes": ("kimi", "moonshot-"), "kind": "openai"},
+    "xai": {"base_url": "https://api.x.ai/v1", "key_env": "XAI_API_KEY", "prefixes": ("grok-",), "kind": "openai"},
 }
 
 CODEX_APP_SERVER_RATE_LIMITS_METHOD = "account/rateLimits/read"

@@ -6,7 +6,7 @@ from pathlib import Path
 # with a minimal PATH that misses ~/.local/bin and nvm's versioned bins — the subscription lanes must still
 # find the plan CLIs there). Globs allowed; newest executable wins.
 _CLI_SEARCH_DIRS = ("~/.claude/local", "~/.local/bin", "/usr/local/bin", "/opt/homebrew/bin",
-                    "~/.nvm/versions/node/*/bin", "~/.kimi-code/bin")   # Kimi Code CLI installs its own bin dir
+                    "~/.nvm/versions/node/*/bin", "~/.kimi-code/bin", "~/.grok/bin")
 
 
 def resolve_cli(name, env_var=None):
