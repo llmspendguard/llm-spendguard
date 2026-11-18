@@ -33,6 +33,19 @@ HOT_RATIO_DEFAULT = 1.5
 ROUTE_EST_IN_DEFAULT = 2000
 ROUTE_EST_OUT_DEFAULT = 500
 
+
+def resolve_bulk_output_token_estimate(intent, out_est=None):
+    """Return one output-token estimate for a workload, independent of the model used to price it."""
+    import spendguard.manage.admission.admission_accessors as bulkgate
+
+    measured = bulkgate.resolve_maxtokens(intent)
+    if measured.get("p99"):
+        return int(measured["p99"]), f"measured p99 (n={measured.get('n')})"
+    if out_est is not None:
+        return int(out_est), "caller out_est"
+    configured = config._cfg_get("advisor", "route_est_out", None)
+    return int(configured or ROUTE_EST_OUT_DEFAULT), "config nominal (no measured p99 yet)"
+
 # A lane task can spend one deadline waiting for a dispatch slot and another deadline in the provider call. The fan
 # allows another quarter of that composed bound for thread scheduling and result hand-off; this margin is deliberately
 # outside the provider budget, so a call completing at its own deadline is not falsely timed out.
@@ -1416,9 +1429,7 @@ def estimate_fan(tasks, intent, system=None, lanes=None, tier=None, out_est=None
         else `out_est`, else a config nominal — `out_basis` says which so the estimate is auditable.
     Mirrors crossllm's "budget_usd is None → estimate only, never spends" pattern for the lane fan."""
     import hashlib as _hl
-    from ... import lane_economics, pricing, config, provider_tokens
-    import spendguard.manage.admission.admission_accessors as bulkgate
-
+    from ... import lane_economics, pricing, provider_tokens
     tasks = list(tasks)
     n_tasks = len(tasks)
     # DISTINCT calls: identical (system+task+intent) collapse to one content key — the same identity bulk_delegate's
@@ -1456,14 +1467,7 @@ def estimate_fan(tasks, intent, system=None, lanes=None, tier=None, out_est=None
 
     # OUTPUT tokens — the intent's MEASURED p99 (never a literal nobody picked); fall back to a caller value, then a
     # config nominal, recording which basis was used so the ceiling is auditable.
-    mt = bulkgate.resolve_maxtokens(intent)
-    if mt.get("p99"):
-        out_tok, out_basis = int(mt["p99"]), f"measured p99 (n={mt.get('n')})"
-    elif out_est:
-        out_tok, out_basis = int(out_est), "caller out_est"
-    else:
-        out_tok = int(config._cfg_get("advisor", "route_est_out", None) or ROUTE_EST_OUT_DEFAULT)
-        out_basis = "config nominal (no measured p99 yet)"
+    out_tok, out_basis = resolve_bulk_output_token_estimate(intent, out_est=out_est)
 
     # WORST-CASE metered ceiling: each DISTINCT task priced at its round-robin arm's model on the paid API. Input
     # tokens are exact from the actual task+system text; unpriced models contribute $0 and are surfaced, never hidden.

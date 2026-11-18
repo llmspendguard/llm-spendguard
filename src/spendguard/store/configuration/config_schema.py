@@ -152,11 +152,11 @@ SETTINGS = [
          desc="Raw-HTTP visibility net: parse usage from httpx/requests calls made straight at provider hosts "
               "(no SDK) into the realtime ledger; unparseable provider responses log a loud unmetered event. "
               "Capture-only (never blocks); SDK calls are suppressed (no double count)."),
-    dict(section="gate", key="enforce", store="config.json:gate.enforce", env="SPENDGUARD_ENFORCE", default="warn",
+    dict(section="gate", key="enforce", store="config.json:gate.enforce", env="SPENDGUARD_ENFORCE", default="block",
          kind="enum:off,warn,block", secret=False,
          desc="Lifecycle enforcement for batches over the size threshold (the estimate → test → eval → run sequence): "
-              "off = no requirement; warn = log a 'would-block' when a batch runs without a fresh estimate+test+eval "
-              "(default); block = hard-require the fresh estimate → test → eval before the batch runs."),
+              "block (default) = hard-require the fresh estimate → test → eval before the batch runs; off and warn "
+              "are explicit opt-outs, with warn logging a 'would-block'."),
     dict(section="gate", key="require_eval", store="config.json:gate.require_eval", env="SPENDGUARD_REQUIRE_EVAL",
          default=True, kind="bool", secret=False,
          desc="Does a gated scale run also require a fresh PASSING eval (a STATED bar + an AGENTIC verdict on the test "

@@ -81,6 +81,12 @@ os.environ["SPENDGUARD_ENFORCE"] = "off"
 record_script_check(fails, "off mode: enforcement disabled", bulkgate.check_bulk(sig_h, HAIKU, 5000, 8.0) == "allow:off")
 os.environ["SPENDGUARD_ENFORCE"] = "block"
 
+# Default is enforcement; only an explicit mode/force override may admit an unprepared bulk burst.
+os.environ.pop("SPENDGUARD_ENFORCE", None)
+record_script_check(fails, "default mode blocks unprepared bulk", raised(
+    lambda: bulkgate.check_bulk(sig_h, HAIKU, 5000, 8.0)))
+os.environ["SPENDGUARD_ENFORCE"] = "block"
+
 # ── 10. gated_batch enforces the order (can't run before estimate+test) ──
 ran = {"submitted": False}
 with bulkgate.gated_batch(sig_n := bulkgate.sig("opus", template_id="flow", template_version="v1", schema_name="s"), "opus") as job:
