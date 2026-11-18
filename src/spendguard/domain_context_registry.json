@@ -91,6 +91,7 @@
         "external_cap",
         "fresh_ledger_conn",
         "git_root_project",
+        "grok_lane_concurrency",
         "identity_path",
         "intent_cap",
         "intent_cap_window_s",

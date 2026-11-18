@@ -35,7 +35,7 @@ SHARD_GUARD_WORKFLOW_FIELDS = (
     ("test", "strategy", "matrix", "python-version"),
     ("coverage", "strategy", "matrix", "python-version"),
 )
-SHARD_GUARD_VERSIONS = ["3.11", "3.12"]
+SHARD_GUARD_VERSIONS = ["3.11"]
 SHARD_GUARD_VERSION_JOBS = ("test", "coverage")
 SHARD_GUARD_SHARD_MATRIX = '${{ fromJSON(needs.gate-plan.outputs.shards) }}'
 SHARD_GUARD_SHARD_INDEX = '${{ matrix.shard-index }}'

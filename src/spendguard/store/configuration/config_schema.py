@@ -628,6 +628,11 @@ SETTINGS = [
               "openai on codex, all zai on the GLM plan). A lane is a heavy subprocess (CLI cold-start + context "
               "injection); a small pool beats a swarm and avoids the plan's own concurrency throttle. The dispatch "
               "governor (dispatch.py) queues overflow instead of firing it; a 4-vendor panel touches no limit."),
+    dict(section="dispatch", key="lane_concurrency_grok", store="config.json:dispatch.lane_concurrency_grok",
+         env=config.GROK_LANE_CONCURRENCY_ENV, default=config.GROK_LANE_CONCURRENCY_FLOOR,
+         kind="int", secret=False,
+         desc="Shared Grok admission and warm-leader pool capacity. Values below the measured concurrency floor "
+              "are raised to that floor so admission never throttles the executor pool."),
     dict(section="dispatch", key="vendor_concurrency", store="config.json:dispatch.vendor_concurrency",
          env="SPENDGUARD_DISPATCH_VENDOR_CONCURRENCY", default=8, kind="int", secret=False,
          desc="Max concurrent metered calls to ONE vendor, so a large cross-LLM fan-out (or a pinned-vendor matrix) "
