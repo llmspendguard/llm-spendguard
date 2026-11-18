@@ -2248,6 +2248,11 @@
           {
             "operation": "add_argument",
             "owner": "ap",
+            "declaration_id": "comprehend/comprehend.cmd/ap/--lanes-or-default"
+          },
+          {
+            "operation": "add_argument",
+            "owner": "ap",
             "declaration_id": "comprehend/comprehend.cmd/ap/--items"
           },
           {

@@ -1840,6 +1840,24 @@
     "evidence": "src/spendguard/manage/token_operations/comprehend.py:215"
   },
   {
+    "declaration_id": "comprehend/comprehend.cmd/ap/--lanes-or-default",
+    "commands": [
+      "comprehend"
+    ],
+    "names": [
+      "--lanes-or-default"
+    ],
+    "attributes": {
+      "action": {
+        "literal": "store_true"
+      },
+      "help": {
+        "literal": "opt in to default lanes when explicit --lanes have no declared advisor.lane_models arm"
+      }
+    },
+    "evidence": "src/spendguard/manage/token_operations/comprehend.py"
+  },
+  {
     "declaration_id": "comprehend/comprehend.cmd/ap/--max-chars",
     "commands": [
       "comprehend"

@@ -478,7 +478,8 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None,
                   model_for=None, prompt_for=None, task_key=None, return_keyed=False,
                   on_miss=None, batch_submit=None, batch_model=None, batch_cap=None,
                   hedge_ms=None, strategy=None, metered_only=False, sla_class=None, record_route=True,
-                  budget_usd=None, auth_over_quota=False, executor=None):
+                  budget_usd=None, auth_over_quota=False, executor=None, lanes_or_default=False,
+                  pinned_model=None, settled_result_callback=None):
     """Fan a LIST of similar tasks across ALL viable idle lanes CONCURRENTLY — the right shape for a BULK job (e.g.
     symgrep's ~6k one-sentence symbol descriptions) that the per-call bandit would trickle one at a time. Each task
     runs on a lane (round-robin across the lanes the bandit rates GOOD for this intent), each admission BOUNDED by
@@ -772,7 +773,7 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None,
                     for _ in tasks])
     else:
         arms = _bulk_arms(intent, lanes=lanes)
-        if not arms and lanes:
+        if not arms and lanes and lanes_or_default:
             # CONFINED-LANE DEAD-END GUARD: the caller confined to lanes= that yield NO viable arm right now — a fresh
             # intent the bandit has not rated yet, or confined lanes with no advisor.lane_models entry — which would
             # otherwise return ONE EMPTY ROW PER TASK and do no work (measured: 766 tasks came back empty, no
@@ -788,8 +789,26 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None,
                              f"returning empty. Declare models on the confined lanes to keep the confinement.")
                 arms = _wide
         if not arms:
+            _missing = (f"confined lane(s) ({', '.join(lanes)}) have no declared advisor.lane_models arm"
+                        if lanes else "no viable lane (set advisor.lane_models; check `spendguard lanes`)")
             return _finalize([{"text": None, "lane": None, "use_name": None, "billed": False, "reason": "no_viable_lane",
-                     "error": "no viable lane (set advisor.lane_models; check `spendguard lanes`)"} for _ in tasks])
+                     "error": _missing} for _ in tasks])
+
+        if pinned_model:
+            _pinned_provider, _pinned_raw = ((pinned_model.split(":", 1) + [None])[:2]
+                                             if ":" in pinned_model else (None, pinned_model))
+            _matching_arms = [arm for arm in arms
+                              if arm[1] == _pinned_raw and
+                              (_pinned_provider is None or
+                               _reference_data_accessors.resolve_lane_provider(arm[0]) == _pinned_provider)]
+            if not _matching_arms:
+                _eligible = ", ".join(f"{lane}:{model}" for lane, model in arms)
+                _pin_error = (f"pinned model {pinned_model!r} cannot be served by the eligible lane arms "
+                              f"({_eligible}); refusing rather than substituting a different model")
+                return _finalize([{"text": None, "lane": None, "use_name": None, "model": pinned_model,
+                                   "billed": False, "reason": "pinned_model_unavailable", "error": _pin_error}
+                                  for _ in tasks])
+            arms = _matching_arms
 
     if not _vision and not _pinned:                      # arms is None for both — the reserved/tier guard is lane-only
         # RESERVED-LANE GUARD — the SAME reservation idle_lanes() and route_decision() already honor, applied here
@@ -1095,7 +1114,11 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None,
                               _route=record_route)                               # this fan IS a queue row when drain/submit
             #                                                                      set record_route=False → don't re-record
             # (receipt suppressed via set_context above, not the context manager)  each reply feeds that measurement
-        except _STOP_TYPES:
+        except _STOP_TYPES as e:
+            from spendguard.manage.admission.spend_refusal_error import MeteredCallRefused
+            if no_fallback and isinstance(e, MeteredCallRefused):
+                return i, {"text": None, "lane": lane, "use_name": use_name, "model": model, "billed": False,
+                           "reason": "lane_miss", "error": str(e)}
             raise                                            # a deliberate stop (refusal / deadline) propagates — it is
             #                                                  NOT downgraded to a textless row (_execution_accessors.resolve_call is not
             #                                                  supposed to raise these, but if one escapes, halt not hide)
@@ -1232,6 +1255,14 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None,
         if _vision or _pinned:                         # VISION or a PINNED per-task-model matrix (text) → the governed,
             return _run_task_on_api(i, task)           # no-substitution metered runner; hedging/bandit are lane-only
         lane, use_name = _pick_arm(i)                  # DYNAMIC least-loaded (or static under SPENDGUARD_LANE_STATIC_DISPATCH)
+        if refuse_billed:
+            _ordered_arms = [(lane, use_name)] + [arm for arm in arms if arm != (lane, use_name)]
+            _last_free_miss = None
+            for _free_lane, _free_model in _ordered_arms:
+                _last_free_miss = _attempt_on_lane(i, task, _free_lane, _free_model, True)
+                if (_last_free_miss[1] or {}).get("text"):
+                    return _last_free_miss
+            return _last_free_miss
         if _hedge_ms <= 0 or len(arms) < 2:            # hedging off, or only one lane → the plain single attempt (unchanged path)
             return _attempt_on_lane(i, task, lane, use_name, refuse_billed)
         return _hedged_attempt(i, task, lane, use_name)
@@ -1255,6 +1286,7 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None,
             _fan_ceiling_s = _bulk_fan_coordinator_bound_s(deadline_s, len(chunk), _fan_worker_count)
             ex = _cf.ThreadPoolExecutor(max_workers=_fan_worker_count)
             _fan_timed_out = False
+            _fan_deliberate_stop = None
             _fut_idx = {ex.submit(_run_task_on_lane, i, tasks[i]): i for i in chunk}
 
             def _settle_fan_future(fut, future_indices=_fut_idx):
@@ -1273,6 +1305,8 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None,
                 results[i] = res
                 _spent += float(res.get("cost") or 0.0)      # ACTUAL cost drives the cap — never an estimate
                 _checkpoint(i, res)
+                if settled_result_callback is not None:
+                    settled_result_callback(i, res)
 
             def _settle_fan_deadline_futures(future_indices, ceiling_s, settle_future):
                 # Preserve a result that crossed the deadline concurrently; only genuinely unfinished tasks become
@@ -1291,7 +1325,11 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None,
 
             try:
                 for fut in _cf.as_completed(_fut_idx, timeout=_fan_ceiling_s):
-                    _settle_fan_future(fut)
+                    try:
+                        _settle_fan_future(fut)
+                    except _STOP_TYPES as _deliberate_stop:
+                        if _fan_deliberate_stop is None:
+                            _fan_deliberate_stop = _deliberate_stop
             except _cf.TimeoutError:
                 _fan_timed_out = True
                 _settle_fan_deadline_futures(_fut_idx, _fan_ceiling_s, _settle_fan_future)
@@ -1299,6 +1337,8 @@ def bulk_delegate(tasks, intent, system=None, reasoning=None, max_workers=None,
                 # Normal chunks still drain completely. A timed-out chunk never joins a wedged worker; Python cannot
                 # preempt it, and admitted calls remain uncancelled so any eventual billing is recorded by the ledger.
                 ex.shutdown(wait=not _fan_timed_out)
+            if _fan_deliberate_stop is not None:
+                raise _fan_deliberate_stop
     if _stopped_at is not None:                              # everything from the stop point on was NEVER issued
         import sys as _sysbd
         _left = todo[_stopped_at:]
