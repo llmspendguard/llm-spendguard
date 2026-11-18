@@ -53,7 +53,7 @@ try:
                 by["zai-coding"]["state"] == "idle" and by["zai-coding"]["est_value_month"] == 0.0)
     fails += ck("utilization = est-value / fee", abs(by["claude-code"]["utilization"] - 900.0 / _fee) < 0.001)
     fails += ck("per-lane fee is the even split, flagged NOT exact (no lane_plans map set)",
-                abs(by["claude-code"]["plan_fee"] - _fee) < 0.001 and by["claude-code"]["fee_exact"] is False)
+                abs(by["claude-code"]["plan_fee"] - round(_fee, 2)) < 0.001 and by["claude-code"]["fee_exact"] is False)
 
     print("\n-- the router's inputs: shed-from and absorb-into, least-utilised first --")
     fails += ck("hot_lanes() = [claude-code]", lane_balance.hot_lanes() == ["claude-code"])

@@ -350,7 +350,7 @@
       "why": "The base-called hook returning the env marker merged into every warm app-server spawn (and thereby inherited by all its descendants); base _WarmStdioJsonRpcDaemon._lease_marker_env returns {} (no marker), _CodexDaemon._lease_marker_env returns {CODEX_LEASE_ACTIVE_ENV: '1'} so a codex request nested inside an active lease detects the marker and diverts to a tracked cold codex exec instead of taking a second pool lease (the wedge fix). Same contract, per-provider body, exactly like the _extra_waiters_to_fail / _route_notification / _spawn_cmd / _on_response hook overrides. [PROTOCOL, codex warm-daemon wedge fix Stage B, 2026-10-28.]"
     },
     "_bin": {
-      "n": 4,
+      "n": 5,
       "verdict": "PROTOCOL",
       "why": "Each CLI-backed lane implements the same host-binary resolver contract, while lanes_status dispatches generically via hasattr(mod, \"_bin\") and mod._bin(); each implementation intentionally resolves its own CLI."
     },
@@ -455,7 +455,7 @@
       "why": "Each lane executor implements the same auth-status contract: accept a timeout, query that backend's CLI on the plan-login env (subscription_exec reads the `claude auth status` JSON `loggedIn` bool; codex_exec reads the `codex login status` exit code), never raise, and return {authed: True|False|None}. Dispatched by name via lanes.lane_auth_status (getattr(mod, 'auth_status')); the differing command invocations/parsing are necessary adapter implementations, not duplicate or unrelated jobs. Adjudicated PROTOCOL by honestreview name src/spendguard --run, 2026-09-26."
     },
     "available": {
-      "n": 5,
+      "n": 6,
       "verdict": "PROTOCOL",
       "why": "Each executor exposes a uniform readiness probe returning bool: CLI lanes test their lane-specific _bin(), while zai_exec tests its plan key. Callers can invoke available() interchangeably despite differing resources."
     },
@@ -540,7 +540,7 @@
       "why": "Both are per-command view renderers: scan.render turns scan data into text lines, sources.render turns discovery data into text lines. Same 'format command output' contract, different inputs/outputs, "
     },
     "run_prompt": {
-      "n": 5,
+      "n": 6,
       "verdict": "PROTOCOL",
       "why": "All lane modules expose the same prompt-call signature and compatible result shape, and lanes.probe dispatches polymorphically with mod.run_prompt(...). Bodies differ appropriately by backend while preserving the shared lane contract. PR0 adjudication covers only the following exact dispatched-contract pairs, including recorded shortened identities; it does not permit unrelated members sharing the bare name. n retains the planned source-definition baseline (or the planned repository count when no source definition exists); test/script pairs do not expand source coverage. [Verdict 35: tests/test_lane_metered_fallback_separation.py:run_prompt <-> tests/test_lane_receives_budget.py:run_prompt] Lane executor run_prompt protocol These are dynamically supplied lane executors implementing the uniform run_prompt contract consumed by adapter CLI dispatch. The empty-lane fixture deliberately returns empty text while the budget fixture captures max_tokens and returns valid text, usage and latency. Their distinct outcomes validate routing and budget propagation; sharing implementations would invalidate those scenarios. Evidence: tests/test_lane_metered_fallback_separation.py:46; tests/test_lane_receives_budget.py:43; src/spendguard/adapters.py:2521."
     },
@@ -585,7 +585,7 @@
       "why": "Kimi and Z.ai executor usage_report() implementations expose the same zero-argument optional lane-headroom report contract: buckets, source, reason, n, window and uncertainty. Both delegate to subscription_headroom_surfaces.read_subscription_headroom_report with their lane identity. lanes.lane_headroom dispatches this member by name before the legacy usage() fallback. Provider-specific configured surfaces differ, but the dispatched signature and report semantics are uniform. This verdict covers only src/spendguard/kimi_exec.py:usage_report and src/spendguard/zai_exec.py:usage_report."
     },
     "usage": {
-      "n": 5,
+      "n": 6,
       "verdict": "PROTOCOL",
       "why": "Each usage() is a per-lane implementation of the same lane-quota contract (return buckets [{bucket, remaining_pct, reset_ts}] or None). Antigravity/codex/subscription parse provider surfaces through lane_quota.cached_usage; Kimi/Z.ai delegate to their uniform usage_report() readers and return its buckets. Intentional polymorphism consumed by lanes.lane_headroom() as the fallback when usage_report is absent. None establishes only that this read supplied no data, not that the provider has no quota surface. [Original protocol adjudicated by honestreview name --run, 2026-08-27; Kimi/Z.ai protocol implementations reviewed 2026-10-05; report-backed delegation updated in the lane-headroom fix.]"
     },

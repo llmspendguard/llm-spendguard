@@ -347,6 +347,7 @@
         "generate.execution.embeddings",
         "generate.execution.execution_accessors",
         "generate.execution.execution_resolver_bootstrap",
+        "generate.execution.grok_exec",
         "generate.execution.kimi_exec",
         "generate.execution.lane_health",
         "generate.execution.openai_batch_cli",
@@ -1295,6 +1296,11 @@
     {
       "legacy_module": "spendguard.antigravity_exec",
       "current_module": "spendguard.generate.execution.antigravity_exec",
+      "moved_in_phase": 3
+    },
+    {
+      "legacy_module": "spendguard.grok_exec",
+      "current_module": "spendguard.generate.execution.grok_exec",
       "moved_in_phase": 3
     },
     {

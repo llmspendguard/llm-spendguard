@@ -3083,6 +3083,159 @@
         "tool_choice": true,
         "mode": "chat"
       }
+    },
+    "grok-4.5": {
+      "id": "grok-4.5",
+      "provider": "xai",
+      "aliases": [
+        "grok 4.5"
+      ],
+      "retired_alias_of": null,
+      "metered_id": "grok-4.5",
+      "lane_spellings": {
+        "grok": [
+          "grok-4.5"
+        ]
+      },
+      "price": {
+        "in_": 2.0,
+        "out": 6.0,
+        "cached_in": 0.3,
+        "batch_in": 1.0,
+        "batch_out": 3.0,
+        "batch_cached_in": 0.15,
+        "source": "https://docs.x.ai/developers/pricing",
+        "verified": "2026-11-17"
+      },
+      "price_error": null,
+      "context_window": {
+        "value": 500000,
+        "source": "https://docs.x.ai/developers/pricing",
+        "verified": "2026-11-17"
+      },
+      "output_ceiling": {
+        "value": null,
+        "source": "https://docs.x.ai/developers/pricing"
+      },
+      "reasoning": {
+        "floor": "high",
+        "effort_ok": true,
+        "reasoning_floor": null,
+        "reasons_by_default": true,
+        "tokens_param": "max_tokens",
+        "style": "param"
+      },
+      "provider_base": false,
+      "as_of": "2026-11-17",
+      "vision": true,
+      "capabilities": {
+        "mode": "chat",
+        "function_calling": true,
+        "response_schema": true,
+        "output_ceiling_exempt_reason": "xAI publishes no text output limit for this family."
+      }
+    },
+    "grok-4.6": {
+      "id": "grok-4.6",
+      "provider": "xai",
+      "aliases": [
+        "grok 4.6"
+      ],
+      "retired_alias_of": null,
+      "metered_id": "grok-4.6",
+      "lane_spellings": {
+        "grok": [
+          "grok-4.6"
+        ]
+      },
+      "price": {
+        "in_": 2.0,
+        "out": 6.0,
+        "cached_in": 0.5,
+        "batch_in": 1.0,
+        "batch_out": 3.0,
+        "batch_cached_in": 0.25,
+        "source": "https://docs.x.ai/developers/pricing",
+        "verified": "2026-11-17"
+      },
+      "price_error": null,
+      "context_window": {
+        "value": 500000,
+        "source": "https://docs.x.ai/developers/pricing",
+        "verified": "2026-11-17"
+      },
+      "output_ceiling": {
+        "value": null,
+        "source": "https://docs.x.ai/developers/pricing"
+      },
+      "reasoning": {
+        "floor": "high",
+        "effort_ok": true,
+        "reasoning_floor": null,
+        "reasons_by_default": true,
+        "tokens_param": "max_tokens",
+        "style": "param"
+      },
+      "provider_base": false,
+      "as_of": "2026-11-17",
+      "vision": true,
+      "capabilities": {
+        "mode": "chat",
+        "function_calling": true,
+        "response_schema": true,
+        "output_ceiling_exempt_reason": "xAI publishes no text output limit for this family."
+      }
+    },
+    "grok-4.7": {
+      "id": "grok-4.7",
+      "provider": "xai",
+      "aliases": [
+        "grok 4.7"
+      ],
+      "retired_alias_of": null,
+      "metered_id": "grok-4.7",
+      "lane_spellings": {
+        "grok": [
+          "grok-4.7"
+        ]
+      },
+      "price": {
+        "in_": 2.0,
+        "out": 6.0,
+        "cached_in": 0.5,
+        "batch_in": 1.0,
+        "batch_out": 3.0,
+        "batch_cached_in": 0.25,
+        "source": "https://docs.x.ai/developers/pricing",
+        "verified": "2026-11-17"
+      },
+      "price_error": null,
+      "context_window": {
+        "value": 500000,
+        "source": "https://docs.x.ai/developers/pricing",
+        "verified": "2026-11-17"
+      },
+      "output_ceiling": {
+        "value": null,
+        "source": "https://docs.x.ai/developers/pricing"
+      },
+      "reasoning": {
+        "floor": "high",
+        "effort_ok": true,
+        "reasoning_floor": null,
+        "reasons_by_default": true,
+        "tokens_param": "max_tokens",
+        "style": "param"
+      },
+      "provider_base": true,
+      "as_of": "2026-11-17",
+      "vision": true,
+      "capabilities": {
+        "mode": "chat",
+        "function_calling": true,
+        "response_schema": true,
+        "output_ceiling_exempt_reason": "xAI publishes no text output limit for this family."
+      }
     }
   }
 }

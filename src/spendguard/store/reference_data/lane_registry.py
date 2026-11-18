@@ -73,6 +73,12 @@ LANES = [
      "login": ("run `kimi` then `/login` and choose Kimi Code OAuth (your subscription) — NOT the Moonshot API "
                "key, which meters every call to the API instead of your plan"),
      "relogin_cmd": "kimi"},   # interactive: run `kimi` then `/login` — no single non-interactive re-auth command
+    {"lane": "grok", "provider": "xai", "exec": "grok_exec", "kind": "cli",
+     "agentic": True,
+     "creds": (_home_path(".grok", "models_cache.json"),), "keychain": None, "probe_tier": None,
+     "reasoning": {"style": "none", "levels": (), "default": None},
+     "login": "run `grok login` and sign in with the SuperGrok subscription account (not an xAI API key)",
+     "relogin_cmd": "grok login"},
 ]
 
 _BY_LANE = {r["lane"]: r for r in LANES}
