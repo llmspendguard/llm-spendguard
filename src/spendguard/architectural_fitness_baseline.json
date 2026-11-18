@@ -1735,6 +1735,10 @@
             "max_cc": 1,
             "mi": 100.0
           },
+          "src/spendguard/generate/execution/grok_exec.py": {
+            "max_cc": 20,
+            "mi": 35.521815165781824
+          },
           "src/spendguard/generate/execution/kimi_exec.py": {
             "max_cc": 24,
             "mi": 44.95088065727963
@@ -2313,7 +2317,7 @@
           },
           "src/spendguard/store/configuration/cli_resolution.py": {
             "max_cc": 10,
-            "mi": 87.71097614398958
+            "mi": 87.33062685472828
           },
           "src/spendguard/store/configuration/config.py": {
             "max_cc": 23,
@@ -2429,7 +2433,7 @@
           },
           "src/spendguard/store/reference_data/lane_registry.py": {
             "max_cc": 2,
-            "mi": 88.70953110460482
+            "mi": 88.61927744935178
           },
           "src/spendguard/store/reference_data/model_catalog.py": {
             "max_cc": 50,
