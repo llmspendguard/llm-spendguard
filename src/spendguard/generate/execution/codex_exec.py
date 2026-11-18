@@ -690,6 +690,20 @@ def _codex_structured_http_status(payload):
     return None
 
 
+def _codex_structured_error_code(payload):
+    """Extract a provider error-envelope code without interpreting its prose."""
+    if not isinstance(payload, dict):
+        return None
+    value = payload.get("code")
+    if isinstance(value, str) and value:
+        return value
+    for nested_value in payload.values():
+        code = _codex_structured_error_code(nested_value)
+        if code is not None:
+            return code
+    return None
+
+
 def run_prompt(prompt, system=None, model=None, timeout=TIMEOUT_S, reasoning=None, max_tokens=None,
                sandbox="read-only", cwd=None, recycle_on_timeout=None, delegate_context=False):
     """→ {text, in_tok, out_tok, latency, error} from one headless plan-billed Codex run. `system` is
@@ -821,9 +835,11 @@ def _run_prompt_in_cwd(prompt, system=None, model=None, timeout=TIMEOUT_S, reaso
                     "thread": _r.get("thread"), "turn": _r.get("turn"), "process_pid": _r.get("process_pid"),
                     "latency": round(time.time() - _t0, 2), "effort": _eff, "error": None}
         _derr = _r.get("error") or "codex warm admission returned no final message"
-        structured_status = _codex_structured_http_status(_r.get("provider_error"))
+        provider_error = _r.get("provider_error")
+        structured_status = _codex_structured_http_status(provider_error)
         return {"error": _derr, "thread": _r.get("thread"), "status_code": structured_status if structured_status is not None
-                else _codex_error_status(_derr)}
+                else _codex_error_status(_derr), "error_code": _codex_structured_error_code(provider_error),
+                "provider_error": provider_error}
     return {"error": "codex broker admission disabled; uncounted cold execution refused"}
 
 

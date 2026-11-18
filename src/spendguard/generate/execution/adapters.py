@@ -1818,12 +1818,28 @@ def _call_once(model, prompt, max_tokens=None, system=None, reasoning=None, sche
         from ... import lane_queue
         from spendguard.store.call_corpus import call_corpus_accessors as _call_corpus_accessors
         _recovery.recovery_event("queue")
+        _hold_intent = (_call_corpus_accessors.resolve_calls_current() or {}).get("intent") or "lane-recovery"
+        # This is an inline availability hold, not another full lane-work attempt.  Its own configured
+        # deadline keeps the calling path bounded independently of vendor_call.time_budget(), whose lane
+        # floor is intentionally large enough for cold-started subscription work.
+        _hold_deadline_s = lane_recovery.recovery_setting(
+            "queue_deadline_s", lane_recovery.QUEUE_HOLD_DEADLINE_DEFAULT_S)
+        _hold_deadline_basis = "lane_recovery.queue_deadline_s"
         _held = lane_queue.hold_free_recovery(
-            (_call_corpus_accessors.resolve_calls_current() or {}).get("intent") or "lane-recovery", prompt, _poll_free_recovery,
-            deadline_s=lane_recovery.recovery_setting("queue_deadline_s", 15.0),
+            _hold_intent, prompt, _poll_free_recovery,
+            deadline_s=_hold_deadline_s,
             poll_s=lane_recovery.recovery_setting("queue_poll_s", 1.0))
-        _recovery.queue_checked = bool(_held.get("_free_hold", {}).get("deadline_exhausted"))
+        _held.setdefault("_free_hold", {})["deadline_basis"] = _hold_deadline_basis
+        _hold_outcome = _held.get("_free_hold", {})
+        # Queue proof means that the hold ran to an explicit outcome.  Durable disposition is separate
+        # work-integrity evidence and must not erase a completed queue rung when terminal persistence is
+        # unavailable (nor manufacture queue proof when no hold outcome was returned).
+        _recovery.queue_checked = "deadline_exhausted" in _hold_outcome
         _recovery.recovery_event("queue_outcome", **_held.get("_free_hold", {}))
+        if (_held.get("status_code") == 400
+                and _held.get("error_code") in _execution_accessors.UNSERVABLE_MODEL_ERROR_CODES):
+            from ... import lane_servability as _held_lane_servability
+            _held_lane_servability.record_structured_lane_rejection(lane_name, raw, _held)
         if not _held.get("error") and (_held.get("text") or "").strip():
             if _held.get("substituted_from"):
                 return _held

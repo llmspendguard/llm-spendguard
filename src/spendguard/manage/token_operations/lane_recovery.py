@@ -14,6 +14,9 @@ from ... import config
 import spendguard.manage.admission.admission_accessors as gate
 
 
+QUEUE_HOLD_DEADLINE_DEFAULT_S = 15.0
+
+
 class LaneRecoveryViolation(_admission_refusal_errors.SpendGateRefused):
     """A paid transition lacked evidence that the free recovery ladder was exhausted."""
 

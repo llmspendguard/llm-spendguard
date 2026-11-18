@@ -38,6 +38,7 @@ LANE_MIN_TIMEOUT_S = 150.0
 MAX_TOKEN_CEILING = 128_000
 SCHEMA_STRICT = "strict"
 TOKEN_FLOOR = 32_000
+UNSERVABLE_MODEL_ERROR_CODES = frozenset(("model_not_found",))
 
 PROVIDERS = {
     "openai": {"base_url": None, "key_env": "OPENAI_API_KEY", "prefixes": ("gpt-", "o1", "o3", "chatgpt"), "kind": "openai", "batch": True},
@@ -67,7 +68,7 @@ PAYLOAD_REJECTED = "payload_rejected"
 PREFLIGHT_UNMET = "preflight_unmet"
 KINDS = (OK, TRUNCATED, EMPTY, REFUSED, TRANSPORT_ERROR, DEADLINE_EXCEEDED, SCHEMA_VIOLATION, UNFUNDED, OVERLOADED, PAYLOAD_REJECTED, PREFLIGHT_UNMET, GATE_REFUSED)
 FAILURES = tuple(kind for kind in KINDS if kind != OK)
-RETRYABLE = (TRANSPORT_ERROR, OVERLOADED)
+RETRYABLE = (TRANSPORT_ERROR, OVERLOADED, DEADLINE_EXCEEDED)
 
 _execution_result_run_id = None
 _execution_result_run_id_lock = threading.RLock()
