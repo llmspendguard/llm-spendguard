@@ -669,7 +669,7 @@
           },
           "src/spendguard/manage/admission/bulkgate.py": {
             "max_cc": 35,
-            "mi": 4.479082826174237
+            "mi": 4.479017862910724
           },
           "src/spendguard/manage/admission/disk_guard.py": {
             "max_cc": 5,
@@ -724,7 +724,7 @@
             "mi": 59.17462817490093
           },
           "src/spendguard/manage/routing/lane_balance.py": {
-            "max_cc": 117,
+            "max_cc": 129,
             "mi": 0.0
           },
           "src/spendguard/manage/routing/route_economics.py": {
@@ -764,8 +764,8 @@
             "mi": 21.026037017456613
           },
           "src/spendguard/manage/token_operations/comprehend.py": {
-            "max_cc": 21,
-            "mi": 39.06540928307973
+            "max_cc": 25,
+            "mi": 36.485635367254055
           },
           "src/spendguard/manage/token_operations/delegate_jobs.py": {
             "max_cc": 32,
@@ -2017,7 +2017,7 @@
           },
           "src/spendguard/manage/admission/bulkgate.py": {
             "max_cc": 35,
-            "mi": 4.443281159615523
+            "mi": 4.425418375038381
           },
           "src/spendguard/manage/admission/disk_guard.py": {
             "max_cc": 5,
@@ -2072,7 +2072,7 @@
             "mi": 58.95170767312015
           },
           "src/spendguard/manage/routing/lane_balance.py": {
-            "max_cc": 117,
+            "max_cc": 129,
             "mi": 0.0
           },
           "src/spendguard/manage/routing/route_economics.py": {
@@ -2120,8 +2120,8 @@
             "mi": 21.026037017456613
           },
           "src/spendguard/manage/token_operations/comprehend.py": {
-            "max_cc": 21,
-            "mi": 38.987113926607044
+            "max_cc": 25,
+            "mi": 36.41303973071709
           },
           "src/spendguard/manage/token_operations/delegate_jobs.py": {
             "max_cc": 32,
@@ -2565,7 +2565,8 @@
     "reviewed_c6_doctor_advisor_cap_and_reaper_liveness": "C6 defect fixes add necessary branch logic: control_gate_runtime doctor path gained a three-way advisor-unpriced-cap magnitude check (latent vs active-default-picker bind vs waived escape hatch), raising gate.py max_cc 131->136; maintain_delegate_job_lifecycle reaper gained a terminal-state + child-aware live-process check so a dead launcher with no child is reclaimed, lowering delegate_jobs.py MI. Both rises are cohesive reviewed defect logic, far under the repo worst CC 255.",
     "reviewed_metered_readiness_and_embedding_limits_ssot": "model_preflight.py gained the public metered_call_readiness SSOT accessor (resolves routed provider, credential identity, model record), lowering its MI (57.23->52.61 at 3.11); __init__.py MI shifted slightly from moving the two SSOT accessor imports (embedding_input_limits, metered_call_readiness) off the unconditional top level into the lazy _load_public_api_and_install_gate path, so the cli-help bootstrap stays free of these heavy homes (cli-help laziness guard). max_cc unchanged for both.",
     "reviewed_pr_338_luna_cap_authority_recovery": "PR #338 recovery paths now preserve the catalog-selected output-cap authority without duplicate keyword arguments.",
-    "reviewed_pr_339_distribute_prefer_installed_readonly": "Reviewed prefer-installed distribution inspection complexity for PR 339 read-only probe fix"
+    "reviewed_pr_339_distribute_prefer_installed_readonly": "Reviewed prefer-installed distribution inspection complexity for PR 339 read-only probe fix",
+    "reviewed_comprehend_p0_p1_measured_deltas": "Measured host-native P0/P1 comprehend deltas: lane_balance CC 117->129; comprehend CC 21->25 and MI ~39->~36.5; bulkgate MI float-floor wobble. P0 added constraint-respecting bulk_delegate confinement branches (B1/B2/B3) plus a per-item settled-result persistence callback in comprehend; P1 added the bulk-gate enforcement default plus a catalog-derived token-estimate path. These are reviewed real branching changes measured on this host."
   },
   "dead_allowlist": [
     {
