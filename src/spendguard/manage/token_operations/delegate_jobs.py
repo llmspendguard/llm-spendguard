@@ -590,12 +590,13 @@ def maintain_delegate_job_lifecycle(*, execute=False, reap_running=True, retain_
 
     current = now or datetime.datetime.now(datetime.timezone.utc)
     settings = _delegate_jobs_maintenance_settings()
-    report = {"mode": "execute" if execute else "dry-run", "reclaimed": [], "archived": [],
+    report = {"mode": "execute" if execute else "dry-run", "reclaimed": [], "recovered": [], "archived": [],
               "skipped": [], "errors": [], "checkpoint": False, "vacuum": "not-needed",
               "reclaimable_payload_bytes": 0, "reap_eligible_total": 0,
               "reap_limit_reached": False, "archive_eligible_total": 0,
               "archive_limit_reached": False, "archive_remaining": 0,
               "more_work_remaining": False}
+    dead_owner_execution_job_ids = []
     with _open_delegate_jobs_connection() as connection:
         connection.row_factory = sqlite3.Row
         if reap_running:
@@ -635,13 +636,29 @@ def maintain_delegate_job_lifecycle(*, execute=False, reap_running=True, retain_
                 if identity_state != WARM_OWNER_IDENTITY_DEAD:
                     report["skipped"].append(row["job_id"])
                     continue
-                report["reclaimed"].append(row["job_id"])
-                if execute:
-                    connection.execute(
-                        "UPDATE delegate_jobs SET state=?,updated_ts=?,terminal_reason=? "
-                        "WHERE job_id=? AND state=?",
-                        (DELEGATE_JOB_RECLAIMED_STATE, current.isoformat(), DELEGATE_JOB_RECLAIM_REASON,
-                         row["job_id"], DELEGATE_JOB_RUNNING_STATE))
+                if not execute:
+                    report["reclaimed"].append(row["job_id"])
+                    continue
+                dead_owner_execution_job_ids.append(row["job_id"])
+    for job_id in dead_owner_execution_job_ids:
+        try:
+            recover_delegate_job_execution(job_id)
+            recovered_row = _delegate_job_row(job_id)
+        except Exception as error:
+            report["errors"].append(f"{job_id}: recovery unavailable: {error}")
+            continue
+        if recovered_row["state"] != DELEGATE_JOB_RUNNING_STATE:
+            report["recovered"].append(job_id)
+            continue
+        with _open_delegate_jobs_connection(job_id=job_id) as connection:
+            connection.execute(
+                "UPDATE delegate_jobs SET state=?,updated_ts=?,terminal_reason=? "
+                "WHERE job_id=? AND state=?",
+                (DELEGATE_JOB_RECLAIMED_STATE, current.isoformat(), DELEGATE_JOB_RECLAIM_REASON,
+                 job_id, DELEGATE_JOB_RUNNING_STATE))
+        report["reclaimed"].append(job_id)
+    with _open_delegate_jobs_connection() as connection:
+        connection.row_factory = sqlite3.Row
         if retain_payloads:
             cutoff = (current - datetime.timedelta(days=settings["payload_retention_days"])).isoformat()
             placeholders = ",".join("?" for _ in DELEGATE_JOB_TERMINAL_STATES)
