@@ -54,7 +54,7 @@ record_script_check(fails, "keys.env is chmod 600", (os.stat(p).st_mode & 0o777)
 enf = [s for s in config_schema.SETTINGS if s["section"] == "gate" and s["key"] == "enforce"]
 record_script_check(fails, "gate.enforce is in the schema", len(enf) == 1)
 record_script_check(fails, "gate.enforce enum = off,warn,block", bool(enf) and enf[0]["kind"] == "enum:off,warn,block")
-record_script_check(fails, "gate.enforce default = warn", bool(enf) and enf[0]["default"] == "warn")
+record_script_check(fails, "gate.enforce default = block", bool(enf) and enf[0]["default"] == "block")
 record_script_check(fails, "VAST_API_KEY is in the schema", any(s["key"] == "VAST_API_KEY" for s in config_schema.SETTINGS))
 
 # ── OpenAI-compatible vendors wired: key in schema (→ keys.env) + model routing. Pricing comes from the
