@@ -69,6 +69,17 @@ def effective_codex_concurrency(pool_size=None, *, strict=False):
                    "lane_concurrency_codex", _limit("lane_concurrency", DEFAULT_LANE_CONCURRENCY, strict=strict), strict=strict)))
 
 
+def effective_grok_concurrency(*, strict=False):
+    """Resolve the Grok lane capacity from the executor/governor shared config SSOT."""
+    from ... import config
+    try:
+        return config.grok_lane_concurrency()
+    except Exception:
+        if strict:
+            raise
+        return config.GROK_LANE_CONCURRENCY_FLOOR
+
+
 def _off():
     """Kill switch: SPENDGUARD_DISPATCH_OFF=1 makes every acquire a no-op. The safety valve if the governor is
     ever suspected of holding a call — spend discipline must never depend on a scheduler being correct."""
@@ -828,6 +839,8 @@ class Governor:
             limit = _limit(f"lane_concurrency_{lane}", _limit("lane_concurrency", DEFAULT_LANE_CONCURRENCY))
             if lane == "codex":
                 limit = effective_codex_concurrency()
+            elif lane == "grok":
+                limit = effective_grok_concurrency()
         else:
             key = f"vendor:{vendor}"
             # PER-VENDOR override → the global metered cap → the default: dispatch.vendor_concurrency_<vendor> (e.g.
@@ -1170,6 +1183,8 @@ def _configured_lane_capacity(lane, *, strict=False):
     """Configured execution capacity shared by free-slot and ceiling reads."""
     if lane == "codex":
         return effective_codex_concurrency(strict=strict)
+    if lane == "grok":
+        return effective_grok_concurrency(strict=strict)
     return _limit(f"lane_concurrency_{lane}", _limit(
         "lane_concurrency", DEFAULT_LANE_CONCURRENCY, strict=strict), strict=strict)
 

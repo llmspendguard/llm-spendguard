@@ -1,10 +1,13 @@
 """SuperGrok subscription lane driven by the authenticated Grok CLI."""
+import atexit
 import json
 import os
 import pathlib
+import queue
 import shutil
 import subprocess
 import tempfile
+import threading
 import time
 
 TIMEOUT_S = 300
@@ -17,6 +20,62 @@ GROK_USAGE_UNKNOWN_SAMPLE_COUNT = 0
 GROK_REASONING_FLAG = "--reasoning-effort"
 GROK_REASONING_DEFAULT = "low"               # lane default: Grok's floor and the chosen ~12s standard (lane_registry declares the same)
 GROK_STANDARD_REASONING_FLOOR = "minimal"    # the STANDARD ordinal floor (reasoning_equivalence STANDARD_LEVELS[0]); Grok has no spelling below 'low'
+GROK_LEADER_DIRECTORY_PREFIX = "spendguard-grok-leaders-"
+GROK_LEADER_SOCKET_FILENAME_TEMPLATE = "leader-{index}.sock"
+GROK_LEADER_SOCKET_FLAG = "--leader-socket"
+GROK_NON_AGENTIC_FLAGS = ("--disable-web-search", "--no-subagents", "--no-plan")
+GROK_BUILTIN_TOOLS_FLAG = "--tools"
+GROK_DISABLED_BUILTIN_TOOLS = ""
+
+
+class _GrokLeaderSocketPool:
+    """Bounded reusable socket identities; Grok keeps each socket's leader warm between calls."""
+
+    def __init__(self, capacity):
+        self.capacity = capacity
+        self._directory = pathlib.Path(tempfile.mkdtemp(prefix=GROK_LEADER_DIRECTORY_PREFIX))
+        self._available = queue.Queue(maxsize=capacity)
+        self._socket_paths = tuple(
+            self._directory / GROK_LEADER_SOCKET_FILENAME_TEMPLATE.format(index=index)
+            for index in range(capacity)
+        )
+        for socket_path in self._socket_paths:
+            self._available.put(socket_path)
+
+    def acquire_grok_leader_socket(self):
+        return self._available.get()
+
+    def release_grok_leader_socket(self, socket_path):
+        self._available.put(socket_path)
+
+    def reap(self):
+        executable = _bin()
+        if executable:
+            for socket_path in self._socket_paths:
+                try:
+                    subprocess.run(
+                        [executable, GROK_LEADER_SOCKET_FLAG, str(socket_path), "leader", "kill"],
+                        capture_output=True, text=True, timeout=TIMEOUT_S, stdin=subprocess.DEVNULL,
+                    )
+                except Exception:
+                    pass
+        shutil.rmtree(self._directory, ignore_errors=True)
+
+
+_grok_leader_pool = None
+_grok_leader_pool_lock = threading.Lock()
+
+
+def _warm_grok_leader_pool():
+    """Create the process-wide pool once, sized from the shared lane-concurrency config."""
+    global _grok_leader_pool
+    if _grok_leader_pool is None:
+        with _grok_leader_pool_lock:
+            if _grok_leader_pool is None:
+                from ... import config
+                _grok_leader_pool = _GrokLeaderSocketPool(config.grok_lane_concurrency())
+                atexit.register(_grok_leader_pool.reap)
+    return _grok_leader_pool
 
 
 def _bin():
@@ -81,6 +140,29 @@ def _grok_effort(level):
     return GROK_REASONING_DEFAULT if requested == GROK_STANDARD_REASONING_FLOOR else requested
 
 
+def _begin_non_agentic_grok_completion(command):
+    """Reserve a warm leader socket and a scratch directory for the lean non-agentic completion path.
+
+    Returns ``(extended_command, completion_context)`` where the context carries the resources the caller
+    releases in its ``finally`` block via :func:`_finish_grok_completion`.
+    """
+    leader_pool = _warm_grok_leader_pool()
+    leader_socket_path = leader_pool.acquire_grok_leader_socket()
+    extended_command = command + [GROK_LEADER_SOCKET_FLAG, str(leader_socket_path), *GROK_NON_AGENTIC_FLAGS,
+                                  GROK_BUILTIN_TOOLS_FLAG, GROK_DISABLED_BUILTIN_TOOLS]
+    neutral_directory = tempfile.mkdtemp(prefix=GROK_WORK_DIRECTORY_PREFIX)
+    return extended_command, {"leader_pool": leader_pool, "leader_socket_path": leader_socket_path,
+                              "neutral_directory": neutral_directory}
+
+
+def _finish_grok_completion(completion_context):
+    """Release the warm leader socket and remove the scratch directory a non-agentic completion reserved."""
+    if completion_context is None:
+        return
+    completion_context["leader_pool"].release_grok_leader_socket(completion_context["leader_socket_path"])
+    shutil.rmtree(completion_context["neutral_directory"], ignore_errors=True)
+
+
 def run_prompt(prompt, system=None, model=None, timeout=TIMEOUT_S, reasoning=None, max_tokens=None,
                *, agentic=False, cwd=None):
     """Run one authenticated headless Grok CLI completion and return the subscription result contract.
@@ -106,14 +188,16 @@ def run_prompt(prompt, system=None, model=None, timeout=TIMEOUT_S, reasoning=Non
     from ... import config
     environment = config.lane_exec_env(executable)
     started_at = time.time()
-    neutral_directory = None
+    completion_context = None
+    run_directory = cwd
+    if not agentic:
+        command, completion_context = _begin_non_agentic_grok_completion(command)
+        run_directory = completion_context["neutral_directory"]
     try:
-        if not agentic:
-            neutral_directory = tempfile.mkdtemp(prefix=GROK_WORK_DIRECTORY_PREFIX)
         try:
             completed = process_runner(command, capture_output=True, text=True, timeout=timeout,
                                        env=environment, stdin=subprocess.DEVNULL,
-                                       cwd=cwd if agentic else neutral_directory)
+                                       cwd=run_directory)
         except subprocess.TimeoutExpired:
             if durable_id:
                 raise
@@ -130,5 +214,4 @@ def run_prompt(prompt, system=None, model=None, timeout=TIMEOUT_S, reasoning=Non
         return {"text": response_text, "in_tok": len(full_prompt) // 4,
                 "out_tok": len(response_text) // 4, "latency": time.time() - started_at, "error": None}
     finally:
-        if neutral_directory:
-            shutil.rmtree(neutral_directory, ignore_errors=True)
+        _finish_grok_completion(completion_context)
