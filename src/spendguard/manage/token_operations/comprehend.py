@@ -27,14 +27,11 @@ import json as _json
 import os
 import re
 
-from ... import calls, config, expected_output, lane_balance, lane_catalog, pricing
+from ... import calls, config, lane_balance, lane_catalog, pricing, provider_tokens
 
 # Per-task evidence ceiling (chars). A file larger than this is split into contiguous parts — contained, never
 # cut. ~200k chars ≈ 50k tokens, comfortably inside a 1M-context model, so in practice most files are one task.
 _DEFAULT_MAX_CHARS = 200_000
-# Coarse chars→tokens proxy for the PRE-SPEND estimate. This measures the real byte size of the corpus (not an
-# invented token count); the true cost is whatever the lanes/metered path actually bill, trued up by reconcile.
-_CHARS_PER_TOKEN = 4
 _DEFAULT_QUESTION = ("Read the file below and extract its key points, decisions, and any gaps, risks, or "
                      "inconsistencies. Be specific and cite the relevant lines.")
 
@@ -111,14 +108,15 @@ def default_checkpoint(intent):
 
 
 def estimate_corpus(tasks, model, intent):
-    """ZERO-SPEND cost ceiling from the MEASURED corpus. Input tokens come from the real character counts of the
-    files (measurement, not an invented literal); per-task output comes from expected_output.expect (a learned
-    p90 for this intent, else this model's measured history, else its published ceiling — its `basis` is
-    reported). It is a CEILING for the metered-fallback worst case; the lanes bill $0, so the real spend is
-    typically far below it and reconcile trues it up."""
+    """ZERO-SPEND cost ceiling from the complete prompts in provider-native token units.
+
+    Output tokens describe the workload (measured intent p99, caller declaration, or configured nominal), so
+    changing the pricing model cannot silently replace expected work with that model's published output ceiling.
+    Catalog pricing is applied only after both token axes are resolved.
+    """
     live = [t for t in tasks if t.get("prompt")]
-    in_tok = sum(max(1, t["chars"] // _CHARS_PER_TOKEN) for t in live)
-    per_out, basis = expected_output.expect(model, sig=intent)
+    in_tok = sum(provider_tokens.count_text(t["prompt"], model=model) for t in live)
+    per_out, basis = lane_balance.resolve_bulk_output_token_estimate(intent)
     # cost_or_unpriced returns 0.0 (and RECORDS the model as unpriced) ONLY for an unpriced model / bad args
     # (KeyError/TypeError/ValueError). A deliberate stop — EstimateNotGrounded, SpendGateRefused — PROPAGATES
     # through it: a refusal must never be downgraded to a $0 ceiling that would wave the budget check through.

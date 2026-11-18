@@ -180,11 +180,14 @@ def require_eval():
 
 
 def mode():
-    """Roll-out switch: off | warn | block. Default `warn` (log "would-block" so consumers see what's coming) — flip to
-    `block` once they've adopted estimate/test. `enforce_test_first=false` in config forces `off`."""
+    """Enforcement switch: off | warn | block. Default `block`; weaker modes are explicit caller opt-outs.
+
+    `enforce_test_first=false` in config forces `off`. A missing or unusable setting never weakens enforcement.
+    """
     if config._cfg_get("gate", "enforce_test_first", True) is False:
         return "off"
-    return (os.getenv("SPENDGUARD_ENFORCE") or config._cfg_get("gate", "enforce", None) or "warn").lower()
+    configured_mode = os.getenv("SPENDGUARD_ENFORCE") or config._cfg_get("gate", "enforce", None)
+    return str(configured_mode or "block").lower()
 
 
 def sig(model, template_id=None, template_version=None, schema_name=None, prompt=None):
