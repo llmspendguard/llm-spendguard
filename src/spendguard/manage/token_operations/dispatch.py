@@ -45,13 +45,22 @@ DEFAULT_LANE_CONCURRENCY = 8       # max concurrent calls sharing one subscripti
 # the plan with headroom; a 429/quota still trips the per-lane cooldown (and zai retries 429 with backoff), so
 # overshoot self-corrects. Per-lane override: dispatch.lane_concurrency_<lane> (below). Was 3 — a pre-measurement
 # floor that throttled the whole cross-lane fan below every plan's real concurrency (the "governor throttle").
-DEFAULT_VENDOR_CONCURRENCY = 8     # max concurrent metered calls to one vendor
+# Metered concurrency per vendor is DISCOVERED online (AIMD), not fixed. Providers are stateless HTTP — parallel up to
+# EACH vendor's own concurrent-connection limit, which varies wildly (a touchy account 429s at ~4, a tolerant one runs
+# dozens) and is only observable via a 429. So a single static cap is wrong for every vendor BY CONSTRUCTION: instead the
+# window starts at a FLOOR, additively GROWS toward a generous CEILING on clean success ("push until 429"), and
+# multiplicatively backs off on a 429/529. The ceiling is the upper bound (per-vendor tunable: vendor_concurrency_<vendor>);
+# the floor is the cold-start admission before anything is learned (kept = the old flat cap, so cold behaviour is unchanged).
+DEFAULT_VENDOR_CONCURRENCY_FLOOR = 8      # cold-start concurrent metered calls to one vendor, before the AIMD window learns
+DEFAULT_VENDOR_CONCURRENCY_CEILING = 32   # the AIMD grow ceiling per vendor; raise one provider via dispatch.vendor_concurrency_<vendor>
 DEFAULT_RPM = 0                    # requests/minute per key; 0 = pacing OFF (only concurrency governs). Opt-in.
 DEFAULT_TPM = 0                    # tokens/minute per key (input+output); 0 = pacing OFF. The quantity that ACTUALLY
 # 429s on OpenAI/Anthropic (an enqueued-/tokens-per-minute ceiling), which a concurrency or RPM cap cannot bound — a
 # handful of big-context calls blow TPM while well under both. Seeded from each provider's real limit via config
 # `dispatch.tpm_<vendor>` (never a literal here); 0 until set, then Step-3 self-calibration learns it from 429 headers.
-DEFAULT_GLOBAL_CONCURRENCY = 24    # a machine-wide ceiling across ALL keys — the last backstop against a swarm
+DEFAULT_GLOBAL_CONCURRENCY = 128   # a machine-wide ceiling across ALL keys — the last backstop against a swarm. Set high
+# enough that a multi-vendor fan (each vendor up to its own ceiling) is bounded by the PER-VENDOR AIMD caps, not by this
+# one slot — a too-low global (was 24: three vendors × 8 saturated it) head-of-lines a healthy vendor behind a busy one.
 DISPATCH_POSITIVE_CONCURRENCY_MIN = 1
 
 _ENV_PREFIX = "SPENDGUARD_DISPATCH_"
@@ -304,6 +313,23 @@ def _learned_conn(vendor):
     return int((_LEARNED.for_vendor(vendor) or {}).get("conn") or 0)
 
 
+def _vendor_ceiling(vendor):
+    """UPPER bound the AIMD connection window grows toward for this metered vendor: per-vendor vendor_concurrency_<v> →
+    vendor_concurrency → DEFAULT_VENDOR_CONCURRENCY_CEILING. This is the intuitive 'how many concurrent' knob — raise it
+    for a tolerant provider (vendor_concurrency_openai=48) or lower it to hard-cap a touchy one."""
+    v = (vendor or "").strip().lower()
+    return max(1, _limit(f"vendor_concurrency_{v}", _limit("vendor_concurrency", DEFAULT_VENDOR_CONCURRENCY_CEILING)))
+
+
+def _vendor_floor(vendor):
+    """COLD-START admission for this metered vendor, before the window has learned anything — clamped to never exceed the
+    vendor's ceiling, so an explicit low ceiling (e.g. vendor_concurrency_<v>=1) wins over the floor rather than being
+    raised past it. Override the floor itself via vendor_concurrency_floor[_<v>]."""
+    v = (vendor or "").strip().lower()
+    raw = _limit(f"vendor_concurrency_floor_{v}", _limit("vendor_concurrency_floor", DEFAULT_VENDOR_CONCURRENCY_FLOOR))
+    return max(1, min(int(raw), _vendor_ceiling(v)))
+
+
 def shrink_connection_window(vendor):
     """AIMD MULTIPLICATIVE-DECREASE — the LOSS side of the TCP-style window. ANY rate-limit 429/529 is a CONGESTION
     signal (we do NOT try to subtype it — a provider may or may not send a tpm/rpm header, and guessing the kind is a
@@ -326,7 +352,7 @@ def shrink_connection_window(vendor):
             if not recently:
                 _RATCHET_AT[v] = now
         if not recently:
-            cur = _learned_conn(v) or _limit(f"vendor_concurrency_{v}", _limit("vendor_concurrency", DEFAULT_VENDOR_CONCURRENCY))
+            cur = _learned_conn(v) or _vendor_floor(v)   # cold 429: the cap in effect was the cold-start floor
             # Target just BELOW the concurrency in flight when the 429 hit (the real ceiling is below it) — precise
             # convergence that does NOT slam to 1 the way a blind halving does. In-flight unknown → fall back to halving.
             _inflight = 0
@@ -346,26 +372,30 @@ def shrink_connection_window(vendor):
 
 def grow_connection_window(vendor):
     """AIMD ADDITIVE-INCREASE — the ACK side of the TCP-style window: after a clean success, GROW this vendor's learned
-    connection cap UP by 1 toward the configured default, so the window RECOVERS headroom a prior 429 backed off (and a
-    one-off ratchet-too-low self-heals). Only once a cap has been LEARNED (a vendor that never 429'd has no cap and needs
-    none), capped at the configured/default ceiling, debounced to ~once per _GROW_WIN, and it WAKES a waiter to use the
-    freed slot. Never raises — an ACK-grow bookkeeping miss must not turn a success into a failure."""
+    connection cap UP by 1 toward the ceiling, so concurrency RAMPS INTO each vendor's real limit ('push until 429') and
+    the window RECOVERS headroom a prior 429 backed off. A vendor that never 429'd SEEDS at the floor on its first clean
+    success and then climbs toward the ceiling (so a tolerant provider reaches its full ceiling instead of staying at the
+    cold-start floor forever). Capped at the ceiling, debounced to ~once per _GROW_WIN, and it WAKES a waiter to use the
+    freed slot. Never raises — an ACK-grow bookkeeping miss must not turn a success into a failure. The applied cap is
+    enforced live in Governor._conn_admit (cold admission is _vendor_floor; grown admission is the learned cap)."""
     try:
         v = (vendor or "").strip().lower()
         if not v:
             return
         cur = _learned_conn(v)
+        ceil_default = _vendor_ceiling(v)
         if cur <= 0:
-            return                              # no learned cap ⇒ unlimited already; nothing to grow
-        ceil_default = _limit(f"vendor_concurrency_{v}", _limit("vendor_concurrency", DEFAULT_VENDOR_CONCURRENCY))
-        if cur >= ceil_default:
-            return                              # never grow past the configured/default ceiling
+            target = _vendor_floor(v)           # SEED the window at the floor on the first clean success, then climb
+        elif cur < ceil_default:
+            target = cur + 1                    # ADDITIVE INCREASE toward the ceiling (one step per _GROW_WIN)
+        else:
+            return                              # already at the ceiling — nothing to grow
         now = time.monotonic()
         with _RATCHET_LOCK:
             if (now - _GROW_AT.get(v, 0.0)) < _GROW_WIN:
                 return
             _GROW_AT[v] = now
-        _LEARNED.learn(v, conn=cur + 1, source="aimd-grow")
+        _LEARNED.learn(v, conn=target, source="aimd-grow")
         _GOV._conn_wake(v)                      # a slot opened — wake a waiter to use it
     except Exception as e:
         import spendguard.manage.admission.admission_accessors as _g
@@ -777,14 +807,18 @@ class Governor:
         """WAIT until this metered vendor's in-flight CONNECTION count is below its LIVE learned cap, then count this
         one. The cap is read live on every check, so a shrink (shrink_connection_window) throttles new admits IMMEDIATELY
         and a grow (grow_connection_window) frees one — WITHOUT rebuilding any semaphore, so an over-admitted wave
-        DRAINS naturally instead of orphaning holders (the whole bug). cap<=0 (nothing learned) ⇒ admit at once."""
+        DRAINS naturally instead of orphaning holders (the whole bug). cap<=0 (nothing learned yet) ⇒ admit up to the
+        cold-start FLOOR — never unbounded — so the vendor bucket's generous ceiling is SAFE: the AIMD window grows INTO
+        the limit from the floor rather than cold-starting a whole wave at the ceiling (which would 429-storm)."""
         cv = self._conn_cv(key)
         t0 = time.monotonic()
         with cv:
             while True:
                 cap = _learned_conn(vendor)
+                if cap <= 0:                     # nothing learned → gate the cold wave at the floor, not the full ceiling
+                    cap = _vendor_floor(vendor)
                 cur = self._conn_inflight.get(key, 0)
-                if cap <= 0 or cur < cap:
+                if cur < cap:
                     self._conn_inflight[key] = cur + 1
                     return
                 left = float(deadline_s) - (time.monotonic() - t0)
@@ -843,10 +877,11 @@ class Governor:
                 limit = effective_grok_concurrency()
         else:
             key = f"vendor:{vendor}"
-            # PER-VENDOR override → the global metered cap → the default: dispatch.vendor_concurrency_<vendor> (e.g.
-            # vendor_concurrency_openai=12) tunes each provider to ITS real rate limit — never one hardcoded number for
-            # every vendor. Mirrors the per-lane override; this cap is now also enforced ACROSS processes (acquire()).
-            limit = _limit(f"vendor_concurrency_{vendor}", _limit("vendor_concurrency", DEFAULT_VENDOR_CONCURRENCY))
+            # The per-vendor CEILING (vendor_concurrency_<vendor> → vendor_concurrency → default) — the UPPER bound both the
+            # in-process bucket and the cross-process flock cap admit to; the AIMD connection window (below) governs the
+            # LIVE cap between the floor and this ceiling. Per-vendor tunable to each provider's real limit — never one
+            # hardcoded number for every vendor. This ceiling is also enforced ACROSS processes (acquire()).
+            limit = _vendor_ceiling(vendor)
             # NOTE: the learned CONNECTION cap is NOT folded into this (fixed) semaphore limit — it is enforced LIVE by
             # the dynamic connection window in acquire() (_conn_admit), so it can shrink/grow without a semaphore rebuild.
         rpm = _limit(f"rpm_{vendor}", DEFAULT_RPM)     # per-vendor RPM, e.g. SPENDGUARD_DISPATCH_RPM_MOONSHOT=60
