@@ -4,6 +4,18 @@ All notable changes to **llm-spendguard**. Format loosely follows Keep a Changel
 
 ## [Unreleased]
 
+## [0.16.40] — 2026-11-18
+
+A patch release. Makes the Grok subscription lane genuinely parallel and lean for one-shot completion work.
+
+### lanes — bounded warm Grok leaders sustain parallel one-shot completions
+- A single `dispatch.lane_concurrency_grok` setting, with a measured floor of 10, now sizes both Grok governor
+  admission and a process-wide bounded pool of distinct leader sockets. Socket identities are reused to keep leaders
+  warm, overflow waits for a pool lease, and an exit reaper stops the pool leaders and removes their temporary home.
+- Non-agentic Grok calls disable web search, subagents, planning, and built-in tools. Agentic workspace calls retain
+  their prior command and tool behavior. Offline concurrency tests prove distinct leases, back-pressure, warm reuse,
+  command isolation, and equality between the executor pool and governor capacity.
+
 ## [0.16.39] — 2026-11-18
 
 A patch release. Makes the grok lane fast by default; no public CLI, API, or MCP surface changes, parity unchanged.

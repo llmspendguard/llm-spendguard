@@ -59,6 +59,8 @@ CODEX_POOL_RESOURCE_EXHAUSTION_RESTART_THRESHOLD_DEFAULT = 3
 CODEX_POOL_OWNER_MARKER_FILENAME = ".spendguard-owner.json"
 CODEX_POOL_HOME_STALE_AGE_DEFAULT_S = 3600.0
 CODEX_POOL_TRUE_VALUES = frozenset(("1", "true", "yes", "on"))
+GROK_LANE_CONCURRENCY_FLOOR = 10
+GROK_LANE_CONCURRENCY_ENV = "SPENDGUARD_DISPATCH_LANE_CONCURRENCY_GROK"
 EXPLICIT_TRUE_VALUES = (True, "true", "1", 1)
 WORKSPACE_ROOTS_DEFAULT = ()
 WORKSPACE_EXTRA_VENV_DIRS_DEFAULT = ("~/.venvs",)
@@ -408,6 +410,15 @@ def codex_daemon_pool_settings():
     return {"size": size, "isolate_homes": bool(isolated), "health_interval_s": health_interval_s,
             "respawn_backoff_s": respawn_backoff_s, "resource_exhaustion_backoff_s": resource_backoff_s,
             "resource_exhaustion_restart_threshold": restart_threshold}
+
+
+def grok_lane_concurrency():
+    """Resolve the shared Grok governor and warm-leader capacity, enforcing its measured floor."""
+    configured = int(os.getenv(
+        GROK_LANE_CONCURRENCY_ENV,
+        _cfg_get("dispatch", "lane_concurrency_grok", GROK_LANE_CONCURRENCY_FLOOR),
+    ))
+    return max(GROK_LANE_CONCURRENCY_FLOOR, configured)
 
 
 def codex_daemon_admission_settings():
