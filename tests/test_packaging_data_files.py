@@ -23,7 +23,7 @@ def main():
     try:
         import tomllib
     except ModuleNotFoundError:
-        print("SKIP test_packaging_data_files: tomllib needs Python 3.11+ (the release gate runs 3.12)")
+        print("SKIP test_packaging_data_files: tomllib needs Python 3.11+ (the release gate runs 3.11)")
         return 0
 
     fails = []
