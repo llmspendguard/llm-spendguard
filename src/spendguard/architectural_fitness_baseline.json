@@ -497,7 +497,7 @@
           },
           "src/spendguard/generate/spend_capture/compaction.py": {
             "max_cc": 18,
-            "mi": 33.53394500327639
+            "mi": 33.533945003276386
           },
           "src/spendguard/generate/spend_capture/gpu_port.py": {
             "max_cc": 23,
@@ -2575,7 +2575,8 @@
     "reviewed_pr_338_luna_cap_authority_recovery": "PR #338 recovery paths now preserve the catalog-selected output-cap authority without duplicate keyword arguments.",
     "reviewed_pr_339_distribute_prefer_installed_readonly": "Reviewed prefer-installed distribution inspection complexity for PR 339 read-only probe fix",
     "reviewed_comprehend_p0_p1_measured_deltas": "Measured host-native P0/P1 comprehend deltas: lane_balance CC 117->129; comprehend CC 21->25 and MI ~39->~36.5; bulkgate MI float-floor wobble. P0 added constraint-respecting bulk_delegate confinement branches (B1/B2/B3) plus a per-item settled-result persistence callback in comprehend; P1 added the bulk-gate enforcement default plus a catalog-derived token-estimate path. These are reviewed real branching changes measured on this host.",
-    "reviewed_grok_subscription_lane_complexity_baseline": "2026-11-17: Added the grok $0 subscription CLI lane. grok_exec.py is a new CLI-lane executor module mirroring antigravity_exec/kimi_exec (binary resolved via config.resolve_cli, one headless grok -p/-m run, model_ids read from ~/.grok/models_cache.json, reader-wired UNKNOWN usage like kimi); its measured Radon CC/MI are recorded fresh. cli_resolution.py adds one '~/.grok/bin' entry to the CLI search dirs (max CC 10 unchanged; whole-file MI falls only from the one added line). lane_registry.py adds the grok lane row (max CC 2 unchanged; MI falls only from the added data row). No logic-complexity increase beyond the new lane's own module. Measured with Radon under Python 3.11 on this host; the 3.12 entry is regenerated under CI's linux/amd64 3.12 per the repo convention."
+    "reviewed_grok_subscription_lane_complexity_baseline": "2026-11-17: Added the grok $0 subscription CLI lane. grok_exec.py is a new CLI-lane executor module mirroring antigravity_exec/kimi_exec (binary resolved via config.resolve_cli, one headless grok -p/-m run, model_ids read from ~/.grok/models_cache.json, reader-wired UNKNOWN usage like kimi); its measured Radon CC/MI are recorded fresh. cli_resolution.py adds one '~/.grok/bin' entry to the CLI search dirs (max CC 10 unchanged; whole-file MI falls only from the one added line). lane_registry.py adds the grok lane row (max CC 2 unchanged; MI falls only from the added data row). No logic-complexity increase beyond the new lane's own module. Measured with Radon under Python 3.11 on this host; the 3.12 entry is regenerated under CI's linux/amd64 3.12 per the repo convention.",
+    "reviewed_ci_feat_ci_python_311_only_complexity_remeasure": "Regenerated the complexity baseline on the CI runner interpreter 3.11.18 (radon 6.0.1) for branch feat/ci-python-311-only. The readiness gate's selected baseline bucket must be measured on the interpreter where the gate runs; a developer-measured bucket regresses by a hair on the runner's tokenizer."
   },
   "dead_allowlist": [
     {
