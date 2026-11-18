@@ -1,0 +1,53 @@
+name: regenerate-complexity-baseline
+# One-shot operator tool: regenerate the per-file radon complexity baseline on CI's exact interpreter and
+# upload it as an artifact to commit back. The complexity ratchet records logical-line counts through the
+# RUNNING Python tokenizer, so the baseline is only valid for the interpreter that produced it. When the
+# readiness gate's interpreter changes (e.g. the matrix moving to 3.11-only), the selected baseline bucket
+# must be re-measured here rather than on a developer machine whose micro-version tokenizer differs.
+on:
+  workflow_dispatch:
+    inputs:
+      justification:
+        description: Reviewed justification recorded against the regenerated baseline entries.
+        required: true
+      justification_key:
+        description: Registry key for the reviewed regeneration (must start with reviewed_).
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  regenerate:
+    runs-on: ubuntu-latest
+    env:
+      GATE_DISABLE: "1"
+      SPENDGUARD_NO_AUTOINSTALL: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
+        id: python
+        with:
+          python-version: "3.11"
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      - name: Install the pinned verification environment
+        run: |
+          uv venv --python "${{ steps.python.outputs.python-path }}" .venv
+          echo "${PWD}/.venv/bin" >> "$GITHUB_PATH"
+          uv pip install --python .venv/bin/python -e ".[openai,anthropic,otel,chat,dev]" "pydantic>=2"
+      - name: Report the measuring interpreter and radon version
+        run: |
+          python -c "import sys, radon; print('interpreter', sys.version); print('radon', radon.__version__)"
+      - name: Regenerate the complexity baseline on this interpreter
+        run: |
+          python scripts/test/regenerate_architectural_complexity_baseline.py \
+            --justification "${{ inputs.justification }}" \
+            --justification-key "${{ inputs.justification_key }}"
+      - name: Show the baseline diff
+        run: git --no-pager diff -- src/spendguard/architectural_fitness_baseline.json
+      - name: Upload the regenerated baseline
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: regenerated-complexity-baseline
+          path: src/spendguard/architectural_fitness_baseline.json
+          if-no-files-found: error
