@@ -23,6 +23,7 @@ DISCIPLINES (inherited, non-negotiable):
 
 from ...capability_cli_parsing import add_registered_cli_argument
 import glob as _glob
+import json as _json
 import os
 import re
 
@@ -204,15 +205,28 @@ def _comprehend_review_estimate(tasks, model, intent, panel_models):
     return est
 
 
-def _comprehend_dispatch_tasks(live, intent, selected_lanes, checkpoint, refuse_billed, panel):
+def _comprehend_dispatch_tasks(live, intent, selected_lanes, checkpoint, refuse_billed, panel, model,
+                               lanes_or_default=False, settled_result_callback=None):
     """Share the durable governed bulk fan for ordinary tasks and provider-pinned panel votes."""
     controls = {"intent": intent, "lanes": selected_lanes, "checkpoint": checkpoint,
-                "return_keyed": True, "refuse_billed": refuse_billed}
+                "return_keyed": True, "refuse_billed": refuse_billed,
+                "lanes_or_default": lanes_or_default, "settled_result_callback": settled_result_callback}
     if panel:
         return lane_balance.bulk_delegate(live, **controls, model_for=lambda task: task["review_model"],
                                           prompt_for=lambda task: task["prompt"], task_key=lambda task: task["key"])
-    return lane_balance.bulk_delegate([t["prompt"] for t in live], **controls,
+    return lane_balance.bulk_delegate([t["prompt"] for t in live], **controls, pinned_model=model,
                                       task_key=[t["key"] for t in live])
+
+
+def _append_comprehend_output_record(output_path, record):
+    """Append and durably flush one completed verdict or named gap to the explicit output journal."""
+    output_directory = os.path.dirname(output_path)
+    if output_directory:
+        os.makedirs(output_directory, exist_ok=True)
+    with open(output_path, "a") as output_stream:
+        output_stream.write(_json.dumps(record, sort_keys=True) + "\n")
+        output_stream.flush()
+        os.fsync(output_stream.fileno())
 
 
 def _comprehend_aggregate_reviews(tasks, rows, panel_models):
@@ -228,7 +242,7 @@ def _comprehend_aggregate_reviews(tasks, rows, panel_models):
 
 def comprehend_corpus(patterns=None, intent=None, question=None, model=None, run=False, budget_usd=None, lanes=None,
                       max_chars=_DEFAULT_MAX_CHARS, checkpoint=None, refuse_billed=False,
-                      items=None, vendors=None, panel=False):
+                      items=None, vendors=None, panel=False, out=None, lanes_or_default=False):
     """Fan the corpus across the $0 lanes and aggregate per file. Default (run=False) is a ZERO-SPEND estimate.
 
     `intent` is the job-type label every call records under (required — attribution is the core mission).
@@ -273,8 +287,26 @@ def comprehend_corpus(patterns=None, intent=None, question=None, model=None, run
 
     if not checkpoint:                         # durable + resumable by default (chunk-never-single-shot): each
         checkpoint = default_checkpoint(intent)  # result is appended before the next chunk, so a crash resumes
-    with config.scoped_intent_cap(intent, budget_usd), calls.context(intent=intent):
-        keyed = _comprehend_dispatch_tasks(live, intent, selected_lanes, checkpoint, refuse_billed, panel)
+    completed_keys = set()
+
+    def persist_completed_comprehend_verdict(index, row):
+        task = live[index]
+        completed_keys.add(task["key"])
+        if out:
+            _append_comprehend_output_record(out, {"kind": "verdict", "key": task["key"], "file": task["file"],
+                                                    "part": task["part"], "parts": task["parts"], "result": row})
+
+    try:
+        with config.scoped_intent_cap(intent, budget_usd), calls.context(intent=intent):
+            keyed = _comprehend_dispatch_tasks(live, intent, selected_lanes, checkpoint, refuse_billed, panel, model,
+                                               lanes_or_default=lanes_or_default,
+                                               settled_result_callback=persist_completed_comprehend_verdict)
+    except Exception as dispatch_error:
+        unfinished = [task["key"] for task in live if task["key"] not in completed_keys]
+        if out:
+            _append_comprehend_output_record(out, {"kind": "gap", "reason": type(dispatch_error).__name__,
+                                                    "unfinished": unfinished})
+        raise
     rows = keyed if isinstance(keyed, dict) else {}
     by_file = _comprehend_aggregate_reviews(tasks, rows, panel_models)
     served = sum(1 for v in rows.values() if isinstance(v, dict) and v.get("text"))
@@ -298,6 +330,7 @@ def cmd(argv=None):
     add_registered_cli_argument(ap, 'comprehend/comprehend.cmd/ap/--budget-usd', type=float)
     add_registered_cli_argument(ap, 'comprehend/comprehend.cmd/ap/--refuse-billed')
     add_registered_cli_argument(ap, 'comprehend/comprehend.cmd/ap/--lanes')
+    add_registered_cli_argument(ap, 'comprehend/comprehend.cmd/ap/--lanes-or-default')
     add_registered_cli_argument(ap, 'comprehend/comprehend.cmd/ap/--items')
     add_registered_cli_argument(ap, 'comprehend/comprehend.cmd/ap/--vendors')
     add_registered_cli_argument(ap, 'comprehend/comprehend.cmd/ap/--panel')
@@ -312,7 +345,8 @@ def cmd(argv=None):
     vendors = [x.strip() for x in a.vendors.split(",") if x.strip()] if a.vendors is not None else None
     res = comprehend_corpus(a.patterns, intent=a.intent, question=a.question, model=a.model, run=a.run,
                             budget_usd=a.budget_usd, lanes=lanes, max_chars=a.max_chars, checkpoint=a.checkpoint,
-                            refuse_billed=a.refuse_billed, items=a.items, vendors=vendors, panel=a.panel)
+                            refuse_billed=a.refuse_billed, items=a.items, vendors=vendors, panel=a.panel,
+                            out=a.out, lanes_or_default=a.lanes_or_default)
     est = res["estimate"]
     print(f"comprehend — {res['files']} file(s) → {res['tasks']} task(s), model {est['model']} · "
           f"estimate ceiling ${est['est_usd_ceiling']:.4f} "
@@ -334,11 +368,5 @@ def cmd(argv=None):
           f"billed (metered-fallback) file(s): {len(res['billed_files'])}")
     print(f"  durable results (resumable) → {res['checkpoint']}")
     if a.out:
-        d = os.path.dirname(a.out)
-        if d:
-            os.makedirs(d, exist_ok=True)
-        # the sanctioned whole-file JSON writer: atomic, keeps a `~` backup, and REFUSES to clobber an existing
-        # file that does not parse — never a hand-rolled open(...,'w')+json.dump (see test_every_json_write_backs_up)
-        config.update_json(a.out, lambda _prev: res["results"])
-        print(f"  also exported aggregated per-file results → {a.out}")
-    return 0
+        print(f"  also journaled per-item results → {a.out}")
+    return 0 if res["served"] else 2

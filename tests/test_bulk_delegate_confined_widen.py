@@ -1,4 +1,4 @@
-"""GUARD — a confined bulk fan whose lanes yield NO viable arm WIDENS to the default lanes instead of dead-ending.
+"""GUARD — lane confinement refuses by default and widens only by explicit opt-in.
 
 Measured 2026-09-21: a bulk job confined to lanes= on a FRESH intent (no bandit rating yet, or confined lanes with
 no advisor.lane_models) returned 766 EMPTY rows and did no work — bulk_delegate's no_viable_lane path refused the
@@ -42,24 +42,30 @@ dispatch.release = lambda *a, **k: None
 adapters.call = lambda model, task, **kw: {"text": "ans", "provider": "google", "model": "g-model",
                                            "executor": "gemini", "cost": 0.0, "error": None, "reason": None}
 
-# ── (a) confined empty, unconfined non-empty → WIDEN and run ──
-print("-- (a) confined lanes with no viable arm → widen to the default lanes and RUN --")
+# ── (a) confined empty, unconfined non-empty → REFUSE and name the declaration ──
+print("-- (a) confined lanes with no viable arm → refuse without widening --")
 lane_balance._bulk_arms = lambda intent, lanes=None: ([] if lanes else [DEFAULT_ARM])
 res = lane_balance.bulk_delegate(list(TASKS), "fresh:intent", lanes=["confined-lane"], force=True)
-record_script_check(fails, "confined-empty + default-available → the fan RUNS (no 'no_viable_lane' rows)",
-   len(res) == len(TASKS) and all((r or {}).get("reason") != "no_viable_lane" for r in res))
-record_script_check(fails, "every task was served on the widened default lane (text present)",
-   all((r or {}).get("text") == "ans" for r in res))
+record_script_check(fails, "confined-empty refuses and names advisor.lane_models",
+   all((r or {}).get("reason") == "no_viable_lane" and "advisor.lane_models" in (r or {}).get("error", "")
+       for r in res))
 
-# ── (b) NOTHING viable anywhere → honest refusal (we widen, never invent) ──
-print("\n-- (b) no lane viable at all → honest no_viable_lane, never invents a lane --")
+# ── (b) explicit opt-in widens ──
+print("\n-- (b) --lanes-or-default explicitly widens and runs --")
+res_opt_in = lane_balance.bulk_delegate(list(TASKS), "fresh:intent", lanes=["confined-lane"],
+                                        lanes_or_default=True, force=True)
+record_script_check(fails, "explicit widening opt-in serves on the default arm",
+   all((r or {}).get("text") == "ans" for r in res_opt_in))
+
+# ── (c) NOTHING viable anywhere → honest refusal ──
+print("\n-- (c) no lane viable at all → honest no_viable_lane --")
 lane_balance._bulk_arms = lambda intent, lanes=None: []
 res_none = lane_balance.bulk_delegate(list(TASKS), "fresh:intent", lanes=["confined-lane"], force=True)
 record_script_check(fails, "no lane viable at all → 'no_viable_lane' rows (widen never invents a lane)",
    all((r or {}).get("reason") == "no_viable_lane" and (r or {}).get("text") is None for r in res_none))
 
-# ── (c) an UNCONFINED caller is UNCHANGED — the widen branch is confined-only ──
-print("\n-- (c) an unconfined (lanes=None) caller is unchanged: widen branch not triggered --")
+# ── (d) an UNCONFINED caller is UNCHANGED ──
+print("\n-- (d) an unconfined (lanes=None) caller is unchanged --")
 _calls_with_no_lanes = {"n": 0}
 
 
