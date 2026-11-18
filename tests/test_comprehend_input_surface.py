@@ -95,9 +95,19 @@ def test_comprehend_generated_cli_flags_reach_core(comprehend_surface_harness):
         comprehend.cmd([str(first), "--items", str(first), "--intent", "surface-test"])
 
 
+def test_comprehend_bulk_items_use_one_governed_fan(comprehend_surface_harness):
+    first, other, observed, checkpoint = comprehend_surface_harness
+    result = comprehend.comprehend_corpus(items=[str(first), str(other)], intent="surface-test",
+                                          model="test-model", run=True, checkpoint=str(checkpoint))
+    assert result["tasks"] == 2
+    assert len(observed) == 1
+    assert len(observed[0][0]) == 2
+
+
 if __name__ == "__main__":
     checks = (test_comprehend_literal_items_exact_and_whole, test_comprehend_vendor_confinement,
-              test_comprehend_panel_matrix_and_estimate, test_comprehend_generated_cli_flags_reach_core)
+              test_comprehend_panel_matrix_and_estimate, test_comprehend_generated_cli_flags_reach_core,
+              test_comprehend_bulk_items_use_one_governed_fan)
     for check in checks:
         with TemporaryDirectory() as directory, pytest.MonkeyPatch.context() as patches:
             check(comprehend_surface_harness(patches, Path(directory)))

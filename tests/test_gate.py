@@ -51,10 +51,28 @@ expect("non-batch upload -> pass (not gated)", lambda: oc.files.create(file=io.B
 expect("malformed batch file -> fail-open pass", lambda: oc.files.create(file=io.BytesIO(b"not json\n{bad"), purpose="batch"), False)
 
 print("\n-- Anthropic messages.batches.create(requests=...) --")
-os.environ["GATE_CAP"] = "75"
-expect("4000 big opus reqs over $75 cap -> refuse", lambda: ac.messages.batches.create(requests=big_reqs), True)
-os.environ["GATE_CAP"] = "100000"
-expect("same under huge cap -> pass", lambda: ac.messages.batches.create(requests=big_reqs), False)
+prior_bulk_enforcement = os.environ.get("SPENDGUARD_ENFORCE")
+try:
+    # These two assertions isolate the budget-cap axis. The test-first axis is
+    # covered independently below under its fail-closed block default.
+    os.environ["SPENDGUARD_ENFORCE"] = "warn"
+    os.environ["GATE_CAP"] = "75"
+    expect("4000 big opus reqs over $75 cap -> refuse", lambda: ac.messages.batches.create(requests=big_reqs), True)
+    os.environ["GATE_CAP"] = "100000"
+    expect("same under huge cap -> pass", lambda: ac.messages.batches.create(requests=big_reqs), False)
+
+    # Lock in comprehend defect #2: budget headroom cannot bypass test-first.
+    os.environ["SPENDGUARD_ENFORCE"] = "block"
+    expect("block-default refuses large untested bulk under huge cap -> test-first",
+           lambda: ac.messages.batches.create(requests=big_reqs), True)
+    os.environ["SPENDGUARD_ENFORCE"] = "warn"
+    expect("same bulk allowed under explicit test-first warn rollout -> pass",
+           lambda: ac.messages.batches.create(requests=big_reqs), False)
+finally:
+    if prior_bulk_enforcement is None:
+        os.environ.pop("SPENDGUARD_ENFORCE", None)
+    else:
+        os.environ["SPENDGUARD_ENFORCE"] = prior_bulk_enforcement
 
 # show what the big anthropic batch was estimated at
 e = spend_gate._estimate_anthropic_requests(big_reqs)
