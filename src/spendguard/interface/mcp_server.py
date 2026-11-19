@@ -1168,7 +1168,7 @@ def serve_http(host="127.0.0.1", port=4913):
             logging.getLogger(__name__).exception("Stopping MCP HTTP daemon for supervised descriptor recovery")
 
 
-def cmd(argv=None):
+def cmd(argv=None, *, install_http=None, migrate_http=None):
     import argparse
     ap = argparse.ArgumentParser(prog="spendguard mcp",
                                  description="spendguard's tools over MCP: the model-advisor plus read-only spend & "
@@ -1178,7 +1178,21 @@ def cmd(argv=None):
     import os as _os
     add_registered_cli_argument(ap, 'mcp/mcp_server.cmd/ap/--host', default=_os.environ.get('SPENDGUARD_MCP_HOST', '127.0.0.1'))
     add_registered_cli_argument(ap, 'mcp/mcp_server.cmd/ap/--port', type=int, default=int(_os.environ.get('SPENDGUARD_MCP_PORT', '4913')))   # family: 4900 ccwatch · 4910 7thsense · 4911 symgrep · 4912 honestreview · 4913 spendguard
+    add_registered_cli_argument(ap, 'mcp/mcp_server.cmd/ap/--install-http')
+    add_registered_cli_argument(ap, 'mcp/mcp_server.cmd/ap/--migrate-http')
+    add_registered_cli_argument(ap, 'mcp/mcp_server.cmd/ap/--apply')
     args = ap.parse_args(argv)
+    if sum((args.http, args.install_http, args.migrate_http)) > 1:
+        ap.error("--http, --install-http and --migrate-http are mutually exclusive")
+    if args.apply and not args.migrate_http:
+        ap.error("--apply requires --migrate-http")
+    if args.install_http or args.migrate_http:
+        if install_http is None or migrate_http is None:
+            ap.error("HTTP service management requires the CLI entrypoint")
+        result = (install_http(port=args.port) if args.install_http
+                  else migrate_http(apply=args.apply))
+        print(json.dumps(result, indent=2, default=str))
+        return 0
     if args.http:
         # WARM SHARED DAEMON = SINGLETON (one per port): a second start detects the incumbent (flock) and exits 0, so a
         # supervisor can (re)start it idempotently, never racing http.server into a bind "address already in use".

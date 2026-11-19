@@ -580,8 +580,8 @@
             "mi": 34.59780241815678
           },
           "src/spendguard/interface/capability_cli_dispatch_generation.py": {
-            "max_cc": 8,
-            "mi": 53.97046924166878
+            "max_cc": 9,
+            "mi": 53.26192043956366
           },
           "src/spendguard/interface/capability_cli_help_generation.py": {
             "max_cc": 22,
@@ -608,7 +608,7 @@
             "mi": 21.647400062518287
           },
           "src/spendguard/interface/cli.py": {
-            "max_cc": 42,
+            "max_cc": 46,
             "mi": 0.0
           },
           "src/spendguard/interface/cli_arguments.py": {
@@ -625,7 +625,7 @@
           },
           "src/spendguard/interface/mcp_server.py": {
             "max_cc": 26,
-            "mi": 4.318145822048467
+            "mi": 3.0176094156094715
           },
           "src/spendguard/interface/serve.py": {
             "max_cc": 10,
@@ -849,7 +849,7 @@
           },
           "src/spendguard/platform/distribution_daemon.py": {
             "max_cc": 23,
-            "mi": 21.905468067969675
+            "mi": 21.16967305343089
           },
           "src/spendguard/platform/fleet.py": {
             "max_cc": 26,
@@ -1258,6 +1258,10 @@
           "src/spendguard/analyze/assurance/mcp_freshness_readiness.py": {
             "max_cc": 17,
             "mi": 49.565072776466415
+          },
+          "src/spendguard/platform/mcp_http_launchd.py": {
+            "max_cc": 20,
+            "mi": 24.100030167875357
           }
         },
         "measured_extremes": {
@@ -2590,7 +2594,8 @@
     "reviewed_grok_lane_concurrency_config_accessor": "config_store.py gains the grok lane concurrency SSOT accessor (GROK_LANE_CONCURRENCY_FLOOR/ENV + grok_lane_concurrency()), mirroring effective_codex_concurrency; max_cc unchanged (23), MI dips ~0.15 from the three added config symbols \u2014 reviewed, no new branching complexity.",
     "reviewed_reclaim_cli_complexity": "Reclaim CLI (PR #352): new platform module home_reclaim.py plus the reclaim-command wiring in capability_cli_callable_generation.py; measured under CPython 3.11 + radon 6.0.1 and recorded their true per-file CC/MI into the 3.11 ratchet bucket.",
     "reviewed_lane_queue_failure_attribution_resync_66c2559e": "lane-queue structured failure attribution (F1-F4): adapters/codex_exec/lane_queue/lane_recovery/lane_servability/execution_accessors complexity re-measured under CPython 3.11 after rebase onto main @66c2559e",
-    "reviewed_mcp_deploy_freshness": "Reviewed MCP deployment verification and readiness changes"
+    "reviewed_mcp_deploy_freshness": "Reviewed MCP deployment verification and readiness changes",
+    "reviewed_mcp_http_installer_migration": "Reviewed package-owned MCP HTTP installer and safe migration complexity"
   },
   "dead_allowlist": [
     {

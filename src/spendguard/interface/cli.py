@@ -421,7 +421,9 @@ def _dispatch(argv=None):
         except Exception:
             pass
     from .capability_cli_dispatch_generation import invoke_registered_cli_command
-    matched, result = invoke_registered_cli_command(cmd, rest, argv)
+    dependencies = (mcp_http_cli_dependencies() if cmd == "mcp" and
+                    ("--install-http" in rest or "--migrate-http" in rest) else None)
+    matched, result = invoke_registered_cli_command(cmd, rest, argv, handler_kwargs=dependencies)
     if matched:
         return result
     import difflib
@@ -468,6 +470,14 @@ def cli_core_reconcile(rest, cmd, argv):
         except RuntimeError as e:                          # e.g. a missing provider key — clean one-line exit, no traceback
             print(e)
             return 1
+
+
+def mcp_http_cli_dependencies():
+    """Provide launchd management operations to the MCP transport parser."""
+    from ..platform.mcp_http_launchd import (install_mcp_http_launchd_daemon,
+                                             migrate_mcp_http_to_package_owned)
+    return {"install_http": install_mcp_http_launchd_daemon,
+            "migrate_http": migrate_mcp_http_to_package_owned}
 
 
 def cli_core_deploy(rest, cmd, argv):
@@ -568,16 +578,28 @@ def cli_core_deploy(rest, cmd, argv):
             if _fr.get(_fleet.FLEET_RESTART_FAILURE_KEY):
                 return _deploy_failed_verdict("one or more supervised consumer restarts could not be requested")
         if registered_cli_option_token('deploy/--dry-run') not in r:
-            from ..platform import restart_and_verify_live_mcp
+            from ..platform import inspect_live_mcp_service, restart_and_verify_live_mcp
+            from ..platform.mcp_http_launchd import install_mcp_http_launchd_daemon
+            _mcp_service = inspect_live_mcp_service()
+            if _mcp_service.get("package_owned") is True or _mcp_service.get("listener_present") is False:
+                try:
+                    _mcp_install = install_mcp_http_launchd_daemon()
+                    print(f"deploy: MCP HTTP daemon — {_mcp_install['status']}: {_mcp_install['reason']}")
+                except Exception as _mcp_install_error:
+                    print(f"deploy: ⚠ MCP HTTP daemon install failed: {_mcp_install_error}", file=sys.stderr)
+            elif _mcp_service.get("package_owned") is False:
+                print("deploy: installed MCP service is not package-owned; run "
+                      "`spendguard mcp --migrate-http --apply` to migrate it", file=sys.stderr)
             _mcp_verification = restart_and_verify_live_mcp(
                 intended_sha=rec["sha"], restart=registered_cli_option_token('deploy/--no-restart') not in r)
             if not _mcp_verification["verified"]:
-                return _deploy_failed_verdict(
-                    f"live MCP loaded {_mcp_verification['loaded_sha']} instead of intended "
-                    f"{_mcp_verification['intended_sha']}: {_mcp_verification['reason']}"
-                )
-            if _mcp_verification["package_owned"] is False:
-                print("deploy: installed MCP service is not package-owned", file=sys.stderr)
+                if inspect_live_mcp_service().get("listener_present") is False:
+                    print("deploy: no MCP HTTP listener present; live verification skipped.")
+                else:
+                    return _deploy_failed_verdict(
+                        f"live MCP loaded {_mcp_verification['loaded_sha']} instead of intended "
+                        f"{_mcp_verification['intended_sha']}: {_mcp_verification['reason']}"
+                    )
         _refresh_deployments = registered_cli_option_token('deploy/--no-refresh') not in r
         _host_install_audit = _fleet.reconcile_registered_host_installations()
         _host_escape_count = len(_host_install_audit["escapes"])

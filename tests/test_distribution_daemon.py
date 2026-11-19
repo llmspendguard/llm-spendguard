@@ -282,6 +282,14 @@ def exercise_live_mcp_unowned_service_finding():
     print("[OK] listener owned by an external launchd label produces an ownership finding")
 
 
+def exercise_live_mcp_absent_listener_finding():
+    response = SimpleNamespace(stdout="", returncode=1, stderr="")
+    with patch.object(daemon.subprocess, "run", return_value=response):
+        finding = daemon.inspect_live_mcp_service()
+    assert finding["listener_present"] is False and finding["package_owned"] is None
+    print("[OK] no listener is distinguished from an unknown owner")
+
+
 if __name__ == "__main__":
     exercise_distribution_daemon_red_green()
     exercise_distribution_descriptor_external_process()
@@ -291,3 +299,4 @@ if __name__ == "__main__":
     exercise_distribution_missing_http_owner_restart()
     exercise_live_mcp_restart_verification()
     exercise_live_mcp_unowned_service_finding()
+    exercise_live_mcp_absent_listener_finding()

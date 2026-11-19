@@ -139,6 +139,10 @@ it reconstructs *what* you should do cheaper, and won't let "cheaper" cost you q
   models on a task sample so they enter the ranking. Exposed as a local MCP server — **`spendguard mcp`** (stdio,
   no SDK dep) — so any MCP client (Claude Code / Desktop, an IDE agent) can call it as tools. See
   [Model-advisor](docs/MODEL_ADVISOR.md).
+  Install the package-owned HTTP daemon with `spendguard mcp --install-http`. To replace a foreign
+  launchd service, first review `spendguard mcp --migrate-http`, then run
+  `spendguard mcp --migrate-http --apply`; migration keeps a backup and verifies the new daemon before
+  removing the old plist.
 - **active routing** — `advisor.shed_lanes` plus live cap/overage state moves eligible work to ready $0 lanes;
   best-value resolves the cheapest measured-good `(model, effort)`; unserved requests get the best catalog-ranked
   served substitute within anchor rate ×1.25. Shed results distinguish avoided-overage $ from quota-preserved value.

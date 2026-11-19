@@ -28,7 +28,18 @@ def test_live_mcp_readiness_unreachable_is_unreviewed():
         assert assess_live_mcp_freshness_readiness(context={}).status == "UNREVIEWED"
 
 
+def test_live_mcp_readiness_absent_listener_is_unreviewed():
+    status = {"served": {"sha": "loaded"}, "install_kind": "editable",
+              "freshness": {"fresh": True, "mode": "editable", "loaded_sha": "loaded",
+                            "source_sha": "loaded", "reason": "matching"}}
+    service = {"package_owned": None, "listener_present": False, "reason": "no listener"}
+    with patch.object(platform, "read_live_mcp_release_status", return_value=status), \
+         patch.object(platform, "inspect_live_mcp_service", return_value=service):
+        assert assess_live_mcp_freshness_readiness(context={}).status == "UNREVIEWED"
+
+
 if __name__ == "__main__":
     test_live_mcp_readiness_requires_fresh_owned_service()
     test_live_mcp_readiness_unreachable_is_unreviewed()
+    test_live_mcp_readiness_absent_listener_is_unreviewed()
     print("MCP freshness readiness: PASS")

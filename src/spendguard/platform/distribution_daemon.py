@@ -90,6 +90,9 @@ def inspect_live_mcp_service(settings=None):
         listeners = subprocess.run([MCP_LSOF_COMMAND, "-nP", "-t", f"-iTCP:{port}", "-sTCP:LISTEN"],
             capture_output=True, text=True, timeout=MCP_PROCESS_DISCOVERY_TIMEOUT_S, check=False)
         pids = {int(line) for line in listeners.stdout.splitlines() if line.strip().isdigit()}
+        if not listeners.stdout.strip() and not listeners.stderr.strip() and listeners.returncode in (0, 1):
+            return {"label_used": None, "package_owned": None, "listener_present": False,
+                    "reason": "no MCP HTTP listener present"}
         if len(pids) != 1:
             return {"label_used": None, "package_owned": None, "reason": "MCP listener identity is absent or ambiguous"}
         pid = next(iter(pids))
@@ -106,7 +109,7 @@ def inspect_live_mcp_service(settings=None):
                       and fleet.launchd_consumer_label_loaded(row.get("supervision_ref")) is True]
         label = registered[0] if registered else labels[0]
         owned = label == MCP_HTTP_LAUNCHD_LABEL
-        return {"label_used": label, "package_owned": owned,
+        return {"label_used": label, "package_owned": owned, "listener_present": True,
                 "reason": "package-owned MCP service" if owned else "installed MCP service is not package-owned"}
     except (OSError, subprocess.SubprocessError, ValueError, RuntimeError) as exc:
         return {"label_used": None, "package_owned": None, "reason": f"MCP service ownership unproven: {exc}"}

@@ -57,7 +57,7 @@ Each absence below carries the registry's reviewed reason.
 | C031 | Ask a cross-provider panel under a budget and deadline | ask | spendguard.crossllm.ask(prompt, *, vendors=None, n=None, schema=None, system=None, purpose='ask', deadline_s=None, budget_usd=None, mode='all', require=None, max_tokens=None, est_output_tokens=None, preflight=True, refuse_billed=False) | capability_ask_crossllm_ask | [spendguard.crossllm:ask](#core-2b2b2b602d41bb6497173212fa9c761d8af7bdca9bda4e2ad59ba556c6f0787e) |
 | C032 | Comprehend a file corpus across subscription lanes | comprehend | spendguard.comprehend.comprehend_corpus(patterns, intent, question=None, model=None, run=False, budget_usd=None, lanes=None, max_chars=_DEFAULT_MAX_CHARS, checkpoint=None, refuse_billed=False) | capability_comprehend_comprehend_comprehend_corpus | [spendguard.comprehend:comprehend_corpus](#core-599ff4f027637b2ed47e9adb0625f40c13c44e39ca007aa586f8bf2406705a21) |
 | C033 | Run the authenticated spendguard HTTP server | serve | ABSENT (DELIBERATE): Server lifecycle is an operator process concern; underlying server construction remains public. | ABSENT (DELIBERATE): Starting an HTTP server belongs to external process supervision. |  |
-| C034 | Run the MCP transport server | mcp | ABSENT (DELIBERATE): Transport process lifecycle belongs to the protocol host. | ABSENT (DELIBERATE): Starting the current transport belongs to external process supervision. |  |
+| C034 | Run or manage the MCP transport server | mcp | ABSENT (DELIBERATE): Transport process lifecycle belongs to the protocol host. | ABSENT (DELIBERATE): Starting the current transport belongs to external process supervision. |  |
 | C035 | Audit and optionally arm consumer workspaces | consumer-audit | spendguard.consumer_audit.audit_consumer_workspaces(deployed_sha, roots=None, auto_arm=True, dry_run=False, settings=None) | ABSENT (DELIBERATE): Workspace interpreter arming belongs to explicit host installation and deployment. | [spendguard.consumer_audit:audit_consumer_workspaces](#core-ee933086ba7445ad6825aa20577ae73b6a6d9e69fc1554ab7778ff5519ae8f08) |
 | C036 | Promote a gated release and converge running consumers | deploy | ABSENT (DELIBERATE): Release promotion owns deployment locks and external process supervision. | ABSENT (DELIBERATE): Promoting the serving release requires deployment locks and external process supervision. |  |
 | C037 | Compare candidate models and efforts on measured quality | bakeoff | spendguard.bakeoff.bakeoff(intent, candidates=None, prompts=None, sample_n=5, run=False, budget_usd=None, judge_model=None, parent_reading=None, efforts=None, requirement_aware=False, adjudicator_model=None, temperature=None, top_p=None, seed=None) | spendguard_bakeoff(intent, candidates, prompts, sample_n, efforts, requirement_aware, adjudicator_model, temperature, top_p, seed, budget_usd) | [spendguard.bakeoff:bakeoff](#core-0a386423d2156252798bb6307054e9cf35ca1df1e68efd1d5fd5817741f4b3e8) |
@@ -546,15 +546,18 @@ Reviewed CLI schema projections bind the existing operator handler; lifecycle op
 | host | string | no | DEFAULT_HOST | bind host (default 127.0.0.1; a non-loopback host needs a token) |
 | port | integer | no | DEFAULT_PORT | Existing serve control --port; source contract src/spendguard/serve.py:162 |
 
-### C034: Run the MCP transport server
+### C034: Run or manage the MCP transport server
 
-Reviewed CLI schema projections bind the existing operator handler; lifecycle operation remains deliberately absent from API/MCP. cli_projection_id identifies the original declaration; defaults with default_source are evaluated only at their existing callsite. Audited CLI invocation: spendguard mcp --host --http --port.
+Reviewed CLI schema projections bind the existing operator handler; lifecycle operation remains deliberately absent from API/MCP. cli_projection_id identifies the original declaration; defaults with default_source are evaluated only at their existing callsite. Audited CLI invocation: spendguard mcp --host --http --port. HTTP installation and migration are CLI lifecycle controls; migration defaults to a dry run.
 
 | Parameter | Type | Required | Default | Contract |
 | --- | --- | --- | --- | --- |
 | http | boolean | no | false | serve over HTTP (stdlib, POST /mcp) as one WARM daemon every session CONNECTS to via urllib, instead of spawning a stdio `spendguard mcp` per session. |
 | host | string | no | _os.environ.get('SPENDGUARD_MCP_HOST', '127.0.0.1') | Existing mcp control --host; source contract src/spendguard/mcp_server.py:1363 |
 | port | integer | no | int(_os.environ.get('SPENDGUARD_MCP_PORT', '4913')) | Existing mcp control --port; source contract src/spendguard/mcp_server.py:1364 |
+| install_http | boolean | no | false | Install and start the package-owned MCP HTTP daemon. |
+| migrate_http | boolean | no | false | Plan migration of a foreign MCP HTTP daemon; use --apply to execute. |
+| apply | boolean | no | false | Apply the MCP HTTP migration instead of showing its plan. |
 
 ### C035: Audit and optionally arm consumer workspaces
 

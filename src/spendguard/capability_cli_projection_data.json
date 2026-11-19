@@ -3368,6 +3368,60 @@
     "evidence": "src/spendguard/interface/mcp_server.py:1364"
   },
   {
+    "declaration_id": "mcp/mcp_server.cmd/ap/--install-http",
+    "commands": [
+      "mcp"
+    ],
+    "names": [
+      "--install-http"
+    ],
+    "attributes": {
+      "action": {
+        "literal": "store_true"
+      },
+      "help": {
+        "literal": "Install and start the package-owned MCP HTTP daemon."
+      }
+    },
+    "evidence": "src/spendguard/interface/mcp_server.py:1181"
+  },
+  {
+    "declaration_id": "mcp/mcp_server.cmd/ap/--migrate-http",
+    "commands": [
+      "mcp"
+    ],
+    "names": [
+      "--migrate-http"
+    ],
+    "attributes": {
+      "action": {
+        "literal": "store_true"
+      },
+      "help": {
+        "literal": "Plan migration of a foreign MCP HTTP daemon; use --apply to execute."
+      }
+    },
+    "evidence": "src/spendguard/interface/mcp_server.py:1181"
+  },
+  {
+    "declaration_id": "mcp/mcp_server.cmd/ap/--apply",
+    "commands": [
+      "mcp"
+    ],
+    "names": [
+      "--apply"
+    ],
+    "attributes": {
+      "action": {
+        "literal": "store_true"
+      },
+      "help": {
+        "literal": "Apply the MCP HTTP migration instead of showing its plan."
+      }
+    },
+    "evidence": "src/spendguard/interface/mcp_server.py:1181"
+  },
+  {
     "declaration_id": "measurement/measurement.cmd/p_i/reading_id",
     "commands": [
       "measurement"
