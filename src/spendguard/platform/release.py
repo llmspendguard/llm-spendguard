@@ -72,9 +72,15 @@ def served_sha():
     """The commit this process's code was imported from — captured on the FIRST call and FROZEN for the life of
     the process (memoised write-once; there is deliberately NO refresh). The editable install serves the working
     tree, so HEAD is that identity, with a `dirty` flag when tracked files were uncommitted at startup. Returns
-    {sha, short, dirty, describe} or None outside a git tree. Frozen on purpose: re-reading HEAD later would
-    report a checkout that moved AFTER import — code this process is NOT running — the exact confusion this
-    module removes. Tests reset it with `served_sha.cache_clear()` after stubbing `_git_src`."""
+    {sha, short, dirty, describe} only for an editable checkout. A wheel's package directory may be inside a
+    foreign git repo, where git -C would return that repo's HEAD; a wheel returns None, so version is the only
+    signal. Frozen on purpose: re-reading HEAD later would report a checkout that moved AFTER import — code
+    this process is NOT running — the exact confusion this module removes. Tests reset it with
+    `served_sha.cache_clear()` after stubbing `_git_src`."""
+    from .manifest import MANIFEST_EDITABLE_KIND, inspect_current_interpreter_install_kind
+
+    if inspect_current_interpreter_install_kind().get("install_kind") != MANIFEST_EDITABLE_KIND:
+        return None
     sha = _git_src("rev-parse", "HEAD")
     if not sha:
         return None
