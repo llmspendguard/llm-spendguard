@@ -29,6 +29,7 @@ import shutil
 import subprocess
 import tempfile
 import time
+from ...store.configuration.cli_resolution import cli_resolver
 
 TIMEOUT_S = 300               # meta prompts are small; a hung CLI must not stall the daily report
 MIN_TIMEOUT_S = 30            # agy's real working latency is ~5s (no big cold-start), and its plan quota OSCILLATES
@@ -48,13 +49,7 @@ AGY_USAGE_PRINT_TIMEOUT = "30s"
 AGY_USAGE_PROCESS_TIMEOUT_S = 45
 
 
-def _bin():
-    """Host `agy` via config.resolve_cli ($SPENDGUARD_AGY_BIN pin → PATH → well-known user-local dirs like
-    ~/.local/bin, where the Antigravity installer places it) — daemons run with a minimal PATH that misses it.
-    Delegating outright (no shutil.which fast-path) so an explicit pin is never overridden by a stray PATH binary,
-    matching codex_exec._bin()."""
-    from ... import config
-    return config.resolve_cli("agy", "SPENDGUARD_AGY_BIN")
+_bin = cli_resolver("agy", "SPENDGUARD_AGY_BIN")
 
 
 def available() -> bool:

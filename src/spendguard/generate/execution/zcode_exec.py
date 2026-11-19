@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import tempfile
 import time
+from ...store.configuration.cli_resolution import cli_resolver
 
 
 TIMEOUT_S = 300
@@ -16,9 +17,7 @@ ZCODE_AGENTIC_MODE = "build"
 ZCODE_WORK_DIRECTORY_PREFIX = "spendguard-zcode-"
 
 
-def _bin():
-    from ... import config
-    return config.resolve_cli("zcode", ZCODE_BIN_ENV)
+_bin = cli_resolver("zcode", ZCODE_BIN_ENV)
 
 
 def available() -> bool:

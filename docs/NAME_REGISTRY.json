@@ -349,11 +349,6 @@
       "verdict": "PROTOCOL",
       "why": "The base-called hook returning the env marker merged into every warm app-server spawn (and thereby inherited by all its descendants); base _WarmStdioJsonRpcDaemon._lease_marker_env returns {} (no marker), _CodexDaemon._lease_marker_env returns {CODEX_LEASE_ACTIVE_ENV: '1'} so a codex request nested inside an active lease detects the marker and diverts to a tracked cold codex exec instead of taking a second pool lease (the wedge fix). Same contract, per-provider body, exactly like the _extra_waiters_to_fail / _route_notification / _spawn_cmd / _on_response hook overrides. [PROTOCOL, codex warm-daemon wedge fix Stage B, 2026-10-28.]"
     },
-    "_bin": {
-      "n": 6,
-      "verdict": "PROTOCOL",
-      "why": "Each CLI-backed lane implements the same host-binary resolver contract, while lanes_status dispatches generically via hasattr(mod, \"_bin\") and mod._bin(); each implementation intentionally resolves its own CLI. The ZCode agentic executor adds a sixth wrapper (config.resolve_cli('zcode', 'SPENDGUARD_ZCODE_BIN')); honestreview name --run on 2026-11-19 read the new body and dissented DUPLICATION (the six wrappers only vary the CLI name + pin var and could merge to config.resolve_cli) \u2014 kept PROTOCOL here because dispatch stays polymorphic via hasattr(mod, '_bin'); the merge is tracked as a separate follow-up."
-    },
     "_conf": {
       "n": 2,
       "verdict": "DUPLICATION",
