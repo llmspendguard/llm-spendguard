@@ -421,7 +421,7 @@
           },
           "src/spendguard/generate/execution/codex_exec.py": {
             "max_cc": 18,
-            "mi": 13.348690107863835
+            "mi": 13.34
           },
           "src/spendguard/generate/execution/execution_accessors.py": {
             "max_cc": 6,
@@ -1025,7 +1025,7 @@
           },
           "src/spendguard/store/reference_data/lane_registry.py": {
             "max_cc": 2,
-            "mi": 88.58953635542947
+            "mi": 88.58
           },
           "src/spendguard/store/reference_data/model_catalog.py": {
             "max_cc": 50,
@@ -1217,7 +1217,7 @@
           },
           "src/spendguard/store/configuration/cli_resolution.py": {
             "max_cc": 10,
-            "mi": 86.20995791708583
+            "mi": 86.2
           },
           "src/spendguard/store/configuration/config_store.py": {
             "max_cc": 23,
@@ -1265,7 +1265,7 @@
           },
           "src/spendguard/generate/execution/zcode_exec.py": {
             "max_cc": 23,
-            "mi": 38.20757148384761
+            "mi": 38.2
           }
         },
         "measured_extremes": {
@@ -2600,7 +2600,7 @@
     "reviewed_lane_queue_failure_attribution_resync_66c2559e": "lane-queue structured failure attribution (F1-F4): adapters/codex_exec/lane_queue/lane_recovery/lane_servability/execution_accessors complexity re-measured under CPython 3.11 after rebase onto main @66c2559e",
     "reviewed_mcp_deploy_freshness": "Reviewed MCP deployment verification and readiness changes",
     "reviewed_mcp_http_installer_migration": "Reviewed package-owned MCP HTTP installer and safe migration complexity",
-    "reviewed_zcode_lane_and_cli_resolver_merge_new_files": "2026-11-19: New files on feat/zcode-agentic-lane need measured complexity baselines. zcode_exec.py is the new grok-class agentic ZCode CLI executor mirroring grok_exec; its run_prompt is the one non-trivial function at CC 23 (rank D), matching grok_exec's parallel run_prompt, with auth_status (CC 2) and available (CC 1) trivial, measured MI 38.21. The two new guard tests rank CC A: test_zcode_agentic_executor.py drives the router's canonical-import agentic dispatch (worst CC 5, MI 69.56) and test_cli_bin_resolver_is_merged.py guards the merged cli_resolver factory (worst CC 4, MI 50.81); tests are outside the src-only complexity source scope so they take no baseline entry. Measured with Radon under Python 3.11. No pre-existing file's max_cc regresses; three files' size-sensitive MI dip within rank from the same-branch edits (codex_exec 13.634->13.349, cli_resolution 88.619->88.590, lane_registry 87.331->86.210). Cycle, duplication and dead-code ratchets unchanged."
+    "reviewed_zcode_lane_and_cli_resolver_merge_new_files": "2026-11-19: feat/zcode-agentic-lane complexity baselines. zcode_exec.py is the new grok-class agentic ZCode CLI executor mirroring grok_exec; its run_prompt is the one non-trivial function at CC 23 (rank D), matching grok_exec's parallel run_prompt. No pre-existing file's integer max_cc regresses (platform-stable); arm64 measures new=0 regress=0 across all 315 files. The baseline is authored on arm64-darwin (dev) while CI readiness measures on linux/amd64 py3.11; radon's maintainability index uses libm ln() and differs in its trailing digits across platforms -- the same libm variance already recorded for compaction.py/lanes.py in reviewed_restructure_domain_taxonomy_complexity and as a zero-margin ceiling in reviewed_storm_realtime_per_item_deadline. To keep the exact-float mi<stored ratchet robust across the arm64-dev / amd64-CI boundary without an amd64 environment, the four knife-edge entries whose stored MI equals the arm64 measurement exactly -- codex_exec, zcode_exec (new), cli_resolution (new from the _bin merge), lane_registry (zai-coding row edit) -- are recorded as their arm64 MI truncated DOWN to two decimals (codex_exec 13.34, zcode_exec 38.2, cli_resolution 86.2, lane_registry 88.58): a conservative floor provably <= the amd64 value (truncation margin ~0.007-0.01, far above any libm last-bit divergence) that still fails on a real complexity regression, which moves MI by far more than 0.01. The other same-branch executors (antigravity, grok, kimi, subscription) measure well above their stored MI (margins > 0.12) and need no adjustment. Cycle, duplication and dead-code ratchets unchanged."
   },
   "dead_allowlist": [
     {
