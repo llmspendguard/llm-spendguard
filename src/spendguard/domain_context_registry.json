@@ -694,7 +694,8 @@
         "analyze.assurance.verify",
         "analyze.assurance.architectural_fitness",
         "analyze.assurance.capability_readiness",
-        "analyze.assurance.capability_readiness_gates",
+      "analyze.assurance.capability_readiness_gates",
+      "analyze.assurance.mcp_freshness_readiness",
         "analyze.assurance.external_standard_readiness",
         "analyze.assurance.ledger_performance_benchmark",
         "analyze.assurance.source_compact",
@@ -753,7 +754,10 @@
         "RECLAIM_DEFAULT_PROTECTION",
         "RECLAIM_DEFAULT_ROTATED_LOGS",
         "RECLAIM_DEFAULT_STATE_SNAPSHOTS",
-        "RECLAIM_LSOF_EXECUTABLE_DEFAULT"
+        "RECLAIM_LSOF_EXECUTABLE_DEFAULT",
+        "inspect_live_mcp_service",
+        "read_live_mcp_release_status",
+        "restart_and_verify_live_mcp"
       ]
     },
     {

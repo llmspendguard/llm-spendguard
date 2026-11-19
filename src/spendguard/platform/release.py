@@ -26,6 +26,7 @@ import functools
 import os
 import pathlib
 import subprocess
+from typing import Optional, TypedDict
 
 from .. import config
 
@@ -106,6 +107,32 @@ def stale_vs_green():
     return g.get("sha") != s.get("sha")
 
 
+class SourceFreshnessVerdict(TypedDict):
+    fresh: Optional[bool]
+    mode: str
+    loaded_sha: Optional[str]
+    source_sha: Optional[str]
+    reason: str
+
+
+def live_matches_current_source(*, loaded_sha=None, mode=None) -> SourceFreshnessVerdict:
+    """Compare a loaded identity with the source appropriate to its install mode."""
+    from .manifest import MANIFEST_EDITABLE_KIND, inspect_current_interpreter_install_kind
+
+    if mode is None:
+        mode = inspect_current_interpreter_install_kind().get("install_kind") or "unknown"
+    if loaded_sha is None:
+        loaded_sha = (served_sha() or {}).get("sha")
+    source = (_git_src("rev-parse", "HEAD") if mode == MANIFEST_EDITABLE_KIND
+              else (green_pointer() or {}).get("sha"))
+    fresh = loaded_sha == source if loaded_sha and source else None
+    target = "checkout HEAD" if mode == MANIFEST_EDITABLE_KIND else "green pointer"
+    reason = (f"loaded commit matches {target}" if fresh is True else
+              f"loaded commit differs from {target}" if fresh is False else
+              f"loaded commit or {target} is unknown")
+    return {"fresh": fresh, "mode": mode, "loaded_sha": loaded_sha, "source_sha": source, "reason": reason}
+
+
 def current_respawn_decision():
     """Return the total, traceable install-aware replacement decision for this process."""
     from spendguard.platform._version import __version__
@@ -113,15 +140,9 @@ def current_respawn_decision():
                            inspect_current_interpreter_install_kind)
     install = inspect_current_interpreter_install_kind()
     if install.get("install_kind") == MANIFEST_EDITABLE_KIND:
-        if not stale_vs_green():
-            return {"should_respawn": False, "install_kind": MANIFEST_EDITABLE_KIND,
-                    "reason": "editable process is not behind the green pointer"}
-        green = green_pointer()
-        head = _git_src("rev-parse", "HEAD")
-        lands_on_green = bool(green and head and green.get("sha") == head)
-        return {"should_respawn": lands_on_green, "install_kind": MANIFEST_EDITABLE_KIND,
-                "reason": ("editable replacement loads green HEAD" if lands_on_green else
-                           "editable replacement would not load the green HEAD")}
+        verdict = live_matches_current_source(mode=MANIFEST_EDITABLE_KIND)
+        return {"should_respawn": verdict["fresh"] is False, "install_kind": MANIFEST_EDITABLE_KIND,
+                "reason": verdict["reason"]}
     if install.get("install_kind") == MANIFEST_WHEEL_KIND:
         installed_version = install.get("wheel_version")
         differs = bool(installed_version and installed_version != __version__)
@@ -189,19 +210,12 @@ def release_status():
     whether they diverge — the $0 signal that answers 'is this server running the latest blessed code?'."""
     s = served_sha()
     g = green_pointer()
-    stale = stale_vs_green()
-    if g and s and stale:
-        note = ("STALE: this process serves %s but the green pointer is %s — a newer commit was deployed; a "
-                "fresh process will serve it (the MCP server hands off between requests)."
-                % ((s or {}).get("short"), (g or {}).get("short")))
-    elif g and s and not stale:
-        note = "up to date: this process serves the green pointer (%s)" % (g or {}).get("short")
-    elif s and not g:
-        note = "no green pointer yet — this process serves %s; run `spendguard deploy` to bless it" % s.get("short")
-    else:
-        note = "version unknown (not a git checkout) — staleness cannot be established; the server keeps running"
+    verdict = live_matches_current_source()
+    stale = verdict["fresh"] is False
+    note = verdict["reason"]
     respawn = current_respawn_decision()
     return {"served": s, "green": g, "stale": stale, "respawn": respawn,
+            "freshness": verdict, "install_kind": verdict["mode"],
             "served_dirty": bool((s or {}).get("dirty")), "pointer_path": str(pointer_path()), "note": note}
 
 

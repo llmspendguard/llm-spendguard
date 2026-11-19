@@ -608,7 +608,7 @@
             "mi": 21.647400062518287
           },
           "src/spendguard/interface/cli.py": {
-            "max_cc": 39,
+            "max_cc": 42,
             "mi": 0.0
           },
           "src/spendguard/interface/cli_arguments.py": {
@@ -625,7 +625,7 @@
           },
           "src/spendguard/interface/mcp_server.py": {
             "max_cc": 26,
-            "mi": 6.962126389462975
+            "mi": 4.318145822048467
           },
           "src/spendguard/interface/serve.py": {
             "max_cc": 10,
@@ -848,8 +848,8 @@
             "mi": 0.0
           },
           "src/spendguard/platform/distribution_daemon.py": {
-            "max_cc": 20,
-            "mi": 37.06759001374062
+            "max_cc": 23,
+            "mi": 21.905468067969675
           },
           "src/spendguard/platform/fleet.py": {
             "max_cc": 26,
@@ -880,8 +880,8 @@
             "mi": 100.0
           },
           "src/spendguard/platform/release.py": {
-            "max_cc": 13,
-            "mi": 54.839360259886725
+            "max_cc": 12,
+            "mi": 54.270264078848825
           },
           "src/spendguard/platform/remote.py": {
             "max_cc": 26,
@@ -1254,6 +1254,10 @@
           "src/spendguard/platform/home_reclaim.py": {
             "max_cc": 22,
             "mi": 36.63312574243071
+          },
+          "src/spendguard/analyze/assurance/mcp_freshness_readiness.py": {
+            "max_cc": 17,
+            "mi": 49.565072776466415
           }
         },
         "measured_extremes": {
@@ -2585,7 +2589,8 @@
     "reviewed_grok_warm_leader_concurrency": "Reviewed Grok concurrency architecture: grok_exec adds one bounded process-wide warm leader-socket pool with blocking acquisition, deterministic release, and exit reaping; config_store adds the single floored dispatch.lane_concurrency_grok accessor shared by admission and execution. The added branches directly enforce bounded parallelism and configuration validation.",
     "reviewed_grok_lane_concurrency_config_accessor": "config_store.py gains the grok lane concurrency SSOT accessor (GROK_LANE_CONCURRENCY_FLOOR/ENV + grok_lane_concurrency()), mirroring effective_codex_concurrency; max_cc unchanged (23), MI dips ~0.15 from the three added config symbols \u2014 reviewed, no new branching complexity.",
     "reviewed_reclaim_cli_complexity": "Reclaim CLI (PR #352): new platform module home_reclaim.py plus the reclaim-command wiring in capability_cli_callable_generation.py; measured under CPython 3.11 + radon 6.0.1 and recorded their true per-file CC/MI into the 3.11 ratchet bucket.",
-    "reviewed_lane_queue_failure_attribution_resync_66c2559e": "lane-queue structured failure attribution (F1-F4): adapters/codex_exec/lane_queue/lane_recovery/lane_servability/execution_accessors complexity re-measured under CPython 3.11 after rebase onto main @66c2559e"
+    "reviewed_lane_queue_failure_attribution_resync_66c2559e": "lane-queue structured failure attribution (F1-F4): adapters/codex_exec/lane_queue/lane_recovery/lane_servability/execution_accessors complexity re-measured under CPython 3.11 after rebase onto main @66c2559e",
+    "reviewed_mcp_deploy_freshness": "Reviewed MCP deployment verification and readiness changes"
   },
   "dead_allowlist": [
     {

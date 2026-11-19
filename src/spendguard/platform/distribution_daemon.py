@@ -2,6 +2,10 @@
 import inspect
 import json
 import os
+import subprocess
+import time
+from typing import TypedDict
+from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
 from .. import config, fleet, mcp_fd_lifecycle
@@ -12,6 +16,21 @@ DISTRIBUTION_RPC_ID = "distribution-attestation"
 DISTRIBUTION_MCP_PATH = "/mcp"
 DISTRIBUTION_HTTP_SCHEME = "http"
 DISTRIBUTION_VERSION_TOOL = "spendguard_version"
+MCP_RESTART_TIMEOUT_DEFAULT_S = 30.0
+MCP_RESTART_POLL_INTERVAL_S = 0.5
+MCP_PROCESS_DISCOVERY_TIMEOUT_S = 5.0
+MCP_LSOF_COMMAND = "lsof"
+MCP_LAUNCHCTL_COMMAND = "launchctl"
+
+
+class LiveMcpRestartResult(TypedDict):
+    verified: bool
+    loaded_sha: str | None
+    intended_sha: str
+    label_used: str | None
+    attempts: int
+    reason: str
+    package_owned: bool | None
 
 
 def distribution_daemon_settings(settings=None):
@@ -49,6 +68,93 @@ def request_distribution_mcp_rpc(endpoint, method, params, timeout):
             or "error" in result or "result" not in result):
         raise ValueError(f"invalid live MCP response: {result}")
     return result["result"]
+
+
+def read_live_mcp_release_status(settings=None):
+    """Read the running server itself; an unreachable or invalid responder raises."""
+    policy = distribution_daemon_settings(settings)
+    reply = request_distribution_mcp_rpc(policy["mcp_endpoint"], "tools/call",
+        {"name": DISTRIBUTION_VERSION_TOOL, "arguments": {}}, policy["probe_timeout_s"])
+    if reply.get("isError") or not isinstance(reply.get("structuredContent"), dict):
+        raise ValueError("live MCP version response lacks structured status")
+    return reply["structuredContent"]
+
+
+def inspect_live_mcp_service(settings=None):
+    """Identify the launchd owner of the endpoint listener without changing its plist."""
+    policy = distribution_daemon_settings(settings)
+    port = urlparse(policy["mcp_endpoint"]).port
+    if port is None:
+        return {"label_used": None, "package_owned": None, "reason": "MCP endpoint has no explicit port"}
+    try:
+        listeners = subprocess.run([MCP_LSOF_COMMAND, "-nP", "-t", f"-iTCP:{port}", "-sTCP:LISTEN"],
+            capture_output=True, text=True, timeout=MCP_PROCESS_DISCOVERY_TIMEOUT_S, check=False)
+        pids = {int(line) for line in listeners.stdout.splitlines() if line.strip().isdigit()}
+        if len(pids) != 1:
+            return {"label_used": None, "package_owned": None, "reason": "MCP listener identity is absent or ambiguous"}
+        pid = next(iter(pids))
+        jobs = subprocess.run([MCP_LAUNCHCTL_COMMAND, "list"], capture_output=True, text=True,
+            timeout=MCP_PROCESS_DISCOVERY_TIMEOUT_S, check=False)
+        if jobs.returncode:
+            raise RuntimeError(jobs.stderr.strip() or "launchctl list failed")
+        labels = [parts[2] for line in jobs.stdout.splitlines()
+                  if len(parts := line.split()) >= 3 and parts[0] == str(pid)]
+        if len(labels) != 1:
+            return {"label_used": None, "package_owned": None, "reason": "MCP listener has no unique launchd owner"}
+        registered = [row.get("supervision_ref") for row in fleet.running_consumers(prune=False)
+                      if row.get("pid") == pid and row.get("supervision_ref") in labels
+                      and fleet.launchd_consumer_label_loaded(row.get("supervision_ref")) is True]
+        label = registered[0] if registered else labels[0]
+        owned = label == MCP_HTTP_LAUNCHD_LABEL
+        return {"label_used": label, "package_owned": owned,
+                "reason": "package-owned MCP service" if owned else "installed MCP service is not package-owned"}
+    except (OSError, subprocess.SubprocessError, ValueError, RuntimeError) as exc:
+        return {"label_used": None, "package_owned": None, "reason": f"MCP service ownership unproven: {exc}"}
+
+
+def restart_and_verify_live_mcp(*, intended_sha, timeout_s=MCP_RESTART_TIMEOUT_DEFAULT_S, settings=None,
+                                restart=True) -> LiveMcpRestartResult:
+    """Restart the actual endpoint owner and verify the SHA reported over its transport."""
+    service = inspect_live_mcp_service(settings)
+    label = service["label_used"]
+    failure = None
+    if restart:
+        if not label:
+            failure = service["reason"]
+        elif not fleet.fleet_control_restarts_enabled():
+            failure = "control-plane restarts disabled by kill switch"
+        else:
+            try:
+                outcome = fleet.kickstart_declared_launchd_consumer(label)
+                if not outcome.get("ok"):
+                    failure = f"kickstart failed: {outcome.get('detail')}"
+            except Exception as exc:
+                failure = f"kickstart failed: {type(exc).__name__}: {exc}"
+    deadline = time.monotonic() + max(0, timeout_s)
+    attempts = 0
+    loaded = None
+    probe_settings = distribution_daemon_settings(settings)
+    while True:
+        attempts += 1
+        try:
+            remaining = deadline - time.monotonic()
+            if remaining > 0:
+                probe_settings["probe_timeout_s"] = min(probe_settings["probe_timeout_s"], remaining)
+            loaded = (read_live_mcp_release_status(probe_settings).get("served") or {}).get("sha")
+            if loaded and loaded == intended_sha and failure is None:
+                return {"verified": True, "loaded_sha": loaded, "intended_sha": intended_sha,
+                        "label_used": label, "attempts": attempts, "reason": "live MCP serves intended commit",
+                        "package_owned": service["package_owned"]}
+        except Exception as exc:
+            failure_detail = f"live MCP status unavailable: {type(exc).__name__}: {exc}"
+        else:
+            failure_detail = "live MCP did not reload intended commit"
+        remaining = deadline - time.monotonic()
+        if remaining <= 0 or failure:
+            return {"verified": False, "loaded_sha": loaded, "intended_sha": intended_sha,
+                    "label_used": label, "attempts": attempts, "reason": failure or failure_detail,
+                    "package_owned": service["package_owned"]}
+        time.sleep(min(MCP_RESTART_POLL_INTERVAL_S, remaining))
 
 
 def prove_distribution_mcp_daemon(consumer, target, settings):
@@ -122,11 +228,18 @@ def attest_distribution_daemons(target, *, check=False, dry_run=False, settings=
     if not http_consumers:
         consumers.append({"surface": policy["mcp_endpoint"], "endpoint": policy["mcp_endpoint"]})
     rows = []
+    verification = None
+    if not check and not dry_run:
+        verification = restart_and_verify_live_mcp(intended_sha=target["sha"], settings=policy)
     for consumer in consumers:
         action = "none"
         restart_evidence = None
         restart_ok = True
-        if not check:
+        if consumer.get("endpoint") and verification is not None:
+            restart_evidence = verification
+            restart_ok = verification["verified"]
+            action = "restart-verified" if restart_ok else "restart-verification-failed"
+        elif not check:
             if dry_run:
                 action = "would-restart"
             elif consumer.get("pid"):
@@ -136,13 +249,7 @@ def attest_distribution_daemons(target, *, check=False, dry_run=False, settings=
                 action = "restart-requested" if restart_ok else "restart-request-failed"
             else:
                 restart_ok = False
-                if fleet.fleet_control_restarts_enabled():
-                    try:
-                        restart_evidence = fleet.kickstart_declared_launchd_consumer(MCP_HTTP_LAUNCHD_LABEL)
-                        restart_ok = bool(restart_evidence.get("ok"))
-                    except Exception as exc:
-                        restart_evidence = {"error": f"{type(exc).__name__}: {exc}"}
-                action = "restart-requested" if restart_ok else "restart-request-failed"
+                action = "restart-request-failed"
         row = prove_distribution_mcp_daemon(consumer, target, policy)
         row["action_taken"] = action
         if restart_evidence is not None:
@@ -150,7 +257,10 @@ def attest_distribution_daemons(target, *, check=False, dry_run=False, settings=
         if not restart_ok:
             row["healthy"] = False
             row["straggler_reason"] = "; ".join(filter(None, (
-                row["straggler_reason"], "required daemon restart could not be requested")))
+                row["straggler_reason"],
+                (f"live MCP loaded {verification['loaded_sha']} instead of intended {verification['intended_sha']}: "
+                 f"{verification['reason']}" if verification is not None and consumer.get("endpoint") else
+                 "required daemon restart could not be requested"))))
         rows.append(row)
     return rows
 

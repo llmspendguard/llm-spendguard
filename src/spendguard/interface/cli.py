@@ -524,7 +524,7 @@ def cli_core_deploy(rest, cmd, argv):
             except Exception as exc:
                 return _deploy_failed_verdict(f"green-pointer promotion failed: {exc}")
         print(f"deploy: 🟢 promoted {rec['short']} ({rec['describe']}) → green pointer  [{rec['gate']}]")
-        print("        already-running MCP servers serve it on their next request (they hand off between requests).")
+        print("        verifying the running MCP server against the promoted commit.")
         if registered_cli_option_token('deploy/--skip-consumer-verify') not in r:
             from ..consumer_audit import audit_consumer_workspaces, render_consumer_audit_table
             _consumer_result = audit_consumer_workspaces(
@@ -567,6 +567,17 @@ def cli_core_deploy(rest, cmd, argv):
                 print("deploy: fleet — all tracked consumers already on the green commit.")
             if _fr.get(_fleet.FLEET_RESTART_FAILURE_KEY):
                 return _deploy_failed_verdict("one or more supervised consumer restarts could not be requested")
+        if registered_cli_option_token('deploy/--dry-run') not in r:
+            from ..platform import restart_and_verify_live_mcp
+            _mcp_verification = restart_and_verify_live_mcp(
+                intended_sha=rec["sha"], restart=registered_cli_option_token('deploy/--no-restart') not in r)
+            if not _mcp_verification["verified"]:
+                return _deploy_failed_verdict(
+                    f"live MCP loaded {_mcp_verification['loaded_sha']} instead of intended "
+                    f"{_mcp_verification['intended_sha']}: {_mcp_verification['reason']}"
+                )
+            if _mcp_verification["package_owned"] is False:
+                print("deploy: installed MCP service is not package-owned", file=sys.stderr)
         _refresh_deployments = registered_cli_option_token('deploy/--no-refresh') not in r
         _host_install_audit = _fleet.reconcile_registered_host_installations()
         _host_escape_count = len(_host_install_audit["escapes"])

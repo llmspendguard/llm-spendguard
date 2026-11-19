@@ -138,7 +138,8 @@ def distribution_daemon_guard_fixture():
               "gate_enforcing": True, "served": {"sha": GUARD_REMOVAL_SHA, "dirty": False}}
     state = {"consumers": [consumer], "status": status,
              "identity": guard_daemon.fleet._FLEET_PID_VERIFIED_LIVE,
-             "restart": {guard_daemon.fleet.FLEET_RESTART_REQUESTED_KEY: [{"pid": GUARD_REMOVAL_PID}]}}
+             "restart": {"verified": True, "loaded_sha": GUARD_REMOVAL_SHA,
+                         "intended_sha": GUARD_REMOVAL_SHA, "reason": "verified"}}
     policy = {"mcp_endpoint": GUARD_REMOVAL_ENDPOINT, "probe_timeout_s": GUARD_REMOVAL_TIMEOUT}
 
     def answer_guard_daemon_rpc(endpoint, method, params, timeout):
@@ -150,6 +151,7 @@ def distribution_daemon_guard_fixture():
     with patch.object(guard_daemon.fleet, "running_consumers", side_effect=lambda **kwargs: state["consumers"]), \
          patch.object(guard_daemon.fleet, "_classify_fleet_pid_identity", side_effect=lambda *args: state["identity"]), \
          patch.object(guard_daemon.fleet, "restart_stale", side_effect=lambda **kwargs: state["restart"]), \
+         patch.object(guard_daemon, "restart_and_verify_live_mcp", side_effect=lambda **kwargs: state["restart"]), \
          patch.object(guard_daemon.fleet, "fleet_control_restarts_enabled", return_value=False), \
          patch.object(guard_daemon, "request_distribution_mcp_rpc", side_effect=answer_guard_daemon_rpc), \
          patch.object(guard_daemon.mcp_fd_lifecycle, "attest_mcp_process_descriptors", return_value={"fd_ok": True}):
@@ -183,16 +185,18 @@ def exercise_distribution_daemon_pid_identity_liveness_guard_removal():
 def exercise_distribution_daemon_no_owner_guard_removal():
     with distribution_daemon_guard_fixture() as (state, rejects):
         state["consumers"] = []
-        mutant = compile_distribution_guard_removal(guard_daemon.attest_distribution_daemons, (
-            ('restart_ok = False', 'restart_ok = True'),))
-        require_distribution_guard_mutant_killed(rejects, guard_daemon, "attest_distribution_daemons", mutant)
+        state["status"]["pid"] = None
+        mutant = compile_distribution_guard_removal(guard_daemon.prove_distribution_mcp_daemon, (
+            ('if not pid or (consumer.get("pid") is not None and pid != consumer["pid"]):', 'if False:'),))
+        require_distribution_guard_mutant_killed(rejects, guard_daemon, "prove_distribution_mcp_daemon", mutant)
 
 
 def exercise_distribution_daemon_restart_confirmed_guard_removal():
     with distribution_daemon_guard_fixture() as (state, rejects):
-        state["restart"] = {}
+        state["restart"] = {"verified": False, "loaded_sha": None,
+                            "intended_sha": GUARD_REMOVAL_SHA, "reason": "unverified"}
         mutant = compile_distribution_guard_removal(guard_daemon.attest_distribution_daemons, (
-            ('restart_ok = bool(result.get(fleet.FLEET_RESTART_REQUESTED_KEY))', 'restart_ok = True'),))
+            ('restart_ok = verification["verified"]', 'restart_ok = True'),))
         require_distribution_guard_mutant_killed(rejects, guard_daemon, "attest_distribution_daemons", mutant)
 
 

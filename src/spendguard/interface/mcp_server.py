@@ -906,6 +906,36 @@ def _arm_and_verify_mcp_daemon_gate():
         )
 
 
+MCP_STDIO_FRESHNESS_POLL_SECONDS = 1.0
+
+
+def _mcp_stdio_input_lines(inp):
+    """Yield lines while allowing the serving thread to check freshness when idle."""
+    import os
+    import select
+
+    try:
+        descriptor = inp.fileno()
+    except (AttributeError, OSError, ValueError):
+        yield from inp
+        return
+    pending = bytearray()
+    while True:
+        readable, _, _ = select.select([descriptor], [], [], MCP_STDIO_FRESHNESS_POLL_SECONDS)
+        if not readable:
+            yield None
+            continue
+        byte = os.read(descriptor, 1)
+        if not byte:
+            if pending:
+                yield pending.decode(inp.encoding or "utf-8", errors=inp.errors or "strict")
+            return
+        pending.extend(byte)
+        if byte == b"\n":
+            yield pending.decode(inp.encoding or "utf-8", errors=inp.errors or "strict")
+            pending.clear()
+
+
 def serve_stdio(inp=None, outp=None):
     """Read newline-delimited JSON-RPC from stdin, write responses to stdout — the MCP stdio transport. Blocking;
     ends on EOF. A malformed line gets a parse-error reply and the loop continues (one bad frame never kills the
@@ -926,9 +956,12 @@ def serve_stdio(inp=None, outp=None):
     outp = outp or sys.stdout
     respawn_on_deploy = _auto_respawn_enabled()
     announced = False
-    for line in inp:
-        line = line.strip()
-        if not line:
+    for line in _mcp_stdio_input_lines(inp):
+        if line is None:
+            if _auto_respawn_enabled() and _platform_accessors.resolve_should_respawn():
+                return
+            continue
+        if not line.strip():
             continue
         try:
             req = json.loads(line)

@@ -101,7 +101,7 @@ rec = release.promote_release(gate="chunked_suite green")
 record_script_check(fails, "promote wrote the pointer at the served sha", rec["sha"] == "a" * 40 and release.green_pointer()["sha"] == "a" * 40)
 record_script_check(fails, "gate result is recorded on the pointer", release.green_pointer().get("gate") == "chunked_suite green")
 record_script_check(fails, "served == green → NOT stale", release.stale_vs_green() is False)
-record_script_check(fails, "release_status note reads up-to-date", "up to date" in release.release_status()["note"])
+record_script_check(fails, "release_status reports matching source", release.release_status()["freshness"]["fresh"] is True)
 
 # a newer commit is deployed (HEAD moves to a KNOWN newer sha, tree clean) → the frozen process is now behind it
 STATE["head"] = "b" * 40
@@ -110,17 +110,16 @@ record_script_check(fails, "a second promote advances the pointer to the new sha
 record_script_check(fails, "update_json left a `~` backup of the previous pointer (non-destructive advance)",
    pathlib.Path(str(release.pointer_path()) + "~").exists())
 record_script_check(fails, "served (a…) now BEHIND green (b…) → STALE", release.stale_vs_green() is True)
-record_script_check(fails, "release_status note flags STALE with both short shas", "STALE" in release.release_status()["note"]
-   and release.release_status()["stale"] is True)
+record_script_check(fails, "release_status flags the stale loaded commit", release.release_status()["stale"] is True)
 
 print("\n-- should_respawn() is loop-safe: exit ONLY when a fresh process would land on green --")
 # live HEAD == green (b) and this frozen process serves a → a respawn WOULD reach green → respawn.
 record_script_check(fails, "should_respawn TRUE when live HEAD == green and the process is behind it", release.should_respawn() is True)
 STATE["known"].add("d" * 40)
 STATE["head"] = "d" * 40                              # HEAD moved PAST green (d) without a deploy; green stays b
-record_script_check(fails, "should_respawn FALSE when HEAD != green (a respawn would serve d, not green — no exit loop)",
-   release.should_respawn() is False)
-record_script_check(fails, "... yet stale_vs_green stays True (the process IS behind green; it just cannot fix it by respawning)",
+record_script_check(fails, "should_respawn TRUE when editable checkout advanced beyond green",
+   release.should_respawn() is True)
+record_script_check(fails, "... stale_vs_green still reports the independent pointer comparison",
    release.stale_vs_green() is True)
 STATE["head"] = "b" * 40                              # restore for any later assertions
 

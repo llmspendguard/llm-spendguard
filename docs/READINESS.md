@@ -1,6 +1,6 @@
 # Readiness
 
-Definition revision: 8
+Definition revision: 9
 
 Square means every checklist item has a reviewed deterministic gate and every gate passes.
 `spendguard selfcheck` runs each gate and exits nonzero for FAIL or UNREVIEWED.
@@ -8,6 +8,9 @@ Coverage counts PASS and FAIL items with reviewed gates; UNREVIEWED counts as ne
 A supplied clean-environment report must match the current input fingerprint and its complete verification logs.
 
 ## Project invariants
+
+- [ ] **mcp-serves-current-source** — The live MCP server serves current source and its service is package-owned.
+  Gate: `spendguard.analyze.assurance.mcp_freshness_readiness:assess_live_mcp_freshness_readiness`; inputs: `{}`.
 
 - [ ] **wheel-source-module-conformance** — A clean offline wheel contains exactly every recursive source module and no stale modules.
   Gate: `spendguard.capability_readiness_gates:assess_wheel_source_conformance_readiness`; inputs: `{"scripts": ["tests/test_wheel_ships_every_source_subpackage.py"]}`.

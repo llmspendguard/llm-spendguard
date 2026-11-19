@@ -22,6 +22,11 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(
 from _script_checks import record_script_check  # noqa: E402
 
 from spendguard import cli, release, config, fleet   # noqa: E402
+from spendguard.platform import distribution_daemon  # noqa: E402
+
+_mcp_fixture = {"verified": True, "loaded_sha": "abc1234", "intended_sha": "abc1234",
+                "package_owned": True, "reason": "verified"}
+distribution_daemon.restart_and_verify_live_mcp = lambda **kwargs: _mcp_fixture
 
 config.HOME = pathlib.Path(os.environ["SPENDGUARD_HOME"])
 fleet.verify_and_refresh_registered_interpreters = lambda apply=True: {
@@ -94,6 +99,11 @@ record_script_check(fails, "deploy ends with force distribution attestation",
                     distribution_invocations == [{"dry_run": False}])
 
 print("\n-- distribution attestation is the final fail-closed deployment bar --")
+_mcp_fixture.update(verified=False, loaded_sha="old", reason="not reloaded")
+rc, out = _run(["deploy", "--no-gate", "--skip-consumer-verify", "--no-restart", "--no-refresh"])
+record_script_check(fails, "deploy rejects an MCP server still serving the old commit",
+                    rc != 0 and "old" in out and "abc1234" in out)
+_mcp_fixture.update(verified=True, loaded_sha="abc1234", reason="verified")
 distribution_fixture_exit_code = 1
 rc, out = _run(["deploy", "--no-gate", "--skip-consumer-verify", "--no-restart", "--no-refresh"])
 record_script_check(fails, "deploy propagates a named distribution straggler",
