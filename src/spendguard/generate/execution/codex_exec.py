@@ -34,7 +34,7 @@ import time
 import logging
 import threading
 import contextlib
-from ...store.configuration.cli_resolution import cli_resolver
+from ...store.configuration.config import cli_resolver
 from pathlib import Path
 from ...execution_journal import (
     _protect_durable_execution_io,

@@ -6,7 +6,7 @@ import shutil
 import subprocess
 import tempfile
 import time
-from ...store.configuration.cli_resolution import cli_resolver
+from ...store.configuration.config import cli_resolver
 
 
 TIMEOUT_S = 300

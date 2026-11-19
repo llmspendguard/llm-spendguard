@@ -25,7 +25,7 @@ import subprocess
 import tempfile
 import time
 import urllib.parse
-from ...store.configuration.cli_resolution import cli_resolver
+from ...store.configuration.config import cli_resolver
 
 TIMEOUT_S = 300
 _USAGE_TTL_S = 300

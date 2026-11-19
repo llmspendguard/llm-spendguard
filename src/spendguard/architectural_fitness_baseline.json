@@ -5003,6 +5003,14 @@
       "spendguard.store.reference_data.models"
     ],
     [
+      "spendguard.generate.execution.zcode_exec",
+      "spendguard.manage.token_operations.execution_journal"
+    ],
+    [
+      "spendguard.generate.execution.zcode_exec",
+      "spendguard.store.configuration.config"
+    ],
+    [
       "spendguard.generate.spend_capture.backfill",
       "spendguard.analyze.learning.learn"
     ],
@@ -7437,5 +7445,6 @@
   "reviewed_comprehend_catalog_estimate_token_count_boundary": "Comprehend's catalog-derived estimate deliberately adds one minimal edge to provider_tokens: defect #7 requires host-side input-token counting, and provider_tokens is the shared cost-estimation utility that owns count_text. This introduces no coupling direction beyond estimate to token counting. Measured natively by the architecture context-boundaries gate.",
   "reviewed_grok_subscription_lane_flat_path_alias": "2026-11-17: The grok $0 subscription lane requires its flat-path executor alias spendguard.grok_exec -> spendguard.generate.execution.grok_exec, exactly like every sibling exec module (kimi_exec, antigravity_exec, codex_exec, subscription_exec). The executor loader and tests import exec modules via the flat path, so the shim is load-bearing, not debt to pay down. Measured legacy-shim count rises 219 -> 220 by this one declared alias.",
   "reviewed_mcp_http_launchd_boundary_edges": "The CLI invokes the platform installer for its user-facing install and migration commands; the installer reads the package location to preserve editable installs, uses the established receipt executable resolver for its daemon command, and uses the existing token operations launchd GUI-domain template to target the same user domain. These are minimal dependencies on existing owners, consistent with previously recorded CLI-to-platform, platform-to-package, platform-to-analyze, and platform-to-manage edges.",
-  "reviewed_setup_gate_resolver_prerequisites_boundary": "Hook generation imports the gate and its established ordered prerequisites, ledger read, cursor, budget and bulkgate, so the admission resolver is wired when CLI startup deferred initialization. These dependencies target the existing owners and preserve fail-closed enforcement."
+  "reviewed_setup_gate_resolver_prerequisites_boundary": "Hook generation imports the gate and its established ordered prerequisites, ledger read, cursor, budget and bulkgate, so the admission resolver is wired when CLI startup deferred initialization. These dependencies target the existing owners and preserve fail-closed enforcement.",
+  "reviewed_zcode_lane_executor_sibling_boundary_edges": "zcode_exec is a new grok-class agentic CLI executor built mirroring grok_exec. Like every sibling executor (antigravity, codex, grok, kimi, subscription), it imports store.configuration.config (lane_exec_env and the cli_resolver re-export) and manage.token_operations.execution_journal (durable-run journaling). These two cross-context non-surface edges are the established, already-recorded sibling pattern -- a new sibling joining it, not new architectural debt. The six *_exec -> store.configuration.cli_resolution edges introduced by the _bin merge were eliminated by rerouting the shared cli_resolver import through the config re-export (config.py re-exports cli_resolver, the adjudicated config.resolve_cli home), so only zcode's two sibling edges are recorded here. Measured under the 3.11 gated venv via the architecture-context-boundaries gate."
 }

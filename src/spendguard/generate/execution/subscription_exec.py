@@ -23,7 +23,7 @@ import shutil
 import subprocess
 import tempfile
 import time
-from ...store.configuration.cli_resolution import cli_resolver
+from ...store.configuration.config import cli_resolver
 
 TIMEOUT_S = 300               # meta prompts are small; a hung CLI must not stall the daily report
 SUBSCRIPTION_WORK_DIRECTORY_PREFIX = "spendguard-subscription-"

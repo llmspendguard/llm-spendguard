@@ -9,7 +9,7 @@ import subprocess
 import tempfile
 import threading
 import time
-from ...store.configuration.cli_resolution import cli_resolver
+from ...store.configuration.config import cli_resolver
 
 TIMEOUT_S = 300
 GROK_HOME_ENV = "GROK_HOME"
