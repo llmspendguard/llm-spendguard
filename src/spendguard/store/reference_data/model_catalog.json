@@ -2950,11 +2950,11 @@
       "price": {
         "in_": 2.0,
         "cached_in": 0.2,
-        "batch_in": 2.0,
+        "batch_in": 1.0,
         "out": 10.0,
-        "batch_out": 10.0,
-        "source": "https://developers.openai.com/api/docs/pricing (+ https://developers.openai.com/api/docs/models/gpt-6-sol) — fetched 2026-10-13; Standard <=272K tier; sol/luna batch=standard (no published discount), astra batch=50%; superseded by gpt-6.1-sol (newer Sol, 2026-10-13); kept for the records that still name it",
-        "verified": "2026-10-13"
+        "batch_out": 5.0,
+        "source": "https://developers.openai.com/api/docs/pricing — Standard <=272K tier: Input $2.00 / Output $10.00 / Cached input $0.20. Batch = 50% of Standard (batch_in $1.00 / batch_out $5.00), verified against the live Batch tab 2026-11-18 (prior seed wrongly recorded batch=standard). Cache-write $2.50; >272K input: 2x input/cache + 1.5x output; Regional +10%; Fast 2x. Superseded by gpt-6.1-sol; kept for records that still name it.",
+        "verified": "2026-11-18"
       },
       "price_error": null,
       "output_ceiling": {
@@ -2974,7 +2974,7 @@
         "tokens_param": "max_tokens",
         "style": "param"
       },
-      "as_of": "2026-11-14",
+      "as_of": "2026-11-18",
       "vision": true,
       "capabilities": {
         "response_schema": true,
@@ -2999,11 +2999,11 @@
       "price": {
         "in_": 0.1,
         "cached_in": 0.01,
-        "batch_in": 0.1,
+        "batch_in": 0.05,
         "out": 0.5,
-        "batch_out": 0.5,
-        "source": "https://developers.openai.com/api/docs/pricing (+ https://developers.openai.com/api/docs/models/gpt-6-luna) — fetched 2026-10-13; Standard <=272K tier; sol/luna batch=standard (no published discount), astra batch=50%",
-        "verified": "2026-10-13"
+        "batch_out": 0.25,
+        "source": "https://developers.openai.com/api/docs/pricing — Standard <=272K tier: Input $0.10 / Output $0.50 / Cached input $0.01. Batch = 50% of Standard (batch_in $0.05 / batch_out $0.25), verified against the live Batch tab 2026-11-18 (prior seed wrongly recorded batch=standard). Cache-write $0.125; eligible background requests 30% below Standard (2h window) / 40% below (8h window); >272K input: 2x input/cache + 1.5x output. Snapshot gpt-6-luna.",
+        "verified": "2026-11-18"
       },
       "price_error": null,
       "output_ceiling": {
@@ -3023,7 +3023,7 @@
         "tokens_param": "max_tokens",
         "style": "param"
       },
-      "as_of": "2026-11-14",
+      "as_of": "2026-11-18",
       "vision": true,
       "capabilities": {
         "response_schema": true,
