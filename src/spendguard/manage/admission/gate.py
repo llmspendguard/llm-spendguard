@@ -47,9 +47,9 @@ from .spend_refusal_error import (EffortNotHonored, MeteredCallRefused,  # noqa:
 
 def admission_prompt_is_interactive():
     """Return whether this call has both a human TTY and no background dispatch."""
-    from ..token_operations import execution_journal
+    from ..token_operations import current_durable_execution_id
     return bool(sys.stdin is not None and sys.stdin.isatty()
-                and execution_journal.current_durable_execution_id() is None)
+                and current_durable_execution_id() is None)
 
 
 def _prompt_text(kw):
