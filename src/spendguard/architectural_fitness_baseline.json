@@ -421,7 +421,7 @@
           },
           "src/spendguard/generate/execution/codex_exec.py": {
             "max_cc": 18,
-            "mi": 13.634269421438717
+            "mi": 13.348690107863835
           },
           "src/spendguard/generate/execution/execution_accessors.py": {
             "max_cc": 6,
@@ -1025,7 +1025,7 @@
           },
           "src/spendguard/store/reference_data/lane_registry.py": {
             "max_cc": 2,
-            "mi": 88.61927744935178
+            "mi": 88.58953635542947
           },
           "src/spendguard/store/reference_data/model_catalog.py": {
             "max_cc": 50,
@@ -1217,7 +1217,7 @@
           },
           "src/spendguard/store/configuration/cli_resolution.py": {
             "max_cc": 10,
-            "mi": 87.33062685472828
+            "mi": 86.20995791708583
           },
           "src/spendguard/store/configuration/config_store.py": {
             "max_cc": 23,
@@ -1262,6 +1262,10 @@
           "src/spendguard/platform/mcp_http_launchd.py": {
             "max_cc": 20,
             "mi": 24.100030167875357
+          },
+          "src/spendguard/generate/execution/zcode_exec.py": {
+            "max_cc": 23,
+            "mi": 38.20757148384761
           }
         },
         "measured_extremes": {
@@ -2595,7 +2599,8 @@
     "reviewed_reclaim_cli_complexity": "Reclaim CLI (PR #352): new platform module home_reclaim.py plus the reclaim-command wiring in capability_cli_callable_generation.py; measured under CPython 3.11 + radon 6.0.1 and recorded their true per-file CC/MI into the 3.11 ratchet bucket.",
     "reviewed_lane_queue_failure_attribution_resync_66c2559e": "lane-queue structured failure attribution (F1-F4): adapters/codex_exec/lane_queue/lane_recovery/lane_servability/execution_accessors complexity re-measured under CPython 3.11 after rebase onto main @66c2559e",
     "reviewed_mcp_deploy_freshness": "Reviewed MCP deployment verification and readiness changes",
-    "reviewed_mcp_http_installer_migration": "Reviewed package-owned MCP HTTP installer and safe migration complexity"
+    "reviewed_mcp_http_installer_migration": "Reviewed package-owned MCP HTTP installer and safe migration complexity",
+    "reviewed_zcode_lane_and_cli_resolver_merge_new_files": "2026-11-19: New files on feat/zcode-agentic-lane need measured complexity baselines. zcode_exec.py is the new grok-class agentic ZCode CLI executor mirroring grok_exec; its run_prompt is the one non-trivial function at CC 23 (rank D), matching grok_exec's parallel run_prompt, with auth_status (CC 2) and available (CC 1) trivial, measured MI 38.21. The two new guard tests rank CC A: test_zcode_agentic_executor.py drives the router's canonical-import agentic dispatch (worst CC 5, MI 69.56) and test_cli_bin_resolver_is_merged.py guards the merged cli_resolver factory (worst CC 4, MI 50.81); tests are outside the src-only complexity source scope so they take no baseline entry. Measured with Radon under Python 3.11. No pre-existing file's max_cc regresses; three files' size-sensitive MI dip within rank from the same-branch edits (codex_exec 13.634->13.349, cli_resolution 88.619->88.590, lane_registry 87.331->86.210). Cycle, duplication and dead-code ratchets unchanged."
   },
   "dead_allowlist": [
     {
@@ -2637,8 +2642,8 @@
   "dead_confidence": 100,
   "dead_confidence_justification": "Vulture defines 100% findings as definite unused arguments/variables and unreachable code. Lower-confidence unused public functions and attributes require caller/dynamic-registration review and are explicitly tracked separately; this gate does not claim full dead-code absence.",
   "duplication": {
-    "duplicate_lines": 426,
-    "groups": 55
+    "duplicate_lines": 431,
+    "groups": 56
   },
   "duplication_justification": "Use pylint symilar's documented default minimum of four significant lines; comments, docstrings, imports and function signatures are declarations rather than implementation duplication. Compare every source file against every other source file. Ratchet lines and groups to measured current values.",
   "duplication_options": {
@@ -7427,6 +7432,7 @@
   "type_scope_reason": "Existing annotated immutable CLI data model passes mypy with normal diagnostics. Follow-imports skip isolates this explicitly recorded surface; it does not claim typing of transitive application imports or full-package coverage.",
   "reviewed_restructure_boundary_rebaseline": "Re-baseline after the approved Phase 3-5 domain-taxonomy restructure + config carve + integration sweep relocated ~220 modules into bounded-context packages. Net cross-context non-surface edge delta is +23 (390 new / 367 removed) \u2014 relocation churn of foundational shared-module imports (config, pricing, models/model_catalog, money_ledger, platform._version, the shared spend_refusal_error exception, reporting reads) and the ports-and-adapters accessor/contracts access pattern, not new coupling. The 73 direct deep-internal reach-ins are relocated pre-existing imports; routing them through accessors is tracked as future work. Measured linux/amd64 py3.12 matching CI.",
   "reviewed_restructure_duplication_rebaseline": "Duplication rose 303->426 lines / 48->55 groups entirely from the restructure's parallel ports-and-adapters boilerplate: 14 per-context *_accessors headers (~17 lines each), parallel provider adapters (codex/claudecode/chat) and parallel admission gates (agent_spawn/residency/weekly_cap). Factoring these into a shared base would couple the bounded contexts and undo Phase-4 acyclicity, so the parallel structure is recorded, not de-duplicated. Measured linux/amd64 py3.12 matching CI.",
+  "reviewed_zcode_lane_duplication_rebaseline": "2026-11-19: Duplication rose 426->431 lines / 55->56 groups from exactly one new 5-line group between generate/execution/grok_exec.py and generate/execution/zcode_exec.py, measured by pylint symilar under Python 3.11. zcode_exec is a new grok-class agentic CLI provider adapter deliberately built mirroring grok_exec (same --json/--mode/--cwd subprocess contract); the shared fragment is the parallel provider-adapter boilerplate the restructure rebaseline already records, not accidental copy-paste. Factoring grok and zcode into a shared base would couple the two provider adapters, so the parallel structure is recorded, not de-duplicated. The _bin merge on the same branch removed six sub-threshold wrapper bodies and does not change the count. No other group changed.",
   "reviewed_metered_readiness_embedding_limits_ssot_boundary_rebaseline": "Re-baseline after the two public SSOT accessors (embedding_input_limits, metered_call_readiness). Net cross-context non-surface edge delta is +7 (7 new / 0 removed), all deliberate and required by the accessors: __init__ exports spendguard->manage.admission.model_preflight and spendguard->store.reference_data.model_catalog; metered_call_readiness resolves its routed provider (model_preflight->generate.execution.providers), credential identity (model_preflight->store.configuration.provider_key_env_registry and ->config_accessors), and model record (model_preflight->store.reference_data.model_catalog) so the caller never names a provider or env var; and embedding_input_limits reads the config-overridable worst_case_chars_per_token (store.reference_data.model_catalog->store.configuration.config). No new coupling direction is introduced beyond spendguard owning the provider->credential map. Measured by spendguard selfcheck, matching CI.",
   "reviewed_comprehend_catalog_estimate_token_count_boundary": "Comprehend's catalog-derived estimate deliberately adds one minimal edge to provider_tokens: defect #7 requires host-side input-token counting, and provider_tokens is the shared cost-estimation utility that owns count_text. This introduces no coupling direction beyond estimate to token counting. Measured natively by the architecture context-boundaries gate.",
   "reviewed_grok_subscription_lane_flat_path_alias": "2026-11-17: The grok $0 subscription lane requires its flat-path executor alias spendguard.grok_exec -> spendguard.generate.execution.grok_exec, exactly like every sibling exec module (kimi_exec, antigravity_exec, codex_exec, subscription_exec). The executor loader and tests import exec modules via the flat path, so the shim is load-bearing, not debt to pay down. Measured legacy-shim count rises 219 -> 220 by this one declared alias.",
