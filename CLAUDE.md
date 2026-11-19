@@ -73,8 +73,13 @@ hook matched `Write|Edit`, and source authored through a **Bash heredoc** (`cat 
 to it. The same session proved both halves — the hook fired instantly and correctly on an `Edit`, while a dozen
 heredoc-written probe scripts, several carrying regex-decisions, went unreviewed.
 
-So: **author source with Write/Edit, never a heredoc/redirect/tee.** A heredoc bypasses every file-level guard
-the user has installed, and a guard that cannot see the write may as well not exist.
+So the fix was to **widen the guard, not ban the tool**: the matcher was widened to `Write|Edit|Bash|NotebookEdit`
+(globally armed in `~/.claude/settings.json`), and the hook now extracts the content from a heredoc/redirect/tee/
+`python -c` and reviews it exactly like a Write. So author source however is ergonomic — **heredoc included; it is
+reviewed, not bypassed** (quote the delimiter, `<<'PY'`, so the shell can't corrupt the content). In-place rewrites
+(`sed -i`/`perl -i`) and piping a program's output into source are still BLOCKED by design — use Write/Edit there.
+The principle stands — a guard that cannot see the write may as well not exist — which is precisely why the guard
+was widened to see it, rather than the tool forbidden.
 
 And the general form, which is the whole point: when the same correction arrives for the third time, the
 question is NOT "why didn't I remember" — remembering has already been tried and has already failed. It is
