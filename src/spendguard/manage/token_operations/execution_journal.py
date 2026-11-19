@@ -309,9 +309,12 @@ def run_durable_delegate_subprocess(command, **kwargs):
     kwargs.pop("stderr", None)
     check = kwargs.pop("check", False)
     timeout = kwargs.pop("timeout", None)
+    durable_subprocess_input_was_supplied = "input" in kwargs
     child_input = kwargs.pop("input", None)
     if child_input is not None:
         kwargs["stdin"] = subprocess.PIPE
+    elif not durable_subprocess_input_was_supplied and "stdin" not in kwargs:
+        kwargs["stdin"] = subprocess.DEVNULL
     expired = None
     output_offset = paths["stdout"].stat().st_size
     error_offset = paths["stderr"].stat().st_size

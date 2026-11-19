@@ -506,7 +506,9 @@
         "manage.token_operations.lane_recovery",
         "manage.token_operations.comprehend"
       ],
-      "published_names": []
+      "published_names": [
+        "current_durable_execution_id"
+      ]
     },
     {
       "id": "cost_estimation",
