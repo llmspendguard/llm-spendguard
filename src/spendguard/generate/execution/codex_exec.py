@@ -34,6 +34,7 @@ import time
 import logging
 import threading
 import contextlib
+from ...store.configuration.config import cli_resolver
 from pathlib import Path
 from ...execution_journal import (
     _protect_durable_execution_io,
@@ -300,16 +301,7 @@ def _token_unexpired(now=None, margin=None):
 _usage_cache = {"at": 0.0, "val": None}
 
 
-def _bin():
-    """Host codex CLI via config.resolve_cli ($SPENDGUARD_CODEX_BIN pin → PATH → well-known user-local
-    dirs) — daemons run with a minimal PATH that misses nvm/~/.local installs."""
-    # NO shutil.which FAST PATH. It ran BEFORE the pin was consulted, so $SPENDGUARD_CODEX_BIN was silently
-    # ignored whenever a `codex` existed on PATH — an explicit pin overridden by whatever was lying around, in
-    # a tool whose whole premise is never silently substituting one thing for another. resolve_cli already
-    # does the PATH lookup (pin → PATH → well-known dirs), so nothing is lost by delegating outright, and a
-    # pin that points at a missing binary now fails LOUD instead of falling through to a different binary.
-    from ... import config
-    return config.resolve_cli("codex", "SPENDGUARD_CODEX_BIN")
+_bin = cli_resolver("codex", "SPENDGUARD_CODEX_BIN")
 
 
 def available() -> bool:

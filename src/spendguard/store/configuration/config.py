@@ -202,6 +202,7 @@ from spendguard.store.configuration.ledger_connection import (  # absolute so ru
 import os as os
 
 from spendguard.store.configuration.cli_resolution import resolve_cli as resolve_cli
+from spendguard.store.configuration.cli_resolution import cli_resolver as cli_resolver
 from spendguard.store.configuration.config_accessors import set_config_accessors
 from spendguard.store.configuration.lane_subprocess_env import (
     lane_plan_env as lane_plan_env,

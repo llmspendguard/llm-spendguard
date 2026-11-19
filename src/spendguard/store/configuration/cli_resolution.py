@@ -36,3 +36,18 @@ def resolve_cli(name, env_var=None):
         except OSError:
             return -1.0
     return str(max(hits, key=_mtime)) if hits else None
+
+
+def cli_resolver(name, env_var=None):
+    """Build a zero-arg resolver for one lane's host CLI via resolve_cli(name, env_var).
+
+    It returns the absolute path or None via the env pin, PATH, then well-known user-local dirs.
+    Daemons (launchd/cron) have a minimal PATH that misses nvm/~/.local installs, so PATH alone is
+    insufficient. There is deliberately no shutil.which fast path ahead of the pin: that path used
+    to ignore an explicit $SPENDGUARD_*_BIN when a same-named binary was on PATH. resolve_cli fails
+    loud (returns None) at a missing pin instead of substituting another binary. Keeping this in
+    one factory prevents that invariant from drifting between lanes.
+    """
+    def resolve_bound_cli():
+        return resolve_cli(name, env_var)
+    return resolve_bound_cli

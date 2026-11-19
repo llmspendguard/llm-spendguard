@@ -226,7 +226,7 @@ def delegation_lanes_ready(route_kind="oneshot"):
             spec = lane_registry.lane_spec(plan)
             if not spec or not spec.get("agentic"):
                 continue
-            module = importlib.import_module(f"...{spec['exec']}", __package__)
+            module = importlib.import_module(f"spendguard.generate.execution.{spec.get('agentic_exec') or spec['exec']}")
             try:
                 executor_available = bool(module.available())
                 auth = (module.auth_status().get("authed") if hasattr(module, "auth_status") else
@@ -490,7 +490,7 @@ def _route_agentic(plan, prompt, model, timeout, cwd, warm=False):
         return {"error": f"unknown configured plan {plan!r}"}
     if not spec.get("agentic"):
         return {"error": f"configured plan {plan!r} has no agentic executor"}
-    module = importlib.import_module(f"...{spec['exec']}", __package__)
+    module = importlib.import_module(f"spendguard.generate.execution.{spec.get('agentic_exec') or spec['exec']}")
     kwargs = {"model": model, "cwd": cwd}
     if timeout is not None:
         kwargs["timeout"] = timeout

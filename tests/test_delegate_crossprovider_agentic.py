@@ -58,17 +58,49 @@ def test_crossprovider_agentic_dispatch_edits_supplied_workspace(plan, module_na
     assert (workspace / CROSSPROVIDER_EDIT_FILENAME).read_text() == plan
 
 
-def test_crossprovider_http_lane_never_advertised_or_dispatched_agentic(tmp_path, monkeypatch):
+def test_zai_http_completion_executor_never_dispatched_agentic(tmp_path, monkeypatch):
+    # The zai provider gained an AGENTIC executor (the ZCode coding-plan CLI, zcode_exec) while its HTTP
+    # executor (zai_exec) stays COMPLETION-ONLY. Dispatching the lane agentically must route to the CLI via
+    # the row's `agentic_exec`, and must NEVER reach the completion-only HTTP executor. (The old form of this
+    # test asserted the lane was not agentic at all; the augment makes it agentic through a DIFFERENT
+    # executor, so the preserved invariant is: the HTTP executor is never the agentic dispatch target.)
     from spendguard import zai_exec
+    from spendguard.generate.execution import zcode_exec
     plan = lane_registry.provider_lane_map()["zai"][0]
-    monkeypatch.setattr(delegate_router, "_configured_plan_models", lambda: {plan: CROSSPROVIDER_OFFLINE_MODEL})
-    monkeypatch.setattr(zai_exec, "available", lambda: True)
+    spec = lane_registry.lane_spec(plan)
+    assert spec["agentic"] is True
+    assert spec["exec"] == "zai_exec"
+    assert (spec.get("agentic_exec") or spec["exec"]) == "zcode_exec"
+
     monkeypatch.setattr(zai_exec, "run_prompt", lambda *args, **kwargs: pytest.fail(
-        "agentic work reached a completion-only HTTP executor"))
-    assert lane_registry.lane_spec(plan)["agentic"] is False
-    assert plan not in delegate_router.delegation_lanes_ready("agentic")["ready"]
-    assert delegate_router._route_agentic(plan, CROSSPROVIDER_OFFLINE_TASK,
-                                         CROSSPROVIDER_OFFLINE_MODEL, None, str(tmp_path))["error"]
+        "agentic work reached the completion-only HTTP executor zai_exec"))
+
+    workspace = tmp_path / plan
+    workspace.mkdir()
+    dispatched_commands = []
+
+    def zcode_offline_transport(command, **kwargs):
+        dispatched_commands.append(command)
+        assert kwargs["cwd"] == str(workspace)
+        (Path(kwargs["cwd"]) / CROSSPROVIDER_EDIT_FILENAME).write_text(plan)
+        return SimpleNamespace(returncode=0,
+                               stdout=json.dumps({"response": CROSSPROVIDER_OFFLINE_RESULT, "usage": {}}),
+                               stderr="")
+
+    monkeypatch.setattr(zcode_exec, "_bin", lambda: CROSSPROVIDER_OFFLINE_EXECUTABLE)
+    monkeypatch.setattr(zcode_exec.subprocess, "run", zcode_offline_transport)
+    monkeypatch.setattr(config, "lane_exec_env", lambda unused: {})
+    monkeypatch.setattr(delegate_router, "_invoke_recoverable_delegate", lambda executor, **kwargs: executor())
+    from spendguard import delegate_worktrees
+    monkeypatch.setattr(delegate_worktrees, "run_isolated_delegate",
+                        lambda executor, cwd, **isolation_dependencies: executor(cwd))
+
+    execution = delegate_router._route_agentic(plan, CROSSPROVIDER_OFFLINE_TASK,
+                                               CROSSPROVIDER_OFFLINE_MODEL, None, str(workspace))
+    assert not execution.get("error"), execution
+    assert dispatched_commands
+    assert all(flag in dispatched_commands[0] for flag in ("--mode", "--json"))
+    assert (workspace / CROSSPROVIDER_EDIT_FILENAME).read_text() == plan
 
 
 @pytest.mark.parametrize("plan,module_name,agent_flags", CROSSPROVIDER_AGENTIC_CASES)
@@ -107,6 +139,6 @@ if __name__ == "__main__":
             with pytest.MonkeyPatch.context() as crossprovider_patch:
                 test_crossprovider_agentic_missing_workspace_fails_closed(*crossprovider_case, crossprovider_patch)
         with pytest.MonkeyPatch.context() as crossprovider_patch:
-            test_crossprovider_http_lane_never_advertised_or_dispatched_agentic(
+            test_zai_http_completion_executor_never_dispatched_agentic(
                 Path(crossprovider_test_root), crossprovider_patch)
     print("cross-provider agentic dispatch: 7 targeting cases passed")

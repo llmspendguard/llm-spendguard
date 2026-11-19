@@ -9,6 +9,7 @@ import subprocess
 import tempfile
 import threading
 import time
+from ...store.configuration.config import cli_resolver
 
 TIMEOUT_S = 300
 GROK_HOME_ENV = "GROK_HOME"
@@ -78,10 +79,7 @@ def _warm_grok_leader_pool():
     return _grok_leader_pool
 
 
-def _bin():
-    """Resolve the CLI by explicit pin, PATH, then configured user-local search directories."""
-    from ... import config
-    return config.resolve_cli("grok", "SPENDGUARD_GROK_BIN")
+_bin = cli_resolver("grok", "SPENDGUARD_GROK_BIN")
 
 
 def available() -> bool:

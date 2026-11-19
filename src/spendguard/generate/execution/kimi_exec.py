@@ -25,6 +25,7 @@ import subprocess
 import tempfile
 import time
 import urllib.parse
+from ...store.configuration.config import cli_resolver
 
 TIMEOUT_S = 300
 _USAGE_TTL_S = 300
@@ -128,13 +129,7 @@ def kimi_server_process_exists(pid):
     return True
 
 
-def _bin():
-    """Host kimi CLI via config.resolve_cli ($SPENDGUARD_KIMI_BIN pin → PATH → well-known user-local dirs, incl.
-    ~/.kimi-code/bin) — daemons run with a minimal PATH that misses it. No shutil.which fast-path (the
-    resolve-cli-binary drift): resolve_cli already does pin → PATH → well-known dirs, so a pin at a missing binary
-    fails LOUD instead of falling through to whatever `kimi` is on PATH."""
-    from ... import config
-    return config.resolve_cli("kimi", "SPENDGUARD_KIMI_BIN")
+_bin = cli_resolver("kimi", "SPENDGUARD_KIMI_BIN")
 
 
 def available() -> bool:
