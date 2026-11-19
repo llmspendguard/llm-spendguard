@@ -167,6 +167,10 @@ if not any(getattr(finder, "_spendguard_gate_failclosed", False) for finder in s
 
 def _resolved_gated_sdk_modules(gated_modules):
     if gated_modules is None:
+        # The CLI can import setup before the normal gate bootstrap has wired its accessor.
+        # Importing the owner registers the resolver without weakening the baked finder.
+        from spendguard.store.spend_search import ledger_read, ledger_request_cursor  # noqa: F401
+        from spendguard.manage.admission import budget, bulkgate, gate  # noqa: F401
         from spendguard.manage.admission.admission_accessors import resolve_gated_sdk_modules as gated_sdk_modules
         return tuple(gated_sdk_modules())
     return tuple(gated_modules)

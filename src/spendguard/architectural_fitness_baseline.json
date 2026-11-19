@@ -5403,6 +5403,10 @@
     ],
     [
       "spendguard.interface.cli",
+      "spendguard.platform.mcp_http_launchd"
+    ],
+    [
+      "spendguard.interface.cli",
       "spendguard.platform.release"
     ],
     [
@@ -6439,10 +6443,6 @@
     ],
     [
       "spendguard.manage.token_operations.comprehend",
-      "spendguard.analyze.cost_estimation.expected_output"
-    ],
-    [
-      "spendguard.manage.token_operations.comprehend",
       "spendguard.analyze.cost_estimation.provider_tokens"
     ],
     [
@@ -6818,6 +6818,18 @@
       "spendguard.store.configuration.config"
     ],
     [
+      "spendguard.platform.mcp_http_launchd",
+      "spendguard"
+    ],
+    [
+      "spendguard.platform.mcp_http_launchd",
+      "spendguard.analyze.spend_reporting.receipt"
+    ],
+    [
+      "spendguard.platform.mcp_http_launchd",
+      "spendguard.manage.token_operations.codex_broker_owner"
+    ],
+    [
       "spendguard.platform.release",
       "spendguard.store.configuration.config"
     ],
@@ -6887,6 +6899,18 @@
     ],
     [
       "spendguard.platform.setup",
+      "spendguard.manage.admission.budget"
+    ],
+    [
+      "spendguard.platform.setup",
+      "spendguard.manage.admission.bulkgate"
+    ],
+    [
+      "spendguard.platform.setup",
+      "spendguard.manage.admission.gate"
+    ],
+    [
+      "spendguard.platform.setup",
       "spendguard.manage.routing.tier_config"
     ],
     [
@@ -6904,6 +6928,14 @@
     [
       "spendguard.platform.setup",
       "spendguard.store.money_ledger.ledger"
+    ],
+    [
+      "spendguard.platform.setup",
+      "spendguard.store.spend_search.ledger_read"
+    ],
+    [
+      "spendguard.platform.setup",
+      "spendguard.store.spend_search.ledger_request_cursor"
     ],
     [
       "spendguard.store.call_corpus.callio",
@@ -7397,5 +7429,7 @@
   "reviewed_restructure_duplication_rebaseline": "Duplication rose 303->426 lines / 48->55 groups entirely from the restructure's parallel ports-and-adapters boilerplate: 14 per-context *_accessors headers (~17 lines each), parallel provider adapters (codex/claudecode/chat) and parallel admission gates (agent_spawn/residency/weekly_cap). Factoring these into a shared base would couple the bounded contexts and undo Phase-4 acyclicity, so the parallel structure is recorded, not de-duplicated. Measured linux/amd64 py3.12 matching CI.",
   "reviewed_metered_readiness_embedding_limits_ssot_boundary_rebaseline": "Re-baseline after the two public SSOT accessors (embedding_input_limits, metered_call_readiness). Net cross-context non-surface edge delta is +7 (7 new / 0 removed), all deliberate and required by the accessors: __init__ exports spendguard->manage.admission.model_preflight and spendguard->store.reference_data.model_catalog; metered_call_readiness resolves its routed provider (model_preflight->generate.execution.providers), credential identity (model_preflight->store.configuration.provider_key_env_registry and ->config_accessors), and model record (model_preflight->store.reference_data.model_catalog) so the caller never names a provider or env var; and embedding_input_limits reads the config-overridable worst_case_chars_per_token (store.reference_data.model_catalog->store.configuration.config). No new coupling direction is introduced beyond spendguard owning the provider->credential map. Measured by spendguard selfcheck, matching CI.",
   "reviewed_comprehend_catalog_estimate_token_count_boundary": "Comprehend's catalog-derived estimate deliberately adds one minimal edge to provider_tokens: defect #7 requires host-side input-token counting, and provider_tokens is the shared cost-estimation utility that owns count_text. This introduces no coupling direction beyond estimate to token counting. Measured natively by the architecture context-boundaries gate.",
-  "reviewed_grok_subscription_lane_flat_path_alias": "2026-11-17: The grok $0 subscription lane requires its flat-path executor alias spendguard.grok_exec -> spendguard.generate.execution.grok_exec, exactly like every sibling exec module (kimi_exec, antigravity_exec, codex_exec, subscription_exec). The executor loader and tests import exec modules via the flat path, so the shim is load-bearing, not debt to pay down. Measured legacy-shim count rises 219 -> 220 by this one declared alias."
+  "reviewed_grok_subscription_lane_flat_path_alias": "2026-11-17: The grok $0 subscription lane requires its flat-path executor alias spendguard.grok_exec -> spendguard.generate.execution.grok_exec, exactly like every sibling exec module (kimi_exec, antigravity_exec, codex_exec, subscription_exec). The executor loader and tests import exec modules via the flat path, so the shim is load-bearing, not debt to pay down. Measured legacy-shim count rises 219 -> 220 by this one declared alias.",
+  "reviewed_mcp_http_launchd_boundary_edges": "The CLI invokes the platform installer for its user-facing install and migration commands; the installer reads the package location to preserve editable installs, uses the established receipt executable resolver for its daemon command, and uses the existing token operations launchd GUI-domain template to target the same user domain. These are minimal dependencies on existing owners, consistent with previously recorded CLI-to-platform, platform-to-package, platform-to-analyze, and platform-to-manage edges.",
+  "reviewed_setup_gate_resolver_prerequisites_boundary": "Hook generation imports the gate and its established ordered prerequisites, ledger read, cursor, budget and bulkgate, so the admission resolver is wired when CLI startup deferred initialization. These dependencies target the existing owners and preserve fail-closed enforcement."
 }
