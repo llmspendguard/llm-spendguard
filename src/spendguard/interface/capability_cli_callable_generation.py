@@ -34,6 +34,9 @@ def decode_callable_cli_json(value):
 
 def populate_callable_cli_parser(parser, capability, variant):
     """Declare real flags from canonical types, preserving omitted arguments."""
+    public_parameter_names = {
+        target: source for source, target in variant.parameter_renames.items()
+    }
     parser.description = capability.description
     exposed_parameters = []
     for parameter in variant.parameters:
@@ -45,16 +48,17 @@ def populate_callable_cli_parser(parser, capability, variant):
         help_text = parameter.help
         if converter is decode_callable_cli_json:
             help_text += ' Supply a JSON value, including quotes around JSON strings.'
-        option = '--' + parameter.name.replace('_', '-')
+        public_name = public_parameter_names.get(parameter.name, parameter.name)
+        option = '--' + public_name.replace('_', '-')
         if (parameter.schema.type == 'array' and parameter.schema.items is not None
                 and parameter.schema.items.type == 'string'):
-            parser.add_argument(option, dest=parameter.name, action='append',
+            parser.add_argument(option, dest=public_name, action='append',
                                 required=parameter.required, default=argparse.SUPPRESS, help=help_text)
         elif parameter.schema.type == 'boolean' and parameter.default is False:
-            parser.add_argument(option, dest=parameter.name, action='store_true', default=argparse.SUPPRESS,
+            parser.add_argument(option, dest=public_name, action='store_true', default=argparse.SUPPRESS,
                                 required=parameter.required, help=help_text)
         else:
-            parser.add_argument(option, dest=parameter.name, type=converter,
+            parser.add_argument(option, dest=public_name, type=converter,
                                 required=parameter.required and parameter.kind not in {'VAR_POSITIONAL', 'VAR_KEYWORD'},
                                 default=argparse.SUPPRESS, help=help_text)
     if not exposed_parameters:

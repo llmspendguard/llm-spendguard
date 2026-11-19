@@ -22,6 +22,14 @@ from spendguard.manage.admission.admission_accessors import RESIDENCY_HOOK_TIMEO
 
 from .config import DISK_GUARD_FLOOR_DEFAULT_BYTES, DISK_GUARD_FLOOR_ENV
 from spendguard.platform.platform_accessors import FLEET_RESTARTS_ENABLED_DEFAULT, FLEET_RESTARTS_ENABLED_ENV
+from spendguard.platform import (
+    RECLAIM_DEFAULT_CACHE_DIRECTORIES,
+    RECLAIM_DEFAULT_EPHEMERAL_DIRECTORIES,
+    RECLAIM_DEFAULT_PROTECTION,
+    RECLAIM_DEFAULT_ROTATED_LOGS,
+    RECLAIM_DEFAULT_STATE_SNAPSHOTS,
+    RECLAIM_LSOF_EXECUTABLE_DEFAULT,
+)
 
 
 def configured_agent_near_cap_threshold():
@@ -769,6 +777,23 @@ SETTINGS = [
               "gc_embed_checkpoints evicts oldest-first until under the cap, so a month of heavy embedding cannot "
               "fill the disk even when every checkpoint is still recent (the age bound alone would not have "
               "stopped the 19.65 GiB build-up). The in-flight run's own checkpoint is never evicted."),
+    *[dict(section="safety", key="reclaim." + key, store="config.json:safety.reclaim." + key,
+           env=None, default=default, kind="json" if not isinstance(default, str) else "str", secret=False,
+           desc=desc)
+      for key, default, desc in (
+          ("ephemeral", RECLAIM_DEFAULT_EPHEMERAL_DIRECTORIES,
+           "Per-category enabled flag, spendguard-home directory name, and stale age in days for ephemeral job units."),
+          ("caches", RECLAIM_DEFAULT_CACHE_DIRECTORIES,
+           "Per-category enabled flag and spendguard-home directory name for fully regenerated cache contents."),
+          ("rotated_logs", RECLAIM_DEFAULT_ROTATED_LOGS,
+           "Enabled flag and filename grammar for rotated logs; the live unnumbered log never matches."),
+          ("state_snapshots", RECLAIM_DEFAULT_STATE_SNAPSHOTS,
+           "Enabled flag, timestamp grammar/format, and newest-per-module retention for state snapshots."),
+          ("protection", RECLAIM_DEFAULT_PROTECTION,
+           "Exact live filenames, protected directory roots, and live JSON grammar that reclamation must refuse."),
+          ("lsof_executable", RECLAIM_LSOF_EXECUTABLE_DEFAULT,
+           "Owning-side executable used to prove an ephemeral unit has no live process before deletion."),
+      )],
     dict(section="calibrate", key="pair_horizon_hours", store="(env only)", env="SPENDGUARD_PAIR_HORIZON_H",
          default="24", kind="int", secret=False,        # "number" was a one-off; every other numeric is int/float
          desc="Learned-estimator pairing window: a logged job prediction (`calibrate.record_estimate`) collects "
