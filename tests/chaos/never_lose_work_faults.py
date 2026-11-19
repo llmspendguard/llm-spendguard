@@ -36,7 +36,10 @@ def run_never_lose_work_chaos_contract():
         real_settle = lane_queue.settle
 
         def reopen_expired_hold(rid, result):
-            result = {**result, "outcome": None} if result.get("_free_hold") else result
+            if result.get("_free_hold"):
+                # Remove both terminal signals: the owner-finished flag now independently
+                # prevents a retry even when the outcome is absent.
+                result = {**result, "outcome": None, "_free_hold_owner_finished": False}
             return real_settle(rid, result)
 
         lane_queue.settle = reopen_expired_hold
