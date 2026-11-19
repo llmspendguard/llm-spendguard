@@ -60,7 +60,8 @@ LANES = [
                "call to the Gemini API instead of your Antigravity plan)"),
      "relogin_cmd": "agy"},   # agy has no login subcommand — running it re-triggers the cached Antigravity OAuth
     {"lane": "zai-coding", "provider": "zai", "exec": "zai_exec", "kind": "key",
-     "agentic": False,  # HTTP completion executor, not a tool-running agent CLI.
+     "agentic": True,  # completion rides zai_exec (HTTP); agentic rides zcode_exec (the authenticated ZCode coding-plan CLI).
+     "agentic_exec": "zcode_exec",
      "creds": (), "keychain": None, "probe_tier": None,
      "reasoning": {"style": "none", "levels": (), "default": None},
      "login": ("add a z.ai GLM Coding Plan key to keys.env — `ZAI_CODING_API_KEY` (or your account's `ZAI_API_KEY` "

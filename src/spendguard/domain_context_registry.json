@@ -362,7 +362,8 @@
         "generate.execution.subscription_cli_results",
         "generate.execution.subscription_exec",
         "generate.execution.vendor_call",
-        "generate.execution.zai_exec"
+        "generate.execution.zai_exec",
+        "generate.execution.zcode_exec"
       ],
       "published_names": []
     },
