@@ -186,7 +186,8 @@ def migrate_mcp_http_to_package_owned(*, apply=False, settings=None) -> McpHttpM
             installed = install_mcp_http_launchd_daemon(port=port, settings=settings)
             if installed["status"] not in ("installed", "unchanged"):
                 raise RuntimeError(installed["reason"])
-            verification = distribution_daemon.restart_and_verify_live_mcp(intended_sha=sha, settings=settings)
+            verification = distribution_daemon.restart_and_verify_live_mcp(
+                intended_sha=sha, settings=settings, restart=False)
             if verification.get("verified") is not True or verification.get("package_owned") is not True:
                 raise RuntimeError(verification.get("reason") or "replacement ownership or verification failed")
             if path.read_bytes() != backup.read_bytes():

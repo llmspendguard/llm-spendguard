@@ -115,43 +115,58 @@ def inspect_live_mcp_service(settings=None):
         return {"label_used": None, "package_owned": None, "reason": f"MCP service ownership unproven: {exc}"}
 
 
+def _restart_resolved_live_mcp_owner(label):
+    """Kickstart one resolved owner, returning a terminal failure reason if unsafe or unsuccessful."""
+    if not fleet.fleet_control_restarts_enabled():
+        return "control-plane restarts disabled by kill switch"
+    try:
+        outcome = fleet.kickstart_declared_launchd_consumer(label)
+        if not outcome.get("ok"):
+            return f"kickstart failed: {outcome.get('detail')}"
+    except Exception as exc:
+        return f"kickstart failed: {type(exc).__name__}: {exc}"
+    return None
+
+
 def restart_and_verify_live_mcp(*, intended_sha, timeout_s=MCP_RESTART_TIMEOUT_DEFAULT_S, settings=None,
                                 restart=True) -> LiveMcpRestartResult:
     """Restart the actual endpoint owner and verify the SHA reported over its transport."""
-    service = inspect_live_mcp_service(settings)
-    label = service["label_used"]
-    failure = None
-    if restart:
-        if not label:
-            failure = service["reason"]
-        elif not fleet.fleet_control_restarts_enabled():
-            failure = "control-plane restarts disabled by kill switch"
-        else:
-            try:
-                outcome = fleet.kickstart_declared_launchd_consumer(label)
-                if not outcome.get("ok"):
-                    failure = f"kickstart failed: {outcome.get('detail')}"
-            except Exception as exc:
-                failure = f"kickstart failed: {type(exc).__name__}: {exc}"
     deadline = time.monotonic() + max(0, timeout_s)
     attempts = 0
     loaded = None
+    label = None
+    service = {"label_used": None, "package_owned": None, "reason": "MCP service ownership unresolved"}
+    restart_attempted = False
     probe_settings = distribution_daemon_settings(settings)
     while True:
+        # Ownership is observable only after the listener binds. Re-resolve it
+        # throughout the bounded window so daemon startup latency is transient,
+        # while restart safety failures remain terminal once an owner exists.
         attempts += 1
-        try:
-            remaining = deadline - time.monotonic()
-            if remaining > 0:
-                probe_settings["probe_timeout_s"] = min(probe_settings["probe_timeout_s"], remaining)
-            loaded = (read_live_mcp_release_status(probe_settings).get("served") or {}).get("sha")
-            if loaded and loaded == intended_sha and failure is None:
-                return {"verified": True, "loaded_sha": loaded, "intended_sha": intended_sha,
-                        "label_used": label, "attempts": attempts, "reason": "live MCP serves intended commit",
-                        "package_owned": service["package_owned"]}
-        except Exception as exc:
-            failure_detail = f"live MCP status unavailable: {type(exc).__name__}: {exc}"
+        service = inspect_live_mcp_service(settings)
+        label = service.get("label_used")
+        failure = None
+        if not label:
+            failure_detail = service["reason"]
         else:
-            failure_detail = "live MCP did not reload intended commit"
+            if restart and not restart_attempted:
+                restart_attempted = True
+                failure = _restart_resolved_live_mcp_owner(label)
+            if failure is None:
+                try:
+                    remaining = deadline - time.monotonic()
+                    if remaining > 0:
+                        probe_settings["probe_timeout_s"] = min(probe_settings["probe_timeout_s"], remaining)
+                    loaded = (read_live_mcp_release_status(probe_settings).get("served") or {}).get("sha")
+                    if loaded and loaded == intended_sha:
+                        return {"verified": True, "loaded_sha": loaded, "intended_sha": intended_sha,
+                                "label_used": label, "attempts": attempts,
+                                "reason": "live MCP serves intended commit",
+                                "package_owned": service["package_owned"]}
+                except Exception as exc:
+                    failure_detail = f"live MCP status unavailable: {type(exc).__name__}: {exc}"
+                else:
+                    failure_detail = "live MCP did not reload intended commit"
         remaining = deadline - time.monotonic()
         if remaining <= 0 or failure:
             return {"verified": False, "loaded_sha": loaded, "intended_sha": intended_sha,

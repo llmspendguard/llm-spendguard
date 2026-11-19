@@ -24,6 +24,9 @@ DAEMON_FIXTURE_FRACTION = 0.75
 DAEMON_FIXTURE_DESCRIPTOR_COUNT = 4
 DAEMON_FIXTURE_FD = 7
 DAEMON_FIXTURE_LEDGER_PATH = "/fixture/daemon/spend.db"
+DAEMON_FIXTURE_LISTENER_DELAY_POLLS = 2
+DAEMON_FIXTURE_ABSENT_WINDOW_POLLS = 2
+DAEMON_FIXTURE_CLOCK_START_S = 0.0
 
 
 def build_distribution_daemon_check_mutant(axis):
@@ -269,6 +272,48 @@ def exercise_live_mcp_restart_verification():
     print("[OK] unchanged live SHA fails verification; correct reload passes and ownership is recorded")
 
 
+def exercise_live_mcp_delayed_listener_verification():
+    absent = {"label_used": None, "package_owned": None, "listener_present": False,
+              "reason": "no MCP HTTP listener present"}
+    present = {"label_used": daemon.MCP_HTTP_LAUNCHD_LABEL, "package_owned": True,
+               "listener_present": True, "reason": "package-owned MCP service"}
+    inspections = [absent] * DAEMON_FIXTURE_LISTENER_DELAY_POLLS + [present]
+    clock = {"now": DAEMON_FIXTURE_CLOCK_START_S}
+
+    def advance_fixture_clock(seconds):
+        clock["now"] += seconds
+
+    with patch.object(daemon, "inspect_live_mcp_service", side_effect=inspections), \
+         patch.object(daemon.fleet, "fleet_control_restarts_enabled", return_value=True), \
+         patch.object(daemon.fleet, "kickstart_declared_launchd_consumer", return_value={"ok": True}) as kickstart, \
+         patch.object(daemon, "read_live_mcp_release_status",
+                      return_value={"served": {"sha": DAEMON_FIXTURE_SHA}}), \
+         patch.object(daemon.time, "monotonic", side_effect=lambda: clock["now"]), \
+         patch.object(daemon.time, "sleep", side_effect=advance_fixture_clock):
+        result = daemon.restart_and_verify_live_mcp(
+            intended_sha=DAEMON_FIXTURE_SHA,
+            timeout_s=daemon.MCP_RESTART_POLL_INTERVAL_S * (DAEMON_FIXTURE_LISTENER_DELAY_POLLS + 1))
+    assert result["verified"] is True and result["package_owned"] is True
+    assert result["loaded_sha"] == DAEMON_FIXTURE_SHA
+    kickstart.assert_called_once_with(daemon.MCP_HTTP_LAUNCHD_LABEL)
+
+    clock["now"] = DAEMON_FIXTURE_CLOCK_START_S
+    with patch.object(daemon, "inspect_live_mcp_service", return_value=absent), \
+         patch.object(daemon.fleet, "fleet_control_restarts_enabled", return_value=True), \
+         patch.object(daemon.fleet, "kickstart_declared_launchd_consumer") as absent_kickstart, \
+         patch.object(daemon, "read_live_mcp_release_status") as absent_status, \
+         patch.object(daemon.time, "monotonic", side_effect=lambda: clock["now"]), \
+         patch.object(daemon.time, "sleep", side_effect=advance_fixture_clock):
+        result = daemon.restart_and_verify_live_mcp(
+            intended_sha=DAEMON_FIXTURE_SHA,
+            timeout_s=daemon.MCP_RESTART_POLL_INTERVAL_S * DAEMON_FIXTURE_ABSENT_WINDOW_POLLS)
+    assert result["verified"] is False and result["reason"] == absent["reason"]
+    assert result["package_owned"] is None and result["label_used"] is None
+    absent_kickstart.assert_not_called()
+    absent_status.assert_not_called()
+    print("[OK] delayed listener is polled to verification; absent listener fails closed at deadline")
+
+
 def exercise_live_mcp_unowned_service_finding():
     port = 43123
     label = "fixture.unowned.service"
@@ -298,5 +343,6 @@ if __name__ == "__main__":
     exercise_distribution_probe_prevents_http_self_restart()
     exercise_distribution_missing_http_owner_restart()
     exercise_live_mcp_restart_verification()
+    exercise_live_mcp_delayed_listener_verification()
     exercise_live_mcp_unowned_service_finding()
     exercise_live_mcp_absent_listener_finding()
