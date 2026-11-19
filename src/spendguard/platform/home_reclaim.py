@@ -20,7 +20,7 @@ import shutil
 import subprocess
 from typing import Any
 
-from spendguard.store.configuration import config
+from spendguard.store.configuration import active_spendguard_home, reclaim_config_value
 
 
 RECLAIM_DEFAULT_EPHEMERAL_DIRECTORIES = {
@@ -58,7 +58,7 @@ class HomeReclaimRefusal(RuntimeError):
 
 
 def _reclaim_setting(key: str, default: Any) -> Any:
-    return config._cfg_get("safety", f"reclaim.{key}", default)
+    return reclaim_config_value("safety", f"reclaim.{key}", default)
 
 
 def _resolved_reclaim_policy() -> dict[str, Any]:
@@ -198,7 +198,7 @@ def reclaim_home_artifacts(
     ``now_utc`` is an ISO-8601 test/automation clock override. The report counts
     filesystem bytes selected and, on apply, bytes successfully removed.
     """
-    reclaim_home = Path(home).expanduser() if home is not None else config.active_spendguard_home()
+    reclaim_home = Path(home).expanduser() if home is not None else active_spendguard_home()
     reclaim_home = reclaim_home.resolve(strict=True)
     now = datetime.fromisoformat(now_utc) if now_utc else datetime.now(timezone.utc)
     if now.tzinfo is None:

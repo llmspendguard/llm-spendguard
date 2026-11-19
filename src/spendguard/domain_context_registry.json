@@ -131,6 +131,7 @@
         "provider_key_status",
         "read_json_cache_entry",
         "recall_model",
+        "reclaim_config_value",
         "recycle_idle_ledger_connections",
         "refuse_isolated_cli_launch",
         "require_ledger_home_alignment",
@@ -744,7 +745,14 @@
         "platform.offline_python_build",
         "platform.launchd_labels"
       ],
-      "published_names": []
+      "published_names": [
+        "RECLAIM_DEFAULT_CACHE_DIRECTORIES",
+        "RECLAIM_DEFAULT_EPHEMERAL_DIRECTORIES",
+        "RECLAIM_DEFAULT_PROTECTION",
+        "RECLAIM_DEFAULT_ROTATED_LOGS",
+        "RECLAIM_DEFAULT_STATE_SNAPSHOTS",
+        "RECLAIM_LSOF_EXECUTABLE_DEFAULT"
+      ]
     },
     {
       "id": "surfaces",

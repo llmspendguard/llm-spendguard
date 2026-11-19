@@ -81,6 +81,7 @@ install_domain_context_surface(globals(), {
     "provider_key_status": "spendguard.store.configuration.config:provider_key_status",
     "read_json_cache_entry": "spendguard.store.configuration.config:read_json_cache_entry",
     "recall_model": "spendguard.store.configuration.config:recall_model",
+    "reclaim_config_value": "spendguard.store.configuration.config:_cfg_get",
     "recycle_idle_ledger_connections": "spendguard.store.configuration.config:recycle_idle_ledger_connections",
     "refuse_isolated_cli_launch": "spendguard.store.configuration.config:refuse_isolated_cli_launch",
     "require_ledger_home_alignment": "spendguard.store.configuration.config:require_ledger_home_alignment",

@@ -949,7 +949,7 @@
           },
           "src/spendguard/store/configuration/config_schema.py": {
             "max_cc": 4,
-            "mi": 69.9386487242984
+            "mi": 68.12646986204753
           },
           "src/spendguard/store/configuration/ledger_connection_accessors.py": {
             "max_cc": 3,
@@ -1250,6 +1250,10 @@
           "src/spendguard/generate/execution/grok_exec.py": {
             "max_cc": 20,
             "mi": 35.00831433493859
+          },
+          "src/spendguard/platform/home_reclaim.py": {
+            "max_cc": 22,
+            "mi": 36.63312574243071
           }
         },
         "measured_extremes": {
@@ -2227,6 +2231,10 @@
             "max_cc": 26,
             "mi": 0.0
           },
+          "src/spendguard/platform/home_reclaim.py": {
+            "max_cc": 22,
+            "mi": 36.63312574243071
+          },
           "src/spendguard/platform/lanes.py": {
             "max_cc": 157,
             "mi": 1.5148465704576854
@@ -2329,7 +2337,7 @@
           },
           "src/spendguard/store/configuration/config_schema.py": {
             "max_cc": 4,
-            "mi": 69.9386487242984
+            "mi": 68.12646986204753
           },
           "src/spendguard/store/configuration/config_store.py": {
             "max_cc": 23,
@@ -2579,7 +2587,8 @@
     "reviewed_delegate_reap_recover_before_reclaim": "delegate reap recover-before-RECLAIM: the execution_id reap arm now defers dead-owner jobs and calls recover_delegate_job_execution before reclaiming so a terminal result is never lost; +15 lines, CC unchanged (32), MI 3.41->2.56",
     "reviewed_ci_feat_ci_python_311_only_complexity_remeasure": "Regenerated the complexity baseline on the CI runner interpreter 3.11.18 (radon 6.0.1) for branch feat/ci-python-311-only. The readiness gate's selected baseline bucket must be measured on the interpreter where the gate runs; a developer-measured bucket regresses by a hair on the runner's tokenizer.",
     "reviewed_grok_warm_leader_concurrency": "Reviewed Grok concurrency architecture: grok_exec adds one bounded process-wide warm leader-socket pool with blocking acquisition, deterministic release, and exit reaping; config_store adds the single floored dispatch.lane_concurrency_grok accessor shared by admission and execution. The added branches directly enforce bounded parallelism and configuration validation.",
-    "reviewed_grok_lane_concurrency_config_accessor": "config_store.py gains the grok lane concurrency SSOT accessor (GROK_LANE_CONCURRENCY_FLOOR/ENV + grok_lane_concurrency()), mirroring effective_codex_concurrency; max_cc unchanged (23), MI dips ~0.15 from the three added config symbols \u2014 reviewed, no new branching complexity."
+    "reviewed_grok_lane_concurrency_config_accessor": "config_store.py gains the grok lane concurrency SSOT accessor (GROK_LANE_CONCURRENCY_FLOOR/ENV + grok_lane_concurrency()), mirroring effective_codex_concurrency; max_cc unchanged (23), MI dips ~0.15 from the three added config symbols \u2014 reviewed, no new branching complexity.",
+    "reviewed_home_reclaim_surface_and_complexity": "Reviewed home reclamation selection, path containment, open-file refusal and deletion flow, and the configuration schema surface import; recorded their measured complexity without relaxing other files."
   },
   "dead_allowlist": [
     {

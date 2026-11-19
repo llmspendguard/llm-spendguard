@@ -22,7 +22,7 @@ from spendguard.manage.admission.admission_accessors import RESIDENCY_HOOK_TIMEO
 
 from .config import DISK_GUARD_FLOOR_DEFAULT_BYTES, DISK_GUARD_FLOOR_ENV
 from spendguard.platform.platform_accessors import FLEET_RESTARTS_ENABLED_DEFAULT, FLEET_RESTARTS_ENABLED_ENV
-from spendguard.platform.home_reclaim import (
+from spendguard.platform import (
     RECLAIM_DEFAULT_CACHE_DIRECTORIES,
     RECLAIM_DEFAULT_EPHEMERAL_DIRECTORIES,
     RECLAIM_DEFAULT_PROTECTION,
