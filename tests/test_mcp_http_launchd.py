@@ -2,12 +2,33 @@
 import ast
 import pathlib
 import plistlib
+import xml.parsers.expat
 from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
 
 from spendguard.platform import mcp_http_launchd as jobs
+
+# A launchd plist that is valid to Apple's parser and runs under launchd, but whose header comment
+# contains a `--` sequence (`--http`), which the XML spec forbids inside a comment. Python's strict
+# expat (plistlib) rejects it; Apple's `plutil` accepts it. This is the real shape measured on the
+# live com.ashdamle.spendguard-mcp-http.plist that crashed the migration before the plutil fix.
+DASHDASH_COMMENT_PLIST = (
+    b'<?xml version="1.0" encoding="UTF-8"?>\n'
+    b'<!-- spendguard MCP: --http is a SINGLETON, do NOT remove -->\n'
+    b'<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n'
+    b'<plist version="1.0"><dict><key>Label</key><string>com.test.dashdash</string></dict></plist>\n'
+)
+
+
+def fake_plutil_run(label=None, returncode=0, stderr=""):
+    """Stand in for `plutil -extract Label raw` without the (Linux-absent) binary."""
+    def run(args, **kwargs):
+        assert args[0] == jobs.MCP_PLUTIL_COMMAND and args[1:4] == ["-extract", "Label", "raw"]
+        return SimpleNamespace(returncode=returncode, stdout=("" if label is None else f"{label}\n"),
+                               stderr=stderr)
+    return run
 
 
 def launchd_fixture(monkeypatch, tmp_path):
@@ -140,9 +161,50 @@ def test_foreign_plist_resolved_from_launchd(monkeypatch, tmp_path):
     path.write_bytes(plistlib.dumps({"Label": "foreign.test"}))
     monkeypatch.setattr(jobs, "mcp_http_launchctl", lambda *args: SimpleNamespace(
         returncode=0, stdout=f"path = {path}\n", stderr=""))
+    monkeypatch.setattr(jobs.subprocess, "run", fake_plutil_run(label="foreign.test"))
     assert jobs.mcp_http_foreign_plist_path("foreign.test") == path
     with pytest.raises(ValueError):
         jobs.mcp_http_foreign_plist_path("another.test")
+
+
+def test_foreign_plist_label_read_via_apple_parser_not_strict_xml(monkeypatch, tmp_path):
+    # The real failure shape: a launchd-valid plist whose comment carries `--`, which strict
+    # expat rejects. The migration read path must NOT depend on plistlib for the foreign plist.
+    path = tmp_path / "dashdash.plist"
+    path.write_bytes(DASHDASH_COMMENT_PLIST)
+    with pytest.raises((xml.parsers.expat.ExpatError, plistlib.InvalidFileException)):
+        plistlib.loads(path.read_bytes())  # proves the pre-fix strict path would crash
+    monkeypatch.setattr(jobs.subprocess, "run", fake_plutil_run(label="com.test.dashdash"))
+    assert jobs.mcp_http_read_plist_label(path) == "com.test.dashdash"
+    monkeypatch.setattr(jobs, "mcp_http_launchctl", lambda *args: SimpleNamespace(
+        returncode=0, stdout=f"path = {path}\n", stderr=""))
+    assert jobs.mcp_http_foreign_plist_path("com.test.dashdash") == path
+
+
+def test_foreign_plist_label_read_fails_closed_on_plutil_error(monkeypatch, tmp_path):
+    path = tmp_path / "broken.plist"
+    path.write_bytes(DASHDASH_COMMENT_PLIST)
+    monkeypatch.setattr(jobs.subprocess, "run",
+                        fake_plutil_run(returncode=1, stderr="could not extract Label"))
+    with pytest.raises(ValueError):
+        jobs.mcp_http_read_plist_label(path)
+
+
+def test_migration_dry_run_survives_dashdash_comment_plist(monkeypatch, tmp_path):
+    # The whole-migration guarantee: a foreign listener whose plist breaks strict XML must still
+    # produce an ordered plan from apply=False, never an uncaught ExpatError.
+    fixture = launchd_fixture(monkeypatch, tmp_path)
+    foreign = tmp_path / "foreign-dashdash.plist"
+    foreign.write_bytes(DASHDASH_COMMENT_PLIST)
+    monkeypatch.setattr(jobs.distribution_daemon, "inspect_live_mcp_service",
+                        lambda settings=None: {"package_owned": False, "label_used": "com.test.dashdash"})
+    monkeypatch.setattr(jobs, "mcp_http_launchctl", lambda *args: SimpleNamespace(
+        returncode=0, stdout=f"path = {foreign}\n", stderr=""))
+    monkeypatch.setattr(jobs.subprocess, "run", fake_plutil_run(label="com.test.dashdash"))
+    monkeypatch.setattr(jobs.release, "_git_src", lambda *args: "source-sha")
+    result = jobs.migrate_mcp_http_to_package_owned()
+    assert [step["action"] for step in result["plan"]] == ["backup", "bootout", "install", "verify", "remove"]
+    assert foreign.read_bytes() == DASHDASH_COMMENT_PLIST  # untouched by a dry run
 
 
 if __name__ == "__main__":
