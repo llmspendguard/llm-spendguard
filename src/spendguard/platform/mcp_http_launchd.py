@@ -11,6 +11,11 @@ from urllib.parse import urlparse
 from . import distribution_daemon, fleet, manifest, release
 from .launchd_labels import MCP_HTTP_LAUNCHD_LABEL
 
+# launchd plists are authored for Apple's lenient plist parser, which accepts constructs the XML
+# spec forbids (e.g. a `--` sequence inside a comment). Python's strict expat (plistlib) rejects
+# those, so the Label is read with Apple's own tool instead of plistlib.
+MCP_PLUTIL_COMMAND = "plutil"
+
 
 class McpHttpInstallResult(TypedDict):
     status: str
@@ -116,6 +121,16 @@ def install_mcp_http_launchd_daemon(*, port=None, apply=True, settings=None) -> 
     return {**result, "status": "installed", "reason": "package-owned MCP HTTP service installed"}
 
 
+def mcp_http_read_plist_label(path):
+    """Read a launchd plist's Label via Apple's lenient parser, which launchd-valid plists require."""
+    result = subprocess.run([MCP_PLUTIL_COMMAND, "-extract", "Label", "raw", "-o", "-", str(path)],
+                            capture_output=True, text=True,
+                            timeout=fleet.FLEET_LAUNCHD_OPERATION_TIMEOUT_S, check=False)
+    if result.returncode:
+        raise ValueError(result.stderr.strip() or "cannot read foreign plist Label")
+    return result.stdout.strip()
+
+
 def mcp_http_foreign_plist_path(label):
     """Resolve launchd's actual job path and verify its declared identity."""
     result = mcp_http_launchctl("print", f"{mcp_http_gui_domain()}/{label}")
@@ -128,9 +143,8 @@ def mcp_http_foreign_plist_path(label):
     path = pathlib.Path(paths[0])
     if not path.is_absolute() or not path.is_file() or path.is_symlink():
         raise ValueError("foreign plist is not an absolute regular file")
-    with path.open("rb") as stream:
-        if plistlib.load(stream).get("Label") != label:
-            raise ValueError("foreign plist label does not match launchd job")
+    if mcp_http_read_plist_label(path) != label:
+        raise ValueError("foreign plist label does not match launchd job")
     return path
 
 
