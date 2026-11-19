@@ -201,7 +201,7 @@
           },
           "src/spendguard/analyze/measurement/lane_servability.py": {
             "max_cc": 15,
-            "mi": 42.483868661843154
+            "mi": 40.70842908888038
           },
           "src/spendguard/analyze/measurement/measurement.py": {
             "max_cc": 19,
@@ -421,11 +421,11 @@
           },
           "src/spendguard/generate/execution/codex_exec.py": {
             "max_cc": 18,
-            "mi": 14.697904979008683
+            "mi": 13.634269421438717
           },
           "src/spendguard/generate/execution/execution_accessors.py": {
             "max_cc": 6,
-            "mi": 6.953499879093399
+            "mi": 6.938032636130275
           },
           "src/spendguard/generate/execution/execution_resolver_bootstrap.py": {
             "max_cc": 1,
@@ -801,7 +801,7 @@
           },
           "src/spendguard/manage/token_operations/lane_recovery.py": {
             "max_cc": 12,
-            "mi": 48.671085635210005
+            "mi": 48.48459823907403
           },
           "src/spendguard/manage/token_operations/process_group_reaper.py": {
             "max_cc": 9,
@@ -2584,7 +2584,8 @@
     "reviewed_ci_feat_ci_python_311_only_complexity_remeasure": "Regenerated the complexity baseline on the CI runner interpreter 3.11.18 (radon 6.0.1) for branch feat/ci-python-311-only. The readiness gate's selected baseline bucket must be measured on the interpreter where the gate runs; a developer-measured bucket regresses by a hair on the runner's tokenizer.",
     "reviewed_grok_warm_leader_concurrency": "Reviewed Grok concurrency architecture: grok_exec adds one bounded process-wide warm leader-socket pool with blocking acquisition, deterministic release, and exit reaping; config_store adds the single floored dispatch.lane_concurrency_grok accessor shared by admission and execution. The added branches directly enforce bounded parallelism and configuration validation.",
     "reviewed_grok_lane_concurrency_config_accessor": "config_store.py gains the grok lane concurrency SSOT accessor (GROK_LANE_CONCURRENCY_FLOOR/ENV + grok_lane_concurrency()), mirroring effective_codex_concurrency; max_cc unchanged (23), MI dips ~0.15 from the three added config symbols \u2014 reviewed, no new branching complexity.",
-    "reviewed_reclaim_cli_complexity": "Reclaim CLI (PR #352): new platform module home_reclaim.py plus the reclaim-command wiring in capability_cli_callable_generation.py; measured under CPython 3.11 + radon 6.0.1 and recorded their true per-file CC/MI into the 3.11 ratchet bucket."
+    "reviewed_reclaim_cli_complexity": "Reclaim CLI (PR #352): new platform module home_reclaim.py plus the reclaim-command wiring in capability_cli_callable_generation.py; measured under CPython 3.11 + radon 6.0.1 and recorded their true per-file CC/MI into the 3.11 ratchet bucket.",
+    "reviewed_lane_queue_failure_attribution_resync_66c2559e": "lane-queue structured failure attribution (F1-F4): adapters/codex_exec/lane_queue/lane_recovery/lane_servability/execution_accessors complexity re-measured under CPython 3.11 after rebase onto main @66c2559e"
   },
   "dead_allowlist": [
     {

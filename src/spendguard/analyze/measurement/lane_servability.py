@@ -367,3 +367,17 @@ def refresh_lane_servability(lane=None, announce=True, reprobe=False):
     except Exception:
         pass
     return out
+
+
+def record_structured_lane_rejection(lane, model, result):
+    """Persist a deterministic provider-declared model rejection for admission preflight."""
+    if (not lane or not model or not isinstance(result, dict)
+            or result.get("error_code") not in _execution_accessors.UNSERVABLE_MODEL_ERROR_CODES):
+        return False
+    try:
+        from ...store.reference_data import reference_data_accessors
+        rejected = sorted(set(reference_data_accessors.resolve_lane_unserved_ids(lane) or []) | {model})
+        reference_data_accessors.resolve_merge_lane_observation(lane, [], rejected)
+        return True
+    except Exception:
+        return False
