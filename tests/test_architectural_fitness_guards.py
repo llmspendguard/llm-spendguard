@@ -19,6 +19,7 @@ from spendguard.architectural_fitness import (
     measure_architectural_cyclic_edge_ratchet,
     measure_architectural_complexity,
     measure_architectural_duplication,
+    regenerate_architectural_boundary_baseline,
     regenerate_architectural_legacy_flat_module_baseline,
     regenerate_architectural_complexity_baseline,
     regenerate_architectural_legacy_shim_count_baseline,
@@ -259,8 +260,14 @@ def test_new_cross_context_nonsurface_import_is_red_then_recorded_green(tmp_path
     expected_edge = (ARCHITECTURAL_FIXTURE_ALPHA_MODULE, ARCHITECTURAL_FIXTURE_BETA_MODULE)
     assert red.status == "FAIL", red
     assert str(expected_edge) in str(red.evidence), red
-    settings["recorded_cross_context_nonsurface_imports"] = [list(expected_edge)]
-    baseline_path.write_text(json.dumps(settings))
+    with pytest.raises(ValueError, match="reviewed justification"):
+        regenerate_architectural_boundary_baseline(tmp_path)
+    regeneration = regenerate_architectural_boundary_baseline(
+        tmp_path, reviewed_justification=ARCHITECTURAL_FIXTURE_REVIEW_JUSTIFICATION,
+        reviewed_justification_key=ARCHITECTURAL_FIXTURE_REVIEW_KEY,
+    )
+    assert regeneration["updated"] is True
+    assert json.loads(baseline_path.read_text())[ARCHITECTURAL_FIXTURE_REVIEW_KEY] == ARCHITECTURAL_FIXTURE_REVIEW_JUSTIFICATION
     assert run_architectural_fitness_gate(context=context, invariant="boundaries").status == "PASS"
 
 

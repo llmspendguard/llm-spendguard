@@ -78,6 +78,11 @@ def exercise_distribution_daemon_red_green():
         state.update(status=copy.deepcopy(clean), broken_probe=False, leaked=False)
         return {daemon.fleet.FLEET_RESTART_REQUESTED_KEY: [{"pid": DAEMON_FIXTURE_PID}]}
 
+    def verify_distribution_fixture_restart(**arguments):
+        repair_distribution_fixture_daemon(apply=True, consumer_id=DAEMON_FIXTURE_PID, all_supervised=True)
+        return {"verified": True, "loaded_sha": DAEMON_FIXTURE_SHA, "intended_sha": DAEMON_FIXTURE_SHA,
+                "reason": "verified"}
+
     def inspect_distribution_fixture_fds(pid, ledger_path=None):
         assert pid == DAEMON_FIXTURE_PID
         assert ledger_path == DAEMON_FIXTURE_LEDGER_PATH
@@ -96,6 +101,7 @@ def exercise_distribution_daemon_red_green():
          patch.object(daemon.fleet, "_classify_fleet_pid_identity", return_value=daemon.fleet._FLEET_PID_VERIFIED_LIVE), \
          patch.object(daemon, "request_distribution_mcp_rpc", side_effect=answer_distribution_fixture_rpc), \
          patch.object(daemon.fleet, "restart_stale", side_effect=repair_distribution_fixture_daemon) as restart, \
+         patch.object(daemon, "restart_and_verify_live_mcp", side_effect=verify_distribution_fixture_restart), \
          patch.object(lifecycle, "attest_mcp_process_descriptors", side_effect=inspect_distribution_fixture_fds):
         for label, mutate in mutations:
             mutate()
@@ -106,7 +112,8 @@ def exercise_distribution_daemon_red_green():
             assert len(green) == 1 and green[0]["straggler_reason"] is None, label
             restart.reset_mock()
         assert daemon.attest_distribution_daemons(target, check=True, settings=policy)[0]["straggler_reason"] is None
-        with patch.object(daemon.fleet, "restart_stale", return_value={}):
+        with patch.object(daemon, "restart_and_verify_live_mcp", return_value={"verified": False,
+                "loaded_sha": DAEMON_FIXTURE_OLD_SHA, "intended_sha": DAEMON_FIXTURE_SHA, "reason": "old"}):
             failed_restart = daemon.attest_distribution_daemons(target, settings=policy)[0]
             assert failed_restart["straggler_reason"] and not failed_restart["healthy"]
         # Removing each input check makes its corresponding red assertion fail.
@@ -236,13 +243,51 @@ def exercise_distribution_missing_http_owner_restart():
              "healthy": True, "fd_ok": True, "straggler_reason": None, "evidence": {}}
     with patch.object(daemon.fleet, "running_consumers", return_value=[]), \
          patch.object(daemon.fleet, "fleet_control_restarts_enabled", return_value=True), \
-         patch.object(daemon.fleet, "kickstart_declared_launchd_consumer", return_value={"ok": True}) as kick, \
+         patch.object(daemon, "restart_and_verify_live_mcp", return_value={"verified": True}) as verify, \
          patch.object(daemon, "prove_distribution_mcp_daemon", return_value=proof) as attest:
         rows = daemon.attest_distribution_daemons(target, settings={"mcp_endpoint": DAEMON_FIXTURE_ENDPOINT})
-        kick.assert_called_once_with(daemon.MCP_HTTP_LAUNCHD_LABEL)
+        verify.assert_called_once()
         assert attest.call_args.args[0].get("pid") is None
-        assert rows[0]["action_taken"] == "restart-requested" and not rows[0]["straggler_reason"]
+        assert rows[0]["action_taken"] == "restart-verified" and not rows[0]["straggler_reason"]
     print("[OK] missing HTTP owner requests shared launchd restart without blocking")
+
+
+def exercise_live_mcp_restart_verification():
+    service = {"label_used": "fixture.service", "package_owned": False, "reason": "not package-owned"}
+    state = {"sha": DAEMON_FIXTURE_OLD_SHA}
+    with patch.object(daemon, "inspect_live_mcp_service", return_value=service), \
+         patch.object(daemon.fleet, "fleet_control_restarts_enabled", return_value=True), \
+         patch.object(daemon.fleet, "kickstart_declared_launchd_consumer", return_value={"ok": True}), \
+         patch.object(daemon, "read_live_mcp_release_status",
+                      side_effect=lambda settings: {"served": {"sha": state["sha"]}}):
+        red = daemon.restart_and_verify_live_mcp(intended_sha=DAEMON_FIXTURE_SHA, timeout_s=0)
+        assert not red["verified"] and red["loaded_sha"] == DAEMON_FIXTURE_OLD_SHA
+        assert red["package_owned"] is False and red["label_used"] == service["label_used"]
+        state["sha"] = DAEMON_FIXTURE_SHA
+        green = daemon.restart_and_verify_live_mcp(intended_sha=DAEMON_FIXTURE_SHA, timeout_s=0)
+        assert green["verified"] and green["loaded_sha"] == DAEMON_FIXTURE_SHA
+    print("[OK] unchanged live SHA fails verification; correct reload passes and ownership is recorded")
+
+
+def exercise_live_mcp_unowned_service_finding():
+    port = 43123
+    label = "fixture.unowned.service"
+    responses = [SimpleNamespace(stdout=f"{DAEMON_FIXTURE_PID}\n", returncode=0, stderr=""),
+                 SimpleNamespace(stdout=f"{DAEMON_FIXTURE_PID}\t0\t{label}\n", returncode=0, stderr="")]
+    with patch.object(daemon.subprocess, "run", side_effect=responses), \
+         patch.object(daemon.fleet, "running_consumers", return_value=[]):
+        finding = daemon.inspect_live_mcp_service({"mcp_endpoint": f"http://fixture.invalid:{port}/mcp"})
+    assert finding["label_used"] == label and finding["package_owned"] is False
+    assert "not package-owned" in finding["reason"]
+    print("[OK] listener owned by an external launchd label produces an ownership finding")
+
+
+def exercise_live_mcp_absent_listener_finding():
+    response = SimpleNamespace(stdout="", returncode=1, stderr="")
+    with patch.object(daemon.subprocess, "run", return_value=response):
+        finding = daemon.inspect_live_mcp_service()
+    assert finding["listener_present"] is False and finding["package_owned"] is None
+    print("[OK] no listener is distinguished from an unknown owner")
 
 
 if __name__ == "__main__":
@@ -252,3 +297,6 @@ if __name__ == "__main__":
     exercise_distribution_wire_rpc()
     exercise_distribution_probe_prevents_http_self_restart()
     exercise_distribution_missing_http_owner_restart()
+    exercise_live_mcp_restart_verification()
+    exercise_live_mcp_unowned_service_finding()
+    exercise_live_mcp_absent_listener_finding()

@@ -21,7 +21,19 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(
 
 from _script_checks import record_script_check  # noqa: E402
 
-from spendguard import cli, release, config, fleet   # noqa: E402
+from spendguard import cli, release, config, fleet, platform   # noqa: E402
+from spendguard.platform import distribution_daemon  # noqa: E402
+from spendguard.platform import mcp_http_launchd  # noqa: E402
+
+_mcp_fixture = {"verified": True, "loaded_sha": "abc1234", "intended_sha": "abc1234",
+                "package_owned": True, "reason": "verified"}
+distribution_daemon.restart_and_verify_live_mcp = lambda **kwargs: _mcp_fixture
+_mcp_service_fixture = {"package_owned": True, "listener_present": True, "label_used": "fixture"}
+platform.inspect_live_mcp_service = lambda: _mcp_service_fixture
+platform.restart_and_verify_live_mcp = lambda **kwargs: _mcp_fixture
+_mcp_install_calls = []
+mcp_http_launchd.install_mcp_http_launchd_daemon = lambda: (
+    _mcp_install_calls.append(True) or {"status": "unchanged", "reason": "fixture"})
 
 config.HOME = pathlib.Path(os.environ["SPENDGUARD_HOME"])
 fleet.verify_and_refresh_registered_interpreters = lambda apply=True: {
@@ -94,6 +106,25 @@ record_script_check(fails, "deploy ends with force distribution attestation",
                     distribution_invocations == [{"dry_run": False}])
 
 print("\n-- distribution attestation is the final fail-closed deployment bar --")
+_mcp_fixture.update(verified=False, loaded_sha="old", reason="not reloaded")
+rc, out = _run(["deploy", "--no-gate", "--skip-consumer-verify", "--no-restart", "--no-refresh"])
+record_script_check(fails, "deploy rejects an MCP server still serving the old commit",
+                    rc != 0 and "old" in out and "abc1234" in out)
+_mcp_fixture.update(verified=True, loaded_sha="abc1234", reason="verified")
+_mcp_service_fixture.update(package_owned=None, listener_present=False, label_used=None)
+_mcp_fixture.update(verified=False, loaded_sha=None, reason="no listener", package_owned=None)
+rc, out = _run(["deploy", "--no-gate", "--skip-consumer-verify", "--no-restart", "--no-refresh"])
+record_script_check(fails, "deploy ensures an absent daemon and does not fail if no listener is present",
+                    rc == 0 and "live verification skipped" in out and bool(_mcp_install_calls))
+_mcp_service_fixture.update(package_owned=False, listener_present=True, label_used="foreign")
+_mcp_fixture.update(verified=True, loaded_sha="abc1234", reason="verified", package_owned=False)
+_before_foreign_install = len(_mcp_install_calls)
+rc, out = _run(["deploy", "--no-gate", "--skip-consumer-verify", "--no-restart", "--no-refresh"])
+record_script_check(fails, "deploy leaves foreign service alone and prints migration command",
+                    rc == 0 and len(_mcp_install_calls) == _before_foreign_install
+                    and "spendguard mcp --migrate-http --apply" in out)
+_mcp_service_fixture.update(package_owned=True, listener_present=True, label_used="fixture")
+_mcp_fixture.update(package_owned=True)
 distribution_fixture_exit_code = 1
 rc, out = _run(["deploy", "--no-gate", "--skip-consumer-verify", "--no-restart", "--no-refresh"])
 record_script_check(fails, "deploy propagates a named distribution straggler",

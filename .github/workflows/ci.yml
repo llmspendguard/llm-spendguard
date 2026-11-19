@@ -246,8 +246,13 @@ jobs:
           #     needs a reachable LLM lane; this runner is network-isolated, so that leg cannot run
           #     and the gate reports UNREVIEWED. The judgement runs on operator machines where a
           #     lane is present; a real doc-currency regression there FAILs and is never tolerated.
-          # Both UNREVIEWEDs are tolerated here while every FAIL and every other UNREVIEWED blocks.
+          #   - mcp-serves-current-source needs a live MCP HTTP daemon to query over its transport;
+          #     no such server runs in CI, so the live status is unreachable and the gate reports
+          #     UNREVIEWED. The real served==current-source check runs at deploy time (cli_core_deploy's
+          #     restart_and_verify_live_mcp hard-fails) and on operator hosts, where a served!=source
+          #     or not-package-owned state FAILs and is never tolerated.
+          # These UNREVIEWEDs are tolerated here while every FAIL and every other UNREVIEWED blocks.
           export HTTP_PROXY="$CI_OFFLINE_PROXY" HTTPS_PROXY="$CI_OFFLINE_PROXY" ALL_PROXY="$CI_OFFLINE_PROXY"
           export http_proxy="$CI_OFFLINE_PROXY" https_proxy="$CI_OFFLINE_PROXY" all_proxy="$CI_OFFLINE_PROXY"
           export NO_PROXY= no_proxy= PIP_NO_INDEX=1
-          spendguard selfcheck --environment-report "$CI_READINESS_ENVIRONMENT_REPORT" --tolerate-unreviewed wheel-source-module-conformance --tolerate-unreviewed docs-present
+          spendguard selfcheck --environment-report "$CI_READINESS_ENVIRONMENT_REPORT" --tolerate-unreviewed wheel-source-module-conformance --tolerate-unreviewed docs-present --tolerate-unreviewed mcp-serves-current-source

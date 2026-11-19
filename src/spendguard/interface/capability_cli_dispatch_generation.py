@@ -4,7 +4,7 @@ from importlib import import_module
 import sys
 
 
-def invoke_registered_cli_command(command, rest, argv):
+def invoke_registered_cli_command(command, rest, argv, *, handler_kwargs=None):
     """Preserve each registered handler's legacy argument and exit contract."""
     from .capability_registry import CLI_COMMAND_BINDINGS
 
@@ -20,7 +20,7 @@ def invoke_registered_cli_command(command, rest, argv):
     if binding.legacy_argv_prefix is not None:
         sys.argv = [binding.legacy_argv_prefix] + rest
     if binding.invocation_policy == 'rest':
-        result = handler(rest)
+        result = handler(rest, **(handler_kwargs or {}))
     elif binding.invocation_policy == 'none':
         result = handler()
     elif binding.invocation_policy == 'command_prefix':

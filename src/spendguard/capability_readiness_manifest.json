@@ -1,6 +1,13 @@
 {
-  "revision": 8,
+  "revision": 9,
   "items": [
+    {
+      "id": "mcp-serves-current-source",
+      "description": "The live MCP server serves current source and its service is package-owned.",
+      "gate": "spendguard.analyze.assurance.mcp_freshness_readiness:assess_live_mcp_freshness_readiness",
+      "arguments": {},
+      "reason": "Live transport and service ownership provide outcome evidence; unavailable evidence is unreviewed."
+    },
     {
       "id": "wheel-source-module-conformance",
       "description": "A clean offline wheel contains exactly every recursive source module and no stale modules.",

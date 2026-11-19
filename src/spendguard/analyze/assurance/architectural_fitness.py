@@ -97,8 +97,8 @@ def measure_architectural_toplevel_flat_modules(root, settings):
     )
 
 
-def regenerate_architectural_boundary_baseline(root):
-    """Explicitly record the current boundary set when it tightens the reviewed ratchet."""
+def regenerate_architectural_boundary_baseline(root, reviewed_justification=None, reviewed_justification_key=None):
+    """Record measured boundaries, requiring review when new edges increase debt."""
     root = Path(root).resolve()
     settings = load_architectural_fitness_baseline(root)
     registry = load_architectural_context_registry(root)
@@ -110,12 +110,25 @@ def regenerate_architectural_boundary_baseline(root):
         }), registry,
     )
     recorded = {tuple(edge) for edge in settings.get(ARCHITECTURAL_BOUNDARY_BASELINE_KEY, ())}
-    if recorded and not set(measured) < recorded:
+    additions = set(measured) - recorded
+    if recorded and not additions and not set(measured) < recorded:
         return {"updated": False, "violations": measured, "unassigned": unassigned}
+    if additions:
+        if not isinstance(reviewed_justification, str) or not reviewed_justification.strip():
+            raise ValueError("A non-empty reviewed justification is required to record new boundary edges")
+        if (not isinstance(reviewed_justification_key, str)
+                or not reviewed_justification_key.startswith(ARCHITECTURAL_COMPLEXITY_REVIEW_KEY_PREFIX)
+                or reviewed_justification_key == ARCHITECTURAL_COMPLEXITY_REVIEW_KEY_PREFIX):
+            raise ValueError("The boundary justification key must start with 'reviewed_'")
+        previous = settings.get(reviewed_justification_key)
+        if previous is not None and previous != reviewed_justification:
+            raise ValueError(f"The justification key already records a different review: {reviewed_justification_key}")
     baseline_path = root / ARCHITECTURAL_PACKAGE_RELATIVE_ROOT / ARCHITECTURAL_BASELINE_RESOURCE
 
     def tighten_architectural_boundary_baseline(data):
         data[ARCHITECTURAL_BOUNDARY_BASELINE_KEY] = [list(edge) for edge in measured]
+        if additions:
+            data[reviewed_justification_key] = reviewed_justification
 
     config.update_json(
         baseline_path,

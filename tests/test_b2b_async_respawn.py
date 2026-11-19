@@ -45,12 +45,12 @@ def test_b2b_install_kind_aware_respawn_is_loop_safe():
         assert release.should_respawn() is False
     editable = {"install_kind": manifest.MANIFEST_EDITABLE_KIND, "wheel_version": None}
     with patch.object(manifest, "inspect_current_interpreter_install_kind", return_value=editable), \
-         patch.object(release, "stale_vs_green", return_value=True), \
+         patch.object(release, "served_sha", return_value={"sha": B2B_OLD_SHA}), \
          patch.object(release, "green_pointer", return_value={"sha": B2B_GREEN_SHA}), \
          patch.object(release, "_git_src", return_value=B2B_GREEN_SHA):
         assert release.should_respawn() is True
     with patch.object(manifest, "inspect_current_interpreter_install_kind", return_value=editable), \
-         patch.object(release, "stale_vs_green", return_value=True), \
+         patch.object(release, "served_sha", return_value={"sha": B2B_OLD_SHA}), \
          patch.object(release, "green_pointer", return_value={"sha": B2B_GREEN_SHA}), \
          patch.object(release, "_git_src", return_value=B2B_OLD_SHA):
         assert release.should_respawn() is False
