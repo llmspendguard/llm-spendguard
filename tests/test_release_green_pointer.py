@@ -74,6 +74,23 @@ STATE["head"] = "c" * 40                              # HEAD 'moves' but the pro
 record_script_check(fails, "served_sha is FROZEN (memoised) — it does not follow a later HEAD change", release.served_sha()["sha"] == "a" * 40)
 STATE["head"] = "a" * 40
 
+print("\n-- only an editable checkout has a served git identity --")
+_reset_served()
+record_script_check(fails, "editable install retains its HEAD identity and short SHA",
+    release.served_sha()["sha"] == STATE["head"]
+    and release.served_sha()["short"] == STATE["head"][:7])
+FOREIGN_REPO_SHA = "d" * 40
+release._git_src = lambda *args: FOREIGN_REPO_SHA
+manifest.inspect_current_interpreter_install_kind = lambda: {"install_kind": manifest.MANIFEST_WHEEL_KIND}
+_reset_served()
+record_script_check(fails, "wheel install ignores an enclosing foreign repo HEAD", release.served_sha() is None)
+manifest.inspect_current_interpreter_install_kind = lambda: {"install_kind": manifest.MANIFEST_UNKNOWN_KIND}
+_reset_served()
+record_script_check(fails, "unknown install has no served git identity", release.served_sha() is None)
+release._git_src = _fake_git
+manifest.inspect_current_interpreter_install_kind = _fake_editable_install_kind
+_reset_served()
+
 print("\n-- no pointer yet → not stale, and status says so --")
 record_script_check(fails, "green_pointer() is None before any deploy", release.green_pointer() is None)
 record_script_check(fails, "stale_vs_green() is False with no pointer (never respawn on an unknown)", release.stale_vs_green() is False)
