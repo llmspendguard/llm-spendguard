@@ -1359,13 +1359,13 @@
       "metered_id": "gemini-3.6-flash",
       "lane_spellings": {},
       "price": {
-        "in_": 1.5,
-        "out": 7.5,
-        "cached_in": 0.15,
-        "batch_in": 0.75,
-        "batch_out": 3.75,
-        "source": "https://aipricecompare.org/models/gemini-3-6-flash.html",
-        "verified": "2026-09-12"
+        "in_": 0.75,
+        "out": 3.75,
+        "cached_in": 0.075,
+        "batch_in": 0.375,
+        "batch_out": 1.875,
+        "source": "https://ai.google.dev/gemini-api/docs/pricing — Input $0.75 / Output $3.75 / Cached $0.075 per 1M; Batch = 50% of Standard (batch_in $0.375 / batch_out $1.875). Verified 2026-11-19; prior seed carried 1.5/7.5 (2x high).",
+        "verified": "2026-11-19"
       },
       "price_error": null,
       "output_ceiling": {
@@ -1395,7 +1395,7 @@
         "tool_choice": true,
         "mode": "chat"
       },
-      "as_of": "2026-11-14"
+      "as_of": "2026-11-19"
     },
     "gemini-3.7-flash": {
       "id": "gemini-3.7-flash",
@@ -1514,8 +1514,9 @@
       "price": {
         "in_": 0.6,
         "out": 2.2,
-        "source": "https://docs.z.ai/guides/overview/pricing",
-        "verified": "2026-11-14"
+        "source": "https://docs.z.ai/guides/overview/pricing — Input $0.60 / Output $2.20 / Cached $0.11 per 1M. z.ai publishes no batch tier (batch_in/out remain absent). Verified 2026-11-19.",
+        "verified": "2026-11-19",
+        "cached_in": 0.11
       },
       "price_error": "not on z.ai current pricing page (legacy/superseded by glm-4.6+); no authoritative current rate — add when sourced",
       "output_ceiling": {
@@ -1535,7 +1536,7 @@
         "tokens_param": "max_tokens",
         "style": "none"
       },
-      "as_of": "2026-11-14",
+      "as_of": "2026-11-19",
       "vision": false,
       "capabilities": {
         "mode": "chat"
@@ -1554,8 +1555,9 @@
       "price": {
         "in_": 0.2,
         "out": 1.1,
-        "source": "https://docs.z.ai/guides/overview/pricing",
-        "verified": "2026-11-14"
+        "source": "https://docs.z.ai/guides/overview/pricing — Input $0.20 / Output $1.10 / Cached $0.03 per 1M. z.ai publishes no batch tier (batch_in/out remain absent). Verified 2026-11-19.",
+        "verified": "2026-11-19",
+        "cached_in": 0.03
       },
       "price_error": "not on z.ai current pricing page (legacy/superseded by glm-4.6+); no authoritative current rate — add when sourced",
       "output_ceiling": {
@@ -1575,7 +1577,7 @@
         "tokens_param": "max_tokens",
         "style": "none"
       },
-      "as_of": "2026-11-14",
+      "as_of": "2026-11-19",
       "vision": false,
       "capabilities": {
         "mode": "chat"
@@ -2902,11 +2904,11 @@
       "price": {
         "in_": 2.0,
         "cached_in": 0.1,
-        "batch_in": 2.0,
+        "batch_in": 1.0,
         "out": 10.0,
-        "batch_out": 10.0,
-        "source": "https://developers.openai.com/api/docs/pricing (+ https://developers.openai.com/api/docs/models/gpt-6.1-sol) — fetched 2026-10-13; Standard <=272K tier; sol/luna batch=standard (no published discount), astra batch=50%",
-        "verified": "2026-10-13"
+        "batch_out": 5.0,
+        "source": "https://developers.openai.com/api/docs/pricing — Standard <=272K: Input $2.00 / Output $10.00 / Cached $0.10. Batch = 50% of Standard (batch_in $1.00 / batch_out $5.00), verified against the live Batch tab 2026-11-19 (prior seed wrongly recorded batch=standard).",
+        "verified": "2026-11-19"
       },
       "price_error": null,
       "output_ceiling": {
@@ -2926,7 +2928,7 @@
         "tokens_param": "max_tokens",
         "style": "param"
       },
-      "as_of": "2026-11-14",
+      "as_of": "2026-11-19",
       "vision": true,
       "capabilities": {
         "response_schema": true,
