@@ -21,9 +21,9 @@ jobs:
       security-events: write   # CodeQL SARIF upload only
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - uses: github/codeql-action/init@33d7b85da1a04171e211befe2c739303b9a4c066 # v4
+      - uses: github/codeql-action/init@1bd86f2fdb4b86187fa4059f16f31a3202acc9ea # v4
         with: { languages: python }
-      - uses: github/codeql-action/analyze@33d7b85da1a04171e211befe2c739303b9a4c066 # v4
+      - uses: github/codeql-action/analyze@1bd86f2fdb4b86187fa4059f16f31a3202acc9ea # v4
 
   secrets:
     runs-on: ubuntu-latest
@@ -47,7 +47,7 @@ jobs:
       # reads: the tool claimed it VERIFIED a function name against Lob's API, so "verified" is not proof of a
       # live credential. Re-enable this detector the day we actually integrate Lob.
       - name: TruffleHog (verified secrets only)
-        uses: trufflesecurity/trufflehog@ea68ca03c865c5f324e86e849ced20ed3cf9dbbb  # v3.99.8 — 3rd-party action, SHA-pinned
+        uses: trufflesecurity/trufflehog@d232362a64a09a9e7d58267b8f5acef00ae90e23  # v3.99.8 — 3rd-party action, SHA-pinned
         with:
           path: ./
           base: ""
